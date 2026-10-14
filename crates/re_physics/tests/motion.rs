@@ -60,7 +60,18 @@ fn live_world() -> Physics {
             },
         ],
     );
-    steps(&mut p, 10);
+    steps(&mut p, 9);
+    // The kinematic body is driven on the last step, then gets no more targets.
+    apply(
+        &mut p,
+        vec![PhysicsCmd::SetKinematicTarget {
+            id: EntityId(SPINNER),
+            pos: Vec3::new(0.1, 4.0, 8.0),
+            rot: Quat::IDENTITY,
+        }],
+    );
+    steps(&mut p, 1);
+    assert!(p.velocity(EntityId(SPINNER)).unwrap().0.x > 1.0);
     p
 }
 
@@ -116,6 +127,12 @@ fn motion_state_seeds_a_fresh_world() {
         assert!(a.distance(b) < 1e-3, "{id}: live {a} vs fresh {b}");
     }
     assert_eq!(fresh.is_awake(EntityId(RESTING)), Some(false));
+    // Without a new target the kinematic body stopped in both worlds.
+    assert_eq!(
+        fresh.velocity(EntityId(SPINNER)),
+        Some((Vec3::ZERO, Vec3::ZERO))
+    );
+    assert_eq!(pos(&fresh, SPINNER), pos(&live, SPINNER));
     let (lc, fc) = (
         live.character(PLAYER).unwrap(),
         fresh.character(PLAYER).unwrap(),
@@ -124,7 +141,8 @@ fn motion_state_seeds_a_fresh_world() {
     assert!(lc.pos.distance(fc.pos) < 1e-3, "{} vs {}", lc.pos, fc.pos);
 }
 
-/// Entities the fresh world lacks are skipped with a warning; the rest still apply.
+/// Entities the fresh world lacks are skipped with a warning; the rest still apply,
+/// and the character finds its ground again among this world's bodies.
 #[test]
 fn motion_state_skips_missing_entities() {
     let live = live_world();
@@ -141,6 +159,10 @@ fn motion_state_skips_missing_entities() {
         fresh.velocity(EntityId(THROWN)),
         live.velocity(EntityId(THROWN))
     );
+    steps(&mut fresh, 90);
+    let c = fresh.character(PLAYER).unwrap();
+    assert!(c.on_ground());
+    assert_eq!(c.ground_entity, Some(EntityId(1)));
 }
 
 /// Queries apply a character's groups to its inner body, as to any body.

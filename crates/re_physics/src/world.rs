@@ -1288,9 +1288,12 @@ impl Physics {
     /// Entities this world lacks, or holds as a static body, are skipped with a warning
     /// (`RE5004` or `RE5009`) in [`take_diagnostics`](Self::take_diagnostics). Contact
     /// pairs are not carried over: the next step reports `Begin` for bodies already
-    /// touching. The continuation is close to the original but not bit-identical, since
-    /// Jolt's contact cache starts empty; [`restore_state`](Self::restore_state) is the
-    /// exact replay within one world.
+    /// touching. Characters' ground and contacts are recomputed against this world, so
+    /// it may hold fewer or other bodies than the source. Commands applied to the source
+    /// but not yet stepped (kinematic targets, character moves) are not carried; take
+    /// the state between frames. The continuation is close to the original but not
+    /// bit-identical, since Jolt's contact cache starts empty;
+    /// [`restore_state`](Self::restore_state) is the exact replay within one world.
     pub fn apply_motion_state(&mut self, motion: &MotionState) {
         for m in &motion.bodies {
             let Some(entry) = self.bodies.get(&m.id) else {
@@ -1333,11 +1336,21 @@ impl Physics {
                 continue;
             };
             let (cid, inner) = (ch.id, ch.inner);
-            match self
+            let filter_layers = ch.sees.clone();
+            self.gate.current.store(ch.groups.0, Ordering::Relaxed);
+            // The saved ground and contacts name bodies by Jolt id, which differ when the
+            // worlds hold different bodies: recompute them against this world.
+            let restored = self
                 .world
                 .character_mut(cid)
                 .and_then(|mut c| c.restore_state(&m.jolt))
-            {
+                .and_then(|()| {
+                    self.world.refresh_character_contacts(
+                        cid,
+                        &JQueryFilter::new().object_layers(&filter_layers),
+                    )
+                });
+            match restored {
                 Ok(()) => {
                     self.state.character_velocity.insert(m.id, m.velocity);
                     if let Some(inner) = inner
