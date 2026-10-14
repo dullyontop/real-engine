@@ -1,0 +1,339 @@
+//! The GPU context: instance, adapter, device and queue, created headless or for a
+//! window surface (ADR-0010).
+//!
+//! Both constructors install an uncaptured-error handler. wgpu's default handler
+//! panics; ours logs each error as an `RE6001` diagnostic through `tracing` and
+//! keeps the most recent ones in a [`GpuErrors`] log, so a validation error never
+//! takes the process down.
+
+use std::collections::VecDeque;
+use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+use re_core::Diagnostic;
+
+use crate::codes;
+
+/// How many recent GPU errors [`GpuErrors`] keeps.
+const ERROR_LOG_CAPACITY: usize = 64;
+
+/// The environment variable that selects the backends for [`backends_from_env`].
+pub const BACKENDS_ENV: &str = "RE_BACKENDS";
+
+/// Parses a backend name: `vulkan` (or `vk`), `gl` (or `gles`, `opengl`), `metal`,
+/// `dx12`, `primary` or `all`. Case does not matter.
+pub fn parse_backends(name: &str) -> Option<wgpu::Backends> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "vulkan" | "vk" => Some(wgpu::Backends::VULKAN),
+        "gl" | "gles" | "opengl" => Some(wgpu::Backends::GL),
+        "metal" => Some(wgpu::Backends::METAL),
+        "dx12" => Some(wgpu::Backends::DX12),
+        "primary" => Some(wgpu::Backends::PRIMARY),
+        "all" => Some(wgpu::Backends::all()),
+        _ => None,
+    }
+}
+
+/// The backends named by `RE_BACKENDS`, or [`wgpu::Backends::PRIMARY`] (Vulkan on
+/// Linux, Metal on macOS, DX12 or Vulkan on Windows) when it is unset or empty.
+pub fn backends_from_env() -> Result<wgpu::Backends, Diagnostic> {
+    match std::env::var(BACKENDS_ENV) {
+        Ok(value) if !value.trim().is_empty() => parse_backends(&value).ok_or_else(|| {
+            Diagnostic::error(
+                codes::UNKNOWN_BACKEND,
+                format!("unknown backend `{value}` in {BACKENDS_ENV}"),
+            )
+            .with_hint("use vulkan, gl, metal, dx12, primary or all")
+        }),
+        _ => Ok(wgpu::Backends::PRIMARY),
+    }
+}
+
+/// The limits to request: the WebGPU defaults when the adapter meets them,
+/// otherwise the downlevel defaults (some GL drivers), always with the adapter's
+/// largest texture size.
+pub fn pick_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    let supported = adapter.limits();
+    let wanted = wgpu::Limits::default();
+    let base = if wanted.check_limits(&supported) {
+        wanted
+    } else {
+        wgpu::Limits::downlevel_defaults()
+    };
+    base.using_resolution(supported)
+}
+
+/// An instance that is not connected to a display server, for offscreen work.
+pub fn headless_instance(backends: wgpu::Backends) -> wgpu::Instance {
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    desc.backends = backends;
+    desc.flags = wgpu::InstanceFlags::from_build_config().with_env();
+    wgpu::Instance::new(desc)
+}
+
+/// The GPU errors reported through the uncaptured-error handler.
+///
+/// Cloning shares the same log. Every error is also logged with `tracing::error!`
+/// when it happens.
+#[derive(Clone, Default)]
+pub struct GpuErrors {
+    inner: Arc<ErrorLog>,
+}
+
+#[derive(Default)]
+struct ErrorLog {
+    total: AtomicU64,
+    recent: Mutex<VecDeque<Diagnostic>>,
+}
+
+impl GpuErrors {
+    /// How many errors were reported since the device was created.
+    pub fn count(&self) -> u64 {
+        self.inner.total.load(Ordering::Relaxed)
+    }
+
+    /// Removes and returns the recent errors (at most the last 64), oldest first.
+    pub fn take(&self) -> Vec<Diagnostic> {
+        let mut recent = self
+            .inner
+            .recent
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        recent.drain(..).collect()
+    }
+
+    /// Converts a wgpu error to an `RE6001` diagnostic, logs it and records it.
+    pub fn report(&self, error: &wgpu::Error) {
+        let kind = match error {
+            wgpu::Error::OutOfMemory { .. } => "out of memory",
+            wgpu::Error::Validation { .. } => "validation error",
+            wgpu::Error::Internal { .. } => "internal error",
+        };
+        let diagnostic = Diagnostic::error(codes::GPU_ERROR, format!("GPU {kind}: {error}"))
+            .with_hint("this is a bug in the caller or the renderer; the frame may be incomplete");
+        tracing::error!(code = %codes::GPU_ERROR, "{}", diagnostic.message);
+        self.inner.total.fetch_add(1, Ordering::Relaxed);
+        let mut recent = self
+            .inner
+            .recent
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if recent.len() == ERROR_LOG_CAPACITY {
+            recent.pop_front();
+        }
+        recent.push_back(diagnostic);
+    }
+}
+
+impl fmt::Debug for GpuErrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GpuErrors")
+            .field("count", &self.count())
+            .finish()
+    }
+}
+
+/// Installs the uncaptured-error handler on `device` and returns its log.
+pub fn install_error_logger(device: &wgpu::Device) -> GpuErrors {
+    let errors = GpuErrors::default();
+    let sink = errors.clone();
+    device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| sink.report(&error)));
+    errors
+}
+
+/// An instance, adapter, device and queue.
+///
+/// The wgpu handles are reference-counted, so cloning them out of a `Gpu` is cheap.
+#[derive(Debug)]
+pub struct Gpu {
+    /// The instance.
+    pub instance: wgpu::Instance,
+    /// The adapter the device was created on.
+    pub adapter: wgpu::Adapter,
+    /// The device.
+    pub device: wgpu::Device,
+    /// The device's queue.
+    pub queue: wgpu::Queue,
+    errors: GpuErrors,
+}
+
+impl Gpu {
+    /// A device with no surface, for offscreen rendering, tests and CI.
+    ///
+    /// Fails with `RE6002` when no adapter matches `backends` and `RE6003` when the
+    /// adapter refuses the device.
+    pub fn headless(backends: wgpu::Backends) -> Result<Gpu, Diagnostic> {
+        let instance = headless_instance(backends);
+        Self::from_instance(instance, None, backends)
+    }
+
+    /// A device that can present to `window`, and the window's surface.
+    ///
+    /// `window` is usually an `Arc<winit::window::Window>`. The instance keeps a
+    /// clone of it as its display handle (needed by GL on Wayland), and the surface
+    /// keeps another, so both outlive any other reference to the window.
+    ///
+    /// Configure the surface with [`Gpu::surface_config`].
+    pub fn for_surface<W>(
+        window: Arc<W>,
+        backends: wgpu::Backends,
+    ) -> Result<(Gpu, wgpu::Surface<'static>), Diagnostic>
+    where
+        W: wgpu::rwh::HasWindowHandle
+            + wgpu::rwh::HasDisplayHandle
+            + fmt::Debug
+            + Send
+            + Sync
+            + 'static,
+    {
+        let mut desc = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone()));
+        desc.backends = backends;
+        desc.flags = wgpu::InstanceFlags::from_build_config().with_env();
+        let instance = wgpu::Instance::new(desc);
+        let surface = instance.create_surface(window).map_err(|e| {
+            Diagnostic::error(
+                codes::SURFACE_FAILED,
+                format!("could not create a window surface: {e}"),
+            )
+        })?;
+        let gpu = Self::from_instance(instance, Some(&surface), backends)?;
+        Ok((gpu, surface))
+    }
+
+    fn from_instance(
+        instance: wgpu::Instance,
+        surface: Option<&wgpu::Surface<'_>>,
+        backends: wgpu::Backends,
+    ) -> Result<Gpu, Diagnostic> {
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: surface,
+            apply_limit_buckets: false,
+        }))
+        .map_err(|e| {
+            Diagnostic::error(
+                codes::NO_ADAPTER,
+                format!("no GPU adapter for backends {backends:?}: {e}"),
+            )
+            .with_hint(
+                "install a Vulkan or GL driver (Mesa's lavapipe or llvmpipe work without a GPU), \
+                 or choose other backends with RE_BACKENDS",
+            )
+        })?;
+        let info = adapter.get_info();
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("re_render"),
+            required_features: wgpu::Features::empty(),
+            required_limits: pick_limits(&adapter),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
+        .map_err(|e| {
+            Diagnostic::error(
+                codes::DEVICE_FAILED,
+                format!(
+                    "the adapter `{}` refused to create a device: {e}",
+                    info.name
+                ),
+            )
+        })?;
+        let errors = install_error_logger(&device);
+        tracing::info!(
+            adapter = %info.name,
+            backend = ?info.backend,
+            driver = %info.driver_info,
+            "GPU device created"
+        );
+        Ok(Gpu {
+            instance,
+            adapter,
+            device,
+            queue,
+            errors,
+        })
+    }
+
+    /// The errors reported by the uncaptured-error handler.
+    pub fn errors(&self) -> &GpuErrors {
+        &self.errors
+    }
+
+    /// The adapter's description.
+    pub fn info(&self) -> wgpu::AdapterInfo {
+        self.adapter.get_info()
+    }
+
+    /// The backend the device runs on.
+    pub fn backend(&self) -> wgpu::Backend {
+        self.adapter.get_info().backend
+    }
+
+    /// True when textures may be viewed with another format (absent on GL).
+    pub fn supports_view_formats(&self) -> bool {
+        self.downlevel_flags()
+            .contains(wgpu::DownlevelFlags::VIEW_FORMATS)
+    }
+
+    /// True when depth textures can be copied to buffers (absent on GL).
+    pub fn supports_depth_copies(&self) -> bool {
+        self.downlevel_flags()
+            .contains(wgpu::DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES)
+    }
+
+    fn downlevel_flags(&self) -> wgpu::DownlevelFlags {
+        self.adapter.get_downlevel_capabilities().flags
+    }
+
+    /// One line describing the adapter: name, backend, type and driver.
+    pub fn adapter_line(&self) -> String {
+        let info = self.info();
+        format!(
+            "{} ({:?}, {:?}, {})",
+            info.name, info.backend, info.device_type, info.driver_info
+        )
+    }
+
+    /// A configuration for `surface` at `width` x `height`: the first sRGB format
+    /// it offers (the renderer writes linear colour), Fifo presentation, and
+    /// `RENDER_ATTACHMENT` usage. Fails with `RE6004` when the surface offers no
+    /// format for this adapter.
+    pub fn surface_config(
+        &self,
+        surface: &wgpu::Surface<'_>,
+        width: u32,
+        height: u32,
+    ) -> Result<wgpu::SurfaceConfiguration, Diagnostic> {
+        let caps = surface.get_capabilities(&self.adapter);
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(wgpu::TextureFormat::is_srgb)
+            .or_else(|| caps.formats.first().copied())
+            .ok_or_else(|| {
+                Diagnostic::error(
+                    codes::SURFACE_FAILED,
+                    "the window surface supports no format on this adapter",
+                )
+            })?;
+        let alpha_mode = caps
+            .alpha_modes
+            .first()
+            .copied()
+            .unwrap_or(wgpu::CompositeAlphaMode::Auto);
+        Ok(wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            width: width.max(1),
+            height: height.max(1),
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode,
+            view_formats: Vec::new(),
+        })
+    }
+}

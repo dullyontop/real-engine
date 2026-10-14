@@ -14,34 +14,33 @@
 //! Paths in messages always use `/`, whatever the OS.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
 /// The code ranges of ARCHITECTURE §7. A crate that is not listed owns no codes.
-#[allow(clippy::single_range_in_vec_init)] // most crates own one range; the type is shared
-pub fn ranges(krate: &str) -> &'static [RangeInclusive<u16>] {
+/// Each entry is an inclusive `(first, last)` pair of code numbers.
+pub fn ranges(krate: &str) -> &'static [(u16, u16)] {
     match krate {
-        "re_core" => &[0..=499],
-        "re_app" | "re_cli" => &[500..=999],
-        "re_reflect" => &[1000..=1199],
-        "re_scene" => &[1200..=1999],
-        "re_command" => &[2000..=2999],
+        "re_core" => &[(0, 499)],
+        "re_app" | "re_cli" => &[(500, 999)],
+        "re_reflect" => &[(1000, 1199)],
+        "re_scene" => &[(1200, 1999)],
+        "re_command" => &[(2000, 2999)],
         // re_script also owns the compatibility block in M1.
-        "re_script" => &[3000..=3999, 9000..=9999],
-        "re_script_check" => &[3000..=3999],
-        "re_proc" | "re_geom" => &[4000..=4999],
-        "re_physics" => &[5000..=5999],
-        "re_render" => &[6000..=6999],
-        "re_assets" => &[7000..=7199],
-        "re_input" => &[7200..=7299],
-        "re_audio" => &[7400..=7499],
-        "re_anim" => &[7600..=7699],
-        "re_agent" => &[8000..=8099],
-        "re_mcp" => &[8500..=8599],
-        "re_editor" => &[8800..=8899],
-        "re_compat" => &[9000..=9999],
+        "re_script" => &[(3000, 3999), (9000, 9999)],
+        "re_script_check" => &[(3000, 3999)],
+        "re_proc" | "re_geom" => &[(4000, 4999)],
+        "re_physics" => &[(5000, 5999)],
+        "re_render" => &[(6000, 6999)],
+        "re_assets" => &[(7000, 7199)],
+        "re_input" => &[(7200, 7299)],
+        "re_audio" => &[(7400, 7499)],
+        "re_anim" => &[(7600, 7699)],
+        "re_agent" => &[(8000, 8099)],
+        "re_mcp" => &[(8500, 8599)],
+        "re_editor" => &[(8800, 8899)],
+        "re_compat" => &[(9000, 9999)],
         _ => &[],
     }
 }
@@ -299,10 +298,10 @@ pub fn scan(root: &Path) -> Result<std::result::Result<Report, Vec<String>>> {
         let first = &uses[0];
         let krate = first.krate.as_str();
         let owned = ranges(krate);
-        if !owned.iter().any(|r| r.contains(&number)) {
+        if !owned.iter().any(|&(lo, hi)| (lo..=hi).contains(&number)) {
             let owned: Vec<String> = owned
                 .iter()
-                .map(|r| format!("RE{:04}-RE{:04}", r.start(), r.end()))
+                .map(|(lo, hi)| format!("RE{lo:04}-RE{hi:04}"))
                 .collect();
             problems.push(format!(
                 "{code} ({}:{}) is outside {krate}'s range ({})",
