@@ -20,6 +20,20 @@ re_types = { path = "crates/re_types" }
 re_reflect = { path = "crates/re_reflect" }
 re_scene = { path = "crates/re_scene" }
 re_command = { path = "crates/re_command" }
+re_render = { path = "crates/re_render" }
+re_physics = { path = "crates/re_physics" }
+re_assets = { path = "crates/re_assets" }
+re_input = { path = "crates/re_input" }
+re_audio = { path = "crates/re_audio" }
+re_anim = { path = "crates/re_anim" }
+re_geom = { path = "crates/re_geom" }
+re_proc = { path = "crates/re_proc" }
+re_script = { path = "crates/re_script" }
+re_script_check = { path = "crates/re_script_check" }
+re_app = { path = "crates/re_app" }
+re_agent = { path = "crates/re_agent" }
+re_mcp = { path = "crates/re_mcp" }
+re_editor = { path = "crates/re_editor" }
 
 # Rendering, windowing, UI.
 wgpu = "=30.0.1"
