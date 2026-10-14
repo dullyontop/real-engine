@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# Rust / Cargo
+# ---------------------------------------------------------------------------
+# Build output (workspace root and any nested crate or tool directory).
+target/
+# Cargo.lock is intentionally NOT ignored: the engine ships binaries (the demo,
+# tools), so the lockfile is committed for reproducible builds.
+# Backup files written by rustfmt.
+**/*.rs.bk
+# Code coverage and profiling output.
+*.profraw
+*.profdata
+lcov.info
+coverage/
+perf.data
+perf.data.old
+flamegraph.svg
+# cargo-mutants output.
+mutants.out/
+mutants.out.old/
+
+# ---------------------------------------------------------------------------
+# Generated test output (headless render captures, diffs, snapshot drafts)
+# ---------------------------------------------------------------------------
+test-output/
+test-results/
+*.actual.png
+*.diff.png
+*.snap.new
+*.pending-snap
+
+# ---------------------------------------------------------------------------
+# Editors and IDEs
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+.vs/
+.fleet/
+.zed/
+*.iml
+*.swp
+*.swo
+*~
+\#*\#
+.\#*
+
+# ---------------------------------------------------------------------------
+# Operating systems
+# ---------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.directory
+.Trash-*
+
+# ---------------------------------------------------------------------------
+# Local environment and secrets
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
