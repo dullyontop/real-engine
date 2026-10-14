@@ -1,0 +1,19 @@
+[package]
+name = "re_script"
+description = "Real Engine scripting: sandboxed Luau contexts (mlua) with the engine-native API, a CPU budget, a scheduler and hot reload."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# ADR-0011: Luau through mlua with `luau` only (not `send`, not `vendored`).
+# re_script reaches subsystems only through re_types::host::HostServices and never
+# links full_moon (`cargo xtask check-graph`).
+[dependencies]
+re_core.workspace = true
+mlua.workspace = true
+
+[features]
+# Luau native code generation (x64 with AVX, or arm64). Off by default in M1 (ADR-0011).
+jit = ["mlua/luau-jit"]
