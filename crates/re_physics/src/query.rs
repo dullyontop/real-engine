@@ -61,13 +61,17 @@ impl Physics {
         if filter.exclude == Some(id) {
             return None;
         }
-        match self.bodies.get(&id) {
-            Some(entry) => (entry.groups.intersects(filter.groups)
-                && (filter.sensors || !entry.sensor))
-                .then_some(id),
-            // A character's inner body: groups were checked when it was registered.
-            None => Some(id),
-        }
+        let seen = match self.bodies.get(&id) {
+            Some(entry) => {
+                entry.groups.intersects(filter.groups) && (filter.sensors || !entry.sensor)
+            }
+            // A character's inner body stands for the character and takes its groups.
+            None => self
+                .characters
+                .get(&id)
+                .is_some_and(|ch| ch.groups.intersects(filter.groups)),
+        };
+        seen.then_some(id)
     }
 
     /// The closest body hit by a ray from `origin` along `dir` (any length, normalised
