@@ -18,6 +18,7 @@ pub mod lock;
 pub mod remote;
 
 pub use lock::{Holder, LockState, ProjectLock, acquire, probe};
+pub use remote::{Writer, open_writer};
 
 use re_core::DiagInfo;
 

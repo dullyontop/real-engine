@@ -1,10 +1,11 @@
 //! The editor socket (ADR-0020, ADR-0026): how other writers send commands to
 //! a running editor, so that a project has one writer.
 //!
-//! The editor holds the project lock ([`crate::lock`]) and serves
-//! `.real/editor.sock` with [`serve`]. `real do` and `real mcp` find it with
-//! [`crate::lock::probe`] and [`connect`] to it; the [`EngineHandle`] they get
-//! back works like a local one, and every call is applied by the editor.
+//! The editor holds the project lock ([`crate::lock`]), [`bind`]s
+//! `.real/editor.sock` and runs [`serve`]. Other writers call
+//! [`open_writer`]: it takes the lock when the project is free, and
+//! otherwise [`connect`]s to the editor. The [`EngineHandle`] a connection
+//! gives works like a local one, and every call is applied by the editor.
 //!
 //! # Protocol
 //!
@@ -31,8 +32,11 @@
 //!   `outcome` with `RE8006` (and `id: null` if no id could be read).
 //!
 //! The policy is applied where the world is: the editor's engine thread
-//! checks every call against its own policy. A client that needs a stricter
-//! policy (such as `real mcp` with the agent policy) checks it before sending.
+//! checks every call against the editor's own policy. **A client that needs
+//! a stricter policy (`real mcp` with the agent policy) must check it before
+//! sending**, and should give its handle an [`Origin::Agent`] origin with
+//! [`EngineHandle::with_origin`]; a connected handle starts as
+//! [`Origin::User`].
 //!
 //! Unix only in M1. On Windows, [`bind`] and [`connect`] return `RE8004`
 //! (named pipes are later work).
@@ -44,7 +48,7 @@ use re_core::{Diagnostic, Location};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use crate::codes;
+use crate::{codes, lock};
 
 /// The origin given to socket calls that don't name one.
 pub const DEFAULT_ORIGIN: &str = "editor-socket";
@@ -160,10 +164,13 @@ pub fn answer(line: &str, handle: &EngineHandle) -> Response {
 
 #[cfg(unix)]
 mod imp {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, ErrorKind, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
 
     use re_command::{CommandOutcome, EngineHandle, EngineReceiver, EngineRequest, channel};
     use re_core::{Diagnostic, Location};
@@ -171,13 +178,50 @@ mod imp {
 
     use super::{Request, Response, answer, protocol_error, socket_error};
     use crate::codes;
-    use crate::lock;
+    use crate::lock::{self, Holder, ProjectLock};
+
+    /// Unix socket paths are limited to about 104 bytes (macOS) or 108
+    /// (Linux), including the terminating NUL.
+    const MAX_SOCKET_PATH: usize = 100;
+
+    fn check_length(path: &Path) -> Result<(), Diagnostic> {
+        if path.as_os_str().len() > MAX_SOCKET_PATH {
+            return Err(Diagnostic::error(
+                codes::SOCKET_IO,
+                format!(
+                    "the editor socket path is too long for a Unix socket ({} bytes, at most {MAX_SOCKET_PATH})",
+                    path.as_os_str().len()
+                ),
+            )
+            .at(Location::file(path.display().to_string()))
+            .with_hint("move the project to a shorter path"));
+        }
+        Ok(())
+    }
 
     /// A bound editor socket, ready for [`serve`].
     #[derive(Debug)]
     pub struct EditorListener {
         listener: UnixListener,
         path: PathBuf,
+        stop: Arc<AtomicBool>,
+    }
+
+    /// Stops a running [`serve`] loop (open connections finish their current
+    /// request and close when their client does).
+    #[derive(Clone, Debug)]
+    pub struct StopServe {
+        path: PathBuf,
+        stop: Arc<AtomicBool>,
+    }
+
+    impl StopServe {
+        /// Makes [`serve`] return `Ok(())` at its next wake-up (this call
+        /// wakes it).
+        pub fn stop(&self) {
+            self.stop.store(true, Ordering::SeqCst);
+            let _ = UnixStream::connect(&self.path);
+        }
     }
 
     impl EditorListener {
@@ -185,69 +229,95 @@ mod imp {
         pub fn path(&self) -> &Path {
             &self.path
         }
-    }
 
-    impl From<UnixListener> for EditorListener {
-        fn from(listener: UnixListener) -> Self {
-            let path = listener
-                .local_addr()
-                .ok()
-                .and_then(|a| a.as_pathname().map(Path::to_path_buf))
-                .unwrap_or_default();
-            EditorListener { listener, path }
-        }
-    }
-
-    /// Binds `<project>/.real/editor.sock`, replacing a leftover socket file,
-    /// and makes it accessible to its owner only. Call it after taking the
-    /// lock as [`lock::Holder::Editor`], so no other editor uses the file.
-    pub fn bind(project: &Path) -> Result<EditorListener, Diagnostic> {
-        let path = lock::socket_path(project);
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| {
-                socket_error(dir, format!("could not create {}: {e}", dir.display()))
-            })?;
-        }
-        match std::fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(socket_error(
-                    &path,
-                    format!("could not remove the old editor socket: {e}"),
-                ));
+        /// A handle that stops [`serve`].
+        pub fn stopper(&self) -> StopServe {
+            StopServe {
+                path: self.path.clone(),
+                stop: self.stop.clone(),
             }
         }
-        let listener = UnixListener::bind(&path)
-            .map_err(|e| socket_error(&path, format!("could not bind the editor socket: {e}")))?;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(|e| {
-            socket_error(
-                &path,
-                format!("could not restrict the editor socket's permissions: {e}"),
+    }
+
+    /// Binds `<project>/.real/editor.sock` for the editor holding `lock`,
+    /// replacing a leftover socket file. The socket is accessible to its
+    /// owner only: it is bound under a temporary name, restricted to `0600`,
+    /// then renamed into place. A lock not held by [`Holder::Editor`] is
+    /// refused with `RE8005`.
+    pub fn bind(lock: &ProjectLock) -> Result<EditorListener, Diagnostic> {
+        let path = lock::socket_path(lock.project());
+        if *lock.holder() != Holder::Editor {
+            return Err(Diagnostic::error(
+                codes::SOCKET_IO,
+                "only the editor's project lock may bind the editor socket",
             )
-        })?;
-        Ok(EditorListener { listener, path })
+            .at(Location::file(path.display().to_string())));
+        }
+        let tmp = path.with_file_name(format!("editor.sock.{}.tmp", std::process::id()));
+        check_length(&tmp)?;
+        let _ = std::fs::remove_file(&tmp);
+        let listener = UnixListener::bind(&tmp)
+            .map_err(|e| socket_error(&path, format!("could not bind the editor socket: {e}")))?;
+        let placed = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+            .and_then(|()| std::fs::rename(&tmp, &path));
+        if let Err(e) = placed {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(socket_error(
+                &path,
+                format!("could not set up the editor socket: {e}"),
+            ));
+        }
+        Ok(EditorListener {
+            listener,
+            path,
+            stop: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     /// Serves the editor socket: accepts connections and answers each one's
     /// requests on its own thread through `handle` (so the engine thread
-    /// applies them, one at a time). Blocks until accepting fails; run it on
-    /// a thread of its own.
+    /// applies them, one at a time). Blocks until [`StopServe::stop`] (then
+    /// `Ok`) or until accepting keeps failing (then `RE8005`); run it on a
+    /// thread of its own. Transient accept errors (an aborted connection, no
+    /// free file descriptors) are retried after a short pause.
     pub fn serve(listener: EditorListener, handle: EngineHandle) -> Result<(), Diagnostic> {
+        let mut failures = 0u32;
         loop {
-            let (stream, _) = listener.listener.accept().map_err(|e| {
-                socket_error(&listener.path, format!("the editor socket failed: {e}"))
-            })?;
+            let accepted = listener.listener.accept();
+            if listener.stop.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+            let stream = match accepted {
+                Ok((stream, _)) => {
+                    failures = 0;
+                    stream
+                }
+                Err(e) => {
+                    failures += 1;
+                    if failures > 200 {
+                        return Err(socket_error(
+                            &listener.path,
+                            format!("the editor socket keeps failing: {e}"),
+                        ));
+                    }
+                    let pause = if e.kind() == ErrorKind::Interrupted {
+                        0
+                    } else {
+                        50
+                    };
+                    std::thread::sleep(Duration::from_millis(pause));
+                    continue;
+                }
+            };
             let handle = handle.clone();
-            std::thread::Builder::new()
+            let spawned = std::thread::Builder::new()
                 .name("re-editor-socket".to_string())
-                .spawn(move || serve_connection(stream, &handle))
-                .map_err(|e| {
-                    socket_error(
-                        &listener.path,
-                        format!("could not start a connection thread: {e}"),
-                    )
-                })?;
+                .spawn(move || serve_connection(stream, &handle));
+            if spawned.is_err() {
+                // Out of threads: the connection is dropped; its client gets
+                // RE8005 and can retry.
+                std::thread::sleep(Duration::from_millis(50));
+            }
         }
     }
 
@@ -277,15 +347,33 @@ mod imp {
     }
 
     /// Connects to an editor socket. The returned handle forwards every call
-    /// to the editor (one at a time, in order) and carries the origin of each
-    /// request, so `with_origin` works as it does locally.
+    /// to the editor (one at a time, in order) with the origin of each
+    /// request; it starts as `Origin::User`, so an agent sets its own with
+    /// `with_origin`. The editor applies its own policy, so a client with a
+    /// stricter one checks calls before sending them. While the editor is
+    /// still starting (the socket file is missing or refuses connections),
+    /// connecting is retried for up to 2 seconds. A call waits for the
+    /// editor's answer without a time limit.
     pub fn connect(socket: &Path) -> Result<EngineHandle, Diagnostic> {
-        let stream = UnixStream::connect(socket).map_err(|e| {
-            socket_error(
-                socket,
-                format!("could not connect to the editor socket: {e}"),
-            )
-        })?;
+        check_length(socket)?;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let stream = loop {
+            match UnixStream::connect(socket) {
+                Ok(s) => break s,
+                Err(e)
+                    if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::ConnectionRefused)
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(e) => {
+                    return Err(socket_error(
+                        socket,
+                        format!("could not connect to the editor socket: {e}"),
+                    ));
+                }
+            }
+        };
         let read = stream.try_clone().map_err(|e| {
             socket_error(
                 socket,
@@ -306,7 +394,8 @@ mod imp {
         Ok(handle)
     }
 
-    /// Sends one request and reads its response.
+    /// Why an exchange failed: the connection (it is unusable) or the answer
+    /// (also unusable: the stream may be out of step).
     fn exchange(
         writer: &mut UnixStream,
         reader: &mut BufReader<UnixStream>,
@@ -383,7 +472,6 @@ mod imp {
                             let _ = reply.send(CommandOutcome::error(protocol_error(
                                 "editor-socket response has no `outcome`",
                             )));
-                            return;
                         }
                         Err(d) => {
                             let _ = reply.send(CommandOutcome::error(d));
@@ -403,9 +491,11 @@ mod imp {
                         }) => {
                             let _ = reply.send(specs);
                         }
-                        // The specs reply channel carries no error: dropping
-                        // `reply` makes `list_specs` report RE2006.
-                        _ => return,
+                        // The editor answered with an error (its engine is
+                        // gone, say): dropping `reply` makes `list_specs`
+                        // report RE2006, and the connection stays usable.
+                        Ok(_) => {}
+                        Err(_) => return,
                     }
                 }
             }
@@ -421,7 +511,7 @@ mod imp {
     use re_core::{Diagnostic, Location};
 
     use crate::codes;
-    use crate::lock;
+    use crate::lock::{self, ProjectLock};
 
     /// A bound editor socket. On this platform none can be bound.
     #[derive(Debug)]
@@ -429,14 +519,30 @@ mod imp {
         _private: (),
     }
 
+    /// Stops a running `serve` loop. On this platform there is none.
+    #[derive(Clone, Debug)]
+    pub struct StopServe {
+        _private: (),
+    }
+
+    impl StopServe {
+        /// Does nothing on this platform.
+        pub fn stop(&self) {}
+    }
+
     impl EditorListener {
         /// The socket file.
         pub fn path(&self) -> &Path {
             Path::new("")
         }
+
+        /// A handle that stops `serve`.
+        pub fn stopper(&self) -> StopServe {
+            StopServe { _private: () }
+        }
     }
 
-    fn unsupported(path: &Path) -> Diagnostic {
+    pub(super) fn unsupported(path: &Path) -> Diagnostic {
         Diagnostic::error(
             codes::SOCKET_UNSUPPORTED,
             "the editor socket is not available on Windows in M1",
@@ -449,8 +555,8 @@ mod imp {
     }
 
     /// Always `RE8004` on this platform.
-    pub fn bind(project: &Path) -> Result<EditorListener, Diagnostic> {
-        Err(unsupported(&lock::socket_path(project)))
+    pub fn bind(lock: &ProjectLock) -> Result<EditorListener, Diagnostic> {
+        Err(unsupported(&lock::socket_path(lock.project())))
     }
 
     /// Always `RE8004` on this platform.
@@ -464,4 +570,34 @@ mod imp {
     }
 }
 
-pub use imp::{EditorListener, bind, connect, serve};
+pub use imp::{EditorListener, StopServe, bind, connect, serve};
+
+/// How a writer reaches the project: it holds the lock itself, or the
+/// editor does and commands go through its socket.
+#[derive(Debug)]
+pub enum Writer {
+    /// The project was free: this process holds the lock and opens the
+    /// project itself.
+    Local(lock::ProjectLock),
+    /// The editor holds the project: send commands through this handle.
+    Remote(EngineHandle),
+}
+
+/// The probe-then-lock sequence every headless writer (`real do`,
+/// `real mcp`) runs: when the editor holds the project, connect to its
+/// socket; otherwise take the lock as `holder`. If the editor takes the lock
+/// between the probe and the attempt, the editor is used. Another headless
+/// writer gives `RE8003`.
+pub fn open_writer(project: &Path, holder: lock::Holder) -> Result<Writer, Diagnostic> {
+    match lock::probe(project) {
+        lock::LockState::Editor(socket) => return connect(&socket).map(Writer::Remote),
+        lock::LockState::Free | lock::LockState::Headless(_) => {}
+    }
+    match lock::acquire(project, holder) {
+        Ok(held) => Ok(Writer::Local(held)),
+        Err(refused) => match lock::probe(project) {
+            lock::LockState::Editor(socket) => connect(&socket).map(Writer::Remote),
+            _ => Err(refused),
+        },
+    }
+}

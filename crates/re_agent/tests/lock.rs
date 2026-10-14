@@ -38,7 +38,7 @@ fn drop_releases_the_lock() {
     let dir = tempfile::tempdir().unwrap();
     let held = lock::acquire(dir.path(), Holder::headless("real do")).unwrap();
     drop(held);
-    assert!(!lock::lock_path(dir.path()).exists());
+    assert!(!lock::owner_path(dir.path()).exists());
     assert_eq!(lock::probe(dir.path()), LockState::Free);
     // And it can be taken again.
     let _again = lock::acquire(dir.path(), Holder::Editor).unwrap();
@@ -59,41 +59,36 @@ fn probe_reports_the_editor_and_its_socket() {
 }
 
 #[test]
-fn lock_file_records_pid_and_kind() {
+fn owner_file_records_pid_and_kind() {
     let dir = tempfile::tempdir().unwrap();
-    let _held = lock::acquire(dir.path(), Holder::headless("real mcp")).unwrap();
-    let text = fs::read_to_string(lock::lock_path(dir.path())).unwrap();
+    let held = lock::acquire(dir.path(), Holder::headless("real mcp")).unwrap();
+    let text = fs::read_to_string(lock::owner_path(dir.path())).unwrap();
     let json: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(json["pid"], std::process::id());
     assert_eq!(json["kind"], "headless");
     assert_eq!(json["command"], "real mcp");
+    drop(held);
+    assert!(!lock::owner_path(dir.path()).exists());
+    // The lock file stays: holding the project is holding an OS lock on it.
+    assert!(lock::lock_path(dir.path()).exists());
 }
 
-/// The pid of a process that has exited.
-#[cfg(unix)]
-fn dead_pid() -> u32 {
-    let mut child = std::process::Command::new("true").spawn().unwrap();
-    let pid = child.id();
-    child.wait().unwrap();
-    pid
-}
-
-#[cfg(unix)]
 #[test]
-fn stale_lock_is_replaced() {
+fn leftover_owner_file_of_a_dead_holder_is_ignored() {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(lock::state_dir(dir.path())).unwrap();
+    // A holder that crashed: its owner file remains, but nobody holds the OS lock.
     let stale = LockInfo {
-        pid: dead_pid(),
+        pid: 999_999,
         holder: Holder::Editor,
     };
+    fs::write(lock::lock_path(dir.path()), "").unwrap();
     fs::write(
-        lock::lock_path(dir.path()),
+        lock::owner_path(dir.path()),
         serde_json::to_string(&stale).unwrap(),
     )
     .unwrap();
     assert_eq!(lock::probe(dir.path()), LockState::Free);
-
     let held = lock::acquire(dir.path(), Holder::headless("real do")).unwrap();
     assert_eq!(
         lock::probe(dir.path()),
@@ -101,34 +96,41 @@ fn stale_lock_is_replaced() {
     );
     drop(held);
     assert_eq!(lock::probe(dir.path()), LockState::Free);
-}
 
-#[test]
-fn unreadable_lock_is_stale() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::create_dir_all(lock::state_dir(dir.path())).unwrap();
-    fs::write(lock::lock_path(dir.path()), "not json").unwrap();
+    fs::write(lock::owner_path(dir.path()), "not json").unwrap();
     assert_eq!(lock::probe(dir.path()), LockState::Free);
-    let _held = lock::acquire(dir.path(), Holder::headless("real do")).unwrap();
+    let _held = lock::acquire(dir.path(), Holder::Editor).unwrap();
 }
 
 #[test]
-fn drop_keeps_a_lock_that_is_no_longer_ours() {
-    let dir = tempfile::tempdir().unwrap();
-    let held = lock::acquire(dir.path(), Holder::Editor).unwrap();
-    // Another process replaced the lock (for example after judging ours
-    // stale): dropping ours must not delete theirs.
-    let theirs = LockInfo {
-        pid: std::process::id().wrapping_add(1),
-        holder: Holder::headless("real mcp"),
-    };
-    let text = serde_json::to_string(&theirs).unwrap();
-    fs::write(lock::lock_path(dir.path()), &text).unwrap();
-    drop(held);
-    assert_eq!(
-        fs::read_to_string(lock::lock_path(dir.path())).unwrap(),
-        text
-    );
+fn racing_writers_get_exactly_one_lock() {
+    for _ in 0..20 {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().to_path_buf();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
+        let threads: Vec<_> = (0..6)
+            .map(|i| {
+                let project = project.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let got = lock::acquire(&project, Holder::headless(format!("w{i}")));
+                    // Hold it until everyone has tried.
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    got.map(drop).map_err(|e| e.code.to_string())
+                })
+            })
+            .collect();
+        let results: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        let winners = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(winners, 1, "{results:?}");
+        assert!(
+            results
+                .iter()
+                .filter_map(|r| r.as_ref().err())
+                .all(|c| c == "RE8003")
+        );
+    }
 }
 
 #[test]

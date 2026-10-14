@@ -27,7 +27,7 @@ struct Editor {
 impl Editor {
     fn start(project: &Path) -> Editor {
         let held = lock::acquire(project, Holder::Editor).unwrap();
-        let listener = remote::bind(project).unwrap();
+        let listener = remote::bind(&held).unwrap();
         assert_eq!(listener.path(), lock::socket_path(project));
         let (handle, receiver) = channel();
         let stop = Arc::new(AtomicBool::new(false));
@@ -225,20 +225,105 @@ fn bind_replaces_a_leftover_socket_and_restricts_it() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     drop(UnixListener::bind(&path).unwrap());
     assert!(path.exists());
-    let listener = remote::bind(dir.path()).unwrap();
+    let held = lock::acquire(dir.path(), Holder::Editor).unwrap();
+    let listener = remote::bind(&held).unwrap();
     let mode = std::fs::metadata(listener.path())
         .unwrap()
         .permissions()
         .mode();
     assert_eq!(mode & 0o777, 0o600);
+    // No temporary socket is left behind.
+    let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(!names.iter().any(|n| n.ends_with(".tmp")), "{names:?}");
+}
+
+#[test]
+fn only_the_editor_lock_may_bind() {
+    let dir = tempfile::tempdir().unwrap();
+    let held = lock::acquire(dir.path(), Holder::headless("real do")).unwrap();
+    let err = remote::bind(&held).unwrap_err();
+    assert_eq!(err.code.to_string(), "RE8005");
 }
 
 #[test]
 fn dropping_the_editor_lock_removes_the_socket() {
     let dir = tempfile::tempdir().unwrap();
     let held = lock::acquire(dir.path(), Holder::Editor).unwrap();
-    let listener = remote::bind(dir.path()).unwrap();
+    let listener = remote::bind(&held).unwrap();
     drop(held);
     assert!(!lock::socket_path(dir.path()).exists());
     drop(listener);
+}
+
+#[test]
+fn stop_ends_serve() {
+    let dir = tempfile::tempdir().unwrap();
+    let held = lock::acquire(dir.path(), Holder::Editor).unwrap();
+    let listener = remote::bind(&held).unwrap();
+    let stopper = listener.stopper();
+    let (handle, _receiver) = channel();
+    let server = std::thread::spawn(move || remote::serve(listener, handle));
+    stopper.stop();
+    assert!(server.join().unwrap().is_ok());
+}
+
+#[test]
+fn open_writer_locks_a_free_project_and_proxies_to_the_editor() {
+    let dir = tempfile::tempdir().unwrap();
+    match remote::open_writer(dir.path(), Holder::headless("real do")).unwrap() {
+        remote::Writer::Local(held) => {
+            // A second headless writer is refused.
+            let err = remote::open_writer(dir.path(), Holder::headless("real mcp")).unwrap_err();
+            assert_eq!(err.code.to_string(), "RE8003");
+            drop(held);
+        }
+        remote::Writer::Remote(_) => panic!("the project was free"),
+    }
+    let editor = Editor::start(dir.path());
+    match remote::open_writer(dir.path(), Holder::headless("real do")).unwrap() {
+        remote::Writer::Remote(handle) => {
+            let out = handle.call("entity.spawn", json!({ "id": "via_editor" }), false);
+            assert!(out.ok, "{:?}", out.diagnostics);
+        }
+        remote::Writer::Local(_) => panic!("the editor holds the project"),
+    }
+    let state = editor.stop();
+    assert!(state.world.entity("via_editor").is_ok());
+}
+
+#[test]
+fn connect_waits_for_an_editor_that_is_starting() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().to_path_buf();
+    let held = lock::acquire(&project, Holder::Editor).unwrap();
+    // The editor binds its socket a moment after taking the lock.
+    let binder = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        let listener = remote::bind(&held).unwrap();
+        let (handle, receiver) = channel();
+        std::thread::spawn(move || remote::serve(listener, handle));
+        let mut registry = CommandRegistry::<EditState>::new();
+        register_builtin_commands(&mut registry);
+        let mut state = EditState::new();
+        let request = receiver.recv().unwrap();
+        request.handle(&mut state, &registry, &AllowAll);
+        held
+    });
+    let LockState::Editor(socket) = lock::probe(dir.path()) else {
+        panic!("the editor holds the lock");
+    };
+    let handle = remote::connect(&socket).unwrap();
+    assert!(handle.list_specs().is_ok());
+    drop(binder.join().unwrap());
+}
+
+#[test]
+fn too_long_socket_paths_are_reported() {
+    let long = std::path::PathBuf::from(format!("/tmp/{}/.real/editor.sock", "x".repeat(120)));
+    let err = remote::connect(&long).unwrap_err();
+    assert_eq!(err.code.to_string(), "RE8005");
+    assert!(err.message.contains("too long"), "{}", err.message);
 }
