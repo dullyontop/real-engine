@@ -140,9 +140,10 @@ impl Default for Playhead {
 
 impl Playhead {
     /// Moves the time forward by `dt * speed` seconds when playing. A non-looping
-    /// playhead stops at the ends of a clip of length `duration`.
+    /// playhead stops at the ends of a clip of length `duration`. A `dt` or
+    /// `speed` that is not finite leaves the time unchanged.
     pub fn advance(&mut self, dt: f32, duration: f32) {
-        if !self.playing || !dt.is_finite() {
+        if !self.playing || !dt.is_finite() || !self.speed.is_finite() {
             return;
         }
         self.time += dt * self.speed;
@@ -168,7 +169,8 @@ impl Playhead {
 }
 
 fn wrap(time: f32, duration: f32, looping: bool) -> f32 {
-    if !time.is_finite() || duration <= 0.0 {
+    // A NaN duration counts as empty: `clamp` panics on a NaN bound.
+    if !time.is_finite() || duration.is_nan() || duration <= 0.0 {
         return 0.0;
     }
     if looping {

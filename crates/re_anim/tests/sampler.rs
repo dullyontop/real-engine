@@ -205,3 +205,25 @@ fn non_finite_times_never_panic() {
         assert_eq!(sampler.sample(f32::NAN).len(), 1);
     }
 }
+
+#[test]
+fn nan_duration_and_speed_never_stick_or_panic() {
+    let mut c = clip(Interpolation::Linear);
+    c.duration = f32::NAN;
+    let sampler = Sampler::new(c).unwrap();
+    assert_eq!(sampler.wrap_time(0.5, false), 0.0);
+    assert_eq!(sampler.wrap_time(0.5, true), 0.0);
+
+    let mut head = Playhead {
+        looping: false,
+        ..Playhead::default()
+    };
+    assert_eq!(head.clip_time(f32::NAN), 0.0);
+    head.advance(0.5, 2.0);
+    head.speed = f32::NAN;
+    head.advance(0.5, 2.0);
+    assert_eq!(head.time, 0.5, "a NaN speed leaves the time alone");
+    head.speed = 1.0;
+    head.advance(2.0, 2.0);
+    assert!(head.is_finished(2.0));
+}
