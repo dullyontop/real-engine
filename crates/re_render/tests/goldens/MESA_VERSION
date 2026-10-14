@@ -1,0 +1,7 @@
+# The Mesa drivers the goldens in vulkan/ and gl/ were recorded with (docs/M1_PLAN.md).
+# When CI's Mesa differs and a golden fails by more than the tolerance, re-record the
+# golden from CI's output (RE_UPDATE_GOLDENS=1) and update this file; never widen the
+# tolerance.
+vulkan: lavapipe, Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2)
+gl: llvmpipe, OpenGL 4.5 Core Profile, Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2)
+recorded: 2026-10-14, Ubuntu 24.04

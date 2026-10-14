@@ -26,8 +26,8 @@ pub struct TargetPose {
 ///
 /// The clip is checked once, in [`Sampler::new`]; sampling never fails. Times
 /// before the first keyframe hold the first value and times after the last hold
-/// the last value, as glTF specifies. Use [`Sampler::wrap_time`] (or a
-/// [`Playhead`]) to loop.
+/// the last value, as glTF specifies; a NaN time samples the first keyframe.
+/// Use [`Sampler::wrap_time`] (or a [`Playhead`]) to loop.
 #[derive(Clone, Debug)]
 pub struct Sampler {
     clip: ClipData,
@@ -140,9 +140,10 @@ impl Default for Playhead {
 
 impl Playhead {
     /// Moves the time forward by `dt * speed` seconds when playing. A non-looping
-    /// playhead stops at the ends of a clip of length `duration`.
+    /// playhead stops at the ends of a clip of length `duration`. A `dt` or
+    /// `speed` that is not finite leaves the time unchanged.
     pub fn advance(&mut self, dt: f32, duration: f32) {
-        if !self.playing || !dt.is_finite() {
+        if !self.playing || !dt.is_finite() || !self.speed.is_finite() {
             return;
         }
         self.time += dt * self.speed;
@@ -168,7 +169,8 @@ impl Playhead {
 }
 
 fn wrap(time: f32, duration: f32, looping: bool) -> f32 {
-    if !time.is_finite() || duration <= 0.0 {
+    // A NaN duration counts as empty: `clamp` panics on a NaN bound.
+    if !time.is_finite() || duration.is_nan() || duration <= 0.0 {
         return 0.0;
     }
     if looping {
@@ -212,7 +214,8 @@ fn check<T>(
 }
 
 /// Finds the keyframe interval containing `time`: `(i, s)` with `times[i] <= time
-/// < times[i + 1]` and `s` the fraction across it. Outside the keys, clamps.
+/// < times[i + 1]` and `s` the fraction across it. Outside the keys (infinities
+/// included), clamps; NaN holds the first key.
 enum Span {
     /// Before the first key, after the last, or a single key: hold this key.
     Hold(usize),
@@ -222,7 +225,7 @@ enum Span {
 
 fn span(times: &[f32], time: f32) -> Span {
     let last = times.len() - 1;
-    if time <= times[0] || last == 0 {
+    if time.is_nan() || time <= times[0] || last == 0 {
         return Span::Hold(0);
     }
     if time >= times[last] {

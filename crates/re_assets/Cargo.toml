@@ -24,6 +24,12 @@ notify.workspace = true
 notify-debouncer-full.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+schemars = { workspace = true, optional = true }
+
+[features]
+# Derives `schemars::JsonSchema` for `MaterialFile`, so that `real schema` (WP6)
+# generates `material.schema.json` from it.
+schemars = ["dep:schemars"]
 
 [dev-dependencies]
 tempfile.workspace = true
