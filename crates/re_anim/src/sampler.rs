@@ -26,8 +26,8 @@ pub struct TargetPose {
 ///
 /// The clip is checked once, in [`Sampler::new`]; sampling never fails. Times
 /// before the first keyframe hold the first value and times after the last hold
-/// the last value, as glTF specifies. Use [`Sampler::wrap_time`] (or a
-/// [`Playhead`]) to loop.
+/// the last value, as glTF specifies; a NaN time samples the first keyframe.
+/// Use [`Sampler::wrap_time`] (or a [`Playhead`]) to loop.
 #[derive(Clone, Debug)]
 pub struct Sampler {
     clip: ClipData,
@@ -212,7 +212,8 @@ fn check<T>(
 }
 
 /// Finds the keyframe interval containing `time`: `(i, s)` with `times[i] <= time
-/// < times[i + 1]` and `s` the fraction across it. Outside the keys, clamps.
+/// < times[i + 1]` and `s` the fraction across it. Outside the keys (infinities
+/// included), clamps; NaN holds the first key.
 enum Span {
     /// Before the first key, after the last, or a single key: hold this key.
     Hold(usize),
@@ -222,7 +223,7 @@ enum Span {
 
 fn span(times: &[f32], time: f32) -> Span {
     let last = times.len() - 1;
-    if time <= times[0] || last == 0 {
+    if time.is_nan() || time <= times[0] || last == 0 {
         return Span::Hold(0);
     }
     if time >= times[last] {

@@ -25,7 +25,11 @@ use crate::meta::AssetMeta;
 use crate::{codes, fsutil, id};
 
 /// The JSON form of a material file.
+///
+/// With the `schemars` feature it derives `JsonSchema`, from which `real schema`
+/// writes `schemas/material.schema.json`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, default)]
 pub struct MaterialFile {
     /// An optional JSON Schema reference, ignored.
@@ -59,6 +63,7 @@ pub struct MaterialFile {
 
 /// The alpha mode names of a material file.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AlphaModeName {
     /// Alpha is ignored.
