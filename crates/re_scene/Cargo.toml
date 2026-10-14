@@ -1,0 +1,26 @@
+[package]
+name = "re_scene"
+description = "Real Engine model layer: the World facade over bevy_ecs (stable ids, hierarchy, transforms, built-in components, scene and prefab files, procedural sources, overrides, suppression and the state hash)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Frozen contract at WP0 PR "entity core" (docs/M1_PLAN.md, "Cross-WP contracts").
+[dependencies]
+re_core.workspace = true
+re_reflect.workspace = true
+re_types.workspace = true
+bevy_ecs.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+indexmap.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+
+# The core_bench example measures transactions and undo, so it uses
+# re_command (dev-dependencies do not count for `cargo xtask check-graph`).
+[dev-dependencies]
+re_command.workspace = true

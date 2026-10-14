@@ -1,0 +1,19 @@
+[package]
+name = "re_reflect"
+description = "Real Engine model layer: the component registry over bevy_ecs (field types, values, coercion, by-name access, script-defined components, the text-boundary document tree and the scene JSON Schema)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Frozen contract at WP0 PR "entity core" (docs/M1_PLAN.md, "Cross-WP contracts").
+# Only re_reflect, re_scene and re_command may name bevy_ecs (ADR-0005).
+[dependencies]
+re_core.workspace = true
+bevy_ecs.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+indexmap.workspace = true
+thiserror.workspace = true

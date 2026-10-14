@@ -93,7 +93,7 @@ graph TD
   end
 ```
 
-Dashed edges exist only when `re_cli` is built with the default-on `tooling` feature. A runtime-only build (`--no-default-features`) links none of the tooling crates, so it links no tokio, rmcp or full_moon (ADR-0019, ADR-0027).
+Dashed edges exist only when `re_cli` is built with the default-on `tooling` feature. A runtime-only build (`--no-default-features`) links none of the tooling crates, so it links no tokio, rmcp or full_moon (ADR-0019, ADR-0027). The rule is simple: a subcommand that needs a tooling crate exists only in the tooling build. That covers `check`, `mcp`, `agent`, `editor` and `do` (`real do` uses `re_agent`'s single-writer lock and editor-socket client), so a runtime-only `real` runs, verifies, describes and explains a project but does not edit it.
 
 ### Crate responsibilities
 
@@ -121,7 +121,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_mcp` | The MCP server (rmcp, stdio) | `serve_stdio(EngineHandle, McpOptions)` | `re_app` |
 | `re_editor` | Editor-lite UI and the editor socket | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
 
-Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]` puts `use re_scene::ecs as bevy_ecs;` at its root, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` does not reach tokio, rmcp or full_moon".
+Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
 
 ### Repository layout
 
@@ -339,6 +339,8 @@ The builder runs once in the `tools` context and returns a `GraphDoc` (`re_types
 | `material.assign` (a `materials/*.material.json` path, loaded by `re_assets`) | Mesh |
 | `fragment.merge` (graph output) | Fragment |
 
+The table has 15 rows and 16 node kinds: `mesh.transform` and `mesh.merge` share a row.
+
 ### Evaluation
 
 - Nodes are evaluated in topological order. Independent nodes run in parallel on the rayon pool.
@@ -376,7 +378,7 @@ This works during play. The M1 demo regenerates the island with a new seed while
 |---|---|---|
 | `real describe [--json]` | What commands, components, nodes and scripts exist | The command registry plus reflection |
 | `real describe --luau-defs` / `engine.d.luau` | The exact native Luau API, for type checkers, editors and agents | The binding registry in `re_script` |
-| `real do <command> --args '{json}' [--dry-run]` | One edit from a shell | The registry |
+| `real do <command> --args '{json}' [--dry-run]` (tooling build) | One edit from a shell | The registry |
 | `real verify --json` | Is the project healthy? | ADR-0022 |
 | `real explain RE####` | What an error means and how to fix it | Compiled explain pages |
 | `real mcp` | MCP clients (Claude Code, Codex, VS Code, Cursor, Gemini CLI, Zed and others) | `re_mcp` → `EngineHandle` → the registry |

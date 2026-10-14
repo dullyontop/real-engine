@@ -1,0 +1,13 @@
+[package]
+name = "derive_alias_check"
+description = "Proves that bevy's Component and Resource derives, and `re_reflect::component!`, work in a crate that reaches bevy_ecs only through `use re_scene::ecs as bevy_ecs;`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Deliberately no bevy_ecs dependency: that is what this crate checks.
+[dependencies]
+re_reflect.workspace = true
+re_scene.workspace = true

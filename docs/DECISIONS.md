@@ -18,7 +18,7 @@ Where a spike measured something, its result overrides earlier design assumption
 **Context.** We need a layout that many people and agents can work on in parallel without editing the same files. It must also keep compile times reasonable on a 4-core machine.
 
 **Decision.**
-- Use one Cargo workspace. Library crates go in `crates/re_*`. Workspace members are `crates/*` and `tools/xtask`; example projects are data, not crates.
+- Use one Cargo workspace. Library crates go in `crates/re_*`. Workspace members are `crates/*` and `tools/*` (`tools/xtask` and `tools/derive_alias_check`); example projects are data, not crates.
 - The user-facing tool is a single binary called `real` (crate `re_cli`).
 - The workspace uses edition 2024 and `rust-version = "1.95"`.
 - All dependency versions live in `[workspace.dependencies]`.
@@ -416,7 +416,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Decision.**
 - `re_proc` defines `ProcGraph`: nodes with typed ports, edges, and per-node parameters as `serde_json::Value`. It is stored as JSON (`*.graph.json`).
 - A Luau **builder** API (`proc.graph()`, `g:node("terrain.heightfield", {...})`, `g:connect(...)`) records a ProcGraph. Builders are `tools`-context scripts under `scripts/tools/`. They do not run anything. Luau never runs inside node evaluation in M1.
-- Nodes are Rust functions registered in a `NodeRegistry`. M1 ships 15 nodes (see ARCHITECTURE §5). Each node's parameters have a JSON Schema.
+- Nodes are Rust functions registered in a `NodeRegistry`. M1 ships 16 node kinds in the 15 rows of the table in ARCHITECTURE §5 (`mesh.transform` and `mesh.merge` share a row). Each node's parameters have a JSON Schema.
 - Each node's cache key is `blake3(node type, node version, canonical params, input keys, seed)`.
 - Each evaluation produces an `EvalReport`: per node, whether it hit the cache, how long it took, and its output sizes and diagnostics.
 - The seed for a node is `Pcg32::from_seed(graph_seed).fork(hash(node_id))`, using `re_noise`. Adding a node does not change the random numbers of the other nodes.
@@ -471,7 +471,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - **A procedural source is an ordinary saved entity** carrying `Procedural { generator, seed }` plus a parameter component for its generator (for a ProcGraph, `GraphSource`; ARCHITECTURE §5). The scene file stores the source, its own transform, and its `overrides`. It never stores generated entities.
 - **Generators return plain data**: a `SceneFragment`, a list of `GenNode { key, name, parent_key, components }` with components given by name. A Rust generator (the ProcGraph evaluator in `re_proc`, the test generators) and, later, a Luau generator produce the same thing.
 - **Generated ids.** Each output node has a generator-chosen **StableKey** (for a ProcGraph, `<node_id>/<local_key>`, where `local_key` is the scatter point index, grid cell and so on). The entity's id is `<source id>/<StableKey>`, so selection, commands, agents and overrides address it like any other entity. Randomness is per key (`GenContext::random(key)` hashes the seed and the key), so growing a grid or adding points does not reshuffle existing ones.
-- **Overrides** are stored on the source as `(target key, component, field, value)` entries, or `(target key, deleted: true)`. Editing a generated entity through a command records an override in the same transaction, so undo removes both the value and the override. Despawning a generated entity records a deletion override. Structural edits (reparent, add or remove component) on a generated entity are refused with a hint to change the source's parameters.
+- **Overrides** are stored on the source as `(target key, component, field, value)` entries, or `(target key, deleted: true)`. Editing a generated entity through a command records an override in the same transaction, so undo removes both the value and the override. Despawning a generated entity records a deletion override. Structural edits (reparent, add or remove component) and renames on a generated entity are refused with a hint to change the source's parameters (a rename because no override can carry a name).
 - **Regeneration.** After edits, the engine fingerprints each source (generator name, seed, parameter values, and for a graph the canonical hash of its document). When the fingerprint changed it runs the generator and applies the new fragment as a diff:
   - entities whose key survives keep their `Entity`, so script handles stay valid; their components are updated in place;
   - new keys are spawned, vanished keys are despawned;
@@ -622,8 +622,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Decision.**
 - The required jobs, all on Ubuntu, are exactly these (M1_PLAN refers to this list):
-  - `fmt` (`cargo fmt --check`);
-  - `clippy` (`cargo clippy --workspace --all-targets --all-features -- -D warnings`);
+  - `fmt` (`cargo fmt --all --check`);
+  - `clippy` (`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`);
   - `test` (`CARGO_BUILD_JOBS=2`, lavapipe). It has two steps: the non-GPU crates in parallel, then the GPU crates (`re_render`, `re_app`, `re_cli`, `re_editor`) with `--test-threads=1`;
   - `msrv` (toolchain 1.95.0, `cargo build --workspace --all-targets --locked`);
   - `deny` (`cargo deny check`, cargo-deny 0.20.2);
@@ -718,7 +718,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - Runtime: `re_app` (the frame loop, sync, verify and the runtime commands) and `re_cli` (the `real` binary). `examples/island` is a project the runtime loads; it is not a crate.
 - Tooling: `re_script_check` (static scan, external type checker, corpus runner), `re_agent` (policy, sessions, checkpoints, agent commands, `AGENTS.md` generation), `re_mcp` (the rmcp adapter) and `re_editor` (editor-lite UI and the editor socket).
 - `re_cli` depends on the tooling crates behind the default-on cargo feature `tooling`.
-- A game export build uses `--no-default-features` and links none of them, so it links no tokio, rmcp or full_moon. `cargo xtask check-graph` checks this.
+- A game export build uses `--no-default-features` and links none of them, so it links no tokio, rmcp or full_moon. `cargo xtask check-graph` checks this (no tooling crate and none of those three dependencies in `cargo tree -p re_cli --no-default-features`).
+- A subcommand that needs a tooling crate is itself behind `tooling`: `check`, `mcp`, `agent`, `editor` and `do`. `real do` needs `re_agent::lock` and `re_agent::remote::connect` (one writer, ADR-0026), so the runtime-only `real` has no `do`; it runs, verifies, describes and explains a project but does not edit it. Nothing is split out of `re_agent` for the runtime build.
 
 **Consequences.** WP6, WP7 and WP8 own disjoint crates and files (see [M1_PLAN.md](M1_PLAN.md)).
 

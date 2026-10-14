@@ -17,6 +17,9 @@ publish = false
 re_core = { path = "crates/re_core" }
 re_noise = { path = "crates/re_noise" }
 re_types = { path = "crates/re_types" }
+re_reflect = { path = "crates/re_reflect" }
+re_scene = { path = "crates/re_scene" }
+re_command = { path = "crates/re_command" }
 
 # Rendering, windowing, UI.
 wgpu = "=30.0.1"

@@ -1,7 +1,8 @@
 //! `cargo xtask check-graph`: the crate dependency rules of ARCHITECTURE §2.
 //!
-//! The graph comes from `cargo metadata --all-features` (normal and build edges;
-//! dev-dependencies do not count). Rules about crates that do not exist yet pass
+//! The graph comes from `cargo metadata --all-features`, filtered to the three
+//! desktop triples of `deny.toml` (normal and build edges; dev-dependencies do
+//! not count). Rules about crates that do not exist yet pass
 //! vacuously. The `re_cli --no-default-features` rule uses `cargo tree`, which
 //! resolves features exactly.
 
@@ -28,6 +29,18 @@ const CONTRACT: &[&str] = &["re_core", "re_types", "re_noise"];
 
 /// The only crates that may name `bevy_ecs` directly (ADR-0005).
 const BEVY_USERS: &[&str] = &["re_reflect", "re_scene", "re_command"];
+
+/// What the runtime-only build (`re_cli --no-default-features`) must not reach:
+/// the tooling crates and the tooling-only dependencies (ADR-0027).
+const RUNTIME_FORBIDDEN: &[&str] = &[
+    "re_script_check",
+    "re_agent",
+    "re_mcp",
+    "re_editor",
+    "tokio",
+    "rmcp",
+    "full_moon",
+];
 
 /// The crates.io index, as `cargo metadata` names it.
 const CRATES_IO: &[&str] = &[
@@ -314,6 +327,11 @@ pub fn run(root: &Path) -> Result<()> {
         "--all-features",
         "--locked",
     ]);
+    // Only edges that apply to a desktop target count: a dependency gated on,
+    // say, emscripten (wasm-bindgen-futures -> tokio) is never built.
+    for triple in crate::dupes::TRIPLES {
+        cmd.args(["--filter-platform", triple]);
+    }
     let metadata: Value =
         serde_json::from_str(&output(cmd, root)?).context("parsing cargo metadata output")?;
     let graph = Graph::from_metadata(&metadata)?;
@@ -341,7 +359,7 @@ pub fn run(root: &Path) -> Result<()> {
             .lines()
             .filter_map(|l| l.split_whitespace().next())
             .collect();
-        for forbidden in ["tokio", "rmcp", "full_moon"] {
+        for forbidden in RUNTIME_FORBIDDEN {
             if reached.contains(forbidden) {
                 violations.push(format!(
                     "re_cli --no-default-features reaches {forbidden} (the runtime-only build \

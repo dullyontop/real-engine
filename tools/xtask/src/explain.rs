@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 
 /// The code ranges of ARCHITECTURE §7. A crate that is not listed owns no codes.
+#[allow(clippy::single_range_in_vec_init)] // most crates own one range; the type is shared
 pub fn ranges(krate: &str) -> &'static [RangeInclusive<u16>] {
     match krate {
         "re_core" => &[0..=499],
