@@ -1,0 +1,120 @@
+//! Tier-1 validation: compile a script without running it.
+
+use std::cell::RefCell;
+
+use mlua::Lua;
+use mlua::chunk::Compiler;
+use re_core::{Diagnostic, Location};
+
+use crate::codes;
+
+use crate::diag::ScriptError;
+
+/// The compiler every context uses: optimisation level 1 and debug level 1 (line
+/// info and function names, enough for tracebacks). These are Luau's defaults.
+pub(crate) fn compiler() -> Compiler {
+    Compiler::new().set_optimization_level(1).set_debug_level(1)
+}
+
+thread_local! {
+    /// A bare VM used only to load (not run) bytecode, which validates it.
+    static LOADER: RefCell<Option<Lua>> = const { RefCell::new(None) };
+}
+
+/// Compiles `source` with the engine's Luau compiler and loads the bytecode
+/// (without running it). Returns no diagnostics when the script is valid. A syntax
+/// error gives one `RE3001` diagnostic pointing at `chunk_name` and the line of
+/// the error; callers should treat any returned error as a failure, because a
+/// bytecode load failure (never seen in practice) is mapped like a runtime error.
+///
+/// `chunk_name` is the path shown in diagnostics, normally the script's path
+/// relative to the project (`scripts/game/player.luau`). This is validation
+/// tier 1 (ADR-0024): `real check`, the corpus runner and the agent's
+/// `script.write` call it before a script is written or run.
+///
+/// ```
+/// let ok = re_script::compile_check("local v = vector.create(1, 2, 3)", "scripts/a.luau");
+/// assert!(ok.is_empty());
+/// let bad = re_script::compile_check("local x = = 1", "scripts/b.luau");
+/// assert_eq!(bad[0].code.to_string(), "RE3001");
+/// ```
+pub fn compile_check(source: &str, chunk_name: &str) -> Vec<Diagnostic> {
+    let bytecode = match compiler().compile(source) {
+        Ok(b) => b,
+        Err(mlua::Error::SyntaxError { message, .. }) => {
+            // The compiler reports `12: message`, without a chunk name.
+            let (line, message) = match message.split_once(':') {
+                Some((l, m)) if l.trim().parse::<u32>().is_ok() => {
+                    (l.trim().parse::<u32>().ok(), m.trim().to_string())
+                }
+                _ => (None, message),
+            };
+            return vec![
+                Diagnostic::error(codes::SYNTAX, message).at(Location::File {
+                    file: chunk_name.to_string(),
+                    line,
+                    column: None,
+                }),
+            ];
+        }
+        Err(e) => return vec![ScriptError::from_mlua(chunk_name, &e).to_diagnostic()],
+    };
+    LOADER.with_borrow_mut(|lua| {
+        let lua = lua.get_or_insert_with(Lua::new);
+        match lua
+            .load(&bytecode[..])
+            .set_name(format!("@{chunk_name}"))
+            .into_function()
+        {
+            Ok(_) => Vec::new(),
+            Err(e) => {
+                let mut s = ScriptError::from_mlua(chunk_name, &e);
+                s.chunk.get_or_insert_with(|| chunk_name.to_string());
+                vec![s.to_diagnostic()]
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use re_core::Location;
+
+    #[test]
+    fn valid_luau_compiles() {
+        let src = "--!strict\nlocal n: number = 1_000_000\nlocal v = vector.create(1, 2, 3)\nreturn v * n";
+        assert!(compile_check(src, "scripts/ok.luau").is_empty());
+    }
+
+    #[test]
+    fn syntax_error_has_file_and_line() {
+        let d = compile_check("local a = 1\nlocal x = = 1\n", "scripts/bad.luau");
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].code, crate::codes::SYNTAX);
+        assert_eq!(
+            d[0].location,
+            Some(Location::File {
+                file: "scripts/bad.luau".into(),
+                line: Some(2),
+                column: None
+            })
+        );
+        assert!(
+            d[0].message.contains("Expected identifier"),
+            "{}",
+            d[0].message
+        );
+    }
+
+    #[test]
+    fn chunk_names_with_spaces_keep_the_line() {
+        let d = compile_check("return +", "scripts/My Folder/a b.luau");
+        assert_eq!(d.len(), 1);
+        assert!(
+            matches!(&d[0].location, Some(Location::File { file, line: Some(1), .. }) if file == "scripts/My Folder/a b.luau"),
+            "{:?}",
+            d[0].location
+        );
+    }
+}
