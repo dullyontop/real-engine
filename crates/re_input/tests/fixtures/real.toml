@@ -1,0 +1,15 @@
+[project]
+name = "island"
+entry_scene = "scenes/main.scene.json"
+
+[sim]
+fixed_hz = 60
+
+[input.buttons]               # action = list of bindings
+jump = ["key:Space", "pad:South"]
+attack = ["mouse:Left", "key:KeyF", "pad:RightTrigger2"]
+regenerate = ["key:KeyG"]
+
+[input.axes]
+move = [{ composite = ["key:KeyW", "key:KeyS", "key:KeyA", "key:KeyD"] }, { stick = "left", dead_zone = 0.2 }]
+look = [{ mouse_delta = 0.002 }, { stick = "right" }]
