@@ -62,7 +62,7 @@ mod world;
 
 pub use config::{LayerTable, PhysicsConfig};
 pub use query::QueryFilter;
-pub use world::{Physics, PhysicsSnapshot};
+pub use world::{BodyMotion, MotionState, Physics, PhysicsSnapshot};
 
 use re_core::DiagInfo;
 

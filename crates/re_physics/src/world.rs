@@ -18,7 +18,7 @@ use oxijolt::{
     HingeConstraintSettings, InnerBody, ObjectLayer, PhysicsWorld, QueryFilter as JQueryFilter,
     Shape, WorldSettings, WorldState,
 };
-use re_core::{Diagnostic, Location, TaskPool};
+use re_core::{Diagnostic, Location, Severity, TaskPool};
 use re_types::EntityId;
 use re_types::physics::{
     BodyDesc, BodyKind, BodyPose, CharacterDesc, CharacterState, ConstraintDesc, ConstraintKind,
@@ -54,7 +54,7 @@ pub struct Physics {
     /// Body → entity, including bodies removed since the last step (see the module docs)
     /// and characters' inner bodies.
     pub(crate) entity_of: HashMap<BodyId, EntityId>,
-    characters: BTreeMap<EntityId, CharacterEntry>,
+    pub(crate) characters: BTreeMap<EntityId, CharacterEntry>,
     constraints: BTreeMap<EntityId, ConstraintEntry>,
     gate: Arc<GroupGate>,
     state: StepState,
@@ -73,10 +73,10 @@ pub(crate) struct BodyEntry {
     pub(crate) sensor: bool,
 }
 
-struct CharacterEntry {
+pub(crate) struct CharacterEntry {
     id: CharacterId,
     inner: Option<BodyId>,
-    groups: GroupMask,
+    pub(crate) groups: GroupMask,
     step_height: f32,
     /// The object layers the character collides with, for its query filter.
     sees: Vec<ObjectLayer>,
@@ -119,7 +119,9 @@ struct StepState {
 /// A saved physics state, from [`Physics::save_state`].
 ///
 /// It restores only into the world that saved it, and only while no body, character
-/// or constraint was added or removed (and no shape replaced) in between.
+/// or constraint was added or removed (and no shape replaced) in between. To carry
+/// motion into another world (a fresh copy of the scene), use
+/// [`Physics::motion_state`] and [`Physics::apply_motion_state`].
 #[derive(Clone)]
 pub struct PhysicsSnapshot {
     world: WorldState,
@@ -131,6 +133,53 @@ impl std::fmt::Debug for PhysicsSnapshot {
         f.debug_struct("PhysicsSnapshot")
             .field("world", &self.world)
             .finish_non_exhaustive()
+    }
+}
+
+/// The motion of one dynamic or kinematic body, in a [`MotionState`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BodyMotion {
+    /// The entity the body belongs to.
+    pub id: EntityId,
+    /// The body's position (its shape origin).
+    pub pos: Vec3,
+    /// The body's rotation.
+    pub rot: Quat,
+    /// Linear velocity, m/s.
+    pub linear: Vec3,
+    /// Angular velocity, rad/s.
+    pub angular: Vec3,
+    /// Whether the body was awake.
+    pub awake: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CharacterMotion {
+    id: EntityId,
+    velocity: Vec3,
+    /// Jolt's character state (pose, velocity, ground and contacts), which restores into
+    /// a character of any world.
+    jolt: oxijolt::CharacterState,
+}
+
+/// Entity-keyed motion, from [`Physics::motion_state`], that seeds another world with
+/// [`Physics::apply_motion_state`].
+#[derive(Clone, Debug, Default)]
+pub struct MotionState {
+    bodies: Vec<BodyMotion>,
+    characters: Vec<CharacterMotion>,
+}
+
+impl MotionState {
+    /// The dynamic and kinematic bodies, sorted by entity.
+    pub fn bodies(&self) -> &[BodyMotion] {
+        &self.bodies
+    }
+
+    /// The characters' entities and velocities (m/s, over their last step), sorted by
+    /// entity.
+    pub fn characters(&self) -> impl Iterator<Item = (EntityId, Vec3)> + '_ {
+        self.characters.iter().map(|c| (c.id, c.velocity))
     }
 }
 
@@ -1185,12 +1234,142 @@ impl Physics {
             )
             .with_hint(
                 "a snapshot restores only into the world that saved it, before any body, \
-                 character or constraint is added or removed",
+                 character or constraint is added or removed; to seed another world, use \
+                 motion_state and apply_motion_state",
             )
         })?;
         self.state = snapshot.state.clone();
         Ok(())
     }
+
+    /// The motion of every dynamic and kinematic body and every character, keyed by
+    /// entity, to seed another world with [`apply_motion_state`](Self::apply_motion_state).
+    ///
+    /// Unlike [`save_state`](Self::save_state) it carries over to any world that has
+    /// bodies and characters for the same entities, such as a fresh `Physics` built from
+    /// a copy of the scene.
+    pub fn motion_state(&self) -> MotionState {
+        let mut bodies = Vec::new();
+        for (&id, entry) in &self.bodies {
+            if entry.kind == BodyKind::Static {
+                continue;
+            }
+            let Ok(b) = self.world.body(entry.id) else {
+                continue;
+            };
+            bodies.push(BodyMotion {
+                id,
+                pos: grv(b.position()),
+                rot: gq(b.rotation()),
+                linear: gv(b.linear_velocity()),
+                angular: gv(b.angular_velocity()),
+                awake: b.is_active(),
+            });
+        }
+        let mut characters = Vec::new();
+        for (&id, ch) in &self.characters {
+            let Ok(c) = self.world.character(ch.id) else {
+                continue;
+            };
+            characters.push(CharacterMotion {
+                id,
+                velocity: self.character_velocity(id, &c),
+                jolt: c.save_state(),
+            });
+        }
+        MotionState { bodies, characters }
+    }
+
+    /// Gives each entity of `motion` that this world also has the pose, velocity and
+    /// sleep state it had in the world that took it, so a copy of the scene continues
+    /// moving instead of starting from rest. A character also takes its ground and
+    /// contact state.
+    ///
+    /// Entities this world lacks, or holds as a static body, are skipped with a warning
+    /// (`RE5004` or `RE5009`) in [`take_diagnostics`](Self::take_diagnostics). Contact
+    /// pairs are not carried over: the next step reports `Begin` for bodies already
+    /// touching. Characters' ground and contacts are recomputed against this world, so
+    /// it may hold fewer or other bodies than the source. Commands applied to the source
+    /// but not yet stepped (kinematic targets, character moves) are not carried; take
+    /// the state between frames. The continuation is close to the original but not
+    /// bit-identical, since Jolt's contact cache starts empty;
+    /// [`restore_state`](Self::restore_state) is the exact replay within one world.
+    pub fn apply_motion_state(&mut self, motion: &MotionState) {
+        for m in &motion.bodies {
+            let Some(entry) = self.bodies.get(&m.id) else {
+                self.diagnostics.push(as_warning(unknown(m.id, "body")));
+                continue;
+            };
+            if entry.kind == BodyKind::Static {
+                self.diagnostics
+                    .push(as_warning(wrong_kind(m.id, "motion", entry.kind)));
+                continue;
+            }
+            let kinematic = entry.kind == BodyKind::Kinematic;
+            let body = entry.id;
+            let result = self.world.body_mut(body).and_then(|mut b| {
+                b.set_position_and_rotation(rv(m.pos), jq(m.rot), Activation::DontActivate)?;
+                if m.awake {
+                    b.set_linear_velocity(jv(m.linear))?;
+                    b.set_angular_velocity(jv(m.angular))?;
+                    b.activate();
+                    Ok(())
+                } else {
+                    b.deactivate()
+                }
+            });
+            match result {
+                Ok(()) => {
+                    // A moving kinematic body stops next step unless it gets a target,
+                    // as it would have in the original world.
+                    if kinematic && m.awake && (m.linear != Vec3::ZERO || m.angular != Vec3::ZERO) {
+                        self.state.kin_moved.insert(m.id);
+                    }
+                }
+                Err(e) => self.diagnostics.push(body_invalid(m.id, e)),
+            }
+        }
+        for m in &motion.characters {
+            let Some(ch) = self.characters.get(&m.id) else {
+                self.diagnostics
+                    .push(as_warning(unknown(m.id, "character")));
+                continue;
+            };
+            let (cid, inner) = (ch.id, ch.inner);
+            let filter_layers = ch.sees.clone();
+            self.gate.current.store(ch.groups.0, Ordering::Relaxed);
+            // The saved ground and contacts name bodies by Jolt id, which differ when the
+            // worlds hold different bodies: recompute them against this world.
+            let restored = self
+                .world
+                .character_mut(cid)
+                .and_then(|mut c| c.restore_state(&m.jolt))
+                .and_then(|()| {
+                    self.world.refresh_character_contacts(
+                        cid,
+                        &JQueryFilter::new().object_layers(&filter_layers),
+                    )
+                });
+            match restored {
+                Ok(()) => {
+                    self.state.character_velocity.insert(m.id, m.velocity);
+                    if let Some(inner) = inner
+                        && let Ok(mut b) = self.world.body_mut(inner)
+                    {
+                        b.activate();
+                    }
+                }
+                Err(e) => self
+                    .diagnostics
+                    .push(character_invalid(m.id, e.to_string())),
+            }
+        }
+    }
+}
+
+fn as_warning(mut d: Diagnostic) -> Diagnostic {
+    d.severity = Severity::Warning;
+    d
 }
 
 fn wrong_kind(id: EntityId, what: &str, kind: BodyKind) -> Diagnostic {
