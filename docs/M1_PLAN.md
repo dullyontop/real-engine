@@ -41,7 +41,7 @@ This plan splits M1 into nine work packages (WPs): WP0 to WP8.
   - A winit `EventLoop` can only be created once per process and only on the main thread. Windowed tests are therefore separate binaries or examples run under `xvfb-run -a -s "-screen 0 1280x720x24"`. They are never `#[test]` functions.
 - **Errors.** Every user-facing error is a `re_core::Diagnostic` with a code from the crate's range ([ARCHITECTURE.md §7](ARCHITECTURE.md#7-diagnostics-and-error-model)). Each code has an explain page `crates/<crate>/explain/RE####.md`, and the crate exports `pub const DIAGNOSTICS: &[re_core::DiagInfo]`.
 - **Clean ports.** Code ported from spikes or the prototype keeps its tests. Comments, test data and report sections that quote or name external projects are removed during the port; each WP's Reuse table names the known spots (for example `src/input.rs` in WP5, core.md §8 and the demo ids in WP0, and scripting.md's header and §3 in WP3).
-- **Lints.** `cargo clippy --workspace --all-targets --locked -- -D warnings` and `cargo fmt --all --check` must pass. Ported spike code is made clippy-clean during the port.
+- **Lints.** `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` and `cargo fmt --all --check` must pass. Ported spike code is made clippy-clean during the port.
 - **Output files.** Acceptance commands write into `out/`, which is git-ignored. Create it first with `mkdir -p out`.
 - **Definition of done (every WP).** The WP's PRs are green on every required CI job of ADR-0023 ([DECISIONS.md](DECISIONS.md#adr-0023-ci-linux-with-lavapipe-blocks-merges-windows-and-macos-are-reported-only)), reviewed and **merged to `main`**; the WP's acceptance commands pass in the reference container; no file outside the WP's owned paths changed (except tool-generated `Cargo.lock` and `schemas/`); every diagnostic code the WP uses has an explain page.
 
@@ -147,21 +147,21 @@ All paths are in the private research folder `/mnt/project-files/real-engine/res
    - `.gitignore` adds `out/`, `**/.real/*` and `!**/.real/agent-policy.toml` (the `**/` matters: a pattern with an inner `/` is otherwise anchored to the repository root; so a project's committed agent policy, such as `examples/island/.real/agent-policy.toml`, is tracked while the rest of `.real/` is ignored), keeping `Cargo.lock` tracked.
 2. **`tools/xtask`** (a plain binary crate using `cargo metadata` output through `serde_json`; no engine crates):
    - `cargo xtask check-graph`: the crate dependency rules of ARCHITECTURE §2 ("must not depend on" column), including "subsystem crates reach only the contract layer", "`re_proc` and `re_geom` reach no wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` name `bevy_ecs`", and "`re_cli --no-default-features` reaches none of tokio, rmcp and full_moon". Rules about crates that do not exist yet pass vacuously.
-   - `cargo xtask dupes` (the duplicate gate): `cargo tree -d -e normal --workspace --target <triple>` for each of `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, compared with the skip-list in `deny.toml` as **(name, version) pairs**. The same version listed twice (a host and a target build with different features) is not a duplicate.
-   - `cargo xtask explain`: scans `crates/*/src/**/*.rs` for string literals matching `"RE[0-9]{4}"`; each code must have `crates/<crate>/explain/RE####.md`, lie inside the crate's range (the table in ARCHITECTURE §7, copied into xtask), and be used by one crate only.
+   - `cargo xtask dupes` (the duplicate gate): `cargo tree -d -e normal --workspace --all-features --target <triple>` (all features, as `deny.toml` `[graph]`) for each of `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, compared with the skip-list in `deny.toml` as **(name, version) pairs**. The same version listed twice (a host and a target build with different features) is not a duplicate.
+   - `cargo xtask explain`: scans `crates/*/src/**/*.rs` for string literals matching `"RE[0-9]{4}"`; each code must have `crates/<crate>/explain/RE####.md`, lie inside the crate's range (the table in ARCHITECTURE §7, copied into xtask), and be used by one crate only; each page must be referenced by a string literal ending in `explain/RE####.md` (the `include_str!` of its `DIAGNOSTICS` entry) in the crate's sources. Paths in its messages use `/` on every OS.
    - `cargo xtask schemas [--check]`: if `crates/re_cli` exists, runs `cargo run --locked -p re_cli -- schema --out schemas/`; with `--check` it fails when the committed files differ. Until `re_cli` exists it prints `skipped: re_cli not built yet`.
    - `cargo xtask check` runs `check-graph`, `dupes`, `explain` and `schemas --check`.
 3. **CI**: `.github/workflows/ci.yml` plus a composite action `.github/actions/linux-setup/action.yml`, and a PR template `.github/pull_request_template.md` (WP, owned paths touched, acceptance output, doc changes requested). The workflow, in full:
    - Triggers: `pull_request`, and `push` to `main`. `concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }`. Env: `CARGO_TERM_COLOR=always`, `CARGO_BUILD_JOBS=2`.
    - `linux-setup` (composite): `sudo apt-get update`, then `sudo apt-get install -y` with exactly the package list in DEPENDENCIES.md "System packages" (it includes `mesa-vulkan-drivers`, which provides lavapipe for the GPU tests, the EGL and Mesa GL packages that the GL backend loads on headless Linux, and `xvfb`); then `rustup toolchain install stable --profile minimal --component rustfmt --component clippy`; then `Swatinem/rust-cache@v2`.
-   - Jobs (all `runs-on: ubuntu-latest` unless stated; each starts with `actions/checkout@v4`):
+   - Jobs (all `runs-on: ubuntu-latest` unless stated; each starts with `actions/checkout@v7`):
 
      | Job | Steps after checkout | Required for merge |
      |---|---|---|
      | `fmt` | `rustup toolchain install stable --profile minimal --component rustfmt`; `cargo fmt --all --check` | yes |
-     | `clippy` | `linux-setup`; `cargo clippy --workspace --all-targets --locked -- -D warnings` | yes |
+     | `clippy` | `linux-setup`; `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` (all features, so feature-gated code such as `re_core`'s `profile-puffin` and `profile-tracy` is compiled and linted; the System packages include the C++ toolchain the Tracy client needs) | yes |
      | `test` | `linux-setup`; install luau-lsp (below); `cargo test --workspace --locked --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor` (cargo only warns about excluded packages that do not exist yet); then the GPU step below | yes |
-     | `msrv` | `linux-setup`; `rustup toolchain install 1.95.0 --profile minimal`; `cargo +1.95.0 build --workspace --locked` | yes |
+     | `msrv` | `linux-setup`; `rustup toolchain install 1.95.0 --profile minimal`; `cargo +1.95.0 build --workspace --all-targets --locked` (all targets, so tests, examples and dev-dependencies also build with the MSRV) | yes |
      | `deny` | `rustup toolchain install stable --profile minimal`; `cargo install cargo-deny --version 0.20.2 --locked`; `cargo deny check` | yes |
      | `xtask` | `linux-setup`; `cargo xtask check` | yes |
      | `verify-demo` | a guard step `echo "present=$([ -f examples/island/real.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"`; every later step has `if: steps.guard.outputs.present == 'true'`: `linux-setup`, luau-lsp, `cargo run --locked --release -p re_cli -- verify --project examples/island --json` | yes (passes as skipped until WP6) |
@@ -197,7 +197,7 @@ All paths are in the private research folder `/mnt/project-files/real-engine/res
      echo "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567  /tmp/luau-lsp.zip" | sha256sum -c -
      sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
      ```
-   - The action versions (`actions/checkout@v4`, `Swatinem/rust-cache@v2`) were not checked from this container; use the newest major of each if these are outdated.
+   - The action versions: `actions/checkout@v7` and `Swatinem/rust-cache@v2`, the newest majors, verified 2026-10-14 with `git ls-remote --tags` (`refs/tags/v7` of actions/checkout is `3d3c42e5aac5ba805825da76410c181273ba90b1`; `refs/tags/v2` of Swatinem/rust-cache is `49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c`).
    - After the first green run on `main`, the maintainer marks the eight Linux jobs as required status checks in the repository's branch protection.
 4. **`re_core`** (modules `diag`, `time`, `phase`, `task`, `events`, `profile`, `log`):
    - `Diagnostic { code, severity, message, location, hint, related }`, `Severity`, `Code`, `Location` (file/line/column, entity id, or command name), `DiagInfo { code, title, page }`, and `render_human` / `render_json`;
@@ -207,12 +207,12 @@ All paths are in the private research folder `/mnt/project-files/real-engine/res
    - `profile_scope!`, with features `profile-puffin` and `profile-tracy`;
    - `init_logging(LogConfig)`.
 5. **`re_noise`**, ported unchanged.
-6. **`re_types`** (**frozen** when this PR merges). It depends only on `glam`, `serde` and `serde_json`; it does **not** depend on `re_core` (errors cross `HostServices` as the plain `HostError` below, and callers turn them into `Diagnostic`s). Every data type is `Send + Clone + Serialize + Deserialize`. One module per area, all re-exported at the crate root:
+6. **`re_types`** (**frozen** when this PR merges). It depends only on `glam`, `serde` and `serde_json`, plus `schemars` behind an optional `schemars` feature that derives `JsonSchema` for the file formats it defines (`GraphDoc`, `ReplayDoc` and their parts), so that `real schema` (WP6) generates `graph.schema.json` and `replay.schema.json` from the frozen types; it does **not** depend on `re_core` (errors cross `HostServices` as the plain `HostError` below, and callers turn them into `Diagnostic`s). Every data type is `Send + Clone + Serialize + Deserialize`. One module per area, all re-exported at the crate root:
    - `ids.rs`: `EntityId(pub u64)` (it carries `bevy_ecs::entity::Entity::to_bits()`; only `re_scene` converts);
-   - `render.rs`: `RenderSnapshot { camera, lights, items, debug_lines, clear }`, `Camera`, `Light`, `DrawItem { entity, mesh, material, world: Mat4, flags }`, `DrawFlags`, `DebugLine`, `MeshHandle`, `MaterialHandle`, `TextureHandle`, `MaterialDesc`;
+   - `render.rs`: `RenderSnapshot { camera, lights, items, debug_lines, clear }`, `Camera`, `Light`, `DrawItem { entity, mesh, material, world: Mat4, flags }`, `DrawFlags`, `DebugLine`, `MeshHandle`, `MaterialHandle`, `TextureHandle`, `TextureRef` (`Asset(asset id string)` or `Handle(TextureHandle)`: `re_assets` cannot hold renderer handles, so it fills material textures with `Asset` and `re_app` resolves them to `Handle` before `Renderer::create_material`), `MaterialDesc`;
    - `mesh.rs`: `MeshData` (vertex layout `{pos, normal, uv, color}`, `u32` indices) and `Aabb`. They live here, not in `re_geom`, so that `re_render` and `re_assets` depend only on the contract layer;
    - `anim.rs`: `ClipData` (translation, rotation and scale channels per target), produced by `re_assets` and sampled by `re_anim`;
-   - `physics.rs`: `PhysicsCmd`, `BodyDesc`, `BodyKind`, `ShapeDesc` (box, sphere, capsule, convex hull, triangle mesh, heightfield with `samples[z*n + x]`), `Layer`, `GroupMask`, `BodyPose { id, pos, rot }` (no velocities, see ADR-0008), `ContactEvent`, `RayHit`, `CharacterDesc` (height, radius, max slope, step height, mass, and `inner_body: bool` so that the character takes part in contact events), `CharacterState`;
+   - `physics.rs`: `PhysicsCmd`, `BodyDesc`, `BodyKind`, `ShapeDesc` (box, sphere, capsule, convex hull, triangle mesh, heightfield with `samples[z*n + x]`), `Layer`, `GroupMask`, `BodyPose { id, pos, rot }` (no velocities, see ADR-0008), `ContactEvent`, `RayHit`, `CharacterDesc` (height, radius, max slope, step height, mass, and `inner_body: bool` so that the character takes part in contact events), `CharacterState`, `ConstraintDesc { a, b, kind }` with `ConstraintKind::{Fixed, Hinge, Distance}` (the M1 set), carried by `PhysicsCmd::AddConstraint { id, desc }` / `RemoveConstraint { id }`, where `id` is the constraint's own entity; removals of constraints sort before removals of bodies, additions after additions of bodies;
    - `audio.rs`: `AudioCmd`;
    - `input.rs`: `ActionFrame` (the state of every action this frame);
    - `graph.rs`: `GraphDoc`, `NodeDoc`, `EdgeDoc`, the `*.graph.json` form, which `re_proc` turns into the `ProcGraph` of ARCHITECTURE §5:
@@ -315,12 +315,12 @@ Everything in the first six rows of "Cross-WP contracts". Consumers find them at
 export CARGO_BUILD_JOBS=2
 mkdir -p out
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked
 cargo test --locked -p re_noise --test golden          # cross-architecture noise goldens from the spike
 cargo xtask check
 cargo deny check
-cargo +1.95.0 build --workspace --locked
+cargo +1.95.0 build --workspace --all-targets --locked
 cargo run --locked -p re_scene --release --example core_bench -- --check
 cargo run --locked -p re_command --example agent_demo -- out/demo   # writes scene.json, registry.json, scene.schema.json, log.jsonl
 ```
@@ -395,7 +395,7 @@ Both PRs are green on every CI job, **including `build-windows` and `build-macos
 **Starts after:** WP0 PR "contracts" is merged.
 
 **Frozen interfaces consumed**
-- `re_types::render::{RenderSnapshot, Camera, Light, DrawItem, DrawFlags, DebugLine, MeshHandle, MaterialHandle, TextureHandle, MaterialDesc}` (`crates/re_types/src/render.rs`);
+- `re_types::render::{RenderSnapshot, Camera, Light, DrawItem, DrawFlags, DebugLine, MeshHandle, MaterialHandle, TextureHandle, TextureRef, MaterialDesc}` (`crates/re_types/src/render.rs`);
 - `re_types::mesh::{MeshData, Aabb}` (`crates/re_types/src/mesh.rs`);
 - `re_core::{Diagnostic, DiagInfo}` (`crates/re_core/src/diag.rs`).
 
@@ -417,7 +417,7 @@ Both PRs are green on every CI job, **including `build-windows` and `build-macos
 **Build**
 - `Gpu::headless(backends)` and `Gpu::for_surface(window)`. Both install the uncaptured-error logger, which reports `RE6001` and never panics.
 - `Renderer::new(&Gpu, format)`.
-- Resources: `upload_mesh(&MeshData) -> MeshHandle`, `upload_texture`, `create_material(&MaterialDesc)`, and `release_mesh`, `release_texture`, `release_material`. Handles carry a generation, so a released handle is detected, not reused by mistake. `stats()` reports live counts and bytes per resource kind.
+- Resources: `upload_mesh(&MeshData) -> MeshHandle`, `upload_texture`, `create_material(&MaterialDesc)` (handles only: a material whose `TextureRef` is still an `Asset` is rejected with a diagnostic, see `MaterialDesc::is_resolved`), and `release_mesh`, `release_texture`, `release_material`. Handles carry a generation, so a released handle is detected, not reused by mistake. `stats()` reports live counts and bytes per resource kind.
 - `Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot)`. It is a forward PBR-lite pass:
   - base colour, a texture, metallic and roughness;
   - one directional light with a single shadow map;
@@ -745,7 +745,7 @@ Required tests:
 **Starts after:** WP0 PR "contracts" is merged.
 
 **Frozen interfaces consumed**
-- `re_types::{input::ActionFrame, replay::ReplayDoc, audio::AudioCmd, ids::EntityId, mesh::MeshData, render::MaterialDesc, anim::ClipData}` (`crates/re_types/src/`);
+- `re_types::{input::ActionFrame, replay::ReplayDoc, audio::AudioCmd, ids::EntityId, mesh::MeshData, render::{MaterialDesc, TextureRef}, anim::ClipData}` (`crates/re_types/src/`);
 - `re_core::{Diagnostic, DiagInfo, init_logging}`.
 - For review only: the `AudioSource` and `AnimPlayer` field table in WP0 (`crates/re_scene/src/components.rs`).
 
@@ -765,7 +765,7 @@ Required tests:
    - `.meta.json` sidecars.
    - `AssetServer` with handles and generations.
    - glTF import: meshes (`MeshData`), materials (`MaterialDesc`) and node animations (`ClipData`). Images are decoded with `image`, because gltf's `Image::source` unwraps.
-   - `load_material(path) -> Result<MaterialDesc, Diagnostic>` for `*.material.json` files, with texture references resolved to asset ids.
+   - `load_material(path) -> Result<MaterialDesc, Diagnostic>` for `*.material.json` files, with texture references resolved to asset ids (`TextureRef::Asset` holding the `AssetId`'s text form; `re_app` uploads the textures and swaps in `TextureRef::Handle`).
    - The postcard cache, written atomically (temp file, then rename).
    - Hot reload through `AssetWatcher`. Atomic saves arrive as `Created`. Changes under `scripts/` are reported too, for script hot reload.
 2. **`re_input`.**

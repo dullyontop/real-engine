@@ -44,7 +44,7 @@ The `msrv` CI job builds with exactly 1.95.0 (`rustup toolchain install 1.95.0 -
 | egui | 0.36.2 | MIT OR Apache-2.0 | 1.95 | Immediate-mode UI for the HUD, debug overlay and editor-lite | default (its `default_fonts` pulls `epaint_default_fonts`: OFL-1.1 and Ubuntu-font-1.0, an ADR-0019 exception) | render prototype `gui_offscreen` | Verified |
 | egui-wgpu | 0.36.2 | MIT OR Apache-2.0 | 1.95 | egui renderer on our wgpu device | default | render prototype | Verified |
 | egui-winit | 0.36.2 | MIT OR Apache-2.0 | 1.95 | egui input from winit | default (its `clipboard` feature pulls `arboard`, and on Windows `clipboard-win` and `error-code`, BSL-1.0) | render prototype | Verified |
-| glam | 0.34.1 | MIT OR Apache-2.0 | 1.85 | Math (Vec3, Quat, Mat4, Affine3A) | `bytemuck`, `mint-05`, `serde` | render prototype (`bytemuck`), platform spike (`mint-05`), scripting spike (default); the `serde` feature and the combination resolve in a lockfile but have not been built | Verified (crate); Provisional (`serde` and the combined feature set) |
+| glam | 0.34.1 | MIT OR Apache-2.0 | 1.85 | Math (Vec3, Quat, Mat4, Affine3A) | `bytemuck`, `mint-05`, `serde` | render prototype (`bytemuck`), platform spike (`mint-05`), scripting spike (default); WP0 builds the combined feature set and round-trips every `re_types` contract type through serde (`crates/re_types/tests/roundtrip.rs`) | Verified |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT | none | POD casts for GPU buffers | `derive` | render prototype | Verified |
 | pollster | 1.0.1 | Apache-2.0 OR MIT | 1.69 | Blocks on wgpu futures (adapter, device, map_async) | default | render prototype | Verified |
 | png | 0.18.1 | MIT OR Apache-2.0 | 1.73 | Writes golden images and readback output | default | render prototype | Verified |
@@ -75,7 +75,7 @@ Notes:
 |---|---|---|---|---|---|
 | luau-lsp | 1.70.1 | MIT | The default type checker for `real check --types` (`luau-lsp analyze`), and the language server for editors and agents. Its Luau submodule is the commit of Luau 0.740. | scripting spike: `analyze` with `--definitions` and `--flag:LuauSolverV2=true`; LSP over stdio. Linux release zip only. | Verified (Linux) |
 | luau-analyze | 0.740, plus a 27-line `--definitions` patch | MIT | Alternative checker (`[scripts] checker`). Built from the Luau 0.740 tag. | scripting spike: built from source in 220 s, checked the spike's typed fixtures | Verified (Linux); needs a rebase per Luau upgrade |
-| cargo-deny | 0.20.2 | MIT OR Apache-2.0 | The `deny` CI job (`cargo install cargo-deny --version 0.20.2 --locked`) | crates.io (newest, not yanked, MSRV 1.88) | Provisional (not yet run on this tree) |
+| cargo-deny | 0.20.2 | MIT OR Apache-2.0 | The `deny` CI job (`cargo install cargo-deny --version 0.20.2 --locked`) | WP0: `cargo deny check` on this tree passes (advisories, bans, licenses, sources ok; `unmatched-skip` and `unused-wrapper` warnings only for crates not yet in the tree) | Verified |
 
 These are tools, like cmake. The crates.io-only rule covers code dependencies. CI pins each tool's version, and the downloaded luau-lsp release by its sha256.
 
@@ -84,17 +84,17 @@ These are tools, like cmake. The crates.io-only rule covers code dependencies. C
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
 | bevy_ecs | 0.20.0 (released 2026-10-08; pin `=0.20.0`) | MIT OR Apache-2.0 | 1.95.0 | Entity storage, hierarchy (`ChildOf` / `Children`), hooks, change ticks and runtime-defined components, used standalone inside the model crates (`re_reflect`, `re_scene`, `re_command`) behind our own API (ADR-0005) | `default-features = false`, `std`, `multi_threaded`. Not `bevy_reflect` (ADR-0032), `async_executor`, `backtrace`, `debug` or `serialize`. | core spike: a 2,600-line prototype with 15 passing tests and a 100k-entity benchmark; five-crate comparison | Verified |
-| rayon | 1.12.0 | MIT OR Apache-2.0 | 1.80 | The one worker pool. Shared with Jolt through `oxijolt::JobSystem`. | default | crates.io, lockfile resolve; a rayon `JobSystem` adapter is a doctest in oxijolt's `src/job_system.rs` (no spike built it) | Provisional (not yet built in our tree) |
+| rayon | 1.12.0 | MIT OR Apache-2.0 | 1.80 | The one worker pool. Shared with Jolt through `oxijolt::JobSystem`. | default | WP0: `re_core::TaskPool` (`crates/re_core/tests/task.rs`: named `re-worker-N` threads, `spawn`, `scope`, the global pool). The rayon `JobSystem` adapter for Jolt is still unbuilt (a doctest in oxijolt's `src/job_system.rs`; WP2) | Verified (pool); Provisional (Jolt adapter) |
 | serde | 1.0.229 | MIT OR Apache-2.0 | 1.56 | Serialization traits | `derive` | AI spike | Verified |
-| serde_json | 1.0.154 | MIT OR Apache-2.0 | 1.71 | Scene, prefab, graph and material files; command and log JSON; CLI JSON output | `preserve_order`, `float_roundtrip` | AI spike (default features); core spike (`float_roundtrip`: exact float parsing, byte-identical scene round trips) | Verified (crate, `float_roundtrip`); Provisional (`preserve_order`) |
-| schemars | 1.2.3 | MIT | 1.74 | JSON Schema for MCP tool inputs and the statically typed file formats (materials, graphs, verify report, agent policy). Scene and prefab schemas come from the component registry instead (ADR-0016). | `derive` | AI spike (MCP tool schemas) | Verified |
-| toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 | 1.85 | `real.toml`, `.real/agent-policy.toml` | default | crates.io, lockfile resolve | Provisional (not yet built) |
+| serde_json | 1.0.154 | MIT OR Apache-2.0 | 1.71 | Scene, prefab, graph and material files; command and log JSON; CLI JSON output | `preserve_order`, `float_roundtrip` | AI spike (default features); core spike (`float_roundtrip`: exact float parsing, byte-identical scene round trips); WP0 (`preserve_order`: graph parameters keep file order, test `graph` in `crates/re_types/tests/roundtrip.rs`) | Verified |
+| schemars | 1.2.3 | MIT | 1.74 | JSON Schema for MCP tool inputs and the statically typed file formats (materials, graphs, verify report, agent policy). Scene and prefab schemas come from the component registry instead (ADR-0016). | `derive` | AI spike (MCP tool schemas); WP0 `re_types` optional `schemars` feature (`GraphDoc`, `ReplayDoc`; `crates/re_types/tests/schema.rs`) | Verified |
+| toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 | 1.85 | `real.toml`, `.real/agent-policy.toml` | default | WP0: `cargo xtask dupes` reads `deny.toml` with it (test `reads_every_skip_form` in `tools/xtask/src/dupes.rs`) | Verified |
 | postcard | 1.1.3 | MIT OR Apache-2.0 | none | Binary cache blobs (processed meshes, EvalReport cache). Replaces bincode. | `use-std` | crates.io, lockfile resolve | Provisional (not yet built) |
 | blake3 | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception | none | Asset cache keys, ProcGraph node keys, `state_hash` | default | platform spike (`assets.rs` cache key) | Verified |
 | uuid | 1.28.0 | Apache-2.0 OR MIT | 1.89 | Asset ids (`.meta.json`). Entity ids are short strings made by `re_scene::IdGen`, not uuids. | `v4`, `serde` | crates.io, lockfile resolve | Provisional (not yet built) |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | 1.85 | Ordered maps in documents, commands and the registry (deterministic file output) | `serde` | core spike | Verified |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 | 1.77 | Library error types | default | crates.io, lockfile resolve | Provisional (not yet built) |
-| anyhow | 1.0.104 | MIT OR Apache-2.0 | 1.68 | Binaries only (`real`, tools) | default | crates.io, lockfile resolve | Provisional (not yet built) |
+| anyhow | 1.0.104 | MIT OR Apache-2.0 | 1.68 | Binaries only (`real`, tools) | default | WP0: `tools/xtask` (`cargo xtask check` and its unit tests) | Verified |
 
 ### Assets, input, audio, platform
 
@@ -107,9 +107,9 @@ These are tools, like cmake. The crates.io-only rule covers code dependencies. C
 | kira | 0.12.5 | MIT OR Apache-2.0 | none | Audio playback and mixing | `default-features = false`, `cpal`, `wav` | platform spike (`CaptureBackend`, headless fallback) | Verified. Pulls MPL-2.0 `triple_buffer` (always) and `symphonia*` (`wav`); see policy 4 and ADR-0019 |
 | gilrs | 0.11.2 | Apache-2.0 OR MIT | 1.84 | Gamepads | **default features required** | platform spike | Verified |
 | tracing | 0.1.44 | MIT | 1.65 | Logging and diagnostics events | default | platform spike | Verified |
-| tracing-subscriber | 0.3.23 | MIT | 1.65 | Log output (human and JSON) | `env-filter`, `fmt`, `ansi`, `json` | platform spike | Verified |
-| puffin | 0.20.0 | MIT OR Apache-2.0 | 1.92 | In-process profiler behind `profile_scope!` | optional, feature `profile-puffin` | platform spike | Verified |
-| tracy-client | 0.19.0 | MIT OR Apache-2.0 | 1.70 | Tracy profiler behind `profile_scope!` | optional, `default-features = false`, `enable`, `ondemand` | platform spike | Verified |
+| tracing-subscriber | 0.3.23 | MIT | 1.65 | Log output (human and JSON) | `env-filter`, `fmt`, `ansi`, `json` | platform spike; WP0 `re_core::init_logging` (`crates/re_core/tests/log.rs`: filters, JSON lines) | Verified |
+| puffin | 0.20.0 | MIT OR Apache-2.0 | 1.92 | In-process profiler behind `profile_scope!` | optional, feature `profile-puffin` | platform spike; WP0 `re_core` (`cargo test -p re_core --all-features`; CI clippy builds all features) | Verified |
+| tracy-client | 0.19.0 | MIT OR Apache-2.0 | 1.70 | Tracy profiler behind `profile_scope!` | optional, `default-features = false`, `enable`, `ondemand` | platform spike; WP0 `re_core` (`cargo test -p re_core --all-features`; CI clippy builds all features) | Verified |
 
 ### Tools, CLI, agent
 
@@ -124,7 +124,7 @@ These are tools, like cmake. The crates.io-only rule covers code dependencies. C
 | Crate | Version | License | MSRV | Role | Status |
 |---|---|---|---|---|---|
 | insta | 1.49.0 | Apache-2.0 | 1.66 | Snapshot tests for JSON output, diagnostics and command specs (`json` feature) | Provisional (not yet built) |
-| tempfile | 3.27.0 | MIT OR Apache-2.0 | 1.63 | Temporary project directories in tests | Provisional (not yet built) |
+| tempfile | 3.27.0 | MIT OR Apache-2.0 | 1.63 | Temporary project directories in tests | Verified (WP0: the `tools/xtask` explain tests build fixture workspaces in temp dirs) |
 
 ## Known duplicate versions
 

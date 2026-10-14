@@ -8,7 +8,7 @@ Real Engine is an open-source 3D game engine written in Rust, at the design stag
 
 ## Status
 
-**Design stage.** The architecture and the first milestone plan are written (see below). The only code in this repository today is the **rendering prototype** in `prototypes/render/`. It is a standalone spike that verified the rendering stack headless and windowed; it will be removed once M1 WP1 has ported it into `re_render`. None of the engine crates described in the docs exist yet.
+**Early M1.** The architecture and the first milestone plan are written (see below). The Cargo workspace exists with the contract-layer crates of M1 WP0: `re_core` (diagnostics, fixed-step clock, frame phases, task pool, events, profiling and logging), `re_noise` (deterministic noise) and `re_types` (the plain-data contracts between the app and its subsystems), plus the repository checks in `tools/xtask`. The other engine crates described in the docs do not exist yet. The **rendering prototype** in `prototypes/render/` is a standalone spike that verified the rendering stack headless and windowed; it will be removed once M1 WP1 has ported it into `re_render`.
 
 The license is not final: see [DECISIONS.md, open questions](docs/DECISIONS.md#open-questions-for-the-owner). The prototype's `Cargo.toml` declares `MIT OR Apache-2.0`.
 
@@ -38,6 +38,21 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records, plus open questions for the project owner |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Every dependency with its version, license, MSRV and verification status; system packages |
 | [docs/research/rendering.md](docs/research/rendering.md) | Findings from the rendering spike |
+
+## Building the workspace
+
+You need the current stable Rust toolchain (`rust-toolchain.toml` selects it; the MSRV is 1.95).
+
+```sh
+export CARGO_BUILD_JOBS=2
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --locked
+cargo xtask check        # crate-graph rules, duplicate versions, explain pages, schema drift
+cargo deny check         # needs cargo-deny 0.20.2: cargo install cargo-deny --version 0.20.2 --locked
+```
+
+CI (`.github/workflows/ci.yml`) runs the same checks, plus a build with Rust 1.95.0 and builds on Windows and macOS (ADR-0023).
 
 ## Building and running the rendering prototype
 

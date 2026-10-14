@@ -1,0 +1,5 @@
+# Everything builds with the current stable toolchain. The workspace declares
+# `rust-version = "1.95"`, and the `msrv` CI job builds with exactly 1.95.0.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

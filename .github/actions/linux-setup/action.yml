@@ -1,0 +1,24 @@
+name: Linux setup
+description: >
+  System packages from docs/DEPENDENCIES.md ("System packages"), the stable Rust
+  toolchain with rustfmt and clippy, and the cargo cache.
+runs:
+  using: composite
+  steps:
+    - name: Install system packages
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential g++ cmake pkg-config \
+          libvulkan-dev mesa-vulkan-drivers vulkan-tools \
+          libegl1 libegl-mesa0 libgl1-mesa-dri libgles2 \
+          libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev \
+          libxcursor-dev libxrandr-dev libxi-dev libwayland-dev \
+          libasound2-dev libudev-dev \
+          xvfb
+    - name: Install the stable toolchain
+      shell: bash
+      run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2

@@ -623,9 +623,9 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Decision.**
 - The required jobs, all on Ubuntu, are exactly these (M1_PLAN refers to this list):
   - `fmt` (`cargo fmt --check`);
-  - `clippy` (`cargo clippy --workspace --all-targets -- -D warnings`);
+  - `clippy` (`cargo clippy --workspace --all-targets --all-features -- -D warnings`);
   - `test` (`CARGO_BUILD_JOBS=2`, lavapipe). It has two steps: the non-GPU crates in parallel, then the GPU crates (`re_render`, `re_app`, `re_cli`, `re_editor`) with `--test-threads=1`;
-  - `msrv` (toolchain 1.95.0, `cargo build --workspace --locked`);
+  - `msrv` (toolchain 1.95.0, `cargo build --workspace --all-targets --locked`);
   - `deny` (`cargo deny check`, cargo-deny 0.20.2);
   - `xtask` (`cargo xtask check`: crate graph, duplicate versions, explain pages, schema drift);
   - `verify-demo` (`real verify --project examples/island --json`);
@@ -753,7 +753,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
   - `Source(Uuid)`: a file with a `.meta.json` sidecar holding the uuid;
   - `Derived(blake3::Hash)`: produced by a ProcGraph node or importer.
 - Processed data is cached at `.real/cache/<hash>.bin`, in postcard.
-- `re_assets` also loads `*.material.json` files into `re_types::MaterialDesc`.
+- `re_assets` also loads `*.material.json` files into `re_types::MaterialDesc`. Textures are referenced as `TextureRef::Asset(id)`, because `re_assets` cannot depend on `re_render`; `re_app` uploads them and replaces each with `TextureRef::Handle` before `Renderer::create_material`.
 - Hot reload is driven by `AssetWatcher`. A reload re-imports the asset, bumps the handle generation, and the next snapshot picks it up. The same watcher reports script changes for script hot reload.
 
 **Consequences.** Derived assets need no files in the project. Deleting `.real/cache` is always safe.

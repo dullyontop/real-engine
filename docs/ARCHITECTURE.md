@@ -101,7 +101,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 |---|---|---|---|
 | `re_core` | Diagnostics, time, phases, task pool, profiling macro, logging setup | `Diagnostic`, `Severity`, `Code`, `DiagInfo`, `FixedClock`, `Phase`, `TaskPool`, `Events<T>`, `profile_scope!`, `init_logging` | anything engine-specific |
 | `re_noise` | Deterministic RNG and noise (ported from the platform spike) | `Pcg32`, `SplitMix64`, `perlin*`, `simplex*`, `fbm*`, `ridged*`, `warped_fbm*`, `cellular*`, `hash2/3` | everything (zero dependencies) |
-| `re_types` | Plain-data contracts between the app and subsystems, and the script host trait (no dependency on `re_core`) | `EntityId`, `RenderSnapshot`, `DrawItem`, `Camera`, `Light`, `MeshHandle`, `MaterialHandle`, `MaterialDesc`, `MeshData`, `Aabb`, `ClipData`, `PhysicsCmd`, `BodyDesc`, `ShapeDesc`, `BodyPose`, `ContactEvent`, `CharacterDesc`, `AudioCmd`, `ActionFrame`, `GraphDoc`, `ReplayDoc`, `host::HostServices` | `re_scene`, any subsystem |
+| `re_types` | Plain-data contracts between the app and subsystems, and the script host trait (no dependency on `re_core`) | `EntityId`, `RenderSnapshot`, `DrawItem`, `Camera`, `Light`, `MeshHandle`, `MaterialHandle`, `TextureRef`, `MaterialDesc`, `MeshData`, `Aabb`, `ClipData`, `PhysicsCmd`, `BodyDesc`, `ShapeDesc`, `BodyPose`, `ContactEvent`, `CharacterDesc`, `AudioCmd`, `ActionFrame`, `GraphDoc`, `ReplayDoc`, `host::HostServices` | `re_scene`, any subsystem |
 | `re_reflect` | The component registry over bevy_ecs: field types, values and coercion, by-name access, script-defined components, the untyped document tree used at text boundaries, registry description and scene JSON Schema (ADR-0032) | `Registry`, `ComponentKey`, `ComponentSchema`, `FieldSchema`, `FieldType`, `ComponentOrigin`, `Value`, `Color`, `Reflect`, `component!`, `field_enum!`, `Doc`, `f32_from_parsed_f64` | subsystems, mlua |
 | `re_scene` | The World facade over bevy_ecs (ADR-0005): stable ids, hierarchy, transforms and propagation, the built-in components, scene and prefab files, procedural sources, fragments, overrides, suppression, state hash | `World`, `Entity`, `StableId`, `IdIndex`, `IdGen`, `Transform`, `GlobalTransform`, `Name`, the built-ins of §4, `SceneDoc`, `SaveOptions`, `PrefabFile`, `Procedural`, `GraphSource`, `Generated`, `Overrides`, `GenNode`, `SceneFragment`, `GenContext`, `Generators`, `state_hash` | subsystems, mlua |
 | `re_command` | Edit operations and transactions with exact undo, the log, the command registry, dry runs, the policy hook and the engine request channel (ADR-0003) | `Op`, `Transaction`, `Origin`, `History`, `LogEntry`, `CommandRegistry`, `CommandSpec`, `Tier`, `CommandOutcome`, `PolicyCheck` trait, `remote::{EngineHandle, EngineReceiver}` | subsystems, mlua, tokio |
@@ -201,12 +201,13 @@ pub enum PhysicsCmd {
     AddBody { id: EntityId, desc: BodyDesc }, RemoveBody { id: EntityId },
     SetTransform { id: EntityId, pos: Vec3, rot: Quat }, SetKinematicTarget { id: EntityId, pos: Vec3, rot: Quat },
     ApplyImpulse { id: EntityId, impulse: Vec3 }, SetVelocity { id: EntityId, linear: Vec3, angular: Vec3 },
-    SetShape { id: EntityId, shape: ShapeDesc }, // ... characters, constraints
+    SetShape { id: EntityId, shape: ShapeDesc },
+    AddConstraint { id: EntityId, desc: ConstraintDesc }, RemoveConstraint { id: EntityId }, // ... characters
 }
 pub struct BodyPose { pub id: EntityId, pub pos: Vec3, pub rot: Quat }   // active bodies only
 ```
 
-- `re_types` depends only on `glam`, `serde` and `serde_json`.
+- `re_types` depends only on `glam`, `serde` and `serde_json` (plus `schemars` behind its optional `schemars` feature, for the schemas of the graph and replay file formats).
 - The pose pull is one batched call to oxijolt's `active_body_poses_into`, which returns position and rotation for **active** bodies. Sleeping bodies are not returned; their `Transform` keeps its last value. Velocities are read per body (`Physics::velocity`) only for the entities that need them, such as characters and scripted bodies.
 - egui output is not part of the snapshot. `re_app` runs egui, tessellates the shapes with `egui::Context::tessellate`, and passes a `UiFrame { primitives, textures_delta, size_px, pixels_per_point }` to `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`. egui types therefore appear only in `re_render`, `re_app` and `re_editor`.
 
@@ -446,7 +447,7 @@ Annotations are derived from the tier and set explicitly on every tool (ADR-0025
 | RE88xx | `re_editor` |
 | RE9xxx | compatibility (`re_script` in M1, `re_compat` in M2) |
 
-- **Explain pages.** Each crate has `explain/RE####.md` and exports `pub const DIAGNOSTICS: &[DiagInfo]`, built with `include_str!`. `re_cli` collects all of them. A test fails on a missing page, a duplicate code, or a code outside the crate's range.
+- **Explain pages.** Each crate has `explain/RE####.md` and exports `pub const DIAGNOSTICS: &[DiagInfo]`, built with `include_str!`. `re_cli` collects all of them. A test fails on a missing page, a duplicate code, or a code outside the crate's range, and `cargo xtask explain` fails on a page that no `include_str!` in the crate's sources references (so every code used in source is in `DIAGNOSTICS`).
 - **Output.** Human output looks like rustc's: `error[RE3004]: ... --> scripts/game/player.luau:12:5`, followed by a hint. `--json` gives the same data as JSON lines.
 - **Panics** are bugs. A panic hook writes a crash report to `.real/crash/` and exits with code 101.
 - **Script errors** carry file, line and traceback. When mlua gives no line (errors raised from Rust, timeouts at the top of a chunk), the line of the first Luau frame in the traceback is used. The duplicated "runtime error:" prefix from mlua is removed. An error in one script callback disconnects nothing and does not stop the frame. It is reported once per distinct location per second.

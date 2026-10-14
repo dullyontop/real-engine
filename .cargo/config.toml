@@ -1,0 +1,3 @@
+[alias]
+# Repository checks: `cargo xtask check` (see tools/xtask).
+xtask = "run --locked -p xtask --"

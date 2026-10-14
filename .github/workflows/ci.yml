@@ -1,0 +1,155 @@
+# CI for Real Engine (ADR-0023, docs/M1_PLAN.md WP0).
+#
+# Required for merge: fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke
+# (all on Ubuntu). build-windows and build-macos are reported only.
+# Jobs for crates that do not exist yet skip their steps, so CI is green from the
+# first PR. Action majors verified with `git ls-remote` on 2026-10-14:
+# actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 2
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal --component rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/linux-setup
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/linux-setup
+      - name: Install luau-lsp 1.70.1
+        run: |
+          curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
+          echo "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567  /tmp/luau-lsp.zip" | sha256sum -c -
+          sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
+      - name: Test (non-GPU crates)
+        # cargo only warns about excluded packages that do not exist yet.
+        run: cargo test --workspace --locked --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
+      - name: Test (GPU crates, lavapipe and GL)
+        run: |
+          pkgs=""
+          for c in re_render re_app re_cli re_editor; do
+            if [ -d "crates/$c" ]; then pkgs="$pkgs -p $c"; fi
+          done
+          if [ -z "$pkgs" ]; then echo "no GPU crates yet"; exit 0; fi
+          vulkaninfo --summary || true          # records the runner's Mesa/lavapipe version in the log
+          cargo test --locked $pkgs -- --test-threads=1
+          if [ -d crates/re_render ]; then
+            RE_BACKENDS=gl cargo test --locked -p re_render -- --test-threads=1
+          fi
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/linux-setup
+      - run: rustup toolchain install 1.95.0 --profile minimal
+      - run: cargo +1.95.0 build --workspace --all-targets --locked
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo install cargo-deny --version 0.20.2 --locked
+      - run: cargo deny check
+
+  xtask:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/linux-setup
+      - run: cargo xtask check
+
+  verify-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Is the demo project present?
+        id: guard
+        run: echo "present=$([ -f examples/island/real.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.guard.outputs.present == 'true'
+        uses: ./.github/actions/linux-setup
+      - name: Install luau-lsp 1.70.1
+        if: steps.guard.outputs.present == 'true'
+        run: |
+          curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
+          echo "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567  /tmp/luau-lsp.zip" | sha256sum -c -
+          sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
+      - if: steps.guard.outputs.present == 'true'
+        run: cargo run --locked --release -p re_cli -- verify --project examples/island --json
+
+  xvfb-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Is the demo project present?
+        id: guard
+        run: echo "present=$([ -f examples/island/real.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.guard.outputs.present == 'true'
+        uses: ./.github/actions/linux-setup
+      - if: steps.guard.outputs.present == 'true'
+        run: cargo build --locked --release -p re_cli
+      - if: steps.guard.outputs.present == 'true'
+        run: xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/island --frames 300 --exit-after
+
+  build-windows:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --locked
+      - name: Test (pure-Rust crates)
+        shell: bash
+        run: |
+          pkgs=""
+          for c in re_core re_noise re_types re_reflect re_scene re_command; do
+            if [ -d "crates/$c" ]; then pkgs="$pkgs -p $c"; fi
+          done
+          cargo test --locked $pkgs
+
+  build-macos:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --locked
+      - name: Test (pure-Rust crates)
+        shell: bash
+        run: |
+          pkgs=""
+          for c in re_core re_noise re_types re_reflect re_scene re_command; do
+            if [ -d "crates/$c" ]; then pkgs="$pkgs -p $c"; fi
+          done
+          cargo test --locked $pkgs

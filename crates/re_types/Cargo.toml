@@ -1,0 +1,23 @@
+[package]
+name = "re_types"
+description = "Real Engine contract layer: plain-data types shared by the app and its subsystems, and the script host trait."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Frozen contract (docs/M1_PLAN.md, "Cross-WP contracts"). It depends only on
+# glam, serde and serde_json (plus schemars behind the optional `schemars`
+# feature), and never on re_core: `cargo xtask check-graph` enforces both.
+[dependencies]
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = { workspace = true, optional = true }
+
+[features]
+# Derives `schemars::JsonSchema` for the file formats defined here (`GraphDoc`,
+# `ReplayDoc` and their parts), so `real schema` generates `graph.schema.json` and
+# `replay.schema.json` from the frozen types instead of hand-written copies.
+schemars = ["dep:schemars"]
