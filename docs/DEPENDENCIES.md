@@ -8,14 +8,14 @@ This file lists every third-party crate Real Engine plans to use in M1: its exac
 2. **Adding a dependency needs a DECISIONS entry.** A PR that adds a crate to any `Cargo.toml` must add or amend an ADR in [DECISIONS.md](DECISIONS.md) and a row in this file. Upgrading within the same minor version only needs a row update.
 3. **Exact versions.** The workspace sets every dependency in `[workspace.dependencies]` as `"=X.Y.Z"`. Member crates write `foo.workspace = true`. `Cargo.lock` is committed. CI builds with `--locked`.
 4. **License allow-list**, enforced by `cargo deny check licenses`: MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, BSL-1.0, ISC, Zlib, CC0-1.0, Unicode-3.0. (BSL-1.0 is for `clipboard-win` and `error-code`, which egui-winit pulls on Windows.) Per-crate exceptions, and nothing else (ADR-0019):
-   - MPL-2.0: `full_moon` and `full_moon_derive` (tooling only); `triple_buffer` (an unconditional dependency of kira) and `symphonia`, `symphonia-core`, `symphonia-format-riff` and `symphonia-metadata` (kira's `wav` feature). **These four plus `triple_buffer` ship in the runtime.**
+   - MPL-2.0: `full_moon` and `full_moon_derive` (tooling only) and `triple_buffer` (an unconditional dependency of kira). **`triple_buffer` is the only MPL-2.0 crate that ships in the runtime.** kira is built without its `wav` feature, so the symphonia crates are not in the build; `re_audio` decodes WAV itself.
    - OFL-1.1 and Ubuntu-font-1.0: `epaint_default_fonts` (egui's bundled fonts).
    MPL-2.0 is file-level copyleft. We use these crates unmodified, so it puts no obligation on our own code. This list comes from a license scan of a lockfile with every crate and feature below.
 5. **Duplicate versions are tracked.** `deny.toml` limits `[graph] targets` to the three desktop triples (`x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`) and sets `[bans] multiple-versions = "warn"`, so cargo-deny reports duplicates but the gate is `cargo xtask dupes`. That command runs `cargo tree -d --workspace -e normal --target <triple>` for each of the three triples (it needs no cross toolchain; it only reads the lockfile) and compares the result with the allow-list in `deny.toml` (`[bans] skip`) as **(name, version) pairs**. The same version appearing twice (a host build and a target build with different features) is not a duplicate. A new duplicate fails CI until someone adds it to the list below with a reason.
 
 ## Status meanings
 
-- **Verified**: built and exercised by a spike, the render prototype, or a probe in this container. The source is named.
+- **Verified**: built and exercised by a spike, the render prototype (now `re_render`), a merged crate's tests, or a probe in this container. The source is named.
 - **Provisional**: the version exists on crates.io, is not yanked and resolves in a workspace lockfile, but it (or the listed feature set) has not been built and exercised yet. We confirm or replace these crates in M1. Their versions are exact all the same.
 
 All versions below were checked against the crates.io index on 2026-10-14. On that date none was yanked, and each was the newest release unless noted.
@@ -28,7 +28,7 @@ All versions below were checked against the crates.io index on 2026-10-14. On th
 | Workspace `rust-version` | `1.95` |
 | What sets the MSRV | `egui` / `egui-wgpu` / `egui-winit` 0.36.2 and `bevy_ecs` 0.20.0 need 1.95. The next highest are `puffin` 0.20.0 (1.92, optional), then `ordered-float` 5.5.0 (1.90, transitive), `uuid` 1.28.0 and `smol_str` 0.3.6 (1.89), and `oxijolt`, `mlua`, `rmcp` and `image` (1.88). |
 | Edition | 2024 |
-| Toolchains seen working | rustc 1.97.0 and 1.99.0 in the development containers. The render prototype declares `rust-version = "1.95"`; the core spike declares none. |
+| Toolchains seen working | rustc 1.97.0 and 1.99.0 in the development containers. The render prototype declared `rust-version = "1.95"`; the core spike declares none. |
 | Dev profile | `debug = "line-tables-only"`. The render spike measured this as a large saving in link time and disk use. |
 
 The `msrv` CI job builds with exactly 1.95.0 (`rustup toolchain install 1.95.0 --profile minimal`), so that the MSRV stays honest. Everything else, locally and in CI, uses the current stable toolchain.
@@ -39,11 +39,11 @@ The `msrv` CI job builds with exactly 1.95.0 (`rustup toolchain install 1.95.0 -
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| wgpu | 30.0.1 | MIT OR Apache-2.0 | 1.87 | GPU abstraction. Vulkan, Metal, DX12 and GL backends. | default | render prototype (`prototypes/render`), lavapipe and llvmpipe | Verified |
-| winit | 0.30.13 | Apache-2.0 | 1.70 | Window and event loop | default | render prototype `windowed` under Xvfb | Verified |
+| wgpu | 30.0.1 | MIT OR Apache-2.0 | 1.87 | GPU abstraction. Vulkan, Metal, DX12 and GL backends. | default | render prototype, then `re_render`'s tests on lavapipe and llvmpipe | Verified |
+| winit | 0.30.13 | Apache-2.0 | 1.70 | Window and event loop. A normal dependency of `re_input` (key and mouse types); only a dev-dependency of `re_render`, for its `windowed_smoke` example (`re_render` itself takes any window handle). `re_app` will own the event loop. | default | render prototype `windowed`, then `re_render`'s `windowed_smoke` under Xvfb | Verified |
 | egui | 0.36.2 | MIT OR Apache-2.0 | 1.95 | Immediate-mode UI for the HUD, debug overlay and editor-lite | default (its `default_fonts` pulls `epaint_default_fonts`: OFL-1.1 and Ubuntu-font-1.0, an ADR-0019 exception) | render prototype `gui_offscreen` | Verified |
 | egui-wgpu | 0.36.2 | MIT OR Apache-2.0 | 1.95 | egui renderer on our wgpu device | default | render prototype | Verified |
-| egui-winit | 0.36.2 | MIT OR Apache-2.0 | 1.95 | egui input from winit | default (its `clipboard` feature pulls `arboard`, and on Windows `clipboard-win` and `error-code`, BSL-1.0) | render prototype | Verified |
+| egui-winit | 0.36.2 | MIT OR Apache-2.0 | 1.95 | egui input from winit. Only a dev-dependency of `re_render` so far (its `windowed_smoke` example); `re_app` and `re_editor` will use it. | default (its `clipboard` feature pulls `arboard`, and on Windows `clipboard-win` and `error-code`, BSL-1.0) | render prototype, then `re_render`'s `windowed_smoke` | Verified |
 | glam | 0.34.1 | MIT OR Apache-2.0 | 1.85 | Math (Vec3, Quat, Mat4, Affine3A) | `bytemuck`, `mint-05`, `serde` | render prototype (`bytemuck`), platform spike (`mint-05`), scripting spike (default); WP0 builds the combined feature set and round-trips every `re_types` contract type through serde (`crates/re_types/tests/roundtrip.rs`) | Verified |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT | none | POD casts for GPU buffers | `derive` | render prototype | Verified |
 | pollster | 1.0.1 | Apache-2.0 OR MIT | 1.69 | Blocks on wgpu futures (adapter, device, map_async) | default | render prototype | Verified |
@@ -87,7 +87,7 @@ These are tools, like cmake. The crates.io-only rule covers code dependencies. C
 | rayon | 1.12.0 | MIT OR Apache-2.0 | 1.80 | The one worker pool. Shared with Jolt through `oxijolt::JobSystem`. | default | WP0: `re_core::TaskPool` (`crates/re_core/tests/task.rs`: named `re-worker-N` threads, `spawn`, `scope`, the global pool). The rayon `JobSystem` adapter for Jolt is still unbuilt (a doctest in oxijolt's `src/job_system.rs`; WP2) | Verified (pool); Provisional (Jolt adapter) |
 | serde | 1.0.229 | MIT OR Apache-2.0 | 1.56 | Serialization traits | `derive` | AI spike | Verified |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | 1.71 | Scene, prefab, graph and material files; command and log JSON; CLI JSON output | `preserve_order`, `float_roundtrip` | AI spike (default features); core spike (`float_roundtrip`: exact float parsing, byte-identical scene round trips); WP0 (`preserve_order`: graph parameters keep file order, test `graph` in `crates/re_types/tests/roundtrip.rs`) | Verified |
-| schemars | 1.2.3 | MIT | 1.74 | JSON Schema for MCP tool inputs and the statically typed file formats (materials, graphs, verify report, agent policy). Scene and prefab schemas come from the component registry instead (ADR-0016). | `derive` | AI spike (MCP tool schemas); WP0 `re_types` optional `schemars` feature (`GraphDoc`, `ReplayDoc`; `crates/re_types/tests/schema.rs`) | Verified |
+| schemars | 1.2.3 | MIT | 1.74 | JSON Schema for MCP tool inputs and the statically typed file formats (materials, graphs, verify report, agent policy). Scene and prefab schemas come from the component registry instead (ADR-0016). | `derive` | AI spike (MCP tool schemas); WP0 `re_types` optional `schemars` feature (`GraphDoc`, `ReplayDoc`; `crates/re_types/tests/schema.rs`); WP5 `re_assets` optional `schemars` feature (`MaterialFile` and `AlphaModeName`, for `material.schema.json`; `crates/re_assets/tests/schema.rs`) | Verified |
 | toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 | 1.85 | `real.toml`, `.real/agent-policy.toml` | default | WP0: `cargo xtask dupes` reads `deny.toml` with it (test `reads_every_skip_form` in `tools/xtask/src/dupes.rs`) | Verified |
 | postcard | 1.1.3 | MIT OR Apache-2.0 | none | Binary cache blobs (processed meshes, EvalReport cache). Replaces bincode. | `use-std` | crates.io, lockfile resolve | Provisional (not yet built) |
 | blake3 | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception | none | Asset cache keys, ProcGraph node keys, `state_hash` | default | platform spike (`assets.rs` cache key) | Verified |
@@ -104,7 +104,7 @@ These are tools, like cmake. The crates.io-only rule covers code dependencies. C
 | image | 0.25.10 | MIT OR Apache-2.0 | 1.88 | Texture decode | `default-features = false`, `png`, `jpeg` | platform spike | Verified |
 | notify | 8.2.0 | CC0-1.0 | 1.77 | File watching for hot reload | default | platform spike `watch` tests | Verified |
 | notify-debouncer-full | 0.7.0 | MIT OR Apache-2.0 | 1.85 | Debounced file events | default | platform spike | Verified |
-| kira | 0.12.5 | MIT OR Apache-2.0 | none | Audio playback and mixing | `default-features = false`, `cpal`, `wav` | platform spike (`CaptureBackend`, headless fallback) | Verified. Pulls MPL-2.0 `triple_buffer` (always) and `symphonia*` (`wav`); see policy 4 and ADR-0019 |
+| kira | 0.12.5 | MIT OR Apache-2.0 | none | Audio playback and mixing | `default-features = false`, `cpal`. Not `wav`: it enables symphonia's RIFF container without the PCM codec, so it cannot decode WAV anyway; `re_audio` has its own WAV reader | platform spike (`CaptureBackend`, headless fallback); WP5 (`re_audio` tests) | Verified. Pulls MPL-2.0 `triple_buffer` (always); see policy 4 and ADR-0019 |
 | gilrs | 0.11.2 | Apache-2.0 OR MIT | 1.84 | Gamepads | **default features required** | platform spike | Verified |
 | tracing | 0.1.44 | MIT | 1.65 | Logging and diagnostics events | default | platform spike | Verified |
 | tracing-subscriber | 0.3.23 | MIT | 1.65 | Log output (human and JSON) | `env-filter`, `fmt`, `ansi`, `json` | platform spike; WP0 `re_core::init_logging` (`crates/re_core/tests/log.rs`: filters, JSON lines) | Verified |

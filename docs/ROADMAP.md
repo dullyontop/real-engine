@@ -12,7 +12,7 @@ We order work by three questions, in this order:
 
 The result:
 - **M1 builds the core loop end to end**: render, physics, scripting, procedural generation, commands and verify. It uses an engine-native API. Every later feature plugs into these seams, and every one of them was proven by a spike, the entity core included.
-- **M2 is compatibility.** It matters a great deal to the owner, but it depends on a working scripting runtime, object model, physics and frame order. It is also the largest chunk of work, and its size depends on an open owner question (DECISIONS, open question 3). Measuring the gap on real scripts (the M1 validation suite) comes before building the layer.
+- **M2 is compatibility.** It matters a great deal to the owner, but it depends on a working scripting runtime, object model, physics and frame order. It is also the largest chunk of work. The owner chose "Demo first" (DECISIONS, open question 3): M1 ships the demo on the engine's own API, and M2's goal is the sample scenes running through the Roblox-style layer; whether a mechanical migration step is acceptable on the way is still open, and sets M2's size. Measuring the gap on real scripts (the M1 validation suite) comes before building the layer.
 - **M3+ adds scale, polish and the rest of a complete game workflow.** That means shipping games, richer rendering, cross-machine determinism, streaming, the node canvas and gizmos. None of these block the others, and each needs M1's measurements (PerfReport, D1 harness) to be done well.
 - **AI integration grows in every milestone** (see "AI track" below), always on top of the same command registry, and always optional.
 
@@ -20,7 +20,7 @@ The result:
 
 | Spike | Result | Report |
 |---|---|---|
-| Render | wgpu 30.0.1, winit 0.30.13 and egui 0.36.2, verified headless on lavapipe and llvmpipe and windowed under Xvfb. The prototype is kept in `prototypes/render/`. | `docs/research/rendering.md` |
+| Render | wgpu 30.0.1, winit 0.30.13 and egui 0.36.2, verified headless on lavapipe and llvmpipe and windowed under Xvfb. M1 WP1 ported the prototype into `crates/re_render/` and removed it. | `docs/research/rendering.md` |
 | Physics | oxijolt 1.1.0 (Jolt 5.6.0): 12 scenarios pass; a 1000-body pile steps in 2.85–3.78 ms; builds from source in about 55 s | research bundle |
 | Platform | Noise and RNG (golden on three architectures), glTF import, asset cache, file watching, kira audio with a headless fallback, input action map, logging, profiling choice | research bundle |
 | AI | MCP server on rmcp 3.5.1 over stdio, 12 tests across two protocol revisions, driven end to end by Claude Code; the command and transaction pattern; agent-safety research | research bundle |
@@ -73,7 +73,7 @@ All M0 spikes are done.
 - Luau-defined commands in the `tools` context, capped at the `edit` tier.
 - Static cells for large static maps (ADR-0031), measured before they are accepted.
 - An importer from an exported Roblox-style project (its script folders) into a Real Engine project.
-- Optionally, a `real migrate` tool, depending on the owner's answer about running scripts unchanged.
+- Optionally, a `real migrate` tool, if the owner accepts a mechanical migration step (the open part of question 3).
 
 **Ordering inside M2.** The static gap report from M1's suite ranks API members by how often real scripts use them. They are implemented in that order, so coverage of real code rises fastest.
 
@@ -82,7 +82,7 @@ All M0 spikes are done.
 - The static gap report shows no `missing` member with more than a threshold number of uses. The owner sets the threshold when M2 starts.
 - Frame-order tests confirm the phase mapping of render-step, stepped and heartbeat events.
 - A large synthetic static map loads, and its PerfReport stays inside budgets. The owner sets the map size and the budgets at the start of M2.
-- Whether the sample projects run *unchanged* or after `real migrate` follows the owner's decision. The exit criteria are rewritten once that decision is made.
+- The sample projects run through the Roblox-style layer (the owner's "Demo first" decision). Whether they must run *unchanged* or may go through `real migrate` first is still open; the exit criteria are rewritten once that is decided.
 
 ## AI track
 

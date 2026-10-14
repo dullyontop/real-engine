@@ -101,7 +101,7 @@ component! {
         pub kind: LightKind = LightKind::Point,
         /// Linear colour.
         pub color: Color = Color::WHITE,
-        /// Intensity: candela for point lights, lux for directional lights.
+        /// Intensity: lumens for point lights, lux for directional lights.
         pub intensity: f32 = 800.0,
         /// Distance in metres beyond which a point light has no effect.
         pub range: f32 = 20.0,
@@ -116,7 +116,8 @@ field_enum! {
 }
 
 component! {
-    /// Makes the entity a physics body. Needs a [`Collider`] to collide.
+    /// Makes the entity a physics body. Needs a [`Collider`] to collide; a
+    /// [`Collider`] without a `RigidBody` is a static body.
     pub struct RigidBody {
         /// Static (never moves), dynamic (simulated) or kinematic (moved by code).
         pub kind: BodyKind = BodyKind::Static,
@@ -140,6 +141,11 @@ field_enum! {
 
 component! {
     /// A collision shape, in the entity's local space.
+    ///
+    /// `re_app` maps it to a `re_types::physics::BodyDesc`: without a
+    /// [`RigidBody`] the body is static, and `enabled = false` removes the body.
+    /// `Mesh` and `Heightfield` shapes are static only (`re_physics` refuses them
+    /// on dynamic and kinematic bodies with `RE5003`).
     pub struct Collider {
         /// The shape kind.
         pub shape: ColliderShape = ColliderShape::Box,
@@ -149,15 +155,20 @@ component! {
         pub radius: f32 = 0.5,
         /// Half height of a capsule's cylindrical part, in metres.
         pub half_height: f32 = 0.5,
-        /// The mesh or heightfield asset for Convex, Mesh and Heightfield shapes.
+        /// The mesh or heightfield asset for Convex, Mesh and Heightfield shapes. A
+        /// heightfield asset carries its sample count per side (`n`), `spacing` and
+        /// `offset` as well as the samples.
         pub source: String = String::new(),
-        /// Object layer.
+        /// Object layer, 0 to 65535 (`re_types::physics::Layer`); the physics layer
+        /// table decides which layers collide.
         pub layer: i32 = 0,
-        /// Collision group (bodies in the same non-zero group do not collide).
-        pub group: i32 = 0,
+        /// Collision group bit mask, 0 to `u32::MAX` (`re_types::physics::GroupMask`:
+        /// bit `g` is group `g`, so the default 1 is group 0). Queries and characters
+        /// only see bodies whose groups intersect theirs.
+        pub groups: i64 = 1,
         /// A sensor reports contacts but does not collide.
         pub sensor: bool = false,
-        /// False removes the shape from the simulation.
+        /// False removes the body from the simulation.
         pub enabled: bool = true,
     }
 }
@@ -177,6 +188,11 @@ component! {
         pub mass: f32 = 70.0,
         /// True adds an inner rigid body, so the character takes part in contact events.
         pub inner_body: bool = true,
+        /// Object layer, 0 to 65535, as in [`Collider`].
+        pub layer: i32 = 0,
+        /// Collision group bit mask, 0 to `u32::MAX`, as in [`Collider`]. The
+        /// character only collides with bodies whose groups intersect these.
+        pub groups: i64 = 1,
     }
 }
 
@@ -198,7 +214,7 @@ component! {
 component! {
     /// A sound emitter.
     pub struct AudioSource {
-        /// Audio clip asset path.
+        /// A project asset path such as `assets/sfx/pickup.wav`, as in `AudioCmd`.
         pub clip: String = String::new(),
         /// Linear volume, 0 to 1.
         pub volume: f32 = 1.0,
@@ -214,7 +230,10 @@ component! {
 component! {
     /// Plays a node animation clip from a glTF asset.
     pub struct AnimPlayer {
-        /// The clip (`assets/door.glb#open`).
+        /// `<model asset path>#<clip name>`, e.g. `assets/models/door.glb#open`; the
+        /// clip name is `ClipData.name` (the glTF animation name, or
+        /// `animation_<index>`). Playback time is runtime state in `re_app`, not a
+        /// field.
         pub clip: String = String::new(),
         /// Playback speed multiplier.
         pub speed: f32 = 1.0,

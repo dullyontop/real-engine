@@ -197,15 +197,16 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 - `re_physics` is the only crate that names oxijolt.
 - `PhysicsWorld` is `Send + Sync` (`unsafe impl` at `world.rs:500` and `:533` in the oxijolt source), so the stepping call may run on a pool thread.
 - Input is a `Vec<PhysicsCmd>` sorted by `(kind, entity)` before it is applied, so the result does not depend on the order in which scripts issued commands.
-- Output is one batched pose pull per step through `active_body_poses_into(&mut Vec<BodyPose>)`, plus `take_events()`. oxijolt's `BodyPose` carries only the body id, position and rotation, and covers active bodies only. So `re_types::BodyPose` has no velocities, sleeping bodies keep their last `Transform`, and velocities are read per body (`Physics::velocity`) only for the entities that need them.
+- Output is one batched pose pull per step through `active_body_poses_into(&mut Vec<BodyPose>)`, plus `take_events()`. oxijolt's `BodyPose` carries only the body id, position and rotation, and covers active bodies only. So `re_types::BodyPose` has no velocities, sleeping bodies keep their last `Transform` (`Physics::poses_into` also reports the final pose of bodies that fell asleep during the step, so that value is exact), and velocities are read per body (`Physics::velocity`) only for the entities that need them.
+- **Layers decide collisions; group masks filter queries and characters.** Which bodies collide is decided by `re_physics::LayerTable` alone: each engine `Layer` becomes two Jolt object layers, one for static bodies (in the static broad-phase tree) and one for moving bodies (dynamic and kinematic, in the moving tree), so a pair of layers has a moving-vs-moving and a moving-vs-static switch. The standard table has 8 layers, layer 1 being debris (moving debris hits static bodies only). `GroupMask` does not affect body-to-body collision: it filters queries (`QueryFilter::groups`) and characters (a character only collides with bodies whose groups intersect its own, through a contact-validate listener).
 - Characters use `CharacterVirtual`. It is not a body and reports nothing in contact events unless it has an inner body, so `CharacterDesc` has an `inner_body` flag, on by default for the player, which lets the character trigger sensors.
 - `re_physics` makes up for the other gotchas the spike found:
   - A kinematic body keeps its last velocity. We zero it when no target is set.
   - `Removed` contact events can name bodies that are already gone. We filter those against our id map.
   - `Removed` also fires when a pair falls asleep. We document this and expose sleeping separately.
   - `position()` is the shape origin, not the centre of mass.
-  - Mesh and heightfield shapes are refused on dynamic bodies. We report this as an `RE5xxx` diagnostic, not a panic.
-  - World positions are limited to ±5 km, because `Real` is f32. We warn beyond that.
+  - Mesh and heightfield shapes are refused on dynamic and kinematic bodies. We report this as `RE5003`, not a panic.
+  - World positions are limited to ±5 km, because `Real` is f32. re_physics refuses bodies, characters and transforms beyond that with RE5006, and the command is dropped.
 
 **Alternatives.**
 - rapier3d. It was not chosen in the physics spike.
@@ -252,13 +253,13 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 
 **Decision.**
 - `re_render::Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot)` is the only drawing entry point for the scene.
-- egui is drawn by `egui-wgpu` into the same view through `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`. `UiFrame` holds already-tessellated `egui::ClippedPrimitive`s, the `TexturesDelta`, the target size and pixels per point. The caller tessellates with `egui::Context::tessellate`, because `FullOutput` carries untessellated shapes and tessellation needs the context's font atlas. We do not use eframe.
-- GPU resources have explicit release calls (`release_mesh`, `release_texture`, `release_material`) and generation-checked handles, so regenerated content does not leak GPU memory.
+- egui is drawn by `egui-wgpu` into the same view through `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`. `UiFrame` holds already-tessellated `egui::ClippedPrimitive`s, the `TexturesDelta`, the target size and pixels per point. The caller tessellates with `egui::Context::tessellate` (`UiFrame::from_output` wraps it), because `FullOutput` carries untessellated shapes and tessellation needs the context's font atlas. We do not use eframe.
+- GPU resources have explicit release calls (`release_mesh`, `release_texture`, `release_material`) and generation-checked handles, so regenerated content does not leak GPU memory. Uploads, `create_material` and releases return `Result<_, Diagnostic>`; `Gpu::for_surface(Arc<W>, backends)` returns the `Gpu` and a `wgpu::Surface<'static>`.
 - Headless mode renders into an offscreen texture and reads it back. Rows are padded to 256 bytes (`padded_bytes_per_row`).
 - Windowed mode renders into the surface texture.
 - We install `Device::on_uncaptured_error` with a logger, because the default handler panics.
-- The projection is `glam` 0.34's `Mat4` built through the right-handed, DirectX-depth path. `perspective_rh` was removed in 0.34; the prototype shows the replacement.
-- The GL backend lacks view formats and depth copies, so features that need them check `downlevel_capabilities`. On GL, egui is painted through a manual-gamma blit, because without `VIEW_FORMATS` the spike's panel came out darker.
+- The projection is `glam` 0.34's `Mat4` built through the right-handed, DirectX-depth path. `perspective_rh` was removed in 0.34; the prototype showed the replacement, and `re_render` uses it.
+- The GL backend lacks view formats and depth copies, so features that need them check `downlevel_capabilities`. Without `VIEW_FORMATS` the spike's egui panel came out darker on GL, so egui is painted into an `Rgba8Unorm` overlay and composited with a manual-gamma blit on **every** backend: one code path, and WP1 measured a 0.000-level difference in the egui panel's mean luminance between Vulkan and GL (their egui goldens are identical).
 - Golden image tests compare with a tolerance of about 2 levels per channel plus a small outlier budget, using the prototype's `imgdiff` approach. **Each backend has its own golden set**, and `verify` uses the set for the backend it ran on.
 - The first egui frame lays out wrongly, so captures render one warm-up frame first.
 
@@ -318,7 +319,7 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 
 ## ADR-0012: Engine-native Luau API in M1; Roblox-style compatibility layer in M2
 
-**Status:** Accepted for M1. The size of M2 depends on the open owner question "Must scene scripts run unchanged?" (see Open questions).
+**Status:** Accepted. The owner chose "Demo first" (open question 3, resolved): M1 ships the playable demo on the engine-native API, and M2's goal is the sample scenes running through the Roblox-style layer. Whether a mechanical migration step on the way is acceptable is still open.
 
 **Context.** The owner's target is a set of external Roblox-style projects made of Luau scripts. They use a large Roblox API surface: services, instance classes, events, enums, datatypes and yielding calls. Building all of that before the engine core exists would delay everything.
 
@@ -345,6 +346,8 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 - Never providing compatibility. That fails the owner's goal.
 
 **Consequences.**
+- M1's demo is written against the native API only; no compatibility work blocks M1.
+- M2's exit is the sample scenes running through `re_compat`. If a mechanical migration step is accepted, `re_compat` may cover less of the API surface and a `real migrate` tool covers the rest; that is decided before M2's plan is written.
 - M2 is measured with the validation suite (ADR-0024): compile rate, static gap report, runtime boot.
 - The static scan (ADR-0014) produces the M2 work list from real scripts before M2 starts.
 
@@ -517,13 +520,12 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Status:** Provisional. It needs the owner's agreement as part of the license question (Open question 1).
 
-**Context.** Our allow-list is permissive licenses. A scan of the full M1 lockfile (`cargo metadata` over every crate and feature in DEPENDENCIES.md) found these crates outside it:
+**Context.** Our allow-list is permissive licenses. A scan of the full M1 lockfile (`cargo metadata` over every crate and feature in DEPENDENCIES.md) found these crates outside it. (The first scan also listed `symphonia`, `symphonia-core`, `symphonia-format-riff` and `symphonia-metadata`, MPL-2.0, pulled by kira's `wav` feature. That feature has been dropped: it enables symphonia's RIFF container without the PCM codec, so it could not decode WAV anyway. `re_audio` reads WAV itself, and the symphonia crates are no longer in the build.)
 
 | Crate(s) | License | Pulled by | Linked into |
 |---|---|---|---|
 | `full_moon`, `full_moon_derive` | MPL-2.0 | `re_script_check` (static scan) | tooling builds only |
 | `triple_buffer` | MPL-2.0 | `kira` 0.12.5 (unconditional dependency) | the runtime |
-| `symphonia`, `symphonia-core`, `symphonia-format-riff`, `symphonia-metadata` | MPL-2.0 | `kira`'s `wav` feature | the runtime |
 | `epaint_default_fonts` | `(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0` | egui's `default_fonts` feature | the runtime |
 | `clipboard-win`, `error-code` | BSL-1.0 | `arboard`, through egui-winit's `clipboard` feature (Windows only) | the runtime on Windows |
 
@@ -531,11 +533,11 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - Add BSL-1.0 (Boost) to the allow-list. It is permissive and needs no attribution in binaries.
 - Add `cargo-deny` exceptions, crate by crate, for the MPL-2.0 crates above and for `epaint_default_fonts` (OFL-1.1 and Ubuntu-font-1.0, for the bundled fonts). No other crate may use these licenses.
 - All of these crates are used unmodified.
-- MPL-2.0 code **does** ship in the runtime, through kira. `full_moon` is the only MPL crate confined to tooling: `re_script_check` is reachable only through `re_cli`'s `tooling` feature, and `cargo xtask check-graph` proves that `re_cli --no-default-features` does not reach it.
+- MPL-2.0 code **does** ship in the runtime, but only `triple_buffer`, an unconditional dependency of kira. `full_moon` is the only MPL crate confined to tooling: `re_script_check` is reachable only through `re_cli`'s `tooling` feature, and `cargo xtask check-graph` proves that `re_cli --no-default-features` does not reach it.
 
 **Alternatives.**
 - Write our own Luau parser instead of full_moon.
-- Drop kira's `wav` feature and decode WAV ourselves. This removes the symphonia crates but not `triple_buffer`.
+- Keep kira's `wav` feature. Rejected: it brought four more MPL-2.0 crates into the runtime and could not decode PCM WAV, so `re_audio` decodes WAV itself. Dropping it does not remove `triple_buffer`.
 - Disable egui's `default_fonts` and ship fonts under a permissive license. The UI then needs its own font setup.
 - A different audio crate. The platform spike verified kira, including its headless fallback.
 
@@ -836,18 +838,18 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 ## Open questions for the owner
 
 1. **License.**
-   - The repository has no `LICENSE` file. The render prototype's `Cargo.toml` declares `MIT OR Apache-2.0`.
+   - The repository has no `LICENSE` file. The crates declare `MIT OR Apache-2.0`, the render prototype's value.
    - Recommendation: dual MIT / Apache-2.0, the usual choice for Rust, which matches most crates' defaults and the prototype. Add `LICENSE-MIT` and `LICENSE-APACHE` at the root.
-   - This also needs a decision on the exceptions in ADR-0019. MPL-2.0 code ships **in the runtime** through kira (`triple_buffer`, and the symphonia crates through the `wav` feature), not only in tooling (full_moon). egui's default fonts bring OFL-1.1 and Ubuntu-font-1.0. Do you accept these, or should we drop kira's `wav` feature, replace kira, or replace the default fonts?
-   - Until the owner decides, the workspace `license` field is left as the prototype's value, and the README says the license is not final.
+   - This also needs a decision on the exceptions in ADR-0019. MPL-2.0 code ships **in the runtime** through one crate, kira's unconditional dependency `triple_buffer` (used unmodified), not only in tooling (full_moon). kira's `wav` feature and its symphonia crates have been dropped (`re_audio` decodes WAV itself). egui's default fonts bring OFL-1.1 and Ubuntu-font-1.0. Do you accept these, or should we replace kira or the default fonts?
+   - Until the owner decides, the workspace `license` field keeps that value, and the README says the license is not final.
 2. **Which Luau type checker do we ship?** The engine cannot type-check in process today, because mlua's vendored Luau has no Analysis module (ADR-0013). The options:
    - **(a) An external official checker** (the current default). luau-lsp 1.70.1 works unpatched and also serves editors; a patched luau-analyze 0.740 (27-line `--definitions` patch, a 220 s source build) is the alternative. Both are MIT tools, not code dependencies, so the crates.io-only rule does not apply, but users must install them (or we bundle the release binaries), and the patched analyzer needs a rebase on each Luau upgrade.
    - **(b) Vendor Luau's Analysis sources** (MIT) into a crate of our own and build them with `cc`. This gives in-process checking at mlua's exact Luau version, on every platform, with no external binary. It is a C++ build we would maintain.
    - **(c) The `luau-analyze` 0.0.1 crate.** The scripting spike rejected it: few downloads, strict-only, single-file, behind mlua's Luau version, no Windows support, and it cannot link into the same binary as mlua.
    - Recommendation: (a) with luau-lsp for M1 and M2, and revisit (b) if bundling external binaries proves painful.
-3. **Must the external sample scenes' scripts run unchanged?**
-   - The current plan is an engine-native Luau API in M1 and a Roblox-style compatibility layer in M2 (ADR-0012).
+3. **Must the external sample scenes' scripts run unchanged?** **Resolved (owner: "Demo first").** M1 ships the playable demo on the engine's own API; M2's goal is the sample scenes running through the Roblox-style layer (ADR-0012, Accepted). Still open: whether a mechanical migration step on the way is acceptable. The background below is kept for that part.
+   - The plan is an engine-native Luau API in M1 and a Roblox-style compatibility layer in M2 (ADR-0012).
    - "Unchanged" means every global, service, class, event, enum and datatype those scripts touch must exist with matching behaviour, including yielding calls and deprecated members.
    - The alternative is "runs after a mechanical migration done by a tool". It is much cheaper, and it could be offered as a `real migrate` command.
-   - The answer sets the size of M2.
+   - The answer to the migration question sets the size of M2.
 4. **Windows and macOS priority.** When should these platforms start blocking merges? M3 is the current plan.
