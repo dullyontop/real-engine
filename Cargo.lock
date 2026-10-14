@@ -66,6 +66,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "cmake"
+version = "0.1.58"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -287,6 +296,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "oxijolt"
+version = "1.1.0+jolt-5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f214485d51e2176f55fec9a516b4afe43a4347d82ab9c3592c0ab0aaff0badb"
+dependencies = [
+ "oxijolt-sys",
+]
+
+[[package]]
+name = "oxijolt-sys"
+version = "1.1.0+jolt-5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3c0dd5f7bb20177655091e4e1c291779d1e4408509f30b4920a82c5e79967db"
+dependencies = [
+ "anyhow",
+ "cmake",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -388,6 +416,17 @@ dependencies = [
 [[package]]
 name = "re_noise"
 version = "0.1.0"
+
+[[package]]
+name = "re_physics"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "oxijolt",
+ "re_core",
+ "re_types",
+ "tracing",
+]
 
 [[package]]
 name = "re_types"
