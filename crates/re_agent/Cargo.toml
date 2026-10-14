@@ -1,0 +1,19 @@
+[package]
+name = "re_agent"
+description = "Real Engine agent tooling: the single-writer project lock and the editor socket (client and server loop)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Tooling crate (ADR-0027): re_cli links it only with the `tooling` feature.
+# No tokio here (`cargo xtask check-graph`): the editor socket is plain std.
+[dependencies]
+re_core.workspace = true
+re_command.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
