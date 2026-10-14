@@ -2710,6 +2710,7 @@ dependencies = [
  "postcard",
  "re_core",
  "re_types",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",

@@ -152,3 +152,78 @@ fn playhead_loops_and_clamps() {
     backwards.advance(0.5, 2.0);
     assert!((backwards.clip_time(2.0) - 1.5).abs() < 1e-6);
 }
+
+#[test]
+fn non_finite_times_never_panic() {
+    for interpolation in [
+        Interpolation::Step,
+        Interpolation::Linear,
+        Interpolation::CubicSpline,
+    ] {
+        let mut clip = clip(interpolation);
+        if interpolation == Interpolation::CubicSpline {
+            // Three values per key: in-tangent, value, out-tangent.
+            for t in &mut clip.targets {
+                let c = t.translation.as_mut().unwrap();
+                c.values = c
+                    .values
+                    .iter()
+                    .flat_map(|&v| [Vec3::ZERO, v, Vec3::ZERO])
+                    .collect();
+                let r = t.rotation.as_mut().unwrap();
+                r.values = r
+                    .values
+                    .iter()
+                    .flat_map(|&q| {
+                        [
+                            Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                            q,
+                            Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+                        ]
+                    })
+                    .collect();
+            }
+        }
+        let sampler = Sampler::new(clip).unwrap();
+        // NaN holds the first key; the infinities clamp to the ends.
+        let nan = sampler.sample_target(0, f32::NAN).unwrap();
+        assert!(
+            close(nan.translation.unwrap(), Vec3::ZERO),
+            "{interpolation:?}"
+        );
+        assert!(nan.rotation.unwrap().is_finite(), "{interpolation:?}");
+        let low = sampler.sample_target(0, f32::NEG_INFINITY).unwrap();
+        assert!(
+            close(low.translation.unwrap(), Vec3::ZERO),
+            "{interpolation:?}"
+        );
+        let high = sampler.sample_target(0, f32::INFINITY).unwrap();
+        assert!(
+            close(high.translation.unwrap(), Vec3::new(2.0, 4.0, 0.0)),
+            "{interpolation:?}"
+        );
+        assert_eq!(sampler.sample(f32::NAN).len(), 1);
+    }
+}
+
+#[test]
+fn nan_duration_and_speed_never_stick_or_panic() {
+    let mut c = clip(Interpolation::Linear);
+    c.duration = f32::NAN;
+    let sampler = Sampler::new(c).unwrap();
+    assert_eq!(sampler.wrap_time(0.5, false), 0.0);
+    assert_eq!(sampler.wrap_time(0.5, true), 0.0);
+
+    let mut head = Playhead {
+        looping: false,
+        ..Playhead::default()
+    };
+    assert_eq!(head.clip_time(f32::NAN), 0.0);
+    head.advance(0.5, 2.0);
+    head.speed = f32::NAN;
+    head.advance(0.5, 2.0);
+    assert_eq!(head.time, 0.5, "a NaN speed leaves the time alone");
+    head.speed = 1.0;
+    head.advance(2.0, 2.0);
+    assert!(head.is_finished(2.0));
+}
