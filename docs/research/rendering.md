@@ -1,9 +1,9 @@
 # Rendering, windowing and editor UI: spike notes
 
-These are the technical notes from the Real Engine rendering spike. Its code is in [`prototypes/render/`](../../prototypes/render/), a standalone Cargo project with its own Cargo.lock; the [README](../../prototypes/render/README.md) there says how to build it and run its tests.
+These are the technical notes from the Real Engine rendering spike. They are historical: the spike's code was a standalone Cargo project at `prototypes/render/`, which M1 WP1 ported into [`crates/re_render/`](../../crates/re_render/) and then deleted. Paths, binaries and commands below refer to that prototype; the renderer's current tests are run as the README's "Running the renderer tests" section describes.
 
 - Date: 2026-10-14
-- Code: `prototypes/render/`
+- Code: `prototypes/render/` (historical; ported into `crates/re_render/` and removed)
   - `src/`, `tests/` and `scripts/` hold the code, and Cargo.lock pins every dependency.
   - The spike's run logs, PNG captures and copies of the upstream files it read are not in this repository. Measurements and image descriptions below come from those runs; the binaries regenerate the images (§11).
 - Test machine:
@@ -791,6 +791,9 @@ Release cadence: v27.0.0 on 2025-10-01, v28.0.0 on 2025-12-17, v29.0.0 on 2026-0
 9. Could `opt-level = 1/2` for wgpu-core, naga and egui in dev builds make debug frame times usable? Not measured.
 
 ## 11. How to reproduce
+
+Historical: these commands ran in the deleted prototype. For the ported renderer, see `crates/re_render/` (`cargo test --locked -p re_render -- --test-threads=1`, `RE_BACKENDS=gl` for GL, and the `windowed_smoke` and `re-imgdiff` examples).
+
 ```sh
 cd prototypes/render
 export CARGO_BUILD_JOBS=2

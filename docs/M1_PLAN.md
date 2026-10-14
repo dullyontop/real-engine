@@ -12,9 +12,9 @@ This plan splits M1 into nine work packages (WPs): WP0 to WP8.
 
 **Every WP section below is a self-contained brief.** An engineer (or agent) who has only this repository and the research folder can do the WP from its section plus the documents it links. Each section gives the goal, the owned paths, the frozen interfaces it consumes and where they are defined, the spike code to reuse, what to build, the non-goals, the acceptance commands and the definition of done.
 
-**Research folder.** The design-phase spikes live in a private research folder at **`/mnt/project-files/real-engine/research/`**. It is **not** part of this public repository, and nothing from it is committed except code that a WP ports on purpose (with the clean-port rule below). Paths written as `research/…` below are relative to that folder. Each WP ports the files listed in its Reuse table into its own crate, with their tests, so once a WP lands the repository no longer needs the research folder for that area. The render prototype is the exception: it is already in this repository at `prototypes/render/`.
+**Research folder.** The design-phase spikes live in a private research folder at **`/mnt/project-files/real-engine/research/`**. It is **not** part of this public repository, and nothing from it is committed except code that a WP ports on purpose (with the clean-port rule below). Paths written as `research/…` below are relative to that folder. Each WP ports the files listed in its Reuse table into its own crate, with their tests, so once a WP lands the repository no longer needs the research folder for that area. The render prototype was the exception: it lived in this repository at `prototypes/render/` until WP1 ported it into `crates/re_render/` and deleted it.
 
-**Ownership rule.** Every path in the repository belongs to exactly one WP, and a WP only edits files it owns. Ownership can be finer than a crate: `crates/re_cli/src/tooling/` is split between WP6, WP7 and WP8, as listed below. One handover is planned: WP6 creates `crates/re_cli/src/tooling/{mcp,agent,editor}.rs` as stubs in its milestone "app" PR, so that `re_cli` compiles; from that merge on, `mcp.rs` and `agent.rs` belong to WP7 and `editor.rs` to WP8, and WP6 never edits them again. Each stub exposes exactly two names, which WP6's `tooling/mod.rs` and clap tree use and which are frozen at that merge: `pub struct McpArgs` / `AgentArgs` / `EditorArgs` (deriving `clap::Args`; the owner may add fields, or replace the struct with a `pub use` of a type with the same name) and `pub fn run(args: <X>Args, project: &std::path::Path) -> anyhow::Result<std::process::ExitCode>`. One shared file has a named exception: in `crates/re_cli/Cargo.toml` (owned by WP6), WP7 may add the dependency and dev-dependency lines for `re_agent` and `re_mcp` and add `"dep:re_mcp"` to the `tooling` feature, and WP8 may do the same for `re_editor`; neither changes any other line. Two kinds of generated file are exceptions: `Cargo.lock` and the files in `schemas/`. They belong to WP0, but any WP may commit a change that `cargo` or `cargo xtask schemas` produced. Nobody edits them by hand. After WP0 merges, `README.md` and `docs/` (except `docs/research/scripting.md`, which WP3 owns) are maintained by the maintainer; other WPs list the doc changes they need in their PR description. A change to a frozen contract (see "Cross-WP contracts") needs a PR reviewed by the WP that defines it and by every WP that consumes it.
+**Ownership rule.** Every path in the repository belongs to exactly one WP, and a WP only edits files it owns. Ownership can be finer than a crate: `crates/re_cli/src/tooling/` is split between WP6, WP7 and WP8, as listed below. One handover is planned: WP6 creates `crates/re_cli/src/tooling/{mcp,agent,editor}.rs` as stubs in its milestone "app" PR, so that `re_cli` compiles; from that merge on, `mcp.rs` and `agent.rs` belong to WP7 and `editor.rs` to WP8, and WP6 never edits them again. Each stub exposes exactly two names, which WP6's `tooling/mod.rs` and clap tree use and which are frozen at that merge: `pub struct McpArgs` / `AgentArgs` / `EditorArgs` (deriving `clap::Args`; the owner may add fields, or replace the struct with a `pub use` of a type with the same name) and `pub fn run(args: <X>Args, project: &std::path::Path) -> anyhow::Result<std::process::ExitCode>`. One shared file has a named exception: in `crates/re_cli/Cargo.toml` (owned by WP6), WP7 may add the `re_agent` and `re_mcp` dependency lines, as `optional = true`, plus their dev-dependency lines, and add `"dep:re_agent"` and `"dep:re_mcp"` to the `tooling` feature, and WP8 may do the same for `re_editor`; neither changes any other line. Both are tooling crates, so a plain (non-optional) line would link them into the `--no-default-features` build, which `cargo xtask check-graph` refuses. `re_agent` is needed first by WP6's `real do` PR (`tooling/do_cmd.rs`): whichever of that PR and WP7's first `re_cli` change lands first adds the optional `re_agent` line and `"dep:re_agent"`, and the other leaves them as they are. Two kinds of generated file are exceptions: `Cargo.lock` and the files in `schemas/`. They belong to WP0, but any WP may commit a change that `cargo` or `cargo xtask schemas` produced. Nobody edits them by hand. After WP0 merges, the maintainer (the lead) takes over every path WP0 owns: the root `Cargo.toml` (including `[workspace.dependencies]`), `Cargo.lock` and `schemas/` (both still under the generated-file exception above), `rust-toolchain.toml`, `deny.toml`, `.cargo/config.toml`, `.gitignore`, `.github/`, `tools/xtask/`, `tools/derive_alias_check/`, `README.md`, `docs/` (except `docs/research/scripting.md`, which WP3 owns) and the WP0 crates (`re_core`, `re_noise`, `re_types`, `re_reflect`, `re_scene`, `re_command`). The maintainer reviews every change to a frozen contract and acts as "the WP that defines it" for WP0's contracts. WP threads do not edit these files: each WP's PR description lists the doc, ADR and dependency changes it needs (a new crate in the workspace, a dependency from `docs/DEPENDENCIES.md`, an ADR amendment), and the maintainer makes them. A change to a frozen contract (see "Cross-WP contracts") needs a PR reviewed by the maintainer, by the WP that defines it and by every WP that consumes it.
 
 ## Common rules for every WP
 
@@ -40,7 +40,7 @@ This plan splits M1 into nine work packages (WPs): WP0 to WP8.
   - Choose the backend with `RE_BACKENDS=vulkan` (the default) or `RE_BACKENDS=gl`.
   - A winit `EventLoop` can only be created once per process and only on the main thread. Windowed tests are therefore separate binaries or examples run under `xvfb-run -a -s "-screen 0 1280x720x24"`. They are never `#[test]` functions.
 - **Errors.** Every user-facing error is a `re_core::Diagnostic` with a code from the crate's range ([ARCHITECTURE.md §7](ARCHITECTURE.md#7-diagnostics-and-error-model)). Each code has an explain page `crates/<crate>/explain/RE####.md`, and the crate exports `pub const DIAGNOSTICS: &[re_core::DiagInfo]`.
-- **Clean ports.** Code ported from spikes or the prototype keeps its tests. Comments, test data and report sections that quote or name external projects are removed during the port; each WP's Reuse table names the known spots (for example `src/input.rs` in WP5, core.md §8 and the demo ids in WP0, and scripting.md's header and §3 in WP3).
+- **Clean ports.** Code ported from spikes keeps its tests. Comments, test data and report sections that quote or name external projects are removed during the port; each WP's Reuse table names the known spots (for example `src/input.rs` in WP5, core.md §8 and the demo ids in WP0, and scripting.md's header and §3 in WP3).
 - **Lints.** `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` and `cargo fmt --all --check` must pass. Ported spike code is made clippy-clean during the port.
 - **Output files.** Acceptance commands write into `out/`, which is git-ignored. Create it first with `mkdir -p out`.
 - **Definition of done (every WP).** The WP's PRs are green on every required CI job of ADR-0023 ([DECISIONS.md](DECISIONS.md#adr-0023-ci-linux-with-lavapipe-blocks-merges-windows-and-macos-are-reported-only)), reviewed and **merged to `main`**; the WP's acceptance commands pass in the reference container; no file outside the WP's owned paths changed (except tool-generated `Cargo.lock` and `schemas/`); every diagnostic code the WP uses has an explain page.
@@ -56,13 +56,13 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | Plain-data types: `EntityId`, `RenderSnapshot`, `DrawItem`, `Camera`, `Light`, `MeshHandle`, `MaterialHandle`, `TextureHandle`, `MaterialDesc`, `DebugLine`, `MeshData`, `Aabb`, `ClipData`, `PhysicsCmd`, `BodyDesc`, `ShapeDesc`, `BodyPose`, `ContactEvent`, `RayHit`, `CharacterDesc`, `CharacterState`, `AudioCmd`, `ActionFrame`, `GraphDoc`, `ReplayDoc` | `crates/re_types/src/*.rs` (module per area, re-exported at the crate root) | WP0 | WP0 PR "contracts" | all |
 | `HostServices` trait (what scripts may ask of the runtime) | `crates/re_types/src/host.rs` | WP0 | WP0 PR "contracts" | WP3 calls it, WP6 implements it |
 | `Diagnostic`, `DiagInfo`, `Phase`, `FixedClock`, `TaskPool`, `Events<T>`, `profile_scope!`, `init_logging` | `crates/re_core/src/*.rs` | WP0 | WP0 PR "contracts" | all |
-| Component registry: `Registry`, `ComponentKey`, `ComponentSchema`, `FieldSchema`, `FieldType`, `ComponentOrigin`, `Value`, `Color`, `Reflect`, `component!`, `field_enum!`, `Doc` | `crates/re_reflect/src/{value,registry,doc,schema}.rs` | WP0 | WP0 PR "entity core" | WP3, WP4, WP6, WP7, WP8 |
-| `World` facade (including `World::fork`), `Entity`, `StableId`, `IdIndex`, the built-in components and their fields, `SceneDoc` load/save, `PrefabFile`, procedural sources (`Procedural`, `GraphSource`, `Generated`, `Overrides`, `GenNode`, `SceneFragment`, `GenContext`, `Generators`, `RegenReport`), `suppress`, `state_hash` | `crates/re_scene/src/*.rs` | WP0 | WP0 PR "entity core" | WP3, WP4, WP6, WP7, WP8 |
+| Component registry: `Registry`, `ComponentKey`, `ComponentSchema`, `FieldSchema`, `FieldType`, `ComponentOrigin`, `Value`, `Color`, `Reflect`, `component!`, `field_enum!`, `Doc`, `ReflectError`, `suggest` | `crates/re_reflect/src/*.rs` | WP0 | WP0 PR "entity core" | WP3, WP4, WP6, WP7, WP8 |
+| `World` facade (including `World::fork`), `Entity`, `StableId`, `IdIndex`, the built-in components and their fields, `SceneDoc` load/save, `PrefabFile`, procedural sources (`Procedural`, `GraphSource`, `Generated`, `Overrides`, `GenNode`, `SceneFragment`, `GenContext`, `Generators`, `RegenReport`), `suppress(id)` (the full generated id `<source id>/<key>`; a bare key is refused with RE1210), `state_hash` | `crates/re_scene/src/*.rs` | WP0 | WP0 PR "entity core" | WP3, WP4, WP6, WP7, WP8 |
 | `Op`, `Transaction`, `Origin`, `History`, `CommandRegistry<C>`, `EditTarget`, `CommandSpec`, `Tier`, `CommandOutcome`, `PolicyCheck`, `remote::{channel, EngineHandle, EngineReceiver, EngineRequest}` | `crates/re_command/src/*.rs` | WP0 | WP0 PR "entity core" | WP3, WP4, WP6, WP7, WP8 |
 | `compile_check(source, chunk_name) -> Vec<Diagnostic>` | `crates/re_script/src/lib.rs` | WP3 | WP3's first PR | WP7 (`script.write`) |
 | `corpus::run`, `scan`, `types::run` | `crates/re_script_check/src/` | WP3 | WP3 exit | WP6 (`real check`, verify stage 3) |
-| `Gpu`, `Renderer` (`render`, `paint_ui`, `upload_*`, `release_*`, `stats`), `UiFrame`, `Capture` | `crates/re_render/src/` | WP1 | WP1 exit | WP6, WP8 |
-| `Physics` (`apply`, `step`, `poses_into`, `velocity`, `events`, queries, characters, `save_state` / `restore_state`) | `crates/re_physics/src/` | WP2 | WP2 exit | WP6 |
+| `Gpu`, `Renderer` (`render`, `paint_ui`, `upload_*`, `create_material`, `release_*`, `stats`), `RendererSettings`, `UiFrame`, `Capture` | `crates/re_render/src/` | WP1 | WP1 exit | WP6, WP8 |
+| `Physics` (`new`, `config`, `apply`, `step`, `poses_into`, `velocity`, `pose`, `is_awake`, `character`, `events`, `take_diagnostics`, `body_count`, `character_count`, `jobs_queued`, `save_state` / `restore_state`, `motion_state` / `apply_motion_state`, queries `raycast` / `shape_cast` / `overlap_sphere`), `PhysicsConfig`, `LayerTable`, `QueryFilter`, `PhysicsSnapshot`, `MotionState`, `DIAGNOSTICS`, `codes` | `crates/re_physics/src/` | WP2 | WP2 exit | WP6 |
 | `ProcGraph`, `NodeRegistry`, `Evaluator`, `EvalReport`, `GraphStore`, `register_generator`, `register_commands` | `crates/re_proc/src/` | WP4 | WP4 exit | WP6 |
 | `AssetServer`, `load_material`, `AssetWatcher`, `RawInput`, `ActionMap`, `InputConfig`, `Replay`, `Audio`, `Sampler`, `Tween` | WP5 crates | WP5 | WP5 exit | WP6 |
 | `App::open`, `App::serve(EngineReceiver)`, `AppConfig`, `verify::{run, VerifyStage}` | `crates/re_app/src/` | WP6 | WP6 milestone "app" | WP7, WP8 |
@@ -91,7 +91,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 
 **Depends on:** nothing. It consumes no frozen interface; it defines the first ones.
 
-**Do not add a `LICENSE` file.** The license is an open owner question ([DECISIONS.md, open question 1](DECISIONS.md#open-questions-for-the-owner)). Crates declare `license = "MIT OR Apache-2.0"` (the prototype's value) and `publish = false`, pending that decision.
+**Do not add a `LICENSE` file.** The license is an open owner question ([DECISIONS.md, open question 1](DECISIONS.md#open-questions-for-the-owner)). Crates declare `license = "MIT OR Apache-2.0"` (the render prototype's value) and `publish = false`, pending that decision.
 
 ### Reuse
 
@@ -146,7 +146,7 @@ All paths are in the private research folder `/mnt/project-files/real-engine/res
    - `deny.toml`: the license allow-list and per-crate exceptions of DEPENDENCIES.md (policy 4), `[licenses] private = { ignore = true }` for our own unpublished crates, bans on a second copy of `wgpu`, `winit`, `egui`, `mlua`, `bevy_ecs` or `glam` 0.34 inside our crates, `[graph] targets` limited to the three desktop triples, `[bans] multiple-versions = "warn"`, and the duplicate skip-list of DEPENDENCIES.md ("Known duplicate versions"). Skip entries for crates not yet in the tree only produce warnings.
    - `.gitignore` adds `out/`, `**/.real/*` and `!**/.real/agent-policy.toml` (the `**/` matters: a pattern with an inner `/` is otherwise anchored to the repository root; so a project's committed agent policy, such as `examples/island/.real/agent-policy.toml`, is tracked while the rest of `.real/` is ignored), keeping `Cargo.lock` tracked.
 2. **`tools/xtask`** (a plain binary crate using `cargo metadata` output through `serde_json`; no engine crates):
-   - `cargo xtask check-graph`: the crate dependency rules of ARCHITECTURE §2 ("must not depend on" column), including "subsystem crates reach only the contract layer", "`re_proc` and `re_geom` reach no wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` name `bevy_ecs`", and "`re_cli --no-default-features` reaches none of tokio, rmcp and full_moon". Rules about crates that do not exist yet pass vacuously.
+   - `cargo xtask check-graph`: the crate dependency rules of ARCHITECTURE §2 ("must not depend on" column), including "subsystem crates reach only the contract layer", "`re_proc` and `re_geom` reach no wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` name `bevy_ecs`", and "`re_cli --no-default-features` reaches none of the tooling crates (`re_script_check`, `re_agent`, `re_mcp`, `re_editor`), tokio, rmcp and full_moon". Rules about crates that do not exist yet pass vacuously.
    - `cargo xtask dupes` (the duplicate gate): `cargo tree -d -e normal --workspace --all-features --target <triple>` (all features, as `deny.toml` `[graph]`) for each of `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, compared with the skip-list in `deny.toml` as **(name, version) pairs**. The same version listed twice (a host and a target build with different features) is not a duplicate.
    - `cargo xtask explain`: scans `crates/*/src/**/*.rs` for string literals matching `"RE[0-9]{4}"`; each code must have `crates/<crate>/explain/RE####.md`, lie inside the crate's range (the table in ARCHITECTURE §7, copied into xtask), and be used by one crate only; each page must be referenced by a string literal ending in `explain/RE####.md` (the `include_str!` of its `DIAGNOSTICS` entry) in the crate's sources. Paths in its messages use `/` on every OS.
    - `cargo xtask schemas [--check]`: if `crates/re_cli` exists, runs `cargo run --locked -p re_cli -- schema --out schemas/`; with `--check` it fails when the committed files differ. Until `re_cli` exists it prints `skipped: re_cli not built yet`.
@@ -256,14 +256,14 @@ All paths are in the private research folder `/mnt/project-files/real-engine/res
    - `Registry::describe() -> serde_json::Value` and `Registry::scene_json_schema() -> serde_json::Value` (JSON Schema 2020-12).
    - Codes RE1000–1199 (unknown component or field, type mismatch, out-of-range f32, non-finite float, unknown enum variant, duplicate component name).
 8. **`re_scene`** (depends on `re_reflect`, `re_types`, `re_core`, `bevy_ecs`, `glam`, `serde`, `serde_json`, `indexmap`, `blake3`, `thiserror`). It re-exports `bevy_ecs::entity::Entity` as `re_scene::Entity`. Its public API:
-   - `pub use bevy_ecs as ecs;` so that other crates write typed queries without depending on bevy_ecs themselves (`cargo xtask check-graph` enforces that). **Bevy derives in other crates:** `#[derive(Component)]` and `#[derive(Resource)]` expand to a bare `bevy_ecs::` path when the crate does not depend on `bevy_ecs` (bevy_macro_utils' fallback), so a crate that uses them (WP4's `GraphStore`, WP6's sync components and resources) puts `use re_scene::ecs as bevy_ecs;` at its crate root. `re_scene`'s crate docs say so, and a small workspace member `tools/derive_alias_check` (WP0; `publish = false`; it depends only on `re_scene` and derives a `Component` and a `Resource` through the alias, with one test that inserts and queries them) proves it compiles on every `cargo test --workspace`.
-   - `World { pub ecs: bevy_ecs::world::World, pub registry: Registry, pub generators: Generators }` with `new()`, `entity(id)`, `id_of(entity)`, `new_id()`, `find(path_of_names)`, `get(id, component, field) -> Value`, `get_doc`, `set(id, component, field, value)`, `regenerate_changed() -> RegenReport`, `propagate()` (incremental), `update()` (both), `describe()`, `scene_json_schema()`, `suppress(key)`, `despawn_runtime(entity)` (for game scripts: suppresses generated entities instead of recording an override), `state_hash() -> blake3::Hash`, and `fork(&self) -> World`. **`fork`** is the world copy that `play.run` and `graph.generate` run on: a fresh `World` with the same registry (built-in, Rust and script-defined components, script components registered first), the same generators, and every entity copied by value through the registry, **including generated entities** (with their `Generated` keys), overrides and the session's suppressions. Ids, `ChildOf` order and `state_hash` are identical. ECS resources are not copied, except `IdIndex`, which hooks rebuild; a caller that needs one of its own resources in the copy (for example WP4's `GraphStore`) clones it in. History is not copied.
+   - `pub use bevy_ecs as ecs;` so that other crates write typed queries without depending on bevy_ecs themselves (`cargo xtask check-graph` enforces that). **Bevy derives in other crates:** `#[derive(Component)]` and `#[derive(Resource)]` expand to a bare `bevy_ecs::` path when the crate does not depend on `bevy_ecs` (bevy_macro_utils' fallback), so a crate that uses them (WP4's `GraphStore`, WP6's sync components and resources) puts `use re_scene::ecs as bevy_ecs;` in every module that uses the derives (a `use` is visible only in its own module, so the crate root alone covers only derives written there). The same holds for `re_reflect::component!`, which derives `Component`. `re_scene`'s crate docs say so, and a small workspace member `tools/derive_alias_check` (WP0; `publish = false`; it depends only on `re_scene` and `re_reflect`, never on `bevy_ecs`, and derives a `Component` and a `Resource` and declares `re_reflect::component!` types with a `requires(...)` clause through the alias, at the crate root and in a submodule, with one test that inserts and queries them) proves it compiles on every `cargo test --workspace`.
+   - `World { pub ecs: bevy_ecs::world::World, pub registry: Registry, pub generators: Generators }` with `new()`, `entity(id)`, `id_of(entity)`, `new_id()`, `find(&self, path_of_names)`, `get(id, component, field) -> Value`, `get_doc`, `set(id, component, field, value)`, `regenerate_changed() -> RegenReport`, `propagate()` (incremental), `update()` (both), `describe()`, `scene_json_schema()`, `suppress(id)` (the full generated id `<source id>/<key>`, not a bare key, which is refused with RE1210), `despawn_runtime(entity)` (for game scripts: suppresses generated entities instead of recording an override), `state_hash() -> blake3::Hash`, and `fork(&self) -> World`. **`fork`** is the world copy that `play.run` and `graph.generate` run on: a fresh `World` with the same registry (built-in, Rust and script-defined components, script components registered first), the same generators, and every entity copied by value through the registry, **including generated entities** (with their `Generated` keys), overrides and the session's suppressions. Ids, `ChildOf` order and `state_hash` are identical. ECS resources are not copied, except `IdIndex`, which hooks rebuild; a caller that needs one of its own resources in the copy (for example WP4's `GraphStore`) clones it in. History is not copied.
    - Schedules use `Schedule::set_executor(SingleThreadedExecutor::new())` and no `par_iter`, so bevy_tasks' compute pool (default name `TaskPool (n)`, one thread per core, created lazily) never starts (ADR-0005, ADR-0007).
    - `ids`: `StableId` (immutable component; `#[component(immutable, on_insert = …, on_discard = …)]`; 0.20 calls the old `on_replace` hook `on_discard`), `IdIndex`, `IdGen` (ids like `e7kq2m9x4tb`; `/` reserved for generated ids; uniqueness checked).
    - `hierarchy`: helpers over bevy's `ChildOf` / `Children` (`add_child`, `insert_child(index, child)`, recursive despawn), cycle checks, `propagate_all`, `propagate_changed`.
    - `scene`: `SceneDoc { format: "real-engine/scene", version, script_components, entities }`, `EntityDoc { id, name, parent, components, overrides }`, `SaveOptions { omit_defaults }`, `World::save`, `World::load` (atomic: a failed load leaves the world untouched), `to_json`, `from_json`, `collapse_scalar_lists`, `migrate`. Order: roots sorted by id, then depth-first in `Children` order; components sorted by name; fields in declaration order. An optional `$schema` key is accepted and written back unchanged. **New compared with the spike:** a top-level `script_components` list holds the `ComponentSchema` of every script-origin component used in the file; `load` registers them, or checks they match what is already registered (a mismatch is a diagnostic).
-   - `prefab`: `PrefabFile` (the same document with `"format": "real-engine/prefab"`) and `PrefabFile::instantiate(key_prefix) -> SceneFragment`, whose keys are `<key_prefix>/<prefab entity id>`.
-   - `procedural`: `Procedural { generator: string, seed: i64 }`, `GraphSource { graph: string, builder: string, params: string }`, `Generated { source, key }` (runtime only), `Overrides` with entries `{ target, component, field, value }` or `{ target, deleted: true }`, `GenNode { key, name, parent_key, components }`, `type SceneFragment = Vec<GenNode>`, `GenContext` (`param`, `random(key)`, and **new**: `resource::<R>()` read access to ECS resources), `Generators::register(GeneratorInfo { name, doc, params_component, run, fingerprint_extra })` (**new**: `fingerprint_extra: Option<fn(&GenContext) -> u64>`, so a generator can fold external input such as a graph document into the fingerprint), and `RegenReport { spawned, updated, despawned, orphans, released_assets }`.
+   - `prefab`: `PrefabFile` (the same document with `"format": "real-engine/prefab"`) and `PrefabFile::instantiate(&Registry, key_prefix) -> Result<SceneFragment, SceneError>`, whose keys are `<key_prefix>/<prefab entity id>` (the registry converts the field values; entity-typed fields must be null).
+   - `procedural`: `Procedural { generator: string, seed: i64 }`, `GraphSource { graph: string, builder: string, params: string }`, `Generated { source, key }` (runtime only), `Overrides` with entries `{ target, component, field, value }` or `{ target, deleted: true }`, `GenNode { key, name, parent_key, components }`, `type SceneFragment = Vec<GenNode>`, `GenContext` (`param`, `random(key)`, and **new**: `resource::<R>()` read access to ECS resources), `Generators::register(GeneratorInfo { name, doc, params_component, run, fingerprint_extra })` (**new**: `fingerprint_extra: Option<fn(&GenContext) -> u64>`, so a generator can fold external input such as a graph document into the fingerprint), and `RegenReport { sources, spawned, updated, despawned, orphans, released_assets, diagnostics }` (`diagnostics` holds generator failures, `RE1207`, and overrides that could not be applied, `RE1209`; orphans are data, not diagnostics).
    - **Changes to the spike's regeneration** (ADR-0017): apply the new fragment as a diff, so an entity whose key survives keeps its `Entity` and is updated in place; spawn new keys and despawn vanished ones; list `MeshRef` / `MaterialRef` values that are no longer referenced in `released_assets`; re-apply overrides by key; skip keys with a deletion override or a suppression; keep orphans and report them; a failing generator leaves the old output in place.
    - Built-in components, registered by `register_builtins` (field names, types and starting defaults below; **frozen at the "entity core" PR**, after review by the consuming WP named in the last column):
 
@@ -276,25 +276,33 @@ All paths are in the private research folder `/mnt/project-files/real-engine/res
      | `Camera` | `fov_y_deg: f32 = 60`, `near: f32 = 0.1`, `far: f32 = 1000`, `active: bool = false` | WP6 |
      | `Light` | `kind: enum {Directional, Point} = Point`, `color: color = white`, `intensity: f32 = 800`, `range: f32 = 20`, `shadows: bool = false` | WP6 |
      | `RigidBody` | `kind: enum {Static, Dynamic, Kinematic} = Static`, `mass: f32 = 1`, `friction: f32 = 0.5`, `restitution: f32 = 0`, `linear_damping: f32 = 0.05`, `angular_damping: f32 = 0.05` | WP2 |
-     | `Collider` | `shape: enum {Box, Sphere, Capsule, Convex, Mesh, Heightfield} = Box`, `half_extents: vec3 = 0.5`, `radius: f32 = 0.5`, `half_height: f32 = 0.5`, `source: string = ""` (mesh or heightfield asset for Convex, Mesh, Heightfield), `layer: i32 = 0`, `group: i32 = 0`, `sensor: bool = false`, `enabled: bool = true` | WP2 |
-     | `CharacterController` | `height: f32 = 1.8`, `radius: f32 = 0.4`, `max_slope_deg: f32 = 45`, `step_height: f32 = 0.3`, `mass: f32 = 70`, `inner_body: bool = true` | WP2 |
+     | `Collider` | `shape: enum {Box, Sphere, Capsule, Convex, Mesh, Heightfield} = Box`, `half_extents: vec3 = 0.5`, `radius: f32 = 0.5`, `half_height: f32 = 0.5`, `source: string = ""` (mesh or heightfield asset for Convex, Mesh, Heightfield), `layer: i32 = 0` (valid 0..=65535), `groups: i64 = 1` (bit mask, valid 0..=u32::MAX), `sensor: bool = false`, `enabled: bool = true` | WP2 |
+     | `CharacterController` | `height: f32 = 1.8`, `radius: f32 = 0.4`, `max_slope_deg: f32 = 45`, `step_height: f32 = 0.3`, `mass: f32 = 70`, `inner_body: bool = true`, `layer: i32 = 0` (valid 0..=65535), `groups: i64 = 1` (bit mask, valid 0..=u32::MAX) | WP2 |
      | `ScriptRef` | `path: string = ""`, `context: enum {Game, Tools} = Game` | WP3 |
-     | `AudioSource` | `clip: string = ""`, `volume: f32 = 1`, `looping: bool = false`, `spatial: bool = true`, `autoplay: bool = false` | WP5 |
-     | `AnimPlayer` | `clip: string = ""`, `speed: f32 = 1`, `looping: bool = true`, `playing: bool = true` | WP5 |
+     | `AudioSource` | `clip: string = ""` (a project asset path such as `assets/sfx/pickup.wav`, as in `AudioCmd`), `volume: f32 = 1`, `looping: bool = false`, `spatial: bool = true`, `autoplay: bool = false` | WP5 |
+     | `AnimPlayer` | `clip: string = ""` (`<model asset path>#<clip name>`, e.g. `assets/models/door.glb#open`; the clip name is `ClipData.name`, the glTF animation name or `animation_<index>`), `speed: f32 = 1`, `looping: bool = true`, `playing: bool = true` | WP5 |
      | `HudText` | `text: string = ""`, `anchor: enum {TopLeft, Top, TopRight, Center, BottomLeft, Bottom, BottomRight} = TopLeft`, `size: f32 = 18` | WP6 |
      | `Procedural` | `generator: string = ""`, `seed: i64 = 0` | WP4 |
      | `GraphSource` | `graph: string = ""`, `builder: string = ""`, `params: string = ""` (per-node parameter overrides as canonical JSON, `{"<node id>": {"<param>": <value>}}`; a string because M1 has no map field type, ADR-0032) | WP4 |
 
      `Name` (the file's `name`), `StableId` (the file's `id`), `GlobalTransform`, `Generated` and the hierarchy are not registry components.
+
+     Notes for WP6, which maps these components to `re_types` (ADR-0008):
+     - The reflect field types have no `u16` or `u32`, so `layer` and `groups` are `i32` and `i64`. WP6 converts them to `Layer(u16)` and `GroupMask(u32)` (bit `g` is group `g`; the default `1` is group 0) and reports a value out of range as a diagnostic instead of truncating it. A layer that is in range but outside the world's `LayerTable` is refused by `re_physics` with `RE5015` (the standard table has 8 layers, `LayerTable::MAX_LAYERS` is 32).
+     - A `Collider` without a `RigidBody` is a `Static` body.
+     - `Collider.enabled = false` removes the body (`PhysicsCmd::RemoveBody`); it is not a flag on the body. Setting it back to `true` adds the body again.
+     - `Mesh` and `Heightfield` shapes are static only: `re_physics` refuses them on `Dynamic` and `Kinematic` bodies with `RE5003`.
+     - A heightfield `source` asset carries everything `ShapeDesc::Heightfield` needs: `n` (samples per side), `spacing`, `offset` and the `n × n` samples, not only the samples.
+     - Playback time of an `AnimPlayer` is runtime state in `re_app`, not a component field.
    - Codes RE1200–1999 (unknown id, duplicate id, reserved `/`, cycle, parse errors naming the entity index, id, component and field, forward parent reference, generator failure, script-component schema mismatch).
 9. **`re_command`** (depends on `re_scene`, `re_reflect`, `re_core`, `serde`, `serde_json`, `schemars`, `indexmap`, `thiserror`):
    - `Op` (the spike's `Command`): `spawn`, `despawn`, `set_field`, `add_component`, `remove_component`, `reparent`, `rename`, `set_override`, `restore`. Serde `tag = "op"`, `rename_all = "snake_case"`, `deny_unknown_fields`.
    - `Origin` (`User`, `Script(name)`, `Agent(name)`), `Transaction { label, origin, ops }`, `History::{execute, undo, redo, can_undo, can_redo, log, log_since_jsonl}`, `LogEntry` with kinds `do`, `undo`, `redo`, `rejected`.
-   - **Generated entities** (ADR-0017): `set_field` on a generated entity also records an override in the same transaction; `despawn` of a generated entity records a deletion override (the spike refused it); `reparent`, `add_component` and `remove_component` on one are refused with the spike's hint ("change its source's generator parameters instead").
+   - **Generated entities** (ADR-0017): `set_field` on a generated entity also records an override in the same transaction; `despawn` of a generated entity records a deletion override (the spike refused it); `reparent`, `add_component` and `remove_component` on one are refused with the spike's hint ("change its source's generator parameters instead"), and so is `rename` (RE2003, "generated names come from the generator"), because no override can carry a name.
    - `CommandRegistry<C: EditTarget>`, where `trait EditTarget { fn world(&mut self) -> &mut re_scene::World; fn history(&mut self) -> &mut History; }`. `CommandSpec { name, summary, tier, input_schema, annotations }` (input schemas from schemars, root a plain object), `Tier { Read, Edit, Destructive }`, `CommandOutcome { ok, changes, diagnostics, data }`, `dispatch(&mut C, name, args, dry_run, &dyn PolicyCheck)`.
    - `dry_run`: every mutating command accepts `"dry_run": true`; the registry executes the transaction, records its `changes`, undoes it without touching the redo stack or the log, and returns the changes. A dry run needs only the `read` tier.
    - `PolicyCheck`, a trait (`fn check(&self, spec: &CommandSpec, args: &serde_json::Value, dry_run: bool) -> Result<(), Diagnostic>`) that `re_agent` implements; `AllowAll` for tests and the CLI.
-   - `remote::{channel, EngineHandle, EngineReceiver, EngineRequest}`: a std channel carrying `(command, args, dry_run)` requests with a reply sender for the `CommandOutcome`, plus `ListSpecs`.
+   - `remote::{channel, EngineHandle, EngineReceiver, EngineRequest}`: a std channel carrying `(command, args, dry_run, origin)` requests with a reply sender for the `CommandOutcome`, plus `ListSpecs`. `EngineHandle::with_origin` sets the `Origin` the log records.
    - Built-in commands (`register_builtin_commands`): read tier `describe`, `query`, `entity.get`, `command.describe`; edit tier `entity.spawn`, `entity.set`, `entity.reparent`, `entity.delete`, `component.add`, `component.remove`, `scene.apply` (`{ "label"?: string, "ops": [Op] }`, one atomic transaction), `undo`, `redo`.
    - Codes RE2000–2999.
 10. **`docs/research/core.md`**: the core spike report, published with the §8 change in the Reuse table.
@@ -346,7 +354,6 @@ Required tests, PR "entity core" (the ported spike tests keep their names):
   - `transform_propagation_incremental_matches_full` (including removed `ChildOf`);
   - `scene_round_trip_is_byte_identical` (JSON);
   - `load_errors_name_the_place` (a failed load leaves zero entities);
-  - `procedural_sources_overrides_and_regeneration`, adapted: generated entities are not saved; an edit records an override and undo removes it; changing a parameter regenerates and keeps the override; same key and seed give the same values whatever the grid size; an orphaned override is kept and reported; **an entity whose key survives keeps its `Entity`**;
   - a deletion override and a suppressed key both stop regeneration from spawning that key, and suppression is not saved;
   - a prefab instantiates into a fragment whose keys are prefixed by the given key;
   - `state_hash` is identical across two runs and changes when one float bit changes;
@@ -358,6 +365,7 @@ Required tests, PR "entity core" (the ported spike tests keep their names):
   - `failed_transaction_rolls_back`: a 4-operation transaction failing on operation 3 leaves the scene byte-identical and logs `rejected`;
   - `commands_are_plain_json_for_agents`: operations parse from the JSON of the report's §5; the spawn result carries the generated id; the log is JSON lines with the origin;
   - `despawn` of a generated entity records a deletion override, and undo removes it;
+  - `procedural_sources_overrides_and_regeneration` (listed here because it needs `History` for undo; its source is the spike's procedural test), adapted: generated entities are not saved; an edit records an override and undo removes it; changing a parameter regenerates and keeps the override; same key and seed give the same values whatever the grid size; an orphaned override is kept and reported; **an entity whose key survives keeps its `Entity`**;
   - a dry run returns the same `changes` as the real call and leaves `state_hash`, the undo stack and the log unchanged;
   - `scene.apply` with an invalid third operation changes nothing and returns an `RE2xxx` diagnostic naming operation 2 (zero-based);
   - a `remote::channel` round trip from another thread returns the `CommandOutcome`.
@@ -390,7 +398,7 @@ Both PRs are green on every CI job, **including `build-windows` and `build-macos
 
 **Goal.** A headless-testable forward renderer in `re_render` that draws a `RenderSnapshot`, paints egui, uploads and releases GPU resources with generation-checked handles, and captures images, ported from the render prototype.
 
-**Owned paths:** `crates/re_render/`, `prototypes/render/`
+**Owned paths:** `crates/re_render/` (and `prototypes/render/`, which WP1 deleted)
 
 **Starts after:** WP0 PR "contracts" is merged.
 
@@ -399,7 +407,7 @@ Both PRs are green on every CI job, **including `build-windows` and `build-macos
 - `re_types::mesh::{MeshData, Aabb}` (`crates/re_types/src/mesh.rs`);
 - `re_core::{Diagnostic, DiagInfo}` (`crates/re_core/src/diag.rs`).
 
-**Reuse.** The prototype is in this repository at `prototypes/render/`. The same code and its logs and images are also in the private research folder at `/mnt/project-files/real-engine/research/spikes/render/` (`render.md`, `code/`, `images/`), which is not in this repository. The published findings are `docs/research/rendering.md`.
+**Reuse.** The prototype was in this repository at `prototypes/render/` until WP1 ported it into `crates/re_render/` and deleted it (the table below is the record of what went where). The same code and its logs and images are also in the private research folder at `/mnt/project-files/real-engine/research/spikes/render/` (`render.md`, `code/`, `images/`), which is not in this repository. The published findings are `docs/research/rendering.md`.
 
 | File (`prototypes/render/…`) | Into |
 |---|---|
@@ -412,13 +420,14 @@ Both PRs are green on every CI job, **including `build-windows` and `build-macos
 | `src/bin/windowed.rs` | `examples/windowed_smoke.rs` |
 | `tests/render.rs` | The pattern for the headless tests |
 
-`prototypes/render/` stays buildable until `re_render`'s tests cover what its tests cover. WP1's last PR deletes it; the maintainer removes the README section about it at the same time.
+Done: WP1's PR deleted `prototypes/render/` once `re_render`'s tests covered what its tests covered, and the README section about it was replaced by "Running the renderer tests".
 
 **Build**
-- `Gpu::headless(backends)` and `Gpu::for_surface(window)`. Both install the uncaptured-error logger, which reports `RE6001` and never panics.
+- `Gpu::headless(backends) -> Result<Gpu, Diagnostic>` and `Gpu::for_surface(Arc<W>, backends) -> Result<(Gpu, wgpu::Surface<'static>), Diagnostic>` (the window is usually an `Arc<winit::window::Window>`; configure the surface with `Gpu::surface_config`). Both install the uncaptured-error logger, which reports `RE6001` and never panics.
 - `Renderer::new(&Gpu, format)`.
-- Resources: `upload_mesh(&MeshData) -> MeshHandle`, `upload_texture`, `create_material(&MaterialDesc)` (handles only: a material whose `TextureRef` is still an `Asset` is rejected with a diagnostic, see `MaterialDesc::is_resolved`), and `release_mesh`, `release_texture`, `release_material`. Handles carry a generation, so a released handle is detected, not reused by mistake. `stats()` reports live counts and bytes per resource kind.
-- `Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot)`. It is a forward PBR-lite pass:
+- `Renderer::new(&Gpu, format)` uses the default `RendererSettings` (exposure, the sky and ground ambient colours, shadow map size and distance, MSAA); `Renderer::with_settings` and `settings_mut` change them.
+- Resources: `upload_mesh(&MeshData) -> Result<MeshHandle, Diagnostic>`, `upload_texture(&TextureData) -> Result<TextureHandle, Diagnostic>`, `create_material(&MaterialDesc) -> Result<MaterialHandle, Diagnostic>` (handles only: a material whose `TextureRef` is still an `Asset` is rejected with a diagnostic, see `MaterialDesc::is_resolved`), and `release_mesh`, `release_texture`, `release_material`, each returning `Result<(), Diagnostic>`. Handles carry a generation, so a released handle is detected, not reused by mistake. `stats()` reports live counts and bytes per resource kind.
+- `Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot) -> Result<FrameReport, Diagnostic>` (stale handles are skipped and listed in the `FrameReport`). It is a forward PBR-lite pass:
   - base colour, a texture, metallic and roughness;
   - one directional light with a single shadow map;
   - ambient light;
@@ -426,14 +435,14 @@ Both PRs are green on every CI job, **including `build-windows` and `build-macos
   - depth;
   - MSAA where the downlevel caps allow it.
 - A debug-line pass.
-- `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`, where `UiFrame { primitives: Vec<egui::ClippedPrimitive>, textures_delta: egui::TexturesDelta, size_px: [u32; 2], pixels_per_point: f32 }`. The caller tessellates with `egui::Context::tessellate(full_output.shapes, pixels_per_point)`, as the prototype does, because tessellation needs the context's font atlas.
-- On GL (no `VIEW_FORMATS`), egui is painted through a manual-gamma blit so that the panel is not darker than on Vulkan.
+- `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame) -> Result<(), Diagnostic>`, where `UiFrame { primitives: Vec<egui::ClippedPrimitive>, textures_delta: egui::TexturesDelta, size_px: [u32; 2], pixels_per_point: f32 }`. The caller tessellates (`UiFrame::from_output(&ctx, &mut full_output, size_px)` calls `egui::Context::tessellate`), because tessellation needs the context's font atlas.
+- egui is painted into an `Rgba8Unorm` overlay and composited with a manual-gamma blit on every backend (one code path; GL has no `VIEW_FORMATS`), so the panel looks the same on GL and Vulkan (measured difference 0.000 levels).
 - `Capture`: render into an offscreen texture, read it back (rows padded to 256 bytes) and write a PNG.
 - A WGSL `#include` preprocessor (about 50 lines; no naga_oil).
-- The projection uses glam 0.34's right-handed, DirectX-depth API, as in the prototype.
+- The projection uses glam 0.34's right-handed, DirectX-depth API, as the prototype did.
 - Codes RE6000–6999 with explain pages.
 
-**Interfaces this WP freezes:** `Gpu`, `Renderer`, `UiFrame`, `Capture` (at WP1 exit; consumed by WP6 and WP8).
+**Interfaces this WP freezes:** `Gpu`, `Renderer`, `RendererSettings`, `UiFrame`, `Capture` (at WP1 exit; consumed by WP6 and WP8).
 
 **Non-goals**
 - A render thread.
@@ -464,7 +473,7 @@ Required tests:
 - one `MeshHandle` uploaded once and drawn 1000 times;
 - uploading and releasing 100 meshes returns `stats()` to its starting counts, and a released handle is rejected with a diagnostic.
 
-**Definition of done:** the common definition (PRs green on CI on lavapipe, merged to `main`), plus `prototypes/render/` deleted by the last PR.
+**Definition of done:** the common definition (PRs green on CI on lavapipe, merged to `main`), plus `prototypes/render/` deleted by the last PR (done).
 
 ---
 
@@ -492,25 +501,26 @@ Required tests:
 | `research/spikes/physics/partial/src/lib.rs` (`StdThreadPool`, the only spike code implementing a caller-supplied `oxijolt::JobSystem`, around line 255) | The pattern for `JoltRayonJobs` in `re_physics::jobs` |
 
 **Build**
-- `Physics::new(PhysicsConfig, &TaskPool)`.
+- `Physics::new(PhysicsConfig, &'static TaskPool) -> Result<Physics, Diagnostic>`. Jolt's job system holds the pool for the world's lifetime, so `re_app` keeps its `TaskPool` in a static or leaks it once at startup (`TaskPool::global()` qualifies).
   - It uses `JoltRayonJobs: oxijolt::JobSystem`: `max_concurrency()` returns threads + 1, and `queue_job` calls `pool.spawn(move || job.run())`.
   - It is passed through `WorldSettings::job_system(Arc<dyn JobSystem>)`.
 - `apply(&mut Vec<PhysicsCmd>)` sorts by `(kind, EntityId)`, applies the commands and leaves the vector empty (its capacity is kept).
 - `step(dt)`.
-- `poses_into(&mut Vec<BodyPose>)`, one batched pull through oxijolt's `active_body_poses_into`. It returns **active** bodies only, with position and rotation. Sleeping bodies are not returned, and their `Transform` keeps its last value.
-- `velocity(id) -> Option<(Vec3, Vec3)>`, a per-body read for the few entities that need it (characters, scripts).
+- `poses_into(&mut self, &mut Vec<BodyPose>)`, one batched pull through oxijolt's `active_body_poses_into`, sorted by entity. It returns the **active** bodies, plus every body that fell asleep during the last step (with its final pose) and every character (its capsule's centre); character inner bodies are not returned. A sleeping body is not returned again until it wakes, and its `Transform` keeps the exact value it had when it fell asleep.
+- `velocity(id) -> Option<(Vec3, Vec3)>`, a per-body read for the few entities that need it (characters, scripts); `pose(id)`, `is_awake(id)` and `character(id) -> Option<CharacterState>` likewise.
 - `events() -> &[ContactEvent]`. Events are filtered, so that `Removed` events for bodies that are already gone are dropped. The sleep-triggered `Removed` is documented.
-- Queries: `raycast`, `shape_cast`, `overlap_sphere`.
+- Queries: `raycast`, `shape_cast`, `overlap_sphere`, each with a `QueryFilter { groups, exclude, sensors }`.
+- Failed commands are skipped and reported through `take_diagnostics()`.
 - `Character` wraps `CharacterVirtual`. When `CharacterDesc::inner_body` is set (the default for the player), it creates the inner body, so the character triggers sensors and appears in contact events. A `CharacterVirtual` without one reports nothing in contact events.
 - Sensors.
 - Constraints: only fixed, hinge and distance are exposed in M1.
-- Collision layers and group masks.
-- Heightfield and triangle-mesh colliders, static only. Using them on a dynamic body gives `RE5003`.
-- `save_state` and `restore_state`, for `real verify` replays and the world copies used by `play.run`.
+- Collision layers (`LayerTable`: each engine layer is a static and a moving Jolt object layer; the standard table has 8 layers, layer 1 being debris) and group masks (which filter queries and characters only, ADR-0008).
+- Heightfield and triangle-mesh colliders, static only. Using them on a dynamic or kinematic body gives `RE5003`.
+- `save_state` and `restore_state`, for `real verify` replays (exact, and only within the world that saved the state). `motion_state() -> MotionState` and `apply_motion_state(&MotionState)` carry the pose, velocity and sleep state of each dynamic and kinematic body, plus each character's full state (ground and contacts), from one world to another by `EntityId`. This is for the world copies `play.run` uses. Entities the target lacks are skipped with an RE5004 warning.
 - Kinematic bodies have their velocity zeroed when no target is set.
 - Fixes for the gotchas in ADR-0008. Codes RE5000–5999 with explain pages.
 
-**Interfaces this WP freezes:** `Physics` and its methods (at WP2 exit; consumed by WP6).
+**Interfaces this WP freezes** (at WP2 exit; consumed by WP6): `Physics::{new, config, apply, step, poses_into, velocity, pose, is_awake, character, events, take_diagnostics, body_count, character_count, jobs_queued, save_state, restore_state, motion_state, apply_motion_state, raycast, shape_cast, overlap_sphere}`, `PhysicsConfig`, `LayerTable`, `QueryFilter`, `PhysicsSnapshot`, `MotionState`, `DIAGNOSTICS` and `codes`.
 
 **Non-goals**
 - D2 cross-platform determinism.
@@ -689,7 +699,7 @@ Required tests:
    - `compute_normals`, `transform` and `merge`.
 2. **`re_proc`.**
    - `ProcGraph` from and to `GraphDoc`, with validation (cycles, port types, unknown node kinds) giving `RE40xx`.
-   - `NodeRegistry` with the 15 M1 nodes of ARCHITECTURE §5. Each node's parameters have a schemars schema, which `real schema` includes in `graph.schema.json`.
+   - `NodeRegistry` with the 16 M1 node kinds of ARCHITECTURE §5 (15 table rows; `mesh.transform` and `mesh.merge` share one). Each node's parameters have a schemars schema, which `real schema` includes in `graph.schema.json`.
    - `points.instance` instantiates prefab files through `re_scene::PrefabFile::instantiate`. `material.assign` sets `MaterialRef.asset` to a material file path; `re_app` loads it through `re_assets`. Mesh nodes set `MeshRef.asset` to `derived:<blake3 key>`; `terrain.mesh` with `collider = true` also adds a `Collider` with `shape = Heightfield` and `source = derived:<key>`.
    - An `Evaluator` that evaluates in topological order, in parallel on `TaskPool`.
    - Per-node blake3 keys; seeds derived per node: `Pcg32::from_seed(seed).fork(hash64(node_id))`.
@@ -824,7 +834,7 @@ Required tests:
 
 **Owned paths:** `crates/re_app/`, `crates/re_cli/` except `crates/re_cli/src/tooling/{mcp,agent,editor}.rs` (which WP6 only creates as stubs, then hands over), `crates/re_cli/tests/mcp_e2e.rs` (WP7) and `crates/re_cli/tests/editor_proxy.rs` (WP8), and `examples/island/` (WP7 and WP8 may also add their crates' lines to `crates/re_cli/Cargo.toml`; see the ownership rule)
 
-**Starts after:** WP0 is merged. Milestone "app" integrates each of WP1–WP5 as its interface freezes; the demo and the final PRs need WP1–WP5 merged.
+**Starts after:** WP0 is merged. Milestone "app" is **one PR** and needs no WP1–WP5 interface frozen (see "Milestone app" below); later WP6 PRs integrate each of WP1–WP5 as its interface freezes. `real do` needs WP7's first PR (`re_agent::lock` and `re_agent::remote::connect`). The demo PR needs WP1–WP5 merged and WP7's `real agent init` (it commits that command's `.real/agent-policy.toml`).
 
 **Frozen interfaces consumed** (each defined in the crate named, at the path in "Cross-WP contracts"):
 - `re_render::{Gpu, Renderer, UiFrame, Capture}` (WP1);
@@ -837,19 +847,26 @@ Required tests:
 - `re_agent::lock::{acquire, probe}` and `re_agent::remote::connect` (`crates/re_agent/src/`, WP7's first PR), for `real do`; `re_scene::World::fork` (WP0), for `play.run`.
 
 **Reuse**
-- `prototypes/render/src/bin/windowed.rs` (the event-loop shape) and `prototypes/render/src/bin/headless.rs` (the headless driver shape), in this repository until WP1 deletes them; the same files are in the private research folder at `/mnt/project-files/real-engine/research/spikes/render/code/src/bin/` (not in this repository).
+- `crates/re_render/examples/windowed_smoke.rs` (the event-loop shape) and the headless tests in `crates/re_render/tests/` (the headless driver shape); the prototype's `windowed.rs` and `headless.rs` are in the private research folder at `/mnt/project-files/real-engine/research/spikes/render/code/src/bin/` (not in this repository).
 
 **Build**
 
-**Milestone "app"** (WP7 and WP8 wait on this):
+**Milestone "app"** (WP7 and WP8 wait on this). It is one PR. It builds only on WP0's frozen contracts (`re_scene`, `re_command`, `re_reflect`, `re_types`, `re_core`); no WP1–WP5 interface has to be frozen first. It freezes `App::open`, `App::serve`, `AppConfig` and `verify::{run, VerifyStage}`, and creates the tooling stubs. The sync modules start out producing and consuming `re_types` values only (`RenderSnapshot`, `PhysicsCmd`, `BodyPose`, `AudioCmd`). Later WP6 PRs wire in each subsystem once its interface is frozen, without changing the frozen signatures (`AppConfig` gains fields only with defaults):
+- `re_physics::Physics` (WP2 exit): `sync::physics`, `play.run`;
+- `re_render::{Gpu, Renderer, UiFrame, Capture}` (WP1 exit): `run_windowed`, `screenshot`, GPU resource release;
+- `re_script::ScriptRuntime` (WP3 exit) and `re_script_check` (WP3 exit): `HostServices`, hot reload, verify stage 3;
+- `re_proc::{register_generator, register_commands, GraphStore}` (WP4 exit): procedural sources at startup and re-grounding;
+- the WP5 interfaces (WP5 exit): assets, materials, input, audio and animation.
+
+Everything WP6 builds before the CLI and the demo (the milestone PR plus those integration PRs):
 - `re_app::App::open(project, AppConfig)`, `AppConfig` from `real.toml`, and the phase loop of ADR-0009. `App` implements `re_command::EditTarget`.
 - `App::serve(EngineReceiver)`: a headless loop on the current thread that answers `EngineRequest`s between frames.
-- `sync::physics::{push, pull}` (`RigidBody`, `Collider`, `CharacterController` → `PhysicsCmd`; poses → `Transform`), `sync::render::build` (`Transform`/`GlobalTransform`, `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light` → `RenderSnapshot`), `sync::audio::build` and `GlobalTransform` interpolation. Sync uses typed bevy queries through `re_scene::World::ecs`, not by-name access.
+- `sync::physics::{push, pull}` (`RigidBody`, `Collider`, `CharacterController` → `PhysicsCmd`; poses → `Transform`), `sync::render::build` (`Transform`/`GlobalTransform`, `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light` → `RenderSnapshot`), `sync::audio::build` and `GlobalTransform` interpolation. Sync uses typed bevy queries through `re_scene::World::ecs`, not by-name access. The component-to-`BodyDesc` / `CharacterDesc` mapping rules are the notes under WP0's built-in component table. Queries apply a character's `groups` to its inner body, so `HostServices::raycast` with a mask that excludes the player's groups skips the player.
 - `World::propagate()` runs in the Sync phase; `World::regenerate_changed()` runs in EndFrame after commands.
 - `run_windowed` and `run_headless(frames, replay)`.
 - `HostServices` implementation. A game script's `destroy()` of a generated entity calls `World::despawn_runtime`, which suppresses its key.
 - Commands registered by `re_app`:
-  - `play.run`: step a copy of the World for N frames, then return a report and a screenshot (`read` tier, budgeted). The copy is `World::fork()` with `GraphStore` cloned in; physics is a fresh `Physics` built from the copy by `sync::physics::push` (same body order), then `restore_state` with the live world's `save_state`, so velocities carry over; scripts run in fresh VMs on the copy, starting from their entry points (in-VM Luau state is not copied in M1, and the report says so); audio uses the capture backend. Nothing from the copy reaches the live world;
+  - `play.run`: step a copy of the World for N frames, then return a report and a screenshot (`read` tier, budgeted). The copy is `World::fork()` with `GraphStore` cloned in; physics is a fresh `Physics` built from the copy by `sync::physics::push` (same body order), then `apply_motion_state` with the live world's `motion_state()`, so poses, velocities, sleep and characters' ground state carry over. Contacts start fresh, so the copy's first step reports `Begin` for touching bodies, and the copy continues close to the live world but not bit-identically; scripts run in fresh VMs on the copy, starting from their entry points (in-VM Luau state is not copied in M1, and the report says so); audio uses the capture backend. Nothing from the copy reaches the live world;
   - `screenshot`: capture the current view (`read`);
   - `verify`: run `verify::run` and return its report (`read`);
   - `asset.import`: import a file into `assets/` with a `.meta.json` (`edit`).
@@ -866,12 +883,12 @@ Required tests:
   - `new`;
   - `run [--headless] [--frames N] [--replay F] [--screenshot F] [--exit-after]`. `--exit-after` exits after the given frames and prints `RUN OK` when no error was reported;
   - `describe [--json] [--luau-defs]` (`--luau-defs` prints `engine.d.luau`);
-  - `do <command> --args JSON [--dry-run]`. It calls `re_agent::lock::probe`: when the editor holds the lock it sends the command through `re_agent::remote::connect` (the editor applies it); otherwise it takes the lock with `re_agent::lock::acquire` for the duration of the command, so a second headless writer gets `RE8003`. Read-only subcommands (`run`, `verify`, `describe`, `check`) take no lock;
+  - `do <command> --args JSON [--dry-run]`, behind the `tooling` feature because it uses `re_agent` (ADR-0027); WP6 writes it in `crates/re_cli/src/tooling/do_cmd.rs`, which WP6 owns. It calls `re_agent::lock::probe`: when the editor holds the lock it sends the command through `re_agent::remote::connect` (the editor applies it); otherwise it takes the lock with `re_agent::lock::acquire` for the duration of the command, so a second headless writer gets `RE8003`. Read-only subcommands (`run`, `verify`, `describe`, `check`) take no lock;
   - `verify [--json]`;
   - `explain RE####`. `re_cli` registers the `explain` command, built from every linked crate's `DIAGNOSTICS`;
   - `graph eval`;
   - `schema [--out DIR]`, which writes every JSON Schema (the scene schema from `World::scene_json_schema`, the other content files, the verify report, the agent policy and the node parameters); `cargo xtask schemas` calls it;
-  - behind the `tooling` feature: `check [--types] [--corpus --scripts-dir D …]`, `mcp`, `agent …` and `editor`. `crates/re_cli/src/tooling/mod.rs` (WP6) declares the modules; `mcp.rs` and `agent.rs` belong to WP7 and `editor.rs` to WP8. WP6 creates those three files as stubs that print "not built yet" and exit 2 in its milestone "app" PR, then hands them over (see the ownership rule).
+  - behind the `tooling` feature: `check [--types] [--corpus --scripts-dir D …]`, `do` (above), `mcp`, `agent …` and `editor`. A runtime-only `real` runs, verifies, describes and explains a project but cannot edit it. `crates/re_cli/src/tooling/mod.rs` (WP6) declares the modules; `mcp.rs` and `agent.rs` belong to WP7 and `editor.rs` to WP8. WP6 creates those three files as stubs that print "not built yet" and exit 2 in its milestone "app" PR, then hands them over (see the ownership rule).
 - `examples/island` (a project directory, not a crate):
   - a procedural island built from the M1 node set by the builder `scripts/tools/island_graph.luau`, placed by a procedural source entity in `scenes/main.scene.json`;
   - a third-person character on `CharacterController` with an inner body;
@@ -903,7 +920,7 @@ target/release/real run --project examples/island --headless --frames 600 \
 target/release/real check --project examples/island --types        # needs luau-lsp 1.70.1; RE3090 and exit 1 without it
 xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/island --frames 300 --exit-after   # prints RUN OK
 cargo build --locked -p re_cli --no-default-features    # runtime-only build
-cargo xtask check                                       # check-graph proves it links no tokio, rmcp or full_moon; schemas are current
+cargo xtask check                                       # check-graph proves it links no tooling crate, tokio, rmcp or full_moon; schemas are current
 cargo test --locked -p re_app -p re_cli -- --test-threads=1
 ```
 
@@ -928,7 +945,7 @@ Required tests:
 
 **Owned paths:** `crates/re_agent/`, `crates/re_mcp/`, `crates/re_cli/src/tooling/mcp.rs`, `crates/re_cli/src/tooling/agent.rs`, `crates/re_cli/tests/mcp_e2e.rs`
 
-**Starts after:** WP0 PR "entity core" is merged (agent and MCP crates). `script.write` needs WP3's `compile_check` (frozen in WP3's first PR); the `real mcp` wiring needs WP6 milestone "app"; `mcp_e2e.rs` needs the finished island demo (`graph.regenerate`, `screenshot` and `verify` on `examples/island`), so it lands after WP6's demo PR (the one that adds `examples/island/real.toml`). WP7's first PR holds only the socket protocol, `re_agent::remote` and `re_agent::lock`, which need nothing beyond WP0.
+**Starts after:** WP0 PR "entity core" is merged (agent and MCP crates). `script.write` needs WP3's `compile_check` (frozen in WP3's first PR); the `real mcp` wiring needs WP6 milestone "app"; `real agent init` must land before WP6's demo PR, which commits its `.real/agent-policy.toml`; `mcp_e2e.rs` needs the finished island demo (`graph.regenerate`, `screenshot` and `verify` on `examples/island`), so it lands after WP6's demo PR (the one that adds `examples/island/real.toml`). WP7's first PR holds only the socket protocol, `re_agent::remote` and `re_agent::lock`, which need nothing beyond WP0.
 
 **Frozen interfaces consumed**
 - `re_command::{CommandRegistry, EditTarget, CommandSpec, Tier, CommandOutcome, PolicyCheck, History, remote::{channel, EngineHandle, EngineReceiver, EngineRequest}}` (`crates/re_command/src/`, WP0);
@@ -960,8 +977,8 @@ Required tests:
    - `real agent init` writes `.real/agent-policy.toml` (`edit` tier and the default scopes of ADR-0020; this is the explicit opt-in) and client configs in each client's own format (ADR-0025): `.mcp.json` (`mcpServers`, Claude Code), `.vscode/mcp.json` (`servers` with `type`), `.cursor/mcp.json` and `.gemini/settings.json` (`mcpServers`). For Codex (`[mcp_servers.real-engine]` TOML in a user or trusted-project `config.toml`) and Zed (the `context_servers` settings key) it prints a snippet, because those files live outside the project. The server name is `real-engine`.
    - `cli::AgentArgs`, giving `real agent init|status|rollback`.
    - `remote::connect(socket) -> Result<EngineHandle, Diagnostic>`: the client side of the editor socket protocol; `remote::serve(listener, EngineHandle)`: the server loop, which `re_editor` hosts. Both are `#[cfg(unix)]` (a Unix socket at `.real/editor.sock`). On Windows M1 compiles a stub that returns `RE8004` ("the editor socket is not available on Windows in M1"); named pipes are later work. `windows-latest` must still build.
-   - `lock`: `ProjectLock`, `acquire(project, holder) -> Result<ProjectLock, Diagnostic>` and `probe(project) -> LockState { Free, Editor(socket path), Headless(pid) }`. `acquire` creates `.real/editor.lock` with `create_new` and writes the holder's pid and kind; a lock whose pid is no longer alive is stale and replaced; a live one gives `RE8003 project is locked by <pid>`. The lock is released on drop. Every writer uses this module: `real do` (WP6), `real mcp` (WP7) and `real editor` (WP8); no other crate emits `RE8003`. `re_agent` does not depend on tokio, so `re_cli` links it in every build.
-   - Codes RE8000–8499.
+   - `lock`: `ProjectLock`, `acquire(project, holder) -> Result<ProjectLock, Diagnostic>` and `probe(project) -> LockState { Free, Editor(socket path), Headless(pid) }`. `acquire` creates `.real/editor.lock` with `create_new` and writes the holder's pid and kind; a lock whose pid is no longer alive is stale and replaced; a live one gives `RE8003 project is locked by <pid>`. The lock is released on drop. Every writer uses this module: `real do` (WP6), `real mcp` (WP7) and `real editor` (WP8); no other crate emits `RE8003`. `re_agent` is a tooling crate: `re_cli` links it only with the `tooling` feature, and all three writers are tooling subcommands (ADR-0027).
+   - Codes RE8000–8099 (ARCHITECTURE §7).
 2. **`re_mcp`.**
    - `serve_stdio(EngineHandle, McpOptions) -> anyhow::Result<()>`, using rmcp with `server`, `transport-io` and `macros` in its own tokio runtime.
    - One MCP tool per registered command (25 in M1, see ARCHITECTURE §6), with the schema hygiene of ADR-0025 and annotations derived from the tier.
@@ -1008,7 +1025,7 @@ Required tests:
 
 **Owned paths:** `crates/re_editor/`, `crates/re_cli/src/tooling/editor.rs`, `crates/re_cli/tests/editor_proxy.rs`
 
-**Starts after:** WP6 milestone "app", WP1, and WP7's first PR (socket protocol and lock).
+**Starts after:** WP6 milestone "app", WP1, and WP7's first PR (socket protocol and lock). `crates/re_cli/tests/editor_proxy.rs` runs `real do`, so it lands after WP6's `real do` PR.
 
 **Frozen interfaces consumed**
 - `re_app::{App, AppConfig}` (`crates/re_app/src/`, WP6);
@@ -1017,7 +1034,7 @@ Required tests:
 - `re_command::{CommandRegistry, History, CommandSpec}` (WP0), for the command palette and undo;
 - `re_reflect::{Registry, ComponentSchema, FieldType, Value}` and `re_scene::World` (WP0), for the hierarchy and the inspector.
 
-**Reuse.** None beyond the crates above. The egui painting pattern is in `prototypes/render/src/gui.rs` (until WP1 removes it) and in the private research folder at `/mnt/project-files/real-engine/research/spikes/render/code/src/gui.rs` (not in this repository).
+**Reuse.** None beyond the crates above. The egui painting pattern is `re_render::UiFrame` and `Renderer::paint_ui` (see `crates/re_render/examples/windowed_smoke.rs`); the prototype's version is in the private research folder at `/mnt/project-files/real-engine/research/spikes/render/code/src/gui.rs` (not in this repository).
 
 **Build**
 - `run_editor(App, EditorOptions) -> anyhow::Result<()>`: the game view plus egui panels:
@@ -1067,16 +1084,22 @@ graph LR
   WP0e --> WP3[WP3 scripting + validation]
   WP0e --> WP4[WP4 geom + proc]
   WP0e --> WP7[WP7 agent + MCP]
-  WP3 --> WP7
-  WP1 --> WP6[WP6 runtime + CLI + demo]
-  WP2 --> WP6
-  WP3 --> WP6
-  WP4 --> WP6
-  WP5 --> WP6
+  WP0e --> WP6[WP6 runtime + CLI + demo]
+  WP3 -. compile_check, for script.write .-> WP7
+  WP1 -. integration + demo PRs .-> WP6
+  WP2 -. integration + demo PRs .-> WP6
+  WP3 -. integration + demo PRs .-> WP6
+  WP4 -. integration + demo PRs .-> WP6
+  WP5 -. integration + demo PRs .-> WP6
   WP6 -. app milestone .-> WP7
   WP6 -. app milestone .-> WP8[WP8 editor-lite]
   WP7 -. socket protocol .-> WP8
+  WP7 -. lock + remote::connect, for real do .-> WP6
+  WP7 -. real agent init, for the demo's agent policy .-> WP6
+  WP6 -. real do, for editor_proxy.rs .-> WP8
 ```
+
+Solid edges gate the whole WP; dotted edges are partial: they gate one PR (or the PRs named), not the whole WP. WP6 starts after WP0 (milestone "app" builds only on WP0's contracts); each of WP1–WP5 gates only WP6's PR that integrates it and the demo PR. WP3 gates only WP7's `script.write`, which needs `compile_check` from WP3's first PR. WP6's milestone "app" PR comes first; WP7's first PR (socket protocol and lock) then unblocks WP6's `real do` PR and WP8; WP7's `real agent init` PR comes before WP6's demo PR; WP7's `mcp_e2e.rs` comes after the demo PR; WP8's `editor_proxy.rs` comes after `real do`.
 
 Critical path: WP0 → WP3 → WP6 → WP8. Every area now starts from a working spike, so no WP is a research task. WP2 and WP4 have the most code, but their risks are already understood from the spikes.
 

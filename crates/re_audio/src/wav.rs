@@ -1,10 +1,10 @@
 //! A small WAV reader: RIFF `WAVE` with PCM (8, 16, 24 or 32 bit) or 32/64-bit
 //! float samples, mono or stereo.
 //!
-//! kira's `wav` feature enables symphonia's RIFF container but not its PCM
-//! codec, so with the engine's kira features `StaticSoundData::from_file`
-//! cannot decode any WAV file ("unsupported audio codec"). Decoding WAV here
-//! keeps the runtime free of further MPL-licensed codec crates.
+//! The engine builds kira without any decoder feature (its `wav` feature would
+//! enable symphonia's RIFF container but not its PCM codec, so it could not
+//! decode a WAV file anyway). Decoding WAV here keeps the runtime free of the
+//! MPL-licensed symphonia crates (ADR-0019).
 
 use std::sync::Arc;
 

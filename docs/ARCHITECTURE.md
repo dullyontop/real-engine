@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** design. Nothing described here is implemented yet, except the rendering prototype in `prototypes/render`. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ports.
+**Status:** partly implemented (M1 in progress). The contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`) and the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim` exist; `re_proc`, `re_geom`, `re_script`, `re_script_check`, `re_app`, `re_cli`, `re_agent`, `re_mcp`, `re_editor` and `re_compat` are still design. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -93,7 +93,7 @@ graph TD
   end
 ```
 
-Dashed edges exist only when `re_cli` is built with the default-on `tooling` feature. A runtime-only build (`--no-default-features`) links none of the tooling crates, so it links no tokio, rmcp or full_moon (ADR-0019, ADR-0027).
+Dashed edges exist only when `re_cli` is built with the default-on `tooling` feature. A runtime-only build (`--no-default-features`) links none of the tooling crates, so it links no tokio, rmcp or full_moon (ADR-0019, ADR-0027). The rule is simple: a subcommand that needs a tooling crate exists only in the tooling build. That covers `check`, `mcp`, `agent`, `editor` and `do` (`real do` uses `re_agent`'s single-writer lock and editor-socket client), so a runtime-only `real` runs, verifies, describes and explains a project but does not edit it.
 
 ### Crate responsibilities
 
@@ -107,8 +107,8 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_command` | Edit operations and transactions with exact undo, the log, the command registry, dry runs, the policy hook and the engine request channel (ADR-0003) | `Op`, `Transaction`, `Origin`, `History`, `LogEntry`, `CommandRegistry`, `CommandSpec`, `Tier`, `CommandOutcome`, `PolicyCheck` trait, `remote::{EngineHandle, EngineReceiver}` | subsystems, mlua, tokio |
 | `re_geom` | Geometry operations over `MeshData` | `Heightfield`, `primitives::*`, `merge`, `transform`, `compute_normals` | wgpu, oxijolt, mlua |
 | `re_proc` | ProcGraph IR, nodes, evaluation, cache, the `graph` generator for procedural sources, `graph.*` commands | `ProcGraph`, `NodeRegistry`, `NodeDef`, `Evaluator`, `EvalReport`, `GraphStore`, `register_generator`, `register_commands` | wgpu, oxijolt, mlua |
-| `re_render` | The GPU renderer, GPU resources, headless capture and egui painting | `Gpu`, `Renderer`, `Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot)`, `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`, `upload_*` / `release_*`, `stats`, `Capture`, `imgdiff` | `re_scene` |
-| `re_physics` | Jolt through oxijolt | `Physics`, `Physics::apply(&mut Vec<PhysicsCmd>)`, `step(dt)`, `poses_into(&mut Vec<BodyPose>)`, `velocity(id)`, `events()`, `raycast`, `JoltRayonJobs` | `re_scene` |
+| `re_render` | The GPU renderer, GPU resources, headless capture and egui painting | `Gpu`, `Renderer`, `Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot)`, `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`, `upload_*` / `create_material` / `release_*`, `stats`, `RendererSettings`, `Capture`, `imgdiff` | `re_scene` |
+| `re_physics` | Jolt through oxijolt | `Physics::new(PhysicsConfig, &'static TaskPool)`, `apply(&mut Vec<PhysicsCmd>)`, `step(dt)`, `poses_into(&mut Vec<BodyPose>)`, `velocity(id)`, `character(id)`, `events()`, `raycast` / `shape_cast` / `overlap_sphere` with a `QueryFilter`, `LayerTable`, `save_state` / `restore_state`, `motion_state` / `apply_motion_state` (`JoltRayonJobs` is internal) | `re_scene` |
 | `re_audio` | kira playback, with a headless capture fallback | `Audio::new_or_headless`, `apply(&[AudioCmd])`, `CaptureBackend` | `re_scene` |
 | `re_input` | Raw input, the action map and replay | `RawInput`, `InputConfig`, `ActionMap`, `Replay`, `ReplayRecorder` | `re_scene` |
 | `re_assets` | Import, material files, cache and hot reload | `AssetId`, `AssetServer`, `import_gltf`, `load_material`, `ProcessedCache`, `AssetWatcher` | `re_scene` |
@@ -121,7 +121,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_mcp` | The MCP server (rmcp, stdio) | `serve_stdio(EngineHandle, McpOptions)` | `re_app` |
 | `re_editor` | Editor-lite UI and the editor socket | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
 
-Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]` puts `use re_scene::ecs as bevy_ecs;` at its root, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` does not reach tokio, rmcp or full_moon".
+Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
 
 ### Repository layout
 
@@ -138,7 +138,6 @@ schemas/                generated JSON Schemas (`cargo xtask schemas`; checked i
 docs/                   these documents
 tools/xtask/            repo checks: crate-graph rules, duplicate-version allow-list, explain-page coverage, schema drift
 tools/derive_alias_check/  proves bevy derives work through `use re_scene::ecs as bevy_ecs;`
-prototypes/render/      the render prototype (reference only; not a workspace member; removed once WP1 has ported it)
 ```
 
 ## 3. Frame loop and threading
@@ -204,14 +203,15 @@ pub enum PhysicsCmd {
     SetShape { id: EntityId, shape: ShapeDesc },
     AddConstraint { id: EntityId, desc: ConstraintDesc }, RemoveConstraint { id: EntityId }, // ... characters
 }
-pub struct BodyPose { pub id: EntityId, pub pos: Vec3, pub rot: Quat }   // active bodies only
+pub struct BodyPose { pub id: EntityId, pub pos: Vec3, pub rot: Quat }   // active bodies, newly asleep bodies, characters
 ```
 
 - `re_types` depends only on `glam`, `serde` and `serde_json` (plus `schemars` behind its optional `schemars` feature, for the schemas of the graph and replay file formats).
-- The pose pull is one batched call to oxijolt's `active_body_poses_into`, which returns position and rotation for **active** bodies. Sleeping bodies are not returned; their `Transform` keeps its last value. Velocities are read per body (`Physics::velocity`) only for the entities that need them, such as characters and scripted bodies.
-- egui output is not part of the snapshot. `re_app` runs egui, tessellates the shapes with `egui::Context::tessellate`, and passes a `UiFrame { primitives, textures_delta, size_px, pixels_per_point }` to `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`. egui types therefore appear only in `re_render`, `re_app` and `re_editor`.
+- The pose pull is one batched call to oxijolt's `active_body_poses_into`, which returns position and rotation for **active** bodies; `Physics::poses_into` adds the bodies that fell asleep during the step (with their final pose) and every character. A sleeping body is not returned again until it wakes; its `Transform` keeps the exact value it had when it fell asleep. Velocities are read per body (`Physics::velocity`) only for the entities that need them, such as characters and scripted bodies.
+- egui output is not part of the snapshot. `re_app` runs egui, tessellates the shapes with `egui::Context::tessellate` (`UiFrame::from_output` does it), and passes a `UiFrame { primitives, textures_delta, size_px, pixels_per_point }` to `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`. egui types therefore appear only in `re_render`, `re_app` and `re_editor`. `re_render` paints egui into an `Rgba8Unorm` overlay and composites it with a manual-gamma blit on every backend, so the UI looks the same on Vulkan and GL (ADR-0010).
+- **Lighting convention.** A directional light's (sun's) intensity is in lux: at exposure 1, an illuminance of 1 lux makes a white diffuse surface white. A point light's intensity is in lumens (it shines `lumens / 4π` candela) with a windowed falloff that reaches zero at its `range`. Emissive colour is multiplied by the exposure too. Exposure and the ambient light (a sky and a ground colour, a hemisphere) are renderer settings (`re_render::RendererSettings`), not snapshot data: `RenderSnapshot` has no ambient field.
 
-Meshes, textures and materials are uploaded through `Renderer::upload_mesh(&MeshData) -> MeshHandle` and its siblings, when an asset loads or a ProcGraph produces a `Derived` mesh, not every frame. They are released through `release_mesh` and its siblings. Handles carry a generation, so a stale handle is detected. `re_app` releases a `Derived` mesh at the end of the frame in which a regeneration diff leaves it unreferenced, so regenerating many times does not grow GPU memory.
+Meshes, textures and materials are uploaded through `Renderer::upload_mesh(&MeshData) -> Result<MeshHandle, Diagnostic>` and its siblings (`upload_texture`, `create_material`), when an asset loads or a ProcGraph produces a `Derived` mesh, not every frame. They are released through `release_mesh` and its siblings, which return `Result<(), Diagnostic>`. Handles carry a generation, so a stale handle is detected. `re_app` releases a `Derived` mesh at the end of the frame in which a regeneration diff leaves it unreferenced, so regenerating many times does not grow GPU memory.
 
 ## 4. Object model
 
@@ -226,8 +226,8 @@ The entity core is bevy_ecs 0.20.0 used standalone, behind our own API (ADR-0005
   - `Name` (written as the entity's `name` in files), `Transform` (`translation`, `rotation`, `scale`) and the derived `GlobalTransform`;
   - `MeshRef`, `MaterialRef`, `Visible`;
   - `Camera`, `Light`;
-  - `RigidBody` (static, dynamic or kinematic), `Collider` (box, sphere, capsule, convex, mesh or heightfield, plus layer, group and sensor);
-  - `CharacterController`;
+  - `RigidBody` (static, dynamic or kinematic), `Collider` (box, sphere, capsule, convex, mesh or heightfield, plus layer, group mask and sensor);
+  - `CharacterController` (with its own layer and group mask);
   - `ScriptRef` (a script path and context);
   - `AudioSource`, `AnimPlayer`;
   - `Procedural` and `GraphSource` (procedural sources, §5);
@@ -339,6 +339,8 @@ The builder runs once in the `tools` context and returns a `GraphDoc` (`re_types
 | `material.assign` (a `materials/*.material.json` path, loaded by `re_assets`) | Mesh |
 | `fragment.merge` (graph output) | Fragment |
 
+The table has 15 rows and 16 node kinds: `mesh.transform` and `mesh.merge` share a row.
+
 ### Evaluation
 
 - Nodes are evaluated in topological order. Independent nodes run in parallel on the rayon pool.
@@ -376,7 +378,7 @@ This works during play. The M1 demo regenerates the island with a new seed while
 |---|---|---|
 | `real describe [--json]` | What commands, components, nodes and scripts exist | The command registry plus reflection |
 | `real describe --luau-defs` / `engine.d.luau` | The exact native Luau API, for type checkers, editors and agents | The binding registry in `re_script` |
-| `real do <command> --args '{json}' [--dry-run]` | One edit from a shell | The registry |
+| `real do <command> --args '{json}' [--dry-run]` (tooling build) | One edit from a shell | The registry |
 | `real verify --json` | Is the project healthy? | ADR-0022 |
 | `real explain RE####` | What an error means and how to fix it | Compiled explain pages |
 | `real mcp` | MCP clients (Claude Code, Codex, VS Code, Cursor, Gemini CLI, Zed and others) | `re_mcp` → `EngineHandle` → the registry |
@@ -442,9 +444,9 @@ Annotations are derived from the tier and set explicitly on every tool (ADR-0025
 | RE72xx | `re_input` |
 | RE74xx | `re_audio` |
 | RE76xx | `re_anim` |
-| RE80xx | `re_agent` |
-| RE85xx | `re_mcp` |
-| RE88xx | `re_editor` |
+| RE8000–8099 | `re_agent` |
+| RE8500–8599 | `re_mcp` |
+| RE8800–8899 | `re_editor` |
 | RE9xxx | compatibility (`re_script` in M1, `re_compat` in M2) |
 
 - **Explain pages.** Each crate has `explain/RE####.md` and exports `pub const DIAGNOSTICS: &[DiagInfo]`, built with `include_str!`. `re_cli` collects all of them. A test fails on a missing page, a duplicate code, or a code outside the crate's range, and `cargo xtask explain` fails on a page that no `include_str!` in the crate's sources references (so every code used in source is in `DIAGNOSTICS`).

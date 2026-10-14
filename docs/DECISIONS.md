@@ -18,7 +18,7 @@ Where a spike measured something, its result overrides earlier design assumption
 **Context.** We need a layout that many people and agents can work on in parallel without editing the same files. It must also keep compile times reasonable on a 4-core machine.
 
 **Decision.**
-- Use one Cargo workspace. Library crates go in `crates/re_*`. Workspace members are `crates/*` and `tools/xtask`; example projects are data, not crates.
+- Use one Cargo workspace. Library crates go in `crates/re_*`. Workspace members are `crates/*` and `tools/*` (`tools/xtask` and `tools/derive_alias_check`); example projects are data, not crates.
 - The user-facing tool is a single binary called `real` (crate `re_cli`).
 - The workspace uses edition 2024 and `rust-version = "1.95"`.
 - All dependency versions live in `[workspace.dependencies]`.
@@ -197,15 +197,16 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 - `re_physics` is the only crate that names oxijolt.
 - `PhysicsWorld` is `Send + Sync` (`unsafe impl` at `world.rs:500` and `:533` in the oxijolt source), so the stepping call may run on a pool thread.
 - Input is a `Vec<PhysicsCmd>` sorted by `(kind, entity)` before it is applied, so the result does not depend on the order in which scripts issued commands.
-- Output is one batched pose pull per step through `active_body_poses_into(&mut Vec<BodyPose>)`, plus `take_events()`. oxijolt's `BodyPose` carries only the body id, position and rotation, and covers active bodies only. So `re_types::BodyPose` has no velocities, sleeping bodies keep their last `Transform`, and velocities are read per body (`Physics::velocity`) only for the entities that need them.
+- Output is one batched pose pull per step through `active_body_poses_into(&mut Vec<BodyPose>)`, plus `take_events()`. oxijolt's `BodyPose` carries only the body id, position and rotation, and covers active bodies only. So `re_types::BodyPose` has no velocities, sleeping bodies keep their last `Transform` (`Physics::poses_into` also reports the final pose of bodies that fell asleep during the step, so that value is exact), and velocities are read per body (`Physics::velocity`) only for the entities that need them.
+- **Layers decide collisions; group masks filter queries and characters.** Which bodies collide is decided by `re_physics::LayerTable` alone: each engine `Layer` becomes two Jolt object layers, one for static bodies (in the static broad-phase tree) and one for moving bodies (dynamic and kinematic, in the moving tree), so a pair of layers has a moving-vs-moving and a moving-vs-static switch. The standard table has 8 layers, layer 1 being debris (moving debris hits static bodies only). `GroupMask` does not affect body-to-body collision: it filters queries (`QueryFilter::groups`) and characters (a character only collides with bodies whose groups intersect its own, through a contact-validate listener).
 - Characters use `CharacterVirtual`. It is not a body and reports nothing in contact events unless it has an inner body, so `CharacterDesc` has an `inner_body` flag, on by default for the player, which lets the character trigger sensors.
 - `re_physics` makes up for the other gotchas the spike found:
   - A kinematic body keeps its last velocity. We zero it when no target is set.
   - `Removed` contact events can name bodies that are already gone. We filter those against our id map.
   - `Removed` also fires when a pair falls asleep. We document this and expose sleeping separately.
   - `position()` is the shape origin, not the centre of mass.
-  - Mesh and heightfield shapes are refused on dynamic bodies. We report this as an `RE5xxx` diagnostic, not a panic.
-  - World positions are limited to ±5 km, because `Real` is f32. We warn beyond that.
+  - Mesh and heightfield shapes are refused on dynamic and kinematic bodies. We report this as `RE5003`, not a panic.
+  - World positions are limited to ±5 km, because `Real` is f32. re_physics refuses bodies, characters and transforms beyond that with RE5006, and the command is dropped.
 
 **Alternatives.**
 - rapier3d. It was not chosen in the physics spike.
@@ -252,13 +253,13 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 
 **Decision.**
 - `re_render::Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot)` is the only drawing entry point for the scene.
-- egui is drawn by `egui-wgpu` into the same view through `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`. `UiFrame` holds already-tessellated `egui::ClippedPrimitive`s, the `TexturesDelta`, the target size and pixels per point. The caller tessellates with `egui::Context::tessellate`, because `FullOutput` carries untessellated shapes and tessellation needs the context's font atlas. We do not use eframe.
-- GPU resources have explicit release calls (`release_mesh`, `release_texture`, `release_material`) and generation-checked handles, so regenerated content does not leak GPU memory.
+- egui is drawn by `egui-wgpu` into the same view through `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`. `UiFrame` holds already-tessellated `egui::ClippedPrimitive`s, the `TexturesDelta`, the target size and pixels per point. The caller tessellates with `egui::Context::tessellate` (`UiFrame::from_output` wraps it), because `FullOutput` carries untessellated shapes and tessellation needs the context's font atlas. We do not use eframe.
+- GPU resources have explicit release calls (`release_mesh`, `release_texture`, `release_material`) and generation-checked handles, so regenerated content does not leak GPU memory. Uploads, `create_material` and releases return `Result<_, Diagnostic>`; `Gpu::for_surface(Arc<W>, backends)` returns the `Gpu` and a `wgpu::Surface<'static>`.
 - Headless mode renders into an offscreen texture and reads it back. Rows are padded to 256 bytes (`padded_bytes_per_row`).
 - Windowed mode renders into the surface texture.
 - We install `Device::on_uncaptured_error` with a logger, because the default handler panics.
-- The projection is `glam` 0.34's `Mat4` built through the right-handed, DirectX-depth path. `perspective_rh` was removed in 0.34; the prototype shows the replacement.
-- The GL backend lacks view formats and depth copies, so features that need them check `downlevel_capabilities`. On GL, egui is painted through a manual-gamma blit, because without `VIEW_FORMATS` the spike's panel came out darker.
+- The projection is `glam` 0.34's `Mat4` built through the right-handed, DirectX-depth path. `perspective_rh` was removed in 0.34; the prototype showed the replacement, and `re_render` uses it.
+- The GL backend lacks view formats and depth copies, so features that need them check `downlevel_capabilities`. Without `VIEW_FORMATS` the spike's egui panel came out darker on GL, so egui is painted into an `Rgba8Unorm` overlay and composited with a manual-gamma blit on **every** backend: one code path, and WP1 measured a 0.000-level difference in the egui panel's mean luminance between Vulkan and GL (their egui goldens are identical).
 - Golden image tests compare with a tolerance of about 2 levels per channel plus a small outlier budget, using the prototype's `imgdiff` approach. **Each backend has its own golden set**, and `verify` uses the set for the backend it ran on.
 - The first egui frame lays out wrongly, so captures render one warm-up frame first.
 
@@ -318,7 +319,7 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 
 ## ADR-0012: Engine-native Luau API in M1; Roblox-style compatibility layer in M2
 
-**Status:** Accepted for M1. The size of M2 depends on the open owner question "Must scene scripts run unchanged?" (see Open questions).
+**Status:** Accepted. The owner chose "Demo first" (open question 3, resolved): M1 ships the playable demo on the engine-native API, and M2's goal is the sample scenes running through the Roblox-style layer. Whether a mechanical migration step on the way is acceptable is still open.
 
 **Context.** The owner's target is a set of external Roblox-style projects made of Luau scripts. They use a large Roblox API surface: services, instance classes, events, enums, datatypes and yielding calls. Building all of that before the engine core exists would delay everything.
 
@@ -345,6 +346,8 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 - Never providing compatibility. That fails the owner's goal.
 
 **Consequences.**
+- M1's demo is written against the native API only; no compatibility work blocks M1.
+- M2's exit is the sample scenes running through `re_compat`. If a mechanical migration step is accepted, `re_compat` may cover less of the API surface and a `real migrate` tool covers the rest; that is decided before M2's plan is written.
 - M2 is measured with the validation suite (ADR-0024): compile rate, static gap report, runtime boot.
 - The static scan (ADR-0014) produces the M2 work list from real scripts before M2 starts.
 
@@ -416,7 +419,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Decision.**
 - `re_proc` defines `ProcGraph`: nodes with typed ports, edges, and per-node parameters as `serde_json::Value`. It is stored as JSON (`*.graph.json`).
 - A Luau **builder** API (`proc.graph()`, `g:node("terrain.heightfield", {...})`, `g:connect(...)`) records a ProcGraph. Builders are `tools`-context scripts under `scripts/tools/`. They do not run anything. Luau never runs inside node evaluation in M1.
-- Nodes are Rust functions registered in a `NodeRegistry`. M1 ships 15 nodes (see ARCHITECTURE §5). Each node's parameters have a JSON Schema.
+- Nodes are Rust functions registered in a `NodeRegistry`. M1 ships 16 node kinds in the 15 rows of the table in ARCHITECTURE §5 (`mesh.transform` and `mesh.merge` share a row). Each node's parameters have a JSON Schema.
 - Each node's cache key is `blake3(node type, node version, canonical params, input keys, seed)`.
 - Each evaluation produces an `EvalReport`: per node, whether it hit the cache, how long it took, and its output sizes and diagnostics.
 - The seed for a node is `Pcg32::from_seed(graph_seed).fork(hash(node_id))`, using `re_noise`. Adding a node does not change the random numbers of the other nodes.
@@ -471,7 +474,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - **A procedural source is an ordinary saved entity** carrying `Procedural { generator, seed }` plus a parameter component for its generator (for a ProcGraph, `GraphSource`; ARCHITECTURE §5). The scene file stores the source, its own transform, and its `overrides`. It never stores generated entities.
 - **Generators return plain data**: a `SceneFragment`, a list of `GenNode { key, name, parent_key, components }` with components given by name. A Rust generator (the ProcGraph evaluator in `re_proc`, the test generators) and, later, a Luau generator produce the same thing.
 - **Generated ids.** Each output node has a generator-chosen **StableKey** (for a ProcGraph, `<node_id>/<local_key>`, where `local_key` is the scatter point index, grid cell and so on). The entity's id is `<source id>/<StableKey>`, so selection, commands, agents and overrides address it like any other entity. Randomness is per key (`GenContext::random(key)` hashes the seed and the key), so growing a grid or adding points does not reshuffle existing ones.
-- **Overrides** are stored on the source as `(target key, component, field, value)` entries, or `(target key, deleted: true)`. Editing a generated entity through a command records an override in the same transaction, so undo removes both the value and the override. Despawning a generated entity records a deletion override. Structural edits (reparent, add or remove component) on a generated entity are refused with a hint to change the source's parameters.
+- **Overrides** are stored on the source as `(target key, component, field, value)` entries, or `(target key, deleted: true)`. Editing a generated entity through a command records an override in the same transaction, so undo removes both the value and the override. Despawning a generated entity records a deletion override. Structural edits (reparent, add or remove component) and renames on a generated entity are refused with a hint to change the source's parameters (a rename because no override can carry a name).
 - **Regeneration.** After edits, the engine fingerprints each source (generator name, seed, parameter values, and for a graph the canonical hash of its document). When the fingerprint changed it runs the generator and applies the new fragment as a diff:
   - entities whose key survives keep their `Entity`, so script handles stay valid; their components are updated in place;
   - new keys are spawned, vanished keys are despawned;
@@ -517,13 +520,12 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Status:** Provisional. It needs the owner's agreement as part of the license question (Open question 1).
 
-**Context.** Our allow-list is permissive licenses. A scan of the full M1 lockfile (`cargo metadata` over every crate and feature in DEPENDENCIES.md) found these crates outside it:
+**Context.** Our allow-list is permissive licenses. A scan of the full M1 lockfile (`cargo metadata` over every crate and feature in DEPENDENCIES.md) found these crates outside it. (The first scan also listed `symphonia`, `symphonia-core`, `symphonia-format-riff` and `symphonia-metadata`, MPL-2.0, pulled by kira's `wav` feature. That feature has been dropped: it enables symphonia's RIFF container without the PCM codec, so it could not decode WAV anyway. `re_audio` reads WAV itself, and the symphonia crates are no longer in the build.)
 
 | Crate(s) | License | Pulled by | Linked into |
 |---|---|---|---|
 | `full_moon`, `full_moon_derive` | MPL-2.0 | `re_script_check` (static scan) | tooling builds only |
 | `triple_buffer` | MPL-2.0 | `kira` 0.12.5 (unconditional dependency) | the runtime |
-| `symphonia`, `symphonia-core`, `symphonia-format-riff`, `symphonia-metadata` | MPL-2.0 | `kira`'s `wav` feature | the runtime |
 | `epaint_default_fonts` | `(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0` | egui's `default_fonts` feature | the runtime |
 | `clipboard-win`, `error-code` | BSL-1.0 | `arboard`, through egui-winit's `clipboard` feature (Windows only) | the runtime on Windows |
 
@@ -531,11 +533,11 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - Add BSL-1.0 (Boost) to the allow-list. It is permissive and needs no attribution in binaries.
 - Add `cargo-deny` exceptions, crate by crate, for the MPL-2.0 crates above and for `epaint_default_fonts` (OFL-1.1 and Ubuntu-font-1.0, for the bundled fonts). No other crate may use these licenses.
 - All of these crates are used unmodified.
-- MPL-2.0 code **does** ship in the runtime, through kira. `full_moon` is the only MPL crate confined to tooling: `re_script_check` is reachable only through `re_cli`'s `tooling` feature, and `cargo xtask check-graph` proves that `re_cli --no-default-features` does not reach it.
+- MPL-2.0 code **does** ship in the runtime, but only `triple_buffer`, an unconditional dependency of kira. `full_moon` is the only MPL crate confined to tooling: `re_script_check` is reachable only through `re_cli`'s `tooling` feature, and `cargo xtask check-graph` proves that `re_cli --no-default-features` does not reach it.
 
 **Alternatives.**
 - Write our own Luau parser instead of full_moon.
-- Drop kira's `wav` feature and decode WAV ourselves. This removes the symphonia crates but not `triple_buffer`.
+- Keep kira's `wav` feature. Rejected: it brought four more MPL-2.0 crates into the runtime and could not decode PCM WAV, so `re_audio` decodes WAV itself. Dropping it does not remove `triple_buffer`.
 - Disable egui's `default_fonts` and ship fonts under a permissive license. The UI then needs its own font setup.
 - A different audio crate. The platform spike verified kira, including its headless fallback.
 
@@ -622,8 +624,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Decision.**
 - The required jobs, all on Ubuntu, are exactly these (M1_PLAN refers to this list):
-  - `fmt` (`cargo fmt --check`);
-  - `clippy` (`cargo clippy --workspace --all-targets --all-features -- -D warnings`);
+  - `fmt` (`cargo fmt --all --check`);
+  - `clippy` (`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`);
   - `test` (`CARGO_BUILD_JOBS=2`, lavapipe). It has two steps: the non-GPU crates in parallel, then the GPU crates (`re_render`, `re_app`, `re_cli`, `re_editor`) with `--test-threads=1`;
   - `msrv` (toolchain 1.95.0, `cargo build --workspace --all-targets --locked`);
   - `deny` (`cargo deny check`, cargo-deny 0.20.2);
@@ -718,7 +720,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - Runtime: `re_app` (the frame loop, sync, verify and the runtime commands) and `re_cli` (the `real` binary). `examples/island` is a project the runtime loads; it is not a crate.
 - Tooling: `re_script_check` (static scan, external type checker, corpus runner), `re_agent` (policy, sessions, checkpoints, agent commands, `AGENTS.md` generation), `re_mcp` (the rmcp adapter) and `re_editor` (editor-lite UI and the editor socket).
 - `re_cli` depends on the tooling crates behind the default-on cargo feature `tooling`.
-- A game export build uses `--no-default-features` and links none of them, so it links no tokio, rmcp or full_moon. `cargo xtask check-graph` checks this.
+- A game export build uses `--no-default-features` and links none of them, so it links no tokio, rmcp or full_moon. `cargo xtask check-graph` checks this (no tooling crate and none of those three dependencies in `cargo tree -p re_cli --no-default-features`).
+- A subcommand that needs a tooling crate is itself behind `tooling`: `check`, `mcp`, `agent`, `editor` and `do`. `real do` needs `re_agent::lock` and `re_agent::remote::connect` (one writer, ADR-0026), so the runtime-only `real` has no `do`; it runs, verifies, describes and explains a project but does not edit it. Nothing is split out of `re_agent` for the runtime build.
 
 **Consequences.** WP6, WP7 and WP8 own disjoint crates and files (see [M1_PLAN.md](M1_PLAN.md)).
 
@@ -835,18 +838,18 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 ## Open questions for the owner
 
 1. **License.**
-   - The repository has no `LICENSE` file. The render prototype's `Cargo.toml` declares `MIT OR Apache-2.0`.
+   - The repository has no `LICENSE` file. The crates declare `MIT OR Apache-2.0`, the render prototype's value.
    - Recommendation: dual MIT / Apache-2.0, the usual choice for Rust, which matches most crates' defaults and the prototype. Add `LICENSE-MIT` and `LICENSE-APACHE` at the root.
-   - This also needs a decision on the exceptions in ADR-0019. MPL-2.0 code ships **in the runtime** through kira (`triple_buffer`, and the symphonia crates through the `wav` feature), not only in tooling (full_moon). egui's default fonts bring OFL-1.1 and Ubuntu-font-1.0. Do you accept these, or should we drop kira's `wav` feature, replace kira, or replace the default fonts?
-   - Until the owner decides, the workspace `license` field is left as the prototype's value, and the README says the license is not final.
+   - This also needs a decision on the exceptions in ADR-0019. MPL-2.0 code ships **in the runtime** through one crate, kira's unconditional dependency `triple_buffer` (used unmodified), not only in tooling (full_moon). kira's `wav` feature and its symphonia crates have been dropped (`re_audio` decodes WAV itself). egui's default fonts bring OFL-1.1 and Ubuntu-font-1.0. Do you accept these, or should we replace kira or the default fonts?
+   - Until the owner decides, the workspace `license` field keeps that value, and the README says the license is not final.
 2. **Which Luau type checker do we ship?** The engine cannot type-check in process today, because mlua's vendored Luau has no Analysis module (ADR-0013). The options:
    - **(a) An external official checker** (the current default). luau-lsp 1.70.1 works unpatched and also serves editors; a patched luau-analyze 0.740 (27-line `--definitions` patch, a 220 s source build) is the alternative. Both are MIT tools, not code dependencies, so the crates.io-only rule does not apply, but users must install them (or we bundle the release binaries), and the patched analyzer needs a rebase on each Luau upgrade.
    - **(b) Vendor Luau's Analysis sources** (MIT) into a crate of our own and build them with `cc`. This gives in-process checking at mlua's exact Luau version, on every platform, with no external binary. It is a C++ build we would maintain.
    - **(c) The `luau-analyze` 0.0.1 crate.** The scripting spike rejected it: few downloads, strict-only, single-file, behind mlua's Luau version, no Windows support, and it cannot link into the same binary as mlua.
    - Recommendation: (a) with luau-lsp for M1 and M2, and revisit (b) if bundling external binaries proves painful.
-3. **Must the external sample scenes' scripts run unchanged?**
-   - The current plan is an engine-native Luau API in M1 and a Roblox-style compatibility layer in M2 (ADR-0012).
+3. **Must the external sample scenes' scripts run unchanged?** **Resolved (owner: "Demo first").** M1 ships the playable demo on the engine's own API; M2's goal is the sample scenes running through the Roblox-style layer (ADR-0012, Accepted). Still open: whether a mechanical migration step on the way is acceptable. The background below is kept for that part.
+   - The plan is an engine-native Luau API in M1 and a Roblox-style compatibility layer in M2 (ADR-0012).
    - "Unchanged" means every global, service, class, event, enum and datatype those scripts touch must exist with matching behaviour, including yielding calls and deprecated members.
    - The alternative is "runs after a mechanical migration done by a tool". It is much cheaper, and it could be offered as a `real migrate` command.
-   - The answer sets the size of M2.
+   - The answer to the migration question sets the size of M2.
 4. **Windows and macOS priority.** When should these platforms start blocking merges? M3 is the current plan.

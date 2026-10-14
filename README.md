@@ -8,9 +8,15 @@ Real Engine is an open-source 3D game engine written in Rust, at the design stag
 
 ## Status
 
-**Early M1.** The architecture and the first milestone plan are written (see below). The Cargo workspace exists with the contract-layer crates of M1 WP0: `re_core` (diagnostics, fixed-step clock, frame phases, task pool, events, profiling and logging), `re_noise` (deterministic noise) and `re_types` (the plain-data contracts between the app and its subsystems), plus the repository checks in `tools/xtask`. The other engine crates described in the docs do not exist yet. The **rendering prototype** in `prototypes/render/` is a standalone spike that verified the rendering stack headless and windowed; it will be removed once M1 WP1 has ported it into `re_render`.
+**Early M1.** The architecture and the first milestone plan are written (see below). The Cargo workspace holds these crates:
 
-The license is not final: see [DECISIONS.md, open questions](docs/DECISIONS.md#open-questions-for-the-owner). The prototype's `Cargo.toml` declares `MIT OR Apache-2.0`.
+- The contract layer: `re_core` (diagnostics, fixed-step clock, frame phases, task pool, events, profiling and logging), `re_noise` (deterministic noise) and `re_types` (the plain-data contracts between the app and its subsystems).
+- The entity model: `re_reflect` (the component registry: typed, documented fields read and written by name), `re_scene` (the World facade over bevy_ecs, with stable ids, the hierarchy, the built-in components, scene and prefab files and procedural sources) and `re_command` (edit operations, transactions with undo and redo, and the command registry).
+- The subsystems: `re_render` (the wgpu forward renderer with egui painting and headless capture), `re_physics` (Jolt through oxijolt behind a command-buffer API), `re_assets` (glTF import, material files, the processed-asset cache and hot reload), `re_input` (raw device state, the action map and replays), `re_audio` (kira playback driven by `AudioCmd`, with a headless capture backend) and `re_anim` (glTF node clips and tweens).
+
+The repository checks are in `tools/xtask`, and `tools/derive_alias_check` proves that bevy's derives work through the `re_scene::ecs` re-export. Nothing runs a game yet: the runtime that ties these crates together (`re_app`), scripting, the procedural graph, the CLI, the agent layer and the editor are later M1 work packages.
+
+The license is not final: see [DECISIONS.md, open questions](docs/DECISIONS.md#open-questions-for-the-owner). The crates declare `MIT OR Apache-2.0` until the owner decides.
 
 ## Stack
 
@@ -47,16 +53,17 @@ You need the current stable Rust toolchain (`rust-toolchain.toml` selects it; th
 export CARGO_BUILD_JOBS=2
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --locked
+cargo test --workspace --locked --exclude re_render
+cargo test --locked -p re_render -- --test-threads=1   # needs lavapipe, see below
 cargo xtask check        # crate-graph rules, duplicate versions, explain pages, schema drift
 cargo deny check         # needs cargo-deny 0.20.2: cargo install cargo-deny --version 0.20.2 --locked
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same checks, plus a build with Rust 1.95.0 and builds on Windows and macOS (ADR-0023).
 
-## Building and running the rendering prototype
+## Running the renderer tests
 
-You need Rust 1.95 or newer. On Debian or Ubuntu, install the system packages:
+`re_render`'s tests draw real frames, headless, and compare them with golden images in `crates/re_render/tests/goldens/` (one set per backend). No GPU is needed. On Debian or Ubuntu, install the system packages:
 
 ```sh
 sudo apt-get install -y build-essential pkg-config libvulkan-dev mesa-vulkan-drivers \
@@ -65,24 +72,24 @@ sudo apt-get install -y build-essential pkg-config libvulkan-dev mesa-vulkan-dri
   libxi-dev libwayland-dev xvfb
 ```
 
-`mesa-vulkan-drivers` provides lavapipe, a software Vulkan driver, so no GPU is needed. The EGL and Mesa GL packages are for the GL backend (llvmpipe). This is the prototype's subset; the full engine list is in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md#system-packages).
+`mesa-vulkan-drivers` provides lavapipe, a software Vulkan driver. The EGL and Mesa GL packages are for the GL backend (llvmpipe). This is the renderer's subset; the full engine list is in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md#system-packages).
 
 ```sh
-cd prototypes/render
+export CARGO_BUILD_JOBS=2
 
 # Headless tests on Vulkan (lavapipe), then on GL (llvmpipe)
-cargo test --locked -- --test-threads=1 --nocapture
-SPIKE_BACKENDS=gl cargo test --locked --test render -- --test-threads=1 --nocapture
-
-# Render one frame to a PNG
-cargo build --release --bins
-target/release/headless --backends vulkan --size 640x480 --out out/headless.png
+cargo test --locked -p re_render -- --test-threads=1
+RE_BACKENDS=gl cargo test --locked -p re_render -- --test-threads=1
 
 # Windowed smoke test under a virtual display (prints WINDOWED OK)
-xvfb-run -a -s "-screen 0 1280x720x24" target/release/windowed --backends vulkan --frames 120
+cargo build --locked -p re_render --example windowed_smoke
+xvfb-run -a -s "-screen 0 1280x720x24" target/debug/examples/windowed_smoke --frames 120
+
+# Compare two images with the golden-test tolerance
+cargo run --locked -p re_render --example re-imgdiff -- <a.png> <b.png>
 ```
 
-The other binaries are `probe` (adapter report), `gui_offscreen` (egui to a PNG) and `imgdiff` (compare two images). A cold release build takes a few minutes.
+CI runs the GPU crates' tests separately from the rest of the workspace, with `--test-threads=1`.
 
 ## Contributing
 
