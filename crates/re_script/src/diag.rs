@@ -22,7 +22,7 @@ use crate::codes;
 /// Registry key of `debug.traceback`, saved before the sandbox freezes globals.
 pub(crate) const TRACEBACK_FN: &str = "re_script.debug_traceback";
 
-/// The message the CPU budget raises (see [`crate::budget`]).
+/// The message the CPU budget raises.
 pub const TIMEOUT_MESSAGE: &str = "script exceeded its time budget";
 
 /// What kind of failure a [`ScriptError`] is.
@@ -195,29 +195,45 @@ fn flatten(err: &mlua::Error) -> (ErrorKind, String, String) {
     }
 }
 
-/// Removes every "runtime error: " prefix (mlua adds one per wrapping layer).
+/// Removes mlua's leading "runtime error: " prefixes (one per wrapping layer).
+/// Text further into the message is the script's own and is kept.
 fn strip_runtime_prefixes(s: &str) -> String {
     let mut out = s.trim_start();
     while let Some(rest) = out.strip_prefix("runtime error: ") {
         out = rest.trim_start();
     }
-    out.replace(": runtime error: ", ": ")
+    out.to_string()
 }
 
-/// Splits `scripts/a.luau:12: boom` into chunk, line and message. The chunk part
-/// must look like a chunk name (no spaces), so a message such as
-/// `bad argument: 3: x` is not mistaken for a location.
+/// Finds `chunk:line:` at the start of `text`: the first `:` that is directly
+/// followed by digits and another `:`. Chunk names may contain spaces and drive
+/// letters (`C:/x.luau`), while a message such as `bad argument #1: 3: x` (a space
+/// after the colon) is not mistaken for a location. Returns the chunk (without
+/// mlua's leading `@` or `=`), the line and the rest after the second colon.
+fn find_location(text: &str) -> Option<(&str, u32, &str)> {
+    let bytes = text.as_bytes();
+    for (i, _) in text.match_indices(':') {
+        let digits = bytes[i + 1..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        if digits == 0 || bytes.get(i + 1 + digits) != Some(&b':') {
+            continue;
+        }
+        let line = text[i + 1..i + 1 + digits].parse::<u32>().ok()?;
+        let chunk = text[..i].trim_start_matches(['@', '=']);
+        return Some((chunk, line, &text[i + 2 + digits..]));
+    }
+    None
+}
+
+/// Splits `scripts/a.luau:12: boom` into chunk, line and message.
 fn split_location(raw: &str) -> (Option<String>, Option<u32>, String) {
     let (first, rest) = match raw.split_once('\n') {
         Some((f, r)) => (f, Some(r)),
         None => (raw, None),
     };
-    let mut parts = first.splitn(3, ':');
-    if let (Some(chunk), Some(line), Some(msg)) = (parts.next(), parts.next(), parts.next())
-        && let Ok(line) = line.trim().parse::<u32>()
-        && !chunk.contains(char::is_whitespace)
-    {
-        let chunk = chunk.trim_start_matches(['@', '=']);
+    if let Some((chunk, line, msg)) = find_location(first) {
         let mut message = msg.trim().to_string();
         if let Some(rest) = rest {
             message.push('\n');
@@ -248,11 +264,8 @@ pub(crate) fn first_luau_frame(traceback: &str) -> Option<(String, u32)> {
         if l.starts_with('[') {
             return None;
         }
-        let mut parts = l.splitn(3, ':');
-        let (chunk, line) = (parts.next()?, parts.next()?);
-        let line = line.trim().parse::<u32>().ok()?;
-        (!chunk.is_empty() && !chunk.contains(char::is_whitespace))
-            .then(|| (chunk.trim_start_matches(['@', '=']).to_string(), line))
+        let (chunk, line, _) = find_location(l)?;
+        (!chunk.is_empty()).then(|| (chunk.to_string(), line))
     })
 }
 
@@ -298,5 +311,33 @@ mod tests {
         let (c, l, m) = split_location("bad argument #1: 3: x");
         assert_eq!((c, l), (None, None));
         assert_eq!(m, "bad argument #1: 3: x");
+    }
+
+    #[test]
+    fn chunk_names_with_spaces_and_drive_letters_keep_their_location() {
+        let lua = mlua::Lua::new();
+        let e = lua
+            .load("local function f() error('boom') end\nf()")
+            .set_name("@scripts/x y.luau")
+            .exec()
+            .unwrap_err();
+        let s = ScriptError::from_mlua("t", &e);
+        assert_eq!(s.chunk.as_deref(), Some("scripts/x y.luau"));
+        assert_eq!(s.line, Some(1));
+        assert_eq!(s.message, "boom");
+        let (c, l, m) = split_location("C:/proj/a.luau:7: oops");
+        assert_eq!(
+            (c.as_deref(), l, m.as_str()),
+            (Some("C:/proj/a.luau"), Some(7), "oops")
+        );
+    }
+
+    #[test]
+    fn script_text_mentioning_runtime_error_is_kept() {
+        let e = mlua::Error::RuntimeError(
+            "runtime error: scripts/a.luau:1: a: runtime error: b".into(),
+        );
+        let s = ScriptError::from_mlua("t", &e);
+        assert_eq!(s.message, "a: runtime error: b");
     }
 }

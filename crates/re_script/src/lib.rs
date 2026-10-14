@@ -51,8 +51,13 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
 mod catalog {
     #[test]
     fn diagnostics_catalog_is_valid() {
-        let mut problems = re_core::validate_catalog(super::DIAGNOSTICS, 3000..=3079);
-        problems.retain(|p| !p.contains("RE9"));
+        // re_script owns two blocks; check each against its own range.
+        let (script, compat): (Vec<_>, Vec<_>) = super::DIAGNOSTICS
+            .iter()
+            .copied()
+            .partition(|d| d.code.number() < 9000);
+        let mut problems = re_core::validate_catalog(&script, 3000..=3079);
+        problems.extend(re_core::validate_catalog(&compat, 9000..=9999));
         assert!(problems.is_empty(), "{problems:#?}");
     }
 }

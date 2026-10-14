@@ -22,8 +22,10 @@ thread_local! {
 }
 
 /// Compiles `source` with the engine's Luau compiler and loads the bytecode
-/// (without running it). Returns no diagnostics when the script is valid, or one
-/// `RE3001` diagnostic pointing at `chunk_name` and the line of the error.
+/// (without running it). Returns no diagnostics when the script is valid. A syntax
+/// error gives one `RE3001` diagnostic pointing at `chunk_name` and the line of
+/// the error; callers should treat any returned error as a failure, because a
+/// bytecode load failure (never seen in practice) is mapped like a runtime error.
 ///
 /// `chunk_name` is the path shown in diagnostics, normally the script's path
 /// relative to the project (`scripts/game/player.luau`). This is validation
