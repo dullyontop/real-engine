@@ -64,3 +64,13 @@ $RECYCLE.BIN/
 .env
 .env.*
 !.env.example
+
+# ---------------------------------------------------------------------------
+# Real Engine
+# ---------------------------------------------------------------------------
+# Output of acceptance commands and examples.
+out/
+# Per-project engine state (caches, sessions, crash reports, locks). A project's
+# agent policy is committed. The `**/` prefix keeps these unanchored.
+**/.real/*
+!**/.real/agent-policy.toml

@@ -1,0 +1,119 @@
+# cargo-deny configuration (cargo-deny 0.20.2). Policy: docs/DEPENDENCIES.md.
+#
+# `cargo deny check` runs in the `deny` CI job. The duplicate-version gate is
+# `cargo xtask dupes`, which reads the `[bans] skip` list below as (name, version)
+# pairs; cargo-deny itself only warns about duplicates.
+
+[graph]
+# The three desktop triples. Duplicates and licenses on other platforms (Android,
+# iOS, UEFI, Redox) are out of scope until those platforms are.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+]
+# Check optional dependencies too (for example the profiler backends of re_core).
+all-features = true
+
+[advisories]
+# Unmaintained notices only matter for crates we depend on directly.
+unmaintained = "workspace"
+
+[licenses]
+# Policy 4 of docs/DEPENDENCIES.md.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "Zlib",
+    "CC0-1.0",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.93
+# The allow-list covers the whole M1 dependency set; crates that are not in the
+# tree yet leave some licenses unused, which is expected.
+unused-allowed-license = "allow"
+unused-license-exception = "allow"
+# Per-crate exceptions (ADR-0019), and nothing else.
+exceptions = [
+    # Luau parser for the static API scan; tooling builds only.
+    { crate = "full_moon", allow = ["MPL-2.0"] },
+    { crate = "full_moon_derive", allow = ["MPL-2.0"] },
+    # Unconditional dependency of kira; ships in the runtime.
+    { crate = "triple_buffer", allow = ["MPL-2.0"] },
+    # kira's `wav` feature; ships in the runtime.
+    { crate = "symphonia", allow = ["MPL-2.0"] },
+    { crate = "symphonia-core", allow = ["MPL-2.0"] },
+    { crate = "symphonia-format-riff", allow = ["MPL-2.0"] },
+    { crate = "symphonia-metadata", allow = ["MPL-2.0"] },
+    # egui's bundled fonts.
+    { crate = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
+]
+
+[licenses.private]
+# Our own crates are `publish = false` and carry no license file yet (the license
+# is an open owner question).
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+    # Never accepted: a second copy of these (docs/DEPENDENCIES.md, ADR-0028).
+    { crate = "wgpu", deny-multiple-versions = true, reason = "one GPU stack" },
+    { crate = "winit", deny-multiple-versions = true, reason = "one windowing stack" },
+    { crate = "egui", deny-multiple-versions = true, reason = "one UI stack" },
+    { crate = "mlua", deny-multiple-versions = true, reason = "one Luau VM" },
+    { crate = "bevy_ecs", deny-multiple-versions = true, reason = "one entity core (ADR-0005)" },
+    { crate = "glam:>=0.34", deny-multiple-versions = true, reason = "our crates use glam 0.34.1 only (ADR-0028)" },
+    # An older glam is accepted only as kira's own dependency (ADR-0028).
+    { crate = "glam:<0.34", wrappers = ["kira"], reason = "older glam only inside kira (ADR-0028)" },
+]
+# Known duplicate versions (docs/DEPENDENCIES.md, "Known duplicate versions").
+# `cargo xtask dupes` compares `cargo tree -d` with this list as (name, version)
+# pairs. Entries for crates that are not in the tree yet only produce warnings.
+skip = [
+    { crate = "glam@0.33.12", reason = "kira 0.12.5; never crosses our API" },
+    { crate = "hashbrown@0.16.1", reason = "gpu-allocator through wgpu-hal, and bevy_platform" },
+    { crate = "hashbrown@0.12.3", reason = "full_moon_derive (compile-time)" },
+    { crate = "indexmap@1.9.3", reason = "full_moon_derive (compile-time)" },
+    { crate = "syn@1.0.109", reason = "full_moon_derive (compile-time)" },
+    { crate = "syn@3.0.9", reason = "bytemuck_derive, clap_derive, darling (compile-time)" },
+    { crate = "derive_more@1.0.0", reason = "full_moon (tooling only)" },
+    { crate = "derive_more-impl@1.0.0", reason = "full_moon (tooling only)" },
+    { crate = "thiserror@1.0.69", reason = "calloop 0.13 through winit's Wayland stack" },
+    { crate = "thiserror-impl@1.0.69", reason = "calloop 0.13 through winit's Wayland stack" },
+    { crate = "getrandom@0.3.4", reason = "ahash through egui" },
+    { crate = "base64@0.13.1", reason = "gltf" },
+    { crate = "calloop@0.13.0", reason = "winit's Wayland stack" },
+    { crate = "calloop-wayland-source@0.3.0", reason = "winit's Wayland stack" },
+    { crate = "smithay-client-toolkit@0.19.2", reason = "winit's Wayland stack" },
+    { crate = "rustix@0.38.44", reason = "winit's Wayland stack" },
+    { crate = "linux-raw-sys@0.4.15", reason = "winit's Wayland stack" },
+    { crate = "rustc-hash@1.1.0", reason = "naga, wgpu-core" },
+    { crate = "itertools@0.14.0", reason = "puffin (optional)" },
+    { crate = "smol_str@0.2.2", reason = "winit" },
+    { crate = "miniz_oxide@0.8.9", reason = "png" },
+    { crate = "spin@0.9.9", reason = "heapless through postcard" },
+    { crate = "windows-sys@0.52.0", reason = "winit; Windows ecosystem split" },
+    { crate = "windows-sys@0.60.2", reason = "Windows ecosystem split" },
+    { crate = "windows-targets@0.52.6", reason = "Windows ecosystem split" },
+    { crate = "windows_x86_64_msvc@0.52.6", reason = "Windows ecosystem split" },
+    { crate = "bitflags@1.3.2", reason = "core-graphics 0.23 through winit (macOS)" },
+    { crate = "block2@0.5.1", reason = "winit 0.30 objc2 line (macOS)" },
+    { crate = "objc2@0.5.3", reason = "winit 0.30 objc2 line (macOS)" },
+    { crate = "objc2-foundation@0.2.2", reason = "winit 0.30 objc2 line (macOS)" },
+    { crate = "objc2-app-kit@0.2.2", reason = "winit 0.30 objc2 line (macOS)" },
+]
+
+[sources]
+# Only crates.io (policy 1).
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

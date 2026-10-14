@@ -1,0 +1,75 @@
+[workspace]
+members = ["crates/*", "tools/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Every third-party crate the engine may use, at the exact version recorded in
+# docs/DEPENDENCIES.md. Member crates write `foo.workspace = true`. Adding a crate
+# here needs an ADR in docs/DECISIONS.md and a row in docs/DEPENDENCIES.md.
+[workspace.dependencies]
+# Workspace crates.
+re_core = { path = "crates/re_core" }
+re_noise = { path = "crates/re_noise" }
+re_types = { path = "crates/re_types" }
+
+# Rendering, windowing, UI.
+wgpu = "=30.0.1"
+winit = "=0.30.13"
+egui = "=0.36.2"
+egui-wgpu = "=0.36.2"
+egui-winit = "=0.36.2"
+glam = { version = "=0.34.1", features = ["bytemuck", "mint-05", "serde"] }
+bytemuck = { version = "=1.25.2", features = ["derive"] }
+pollster = "=1.0.1"
+png = "=0.18.1"
+
+# Physics. Default features off: the default `prebuilt` feature downloads binaries.
+oxijolt = { version = "=1.1.0", default-features = false }
+
+# Scripting and script tooling.
+mlua = { version = "=0.12.2", features = ["luau"] }
+full_moon = { version = "=3.0.0", features = ["luau"] }
+
+# Core, data and serialization.
+bevy_ecs = { version = "=0.20.0", default-features = false, features = ["std", "multi_threaded"] }
+rayon = "=1.12.0"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.154", features = ["preserve_order", "float_roundtrip"] }
+schemars = { version = "=1.2.3", features = ["derive"] }
+toml = "=1.1.8"
+postcard = { version = "=1.1.3", features = ["use-std"] }
+blake3 = "=1.8.7"
+uuid = { version = "=1.28.0", features = ["v4", "serde"] }
+indexmap = { version = "=2.14.2", features = ["serde"] }
+thiserror = "=2.0.21"
+anyhow = "=1.0.104"
+
+# Assets, input, audio, platform.
+gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
+notify = "=8.2.0"
+notify-debouncer-full = "=0.7.0"
+kira = { version = "=0.12.5", default-features = false, features = ["cpal", "wav"] }
+gilrs = "=0.11.2"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "ansi", "json"] }
+puffin = "=0.20.0"
+tracy-client = { version = "=0.19.0", default-features = false, features = ["enable", "ondemand"] }
+
+# Tools, CLI, agent.
+clap = { version = "=4.6.7", features = ["derive"] }
+rmcp = { version = "=3.5.1", features = ["server", "transport-io", "macros"] }
+tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "io-std"] }
+
+# Dev-dependencies.
+insta = { version = "=1.49.0", features = ["json"] }
+tempfile = "=3.27.0"
+
+[profile.dev]
+debug = "line-tables-only"
