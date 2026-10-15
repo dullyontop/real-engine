@@ -18,8 +18,12 @@
 //! an existing one is adopted (its script updated in place), a missing one is
 //! created, and an instance an earlier import created that the input no
 //! longer declares is removed. Only instances an import created (their ids
-//! start with [`IMPORT_ID_PREFIX`]) are ever removed. The whole import is one
-//! transaction: an error leaves the project as it was.
+//! start with [`IMPORT_ID_PREFIX`]) are ever removed. An import owns every
+//! instance any import created in what its input covers (a loader's script
+//! table: all imported scripts; a Rojo project: the whole place), so a project
+//! takes one input. Every check runs before anything is written: an import
+//! that fails to plan leaves the project as it was, and only a file system
+//! error part-way through writing (`RE9808`) can leave it half-written.
 //!
 //! A general `.rbxl`/`.rbxlx` reader is M3.
 

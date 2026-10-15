@@ -335,7 +335,7 @@ pub fn plan(
     let mut taken = HashSet::new();
     for e in &docs.list {
         if let Some(p) = docs.script_path(&e.id) {
-            taken.insert(p);
+            taken.insert(p.to_lowercase());
         }
     }
     if docs.get(GAME_ID).is_none() {
@@ -632,11 +632,16 @@ impl Sync<'_> {
     }
 
     fn service(&mut self, node: usize) {
+        let class = self.tree.nodes[node].class.clone();
         if self.tree.live_children(node).next().is_none() {
-            // Only used as a handle (`ChangeHistoryService`, `CollectionService`).
+            // Only used as a handle (`ChangeHistoryService`, `CollectionService`),
+            // or emptied by the input: never created, but a service the scene
+            // has is still the root its stale scopes are counted from.
+            if self.docs.get(&class).is_some() {
+                self.mapped.insert(node, class);
+            }
             return;
         }
-        let class = self.tree.nodes[node].class.clone();
         if self.docs.get(&class).is_none() {
             match self.classes.try_class(&class) {
                 Some(c) if c.service => {
@@ -769,6 +774,17 @@ impl Sync<'_> {
         };
         let source = n.source.clone();
         let existing = self.docs.script_path(id);
+        if let Some(p) = existing.as_ref().filter(|p| !safe_relative(p)) {
+            self.failed.push(Failure {
+                path: self.tree.path(node),
+                class: class.clone(),
+                line: n.line,
+                message: format!(
+                    "its script file {p:?} in the scene leaves the project directory; the source was not written"
+                ),
+            });
+            return false;
+        }
         let path = match &existing {
             Some(p) => p.clone(),
             None => {
@@ -810,8 +826,11 @@ impl Sync<'_> {
             } else {
                 format!("{dir}/{stem}~{n}{suffix}")
             };
-            if !self.taken.contains(&candidate) && !self.project.dir.join(&candidate).exists() {
-                self.taken.insert(candidate.clone());
+            // Case-folded: two names that differ only in case would be one
+            // file on macOS and Windows.
+            let key = candidate.to_lowercase();
+            if !self.taken.contains(&key) && !self.project.dir.join(&candidate).exists() {
+                self.taken.insert(key);
                 return candidate;
             }
             n += 1;
@@ -854,6 +873,24 @@ impl Sync<'_> {
                                 x.starts_with(IMPORT_ID_PREFIX) && !self.desired.contains(x)
                             }));
                         }
+                    }
+                }
+                StaleScope::UndeclaredServices => {
+                    for c in self.docs.live_children(GAME_ID) {
+                        let class = self.docs.class(&c);
+                        if self
+                            .tree
+                            .services
+                            .iter()
+                            .any(|&s| self.tree.nodes[s].class == class)
+                        {
+                            continue;
+                        }
+                        let mut sub = Vec::new();
+                        self.docs.subtree(&c, &mut sub);
+                        doomed.extend(sub.into_iter().filter(|x| {
+                            x.starts_with(IMPORT_ID_PREFIX) && !self.desired.contains(x)
+                        }));
                     }
                 }
                 StaleScope::Subtree(node) => {
@@ -901,6 +938,7 @@ impl Sync<'_> {
                 });
                 if let Some(p) = self.docs.script_path(x)
                     && p.starts_with("scripts/")
+                    && safe_relative(&p)
                 {
                     self.deletes.push(p);
                 }
@@ -921,6 +959,16 @@ impl Sync<'_> {
         self.deletes.sort();
         self.deletes.dedup();
     }
+}
+
+/// A script path from the scene that stays inside the project directory:
+/// relative, `/`-separated, with no `..`, `.` or empty parts and no drive.
+fn safe_relative(p: &str) -> bool {
+    !p.is_empty()
+        && !p.starts_with('/')
+        && !p.contains('\\')
+        && !p.contains(':')
+        && p.split('/').all(|part| !matches!(part, "" | "." | ".."))
 }
 
 /// Writes a plan into the project directory: scripts first, then the scene,

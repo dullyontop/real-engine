@@ -629,3 +629,174 @@ fn a_new_project_is_an_empty_place_that_takes_an_import() {
     assert!(report.ok());
     load(&project);
 }
+
+fn write_files(dir: &Path, files: &[(&str, &str)]) {
+    for (path, text) in files {
+        let p = dir.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+}
+
+fn removed_paths(report: &ImportReport) -> Vec<String> {
+    let mut out: Vec<String> = report
+        .removed
+        .iter()
+        .map(|i| re_import::display_path(&i.path))
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn an_emptied_or_dropped_service_loses_what_an_import_put_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in");
+    let project = dir.path().join("game");
+    let r = registry();
+    let tree = |services: &str| {
+        format!(r#"{{"name":"t","tree":{{"$className":"DataModel",{services}}}}}"#)
+    };
+    write_files(
+        &input,
+        &[
+            (
+                "default.project.json",
+                &tree(
+                    r#""ServerScriptService":{"$path":"server"},"ReplicatedStorage":{"$path":"shared"}"#,
+                ),
+            ),
+            ("server/Main.server.luau", "print(1)\n"),
+            ("shared/Util.luau", "return 1\n"),
+        ],
+    );
+    import(&input, &project, &r, &opts()).unwrap();
+
+    // The service's directory is now empty.
+    std::fs::remove_file(input.join("server/Main.server.luau")).unwrap();
+    let report = import(&input, &project, &r, &opts()).unwrap();
+    assert_eq!(removed_paths(&report), ["ServerScriptService.Main"]);
+    assert_eq!(report.files.deleted.len(), 1);
+
+    // The project no longer names the service at all.
+    write_files(
+        &input,
+        &[("default.project.json", &tree(r#""Workspace":{}"#))],
+    );
+    let report = import(&input, &project, &r, &opts()).unwrap();
+    assert_eq!(removed_paths(&report), ["ReplicatedStorage.Util"]);
+    load(&project);
+}
+
+#[test]
+fn a_loader_that_empties_a_service_removes_its_old_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("game");
+    let r = registry();
+    let loader = |body: &str| {
+        format!(
+            "local function wipe(where, label)\n\tfor _, kid in ipairs(where:GetChildren()) do\n\t\tif kid.Name == label then\n\t\t\tkid:Destroy()\n\t\tend\n\tend\nend\n\
+             local function new(kind, label, where)\n\tlocal made = Instance.new(kind)\n\tmade.Name = label\n\tmade.Parent = where\n\treturn made\nend\n\
+             do\n\twipe(game:GetService(\"ServerScriptService\"), \"Old\")\n{body}end\n"
+        )
+    };
+    let input = dir.path().join("in.luau");
+    std::fs::write(
+        &input,
+        loader("\tlocal s = new(\"Script\", \"Old\", game:GetService(\"ServerScriptService\"))\n\ts.Source = \"print(1)\"\n"),
+    )
+    .unwrap();
+    import(&input, &project, &r, &opts()).unwrap();
+    std::fs::write(&input, loader("")).unwrap();
+    let report = import(&input, &project, &r, &opts()).unwrap();
+    assert_eq!(removed_paths(&report), ["ServerScriptService.Old"]);
+}
+
+#[test]
+fn names_that_differ_only_in_case_get_their_own_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in");
+    let project = dir.path().join("game");
+    write_files(
+        &input,
+        &[
+            (
+                "default.project.json",
+                r#"{"name":"t","tree":{"$className":"DataModel","ServerScriptService":{"$path":"server"}}}"#,
+            ),
+            ("server/Main.server.luau", "print(1)\n"),
+            ("server/main.server.luau", "print(2)\n"),
+        ],
+    );
+    let report = import(&input, &project, &registry(), &opts()).unwrap();
+    let mut files: Vec<String> = report
+        .files
+        .written
+        .iter()
+        .filter(|p| p.starts_with("scripts/"))
+        .map(|p| p.to_lowercase())
+        .collect();
+    let n = files.len();
+    files.sort();
+    files.dedup();
+    assert_eq!((n, files.len()), (2, 2), "{:?}", report.files.written);
+}
+
+#[test]
+fn a_helper_that_does_more_than_make_is_not_read_as_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.luau");
+    std::fs::write(
+        &input,
+        "local function new(kind, label, where)\n\tlocal made = Instance.new(kind)\n\tmade.Name = label .. \"_suffix\"\n\tmade.Parent = where.Parent\n\treturn made\nend\n\
+         do\n\tnew(\"Folder\", \"X\", game:GetService(\"ReplicatedStorage\"))\nend\n",
+    )
+    .unwrap();
+    let err = import(&input, &dir.path().join("game"), &registry(), &opts()).unwrap_err();
+    assert_eq!(err.code, codes::UNRECOGNISED_STATEMENT);
+}
+
+#[test]
+fn a_script_table_with_a_bad_entry_is_reported_and_keeps_stale_scripts() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("game");
+    let r = registry();
+    let input = dir.path().join("in.luau");
+    let table = |extra: &str| {
+        format!(
+            "local ENTRIES = {{\n\t{{ {{ \"ServerScriptService\", \"A\" }}, \"Script\", \"print(1)\" }},\n{extra}}}\n"
+        )
+    };
+    std::fs::write(
+        &input,
+        table("\t{ { \"ServerScriptService\", \"B\" }, \"Script\", \"print(2)\" },\n"),
+    )
+    .unwrap();
+    import(&input, &project, &r, &opts()).unwrap();
+    std::fs::write(
+        &input,
+        table("\t{ { \"ReplicatedStorage\", \"Ping\" }, \"RemoteEvent\", \"\" },\n"),
+    )
+    .unwrap();
+    let report = import(&input, &project, &r, &opts()).unwrap();
+    assert_eq!(report.unrecognised.len(), 1, "{}", report.render_human());
+    assert!(report.removed.is_empty(), "{}", report.render_human());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_loop_in_a_rojo_project_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in");
+    write_files(
+        &input,
+        &[(
+            "default.project.json",
+            r#"{"name":"t","tree":{"$className":"DataModel","ServerScriptService":{"$path":"server"}}}"#,
+        )],
+    );
+    std::fs::create_dir_all(input.join("server")).unwrap();
+    std::os::unix::fs::symlink(input.join("server"), input.join("server/again")).unwrap();
+    let err = import(&input, &dir.path().join("game"), &registry(), &opts()).unwrap_err();
+    assert_eq!(err.code, codes::ROJO_INVALID);
+}

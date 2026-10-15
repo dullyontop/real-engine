@@ -35,6 +35,7 @@
 //! leave a wrong tree. At the top level it is reported and skipped, so a
 //! trailer that would fail if run (`error("boom")`) imports identically.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use full_moon::LuaVersion;
@@ -597,25 +598,53 @@ impl Reader {
             self.tree.remove_stale = false;
         }
         let mut any = false;
-        for (_, v) in &top {
+        let mut partial = false;
+        for (name, v) in &top {
             let Val::Table {
                 items,
                 keyed: false,
-                ..
+                line: table_line,
             } = v
             else {
                 continue;
             };
-            let entries: Option<Vec<Entry>> = items.iter().map(script_entry).collect();
-            let Some(entries) = entries.filter(|e| !e.is_empty()) else {
+            let read: Vec<Option<Entry>> = items.iter().map(script_entry).collect();
+            let good = read.iter().filter(|e| e.is_some()).count();
+            if good == 0 {
                 continue;
-            };
+            }
+            if good < read.len() {
+                // Most of it is a script table; the rest is not, and skipping
+                // it quietly would lose scripts.
+                partial = true;
+                for (i, e) in read.iter().enumerate() {
+                    if e.is_none() {
+                        let line = match &items[i] {
+                            Val::Table { line, .. } => *line,
+                            _ => *table_line,
+                        };
+                        self.tree.unrecognised.push(Unrecognised {
+                            line,
+                            column: 1,
+                            statement: format!(
+                                "entry {} of the script table {name} is not {{ {{path...}}, \"Script\" | \"LocalScript\" | \"ModuleScript\", source }}",
+                                i + 1
+                            ),
+                        });
+                    }
+                }
+            }
             any = true;
-            for (path, class, source, line) in entries {
+            for (path, class, source, line) in read.into_iter().flatten() {
                 self.apply_entry(&path, &class, source, line, tag.as_deref());
             }
         }
-        if any {
+        if any && partial {
+            self.tree.warnings.push(Diagnostic::warning(
+                codes::UNRECOGNISED_STATEMENT,
+                "a script table has entries the importer does not read, so no stale scripts were removed",
+            ));
+        } else if any {
             self.tree.scopes.push(StaleScope::Scripts);
         }
     }
@@ -756,6 +785,7 @@ fn classify(body: &ast::FunctionBody) -> Option<Helper> {
     let params = params?;
     // The body's code without whitespace or comments.
     let mut code = String::new();
+    let mut words: Vec<String> = Vec::new();
     let mut loops = false;
     let mut returns = false;
     // `tokens()` yields a span's brackets before its contents: sort by place.
@@ -766,18 +796,26 @@ fn classify(body: &ast::FunctionBody) -> Option<Helper> {
             loops |= matches!(symbol, Symbol::For | Symbol::While | Symbol::Repeat);
             returns |= *symbol == Symbol::Return;
         }
-        code.push_str(&t.token().to_string());
+        let text = t.token().to_string();
+        code.push_str(&text);
+        if text != ";" {
+            words.push(text);
+        }
     }
     let has = |s: &str| code.contains(s);
+    let shape = |pattern: &[&str], bound: &[(&str, &String)]| shaped(&words, pattern, bound);
     match params.as_slice() {
-        [c, n, p]
-            if !loops
-                && has(&format!("Instance.new({c})"))
-                && has(&format!(".Name={n}"))
-                && has(&format!(".Parent={p}"))
-                && returns =>
-        {
-            Some(Helper::Make)
+        [c, n, p] => {
+            let bound = [("$c", c), ("$n", n), ("$p", p)];
+            let name_first = [
+                "local", "$v", "=", "Instance", ".", "new", "(", "$c", ")", "$v", ".", "Name", "=",
+                "$n", "$v", ".", "Parent", "=", "$p", "return", "$v",
+            ];
+            let parent_first = [
+                "local", "$v", "=", "Instance", ".", "new", "(", "$c", ")", "$v", ".", "Parent",
+                "=", "$p", "$v", ".", "Name", "=", "$n", "return", "$v",
+            ];
+            (shape(&name_first, &bound) || shape(&parent_first, &bound)).then_some(Helper::Make)
         }
         [path]
             if has("GetService")
@@ -789,15 +827,64 @@ fn classify(body: &ast::FunctionBody) -> Option<Helper> {
         {
             Some(Helper::Resolve)
         }
-        [parent, name]
-            if has(&format!("{parent}:GetChildren()"))
-                && has(&format!(".Name=={name}"))
-                && has(":Destroy()") =>
-        {
-            Some(Helper::Clear)
+        [parent, name] => {
+            let bound = [("$parent", parent), ("$name", name)];
+            let children = ["$parent", ":", "GetChildren", "(", ")"];
+            let body = [
+                "do", "if", "$v", ".", "Name", "==", "$name", "then", "$v", ":", "Destroy", "(",
+                ")", "end", "end",
+            ];
+            // `in ipairs(p:GetChildren())`, `in pairs(...)` or `in p:GetChildren()`.
+            let clear = |iter: Option<&str>| {
+                let mut pattern = vec!["for", "$k", ",", "$v", "in"];
+                if let Some(f) = iter {
+                    pattern.extend([f, "("]);
+                }
+                pattern.extend(children);
+                if iter.is_some() {
+                    pattern.push(")");
+                }
+                pattern.extend(body);
+                shape(&pattern, &bound)
+            };
+            (clear(Some("ipairs")) || clear(Some("pairs")) || clear(None)).then_some(Helper::Clear)
         }
         _ => None,
     }
+}
+
+/// Whether a body's tokens are exactly `pattern`. `$x` in the pattern is a
+/// name: the parameter `bound` gives it, or else any local name, the same at
+/// every `$x` and different from the parameters and other `$` names.
+fn shaped(words: &[String], pattern: &[&str], bound: &[(&str, &String)]) -> bool {
+    if words.len() != pattern.len() {
+        return false;
+    }
+    let mut names: HashMap<&str, &str> = bound.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    for (w, p) in words.iter().zip(pattern) {
+        if !p.starts_with('$') {
+            if w != p {
+                return false;
+            }
+            continue;
+        }
+        match names.get(p) {
+            Some(&v) if v != w => return false,
+            Some(_) => {}
+            None => {
+                let is_name = w
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphabetic() || c == '_')
+                    && w.chars().all(|c| c.is_alphanumeric() || c == '_');
+                if !is_name || names.values().any(|v| v == w) {
+                    return false;
+                }
+                names.insert(p, w);
+            }
+        }
+    }
+    true
 }
 
 fn number_value(t: &TokenReference) -> Option<f64> {

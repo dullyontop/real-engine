@@ -64,6 +64,7 @@ pub fn read(project: &Path) -> Result<Tree, Diagnostic> {
         tree: Tree::new(),
         base,
         project: project.to_path_buf(),
+        open_dirs: Vec::new(),
     };
     for (name, node) in tree_json {
         if name.starts_with('$') {
@@ -78,6 +79,7 @@ pub fn read(project: &Path) -> Result<Tree, Diagnostic> {
         r.node_body(svc, obj, &format!("tree.{name}"))?;
         r.tree.scopes.push(StaleScope::Subtree(svc));
     }
+    r.tree.scopes.push(StaleScope::UndeclaredServices);
     Ok(r.tree)
 }
 
@@ -85,6 +87,9 @@ struct Reader {
     tree: Tree,
     base: PathBuf,
     project: PathBuf,
+    /// The directories being read, canonical: a symlink back into one of
+    /// them is a loop.
+    open_dirs: Vec<PathBuf>,
 }
 
 fn props(obj: Option<&J>) -> Vec<(String, J)> {
@@ -211,6 +216,22 @@ impl Reader {
     }
 
     fn dir_into(&mut self, node: usize, dir: &Path) -> Result<(), Diagnostic> {
+        let canonical = dir
+            .canonicalize()
+            .map_err(|e| invalid(dir, format!("cannot open: {e}")))?;
+        if self.open_dirs.contains(&canonical) {
+            return Err(invalid(
+                dir,
+                "a symlink leads back into a directory being read, so the tree would never end",
+            ));
+        }
+        self.open_dirs.push(canonical);
+        let r = self.dir_body(node, dir);
+        self.open_dirs.pop();
+        r
+    }
+
+    fn dir_body(&mut self, node: usize, dir: &Path) -> Result<(), Diagnostic> {
         let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
             .map_err(|e| invalid(dir, format!("cannot list: {e}")))?
             .filter_map(|e| e.ok().map(|e| e.path()))

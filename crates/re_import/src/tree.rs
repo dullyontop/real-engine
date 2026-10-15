@@ -57,6 +57,9 @@ pub enum StaleScope {
     Named { parent: usize, name: String },
     /// The descendants of a node (a Rojo `$path`).
     Subtree(usize),
+    /// The descendants of every service in the scene the input does not
+    /// declare (a Rojo project describes the whole place).
+    UndeclaredServices,
 }
 
 /// What a reader produced.

@@ -3,8 +3,8 @@
 
 /// A file name for an instance name. Characters no common file system allows
 /// in a name (`/ \ : * ? " < > |`, control characters) and `%` itself become
-/// `%XX`; `.` and `..`, an empty name, and a trailing dot or space are escaped
-/// the same way. Every other character, dots included, is kept, so
+/// `%XX`; `.` and `..`, an empty name, a trailing dot or space and the names
+/// Windows reserves (`CON`, `NUL`, `COM1`, ...) are escaped the same way. Every other character, dots included, is kept, so
 /// `Combat.Animator` stays one file name.
 pub fn file_name(name: &str) -> String {
     if name.is_empty() {
@@ -21,6 +21,16 @@ pub fn file_name(name: &str) -> String {
             }
             c => out.push(c),
         }
+    }
+    // Windows reserves these names whatever follows the first dot.
+    let base = out.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (base.len() == 4
+            && (base.starts_with("COM") || base.starts_with("LPT"))
+            && base.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        let first = out.remove(0);
+        out.insert_str(0, &format!("%{:02X}", first as u32));
     }
     if out == "." || out == ".." {
         return out.replace('.', "%2E");
@@ -62,5 +72,9 @@ mod tests {
         assert_eq!(file_name(""), "%");
         assert_eq!(file_name("tab\there"), "tab%09here");
         assert_eq!(file_name("héllo ↑"), "héllo ↑");
+        assert_eq!(file_name("CON"), "%43ON");
+        assert_eq!(file_name("nul.cfg"), "%6Eul.cfg");
+        assert_eq!(file_name("COM1"), "%43OM1");
+        assert_eq!(file_name("Console"), "Console");
     }
 }
