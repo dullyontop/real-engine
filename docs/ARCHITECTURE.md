@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** partly implemented (M1 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) and the editor (`re_editor`). Partial: `re_app` and `re_cli` (the runtime and the `real` CLI; the demo is still to come). Still design: `re_compat` (M2). Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** partly implemented (M1 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) and the editor (`re_editor`). the runtime and CLI (`re_app`, `re_cli`) and the `examples/island` demo, which `real verify` checks in CI. M1 still needs WP7's MCP end-to-end test before its definition of done is checked. Still design: `re_compat` (M2). Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -115,7 +115,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_anim` | Animation-lite: sampling glTF node clips, and tweens | `Sampler`, `Tween` | `re_scene` |
 | `re_script` | The Luau VMs, contexts, native API, scheduler, compile check and engine type definitions | `ScriptRuntime`, `Context`, `compile_check`, `api::definitions` | subsystems (it reaches them through `HostServices`), full_moon |
 | `re_script_check` | The static scan, the external type checker runner and the corpus validation suite (tooling) | `scan`, `GapReport`, `types::run`, `corpus::run` | `re_app`, tokio |
-| `re_app` | The frame loop, sync glue, headless runner, verify and the runtime commands | `App`, `App::open`, `App::serve`, `AppConfig`, `run_windowed`, `run_headless`, `sync::{render, physics, audio}`, `verify::{run, VerifyStage}` | tokio, rmcp, full_moon |
+| `re_app` | The frame loop, sync glue, headless runner, verify and the runtime commands | `App`, `App::open`, `App::serve`, `AppConfig`, `run_windowed`, `run_headless`, `sync::{render, physics, audio}`, `verify::{run, VerifyStage}`; not frozen: `run_headless_observed`, `restarts`, `pending_diagnostics` | tokio, rmcp, full_moon |
 | `re_cli` | The `real` binary and the `explain` command | subcommands | — |
 | `re_agent` | Agent policy, sessions, checkpoints, agent commands, `AGENTS.md` and client configs, the editor socket (client and server loop; Unix only in M1) and the single-writer lock | `Policy`, `Session`, `Checkpoint`, `register_commands`, `generate_agents_md`, `remote::{connect, serve}`, `lock::{acquire, probe}` | tokio |
 | `re_mcp` | The MCP server (rmcp, stdio) | `serve_stdio(EngineHandle, McpOptions)` | `re_app` |
@@ -162,7 +162,9 @@ Input          poll winit/gilrs or the replay → RawInput → ActionMap → Act
 PreRender      script contexts: per-frame callbacks (variable dt)
 fixed steps    FixedClock.advance(frame_dt) → 0..=5 steps of 1/60 s
   PreAnimation   re_anim samples clips and tweens → Transform writes
-  PreSimulation  script fixed-update callbacks; commands queued by scripts
+  PreSimulation  a CharacterController without a physics character gets one first (tried once per entity),
+                 so move_character works on its first step; then script fixed-update callbacks;
+                 commands queued by scripts
   Physics        sync::physics::push: World changes → Vec<PhysicsCmd>, sorted by (kind, EntityId)
                  Physics::apply, Physics::step(dt) on the rayon pool
                  Physics::poses_into(&mut poses); Physics::events()
@@ -362,7 +364,7 @@ A graph is placed in a scene by a **procedural source** entity (ADR-0017): an or
 4. `graph.regenerate` (`{ source, seed }`) sets the source's seed and applies the diff inside one transaction. Entities whose key is unchanged keep their `Entity`, so script handles stay valid. Physics bodies are updated through `PhysicsCmd`.
 5. User overrides are re-applied. They are stored on the source by StableKey, and are either a field value or a **deletion**. Editing a generated entity through any command records an override in the same transaction, so undo removes both. A key with a deletion override is not spawned again. Overrides whose target disappeared are kept as orphans, and produce warning `RE4010`.
 6. During play, a generated entity destroyed by a game script (a collected item, for example) is **suppressed** by its key for the rest of the session, so it stays gone after a regeneration. Suppression is never saved.
-7. Characters are re-grounded: each character whose first terrain hit below it is a new heightfield is placed on the new ground by a downward raycast at its x and z. The ray passes through non-terrain colliders. A character with no terrain below it after the change gets warning `RE0524`, and a missing or failing graph or builder gives `RE0523`.
+7. Characters are re-grounded: each character whose first terrain hit below it is a new heightfield is placed on the new ground by a downward raycast at its x and z. The ray passes through non-terrain colliders. A character with no terrain below it after the change gets warning `RE0524`, and a missing or failing graph or builder gives `RE0523`. In a verify replay, a regeneration that loses a character, leaves one off the ground after 60 frames or brings back a collected item fails with `RE0525` (ADR-0022, stage 5).
 
 This works during play. The M1 demo regenerates the island with a new seed while the character stands on it.
 
@@ -456,6 +458,7 @@ Annotations are derived from the tier and set explicitly on every tool (ADR-0025
 
 - **Explain pages.** Each crate has `explain/RE####.md` and exports `pub const DIAGNOSTICS: &[DiagInfo]`, built with `include_str!`. `re_cli` collects all of them. A test fails on a missing page, a duplicate code, or a code outside the crate's range, and `cargo xtask explain` fails on a page that no `include_str!` in the crate's sources references (so every code used in source is in `DIAGNOSTICS`).
 - **Output.** Human output looks like rustc's: `error[RE3004]: ... --> scripts/game/player.luau:12:5`, followed by a hint. `--json` gives the same data as JSON lines.
+- **Logging.** `real` logs to stderr at `warn,script=info`, so script `print` and `warn` output shows; `RUST_LOG` overrides it.
 - **Panics** are bugs. A panic hook writes a crash report to `.real/crash/` and exits with code 101.
 - **Script errors** carry file, line and traceback. When mlua gives no line (errors raised from Rust, timeouts at the top of a chunk), the line of the first Luau frame in the traceback is used. The duplicated "runtime error:" prefix from mlua is removed. An error in one script callback disconnects nothing and does not stop the frame. Each distinct code and location is reported once, until the script is reloaded or the game restarts.
 - **Type-check results** from the external checker are parsed into the same `Diagnostic` shape (`RE3xxx`), so the CLI, the editor and agents see one format.

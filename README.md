@@ -1,20 +1,26 @@
 # Real Engine
 
-Real Engine is an open-source 3D game engine written in Rust, at the design stage. It is being designed around three ideas:
+Real Engine is an open-source 3D game engine written in Rust. It is built around three ideas:
 
-- **Procedural first.** Worlds are to be described by node graphs (built from Luau or JSON), generated deterministically, and edited by hand on top, with hand edits designed to survive regeneration.
-- **Luau scripting.** The plan starts with an engine-native API, followed by a compatibility layer for Roblox-style projects.
-- **Agent-ready, AI optional.** Every edit is designed to go through one command registry, shared by the CLI, the editor and an MCP server. `real verify` is planned to give a JSON pass/fail for the whole project, with a stable `RE####` code and a `real explain` page for every error. Everything an agent can do is also an ordinary engine feature, and no AI provider is required.
+- **Procedural first.** Worlds are described by node graphs (built from Luau or JSON), generated deterministically, and edited by hand on top. Hand edits survive regeneration.
+- **Luau scripting.** An engine-native API now, with a compatibility layer for Roblox-style projects next (M2).
+- **Agent-ready, AI optional.** Every edit goes through one command registry, shared by the CLI, the editor and an MCP server. `real verify --json` gives a pass/fail for the whole project, with a stable `RE####` code and a `real explain` page for every error. Everything an agent can do is also an ordinary engine feature, and no AI provider is required.
 
 ## Status
 
-**Early M1.** The architecture and the first milestone plan are written (see below). The Cargo workspace holds these crates:
+**M1 nearly done.** All nine M1 work packages have merged, and `examples/island` is a playable demo: walk, push crates, collect items, win and restart, and regenerate the island with a new seed during play. CI runs `real verify` on it headless and a windowed smoke run under Xvfb. What is left for M1 is the MCP end-to-end test (which found a scene-save bug now being fixed), then checking the [definition of done](docs/M1_PLAN.md#definition-of-done-for-m1). M2, the Roblox-style compatibility layer (`re_compat`), has not started.
 
-- The contract layer: `re_core` (diagnostics, fixed-step clock, frame phases, task pool, events, profiling and logging), `re_noise` (deterministic noise) and `re_types` (the plain-data contracts between the app and its subsystems).
-- The entity model: `re_reflect` (the component registry: typed, documented fields read and written by name), `re_scene` (the World facade over bevy_ecs, with stable ids, the hierarchy, the built-in components, scene and prefab files and procedural sources) and `re_command` (edit operations, transactions with undo and redo, and the command registry).
-- The subsystems: `re_render` (the wgpu forward renderer with egui painting and headless capture), `re_physics` (Jolt through oxijolt behind a command-buffer API), `re_assets` (glTF import, material files, the processed-asset cache and hot reload), `re_input` (raw device state, the action map and replays), `re_audio` (kira playback driven by `AudioCmd`, with a headless capture backend) and `re_anim` (glTF node clips and tweens).
+The workspace holds:
 
-The repository checks are in `tools/xtask`, and `tools/derive_alias_check` proves that bevy's derives work through the `re_scene::ecs` re-export. Nothing runs a game yet: the runtime that ties these crates together (`re_app`), scripting, the procedural graph, the CLI, the agent layer and the editor are later M1 work packages.
+- The contract layer: `re_core`, `re_noise` and `re_types`.
+- The entity model: `re_reflect` (the component registry), `re_scene` (the World facade over bevy_ecs, scenes, prefabs and procedural sources) and `re_command` (edit operations, undo and redo, and the command registry).
+- The subsystems: `re_render` (wgpu), `re_physics` (Jolt), `re_assets`, `re_input`, `re_audio` and `re_anim`.
+- Procedural generation: `re_geom` and `re_proc` (the ProcGraph).
+- Scripting: `re_script` (Luau through mlua) and `re_script_check` (the validation suite).
+- The runtime and CLI: `re_app` and `re_cli` (the `real` binary).
+- Tooling: `re_agent`, `re_mcp` (the MCP server) and `re_editor` (editor-lite).
+
+Try it with `cargo run --release -p re_cli -- run --project examples/island`, or `real verify --project examples/island --json` for the headless checks.
 
 The license is not final: see [DECISIONS.md, open questions](docs/DECISIONS.md#open-questions-for-the-owner). The crates declare `MIT OR Apache-2.0` until the owner decides.
 
@@ -41,6 +47,7 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The crate graph, frame loop and threads, object model, procedural system, AI integration, diagnostics, and file formats |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0 to M3+, their exit criteria, and why they are in this order |
 | [docs/M1_PLAN.md](docs/M1_PLAN.md) | The first milestone as nine self-contained work packages, with owned paths, cross-package contracts, acceptance commands, and the definition of done |
+| [docs/M2_PLAN.md](docs/M2_PLAN.md) | The second milestone, the Roblox-style compatibility layer, as work packages WP9–WP17 in the same shape |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records, plus open questions for the project owner |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Every dependency with its version, license, MSRV and verification status; system packages |
 | [docs/research/rendering.md](docs/research/rendering.md) | Findings from the rendering spike |

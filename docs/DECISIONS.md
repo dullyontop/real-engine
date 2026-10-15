@@ -347,7 +347,7 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 
 **Consequences.**
 - M1's demo is written against the native API only; no compatibility work blocks M1.
-- M2's exit is the sample scenes running through `re_compat`. If a mechanical migration step is accepted, `re_compat` may cover less of the API surface and a `real migrate` tool covers the rest; that is decided before M2's plan is written.
+- M2's exit is the sample scenes running through `re_compat`. If a mechanical migration step is accepted, `re_compat` may cover less of the API surface and a `real migrate` tool covers the rest. [M2_PLAN.md](M2_PLAN.md) assumes scripts run unchanged until the owner decides.
 - M2 is measured with the validation suite (ADR-0024): compile rate, static gap report, runtime boot.
 - The static scan (ADR-0014) produces the M2 work list from real scripts before M2 starts.
 
@@ -603,7 +603,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
   2. script compile (tier 1; the stage's `data.scripts` counts the scripts compiled);
   3. static API scan (tier 2; present when `real` is built with `tooling`, otherwise reported as skipped). Its `data` is `{ scripts, covered, missing }`. API gaps are warnings (`RE0903`, "scripts use an API the engine does not provide"), and a script the scan cannot parse is an error;
   4. headless boot;
-  5. input replays under `tests/replays/*.replay.json`, with `state_hash` compared across two runs;
+  5. input replays under `tests/replays/*.replay.json`, with `state_hash` compared across two runs. Each run also reports `regenerations[]` (`frame`, `characters_kept`, `grounded`, `collected_kept`, `script_errors`): a terrain regeneration during a replay (a change in the set of derived heightfield colliders) must keep each character's `Entity`, get each character on the ground within 60 frames, and keep collected (suppressed) ids absent, or the stage fails with `RE0525`. A restart drops the pending checks;
   6. golden screenshots under `tests/goldens/<backend>/`;
   7. PerfReport.
 - `re_app::verify::run` owns the stages. Stage 3 is passed in by `re_cli` as a `VerifyStage`, so `re_app` never links full_moon.
@@ -834,6 +834,35 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - By-name access costs about 2× typed access with a pre-resolved key, and about 12× when every name is looked up; that is fine for scripts, commands and agents, while hot engine systems stay typed.
 - Container field types (lists and string-keyed maps) are not in M1. M2 adds them for attributes and tags (ARCHITECTURE §4); they affect the schema, the Luau bindings and diffing, so they get their own design pass.
 
+## ADR-0033: Private sample projects are checked by a public runner and a private kit
+
+**Status:** Accepted
+
+**Context.** M2's goal is the owner's two sample projects running through `re_compat` (ADR-0012). They must never be committed to this public repository (ADR-0024), but their acceptance must be repeatable, not a manual check.
+
+**Decision.**
+- The runner is public and generic: `crates/re_compat/tests/samples.rs`. It reads expectation files from the directory in `REAL_SAMPLE_KIT`, and prints `skipped: REAL_SAMPLE_KIT not set` and passes when the variable is unset.
+- An expectation file names its input (path and sha256 prefix), the `real import` options, any stand-in content to add (a ground plane, generated content for missing parts of the sample), the boot expectations (frames, exact script output, allowed warnings), and a list of `play.run` drivers, each with assertions on `dump_tree` output, attributes and logged values.
+- The kit (expectation files, drivers and stand-ins) lives in the private research folder with the samples. It is never committed.
+- PR descriptions report pass and fail counts from the kit only, with no sample names, output or paths.
+
+**Alternatives.** Manual runs, which are not repeatable. Committing redacted samples, which is still sample content.
+
+**Consequences.** Anyone with their own Roblox-style project can write a kit for it. Public CI covers the layer through synthetic fixtures and `examples/plaza`.
+
+## ADR-0034: Compatibility class and enum data are written as facts, not copied prose
+
+**Status:** Accepted
+
+**Context.** `re_compat` needs names, types, defaults and inheritance for many classes, members and enums. Vendor reference documentation and API dumps carry these facts alongside copyrighted prose.
+
+**Decision.**
+- `crates/re_compat/classes/*.json` and `enums/*.json` hold names, signatures, types, defaults, inheritance and our coverage status, written by hand or by a script, for the members real scripts use.
+- Doc strings in these files are written for this repository. No description, example or other prose is copied from any vendor's documentation or tool output.
+- Rig data for the standard R6 and R15 characters (part names, sizes, joint offsets) is written the same way.
+
+**Consequences.** The data covers what real scripts use rather than the whole vendor API. The gap report (ADR-0014) shows what to add next.
+
 ---
 
 ## Open questions for the owner
@@ -852,5 +881,5 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
    - The plan is an engine-native Luau API in M1 and a Roblox-style compatibility layer in M2 (ADR-0012).
    - "Unchanged" means every global, service, class, event, enum and datatype those scripts touch must exist with matching behaviour, including yielding calls and deprecated members.
    - The alternative is "runs after a mechanical migration done by a tool". It is much cheaper, and it could be offered as a `real migrate` command.
-   - The answer to the migration question sets the size of M2.
+   - The answer to the migration question sets the size of M2. Until it is answered, [M2_PLAN.md](M2_PLAN.md) plans for running unchanged.
 4. **Windows and macOS priority.** When should these platforms start blocking merges? M3 is the current plan.

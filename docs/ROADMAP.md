@@ -55,6 +55,8 @@ All M0 spikes are done.
 
 ## M2: Roblox-style compatibility
 
+The work packages (WP9–WP17), contracts and definition of done are in [M2_PLAN.md](M2_PLAN.md).
+
 **Scope.**
 - `re_compat`, the compatibility layer described in [ARCHITECTURE.md §4](ARCHITECTURE.md#m2-roblox-style-compatibility-layer-re_compat):
   - the instance tree over entities (`ChildOf` / `Children`, with `Parent =` and `Destroy()` as the `reparent` and `despawn` operations);

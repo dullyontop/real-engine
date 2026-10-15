@@ -205,3 +205,46 @@ fn collecting_every_gem_wins_and_r_restarts() {
     assert!(app.world().suppressions().is_empty());
     assert_eq!(hud(&app), format!("Gems: 0 / {total}"));
 }
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn an_edit_saved_to_the_scene_keeps_the_island_loading() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("island");
+    copy_dir(&island(), &project);
+    let config = AppConfig {
+        persist_edits: true,
+        ..AppConfig::load(&project).unwrap()
+    };
+    let mut app = App::open(&project, config).unwrap();
+    let out = app.dispatch(
+        "entity.spawn",
+        serde_json::json!({ "id": "rock" }),
+        false,
+        &re_command::AllowAll,
+        re_command::Origin::User,
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    // The gems' Collectible is declared only for generated entities: the
+    // saved scene must still declare it.
+    let scene = std::fs::read_to_string(project.join("scenes/main.scene.json")).unwrap();
+    assert!(scene.contains("\"Collectible\""), "{scene}");
+
+    let mut again = App::open(&project, AppConfig::load(&project).unwrap()).unwrap();
+    let problems = again.take_diagnostics();
+    assert!(problems.iter().all(|d| !d.is_error()), "{problems:?}");
+    assert!(again.world().entity("rock").is_ok());
+    assert!(gems_left(&mut again) > 0);
+}
