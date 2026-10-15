@@ -139,7 +139,9 @@ impl Runner<'_> {
             wgpu::CurrentSurfaceTexture::Success(f)
             | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                // A minimised or hidden window is not a stuck display.
                 self.report.skipped += 1;
+                self.last_present = Instant::now();
                 return;
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {

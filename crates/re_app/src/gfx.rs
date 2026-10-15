@@ -57,6 +57,7 @@ pub struct Graphics {
     egui: egui::Context,
     textures: HashMap<String, TextureHandle>,
     started: Instant,
+    keep_derived: bool,
     // Last, so the device outlives the renderer's resources.
     gpu: Gpu,
 }
@@ -80,6 +81,7 @@ impl Graphics {
             egui: egui::Context::default(),
             textures: HashMap::new(),
             started: Instant::now(),
+            keep_derived: false,
             gpu,
         }
     }
@@ -97,6 +99,12 @@ impl Graphics {
     /// The renderer, mutably.
     pub fn renderer_mut(&mut self) -> &mut Renderer {
         &mut self.renderer
+    }
+
+    /// While true, `derived:` meshes nothing names are kept (set while the
+    /// graphics are lent to a `play.run` copy, whose world is not the live one).
+    pub fn set_keep_derived(&mut self, keep: bool) {
+        self.keep_derived = keep;
     }
 
     /// The backend's lower-case name (`vulkan`, `gl`, `metal`, `dx12`).
@@ -128,7 +136,7 @@ impl Graphics {
         let wanted: HashSet<&str> = meshes.iter().map(String::as_str).collect();
         let unused: Vec<String> = assets
             .mesh_assets()
-            .filter(|a| a.starts_with(DERIVED) && !wanted.contains(a))
+            .filter(|a| !self.keep_derived && a.starts_with(DERIVED) && !wanted.contains(a))
             .map(str::to_string)
             .collect();
         for asset in unused {

@@ -265,6 +265,9 @@ impl App {
         // Lend the GPU side and the loaded media, so nothing is loaded twice.
         std::mem::swap(&mut copy.media, &mut self.media);
         copy.graphics = self.graphics.take();
+        if let Some(g) = &mut copy.graphics {
+            g.set_keep_derived(true);
+        }
         copy.render_assets = std::mem::take(&mut self.render_assets);
         let run = copy.run_headless(Some(frames), replay);
         let image = match (&run, screenshot) {
@@ -273,6 +276,9 @@ impl App {
         };
         std::mem::swap(&mut copy.media, &mut self.media);
         self.graphics = copy.graphics.take();
+        if let Some(g) = &mut self.graphics {
+            g.set_keep_derived(false);
+        }
         self.render_assets = std::mem::take(&mut copy.render_assets);
         let run = run?;
         Ok((run, image.transpose()?))
@@ -993,16 +999,28 @@ impl App {
             return;
         };
         let changes = watcher.poll();
-        if changes.is_empty() {
-            return;
+        if !changes.is_empty() {
+            self.apply_file_changes(&changes);
         }
-        let (report, stale) = self.media.apply_changes(&changes);
+    }
+
+    /// Applies file changes (from a watcher, or made by a command): re-imports
+    /// what changed, uploads it again and forgets collider shapes built from
+    /// it. Returns the problems re-imports reported (the last good version of
+    /// each stays loaded); they are also in the app's diagnostics.
+    pub fn apply_file_changes(&mut self, changes: &[re_assets::AssetChange]) -> Vec<Diagnostic> {
+        let (report, stale) = self.media.apply_changes(changes);
+        let problems = report.problems.clone();
+        for key in &stale {
+            self.shapes.remove(key);
+        }
         self.diagnostics.extend(report.problems);
         self.changed_scripts.extend(report.scripts);
         if let Some(gfx) = &mut self.graphics {
             gfx.invalidate(&mut self.render_assets, &stale, &mut self.diagnostics);
         }
         self.anim_sync.invalidate(&stale);
+        problems
     }
 
     /// Reloads the entry scene into a fresh World (what `world.restart()` asks

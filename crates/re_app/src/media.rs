@@ -51,6 +51,9 @@ pub struct Media {
     derived: HashMap<String, Arc<MeshData>>,
     materials: HashMap<String, LoadedMaterial>,
     clips: HashMap<String, Arc<ClipData>>,
+    /// Loads that failed, so a broken file is not read again every frame; a
+    /// change to any file forgets them.
+    failed: HashMap<String, Diagnostic>,
     reported: HashSet<String>,
 }
 
@@ -63,6 +66,7 @@ impl Media {
             derived: HashMap::new(),
             materials: HashMap::new(),
             clips: HashMap::new(),
+            failed: HashMap::new(),
             reported: HashSet::new(),
         }
     }
@@ -95,7 +99,27 @@ impl Media {
         if let Some(m) = self.meshes.get(asset) {
             return Ok(m.clone());
         }
-        let loaded = if let Some(name) = asset.strip_prefix(BUILTIN) {
+        if let Some(d) = self.failed.get(asset) {
+            return Err(d.clone());
+        }
+        let loaded = self.load_mesh(asset);
+        match loaded {
+            Ok(loaded) => {
+                self.meshes.insert(asset.to_string(), loaded.clone());
+                Ok(loaded)
+            }
+            Err(d) => {
+                // Derived meshes appear when generated; only files are remembered.
+                if !asset.starts_with(DERIVED) {
+                    self.failed.insert(asset.to_string(), d.clone());
+                }
+                Err(d)
+            }
+        }
+    }
+
+    fn load_mesh(&mut self, asset: &str) -> Result<LoadedMesh, Diagnostic> {
+        Ok(if let Some(name) = asset.strip_prefix(BUILTIN) {
             LoadedMesh {
                 mesh: Arc::new(builtin_mesh(name).ok_or_else(|| {
                     unknown_asset(asset, "no such built-in mesh")
@@ -112,9 +136,7 @@ impl Media {
             }
         } else {
             self.load_gltf_mesh(asset)?
-        };
-        self.meshes.insert(asset.to_string(), loaded.clone());
-        Ok(loaded)
+        })
     }
 
     fn load_gltf_mesh(&mut self, asset: &str) -> Result<LoadedMesh, Diagnostic> {
@@ -122,12 +144,17 @@ impl Media {
         let gltf = self.server.gltf(h).expect("just loaded");
         let mut out = MeshData::default();
         let mut placed = HashSet::new();
+        // A malformed file can make a node its own ancestor; visit each once.
+        let mut visited = HashSet::new();
         let mut stack: Vec<(usize, Affine3A)> = gltf
             .roots
             .iter()
             .map(|&r| (r, Affine3A::IDENTITY))
             .collect();
         while let Some((index, parent)) = stack.pop() {
+            if !visited.insert(index) {
+                continue;
+            }
             let Some(node) = gltf.nodes.get(index) else {
                 continue;
             };
@@ -188,12 +215,23 @@ impl Media {
         if let Some(m) = self.materials.get(asset) {
             return Ok(m.clone());
         }
-        let h = self.server.load_material(asset)?;
-        let desc = self.server.material(h).cloned().unwrap_or_default();
-        let textures = self.server.material_textures(h)?;
-        let loaded = LoadedMaterial { desc, textures };
-        self.materials.insert(asset.to_string(), loaded.clone());
-        Ok(loaded)
+        if let Some(d) = self.failed.get(asset) {
+            return Err(d.clone());
+        }
+        let loaded = self.server.load_material(asset).and_then(|h| {
+            let desc = self.server.material(h).cloned().unwrap_or_default();
+            let textures = self.server.material_textures(h)?;
+            Ok(LoadedMaterial { desc, textures })
+        });
+        match &loaded {
+            Ok(l) => {
+                self.materials.insert(asset.to_string(), l.clone());
+            }
+            Err(d) => {
+                self.failed.insert(asset.to_string(), d.clone());
+            }
+        }
+        loaded
     }
 
     /// The clip named by an `AnimPlayer.clip` (`<glTF path>#<clip name>`).
@@ -205,9 +243,20 @@ impl Media {
         if let Some(c) = self.clips.get(reference) {
             return Ok(c.clone());
         }
-        let clip = Arc::new(self.server.clip(reference)?.clone());
-        self.clips.insert(reference.to_string(), clip.clone());
-        Ok(clip)
+        if let Some(d) = self.failed.get(reference) {
+            return Err(d.clone());
+        }
+        match self.server.clip(reference) {
+            Ok(c) => {
+                let clip = Arc::new(c.clone());
+                self.clips.insert(reference.to_string(), clip.clone());
+                Ok(clip)
+            }
+            Err(d) => {
+                self.failed.insert(reference.to_string(), d.clone());
+                Err(d)
+            }
+        }
     }
 
     /// True the first time `key` is passed, so each broken asset is reported once.
@@ -245,6 +294,8 @@ impl Media {
             .cloned()
             .collect();
         stale.retain(|k| !k.starts_with(DERIVED));
+        // Failed loads get another try (and another report) after any change.
+        stale.extend(self.failed.drain().map(|(k, _)| k));
         stale.sort();
         stale.dedup();
         for key in &stale {

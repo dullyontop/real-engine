@@ -418,15 +418,51 @@ fn stage_goldens(project: &Path, config: &AppConfig, options: &VerifyOptions) ->
             break;
         }
         backend = app.graphics().map_or("none", |g| g.backend());
-        if let Err(d) = app.run_headless(None, Some(doc)) {
-            diags.push(d);
-            continue;
+        let wanted: Vec<(u64, String)> = doc
+            .checks
+            .iter()
+            .filter_map(|c| c.screenshot.clone().map(|s| (c.frame, s)))
+            .collect();
+        match app.run_headless(None, Some(doc)) {
+            Ok(run) => diags.extend(run.diagnostics.into_iter().filter(Diagnostic::is_error)),
+            Err(d) => {
+                diags.push(d);
+                continue;
+            }
         }
-        for (request, image) in app.take_captures() {
+        let captures = app.take_captures();
+        for (frame, golden) in &wanted {
+            let taken = captures
+                .iter()
+                .any(|(r, _)| r.frame == *frame && r.golden.as_ref() == Some(golden));
+            if !taken {
+                diags.push(
+                    Diagnostic::error(
+                        codes::SCREENSHOT_FAILED,
+                        format!("{file}: the screenshot check at frame {frame} was not taken"),
+                    )
+                    .at(Location::file(file.clone()))
+                    .with_hint(
+                        "a check's frame must be below the replay's `frames` (frames count from 0)",
+                    ),
+                );
+            }
+        }
+        for (request, image) in captures {
             let Some(golden) = request.golden else {
                 continue;
             };
-            let golden = golden.replace("{backend}", backend);
+            let golden = match crate::commands::project_path(
+                &golden.replace("{backend}", backend),
+                "the golden image",
+                codes::CONTENT_INVALID,
+            ) {
+                Ok(g) => g,
+                Err(d) => {
+                    diags.push(d.at(Location::file(file.clone())));
+                    continue;
+                }
+            };
             let out = project.join(".real/out/goldens").join(&golden);
             let path = project.join(&golden);
             let at = Location::file(golden.clone());
@@ -469,6 +505,7 @@ fn stage_goldens(project: &Path, config: &AppConfig, options: &VerifyOptions) ->
                                         Ok(()) => result["written"] = json!(true),
                                         Err(d) => diags.push(d),
                                     }
+                                    results.push(result);
                                     continue;
                                 }
                                 let _ = crate::gfx::save_png(&image, &out);

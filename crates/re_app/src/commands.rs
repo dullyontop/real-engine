@@ -76,7 +76,11 @@ pub struct ImportArgs {
 
 /// A project-relative path that must stay inside the project (no `..`, not
 /// absolute), with `/` separators.
-fn project_path(path: &str, what: &str, code: re_core::Code) -> Result<String, Diagnostic> {
+pub(crate) fn project_path(
+    path: &str,
+    what: &str,
+    code: re_core::Code,
+) -> Result<String, Diagnostic> {
     let clean = path.replace('\\', "/");
     let p = Path::new(&clean);
     if clean.is_empty()
@@ -160,6 +164,14 @@ fn import(app: &mut App, args: ImportArgs, dry_run: bool) -> Result<serde_json::
     if !dest.starts_with("assets/") {
         return Err(fail(format!("the destination {dest} is not under assets/")));
     }
+    let lower = dest.to_ascii_lowercase();
+    if ![".gltf", ".glb", ".png", ".jpg", ".jpeg", ".material.json"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+    {
+        return Err(fail(format!("no importer for {dest}"))
+            .with_hint("supported files are .gltf, .glb, .png, .jpg, .jpeg and .material.json"));
+    }
     let target = app.project().join(&dest);
     if target.exists() && !args.overwrite {
         return Err(fail(format!("{dest} already exists"))
@@ -178,11 +190,15 @@ fn import(app: &mut App, args: ImportArgs, dry_run: bool) -> Result<serde_json::
             .map_err(|e| fail(format!("cannot copy {} to {dest}: {e}", args.source)))?;
     }
     let meta = re_assets::AssetMeta::read_or_create(&target, &dest, json!({}))?;
-    // Import it now, so a broken file is reported here rather than on first use.
-    app.media_mut()
-        .server()
-        .load(&dest)
-        .map_err(|d| fail(format!("{dest} was copied but does not import")).with_related(d))?;
+    // Import it now, so a broken file is reported here rather than on first use;
+    // a replaced file is re-imported (and uploaded again where it is drawn).
+    let broken =
+        |d: Diagnostic| fail(format!("{dest} was copied but does not import")).with_related(d);
+    let problems = app.apply_file_changes(&[re_assets::AssetChange::Modified(dest.clone())]);
+    if let Some(d) = problems.into_iter().next() {
+        return Err(broken(d));
+    }
+    app.media_mut().server().load(&dest).map_err(broken)?;
     Ok(json!({ "path": dest, "id": meta.id().to_string() }))
 }
 

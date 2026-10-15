@@ -346,3 +346,47 @@ fn a_changed_material_file_is_uploaded_again() {
         image.pixel(80, 60)
     );
 }
+
+#[test]
+fn a_screenshot_check_past_the_end_or_outside_the_project_fails_the_goldens_stage() {
+    let dir = project(SCENE);
+    std::fs::create_dir_all(dir.path().join("tests/replays")).unwrap();
+    let config = AppConfig::load(dir.path()).unwrap();
+    for (frame, path) in [
+        (20, "tests/goldens/{backend}/late.png"),
+        (5, "../outside.png"),
+    ] {
+        std::fs::write(
+            dir.path().join("tests/replays/x.replay.json"),
+            format!(
+                r#"{{ "version": 1, "seed": 1, "frames": 20,
+                     "checks": [ {{ "frame": {frame}, "screenshot": "{path}" }} ] }}"#
+            ),
+        )
+        .unwrap();
+        let update = re_app::VerifyOptions {
+            update_goldens: true,
+            ..re_app::VerifyOptions::default()
+        };
+        let report = re_app::verify::run_project(dir.path(), &config, &update, &[]);
+        assert!(!report.stage("goldens").unwrap().ok, "{path}");
+    }
+    assert!(!dir.path().parent().unwrap().join("outside.png").exists());
+}
+
+#[test]
+fn asset_import_refuses_files_it_cannot_import() {
+    let dir = project(SCENE);
+    let src = tempfile::tempdir().unwrap();
+    std::fs::write(src.path().join("notes.txt"), "hello").unwrap();
+    let mut app = open(dir.path());
+    let out = app.dispatch(
+        "asset.import",
+        serde_json::json!({ "source": src.path().join("notes.txt").display().to_string() }),
+        false,
+        &re_command::AllowAll,
+        re_command::Origin::User,
+    );
+    assert!(!out.ok);
+    assert!(!dir.path().join("assets/notes.txt").exists());
+}
