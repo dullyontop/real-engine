@@ -2,14 +2,49 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1006,
-    "partial": 18,
-    "stub-error": 2,
+    "implemented": 1151,
+    "partial": 32,
+    "stub-error": 46,
     "missing": 3
   },
   "classes": [
     {
+      "name": "Backpack",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "BadgeService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "AwardBadge",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetBadgeInfoAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "UserHasBadgeAsync",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
       "name": "BasePlayerGui",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "BaseRemoteEvent",
       "superclass": "Instance",
       "status": "implemented",
       "members": []
@@ -21,6 +56,42 @@
       "members": [
         {
           "name": "RunContext",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "BindableEvent",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Event",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Fire",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "BindableFunction",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Invoke",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "OnInvoke",
           "kind": "property",
           "status": "implemented"
         }
@@ -124,11 +195,175 @@
       ]
     },
     {
+      "name": "DataStoreService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "GetDataStore",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetGlobalDataStore",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetOrderedDataStore",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetRequestBudgetForRequestType",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "ListDataStoresAsync",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "Debris",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AddItem",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxItems",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Folder",
       "superclass": "Instance",
       "creatable": true,
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "ForceField",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Visible",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "GuiService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AutoSelectGuiEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GetGuiInset",
+          "kind": "method",
+          "status": "partial",
+          "note": "A fixed top inset of 58 pixels and no bottom inset."
+        },
+        {
+          "name": "GuiNavigationEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MenuClosed",
+          "kind": "event",
+          "status": "partial",
+          "note": "Never fires: there is no system menu offline."
+        },
+        {
+          "name": "MenuIsOpen",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MenuOpened",
+          "kind": "event",
+          "status": "partial",
+          "note": "Never fires: there is no system menu offline."
+        },
+        {
+          "name": "SelectedObject",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TopbarInset",
+          "kind": "property",
+          "status": "partial",
+          "note": "A fixed 58-pixel band from x 0 to 0; there is no top bar or real screen width here."
+        }
+      ]
+    },
+    {
+      "name": "HttpService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "GenerateGUID",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "HttpEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "JSONDecode",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "JSONEncode",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PostAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "RequestAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "UrlEncode",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "Instance",
@@ -387,6 +622,80 @@
       "members": []
     },
     {
+      "name": "MarketplaceService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "GetProductInfo",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "PlayerOwnsAsset",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "PromptGamePassPurchase",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "PromptProductPurchase",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "UserOwnsGamePassAsync",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "MemoryStoreService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "GetHashMap",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetQueue",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetSortedMap",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "MessagingService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "PublishAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "SubscribeAsync",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
       "name": "Model",
       "superclass": "PVInstance",
       "creatable": true,
@@ -405,6 +714,478 @@
       "superclass": "Instance",
       "status": "missing",
       "members": []
+    },
+    {
+      "name": "Player",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AccountAge",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AutoJumpEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMaxZoomDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMinZoomDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanLoadCharacterAppearance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Character",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterAdded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterAppearanceId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterAppearanceLoaded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterRemoving",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Chatted",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "DisplayName",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GetNetworkPing",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetRankInGroup",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetRoleInGroup",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "HasAppearanceLoaded",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "HealthDisplayDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IsFriendsWith",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "IsInGroup",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "Kick",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LoadCharacter",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LoadCharacterAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LocaleId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MembershipType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Move",
+          "kind": "method",
+          "status": "partial",
+          "note": "Forwards to the character's Humanoid:Move; does nothing without a character or Humanoid. Raises RE9001 until the Humanoid implements Move."
+        },
+        {
+          "name": "NameDisplayDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Neutral",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RespawnLocation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "UserId",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "PlayerGui",
+      "superclass": "BasePlayerGui",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "PlayerScripts",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "Players",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CharacterAutoLoads",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GetFriendsAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetNameFromUserIdAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetPlayerByUserId",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPlayerFromCharacter",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPlayers",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetUserIdFromNameAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetUserThumbnailAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "LocalPlayer",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxPlayers",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlayerAdded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PlayerMembershipChanged",
+          "kind": "event",
+          "status": "partial",
+          "note": "Never fires: there are no memberships offline."
+        },
+        {
+          "name": "PlayerRemoving",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "RespawnTime",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "ProximityPrompt",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ActionText",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AutoLocalize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClickablePrompt",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Exclusivity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GamepadKeyCode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HoldDuration",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "InputHoldBegin",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "InputHoldEnd",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "KeyboardKeyCode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxActivationDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ObjectText",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptButtonHoldBegan",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptButtonHoldEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptHidden",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptShown",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "RequiresLineOfSight",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored but not checked: there is no line-of-sight test yet."
+        },
+        {
+          "name": "Style",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TriggerEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Triggered",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "UIOffset",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "ProximityPromptService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxPromptsVisible",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptButtonHoldBegan",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptButtonHoldEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptHidden",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptShown",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptTriggerEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptTriggered",
+          "kind": "event",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "RemoteEvent",
+      "superclass": "BaseRemoteEvent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "FireAllClients",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FireClient",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FireServer",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "OnClientEvent",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "OnServerEvent",
+          "kind": "event",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "RemoteFunction",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "InvokeClient",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "InvokeServer",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "OnClientInvoke",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "OnServerInvoke",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "ReplicatedStorage",
@@ -670,6 +1451,39 @@
       ]
     },
     {
+      "name": "SoundService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "AmbientReverb",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DistanceFactor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DopplerScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RespectFilteringEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RolloffScale",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "StarterCharacterScripts",
       "superclass": "StarterPlayerScripts",
       "status": "implemented",
@@ -680,6 +1494,42 @@
       "superclass": "BasePlayerGui",
       "service": true,
       "status": "partial",
+      "members": [
+        {
+          "name": "GetCore",
+          "kind": "method",
+          "status": "partial",
+          "note": "Reads back what SetCore recorded, else the default of a readable option (ChatActive, TopbarEnabled, the notification and menu switches); raises for options with no readable value offline."
+        },
+        {
+          "name": "GetCoreGuiEnabled",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "SetCore",
+          "kind": "method",
+          "status": "partial",
+          "note": "Values are recorded and read back; nothing is drawn."
+        },
+        {
+          "name": "SetCoreGuiEnabled",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded; the built-in interface is not drawn."
+        },
+        {
+          "name": "ShowDevelopmentGui",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "StarterPack",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
       "members": []
     },
     {
@@ -687,13 +1537,238 @@
       "superclass": "Instance",
       "service": true,
       "status": "implemented",
-      "members": []
+      "members": [
+        {
+          "name": "AutoJumpEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMaxZoomDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMinZoomDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterJumpHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterJumpPower",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterMaxSlopeAngle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterUseJumpPower",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterWalkSpeed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EnableMouseLockOption",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HealthDisplayDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LoadCharacterAppearance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "NameDisplayDistance",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "StarterPlayerScripts",
       "superclass": "Instance",
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "TeleportOptions",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "GetTeleportData",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "ReservedServerAccessCode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ServerInstanceId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SetTeleportData",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "ShouldReserveServer",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TeleportService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "GetLocalPlayerTeleportData",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "ReserveServer",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "Teleport",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "TeleportAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "TeleportToPlaceInstance",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "TextChannel",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": []
+    },
+    {
+      "name": "TextChatCommand",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AutocompleteVisible",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PrimaryAlias",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SecondaryAlias",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Triggered",
+          "kind": "event",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TextChatService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ChatVersion",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CreateDefaultCommands",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CreateDefaultTextChannels",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TextService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "FilterStringAsync",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "TextSource",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CanSend",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "UserId",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "Tween",
@@ -764,6 +1839,39 @@
           "name": "SmoothDamp",
           "kind": "method",
           "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "UnreliableRemoteEvent",
+      "superclass": "BaseRemoteEvent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "FireAllClients",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FireClient",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FireServer",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "OnClientEvent",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "OnServerEvent",
+          "kind": "event",
+          "status": "implemented"
         }
       ]
     },

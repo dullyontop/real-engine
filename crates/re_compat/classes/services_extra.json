@@ -1,0 +1,1557 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "HttpService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "JSON, GUIDs and URL encoding. Web requests need the network and raise RE9002.",
+      "properties": [
+        {
+          "name": "HttpEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "Whether web requests are allowed; they are never available offline."
+        }
+      ],
+      "methods": [
+        {
+          "name": "GenerateGUID",
+          "params": [
+            {
+              "name": "wrapInCurlyBraces",
+              "type": "bool",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "string"
+          ],
+          "status": "implemented",
+          "doc": "A new random GUID, in braces unless wrapInCurlyBraces is false. The sequence follows the run seed."
+        },
+        {
+          "name": "JSONEncode",
+          "params": [
+            {
+              "name": "input",
+              "type": "any"
+            }
+          ],
+          "returns": [
+            "string"
+          ],
+          "status": "implemented",
+          "doc": "The JSON text of a value. An empty table is an empty array; a table with keys 1 to n is an array and one with string keys an object. Other tables, functions and non-finite numbers raise RE3006."
+        },
+        {
+          "name": "JSONDecode",
+          "params": [
+            {
+              "name": "input",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "any"
+          ],
+          "status": "implemented",
+          "doc": "The value of a JSON text: objects and arrays become tables, null becomes nil."
+        },
+        {
+          "name": "UrlEncode",
+          "params": [
+            {
+              "name": "input",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "string"
+          ],
+          "status": "implemented",
+          "doc": "The text with every character other than letters, digits and -_.~ percent-encoded."
+        },
+        {
+          "name": "GetAsync",
+          "params": [
+            {
+              "name": "url",
+              "type": "string"
+            },
+            {
+              "name": "nocache",
+              "type": "bool",
+              "optional": true
+            },
+            {
+              "name": "headers",
+              "type": "any",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "string"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "PostAsync",
+          "params": [
+            {
+              "name": "url",
+              "type": "string"
+            },
+            {
+              "name": "data",
+              "type": "string"
+            },
+            {
+              "name": "content_type",
+              "type": "Enum.HttpContentType",
+              "optional": true
+            },
+            {
+              "name": "compress",
+              "type": "bool",
+              "optional": true
+            },
+            {
+              "name": "headers",
+              "type": "any",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "string"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "RequestAsync",
+          "params": [
+            {
+              "name": "requestOptions",
+              "type": "table"
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ]
+    },
+    {
+      "name": "Debris",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "Destroys instances after a delay.",
+      "properties": [
+        {
+          "name": "MaxItems",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1000,
+          "status": "implemented",
+          "doc": "The most instances waiting at once; adding more destroys the oldest early."
+        }
+      ],
+      "methods": [
+        {
+          "name": "AddItem",
+          "params": [
+            {
+              "name": "item",
+              "type": "Instance"
+            },
+            {
+              "name": "lifetime",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "status": "implemented",
+          "doc": "Destroys the instance after lifetime seconds (10 when left out) of simulation time."
+        }
+      ]
+    },
+    {
+      "name": "ProximityPromptService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "Chooses which proximity prompts each client shows and reports their activity.",
+      "properties": [
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, no prompt is shown."
+        },
+        {
+          "name": "MaxPromptsVisible",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 16,
+          "status": "implemented",
+          "doc": "The most prompts shown at once."
+        }
+      ],
+      "events": [
+        {
+          "name": "PromptShown",
+          "params": [
+            {
+              "name": "prompt",
+              "type": "Instance<ProximityPrompt>"
+            },
+            {
+              "name": "inputType",
+              "type": "Enum.ProximityPromptInputType"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires on the client when a prompt is shown."
+        },
+        {
+          "name": "PromptHidden",
+          "params": [
+            {
+              "name": "prompt",
+              "type": "Instance<ProximityPrompt>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires on the client when a prompt is hidden."
+        },
+        {
+          "name": "PromptTriggered",
+          "params": [
+            {
+              "name": "prompt",
+              "type": "Instance<ProximityPrompt>"
+            },
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when a player activates a prompt."
+        },
+        {
+          "name": "PromptTriggerEnded",
+          "params": [
+            {
+              "name": "prompt",
+              "type": "Instance<ProximityPrompt>"
+            },
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when a player lets go after activating a prompt."
+        },
+        {
+          "name": "PromptButtonHoldBegan",
+          "params": [
+            {
+              "name": "prompt",
+              "type": "Instance<ProximityPrompt>"
+            },
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when a player starts holding a prompt's key."
+        },
+        {
+          "name": "PromptButtonHoldEnded",
+          "params": [
+            {
+              "name": "prompt",
+              "type": "Instance<ProximityPrompt>"
+            },
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when a player lets go before a hold completed."
+        }
+      ]
+    },
+    {
+      "name": "ProximityPrompt",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "RequiresLineOfSight is not checked yet, and prompts are not drawn; activation is through InputHoldBegin and InputHoldEnd (input binding is the input work's).",
+      "doc": "An action a player can take near a part or attachment. The client shows the nearest enabled prompt within MaxActivationDistance of its character for each key; InputHoldBegin and InputHoldEnd press and release it.",
+      "properties": [
+        {
+          "name": "ActionText",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Interact",
+          "status": "implemented",
+          "doc": "What the prompt does, such as Open."
+        },
+        {
+          "name": "ObjectText",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "What the prompt acts on."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, the prompt is never shown."
+        },
+        {
+          "name": "HoldDuration",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "Seconds the key must be held before the prompt triggers; 0 triggers on press."
+        },
+        {
+          "name": "MaxActivationDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 10.0,
+          "status": "implemented",
+          "doc": "How near the character must be, in studs."
+        },
+        {
+          "name": "KeyboardKeyCode",
+          "type": "Enum.KeyCode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "E",
+          "status": "implemented",
+          "doc": "The key that activates the prompt."
+        },
+        {
+          "name": "GamepadKeyCode",
+          "type": "Enum.KeyCode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "ButtonX",
+          "status": "implemented",
+          "doc": "The gamepad button that activates the prompt."
+        },
+        {
+          "name": "RequiresLineOfSight",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "partial",
+          "note": "Stored but not checked: there is no line-of-sight test yet.",
+          "doc": "When true, the prompt needs a clear line to the character."
+        },
+        {
+          "name": "Exclusivity",
+          "type": "Enum.ProximityPromptExclusivity",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "Whether the prompt competes with others on the same key, with all prompts, or never."
+        },
+        {
+          "name": "Style",
+          "type": "Enum.ProximityPromptStyle",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "Whether the built-in look or a game's own interface shows the prompt."
+        },
+        {
+          "name": "UIOffset",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "Where the prompt's interface sits relative to its position, in pixels."
+        },
+        {
+          "name": "ClickablePrompt",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the prompt can be clicked or tapped."
+        },
+        {
+          "name": "AutoLocalize",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the prompt's texts are translated."
+        }
+      ],
+      "methods": [
+        {
+          "name": "InputHoldBegin",
+          "status": "implemented",
+          "doc": "Starts holding the prompt for the local player, as pressing its key does. Client only; the prompt must be shown."
+        },
+        {
+          "name": "InputHoldEnd",
+          "status": "implemented",
+          "doc": "Stops holding the prompt for the local player. Client only."
+        }
+      ],
+      "events": [
+        {
+          "name": "Triggered",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires on the server and on the triggering client when the prompt is activated, with the player."
+        },
+        {
+          "name": "TriggerEnded",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when the player lets go after triggering."
+        },
+        {
+          "name": "PromptButtonHoldBegan",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when the player starts holding the prompt's key, for a prompt with a HoldDuration."
+        },
+        {
+          "name": "PromptButtonHoldEnded",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when the player lets go before the hold completed."
+        },
+        {
+          "name": "PromptShown",
+          "params": [
+            {
+              "name": "inputType",
+              "type": "Enum.ProximityPromptInputType"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires on the client when the prompt becomes the one shown for its key."
+        },
+        {
+          "name": "PromptHidden",
+          "status": "implemented",
+          "doc": "Fires on the client when the prompt stops being shown."
+        }
+      ]
+    },
+    {
+      "name": "TextChatService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "note": "Only commands and Player.Chatted; there are no channels, bubbles or chat window.",
+      "doc": "The chat system. The harness's say sends a message as a player: Player.Chatted fires, and a message that starts with a TextChatCommand's alias triggers it.",
+      "properties": [
+        {
+          "name": "ChatVersion",
+          "type": "Enum.ChatVersion",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "TextChatService",
+          "status": "implemented",
+          "doc": "Which chat system the place uses."
+        },
+        {
+          "name": "CreateDefaultCommands",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the built-in commands are made."
+        },
+        {
+          "name": "CreateDefaultTextChannels",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the built-in channels are made."
+        }
+      ]
+    },
+    {
+      "name": "TextChatCommand",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A chat command: a message whose first word is PrimaryAlias or SecondaryAlias (ignoring case) triggers it.",
+      "properties": [
+        {
+          "name": "PrimaryAlias",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The command's main word, such as /help."
+        },
+        {
+          "name": "SecondaryAlias",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "Another word that triggers the command."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, the command never triggers."
+        },
+        {
+          "name": "AutocompleteVisible",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether chat suggests the command."
+        }
+      ],
+      "events": [
+        {
+          "name": "Triggered",
+          "params": [
+            {
+              "name": "originTextSource",
+              "type": "Instance<TextSource>"
+            },
+            {
+              "name": "unfilteredText",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires on the server and on the sending client with the sender's TextSource and the whole message."
+        }
+      ]
+    },
+    {
+      "name": "TextChannel",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "Only holds the TextSources; sending and receiving messages through a channel is not implemented.",
+      "doc": "A chat channel, holding a TextSource per player who can speak in it."
+    },
+    {
+      "name": "TextSource",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "A player's membership of a chat channel.",
+      "properties": [
+        {
+          "name": "UserId",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The player's UserId."
+        },
+        {
+          "name": "CanSend",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the player may send messages in the channel."
+        }
+      ]
+    },
+    {
+      "name": "GuiService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "Facts about the screen layout and the selected interface object.",
+      "properties": [
+        {
+          "name": "SelectedObject",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The interface object selected for gamepad navigation, or nil."
+        },
+        {
+          "name": "AutoSelectGuiEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the gamepad selection button picks an object by itself."
+        },
+        {
+          "name": "GuiNavigationEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether gamepad navigation of interfaces is on."
+        },
+        {
+          "name": "MenuIsOpen",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "Whether the system menu is open; it never opens offline."
+        },
+        {
+          "name": "TopbarInset",
+          "type": "Rect",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "MinX": 0,
+            "MinY": 0,
+            "MaxX": 0,
+            "MaxY": 58
+          },
+          "read_only": true,
+          "status": "partial",
+          "note": "A fixed 58-pixel band from x 0 to 0; there is no top bar or real screen width here.",
+          "doc": "The screen area the top bar covers."
+        }
+      ],
+      "methods": [
+        {
+          "name": "GetGuiInset",
+          "returns": [
+            "Vector2",
+            "Vector2"
+          ],
+          "status": "partial",
+          "note": "A fixed top inset of 58 pixels and no bottom inset.",
+          "doc": "The top-left and bottom-right insets of the screen area interfaces avoid."
+        }
+      ],
+      "events": [
+        {
+          "name": "MenuOpened",
+          "status": "partial",
+          "note": "Never fires: there is no system menu offline.",
+          "doc": "Fires when the system menu opens."
+        },
+        {
+          "name": "MenuClosed",
+          "status": "partial",
+          "note": "Never fires: there is no system menu offline.",
+          "doc": "Fires when the system menu closes."
+        }
+      ]
+    },
+    {
+      "name": "StarterGui",
+      "extend": true,
+      "properties": [
+        {
+          "name": "ShowDevelopmentGui",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether StarterGui's contents are shown in the editor."
+        }
+      ],
+      "methods": [
+        {
+          "name": "SetCore",
+          "params": [
+            {
+              "name": "parameterName",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "status": "partial",
+          "note": "Values are recorded and read back; nothing is drawn.",
+          "doc": "Sets a built-in interface option by name. Recorded for this client; the built-in interface is not drawn. Client only."
+        },
+        {
+          "name": "GetCore",
+          "params": [
+            {
+              "name": "parameterName",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "any"
+          ],
+          "status": "partial",
+          "note": "Reads back what SetCore recorded, else the default of a readable option (ChatActive, TopbarEnabled, the notification and menu switches); raises for options with no readable value offline.",
+          "doc": "The value of a built-in interface option. Raises for a name the built-in interface does not register. Client only."
+        },
+        {
+          "name": "SetCoreGuiEnabled",
+          "params": [
+            {
+              "name": "coreGuiType",
+              "type": "Enum.CoreGuiType"
+            },
+            {
+              "name": "enabled",
+              "type": "bool"
+            }
+          ],
+          "status": "partial",
+          "note": "Recorded; the built-in interface is not drawn.",
+          "doc": "Turns a part of the built-in interface on or off for this client. Recorded only."
+        },
+        {
+          "name": "GetCoreGuiEnabled",
+          "params": [
+            {
+              "name": "coreGuiType",
+              "type": "Enum.CoreGuiType"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "Whether a part of the built-in interface is on for this client."
+        }
+      ]
+    },
+    {
+      "name": "StarterPlayer",
+      "extend": true,
+      "properties": [
+        {
+          "name": "CharacterWalkSpeed",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 16.0,
+          "status": "implemented",
+          "doc": "The WalkSpeed new characters start with."
+        },
+        {
+          "name": "CharacterJumpPower",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 50.0,
+          "status": "implemented",
+          "doc": "The JumpPower new characters start with."
+        },
+        {
+          "name": "CharacterJumpHeight",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 7.2,
+          "status": "implemented",
+          "doc": "The JumpHeight new characters start with."
+        },
+        {
+          "name": "CharacterUseJumpPower",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether new characters jump by JumpPower rather than JumpHeight."
+        },
+        {
+          "name": "CharacterMaxSlopeAngle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 89.0,
+          "status": "implemented",
+          "doc": "The steepest slope new characters can walk up, in degrees."
+        },
+        {
+          "name": "AutoJumpEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether characters jump over obstacles by themselves on touch devices."
+        },
+        {
+          "name": "EnableMouseLockOption",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether players may switch to mouse lock."
+        },
+        {
+          "name": "CameraMaxZoomDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 400.0,
+          "status": "implemented",
+          "doc": "The farthest the default camera zooms out."
+        },
+        {
+          "name": "CameraMinZoomDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.5,
+          "status": "implemented",
+          "doc": "The nearest the default camera zooms in."
+        },
+        {
+          "name": "CameraMode",
+          "type": "Enum.CameraMode",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "Whether the default camera is free or locked in first person."
+        },
+        {
+          "name": "HealthDisplayDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 100.0,
+          "status": "implemented",
+          "doc": "How far away players see other characters' health."
+        },
+        {
+          "name": "NameDisplayDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 100.0,
+          "status": "implemented",
+          "doc": "How far away players see other characters' names."
+        },
+        {
+          "name": "LoadCharacterAppearance",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether characters take their account's look."
+        }
+      ]
+    },
+    {
+      "name": "SoundService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "note": "Properties only; playing sounds is the sound work's.",
+      "doc": "Settings for how sound is played in the place.",
+      "properties": [
+        {
+          "name": "AmbientReverb",
+          "type": "Enum.ReverbType",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The reverb applied to every sound."
+        },
+        {
+          "name": "DistanceFactor",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 3.33,
+          "status": "implemented",
+          "doc": "Studs per metre for 3D sound."
+        },
+        {
+          "name": "DopplerScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "implemented",
+          "doc": "How strongly motion changes pitch."
+        },
+        {
+          "name": "RolloffScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "implemented",
+          "doc": "How fast 3D sounds fade with distance."
+        },
+        {
+          "name": "RespectFilteringEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether sounds a client plays stay on that client."
+        }
+      ]
+    },
+    {
+      "name": "DataStoreService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "doc": "Saved data. It needs an online service: every call raises RE9002.",
+      "methods": [
+        {
+          "name": "GetDataStore",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "scope",
+              "type": "string",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetGlobalDataStore",
+          "returns": [
+            "Instance"
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetOrderedDataStore",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "scope",
+              "type": "string",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetRequestBudgetForRequestType",
+          "params": [
+            {
+              "name": "requestType",
+              "type": "Enum.DataStoreRequestType"
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "ListDataStoresAsync",
+          "returns": [
+            "Instance"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ]
+    },
+    {
+      "name": "MemoryStoreService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "doc": "Shared server memory. It needs an online service: every call raises RE9002.",
+      "methods": [
+        {
+          "name": "GetSortedMap",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetQueue",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "invisibilityTimeout",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetHashMap",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ]
+    },
+    {
+      "name": "TeleportService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "doc": "Moving players between places and servers. It needs an online service: every call raises RE9002.",
+      "methods": [
+        {
+          "name": "Teleport",
+          "params": [
+            {
+              "name": "placeId",
+              "type": "number"
+            },
+            {
+              "name": "player",
+              "type": "Instance<Player>",
+              "optional": true
+            },
+            {
+              "name": "teleportData",
+              "type": "any",
+              "optional": true
+            },
+            {
+              "name": "customLoadingScreen",
+              "type": "Instance",
+              "optional": true
+            }
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "TeleportAsync",
+          "params": [
+            {
+              "name": "placeId",
+              "type": "number"
+            },
+            {
+              "name": "players",
+              "type": "table"
+            },
+            {
+              "name": "teleportOptions",
+              "type": "Instance<TeleportOptions>",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "TeleportToPlaceInstance",
+          "params": [
+            {
+              "name": "placeId",
+              "type": "number"
+            },
+            {
+              "name": "instanceId",
+              "type": "string"
+            },
+            {
+              "name": "player",
+              "type": "Instance<Player>",
+              "optional": true
+            }
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "ReserveServer",
+          "params": [
+            {
+              "name": "placeId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "string",
+            "string"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetLocalPlayerTeleportData",
+          "returns": [
+            "any"
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ]
+    },
+    {
+      "name": "TeleportOptions",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Options for a teleport. Teleports need an online service.",
+      "properties": [
+        {
+          "name": "ReservedServerAccessCode",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The reserved server to teleport to."
+        },
+        {
+          "name": "ServerInstanceId",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The server to teleport to."
+        },
+        {
+          "name": "ShouldReserveServer",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "Whether the teleport reserves a new server."
+        }
+      ],
+      "methods": [
+        {
+          "name": "SetTeleportData",
+          "params": [
+            {
+              "name": "teleportData",
+              "type": "any"
+            }
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetTeleportData",
+          "returns": [
+            "any"
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ]
+    },
+    {
+      "name": "TextService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "doc": "Text filtering and measuring. Filtering needs an online service and raises RE9002.",
+      "methods": [
+        {
+          "name": "FilterStringAsync",
+          "params": [
+            {
+              "name": "stringToFilter",
+              "type": "string"
+            },
+            {
+              "name": "fromUserId",
+              "type": "number"
+            },
+            {
+              "name": "textContext",
+              "type": "Enum.TextFilterContext",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ]
+    },
+    {
+      "name": "MarketplaceService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "doc": "Purchases and product information. It needs an online service: every call raises RE9002.",
+      "methods": [
+        {
+          "name": "PromptProductPurchase",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            },
+            {
+              "name": "productId",
+              "type": "number"
+            }
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "PromptGamePassPurchase",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            },
+            {
+              "name": "gamePassId",
+              "type": "number"
+            }
+          ],
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "UserOwnsGamePassAsync",
+          "params": [
+            {
+              "name": "userId",
+              "type": "number"
+            },
+            {
+              "name": "gamePassId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "PlayerOwnsAsset",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            },
+            {
+              "name": "assetId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetProductInfo",
+          "params": [
+            {
+              "name": "assetId",
+              "type": "number"
+            },
+            {
+              "name": "infoType",
+              "type": "Enum.InfoType",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ]
+    },
+    {
+      "name": "BadgeService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "doc": "Badges. It needs an online service: every call raises RE9002.",
+      "methods": [
+        {
+          "name": "AwardBadge",
+          "params": [
+            {
+              "name": "userId",
+              "type": "number"
+            },
+            {
+              "name": "badgeId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "UserHasBadgeAsync",
+          "params": [
+            {
+              "name": "userId",
+              "type": "number"
+            },
+            {
+              "name": "badgeId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetBadgeInfoAsync",
+          "params": [
+            {
+              "name": "badgeId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ]
+    },
+    {
+      "name": "MessagingService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "doc": "Messages between servers. It needs an online service: every call raises RE9002.",
+      "methods": [
+        {
+          "name": "PublishAsync",
+          "params": [
+            {
+              "name": "topic",
+              "type": "string"
+            },
+            {
+              "name": "message",
+              "type": "any"
+            }
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "SubscribeAsync",
+          "params": [
+            {
+              "name": "topic",
+              "type": "string"
+            },
+            {
+              "name": "callback",
+              "type": "function"
+            }
+          ],
+          "returns": [
+            "RBXScriptConnection"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ]
+    }
+  ]
+}

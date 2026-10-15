@@ -272,7 +272,7 @@ pub enum CompatApi {
 
 /// The `[compat]` section of `real.toml`. Build one with `..Default::default()`
 /// so later fields need no change.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompatConfig {
     /// The API the project's scripts use.
@@ -299,6 +299,28 @@ pub struct CompatConfig {
     /// [`DEFAULT_EFFECT_BUDGET`]); the excess is `RE9351`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_budget: Option<u32>,
+    /// How many players join when the game starts (`players = 2`); the first
+    /// is the client's local player. One unless set.
+    #[serde(default = "one_player")]
+    pub players: u32,
+}
+
+fn one_player() -> u32 {
+    1
+}
+
+impl Default for CompatConfig {
+    fn default() -> Self {
+        CompatConfig {
+            api: CompatApi::default(),
+            signal_behavior: Default::default(),
+            game: GameInfo::default(),
+            seed: 0,
+            assets: BTreeMap::new(),
+            effect_budget: None,
+            players: one_player(),
+        }
+    }
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -383,6 +405,12 @@ impl CompatConfig {
     /// two keys for one id, a path that is absolute or leaves the project,
     /// and an effect budget of 0.
     fn validated(mut self) -> Result<CompatConfig, CompatError> {
+        if self.players == 0 {
+            return Err(CompatError::Runtime {
+                code: crate::codes::PLAYER_STEP,
+                message: "real.toml [compat]: players must be at least 1".into(),
+            });
+        }
         let bad = |m: String| CompatError::Scene(format!("real.toml [compat]: {m}"));
         let mut assets = BTreeMap::new();
         for (id, path) in std::mem::take(&mut self.assets) {
@@ -441,6 +469,9 @@ impl CompatConfig {
         }
         if self.seed != 0 {
             out.push_str(&format!("seed = {}\n", self.seed));
+        }
+        if self.players != 1 {
+            out.push_str(&format!("players = {}\n", self.players));
         }
         if let Some(b) = self.effect_budget {
             out.push_str(&format!("effect_budget = {b}\n"));

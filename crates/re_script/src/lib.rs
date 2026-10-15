@@ -40,7 +40,7 @@ pub mod sched {
         DeferCondition, Owner, SettleHook, WakeMode, YieldToken, advance, cancel_park,
         current_owner, defer, defer_owned, is_parked, is_scheduled, now, park, parked_labels,
         parked_waits, resume_due_now as resume_due, set_settle_hook, settle, sleeping_count, spawn,
-        spawn_owned, stop_owner, wake, yielding,
+        spawn_owned, stop_owner, wake, wake_error, yielding,
     };
 }
 
