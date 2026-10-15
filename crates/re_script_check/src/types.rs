@@ -36,6 +36,9 @@ pub struct TypesOptions {
     pub checker: Option<PathBuf>,
     /// An `engine.d.luau` to use instead of the one generated from `re_script`.
     pub definitions: Option<PathBuf>,
+    /// A `roblox.d.luau` ([`crate::roblox`]) to load as well, for a compat
+    /// project.
+    pub compat_definitions: Option<PathBuf>,
 }
 
 /// The checker [`run`] would use, as an absolute path: a bare program name is
@@ -102,6 +105,10 @@ pub fn run(project: &Path, files: &[PathBuf], options: &TypesOptions) -> Vec<Dia
         },
     };
     let defs = std::path::absolute(&defs).unwrap_or(defs);
+    let compat = options
+        .compat_definitions
+        .as_ref()
+        .map(|c| std::path::absolute(c).unwrap_or_else(|_| c.clone()));
     let project_abs = std::path::absolute(project).unwrap_or_else(|_| project.to_path_buf());
     let rel: Vec<PathBuf> = files
         .iter()
@@ -131,12 +138,18 @@ pub fn run(project: &Path, files: &[PathBuf], options: &TypesOptions) -> Vec<Dia
         if analyze {
             cmd.arg("--formatter=gnu")
                 .arg(format!("--definitions={}", defs.display()));
+            if let Some(c) = &compat {
+                cmd.arg(format!("--definitions={}", c.display()));
+            }
         } else {
             cmd.arg("analyze")
                 .arg("--platform=standard")
                 .arg("--flag:LuauSolverV2=true")
-                .arg(format!("--definitions=@engine={}", defs.display()))
-                .arg("--formatter=gnu");
+                .arg(format!("--definitions=@engine={}", defs.display()));
+            if let Some(c) = &compat {
+                cmd.arg(format!("--definitions=@roblox={}", c.display()));
+            }
+            cmd.arg("--formatter=gnu");
         }
         cmd.args(chunk).current_dir(&project_abs);
         let output = match cmd.output() {
@@ -337,6 +350,7 @@ mod tests {
         let options = TypesOptions {
             checker: Some(rel),
             definitions: None,
+            compat_definitions: None,
         };
         assert_eq!(find_checker(&options), Some(prog));
     }
@@ -346,6 +360,7 @@ mod tests {
         let options = TypesOptions {
             checker: Some(PathBuf::from("/nonexistent/luau-lsp")),
             definitions: None,
+            compat_definitions: None,
         };
         let d = run(Path::new("."), &[PathBuf::from("a.luau")], &options);
         assert_eq!(d.len(), 1);
