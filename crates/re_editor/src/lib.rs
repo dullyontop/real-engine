@@ -73,6 +73,7 @@ pub struct EditorOptions {
     /// (`real editor` registers the same set as `real mcp`). With
     /// [`EditorOptions::agent_commands`] the session starts on it; `None`:
     /// a new one, with only `re_agent`'s commands registered.
+    /// Ignored (and dropped) when `agent_commands` is off.
     pub agent: Option<re_agent::Agent>,
     /// The project lock and socket, when the caller took them before opening
     /// the project (as `real editor` does, so that no other writer can
