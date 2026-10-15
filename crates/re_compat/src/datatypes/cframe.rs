@@ -275,7 +275,8 @@ impl CFrame {
     ///
     /// When the look direction is parallel to `up`, the right vector is
     /// `look × Z` instead (`look × X` if that is degenerate too), so the
-    /// result is still a valid rotation. When `at == target` the rotation is
+    /// result is still a valid rotation. This fallback is this engine's
+    /// choice; Roblox's exact result in that case is not verified. When `at == target` the rotation is
     /// the identity.
     pub fn look_at(at: [f32; 3], target: [f32; 3], up: [f32; 3]) -> Self {
         let d = sub(target, at);
@@ -349,30 +350,50 @@ impl CFrame {
         scale(self.z_vector(), -1.0)
     }
 
+    /// The rotation `R(order[0]) * R(order[1]) * R(order[2])`, each axis
+    /// turned by its own angle (`angles` is always `[rx, ry, rz]`). Order
+    /// `[0, 1, 2]` is `CFrame.Angles`; `[1, 0, 2]` is `fromEulerAnglesYXZ`.
+    pub fn from_euler(angles: [f32; 3], order: [usize; 3]) -> Self {
+        let r = |axis: usize| match axis {
+            0 => Self::rotation_x(angles[0]),
+            1 => Self::rotation_y(angles[1]),
+            _ => Self::rotation_z(angles[2]),
+        };
+        r(order[0]) * r(order[1]) * r(order[2])
+    }
+
+    /// The angles `[rx, ry, rz]` with `from_euler(angles, order) == self` (up
+    /// to rounding). At gimbal lock the last axis's angle is 0.
+    pub fn to_euler(&self, order: [usize; 3]) -> [f32; 3] {
+        let [i, j, k] = order;
+        let r = &self.r;
+        // +1 for a cyclic order (XYZ, YZX, ZXY), -1 otherwise.
+        let s: f32 = if (j + 3 - i) % 3 == 1 { 1.0 } else { -1.0 };
+        let sj = (s * r[i][k]).clamp(-1.0, 1.0);
+        let mut out = [0.0; 3];
+        out[j] = sj.asin();
+        if sj.abs() < 0.999_999_9 {
+            out[i] = (-s * r[j][k]).atan2(r[k][k]);
+            out[k] = (-s * r[i][j]).atan2(r[i][i]);
+        } else {
+            // Gimbal lock: the first and last axes turn about the same line;
+            // put it all in the first.
+            out[i] = (s * r[k][j]).atan2(r[j][j]);
+        }
+        out
+    }
+
     /// The angles `(rx, ry, rz)` with `from_euler_xyz(rx, ry, rz) == self`
     /// (up to rounding).
     pub fn to_euler_xyz(&self) -> (f32, f32, f32) {
-        let r = &self.r;
-        let sy = r[0][2].clamp(-1.0, 1.0);
-        let ry = sy.asin();
-        if sy.abs() < 0.999_999_9 {
-            ((-r[1][2]).atan2(r[2][2]), ry, (-r[0][1]).atan2(r[0][0]))
-        } else {
-            // Gimbal lock: X and Z turn about the same axis; put it all in X.
-            (r[2][1].atan2(r[1][1]), ry, 0.0)
-        }
+        let [x, y, z] = self.to_euler([0, 1, 2]);
+        (x, y, z)
     }
 
     /// The angles `(rx, ry, rz)` with `from_euler_yxz(rx, ry, rz) == self`.
     pub fn to_euler_yxz(&self) -> (f32, f32, f32) {
-        let r = &self.r;
-        let sx = (-r[1][2]).clamp(-1.0, 1.0);
-        let rx = sx.asin();
-        if sx.abs() < 0.999_999_9 {
-            (rx, r[0][2].atan2(r[2][2]), r[1][0].atan2(r[1][1]))
-        } else {
-            (rx, (-r[2][0]).atan2(r[0][0]), 0.0)
-        }
+        let [x, y, z] = self.to_euler([1, 0, 2]);
+        (x, y, z)
     }
 
     /// The rotation as an axis and an angle in radians in `[0, π]`. The
@@ -480,6 +501,9 @@ fn new(a: &[Value]) -> Result<CFrame> {
         3 => Ok(CFrame::from_position(nums::<3>(a, "new")?)),
         7 => {
             let v = nums::<7>(a, "new")?;
+            if v[3] == 0.0 && v[4] == 0.0 && v[5] == 0.0 && v[6] == 0.0 {
+                return Err(bad_argument(4, "new", "the quaternion is zero"));
+            }
             Ok(CFrame::from_quaternion(
                 [v[0], v[1], v[2]],
                 [v[3], v[4], v[5], v[6]],
@@ -487,10 +511,14 @@ fn new(a: &[Value]) -> Result<CFrame> {
         }
         12 => {
             let v = nums::<12>(a, "new")?;
-            Ok(CFrame::from_parts(
-                [v[0], v[1], v[2]],
-                [[v[3], v[4], v[5]], [v[6], v[7], v[8]], [v[9], v[10], v[11]]],
-            ))
+            nondegenerate(
+                CFrame::from_parts(
+                    [v[0], v[1], v[2]],
+                    [[v[3], v[4], v[5]], [v[6], v[7], v[8]], [v[9], v[10], v[11]]],
+                ),
+                &v[3..],
+                "new",
+            )
         }
         _ => Err(bad_argument(
             n,
@@ -506,6 +534,43 @@ fn angles(a: &[Value], f: &str) -> Result<[f32; 3]> {
         *x = num_arg(&arg(a, i), i + 1, f, Some(0.0))? as f32;
     }
     Ok(o)
+}
+
+/// Refuses a rotation that came out NaN from finite inputs: columns that are
+/// zero or parallel cannot be orthonormalized.
+fn nondegenerate(cf: CFrame, inputs: &[f32], f: &str) -> Result<CFrame> {
+    if inputs.iter().all(|x| x.is_finite()) && cf.r.iter().flatten().any(|x| !x.is_finite()) {
+        return Err(bad_argument(
+            2,
+            f,
+            "the rotation's columns are zero or parallel",
+        ));
+    }
+    Ok(cf)
+}
+
+/// An `Enum.RotationOrder` argument (item, name or number) as axis indices;
+/// `nil` is XYZ.
+fn rotation_order(v: &Value, n: usize, f: &str) -> Result<[usize; 3]> {
+    if v.is_nil() {
+        return Ok([0, 1, 2]);
+    }
+    let item = crate::enums::EnumItem::coerce(v, "RotationOrder").map_err(|_| {
+        bad_argument(
+            n,
+            f,
+            format!("Enum.RotationOrder expected, got {}", type_name(v)),
+        )
+    })?;
+    let mut order = [0; 3];
+    for (o, c) in order.iter_mut().zip(item.name().chars()) {
+        *o = match c {
+            'X' => 0,
+            'Y' => 1,
+            _ => 2,
+        };
+    }
+    Ok(order)
 }
 
 /// Installs the `CFrame` library.
@@ -553,9 +618,11 @@ pub(crate) fn install(lua: &Lua, globals: &Table) -> Result<()> {
             (
                 "fromEulerAngles",
                 f(|a| {
-                    // Roblox's default order for this form is XYZ.
-                    let [x, y, z] = angles(a, "fromEulerAngles")?;
-                    Ok(CFrame::from_euler_xyz(x, y, z))
+                    let xyz = angles(a, "fromEulerAngles")?;
+                    Ok(CFrame::from_euler(
+                        xyz,
+                        rotation_order(&arg(a, 3), 4, "fromEulerAngles")?,
+                    ))
                 })?,
             ),
             (
@@ -587,6 +654,13 @@ pub(crate) fn install(lua: &Lua, globals: &Table) -> Result<()> {
                 f(|a| {
                     let axis = vec_arg(&arg(a, 0), 1, "fromAxisAngle")?;
                     let angle = num_arg(&arg(a, 1), 2, "fromAxisAngle", None)? as f32;
+                    if axis == [0.0; 3] {
+                        return Err(bad_argument(
+                            1,
+                            "fromAxisAngle",
+                            "the axis is the zero vector",
+                        ));
+                    }
                     Ok(CFrame::from_axis_angle(axis, angle))
                 })?,
             ),
@@ -600,7 +674,13 @@ pub(crate) fn install(lua: &Lua, globals: &Table) -> Result<()> {
                         Value::Nil => unit(cross(x, y)),
                         v => vec_arg(&v, 4, "fromMatrix")?,
                     };
-                    Ok(CFrame::from_parts(p, from_columns(x, y, z)))
+                    // A defaulted vZ is NaN exactly when vX and vY are degenerate.
+                    let inputs = [x, y].concat();
+                    nondegenerate(
+                        CFrame::from_parts(p, from_columns(x, y, z)),
+                        &inputs,
+                        "fromMatrix",
+                    )
                 })?,
             ),
         ],
@@ -711,9 +791,13 @@ impl UserData for CFrame {
                 vecs(lua, m, "VectorToObjectSpace", |v| c.vector_to_object(v))
             });
         }
-        for name in ["ToEulerAnglesXYZ", "toEulerAnglesXYZ", "ToEulerAngles"] {
+        for name in ["ToEulerAnglesXYZ", "toEulerAnglesXYZ"] {
             methods.add_method(name, |_, c, ()| Ok(c.to_euler_xyz()));
         }
+        methods.add_method("ToEulerAngles", |_, c, order: Value| {
+            let [x, y, z] = c.to_euler(rotation_order(&order, 1, "ToEulerAngles")?);
+            Ok((x, y, z))
+        });
         for name in ["ToEulerAnglesYXZ", "toEulerAnglesYXZ", "ToOrientation"] {
             methods.add_method(name, |_, c, ()| Ok(c.to_euler_yxz()));
         }

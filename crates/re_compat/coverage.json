@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 856,
-    "partial": 4,
+    "implemented": 858,
+    "partial": 2,
     "missing": 15
   },
   "classes": [
@@ -7727,8 +7727,7 @@
         {
           "name": "fromEulerAngles",
           "kind": "function",
-          "status": "partial",
-          "note": "The rotation-order argument is ignored; the order is always XYZ."
+          "status": "implemented"
         },
         {
           "name": "fromEulerAnglesXYZ",
@@ -7835,8 +7834,7 @@
         {
           "name": "ToEulerAngles",
           "kind": "method",
-          "status": "partial",
-          "note": "The rotation-order argument is ignored; the order is always XYZ."
+          "status": "implemented"
         },
         {
           "name": "ToEulerAnglesXYZ",

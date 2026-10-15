@@ -84,7 +84,7 @@ fn f32_of(fs: &[(&'static str, &Value)], name: &str) -> f32 {
 
 fn i32_of(fs: &[(&'static str, &Value)], name: &str) -> i32 {
     match get(fs, name) {
-        Some(Value::Int(i)) => *i as i32,
+        Some(Value::Int(i)) => (*i).clamp(i32::MIN as i64, i32::MAX as i64) as i32,
         Some(Value::Float(x)) => *x as i32,
         _ => 0,
     }

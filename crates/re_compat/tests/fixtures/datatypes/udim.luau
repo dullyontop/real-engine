@@ -21,3 +21,6 @@ local r = Rect.new(0, 0, 100, 50)
 assert(typeof(r) == "Rect" and r.Width == 100 and r.Height == 50)
 assert(r.Min == Vector2.zero and r.Max == Vector2.new(100, 50))
 assert(Rect.new(Vector2.zero, Vector2.new(100, 50)) == r)
+-- Offsets at the i32 limits interpolate without overflowing.
+assert(UDim.new(0, 2147483647):Lerp(UDim.new(0, -2147483648), 0.5).Offset == 0)
+assert(UDim2.new(0, 2147483647, 0, 0):Lerp(UDim2.new(0, -2147483648, 0, 0), 1).X.Offset == -2147483648)

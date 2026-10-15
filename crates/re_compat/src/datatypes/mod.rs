@@ -180,7 +180,7 @@ pub(crate) fn num_arg(v: &Value, n: usize, function: &str, default: Option<f64>)
         Value::String(s) => s
             .to_str()
             .ok()
-            .and_then(|s| s.trim().parse::<f64>().ok())
+            .and_then(|s| parse_number(&s))
             .ok_or_else(|| bad_argument(n, function, "number expected, got string")),
         Value::Nil if default.is_some() => Ok(default.unwrap()),
         other => Err(bad_argument(
@@ -189,6 +189,28 @@ pub(crate) fn num_arg(v: &Value, n: usize, function: &str, default: Option<f64>)
             format!("number expected, got {}", type_name(other)),
         )),
     }
+}
+
+/// Reads a numeric string the way Luau's `tonumber` does: decimal with an
+/// optional exponent, or hexadecimal with `0x`; no `inf` or `nan` words.
+fn parse_number(s: &str) -> Option<f64> {
+    let t = s.trim();
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(b) => (true, b),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    let v = if let Some(hex) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()? as f64
+    } else if !body.is_empty()
+        && body
+            .bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'E' | b'+' | b'-'))
+    {
+        body.parse::<f64>().ok()?
+    } else {
+        return None;
+    };
+    Some(if neg { -v } else { v })
 }
 
 /// Reads a `Vector3` argument.

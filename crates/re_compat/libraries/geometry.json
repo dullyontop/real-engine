@@ -755,14 +755,18 @@
             {
               "name": "rz",
               "type": "number"
+            },
+            {
+              "name": "order",
+              "type": "Enum.RotationOrder",
+              "optional": true
             }
           ],
           "returns": [
             "CFrame"
           ],
-          "status": "partial",
-          "note": "The rotation-order argument is ignored; the order is always XYZ.",
-          "doc": "Rotation in XYZ order."
+          "status": "implemented",
+          "doc": "Rotation from Euler angles applied in the given order (default XYZ)."
         },
         {
           "name": "lookAt",
@@ -1251,9 +1255,15 @@
             "number",
             "number"
           ],
-          "status": "partial",
-          "note": "The rotation-order argument is ignored; the order is always XYZ.",
-          "doc": "Angles in XYZ order."
+          "status": "implemented",
+          "doc": "Euler angles (rx, ry, rz) for the given rotation order (default XYZ).",
+          "params": [
+            {
+              "name": "order",
+              "type": "Enum.RotationOrder",
+              "optional": true
+            }
+          ]
         },
         {
           "name": "ToAxisAngle",

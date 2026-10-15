@@ -133,7 +133,9 @@ function mt.__tostring(v: vector): string
 	return tostr(v)
 end
 
+mt.__metatable = "The metatable is locked"
 table.freeze(methods)
+table.freeze(mt)
 
 local normals = {
 	Right = create(1, 0, 0),

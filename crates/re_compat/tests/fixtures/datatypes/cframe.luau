@@ -92,3 +92,23 @@ ok = pcall(function()
 	return cf * 2
 end)
 assert(not ok)
+
+-- Rotation orders: fromEulerAngles and ToEulerAngles take Enum.RotationOrder.
+assert(CFrame.fromEulerAngles(a, b, c) == CFrame.Angles(a, b, c))
+assert(CFrame.fromEulerAngles(a, b, c, Enum.RotationOrder.YXZ) == CFrame.fromEulerAnglesYXZ(a, b, c))
+local zyx = CFrame.Angles(0, 0, c) * CFrame.Angles(0, b, 0) * CFrame.Angles(a, 0, 0)
+assert(CFrame.fromEulerAngles(a, b, c, Enum.RotationOrder.ZYX):FuzzyEq(zyx, 1e-6))
+for _, order in Enum.RotationOrder:GetEnumItems() do
+	local f = CFrame.fromEulerAngles(a, b, c, order)
+	-- The middle angle may come back as its equivalent in [-pi/2, pi/2], so
+	-- compare the rotations, not the angles.
+	local x2, y2, z2 = f:ToEulerAngles(order)
+	assert(CFrame.fromEulerAngles(x2, y2, z2, order):FuzzyEq(f, 1e-5), order.Name)
+end
+-- Degenerate rotations are refused instead of giving NaN frames.
+assert(not pcall(CFrame.new, 0, 0, 0, 0, 0, 0, 0))
+assert(not pcall(CFrame.fromAxisAngle, Vector3.zero, 1))
+assert(not pcall(CFrame.fromMatrix, Vector3.zero, Vector3.xAxis, Vector3.xAxis))
+-- Numeric strings follow Luau's tonumber.
+assert(CFrame.new("0x10", "1", " 2 ").X == 16)
+assert(not pcall(CFrame.new, "inf", 0, 0))

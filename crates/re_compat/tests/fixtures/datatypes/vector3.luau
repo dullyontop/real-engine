@@ -51,3 +51,6 @@ end)
 assert(not ok)
 ok, err = pcall(Vector3.new, "x")
 assert(not ok and string.find(tostring(err), "RE3006", 1, true))
+-- The shared vector metatable is locked.
+assert(getmetatable(Vector3.zero) == "The metatable is locked")
+assert(not pcall(setmetatable, {}, getmetatable(Vector3.zero) :: any))

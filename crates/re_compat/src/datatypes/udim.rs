@@ -25,7 +25,7 @@ impl UDim {
     fn lerp(self, o: UDim, t: f32) -> UDim {
         UDim::new(
             self.scale + (o.scale - self.scale) * t,
-            (self.offset as f32 + (o.offset - self.offset) as f32 * t) as i32,
+            (self.offset as f64 + (o.offset as f64 - self.offset as f64) * t as f64) as i32,
         )
     }
 
