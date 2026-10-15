@@ -15,6 +15,7 @@ use re_scene::World;
 use re_types::{MaterialDesc, RenderSnapshot, TextureHandle, TextureRef};
 
 use crate::codes;
+use crate::compat_view::CompatView;
 use crate::hud::{self, HudLine};
 use crate::media::{DERIVED, LoadedMaterial, Media};
 use crate::sync::render::{self, RenderAssets};
@@ -281,6 +282,69 @@ impl Graphics {
         let ui = UiFrame::from_output(&self.egui, &mut output, size_px);
         self.renderer
             .paint_ui(&self.gpu.device, &self.gpu.queue, target, &ui)
+    }
+
+    /// Draws a compat game's view (its 3D frame and its UI pass, or the
+    /// HUD without one) into `target` (`size_px` physical pixels).
+    ///
+    /// # Errors
+    ///
+    /// The renderer's errors.
+    pub fn draw_compat(
+        &mut self,
+        target: &wgpu::TextureView,
+        size_px: [u32; 2],
+        pixels_per_point: f32,
+        view: &mut CompatView,
+        hud_lines: &[HudLine],
+    ) -> Result<(), Diagnostic> {
+        let (device, queue) = (&self.gpu.device, &self.gpu.queue);
+        match view.prepare(&mut self.renderer)? {
+            Some((snapshot, extras, exposure)) => {
+                let before = self.renderer.settings().exposure;
+                self.renderer.settings_mut().exposure = exposure;
+                let drawn = self
+                    .renderer
+                    .render_with(device, queue, target, &snapshot, &extras);
+                self.renderer.settings_mut().exposure = before;
+                drawn?;
+            }
+            None => {
+                self.renderer
+                    .render(device, queue, target, &RenderSnapshot::default())?;
+            }
+        }
+        let mut output = match view.take_ui() {
+            Some(o) => o,
+            None if hud_lines.is_empty() => return Ok(()),
+            None => {
+                let time = self.started.elapsed().as_secs_f64();
+                hud::run(&self.egui, hud_lines, size_px, pixels_per_point, time)
+            }
+        };
+        let ui = UiFrame::from_output(&self.egui, &mut output, size_px);
+        self.renderer.paint_ui(device, queue, target, &ui)
+    }
+
+    /// Draws a compat game's view offscreen and reads the image back.
+    ///
+    /// # Errors
+    ///
+    /// The renderer's errors.
+    pub fn capture_compat(
+        &mut self,
+        size: [u32; 2],
+        view: &mut CompatView,
+        hud_lines: &[HudLine],
+    ) -> Result<Image, Diagnostic> {
+        let capture = Capture::new(&self.gpu.device, size[0], size[1])?;
+        self.draw_compat(capture.view(), size, 1.0, view, hud_lines)?;
+        capture.read(&self.gpu.device, &self.gpu.queue)
+    }
+
+    /// The egui context the HUD and a compat game's UI are laid out with.
+    pub fn egui(&self) -> &egui::Context {
+        &self.egui
     }
 
     /// Draws `snapshot` and the HUD offscreen and reads the image back.
