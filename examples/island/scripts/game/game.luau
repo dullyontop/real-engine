@@ -42,9 +42,16 @@ input.on_pressed("restart", function()
 end)
 
 input.on_pressed("regenerate", function()
+	-- After a win the game is over until R: a new island would hold gems
+	-- nobody can collect.
+	if won then
+		return
+	end
 	seed += 1
 	proc.regenerate("island", seed)
-	task.defer(show)
+	-- The new island is made at the end of this frame: count it a little
+	-- later (task.wait() alone could resume in this frame's own step).
+	task.delay(0.1, show)
 end)
 
 -- The island generates before scripts start; count once it is there.

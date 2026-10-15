@@ -351,7 +351,7 @@ struct Regeneration {
     grounded: bool,
     /// Items removed by a game script (collected) that stayed removed.
     collected_kept: usize,
-    /// Script errors reported after it (a stale handle shows up as one).
+    /// Errors reported after it (a script's stale handle shows up as one).
     script_errors: usize,
     #[serde(skip)]
     errors_before: usize,
@@ -393,11 +393,19 @@ impl RegenWatch {
     }
 
     fn after_frame(&mut self, app: &mut App) {
-        let frame = app.frame_count();
+        // The frame that just ran (the counter has moved past it).
+        let frame = app.frame_count().saturating_sub(1);
+        if app.restarts() != self.restarts {
+            // A fresh World: its characters start over and are not the ones
+            // a regeneration was waiting on.
+            for r in &mut self.seen {
+                r.waiting.clear();
+            }
+        }
         let errors = app
             .pending_diagnostics()
             .iter()
-            .filter(|d| d.is_error() && d.code.to_string().starts_with("RE30"))
+            .filter(|d| d.is_error())
             .count();
         for r in &mut self.seen {
             r.script_errors = errors.saturating_sub(r.errors_before);
@@ -443,7 +451,8 @@ impl RegenWatch {
             let lost: Vec<String> = self
                 .characters
                 .iter()
-                .filter(|(id, entity)| now.get(*id) != Some(*entity))
+                // A character a script removed is gone, not lost.
+                .filter(|(id, entity)| now.get(*id).is_some_and(|e| e != *entity))
                 .map(|(id, _)| id.clone())
                 .collect();
             for id in &lost {

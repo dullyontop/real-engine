@@ -125,6 +125,8 @@ pub struct App {
     graph_inputs: procedural::GraphInputs,
     /// How many times the World was reloaded by [`App::restart`].
     restarts: u64,
+    /// Characters [`App::link_new_characters`] already tried to link.
+    link_tried: std::collections::BTreeSet<re_types::EntityId>,
 
     scripts: Option<ScriptRuntime>,
     scripts_failed: bool,
@@ -239,6 +241,7 @@ impl App {
             ground: None,
             graph_inputs,
             restarts: 0,
+            link_tried: Default::default(),
             scripts: None,
             scripts_failed: false,
             script_output: Vec::new(),
@@ -1044,15 +1047,19 @@ impl App {
     /// step, a spawn, a restart) their physics character now, so scripts can
     /// move them in the step they appear.
     fn link_new_characters(&mut self) {
-        let unlinked = self
+        let unlinked: Vec<re_types::EntityId> = self
             .world
             .ecs
             .query_filtered::<re_scene::Entity, re_scene::ecs::query::With<re_scene::CharacterController>>()
             .iter(&self.world.ecs)
-            .any(|e| {
-                self.physics_sync.kind(re_scene::entity_id(e)) != Some(physics::LinkKind::Character)
-            });
-        if unlinked {
+            .map(re_scene::entity_id)
+            .filter(|&id| self.physics_sync.kind(id) != Some(physics::LinkKind::Character))
+            .collect();
+        // A character that cannot be linked (reported by `push`) is tried
+        // once here, not on every step.
+        let fresh = unlinked.iter().any(|id| !self.link_tried.contains(id));
+        self.link_tried = unlinked.into_iter().collect();
+        if fresh {
             self.load_collider_sources();
             physics::push(
                 &mut self.world,
@@ -1457,6 +1464,7 @@ impl App {
                 self.world = world;
                 self.diagnostics.extend(problems);
                 self.ground = None;
+                self.link_tried.clear();
                 self.graph_inputs = procedural::inputs(&mut self.world);
                 self.restarts += 1;
                 self.history = History::default();
