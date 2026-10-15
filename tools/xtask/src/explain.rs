@@ -23,14 +23,16 @@ use anyhow::{Context, Result, bail};
 pub fn ranges(krate: &str) -> &'static [(u16, u16)] {
     match krate {
         "re_core" => &[(0, 499)],
-        "re_app" | "re_cli" => &[(500, 999)],
+        "re_app" => &[(500, 899)],
+        "re_cli" => &[(900, 999)],
         "re_reflect" => &[(1000, 1199)],
         "re_scene" => &[(1200, 1999)],
         "re_command" => &[(2000, 2999)],
         // re_script also owns the compatibility block in M1.
         "re_script" => &[(3000, 3999), (9000, 9999)],
         "re_script_check" => &[(3000, 3999)],
-        "re_proc" | "re_geom" => &[(4000, 4999)],
+        "re_proc" => &[(4000, 4499)],
+        "re_geom" => &[(4500, 4599)],
         "re_physics" => &[(5000, 5999)],
         "re_render" => &[(6000, 6999)],
         "re_assets" => &[(7000, 7199)],

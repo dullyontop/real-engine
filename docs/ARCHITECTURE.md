@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** partly implemented (M1 in progress). The contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`) and the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, plus `re_script` (compile checks and script diagnostics) and `re_agent` (the project lock and editor socket), exist; `re_proc`, `re_geom`, `re_script_check`, `re_app`, `re_cli`, `re_mcp`, `re_editor` and `re_compat` are still design, and `re_script` and `re_agent` are partial. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** partly implemented (M1 in progress). The contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`) and the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, plus `re_script` (compile checks and script diagnostics), `re_agent` (the project lock and editor socket), `re_app` (the runtime, `App::open` and `App::serve`), `re_cli` (the `real` CLI with the tooling stubs), `re_geom` and `re_proc` (geometry and the procedural core), exist; `re_script_check`, `re_mcp`, `re_editor` and `re_compat` are still design, and `re_script`, `re_agent`, `re_app` and `re_cli` are partial. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -306,14 +306,16 @@ There are two ways to author a graph:
 
 ```lua
 local g = proc.graph("island", { seed = 1234 })
-local h = g:node("terrain.heightfield", { size = 256, scale = 0.01, octaves = 5 })
-local m = g:node("terrain.island_mask", { falloff = 0.6 })
+local h = g:node("terrain.heightfield", { size = 256, cell = 1.0, scale = 0.01, octaves = 5 })
+local m = g:node("terrain.island_mask", { size = 256, cell = 1.0, falloff = 0.6 })
 local t = g:node("field.combine", { op = "mul" }, { a = h, b = m })
-g:node("terrain.mesh", { cell = 1.0, collider = true }, { field = t })
+g:node("terrain.mesh", { collider = true }, { field = t })
 local pts = g:node("scatter.poisson", { radius = 4.0, slope_max = 0.5 }, { field = t })
 g:node("points.instance", { prefab = "prefabs/tree.prefab.json" }, { points = pts })
 return g
 ```
+
+Grid spacing belongs to the fields: `cell` and `size` are parameters of `terrain.heightfield` and `terrain.island_mask`, and `terrain.mesh` takes the spacing of the field it is given. Give a mask the same `size` and `cell` as the heightfield it multiplies, or `field.combine` resamples it by UV. A builder records each input as an edge `{ from = [id, "out"], to = [id, port] }`; every node has one output port, named after its type (`field`, `mesh`, `points`, `fragment`), and `out` is an alias for it (`re_proc::OUT_ALIAS`).
 
 Either way, `graph.set_param` does not rewrite the file or the script: it stores a per-node parameter override on the procedural source (`GraphSource.params`) through an ordinary undoable `set_field`, which works for both kinds of graph and is saved with the scene.
 
@@ -354,9 +356,9 @@ The table has 15 rows and 16 node kinds: `mesh.transform` and `mesh.merge` share
 
 A graph is placed in a scene by a **procedural source** entity (ADR-0017): an ordinary saved entity with `Procedural { generator: "graph", seed }`, a `GraphSource` naming the graph file or the builder script, its own `Transform`, and its `overrides`. Generated entities are children of the source and are never saved.
 
-1. A new seed or parameter changes the source's fingerprint (generator, seed, parameters and the graph document's canonical hash). Only nodes whose keys changed recompute.
+1. A new seed or parameter changes the source's fingerprint (generator, seed, parameters and the graph document's canonical hash). Only nodes whose keys changed recompute. The fingerprint does not cover prefab file contents, so after a prefab edit the runtime calls `graph.regenerate`; inside the evaluation, prefab contents are part of the node keys, so only the affected `points.instance` nodes recompute.
 2. The output `SceneFragment` is a list of `GenNode { key, name, parent_key, components }`. The **StableKey** is `<node_id>/<local_key>`, where `local_key` is chosen by the node (point index, cell, …). The entity's id is `<source id>/<StableKey>`, for example `island/scatter/17`.
-3. The fragment is applied as a diff: added, removed and changed entities, and the `Derived` meshes that are no longer referenced.
+3. The fragment is applied as a diff: added, removed and changed entities, and the `Derived` meshes that are no longer referenced (`RegenReport::released_assets`). The runtime calls `GraphStore::release` for the released assets of its own `World::regenerate_changed`; `graph.regenerate` already does so. Releasing a terrain mesh also releases its heightfield collider, and a cloned `GraphStore` (as in `World::fork`) has its own copy of the derived map.
 4. `graph.regenerate` (`{ source, seed }`) sets the source's seed and applies the diff inside one transaction. Entities whose key is unchanged keep their `Entity`, so script handles stay valid. Physics bodies are updated through `PhysicsCmd`.
 5. User overrides are re-applied. They are stored on the source by StableKey, and are either a field value or a **deletion**. Editing a generated entity through any command records an override in the same transaction, so undo removes both. A key with a deletion override is not spawned again. Overrides whose target disappeared are kept as orphans, and produce warning `RE4010`.
 6. During play, a generated entity destroyed by a game script (a collected item, for example) is **suppressed** by its key for the rest of the session, so it stays gone after a regeneration. Suppression is never saved.
@@ -388,13 +390,13 @@ This works during play. The M1 demo regenerates the island with a new seed while
 
 ```
 client → real mcp (tokio, background thread) → re_command::remote::EngineHandle (std channel)
-       → main thread: re_app::App::serve
+       → main thread: re_app::App::serve(receiver, &dyn PolicyCheck)   (edit mode: nothing simulates)
        → PolicyCheck (re_agent::Policy: tier, path scopes, budgets)
        → CommandRegistry::dispatch(name, args, dry_run)
        → Transaction of Ops → History (undo, redo, log) → CommandOutcome { changes, diagnostics, data }
 ```
 
-`re_cli` builds the engine (`App::open`) and hands the `EngineHandle` to `re_mcp::serve_stdio`, so `re_mcp` never depends on `re_app`. If an editor process is running, `real mcp` and the CLI connect to `.real/editor.sock` (`re_agent::remote::connect`) instead of opening the project themselves; otherwise the first writer (`real do`, `real mcp`) takes an operating-system file lock on `.real/editor.lock` through `re_agent::lock` and records its pid and kind in `.real/editor.owner`, and a second one gets `RE8003`. The OS releases the lock when the holder exits, so a crashed writer leaves nothing stale. There is one writer (ADR-0020, ADR-0026).
+`re_cli` builds the engine (`App::open`) and hands the `EngineHandle` to `re_mcp::serve_stdio`, so `re_mcp` never depends on `re_app`. If an editor process is running, `real mcp` and the CLI connect to `.real/editor.sock` (`re_agent::remote::connect`) instead of opening the project themselves; otherwise the first writer (`real do`, `real mcp`) takes an operating-system file lock on `.real/editor.lock` through `re_agent::lock` and records its pid and kind in `.real/editor.owner`, and a second one gets `RE8003`. The OS releases the lock when the holder exits, so a crashed writer leaves nothing stale. There is one writer (ADR-0020, ADR-0026). `App::serve` is edit mode: it answers requests between frames without stepping the simulation, so what an agent edits is the scene on disk; running the game is `play.run` (on a copy) or `real run`.
 
 ### Safety
 
@@ -432,12 +434,14 @@ Annotations are derived from the tier and set explicitly on every tool (ADR-0025
 | Range | Owner |
 |---|---|
 | RE0000–0499 | `re_core` |
-| RE0500–0999 | `re_app` / `re_cli` |
+| RE0500–0899 | `re_app` |
+| RE0900–0999 | `re_cli` |
 | RE1000–1199 | `re_reflect` (field types, coercion, unknown components and fields) |
 | RE1200–1999 | `re_scene` (ids, hierarchy, scene, prefab and procedural errors) |
 | RE2xxx | `re_command` |
 | RE3xxx | `re_script`, `re_script_check` |
-| RE4xxx | `re_proc`, `re_geom` |
+| RE4000–4499 | `re_proc` |
+| RE4500–4599 | `re_geom` |
 | RE5xxx | `re_physics` |
 | RE6xxx | `re_render` |
 | RE70xx–71xx | `re_assets` |
