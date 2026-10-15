@@ -212,6 +212,7 @@ fn map_values_are_dynamic_with_integers_as_floats() {
     };
     refused(Value::Map(BTreeMap::new()), "cannot hold another map");
     refused(Value::Entity(None), "entity reference");
+    refused(Value::Enum("Neon".into()), "enum variant");
     refused(Value::Float(f64::NAN), "finite");
     refused(
         Value::List(vec![Value::List(vec![])]),
@@ -294,7 +295,6 @@ fn json_forms_round_trip_through_text() {
         ("v".to_string(), Value::Vec3(Vec3::new(1.0, 0.5, -2.0))),
         ("q".to_string(), Value::Quat(Quat::IDENTITY)),
         ("c".to_string(), Value::Color(Color::WHITE)),
-        ("e".to_string(), Value::Enum("Neon".into())),
         (
             "l".to_string(),
             Value::List(vec![
@@ -308,10 +308,6 @@ fn json_forms_round_trip_through_text() {
     assert!(text.contains(r#""n":5.0"#), "{text}");
     assert!(
         text.contains(r#""v":{"$type":"vec3","value":[1.0,0.5,-2.0]}"#),
-        "{text}"
-    );
-    assert!(
-        text.contains(r#""e":{"$type":"enum","value":"Neon"}"#),
         "{text}"
     );
     assert!(
@@ -583,12 +579,28 @@ fn describe_and_scene_schema_cover_the_new_types() {
     );
     assert_eq!(bag["fields"][0]["default"], serde_json::json!([1.0, 2.0]));
     assert_eq!(bag["fields"][2]["type"], serde_json::json!({"kind": "map"}));
+    assert_eq!(
+        d["records"],
+        serde_json::json!([]),
+        "only records the registry's fields use are described"
+    );
+    let schema = ComponentSchema {
+        name: "Sized".into(),
+        doc: String::new(),
+        fields: vec![FieldSchema {
+            name: "sizes".into(),
+            ty: FieldType::List(Box::new(FieldType::Record(id))),
+            doc: String::new(),
+            default: Value::List(vec![]),
+        }],
+        origin: ComponentOrigin::Script,
+    };
+    registry.register_script(&mut world, schema).unwrap();
+    let d = registry.describe();
     let records = d["records"].as_array().unwrap();
-    let dim_doc = records
-        .iter()
-        .find(|r| r["name"] == id.name())
-        .expect("records are described");
-    assert_eq!(dim_doc["fields"][1]["type"]["kind"], "i32");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["name"], id.name());
+    assert_eq!(records[0]["fields"][1]["type"]["kind"], "i32");
 
     let js = registry.scene_json_schema();
     let props = &js["$defs"]["Bag"]["properties"];

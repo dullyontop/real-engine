@@ -224,6 +224,15 @@ fn tags_hold_each_tag_once_and_feed_only_when_recording() {
         .insert(&mut w.ecs, e, key, vec![list(&["x", "y", "x"])])
         .unwrap();
     assert_eq!(w.ecs.get::<Tags>(e).unwrap().tags, ["x", "y"]);
+    // A write equal after dropping repeats changes nothing.
+    w.ecs.clear_trackers();
+    w.registry
+        .set_field(&mut w.ecs, e, key, 0, list(&["x", "y", "y"]))
+        .unwrap();
+    let mut changed = w
+        .ecs
+        .query_filtered::<Entity, re_scene::ecs::query::Changed<Tags>>();
+    assert_eq!(changed.iter(&w.ecs).count(), 0);
     assert!(w.drain_tag_changes().is_empty(), "not recording yet");
     w.record_tag_changes();
     w.registry

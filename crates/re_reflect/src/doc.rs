@@ -13,9 +13,8 @@
 //!   also accepted as an array of its fields in order;
 //! * a map is an object whose values carry their own type: `true`, a number
 //!   or a string as themselves, anything else tagged, as in
-//!   `{"$type": "vec3", "value": [1, 2, 3]}`, `{"$type": "enum", "value":
-//!   "Neon"}`, `{"$type": "list", "value": [...]}` or `{"$type": "record",
-//!   "name": "UDim2", "value": {...}}`. Map numbers are always floats, so
+//!   `{"$type": "vec3", "value": [1, 2, 3]}`, `{"$type": "list", "value":
+//!   [...]}` or `{"$type": "record", "name": "UDim2", "value": {...}}`. Map numbers are always floats, so
 //!   they are written with a decimal point (`5.0`).
 
 use std::collections::BTreeMap;
@@ -362,15 +361,6 @@ impl Doc {
                     "vec3" => value.to_value(&FieldType::Vec3, &no_entities)?,
                     "quat" => value.to_value(&FieldType::Quat, &no_entities)?,
                     "color" => value.to_value(&FieldType::Color, &no_entities)?,
-                    "enum" => match value {
-                        Doc::Str(s) => Value::Enum(s.clone()),
-                        other => {
-                            return Err(ValueError::TypeMismatch {
-                                expected: "an enum variant name".into(),
-                                found: other.describe(),
-                            });
-                        }
-                    },
                     "list" if !in_list => match value {
                         Doc::List(items) => Value::List(
                             items
@@ -404,7 +394,7 @@ impl Doc {
                     }
                     other => {
                         return Err(ValueError::Invalid(format!(
-                            "unknown map value type {other:?} (types: vec3, quat, color, enum, list, record{})",
+                            "unknown map value type {other:?} (types: vec3, quat, color, list, record{})",
                             if in_list { "; lists cannot nest" } else { "" }
                         )));
                     }
@@ -440,7 +430,6 @@ impl Doc {
                 "color",
                 Doc::from_value(value, &FieldType::Color, &no_names),
             ),
-            Value::Enum(s) => tagged("enum", Doc::Str(s.clone())),
             Value::List(items) => tagged(
                 "list",
                 Doc::List(items.iter().map(Doc::from_dynamic).collect()),
@@ -454,7 +443,7 @@ impl Doc {
                 ),
             ])),
             // Not storable in a map (refused by coercion).
-            Value::Map(_) | Value::Entity(_) => Doc::Null,
+            Value::Map(_) | Value::Entity(_) | Value::Enum(_) => Doc::Null,
         }
     }
 

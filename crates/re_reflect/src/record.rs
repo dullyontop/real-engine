@@ -115,6 +115,12 @@ impl RecordSchema {
                     self.name, f.name
                 )));
             }
+            if let Err(e) = f.ty.validate() {
+                return Err(ReflectError::InvalidSchema(format!(
+                    "record {}.{}: {e}",
+                    self.name, f.name
+                )));
+            }
             if !f.ty.is_scalar() {
                 return Err(ReflectError::InvalidSchema(format!(
                     "record {}.{}: a record field must be a scalar type, not {}",

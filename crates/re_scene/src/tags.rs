@@ -167,9 +167,12 @@ fn tags_discarded(mut world: DeferredWorld, ctx: HookContext) {
 }
 
 fn tags_inserted(mut world: DeferredWorld, ctx: HookContext) {
-    let Some(new) = world.get::<Tags>(ctx.entity).map(|t| t.tags.clone()) else {
+    let Some(mut new) = world.get::<Tags>(ctx.entity).map(|t| t.tags.clone()) else {
         return;
     };
+    // A `Tags` built in Rust may repeat a tag; it counts once.
+    let mut seen = std::collections::HashSet::new();
+    new.retain(|t| seen.insert(t.clone()));
     if let Some(mut index) = world.get_resource_mut::<TagIndex>() {
         for tag in &new {
             index.add(tag, ctx.entity);

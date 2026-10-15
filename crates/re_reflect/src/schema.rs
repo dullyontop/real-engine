@@ -216,12 +216,17 @@ fn record_json_schema(id: RecordId) -> Json {
         .map(|f| (f.name.clone(), field_json_schema(&f.ty)))
         .collect();
     let names: Vec<&str> = schema.fields.iter().map(|f| f.name.as_str()).collect();
+    let items: Vec<Json> = schema
+        .fields
+        .iter()
+        .map(|f| field_json_schema(&f.ty))
+        .collect();
     let n = schema.fields.len();
     json!({
         "description": format!("record {}", schema.name),
         "oneOf": [
             { "type": "object", "properties": props, "required": names, "additionalProperties": false },
-            { "type": "array", "minItems": n, "maxItems": n }
+            { "type": "array", "prefixItems": items, "minItems": n, "maxItems": n }
         ]
     })
 }
@@ -236,7 +241,7 @@ fn dynamic_json_schema() -> Json {
                 "type": "object",
                 "required": ["$type", "value"],
                 "properties": {
-                    "$type": { "enum": ["vec3", "quat", "color", "enum", "list", "record"] },
+                    "$type": { "enum": ["vec3", "quat", "color", "list", "record"] },
                     "name": { "type": "string" },
                     "value": {}
                 },
@@ -278,7 +283,23 @@ impl Registry {
                 })
             })
             .collect();
-        let records: Vec<Json> = RecordId::all()
+        fn collect(ty: &FieldType, out: &mut Vec<RecordId>) {
+            match ty {
+                FieldType::Record(id) if !out.contains(id) => out.push(*id),
+                FieldType::List(item) => collect(item, out),
+                _ => {}
+            }
+        }
+        // Only the records this registry's fields use, by name, so the output
+        // does not depend on what else the process registered.
+        let mut used = Vec::new();
+        for s in self.schemas() {
+            for f in &s.fields {
+                collect(&f.ty, &mut used);
+            }
+        }
+        used.sort_by_key(|id| id.name());
+        let records: Vec<Json> = used
             .into_iter()
             .map(|id| {
                 let r = id.schema();

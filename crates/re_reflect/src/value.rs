@@ -343,10 +343,18 @@ pub(crate) fn at(path: String, e: ValueError) -> ValueError {
 /// * floats must be finite, vectors and colours finite, quaternions are
 ///   normalised, records are coerced to their schema;
 /// * a list's items follow these rules but may not be lists themselves;
-/// * maps and entity references are refused.
+/// * maps, enum variants (which Luau sees as strings) and entity references
+///   are refused.
 pub fn coerce_dynamic(value: Value, in_list: bool) -> Result<Value, ValueError> {
     Ok(match value {
-        v @ (Value::Bool(_) | Value::Str(_) | Value::Enum(_)) => v,
+        v @ (Value::Bool(_) | Value::Str(_)) => v,
+        // Luau sees an enum variant as a plain string, so a map holding one
+        // would not survive a script round trip; store the name as a string.
+        Value::Enum(_) => {
+            return Err(ValueError::Invalid(
+                "a map cannot hold an enum variant; store its name as a string".into(),
+            ));
+        }
         Value::Int(i) => Value::Float(i as f64),
         Value::Float(f) => FieldType::F64.coerce(Value::Float(f))?,
         v @ Value::Vec3(_) => FieldType::Vec3.coerce(v)?,

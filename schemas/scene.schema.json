@@ -720,7 +720,6 @@
                       "vec3",
                       "quat",
                       "color",
-                      "enum",
                       "list",
                       "record"
                     ]

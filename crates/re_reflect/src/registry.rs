@@ -145,9 +145,11 @@ impl WriteMode for Immutable {
         let Some(c) = world.get::<T>(entity) else {
             return false;
         };
-        if c.get_field(index) != *value {
-            let mut copy = c.clone();
-            copy.set_field(index, value);
+        let mut copy = c.clone();
+        copy.set_field(index, value);
+        // Compared after the write, because a component may normalise what it
+        // stores (`Tags` drops repeats).
+        if copy.get_field(index) != c.get_field(index) {
             world.entity_mut(entity).insert(copy);
         }
         true

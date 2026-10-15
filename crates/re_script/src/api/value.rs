@@ -48,10 +48,16 @@ impl RawValue {
     /// Reads a Luau value; functions and threads are refused, and tables must
     /// be arrays, string-keyed or records.
     pub(crate) fn from_lua(v: LuaValue) -> Result<RawValue> {
-        Self::read(v, 0)
+        Self::read(v, 0, "")
     }
 
-    fn read(v: LuaValue, depth: usize) -> Result<RawValue> {
+    /// As [`RawValue::from_lua`], with `at` (such as `"Health.max: "`) put
+    /// before any error message.
+    pub(crate) fn from_lua_at(v: LuaValue, at: &str) -> Result<RawValue> {
+        Self::read(v, 0, at)
+    }
+
+    fn read(v: LuaValue, depth: usize, at: &str) -> Result<RawValue> {
         Ok(match v {
             LuaValue::Nil => RawValue::Nil,
             LuaValue::Boolean(b) => RawValue::Bool(b),
@@ -69,16 +75,16 @@ impl RawValue {
                 } else {
                     return Err(super::error(
                         crate::codes::BAD_ARGUMENT,
-                        "this userdata cannot be stored in a component field",
+                        format!("{at}this userdata cannot be stored in a component field"),
                     ));
                 }
             }
-            LuaValue::Table(t) => Self::read_table(t, depth)?,
+            LuaValue::Table(t) => Self::read_table(t, depth, at)?,
             other => {
                 return Err(super::error(
                     crate::codes::BAD_ARGUMENT,
                     format!(
-                        "a {} cannot be stored in a component field",
+                        "{at}a {} cannot be stored in a component field",
                         other.type_name()
                     ),
                 ));
@@ -86,8 +92,8 @@ impl RawValue {
         })
     }
 
-    fn read_table(t: Table, depth: usize) -> Result<RawValue> {
-        let bad = |m: &str| super::error(crate::codes::BAD_ARGUMENT, m.to_string());
+    fn read_table(t: Table, depth: usize, at: &str) -> Result<RawValue> {
+        let bad = |m: &str| super::error(crate::codes::BAD_ARGUMENT, format!("{at}{m}"));
         if depth >= MAX_TABLE_DEPTH {
             return Err(bad(
                 "tables nest too deeply to be stored in a component field",
@@ -101,7 +107,7 @@ impl RawValue {
         let mut strings = Vec::new();
         for pair in t.pairs::<LuaValue, LuaValue>() {
             let (k, v) = pair?;
-            let v = Self::read(v, depth + 1)?;
+            let v = Self::read(v, depth + 1, at)?;
             match k {
                 LuaValue::String(s) => strings.push((s.to_str()?.to_string(), v)),
                 LuaValue::Integer(i) => ints.push((i, v)),
@@ -331,13 +337,7 @@ pub(crate) fn fields_from_table(component: &str, t: Table) -> Result<Vec<(String
     let mut out = Vec::new();
     for pair in t.pairs::<String, LuaValue>() {
         let (k, v) = pair?;
-        let type_name = v.type_name();
-        let raw = RawValue::from_lua(v).map_err(|_| {
-            super::error(
-                crate::codes::BAD_ARGUMENT,
-                format!("{component}.{k}: a {type_name} cannot be stored in a component field"),
-            )
-        })?;
+        let raw = RawValue::from_lua_at(v, &format!("{component}.{k}: "))?;
         out.push((k, raw));
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));

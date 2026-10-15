@@ -582,6 +582,12 @@ fn container_fields_map_to_luau_tables() {
         ));
         assert!(d.message.contains(msg), "{bad}: {}", d.message);
     }
+    let d = rig.exec_err("world.spawn({ components = { Inventory = { items = { 1, x = 2 } } } })");
+    assert!(
+        d.message.contains("Inventory.items: ") && d.message.contains("cannot mix"),
+        "{}",
+        d.message
+    );
     let d = rig.exec_err(
         "world.query('Inventory')[1]:set('Inventory', 'size', { scale = 1, offest = 2 })",
     );
