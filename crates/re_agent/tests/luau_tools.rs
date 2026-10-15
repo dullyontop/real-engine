@@ -262,6 +262,11 @@ fn bad_tool_scripts_are_reported_and_skipped() {
             r#"return { name = "test.nosummary", run = function() end }"#,
             "no `summary`",
         ),
+        (
+            "h_mcp_clash.luau",
+            r#"return { name = "entity_spawn", summary = "x", run = function() end }"#,
+            "same MCP tool name",
+        ),
     ];
     for (file, source, _) in &bad {
         // After ring.luau in path order, so the duplicate is the one refused.
@@ -324,4 +329,89 @@ fn an_agents_call_is_held_to_the_agent_policy() {
         Origin::Agent("test".into()),
     );
     assert_eq!(code(&out), "RE8001");
+}
+
+#[test]
+fn a_read_only_agent_can_preview_an_edit_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    write_tool(dir.path(), "ring.luau", RING);
+    let (reg, _) = registry(dir.path());
+    let read = Policy::read_only();
+    let mut s = EditState::new();
+    let before = s.world.state_hash();
+    let out = reg.dispatch_as(
+        &mut s,
+        "test.ring",
+        json!({ "count": 2 }),
+        true,
+        &read,
+        Origin::Agent("test".into()),
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    assert_eq!(out.changes.len(), 2);
+    assert_eq!(s.world.state_hash(), before);
+}
+
+#[test]
+fn a_dry_run_hands_out_no_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    write_tool(
+        dir.path(),
+        "anon.luau",
+        r#"
+return {
+    name = "test.anon",
+    summary = "Spawn an entity with a generated id.",
+    run = function()
+        local out = command.run("entity.spawn", { name = "Anon" })
+        if not out.ok then
+            error(out.diagnostics[1].message)
+        end
+        return true
+    end,
+}
+"#,
+    );
+    let (reg, problems) = registry(dir.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    let mut s = EditState::new();
+    let dry = call(&reg, &mut s, "test.anon", json!({}), true);
+    assert!(dry.ok, "{:?}", dry.diagnostics);
+    let out = call(&reg, &mut s, "test.anon", json!({}), false);
+    assert!(out.ok, "{:?}", out.diagnostics);
+    assert_eq!(
+        serde_json::to_value(&dry.changes).unwrap(),
+        serde_json::to_value(&out.changes).unwrap(),
+        "the preview and the real call spawn the same id"
+    );
+}
+
+#[test]
+fn a_result_must_match_the_output_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    write_tool(
+        dir.path(),
+        "liar.luau",
+        r#"
+return {
+    name = "test.liar",
+    summary = "Return the wrong shape.",
+    tier = "read",
+    output = {
+        type = "object",
+        properties = { count = { type = "integer" } },
+        required = { "count" },
+    },
+    run = function()
+        return { total = 1 }
+    end,
+}
+"#,
+    );
+    let (reg, problems) = registry(dir.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    let mut s = EditState::new();
+    let out = call(&reg, &mut s, "test.liar", json!({}), false);
+    assert_eq!(code(&out), "RE8016", "{:?}", out.diagnostics);
+    assert!(out.diagnostics[0].message.contains("`count` is required"));
 }

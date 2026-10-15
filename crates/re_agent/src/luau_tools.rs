@@ -53,7 +53,7 @@ use re_command::{
     PolicyCheck, Tier, Transaction,
 };
 use re_core::{Diagnostic, Location};
-use re_scene::World;
+use re_scene::{IdGen, World};
 use re_script::{ContextKind, NoServices, RuntimeConfig, ScriptHost, ScriptRuntime};
 use serde_json::{Map, Value as Json, json};
 
@@ -366,7 +366,7 @@ struct ToolRuntime<C: EditTarget> {
     nested: CommandRegistry<C>,
     /// The agent policy, applied to nested calls when an agent called the
     /// tool.
-    policy: Option<Policy>,
+    policy: Policy,
 }
 
 /// The policy for `command.run` inside a tool.
@@ -374,6 +374,9 @@ struct NestedPolicy<'a> {
     tool: &'a str,
     tier: Tier,
     agent: Option<&'a Policy>,
+    /// Whether the tool itself runs as a dry run: its nested commands are
+    /// undone afterwards, so the agent policy checks them as previews.
+    outer_dry_run: bool,
 }
 
 impl PolicyCheck for NestedPolicy<'_> {
@@ -399,7 +402,7 @@ impl PolicyCheck for NestedPolicy<'_> {
             .with_hint("declare `tier = \"edit\"` in the tool to change the project"));
         }
         match self.agent {
-            Some(p) => p.check(spec, args, dry_run),
+            Some(p) => p.check(spec, args, dry_run || self.outer_dry_run),
             None => Ok(()),
         }
     }
@@ -443,13 +446,28 @@ impl<C: EditTarget> ScriptHost for ToolHost<'_, C> {
 
 /// Returns the world to the roots in `snapshot` (from
 /// [`crate::session::snapshot_roots`]), outside any history.
-fn restore_snapshot(world: &mut World, snapshot: Vec<Op>) {
+/// Fails when the restore fails or the world's state hash still differs
+/// from `start_hash` afterwards.
+fn restore_snapshot(
+    world: &mut World,
+    snapshot: Vec<Op>,
+    start_hash: blake3::Hash,
+    tool: &str,
+) -> Result<(), Diagnostic> {
     let ops = crate::session::Session::restore_roots_ops(world, &snapshot);
     let mut scratch = History::default();
     let tx = Transaction::new("restore after a tool", Origin::User, ops);
-    if let Err(e) = scratch.execute(world, tx) {
-        eprintln!("re_agent: could not restore the world after a tool: {e}");
-    }
+    let restored = scratch.execute(world, tx).map_err(|e| e.to_string());
+    let why = match restored {
+        Ok(_) if world.state_hash() == start_hash => return Ok(()),
+        Ok(_) => "the restored world does not match its state before the call".to_string(),
+        Err(e) => e,
+    };
+    Err(Diagnostic::error(
+        codes::TOOL_FAILED,
+        format!("the tool {tool} left the world changed and it could not be restored: {why}"),
+    )
+    .with_hint("reopen the project to drop the unsaved changes, or restore an agent checkpoint with `checkpoint.restore`"))
 }
 
 impl<C: EditTarget + 'static> ToolRuntime<C> {
@@ -472,7 +490,7 @@ impl<C: EditTarget + 'static> ToolRuntime<C> {
             ))
         })?;
         let by_agent = matches!(call.origin(), Origin::Agent(_));
-        let agent = if by_agent { self.policy.as_ref() } else { None };
+        let agent = by_agent.then_some(&self.policy);
         let budget = agent.map_or(DEFAULT_BUDGET, |p| {
             Duration::from_millis(p.budgets().milliseconds)
         });
@@ -480,17 +498,26 @@ impl<C: EditTarget + 'static> ToolRuntime<C> {
             tool: &def.name,
             tier: def.tier,
             agent,
+            outer_dry_run: call.dry_run(),
         };
-
-        let start_hash = target.world().state_hash();
-        let snapshot = crate::session::snapshot_roots(target.world());
-        let saved_history = std::mem::take(target.history());
 
         let config = RuntimeConfig {
             cpu_budget: budget,
             ..RuntimeConfig::new(&self.project)
         };
         let mut runtime = ScriptRuntime::new(config).map_err(|e| e.to_diagnostic())?;
+
+        let start_hash = target.world().state_hash();
+        let snapshot = crate::session::snapshot_roots(target.world());
+        // A dry run hands out no ids: the ids the nested spawns take are
+        // given back afterwards, so the real call generates the same ones.
+        let ids = if call.dry_run() {
+            target.world().ecs.get_resource::<IdGen>().cloned()
+        } else {
+            None
+        };
+        // Nothing below returns before the history is put back.
+        let saved_history = std::mem::take(target.history());
         let source = format!(
             "local tool = require({})\nreturn tool.run({})\n",
             luau_literal(&Json::from(require_path(&def.path))),
@@ -530,9 +557,12 @@ impl<C: EditTarget + 'static> ToolRuntime<C> {
             }
         }
         *target.history() = saved_history;
+        if let Some(ids) = ids {
+            target.world().ecs.insert_resource(ids);
+        }
 
         if undo_error.is_some() || target.world().state_hash() != start_hash {
-            restore_snapshot(target.world(), snapshot);
+            restore_snapshot(target.world(), snapshot, start_hash, &def.name)?;
             if let Some(d) = undo_error {
                 return Err(d);
             }
@@ -556,6 +586,19 @@ impl<C: EditTarget + 'static> ToolRuntime<C> {
                 return Err(first);
             }
         };
+        if let Some(output) = &def.output {
+            check_value(output, &value).map_err(|why| {
+                Diagnostic::error(
+                    codes::TOOL_FAILED,
+                    format!(
+                        "the tool {} returned a value that does not match its output schema: {why}",
+                        def.name
+                    ),
+                )
+                .at(Location::file(def.path.clone()))
+                .with_hint("return a value of the shape the tool's `output` schema declares, or change the schema")
+            })?;
+        }
         if let Some(p) = agent {
             let cap = p.budgets().entities_per_transaction;
             if applied.len() as u64 > cap {
@@ -576,6 +619,11 @@ impl<C: EditTarget + 'static> ToolRuntime<C> {
         }
         Ok(value)
     }
+}
+
+/// The MCP tool name of a command, as `re_mcp` makes it (`a.b` → `a_b`).
+fn mcp_name(command: &str) -> String {
+    command.replace('.', "_")
 }
 
 /// Reads one tool definition by running its module in a scratch `tools` VM.
@@ -685,6 +733,7 @@ pub fn register<C: EditTarget + 'static>(
     for rel in tool_files(project) {
         match load_def(project, &rel) {
             Ok(def) => {
+                let mcp = mcp_name(&def.name);
                 if registry.spec(&def.name).is_some() {
                     problems.push(invalid(
                         &rel,
@@ -698,6 +747,20 @@ pub fn register<C: EditTarget + 'static>(
                             def.name, other.path
                         ),
                     ));
+                } else if let Some(other) = registry
+                    .specs()
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .chain(defs.iter().map(|d| d.name.as_str()))
+                    .find(|n| mcp_name(n) == mcp)
+                {
+                    problems.push(invalid(
+                        &rel,
+                        format!(
+                            "{rel}: the command name {} has the same MCP tool name ({mcp}) as {other}",
+                            def.name
+                        ),
+                    ));
                 } else {
                     defs.push(def);
                 }
@@ -705,7 +768,9 @@ pub fn register<C: EditTarget + 'static>(
             Err(d) => problems.push(d),
         }
     }
-    let policy = Policy::load(project).ok();
+    // An unreadable policy file grants agents nothing (`real mcp` refuses to
+    // start on one anyway).
+    let policy = Policy::load(project).unwrap_or_else(|_| Policy::read_only());
     for def in &defs {
         let mut nested = CommandRegistry::new();
         re_command::register_builtin_commands(&mut nested);

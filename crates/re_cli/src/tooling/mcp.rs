@@ -193,7 +193,7 @@ fn rebuild_baseline(
             d.location = Some(Location::command("verify.diff"));
         }
         d.with_hint(format!(
-            "the baseline is verify on the project as it was at checkpoint {};              `checkpoint.create` starts a new baseline from now",
+            "the baseline is verify on the project as it was at checkpoint {}; `checkpoint.create` starts a new baseline from now",
             cp.id
         ))
     })
