@@ -1,0 +1,18 @@
+---
+source: crates/re_agent/tests/init.rs
+expression: "read(project, \".vscode/mcp.json\")"
+---
+{
+  "servers": {
+    "real-engine": {
+      "type": "stdio",
+      "command": "real",
+      "args": [
+        "mcp",
+        "--project",
+        "${workspaceFolder}"
+      ],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}

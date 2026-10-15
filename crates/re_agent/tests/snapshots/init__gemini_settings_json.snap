@@ -1,0 +1,17 @@
+---
+source: crates/re_agent/tests/init.rs
+expression: "read(project, \".gemini/settings.json\")"
+---
+{
+  "mcpServers": {
+    "real-engine": {
+      "command": "real",
+      "args": [
+        "mcp",
+        "--project",
+        "."
+      ],
+      "cwd": "."
+    }
+  }
+}

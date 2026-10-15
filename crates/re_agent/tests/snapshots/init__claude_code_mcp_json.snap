@@ -1,0 +1,17 @@
+---
+source: crates/re_agent/tests/init.rs
+expression: "read(project, \".mcp.json\")"
+---
+{
+  "mcpServers": {
+    "real-engine": {
+      "type": "stdio",
+      "command": "real",
+      "args": [
+        "mcp",
+        "--project",
+        "${CLAUDE_PROJECT_DIR:-.}"
+      ]
+    }
+  }
+}

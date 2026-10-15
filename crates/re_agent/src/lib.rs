@@ -1,5 +1,15 @@
 //! `re_agent`: agent tooling for Real Engine (ADR-0020, ADR-0026, ADR-0027).
 //!
+//! * [`policy`]: [`Policy`], `.real/agent-policy.toml` (tiers, path scopes,
+//!   budgets), the [`re_command::PolicyCheck`] for agent calls;
+//! * [`session`]: [`Session`] and [`Checkpoint`]: a checkpoint at the start
+//!   of each agent session, covering the scene and the files it touches;
+//! * [`commands`]: [`register_commands`] (`checkpoint.restore`,
+//!   `file.delete`) and the shared [`Agent`] state;
+//! * [`guard`]: [`guard::guarded`], the agent policy in front of a handle
+//!   whose engine applies another policy (the editor's);
+//! * [`init`]: `real agent init`: [`generate_agents_md`], `CLAUDE.md`, the
+//!   default policy and each MCP client's configuration;
 //! * [`lock`]: the single-writer project lock (`.real/editor.lock`), used by
 //!   every writer (`real do`, `real mcp`, `real editor`); code `RE8003`;
 //! * [`remote`]: the editor socket (`.real/editor.sock`): the protocol, the
@@ -14,16 +24,36 @@
 #![warn(missing_docs)]
 
 pub mod codes;
+pub mod commands;
+mod glob;
+pub mod guard;
+pub mod init;
 pub mod lock;
+pub mod policy;
 pub mod remote;
+pub mod session;
 
+pub use commands::{Agent, register_commands};
+pub use init::generate_agents_md;
 pub use lock::{Holder, LockState, ProjectLock, acquire, probe};
+pub use policy::Policy;
 pub use remote::{Writer, open_writer};
+pub use session::{Checkpoint, Session};
 
 use re_core::DiagInfo;
 
 /// Every diagnostic code `re_agent` owns, with its title and explain page.
 pub const DIAGNOSTICS: &[DiagInfo] = &[
+    DiagInfo {
+        code: codes::TIER_REFUSED,
+        title: "Tier refused by the agent policy",
+        page: include_str!("../explain/RE8001.md"),
+    },
+    DiagInfo {
+        code: codes::OUTSIDE_SCOPE,
+        title: "Path outside the agent policy's scopes",
+        page: include_str!("../explain/RE8002.md"),
+    },
     DiagInfo {
         code: codes::PROJECT_LOCKED,
         title: "Project locked by another writer",
@@ -48,6 +78,36 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::LOCK_IO,
         title: "Project lock file error",
         page: include_str!("../explain/RE8007.md"),
+    },
+    DiagInfo {
+        code: codes::OVER_BUDGET,
+        title: "Over the agent budget",
+        page: include_str!("../explain/RE8008.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_POLICY,
+        title: "Invalid agent policy",
+        page: include_str!("../explain/RE8009.md"),
+    },
+    DiagInfo {
+        code: codes::CHECKPOINT_IO,
+        title: "Checkpoint file error",
+        page: include_str!("../explain/RE8010.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_CHECKPOINT,
+        title: "Unknown session or checkpoint",
+        page: include_str!("../explain/RE8011.md"),
+    },
+    DiagInfo {
+        code: codes::NO_SESSION,
+        title: "No agent session",
+        page: include_str!("../explain/RE8012.md"),
+    },
+    DiagInfo {
+        code: codes::FILE_ERROR,
+        title: "File command failed",
+        page: include_str!("../explain/RE8013.md"),
     },
 ];
 
