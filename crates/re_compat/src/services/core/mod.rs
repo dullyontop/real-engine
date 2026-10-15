@@ -21,7 +21,8 @@ use crate::runtime::{Bindings, compat_error, lua_error, state, with_world};
 use crate::scene::{ServiceTag, spawn_instance};
 use crate::signal::{self, events};
 
-/// The children a service is made with: `(class, name)`.
+/// The children a service is made with; each is named after its class and,
+/// when free, has its class name as stable id.
 fn service_children(class: &str) -> &'static [&'static str] {
     match class {
         "StarterPlayer" => &["StarterPlayerScripts", "StarterCharacterScripts"],
@@ -62,7 +63,8 @@ pub fn ensure_service(
     let id = w.entity(class).is_err().then_some(class);
     let s = spawn_instance(w, classes, class, id, class, Some(game))?;
     for child in service_children(class) {
-        spawn_instance(w, classes, child, None, child, Some(s))?;
+        let id = w.entity(child).is_err().then_some(*child);
+        spawn_instance(w, classes, child, id, child, Some(s))?;
     }
     Ok(s)
 }
