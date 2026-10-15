@@ -81,3 +81,11 @@ pub const WINDOW_FAILED: Code = Code::new("RE0521");
 
 /// An animation clip animates a node that no entity under the player is named after.
 pub const ANIM_TARGET_MISSING: Code = Code::new("RE0522");
+
+/// A procedural source's graph could not be made: its graph file is missing or
+/// invalid, or its builder script failed.
+pub const GRAPH_SOURCE_FAILED: Code = Code::new("RE0523");
+
+/// A character could not be put back on the ground after the terrain under it
+/// was regenerated (no ground below it).
+pub const REGROUND_FAILED: Code = Code::new("RE0524");

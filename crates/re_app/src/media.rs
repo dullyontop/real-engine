@@ -83,6 +83,12 @@ impl Media {
         self.derived.insert(name, mesh);
     }
 
+    /// True when the `derived:` mesh `name` was given with
+    /// [`Media::insert_derived_mesh`].
+    pub fn has_derived_mesh(&self, name: &str) -> bool {
+        self.derived.contains_key(name)
+    }
+
     /// Forgets a `derived:` mesh.
     pub fn remove_derived_mesh(&mut self, name: &str) {
         self.derived.remove(name);

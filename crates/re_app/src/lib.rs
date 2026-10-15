@@ -28,6 +28,7 @@ pub mod host;
 pub mod hud;
 pub mod media;
 pub mod perf;
+pub mod procedural;
 pub mod sync;
 pub mod verify;
 pub mod window;
@@ -159,6 +160,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::ANIM_TARGET_MISSING,
         title: "Animation target missing",
         page: include_str!("../explain/RE0522.md"),
+    },
+    DiagInfo {
+        code: codes::GRAPH_SOURCE_FAILED,
+        title: "Procedural graph unavailable",
+        page: include_str!("../explain/RE0523.md"),
+    },
+    DiagInfo {
+        code: codes::REGROUND_FAILED,
+        title: "Character not re-grounded",
+        page: include_str!("../explain/RE0524.md"),
     },
 ];
 

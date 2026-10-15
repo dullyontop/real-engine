@@ -31,6 +31,7 @@ use crate::host::{Host, Pending, PlayHost};
 use crate::hud::{self, HudLine};
 use crate::media::Media;
 use crate::perf::{PerfCounts, PerfRecorder, PerfReport};
+use crate::procedural;
 use crate::sync::anim::{self, AnimSync};
 use crate::sync::audio::{self, AudioSync};
 use crate::sync::physics::{self, PhysicsSync, ShapeLibrary};
@@ -116,6 +117,10 @@ pub struct App {
 
     anim_sync: AnimSync,
 
+    /// The `derived:` heightfields colliders used at the last step: when they
+    /// change during play, characters are put back on the new ground.
+    ground: std::collections::BTreeSet<String>,
+
     scripts: Option<ScriptRuntime>,
     scripts_failed: bool,
     script_output: Vec<String>,
@@ -178,11 +183,13 @@ impl App {
             }
             d
         })?;
-        let world = load_world(project, &config)?;
+        let (world, problems) = load_world(project, &config)?;
         let mut commands = CommandRegistry::new();
         re_command::register_builtin_commands(&mut commands);
         crate::commands::register(&mut commands);
+        re_proc::register_commands(&mut commands);
         let mut app = App::with_world(project, config, world, action_map, Arc::new(commands))?;
+        app.diagnostics.extend(problems);
         app.edit_frame();
         Ok(app)
     }
@@ -222,6 +229,7 @@ impl App {
             watcher: None,
             changed_scripts: Vec::new(),
             anim_sync: AnimSync::new(),
+            ground: Default::default(),
             scripts: None,
             scripts_failed: false,
             script_output: Vec::new(),
@@ -259,7 +267,10 @@ impl App {
         replay: Option<ReplayDoc>,
         screenshot: bool,
     ) -> Result<(RunReport, Option<Image>), Diagnostic> {
-        let world = self.world.fork();
+        let mut world = self.world.fork();
+        if let Some(store) = self.world.ecs.get_resource::<re_proc::GraphStore>() {
+            world.ecs.insert_resource(store.clone());
+        }
         let mut copy = App::with_world(
             &self.project,
             self.config.clone(),
@@ -716,8 +727,7 @@ impl App {
     /// (an editor's), also upload new assets and rebuild the snapshot and HUD,
     /// so [`App::draw_into`] draws the World as it is.
     pub fn edit_frame(&mut self) {
-        let report = self.world.regenerate_changed();
-        self.diagnostics.extend(report.diagnostics.iter().cloned());
+        self.regenerate_changed();
         self.world.propagate();
         if self.graphics.is_some() {
             // An editor's view: the World as it is, with its assets on the GPU.
@@ -733,11 +743,26 @@ impl App {
         }
     }
 
+    /// Regenerates the procedural sources whose inputs changed and forgets the
+    /// derived assets nothing uses any more (the GPU copies go at the next
+    /// upload).
+    fn regenerate_changed(&mut self) {
+        let report = self.world.regenerate_changed();
+        self.diagnostics.extend(report.diagnostics.iter().cloned());
+        procedural::release(
+            &mut self.world,
+            &mut self.media,
+            &mut self.shapes,
+            &report.released_assets,
+        );
+    }
+
     /// Uploads the meshes and materials the World names that are not on the GPU
     /// yet (with the app's [`Graphics`]; nothing without one), recording their
     /// handles in the app's `RenderAssets`. `frame` and `edit_frame` call it.
     pub fn upload_assets(&mut self) {
         if let Some(gfx) = &mut self.graphics {
+            procedural::sync_derived(&mut self.world, &mut self.media, &mut self.shapes);
             gfx.sync_assets(
                 &mut self.world,
                 &mut self.media,
@@ -936,6 +961,22 @@ impl App {
             &mut self.diagnostics,
         );
         self.physics.apply(&mut self.physics_cmds);
+        let ground = procedural::ground(&mut self.world);
+        if ground != self.ground {
+            if !self.ground.is_empty() && !ground.is_empty() {
+                // The terrain changed under the characters: put them on it.
+                self.reground();
+                physics::push(
+                    &mut self.world,
+                    &mut self.physics_sync,
+                    &self.shapes,
+                    &mut self.physics_cmds,
+                    &mut self.diagnostics,
+                );
+                self.physics.apply(&mut self.physics_cmds);
+            }
+            self.ground = ground;
+        }
         let step = Instant::now();
         if let Err(d) = self.physics.step(self.clock.dt_secs()) {
             self.diagnostics.push(d);
@@ -955,6 +996,67 @@ impl App {
         }
         self.run_scripts(Phase::PostSimulation, self.clock.dt_secs().into());
         self.perf.add(Phase::PostSimulation, t.elapsed());
+    }
+
+    /// Puts every character back on the ground after the terrain changed: a
+    /// ray down from above the highest terrain point at the character's x and
+    /// z, then the character's centre half its height (plus a skin) above the
+    /// hit.
+    fn reground(&mut self) {
+        const SKIN: f32 = 0.02;
+        let Some(top) = procedural::ground_top(&self.world) else {
+            return;
+        };
+        let characters: Vec<(re_scene::Entity, f32)> = self
+            .world
+            .ecs
+            .query::<(re_scene::Entity, &re_scene::CharacterController)>()
+            .iter(&self.world.ecs)
+            .map(|(e, c)| (e, c.height))
+            .collect();
+        for (entity, height) in characters {
+            let id = re_scene::entity_id(entity);
+            let Some(gt) = self.world.ecs.get::<re_scene::GlobalTransform>(entity) else {
+                continue;
+            };
+            let pos = glam::Vec3::from(gt.0.translation);
+            // Above every terrain point (in any terrain's local space, with
+            // generous room for where the terrain entity sits).
+            let start = glam::Vec3::new(pos.x, pos.y.max(top) + 1000.0, pos.z);
+            let filter = re_physics::QueryFilter {
+                exclude: Some(id),
+                ..re_physics::QueryFilter::default()
+            };
+            match self
+                .physics
+                .raycast(start, glam::Vec3::NEG_Y, 4000.0, &filter)
+            {
+                Ok(Some(hit)) => {
+                    let y = hit.point.y + height * 0.5 + SKIN;
+                    let target = glam::Vec3::new(pos.x, y, pos.z);
+                    let local = match re_scene::hierarchy::parent(&self.world.ecs, entity)
+                        .and_then(|p| self.world.ecs.get::<re_scene::GlobalTransform>(p))
+                    {
+                        Some(parent) => parent.0.inverse().transform_point3(target),
+                        None => target,
+                    };
+                    if let Some(mut tr) = self.world.ecs.get_mut::<re_scene::Transform>(entity) {
+                        tr.translation = local;
+                    }
+                }
+                _ => {
+                    let name = self.world.id_of(entity).unwrap_or("?").to_string();
+                    self.diagnostics.push(
+                        Diagnostic::warning(
+                            codes::REGROUND_FAILED,
+                            format!("no ground below character {name:?} after the terrain changed"),
+                        )
+                        .at(Location::entity(name)),
+                    );
+                }
+            }
+        }
+        self.world.propagate();
     }
 
     fn end_frame(&mut self, f: u64) {
@@ -990,8 +1092,7 @@ impl App {
                 );
             }
         }
-        let report = self.world.regenerate_changed();
-        self.diagnostics.extend(report.diagnostics.iter().cloned());
+        self.regenerate_changed();
         for path in pending.screenshots {
             self.screenshots.push(ScreenshotRequest {
                 frame: f,
@@ -1059,7 +1160,7 @@ impl App {
     /// each stays loaded); they are also in the app's diagnostics.
     pub fn apply_file_changes(&mut self, changes: &[re_assets::AssetChange]) -> Vec<Diagnostic> {
         let (report, stale) = self.media.apply_changes(changes);
-        let problems = report.problems.clone();
+        let mut problems = report.problems.clone();
         for key in &stale {
             self.shapes.remove(key);
         }
@@ -1072,6 +1173,47 @@ impl App {
             gfx.invalidate(&mut self.render_assets, &stale, &mut self.diagnostics);
         }
         self.anim_sync.invalidate(&stale);
+        // A changed graph file or builder script rebuilds that source's graph
+        // (the new graph's hash regenerates it); a changed prefab regenerates
+        // every source, since prefab contents are not part of a fingerprint.
+        let paths: Vec<String> = changes
+            .iter()
+            .flat_map(|c| match c {
+                re_assets::AssetChange::Created(p)
+                | re_assets::AssetChange::Modified(p)
+                | re_assets::AssetChange::Removed(p) => vec![p.clone()],
+                re_assets::AssetChange::Renamed { from, to } => vec![from.clone(), to.clone()],
+            })
+            .collect();
+        let graphs: Vec<String> = paths
+            .iter()
+            .filter(|p| procedural::is_graph_input(&mut self.world, p))
+            .cloned()
+            .collect();
+        if !graphs.is_empty() {
+            let graph_problems =
+                procedural::load_graphs(&mut self.world, &self.project, Some(&graphs));
+            self.diagnostics.extend(graph_problems.iter().cloned());
+            problems.extend(graph_problems);
+        }
+        if paths.iter().any(|p| p.ends_with(".prefab.json")) {
+            let sources: Vec<re_scene::Entity> = self
+                .world
+                .ecs
+                .query_filtered::<re_scene::Entity, re_scene::ecs::query::With<re_scene::Procedural>>()
+                .iter(&self.world.ecs)
+                .collect();
+            for e in sources {
+                let report = self.world.regenerate(e);
+                self.diagnostics.extend(report.diagnostics.iter().cloned());
+                procedural::release(
+                    &mut self.world,
+                    &mut self.media,
+                    &mut self.shapes,
+                    &report.released_assets,
+                );
+            }
+        }
         problems
     }
 
@@ -1202,8 +1344,10 @@ impl App {
     /// and the replay keep going.
     pub fn restart(&mut self) {
         match load_world(&self.project, &self.config) {
-            Ok(world) => {
+            Ok((world, problems)) => {
                 self.world = world;
+                self.diagnostics.extend(problems);
+                self.ground.clear();
                 self.history = History::default();
                 match Physics::new(physics_config(&self.config), TaskPool::global()) {
                     Ok(p) => self.physics = p,
@@ -1232,6 +1376,7 @@ impl App {
 /// built-ins) into the shape library, loading each once.
 fn load_collider_sources(world: &mut World, shapes: &mut ShapeLibrary, media: &mut Media) {
     use re_scene::{Collider, ColliderShape};
+    procedural::sync_derived(world, media, shapes);
     let wanted: Vec<String> = world
         .ecs
         .query::<&Collider>()
@@ -1257,8 +1402,10 @@ fn headless_audio(project: &Path) -> Audio {
     audio
 }
 
-/// A fresh World with the entry scene loaded and its procedural sources run.
-fn load_world(project: &Path, config: &AppConfig) -> Result<World, Diagnostic> {
+/// A fresh World with the entry scene loaded and the graphs of its procedural
+/// sources in its store (they generate on the first `regenerate_changed`), with
+/// the problems making those graphs.
+fn load_world(project: &Path, config: &AppConfig) -> Result<(World, Vec<Diagnostic>), Diagnostic> {
     let rel_path = &config.project.entry_scene;
     let path = project.join(rel_path);
     let fail = |msg: String| Diagnostic::error(codes::ENTRY_SCENE_FAILED, msg).at(rel(rel_path));
@@ -1268,9 +1415,11 @@ fn load_world(project: &Path, config: &AppConfig) -> Result<World, Diagnostic> {
         fail(format!("the entry scene {rel_path} does not parse")).with_related(e.to_diagnostic())
     })?;
     let mut world = World::new();
+    procedural::install(&mut world, project);
     world.load(&doc).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not load")).with_related(e.to_diagnostic())
     })?;
     world.propagate_all();
-    Ok(world)
+    let problems = procedural::load_graphs(&mut world, project, None);
+    Ok((world, problems))
 }
