@@ -71,7 +71,9 @@ pub struct Project {
 /// `real.toml` of a new compat project.
 pub fn project_toml(name: &str) -> String {
     format!(
-        "[project]\nname = {name:?}\nentry_scene = \"{ENTRY_SCENE}\"\n\n[sim]\nfixed_hz = 60\n\n{}",
+        "[project]\nname = {name:?}\nentry_scene = \"{ENTRY_SCENE}\"\n\n[sim]\nfixed_hz = 60\n\n\
+         # Roblox-style scripts may run up to 10 s without yielding.\n\
+         [scripts]\ncpu_budget_ms = 10000\n\n{}",
         CompatConfig {
             api: CompatApi::Roblox,
             ..Default::default()

@@ -318,6 +318,7 @@ pub fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
             .into_iter()
             .map(|(p, a)| ("DataModel", p, a)),
     );
+    out.extend(crate::physics::accessors());
     out.extend(crate::gui::accessors());
     out.extend(crate::physics::accessors());
     out.extend(crate::render::accessors());

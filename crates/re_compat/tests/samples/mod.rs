@@ -3,6 +3,7 @@
 
 #![allow(dead_code)]
 
+pub mod app;
 pub mod datatypes;
 pub mod import;
 pub mod physics;
@@ -75,6 +76,7 @@ pub fn step(name: &str) -> Option<Step> {
         .or_else(|| datatypes::step(name))
         .or_else(|| runtime::step(name))
         .or_else(|| physics::step(name))
+        .or_else(|| app::step(name))
 }
 
 /// The state a sample's checks share.
