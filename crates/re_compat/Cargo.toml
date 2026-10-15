@@ -17,6 +17,12 @@ re_reflect.workspace = true
 re_scene.workspace = true
 re_command.workspace = true
 re_script.workspace = true
+# Keyframe sampling, track blending and two-bone IK for the Animator (WP14).
+# re_anim is plain computation (re_core, re_types, glam, serde).
+re_anim.workspace = true
+# Characters ride re_physics character controllers in the compat world's
+# physics (ARCHITECTURE §2, the re_compat::physics exception).
+re_physics.workspace = true
 mlua.workspace = true
 glam.workspace = true
 indexmap.workspace = true
@@ -31,6 +37,8 @@ egui.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Replays of raw input drive the character tests (WP14).
+re_input.workspace = true
 # The sample runner (tests/samples.rs) imports each sample (WP16).
 re_import.workspace = true
 # WP15: the UI golden images paint through re_render.

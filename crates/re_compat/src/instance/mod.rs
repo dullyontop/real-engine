@@ -11,6 +11,9 @@
 //! * Methods are plain functions taking the instance first, so
 //!   `inst.FindFirstChild(inst, "x")` and `pcall(game.GetService, game, n)`
 //!   work; reading the same method twice gives the same function.
+//! * A `stub-error` method with a registered implementation runs it when
+//!   called (the offline services raise `RE9002` from the call, so `pcall`
+//!   catches it); without one, reading it raises `RE9001`.
 //! * After `Destroy()` a handle keeps its name and class (a tombstone):
 //!   `Name` and `ClassName` still read, `Parent` reads `nil` and is locked,
 //!   queries find nothing.
@@ -44,6 +47,7 @@ use re_scene::{Entity, World};
 use re_script::codes::{BAD_ARGUMENT, STALE_HANDLE, UNSUPPORTED_MEMBER};
 
 use crate::class::{Accessor, ClassMarker, Member};
+use crate::data::Status;
 use crate::error::CompatError;
 use crate::runtime::{Bindings, compat_error, lua_error, state, with_world};
 use crate::signal;
@@ -196,6 +200,14 @@ fn resolve(lua: &Lua, class: &str, key: &str) -> Result<Resolved> {
     let classes = &st.setup.classes;
     let r = match classes.member(class, key) {
         Ok(m) => match m.require_implemented() {
+            // A stub with an implementation raises its own error when called.
+            Err(_)
+                if matches!(m.member, Member::Method(_))
+                    && m.member.status() == Status::StubError
+                    && st.setup.method(&m.class.name, key).is_some() =>
+            {
+                Resolved::Method(method_fn(lua, &m.class.name, key)?)
+            }
             Err(e) => Resolved::Unsupported(Rc::from(e.to_string())),
             Ok(()) => match m.member {
                 Member::Property(p) => Resolved::Prop(Rc::from(p.ty.as_str())),

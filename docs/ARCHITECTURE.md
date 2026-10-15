@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** partly implemented (M1 done, M2 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. In progress: `re_compat` (M2), with its class layer, data formats, scene conventions (WP9), datatypes and enums (WP10) and the data model (WP11's first PR) merged, and `re_import` (WP16's importer). Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** partly implemented (M1 done, M2 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. In progress: `re_compat` (M2), with its class layer, data formats, scene conventions (WP9), datatypes and enums (WP10), the data model and script runtime (WP11), the two worlds with players and remotes (WP12), characters, animation and input (WP14), and tweens and sound (WP15's first PR) merged, and `re_import` (WP16's importer). Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -113,7 +113,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 |---|---|---|---|
 | `re_core` | Diagnostics, time, phases, task pool, profiling macro, logging setup | `Diagnostic`, `Severity`, `Code`, `DiagInfo`, `FixedClock`, `Phase`, `TaskPool`, `Events<T>`, `profile_scope!`, `init_logging` | anything engine-specific |
 | `re_noise` | Deterministic RNG and noise (ported from the platform spike) | `Pcg32`, `SplitMix64`, `perlin*`, `simplex*`, `fbm*`, `ridged*`, `warped_fbm*`, `cellular*`, `hash2/3` | everything (zero dependencies) |
-| `re_types` | Plain-data contracts between the app and subsystems, and the script host trait (no dependency on `re_core`) | `EntityId`, `RenderSnapshot`, `DrawItem`, `Camera`, `Light`, `MeshHandle`, `MaterialHandle`, `TextureRef`, `MaterialDesc`, `MeshData`, `Aabb`, `ClipData`, `PhysicsCmd`, `BodyDesc`, `ShapeDesc`, `BodyPose`, `ContactEvent`, `CharacterDesc`, `AudioCmd`, `ActionFrame`, `GraphDoc`, `ReplayDoc`, `host::HostServices` | `re_scene`, any subsystem |
+| `re_types` | Plain-data contracts between the app and subsystems, and the script host trait (no dependency on `re_core`) | `EntityId`, `RenderSnapshot`, `DrawItem`, `Camera`, `Light`, `MeshHandle`, `MaterialHandle`, `TextureRef`, `MaterialDesc`, `MeshData`, `Aabb`, `ClipData`, `PhysicsCmd`, `BodyDesc`, `ShapeDesc`, `BodyPose`, `ContactEvent`, `CharacterDesc`, `AudioCmd`, `ActionFrame`, `RawInputFrame`, `InputEvent`, `MouseLock`, `GraphDoc`, `ReplayDoc`, `RawReplayInput`, `host::HostServices` | `re_scene`, any subsystem |
 | `re_reflect` | The component registry over bevy_ecs: field types, values and coercion, by-name access, script-defined components, the untyped document tree used at text boundaries, registry description and scene JSON Schema (ADR-0032) | `Registry`, `ComponentKey`, `ComponentSchema`, `FieldSchema`, `FieldType`, `ComponentOrigin`, `Value`, `Color`, `Reflect`, `component!`, `field_enum!`, `Doc`, `f32_from_parsed_f64` | subsystems, mlua |
 | `re_scene` | The World facade over bevy_ecs (ADR-0005): stable ids, hierarchy, transforms and propagation, the built-in components, scene and prefab files, procedural sources, fragments, overrides, suppression, state hash | `World`, `Entity`, `StableId`, `IdIndex`, `IdGen`, `Transform`, `GlobalTransform`, `Name`, the built-ins of §4, `SceneDoc`, `SaveOptions`, `PrefabFile`, `Procedural`, `GraphSource`, `Generated`, `Overrides`, `GenNode`, `SceneFragment`, `GenContext`, `Generators`, `state_hash` | subsystems, mlua |
 | `re_command` | Edit operations and transactions with exact undo, the log, the command registry, dry runs, the policy hook and the engine request channel (ADR-0003) | `Op`, `Transaction`, `Origin`, `History`, `LogEntry`, `CommandRegistry`, `CommandSpec`, `Tier`, `CommandOutcome`, `PolicyCheck` trait, `remote::{EngineHandle, EngineReceiver}` | subsystems, mlua, tokio |
@@ -191,6 +191,17 @@ EndFrame       flush the command journal; release unreferenced GPU resources; Pe
 ```
 
 The phase order matches the order Roblox-style scripts expect: render-step work happens before simulation, "stepped" before physics, and "heartbeat" after physics (ADR-0009). This makes the M2 mapping direct.
+
+A compat play test (M2, WP12) runs two worlds in one process, a server world and the local player's client world, each with its own script VM. Its frame is:
+
+```
+pump(server)    remotes from the client, queued character loads, scripts that became startable
+server phases   PreRender .. PostSimulation, with physics in the server world
+replicate       owned components client → server, then the server's changes → client
+pump(client)    player and character events, PlayerScripts and PlayerGui, removals,
+                remotes from the server; scripts that became startable
+client phases   PreRender .. PostSimulation; rendering and input use the client world
+```
 
 Headless runs (`real run --headless --frames N`, tests, `real verify`) use the same loop. The differences are:
 - the frame time is fixed at the step size;
@@ -298,7 +309,7 @@ The layer is Luau plus Rust on top of the native model. The core spike checked h
 | `CollectionService` tags | A `Tags` component (a list field) plus a tag index resource kept exact by hooks, like `IdIndex` |
 | Several attachments, welds or constraints per part | Child entities, as in Roblox; entity-typed fields (a weld's other part) are already repaired across despawn and undo |
 | `ModuleScript.Source` | Script assets referenced by path, never inline in the scene |
-| `RemoteEvent`, `RemoteFunction`, `BindableEvent` | In-process queues between the `server` and `client` contexts. M2 runs both in one process. Values are deep-copied, with floats copied bit-exact. |
+| `RemoteEvent`, `RemoteFunction`, `BindableEvent` | In-process queues between the `server` and `client` VMs (`net::NetLink`), delivered by each side's pump. M2 runs both worlds in one process. Values are deep-copied, with floats copied bit-exact; a value that cannot be copied is `RE9300`. |
 | Services that need an online backend (data storage, teleport, marketplace) | They exist and return a clear `RE9002` "not available offline" error. Nothing hangs. |
 | Deprecated members that real scripts still use | Implemented where cheap, each with an `RE9101` deprecation note |
 | Large static maps | Static cells (ADR-0031) |
@@ -309,11 +320,21 @@ The class layer as built (WP9):
 - Unknown and unimplemented members raise `RE9001` with a "did you mean" suggestion. A write to a read-only property raises `RE9005`, and a deprecated member gives an `RE9101` warning with its replacement.
 - Every instance carries a `ClassMarker { class }`. The root entity has the stable id `game` and class `DataModel`. Each service is a child of `game` whose stable id and name are its class name, with a `ServiceTag`. A script instance's `ScriptRef.context` is `Server`, `Client` or `Module`, from its class and `RunContext`; the native runtime starts only `Game` and `Tools` scripts. A compat project says `[compat] api = "roblox"` in `real.toml`, and convention breaks are reported as `RE9004`.
 
-The runtime as built so far (WP10, WP11 "data model"):
+The runtime as built so far (WP10, WP11, WP12, WP14, WP15 "tweens and sound"):
 - A compat VM is a `re_script::Context` of kind `Server` or `Client`, with the native sandbox (no `loadstring`, `getfenv` or `setfenv`), created and driven by `re_compat::CompatVm`, one per world. `ScriptRuntime` stays native-only. Each area registers its accessors, methods, globals and value conversions in `Bindings`, and `CompatSetup` refuses to start if a member marked `implemented` has no implementation.
 - Yielding host calls (`WaitForChild`, `Signal:Wait`) park the calling coroutine and are woken from a later phase (`re_script`'s park and wake protocol, with timeouts). A settle hook runs at the end of each resumption cycle.
 - Instance handles (`InstanceRef`) compare by identity. A destroyed handle becomes a tombstone. `Destroy` fires `Destroying`, locks `Parent`, keeps the subtree readable until the resumption cycle settles, then despawns it. `Clone` honours `Archivable` and remaps references inside the copy.
 - Signals are deferred by default: handlers run in the phase after the event. `[compat] signal_behavior = "immediate"` in `real.toml` switches. Child and descendant events come from observers on `ChildOf`, attribute and tag events from the `re_scene` feeds, and `Changed` from per-field diffs gated by change ticks.
+- Scripts start from the tree by the rules of M2_PLAN WP11: a `Script` runs in `server` under `Workspace` or `ServerScriptService`, a `LocalScript` runs in `client` under a player's containers or character, and `RunContext` `Server` or `Client` overrides the place, except under storage and the templates. Each started script owns its threads, so destroying it stops them. `require(module)` runs a `ModuleScript` once per context in the requiring thread and caches the result; a cycle is `RE3004` with the chain, and a module that raised raises again on every later `require`.
+- `RunService` (`Heartbeat`, `Stepped`, `RenderStepped` in the client, `IsServer`, `IsClient`, `IsStudio`), `task` (`spawn`, `defer`, `delay`, `wait`, `cancel`) and the deprecated `wait`, `delay` and `spawn` run on the virtual clock. `game`'s session fields (`PlaceId`, `JobId`, ...) come from `[compat.game]`, and `Random.new()` without a seed uses `[compat] seed` (the client context uses `seed + 1`), so runs repeat.
+- `re_compat::testing::Harness` is the public headless harness: `open` or `open_with` loads a project's entry scene into a `server` and a `client` world, `start` starts their scripts, `step(n)` runs frames on the virtual clock, and `close` ends the run. `uncaught`, `stuck`, `required`, `unsupported` and `take_output` report what happened. By default the client world is a second copy of the scene without the server-only containers, with the template client scripts started in place; with `HarnessOptions::two_worlds` the run is a play test as described next.
+- Two worlds (WP12): `net::CompatWorlds` holds a server world, which is authoritative and runs physics, and the local player's client world. An instance is the same instance in both when it has the same stable id; entities are never compared across worlds, and entities without a stable id are runtime-only and do not replicate. Each frame, `net::replicate` first copies the upstream components the client changed on instances the local player owns (`NetworkOwner`) to the server, then walks the replicated containers on the server and creates, diffs and removes on the client, remapping entity references by stable id. Only what the server changed since the last pass is written, per field, attribute key and tag. This is the **client-local write rule**: a client's own write to a replicated instance stays until the server next changes that same field.
+- Players (WP12): `[compat] players` players join at start (default 1, and 0 is refused with `RE9302`); the first is the client's `LocalPlayer`, and the others exist only on the server and in replication. The client makes `PlayerScripts` and `PlayerGui` from their templates, and they exist only in the client world. `LoadCharacter` copies `StarterPlayer.StarterCharacter` or builds the default rig (WP14), copies `StarterCharacterScripts`, spawns at a `SpawnLocation` with a `ForceField`, and gives the player network ownership. A remote or bindable call that fails is `RE9301`.
+- Input (WP14): raw device input reaches the layer as `re_types::RawInputFrame` (from `HostServices::raw_input`), with buttons named as `real.toml` binds them (`KeyW`, `Space`, `Left`, `South`); `input/keymap.rs` maps them to `Enum.KeyCode` and `Enum.UserInputType`. `UserInputService` mouse behaviour goes back to the host through `HostServices::set_mouse_behavior`.
+- Characters (WP14): a `Humanoid` rides a `re_physics` character controller in the compat world's `Physics`. A jump sets the vertical velocity to v + g·dt/2, where v is `JumpPower` or √(2g·`JumpHeight`), so the peak matches the configured height at the fixed step. R6 and R15 rigs and their built-in clips are data files under `assets/rigs/` (ADR-0034).
+- Animation (WP14): the `Animator` samples and blends `re_anim` tracks by priority and weight, then applies `IKControl`s. A joint a script wrote in the same frame keeps the script's value, and a joint no track drives any more returns to its rest pose. `Animation.AnimationId` resolves through `[compat.animations]`; an id with no clip plays an empty clip and warns with `RE9201`.
+- A compat frame runs: input, the render step (`RenderStepped`), animation, `Stepped`, the humanoid pre-simulation pass, physics, the humanoid post-simulation pass, then `Heartbeat`.
+- Tweens and sound (WP15): `TweenService:Create` animates properties along an easing curve and refuses a property that cannot be tweened (`RE9352`). `Sound` keeps each sound's clock in the layer, so `TimePosition`, `IsPlaying`, `Ended` and `DidLoop` behave the same with and without an audio device. Each frame the layer queues `re_types::AudioCmd`s, and the frame driver takes them with `sound::take_commands` and hands them to `re_audio`, so `re_compat` does not depend on `re_audio`. `SoundId` resolves through `[compat] assets`; an unknown id is silent and warns once with `RE9350`.
 - Datatypes: `Vector3` is Luau's native vector with a frozen type metatable, so its methods stay fast calls. `CFrame` stores an f32 position and rotation matrix and looks along −Z. The other datatypes are Rust userdata. `Enum` tables are built from `enums/*.json`, with one object per item per VM, so `==`, `rawequal` and table keys work. `Random` is our own seeded generator, so its numbers differ from Roblox's (marked `partial`).
 
 Coverage is a data file, `crates/re_compat/coverage.json`, listing each class and member with its status (`implemented`, `partial`, `stub-error` or `missing`). The static scan (§7) compares real scripts against this file. M2 also ships a compatibility definitions file, so the type checker knows the Roblox-style globals.
@@ -569,6 +590,35 @@ golden_max_outliers = 0.01     # the largest share of outlier pixels (0–1) a m
 frame_ms_p95 = 33.0
 ```
 
+A compat project adds a `[compat]` section. Every key but `api` is optional, and the importer writes only the ones that differ from the default:
+
+```toml
+[compat]
+api = "roblox"
+signal_behavior = "deferred"   # or "immediate"
+seed = 0                       # seeds Random.new() without a seed; i64 range
+players = 1                    # players that join at start; the first is the local player
+effect_budget = 20000          # particles plus beam and trail segments per frame
+
+[compat.game]                  # what game and RunService report; Studio-like defaults
+place_id = 0
+game_id = 0
+creator_id = 0
+job_id = ""
+private_server_id = ""
+private_server_owner_id = 0
+studio = true
+
+[compat.assets]                # asset id to a project file; "rbxassetid://N" and "N" are one id
+"rbxassetid://123" = "assets/sfx/hit.wav"
+
+[compat.animations]            # animation id to a built-in clip or a KeyframeSequence in the place
+"rbxassetid://456" = "builtin:r15_walk"
+"789" = "game.ReplicatedStorage.Wave"
+```
+
+Asset paths are relative to the project and may not contain `..`. An id that is not in the table, or whose file is missing, is `RE9350` when it is used. An animation value is `builtin:` followed by `r6_` or `r15_` and one of `idle`, `walk`, `run`, `jump`, `fall`, `climb` and `sit`, or a dotted path into the place. A key that is not an asset id, a bad value, or one id listed twice is `RE9202` at load.
+
 Input bindings name winit `KeyCode` variants (`key:KeyW`), mouse buttons (`mouse:Left`) and gilrs buttons (`pad:South`). An axis lists its sources in priority order; `composite` is up, down, left and right. An unknown name is a diagnostic, not a silent no-op.
 
 ### Scene file (excerpt)
@@ -625,6 +675,12 @@ Rules (verified by the core spike's round-trip tests, ADR-0016):
   "input": [ { "frame": 30, "action": "move", "axis": [0, 1] }, { "frame": 90, "action": "jump", "down": true } ],
   "commands": [ { "frame": 300, "name": "graph.regenerate", "args": { "source": "island", "seed": 99 } } ],
   "checks": [ { "frame": 600, "screenshot": "tests/goldens/{backend}/island_600.png" } ] }
+```
+
+A replay may also carry `raw` rows (`RawReplayInput`) for layers that read keys rather than actions. Each row has one change: a `key`, `mouse_button` or `pad_button` with `down`, or a `mouse_move`, `mouse_position` or `wheel`. Buttons use the `real.toml` names without the device prefix, and `raw` is left out when empty, so action-only replays are unchanged:
+
+```json
+"raw": [ { "frame": 30, "key": "KeyW", "down": true }, { "frame": 31, "mouse_move": [12, -4] } ]
 ```
 
 Goldens are kept per backend, because GL and Vulkan differ in small ways (ADR-0010). `verify` compares against the set for the backend it ran on, using `[verify]` `golden_mean_tolerance` and `golden_max_outliers` from `real.toml`. `real verify --update-goldens` rewrites the current backend's set from this run; review the images before committing them.

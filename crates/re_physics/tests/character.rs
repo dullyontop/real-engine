@@ -203,3 +203,51 @@ fn jumps_and_lands() {
     assert!(highest > 0.9 + 1.0, "jumped only to {highest}");
     assert!(p.character(PLAYER).unwrap().on_ground());
 }
+
+/// `SetVelocity` on a character sets its velocity: an upward speed makes it
+/// leave the ground and rise about v² / 2g, whatever the configured jump speed.
+#[test]
+fn set_velocity_launches_a_character() {
+    let mut p = world(1);
+    apply(
+        &mut p,
+        vec![
+            floor(1, 0.0, 0.0, 0.0, 20.0),
+            spawn(Vec3::new(0.0, 0.92, 0.0)),
+        ],
+    );
+    steps(&mut p, 10);
+    let start = p.character(PLAYER).unwrap().pos.y;
+    apply(
+        &mut p,
+        vec![PhysicsCmd::SetVelocity {
+            id: PLAYER,
+            linear: Vec3::new(0.0, 8.0, 0.0),
+            angular: Vec3::ZERO,
+        }],
+    );
+    let mut highest = start;
+    for _ in 0..180 {
+        walk(&mut p, Vec3::ZERO);
+        highest = highest.max(p.character(PLAYER).unwrap().pos.y);
+    }
+    let rise = highest - start;
+    let want = 8.0 * 8.0 / (2.0 * 9.81);
+    assert!(
+        (rise - want).abs() < want * 0.1,
+        "rose {rise}, expected about {want}"
+    );
+    assert!(p.character(PLAYER).unwrap().on_ground());
+    // A non-finite velocity is refused.
+    let mut bad = vec![PhysicsCmd::SetVelocity {
+        id: PLAYER,
+        linear: Vec3::new(f32::NAN, 0.0, 0.0),
+        angular: Vec3::ZERO,
+    }];
+    p.apply(&mut bad);
+    assert!(
+        p.take_diagnostics()
+            .iter()
+            .any(|d| d.message.contains("not finite")),
+    );
+}

@@ -1,0 +1,1123 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "Humanoid",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "No climbing, swimming or pathfinding; MoveTo walks a straight line. The state machine runs Running, Jumping, Freefall, Landed, Seated, Physics, Ragdoll, FallingDown, GettingUp, PlatformStanding and Dead; Climbing, Swimming and Flying are never entered.",
+      "doc": "Makes the model it sits in a character: it walks, jumps, sits, takes damage and dies. The model needs a HumanoidRootPart; the engine moves it with a character controller and poses the limbs through their Motor6D joints.",
+      "properties": [
+        {
+          "name": "WalkSpeed",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 16.0,
+          "status": "implemented",
+          "doc": "How fast it walks, in studs per second."
+        },
+        {
+          "name": "JumpPower",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 50.0,
+          "status": "implemented",
+          "doc": "The upward speed of a jump, in studs per second, when UseJumpPower is true."
+        },
+        {
+          "name": "JumpHeight",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 7.2,
+          "status": "implemented",
+          "doc": "How high a jump rises, in studs, when UseJumpPower is false."
+        },
+        {
+          "name": "UseJumpPower",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether jumps use JumpPower (a speed) or JumpHeight (a height)."
+        },
+        {
+          "name": "HipHeight",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "status": "implemented",
+          "doc": "How far the root part floats above the floor, for R15 rigs. R6 rigs stand on their legs and leave it at 0."
+        },
+        {
+          "name": "AutoRotate",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the character turns to face the way it walks."
+        },
+        {
+          "name": "MoveDirection",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The unit direction it is walking in, or zero when standing."
+        },
+        {
+          "name": "WalkToPoint",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "Where MoveTo is walking it (relative to WalkToPart when that is set)."
+        },
+        {
+          "name": "WalkToPart",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The part MoveTo walks it to, or nil."
+        },
+        {
+          "name": "Jump",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "Set to true to jump; the Humanoid sets it back to false once it jumps."
+        },
+        {
+          "name": "Sit",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "True while it sits. Setting it false stands it up."
+        },
+        {
+          "name": "SeatPart",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "partial",
+          "doc": "The seat it sits in, or nil.",
+          "note": "Seats are not supported yet; always nil."
+        },
+        {
+          "name": "PlatformStand",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true it stops walking and stands still, limp, in the PlatformStanding state."
+        },
+        {
+          "name": "Health",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 100.0,
+          "status": "implemented",
+          "doc": "Its health. At 0 or below it dies."
+        },
+        {
+          "name": "MaxHealth",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 100.0,
+          "status": "implemented",
+          "doc": "The most health it can have."
+        },
+        {
+          "name": "BreakJointsOnDeath",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether its joints break apart when it dies."
+        },
+        {
+          "name": "RequiresNeck",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether losing the Neck joint kills it."
+        },
+        {
+          "name": "FloorMaterial",
+          "type": "Enum.Material",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Air",
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The material of the floor it stands on, or Air in the air."
+        },
+        {
+          "name": "RigType",
+          "type": "Enum.HumanoidRigType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "R15",
+          "status": "implemented",
+          "doc": "The rig it was built with, R6 or R15."
+        },
+        {
+          "name": "RootPart",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The model's HumanoidRootPart, or nil."
+        },
+        {
+          "name": "MaxSlopeAngle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 89.0,
+          "status": "partial",
+          "doc": "The steepest slope it can walk up, in degrees.",
+          "note": "Stored; the character controller uses its own slope limit."
+        },
+        {
+          "name": "CameraOffset",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "Shifts the camera from its subject, in the character's frame."
+        },
+        {
+          "name": "AutomaticScalingEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "partial",
+          "doc": "Whether body scale values resize the rig.",
+          "note": "Stored; descriptions always rescale the rig."
+        },
+        {
+          "name": "EvaluateStateMachine",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the engine runs its state machine. When false, scripts drive the state themselves."
+        },
+        {
+          "name": "DisplayName",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "doc": "The name shown over the character; empty shows the model's name.",
+          "note": "Stored; no name is drawn over characters yet."
+        },
+        {
+          "name": "DisplayDistanceType",
+          "type": "Enum.HumanoidDisplayDistanceType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Viewer",
+          "status": "partial",
+          "doc": "Which distance the name and health display use.",
+          "note": "Stored; no name or health bar is drawn yet."
+        },
+        {
+          "name": "NameDisplayDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 100.0,
+          "status": "partial",
+          "doc": "The farthest the name is shown from, in studs.",
+          "note": "Stored; no name is drawn over characters yet."
+        },
+        {
+          "name": "HealthDisplayDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 100.0,
+          "status": "partial",
+          "doc": "The farthest the health bar is shown from, in studs.",
+          "note": "Stored; no health bar is drawn yet."
+        },
+        {
+          "name": "HealthDisplayType",
+          "type": "Enum.HumanoidHealthDisplayType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "DisplayWhenDamaged",
+          "status": "partial",
+          "doc": "When the health bar is shown.",
+          "note": "Stored; no health bar is drawn yet."
+        },
+        {
+          "name": "NameOcclusion",
+          "type": "Enum.NameOcclusion",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "OccludeAll",
+          "status": "partial",
+          "doc": "Which names show through walls.",
+          "note": "Stored; no name is drawn over characters yet."
+        }
+      ],
+      "methods": [
+        {
+          "name": "Move",
+          "params": [
+            {
+              "name": "moveDirection",
+              "type": "Vector3"
+            },
+            {
+              "name": "relativeToCamera",
+              "type": "bool",
+              "optional": true
+            }
+          ],
+          "status": "partial",
+          "note": "relativeToCamera turns the direction by the current camera's yaw only when a camera exists; otherwise it is ignored.",
+          "doc": "Walks it in a direction until told otherwise; a zero vector stops it. The vertical part is ignored."
+        },
+        {
+          "name": "MoveTo",
+          "params": [
+            {
+              "name": "location",
+              "type": "Vector3"
+            },
+            {
+              "name": "part",
+              "type": "Instance",
+              "optional": true
+            }
+          ],
+          "status": "implemented",
+          "doc": "Walks it in a straight line to a point (relative to part, if given). MoveToFinished fires on arrival, or with false after 8 seconds."
+        },
+        {
+          "name": "TakeDamage",
+          "params": [
+            {
+              "name": "amount",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Takes health away, unless the character has a ForceField."
+        },
+        {
+          "name": "GetState",
+          "returns": [
+            "Enum.HumanoidStateType"
+          ],
+          "status": "implemented",
+          "doc": "Its current state."
+        },
+        {
+          "name": "ChangeState",
+          "params": [
+            {
+              "name": "state",
+              "type": "Enum.HumanoidStateType"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Moves it into a state now, unless that state is disabled."
+        },
+        {
+          "name": "SetStateEnabled",
+          "params": [
+            {
+              "name": "state",
+              "type": "Enum.HumanoidStateType"
+            },
+            {
+              "name": "enabled",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Allows or forbids a state. A forbidden state is never entered."
+        },
+        {
+          "name": "GetStateEnabled",
+          "params": [
+            {
+              "name": "state",
+              "type": "Enum.HumanoidStateType"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "Whether a state is allowed."
+        },
+        {
+          "name": "LoadAnimation",
+          "params": [
+            {
+              "name": "animation",
+              "type": "Animation"
+            }
+          ],
+          "returns": [
+            "AnimationTrack"
+          ],
+          "deprecated": "Animator:LoadAnimation",
+          "status": "implemented",
+          "doc": "Loads an animation on the Humanoid's Animator, making one if needed."
+        },
+        {
+          "name": "GetPlayingAnimationTracks",
+          "returns": [
+            "table"
+          ],
+          "deprecated": "Animator:GetPlayingAnimationTracks",
+          "status": "implemented",
+          "doc": "The tracks its Animator is playing."
+        },
+        {
+          "name": "ApplyDescription",
+          "params": [
+            {
+              "name": "humanoidDescription",
+              "type": "HumanoidDescription"
+            }
+          ],
+          "status": "partial",
+          "note": "Applies body colours, scales and animation ids; accessories, clothing and faces are kept on the description but not applied.",
+          "doc": "Changes the character to match a HumanoidDescription."
+        },
+        {
+          "name": "GetAppliedDescription",
+          "returns": [
+            "HumanoidDescription"
+          ],
+          "status": "implemented",
+          "doc": "A copy of the description last applied."
+        },
+        {
+          "name": "GetLimb",
+          "params": [
+            {
+              "name": "part",
+              "type": "BasePart"
+            }
+          ],
+          "returns": [
+            "Enum.Limb"
+          ],
+          "status": "implemented",
+          "doc": "Which limb a part of the R6 rig is, or Unknown."
+        },
+        {
+          "name": "GetBodyPartR15",
+          "params": [
+            {
+              "name": "part",
+              "type": "BasePart"
+            }
+          ],
+          "returns": [
+            "Enum.BodyPartR15"
+          ],
+          "status": "implemented",
+          "doc": "Which body part of the R15 rig a part is, or Unknown."
+        },
+        {
+          "name": "UnequipTools",
+          "status": "stub-error",
+          "note": "Tools are not supported yet.",
+          "doc": "Puts any held tool back in the backpack."
+        },
+        {
+          "name": "EquipTool",
+          "params": [
+            {
+              "name": "tool",
+              "type": "Instance"
+            }
+          ],
+          "status": "stub-error",
+          "note": "Tools are not supported yet.",
+          "doc": "Makes the character hold a tool."
+        }
+      ],
+      "events": [
+        {
+          "name": "Died",
+          "status": "implemented",
+          "doc": "Its health reached 0, or it lost its neck when RequiresNeck is set."
+        },
+        {
+          "name": "HealthChanged",
+          "params": [
+            {
+              "name": "health",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Its health changed."
+        },
+        {
+          "name": "StateChanged",
+          "params": [
+            {
+              "name": "old",
+              "type": "Enum.HumanoidStateType"
+            },
+            {
+              "name": "new",
+              "type": "Enum.HumanoidStateType"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Its state changed."
+        },
+        {
+          "name": "StateEnabledChanged",
+          "params": [
+            {
+              "name": "state",
+              "type": "Enum.HumanoidStateType"
+            },
+            {
+              "name": "isEnabled",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "SetStateEnabled allowed or forbade a state."
+        },
+        {
+          "name": "Running",
+          "params": [
+            {
+              "name": "speed",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "It started or stopped walking, or its speed changed, with its speed along the ground."
+        },
+        {
+          "name": "Jumping",
+          "params": [
+            {
+              "name": "active",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "It entered (true) or left (false) the Jumping state."
+        },
+        {
+          "name": "FreeFalling",
+          "params": [
+            {
+              "name": "active",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "It entered (true) or left (false) the Freefall state."
+        },
+        {
+          "name": "Seated",
+          "params": [
+            {
+              "name": "active",
+              "type": "bool"
+            },
+            {
+              "name": "currentSeatPart",
+              "type": "Instance"
+            }
+          ],
+          "status": "implemented",
+          "doc": "It sat down in a seat (true) or got up (false)."
+        },
+        {
+          "name": "PlatformStanding",
+          "params": [
+            {
+              "name": "active",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "It entered or left the PlatformStanding state."
+        },
+        {
+          "name": "FallingDown",
+          "params": [
+            {
+              "name": "active",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "It entered or left the FallingDown state."
+        },
+        {
+          "name": "GettingUp",
+          "params": [
+            {
+              "name": "active",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "It entered or left the GettingUp state."
+        },
+        {
+          "name": "Ragdoll",
+          "params": [
+            {
+              "name": "active",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "It entered or left the Ragdoll state."
+        },
+        {
+          "name": "MoveToFinished",
+          "params": [
+            {
+              "name": "reached",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "MoveTo arrived (true) or gave up after 8 seconds (false)."
+        },
+        {
+          "name": "Climbing",
+          "params": [
+            {
+              "name": "speed",
+              "type": "number"
+            }
+          ],
+          "status": "partial",
+          "note": "Climbing is not supported; it never fires.",
+          "doc": "It climbed, with its climbing speed."
+        },
+        {
+          "name": "Swimming",
+          "params": [
+            {
+              "name": "speed",
+              "type": "number"
+            }
+          ],
+          "status": "partial",
+          "note": "Swimming is not supported; it never fires.",
+          "doc": "It swam, with its swimming speed."
+        }
+      ]
+    },
+    {
+      "name": "HumanoidDescription",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "Body colours, scales and animation ids are applied; accessory, clothing, face and body-part asset ids are stored only.",
+      "doc": "Everything that makes up a character's look: body colours, scales, animations and assets. Humanoid:ApplyDescription applies it.",
+      "properties": [
+        {
+          "name": "HeightScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "implemented",
+          "doc": "Scales the character's height."
+        },
+        {
+          "name": "WidthScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "implemented",
+          "doc": "Scales the character's width."
+        },
+        {
+          "name": "DepthScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "implemented",
+          "doc": "Scales the character's depth."
+        },
+        {
+          "name": "HeadScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "implemented",
+          "doc": "Scales the head."
+        },
+        {
+          "name": "BodyTypeScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.3,
+          "status": "partial",
+          "doc": "Blends between body shapes; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "ProportionScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "partial",
+          "doc": "Blends between body proportions; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "HeadColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.64,
+            0.64,
+            0.64
+          ],
+          "status": "implemented",
+          "doc": "The colour of the head."
+        },
+        {
+          "name": "TorsoColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.64,
+            0.64,
+            0.64
+          ],
+          "status": "implemented",
+          "doc": "The colour of the torso."
+        },
+        {
+          "name": "LeftArmColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.64,
+            0.64,
+            0.64
+          ],
+          "status": "implemented",
+          "doc": "The colour of the left arm."
+        },
+        {
+          "name": "RightArmColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.64,
+            0.64,
+            0.64
+          ],
+          "status": "implemented",
+          "doc": "The colour of the right arm."
+        },
+        {
+          "name": "LeftLegColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.64,
+            0.64,
+            0.64
+          ],
+          "status": "implemented",
+          "doc": "The colour of the left leg."
+        },
+        {
+          "name": "RightLegColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.64,
+            0.64,
+            0.64
+          ],
+          "status": "implemented",
+          "doc": "The colour of the right leg."
+        },
+        {
+          "name": "IdleAnimation",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The id of the idle animation; 0 keeps the default."
+        },
+        {
+          "name": "WalkAnimation",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The id of the walk animation; 0 keeps the default."
+        },
+        {
+          "name": "RunAnimation",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The id of the run animation; 0 keeps the default."
+        },
+        {
+          "name": "JumpAnimation",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The id of the jump animation; 0 keeps the default."
+        },
+        {
+          "name": "FallAnimation",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The id of the fall animation; 0 keeps the default."
+        },
+        {
+          "name": "ClimbAnimation",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The id of the climb animation; 0 keeps the default."
+        },
+        {
+          "name": "SwimAnimation",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the swim animation; 0 keeps the default.",
+          "note": "Stored; characters never swim."
+        },
+        {
+          "name": "Face",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the face; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "Head",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the head mesh; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "Torso",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the torso mesh; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "LeftArm",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the left arm mesh; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "RightArm",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the right arm mesh; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "LeftLeg",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the left leg mesh; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "RightLeg",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the right leg mesh; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "Shirt",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the shirt; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "Pants",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the pants; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "GraphicTShirt",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "doc": "The id of the t-shirt graphic; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "HatAccessory",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "doc": "Comma-separated ids of hats; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "HairAccessory",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "doc": "Comma-separated ids of hair; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "FaceAccessory",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "doc": "Comma-separated ids of face accessories; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "NeckAccessory",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "doc": "Comma-separated ids of neck accessories; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "ShouldersAccessory",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "doc": "Comma-separated ids of shoulder accessories; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "FrontAccessory",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "doc": "Comma-separated ids of front accessories; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "BackAccessory",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "doc": "Comma-separated ids of back accessories; stored, not applied.",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "WaistAccessory",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "doc": "Comma-separated ids of waist accessories; stored, not applied.",
+          "note": "Stored, not applied."
+        }
+      ]
+    }
+  ]
+}

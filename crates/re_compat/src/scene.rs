@@ -272,7 +272,7 @@ pub enum CompatApi {
 
 /// The `[compat]` section of `real.toml`. Build one with `..Default::default()`
 /// so later fields need no change.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompatConfig {
     /// The API the project's scripts use.
@@ -280,6 +280,12 @@ pub struct CompatConfig {
     /// When signal handlers run: `deferred` (the default) or `immediate`.
     #[serde(default)]
     pub signal_behavior: crate::signal::SignalBehavior,
+    /// Animation id substitutes (`[compat.animations]`): an asset id
+    /// (`"1234"` or `"rbxassetid://1234"`) to `builtin:<clip>` or the dotted
+    /// path of a `KeyframeSequence` in the place. Keys are kept as asset
+    /// numbers once loaded.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub animations: BTreeMap<String, String>,
     /// What `game` and `RunService` report about the session
     /// (`[compat.game]`); Studio-like by default.
     #[serde(default, skip_serializing_if = "GameInfo::is_default")]
@@ -299,6 +305,29 @@ pub struct CompatConfig {
     /// [`DEFAULT_EFFECT_BUDGET`]); the excess is `RE9351`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_budget: Option<u32>,
+    /// How many players join when the game starts (`players = 2`); the first
+    /// is the client's local player. One unless set.
+    #[serde(default = "one_player")]
+    pub players: u32,
+}
+
+fn one_player() -> u32 {
+    1
+}
+
+impl Default for CompatConfig {
+    fn default() -> Self {
+        CompatConfig {
+            api: CompatApi::default(),
+            signal_behavior: Default::default(),
+            animations: BTreeMap::new(),
+            game: GameInfo::default(),
+            seed: 0,
+            assets: BTreeMap::new(),
+            effect_budget: None,
+            players: one_player(),
+        }
+    }
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -383,6 +412,12 @@ impl CompatConfig {
     /// two keys for one id, a path that is absolute or leaves the project,
     /// and an effect budget of 0.
     fn validated(mut self) -> Result<CompatConfig, CompatError> {
+        if self.players == 0 {
+            return Err(CompatError::Runtime {
+                code: crate::codes::PLAYER_STEP,
+                message: "real.toml [compat]: players must be at least 1".into(),
+            });
+        }
         let bad = |m: String| CompatError::Scene(format!("real.toml [compat]: {m}"));
         let mut assets = BTreeMap::new();
         for (id, path) in std::mem::take(&mut self.assets) {
@@ -416,6 +451,7 @@ impl CompatConfig {
             }
         }
         self.assets = assets;
+        self.animations = normalize_animations(&self.animations)?;
         if self.effect_budget == Some(0) {
             return Err(bad("effect_budget must be at least 1".into()));
         }
@@ -442,6 +478,9 @@ impl CompatConfig {
         if self.seed != 0 {
             out.push_str(&format!("seed = {}\n", self.seed));
         }
+        if self.players != 1 {
+            out.push_str(&format!("players = {}\n", self.players));
+        }
         if let Some(b) = self.effect_budget {
             out.push_str(&format!("effect_budget = {b}\n"));
         }
@@ -462,6 +501,58 @@ impl CompatConfig {
                 ));
             }
         }
+        if !self.animations.is_empty() {
+            out.push_str("\n[compat.animations]\n");
+            for (id, to) in &self.animations {
+                out.push_str(&format!(
+                    "{} = {}\n",
+                    toml::Value::String(id.clone()),
+                    toml::Value::String(to.clone())
+                ));
+            }
+        }
         out
     }
+}
+
+/// Checks `[compat.animations]` and keys it by asset number: `"1234"` and
+/// `"rbxassetid://1234"` are the same id, so naming both is refused, as is a
+/// key with no asset number or a value that is neither `builtin:<clip>` nor a
+/// dotted path.
+fn normalize_animations(
+    table: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, CompatError> {
+    let bad = |message: String| CompatError::Runtime {
+        code: codes::BAD_ANIMATION_MAP,
+        message: format!("real.toml [compat.animations]: {message}"),
+    };
+    let mut out = BTreeMap::new();
+    for (k, v) in table {
+        let digits = asset_key(k);
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(bad(format!(
+                "key {k:?} is not an asset id (\"1234\" or \"rbxassetid://1234\")"
+            )));
+        }
+        let ok = match v.strip_prefix("builtin:") {
+            Some(name) => crate::anim::clips::builtin_names().any(|n| n == name),
+            None => v.split('.').all(|seg| {
+                !seg.is_empty()
+                    && seg
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == ' ')
+            }),
+        };
+        if !ok {
+            return Err(bad(format!(
+                "{k:?} = {v:?}: expected \"builtin:<clip>\" naming a built-in clip, or a dotted path such as \"game.ReplicatedStorage.Wave\""
+            )));
+        }
+        let n = digits.trim_start_matches('0');
+        let n = if n.is_empty() { "0" } else { n };
+        if out.insert(n.to_string(), v.clone()).is_some() {
+            return Err(bad(format!("asset id {n} is listed twice")));
+        }
+    }
+    Ok(out)
 }
