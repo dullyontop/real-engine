@@ -69,6 +69,17 @@ Notes:
 | mlua | 0.12.2 | MIT | 1.88 | Embeds Luau (vendored Luau 0.740 through mlua-sys 0.13.0 and luau0-src 0.22.0+luau740; no Analysis module) | `luau` only. Not `vendored` (it does nothing for Luau) and not `send`. `luau-jit` only through `re_script`'s opt-in `jit` feature. | scripting spike: 14 feature tests in the default, `send` and `jit` builds, benchmarks, and a corpus compile | Verified |
 | full_moon | 3.0.0 | MPL-2.0 | none | Luau parser for the static API-gap scan (validation tier 2). Tooling only (`re_script_check`). | `luau` | design-phase probe in this container: `parse_fallible(code, LuaVersion::luau())` parsed an external Roblox-style corpus with no failures | Verified; MPL exception (ADR-0019) |
 
+### Place-file import (M3, tooling only)
+
+Used only by `re_import`, a tooling crate, so none of them ships in a packaged game (ADR-0048). Versions checked against crates.io on 2026-10-15.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| lz4_flex | 0.14.0 | MIT | 1.81 | LZ4 block bodies of binary place-file chunks | `default-features = false`, `std`, `safe-decode`, `checked-decode` | WP27 probe in this container (LZ4 block round trip) | Verified (probe); lands with WP27 PR "place files" |
+| ruzstd | 0.9.1 | MIT | 1.87 | ZSTD frame bodies of binary place-file chunks, pure Rust | `default-features = false`, `std` | WP27 probe (ZSTD frame decode) | Verified (probe); lands with WP27 PR "place files" |
+| quick-xml | 0.41.0 | MIT | 1.79 | `.rbxlx`/`.rbxmx` reader | defaults | WP27 probe; already in the lockfile through `wayland-scanner`, so no new duplicate | Verified (probe); lands with WP27 PR "place files" |
+| base64 | 0.23.1 | MIT OR Apache-2.0 | 1.71 | binary and shared strings in XML place files | defaults | WP27 probe; already in the lockfile through `rmcp` | Verified (probe); lands with WP27 PR "place files" |
+
 ### External tools (not linked, not from crates.io)
 
 | Tool | Version | License | Role | Verified by | Status |

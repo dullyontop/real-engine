@@ -901,6 +901,121 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ---
 
+## ADR-0048: Compat follow-ups: local data services, surfaces and viewports, script reload, skins and effects, and our own place-file reader
+
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP27). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: the formats and limits below were checked on 2026-10-15 against the vendor's current reference pages and the rbx-dom project's format notes (MIT); the four crates were resolved from crates.io and built and exercised together in a probe crate on the reference container (LZ4 block and ZSTD frame round trips, an XML read, a base64 decode). Nothing here is copied prose: facts are restated for this repository (ADR-0034).
+
+**Context.** M2 left five parts of the Roblox-style layer for later (M2_PLAN "Non-goals"; M3_PLAN WP27):
+- `DataStoreService` and `MemoryStoreService` raise `RE9002` on every call (`services/extra/mod.rs`, the `OFFLINE` table), so a game that saves progress cannot run its save path at all.
+- `SurfaceGui` and `ViewportFrame` are `stub-error` and never drawn; the GUI only lays out `ScreenGui` and `BillboardGui` roots and paints them as egui shapes over the 3D view.
+- Compat scripts do not hot reload (`re_app/src/app.rs`, before `reload_script`), and `Script`/`LocalScript` have no `Enabled`/`Disabled` yet (`classes/core.json`), so the WP11 follow-up "a script set back to `Disabled = false` restarts" is open.
+- `real import` refuses `.rbxl`, `.rbxlx`, `.rbxm` and `.rbxmx` with `RE9801`. Only Rojo projects and Studio loader scripts are read.
+- `MeshPart` and `Bone` have no class rows, and `BloomEffect`, `BlurEffect` and `SunRaysEffect` are `partial` ("stored; not drawn").
+
+The engine already has what these need underneath: the scheduler's `park`/`wake` yield API (`re_script/src/scheduler.rs`), the offscreen `Capture` target and egui texture registration in `re_render`, the `notify`-based `AssetWatcher` and the native script reload path, and the import `Tree` that the Rojo and loader readers both write. WP20 (post chain) and WP21 (skins) will add the rest.
+
+**Decision.**
+
+**1. Data services are local, budgeted and deterministic when they must be.**
+- **Storage.** Everything lives under `<project>/.real/data/`, which the project template already ignores (`.real/*`):
+  - `datastore/<name>/<scope>.json`: one file per standard data store and scope, a map from key to `{ value, version, created, updated, user_ids, metadata }`;
+  - `ordered/<name>/<scope>.json`: ordered data stores, integer values only;
+  - `memory/{queues,sorted,hash}/<name>.json`: memory store structures, each item with its absolute expiry on the data clock;
+  - `clock.json`: the data clock (below).
+  Names, scopes and keys are written as percent-encoded file and JSON names, so any string the vendor accepts is a valid path on all three platforms. Writes go to a temporary file and are renamed into place, so a crash leaves the previous version. A file that does not parse is `RE9402`: the store is treated as empty for the run and the bad file is kept as `<file>.bad`, never overwritten silently.
+- **Values.** A value must serialise to JSON the way the vendor's encoder accepts: nil, booleans, finite numbers, strings, arrays, and tables with string keys only; no instances, functions, userdata, mixed or sparse tables, or NaN. The serialised JSON may be at most 4,194,304 characters. Store names, scopes and keys are 1 to 50 characters; metadata keys are at most 50, a metadata value at most 250 characters and the whole metadata at most 300.
+- **Methods.** `GetDataStore`, `GetGlobalDataStore`, `GetOrderedDataStore`, `GetRequestBudgetForRequestType` and `ListDataStoresAsync` on the service; `GetAsync`, `SetAsync`, `UpdateAsync`, `IncrementAsync`, `RemoveAsync` and `ListKeysAsync` on a store, returning `DataStoreKeyInfo` where the vendor does; `GetSortedAsync` with `DataStorePages` on an ordered store. The store keeps the current version only: `GetVersionAsync` and `ListVersionsAsync` see that one version and stay `partial` with that note.
+- **Every `…Async` call yields** through the scheduler's `yielding_method` and resumes on a later frame (`[compat.data] latency_frames`, default 1), so code that relies on the yield behaves the same as online.
+- **Request budgets** follow the vendor's current per-server formulas, with `players` the number of players in the play:
+
+  | Request type | Budget per minute |
+  |---|---|
+  | standard read (`GetAsync`, version reads) | 60 + 40 × players |
+  | standard write (`SetAsync`, `IncrementAsync`) | 60 + 40 × players |
+  | standard remove | 60 + 40 × players |
+  | ordered read | 60 + 40 × players |
+  | ordered write and remove | 30 + 5 × players |
+  | lists (`ListKeysAsync`, `ListDataStoresAsync`, `GetSortedAsync`) | 5 + 2 × players |
+  | `UpdateAsync` | charges both the read and the write budget |
+
+  A budget refills continuously on the data clock and starts full. A request that finds its budget empty waits in its type's queue, which holds 30 requests in arrival order; a request arriving at a full queue fails with the vendor's numeric code for that method (301 to 306). `GetRequestBudgetForRequestType` reports the live value. The per-experience limits, per-key throughput limits and storage quota apply to many servers at once and are not modelled; nor is the old same-key write cooldown, which the current reference no longer states.
+- **Errors** are Luau errors whose message starts with the vendor's number and a colon, then our own wording, then our code, for example `"105: the value is 4,200,113 characters once serialised; the limit is 4,194,304 (RE9400)"`. Scripts that match on the number keep working. The numbers we raise are: 101, 102, 103, 104, 105, 106 and 107 for bad arguments (`RE9400`); 301 to 306 for full queues (`RE9401`); 403 when `[compat.data] enabled = false`, the local stand-in for Studio's "API access" switch (`RE9400`); 501 for a corrupt file (`RE9402`).
+- **Memory stores.** `GetQueue`, `GetSortedMap` and `GetHashMap` return `MemoryStoreQueue` (`AddAsync`, `ReadAsync` with its visibility timeout and wait, `RemoveAsync`, `GetSizeAsync`), `MemoryStoreSortedMap` (`GetAsync`, `SetAsync`, `UpdateAsync`, `RemoveAsync`, `GetRangeAsync`, `GetSizeAsync`) and `MemoryStoreHashMap` (`GetAsync`, `SetAsync`, `UpdateAsync`, `RemoveAsync`, `ListItemsAsync`). Limits: a value of at most 32 KB serialised; expiry from 0 to 3,888,000 seconds (45 days, also the default); at most 1,000,000 items and 100 MB per structure; a memory quota of 64 KB + 1.2 KB × players and 1,000 + 120 × players request units per minute for the whole place, with the unit costs the vendor documents (one per call, one per item returned by range and read calls, at least two for a hash map update). Over the quota, calls that grow the data fail and reads and shrinking calls succeed. The vendor reports these failures by name (`TotalRequestsOverLimit`, `ItemValueSizeTooLarge`, `TotalMemoryOverLimit` and the rest); our message starts with that name, then our wording and `RE9403`.
+- **The data clock.** Expiry, budgets and the `CreatedTime`/`UpdatedTime` fields read one clock. In `real run` and the editor it is wall-clock time. In `real verify`, replays and `play.run` it is a fixed start (`[compat.data] epoch`, default 2026-01-01T00:00:00Z) plus simulation time, and the run reads its data from a fresh copy of `data/seed/` in the project (committed, optional) instead of `.real/data/`, which it never writes. So D1 and D2 replays repeat, and a verify run cannot be changed by what an earlier play saved.
+- **`[compat.data]`** in `real.toml`: `enabled` (default true), `latency_frames` (default 1), `epoch`, and `mode` = `"persist"` (default for `real run`: read and write `.real/data/`) or `"session"` (start from the seed and keep nothing). The `CompatConfig` field is a shared-file change the maintainer makes.
+
+**2. `SurfaceGui` and `ViewportFrame` render to textures.**
+- **One path for both.** Each visible `SurfaceGui` and `ViewportFrame` gets an offscreen `Capture` from a pool, redrawn only when its subtree, its camera or its size changed since its last draw, or when it contains something that animates. A per-frame budget (`[compat.gui] surface_redraws_per_frame`, default 8) spreads redraws over frames; anything over it keeps last frame's texture.
+- **`SurfaceGui`.** Laid out by the same GUI layout code as a `ScreenGui`, into a canvas of `CanvasSize` pixels (`SizingMode` `FixedSize`) or the face's size in studs × `PixelsPerStud` (`PixelsPerStud`, default 50). The egui shapes are painted into the capture, which is drawn as a textured quad on the `Face` of the `Adornee` (or of the parent part), in the 3D pass and depth-tested. `ZOffset` becomes a small depth bias; `LightInfluence` blends between the unlit texture and the scene's lighting; `Brightness` scales the unlit term; `AlwaysOnTop` draws the quad after the 3D pass without depth testing; `MaxDistance` hides it. The texture is capped at 2048 pixels per side; a larger canvas is scaled down once with `RE9410`, as is a `SurfaceGui` with no part to sit on.
+- **Input on surfaces.** A click or touch is ray-cast from the camera; when the first hit is a face that carries a `SurfaceGui` held in the local player's `PlayerGui`, the hit point becomes canvas coordinates and goes through the same GUI input path as a `ScreenGui` (`Activated`, `MouseButton1Click`, hover). A `SurfaceGui` that lives in `Workspace` draws but takes no input in this WP; its `partial` note says so.
+- **`ViewportFrame`.** Its descendant parts (including those under a `WorldModel`) are collected into a separate `RenderSnapshot` with the frame's `CurrentCamera`, lit by `Ambient` plus one directional light (`LightColor`, `LightDirection`) and no shadows, particles, beams, sky or post effects, rendered by a second `Renderer::render` call into the frame's capture at its on-screen pixel size (capped at 1024 per side), and painted as an image in the GUI with `ImageColor3` and `ImageTransparency`. A frame with no `CurrentCamera` draws nothing. Parts in a viewport are never simulated. `WorldModel`'s spatial queries are `stub-error` in this WP.
+- **Headless.** Captures work on lavapipe, so goldens for a surface and a viewport run in `cargo test` and in `real verify`.
+
+**3. Changed compat scripts restart; they do not reload in place.**
+- In `real run` and the editor, the existing `AssetWatcher` reports changed files under `scripts/`. For a changed `Script` or `LocalScript`, the compat runtime runs its normal `stop()` (connections, binds, callbacks and threads owned by the script go) and then `start()` with the new source. Instances the old run created stay, as they do when a script is disabled and enabled again.
+- A changed `ModuleScript` is dropped from every context's module cache, and every running script that required it, directly or through other modules, restarts the same way. Restarting is the only safe choice for compat code: a module's return value is captured in closures all over the place, and the vendor's model has no reload protocol to hand state across.
+- A source that does not compile leaves the old run going and reports `RE9420` with the compiler's message; the next good save restarts it.
+- `Enabled` (and its deprecated inverse `Disabled`) are added to `Script` and `LocalScript`. Setting it false stops the script; setting it true starts it again from the top, so the "starts at most once" rule in `runtime/scripts.rs` becomes "at most once per enable". This closes the WP11 follow-up.
+- Reload never runs in `real verify`, replays or `play.run`: they read files once, so they stay deterministic.
+- Hooking compat plays into `App::apply_file_changes` is a small `re_app` change, through a maintainer-reviewed PR.
+
+**4. Place files are read by our own reader in `re_import`.**
+- `real import` accepts `.rbxl`/`.rbxm` (binary) and `.rbxlx`/`.rbxmx` (XML). A place's top-level instances become services, as in the other importers; a model's roots go under `Workspace`, or under the dotted path in `--parent`. The output is the same project the Rojo and loader imports write (`real.toml`, the scene, and each script's source as a file under `scripts/` with a `ScriptRef`), so everything after the reader is shared code.
+- **Binary format facts the reader relies on** (restated for this repository):
+  - a 32-byte header: the 8-byte magic `<roblox!`, the 6 bytes `89 ff 0d 0a 1a 0a`, a little-endian `u16` version 0, the class count and instance count as `i32`, and 8 reserved zero bytes;
+  - then chunks, each with a 16-byte header: a 4-byte name padded with zeros, the compressed length, the uncompressed length and 4 reserved bytes. A compressed length of 0 means the body is stored raw. Otherwise the body is a ZSTD frame when it starts with `28 b5 2f fd`, and a bare LZ4 block (no frame) otherwise;
+  - `META` (string pairs), `SSTR` (shared strings, each after a 16-byte hash we ignore), one `INST` per class (class id, class name, a service flag, and the instances' referents), one `PROP` per class and property (class id, the serialised property name, a type id, and one value per instance of the class), one `PRNT` (paired arrays of child and parent referents, with -1 for a root), and `END`, whose body is `</roblox>` and is never compressed;
+  - value arrays use three encodings: 32- and 64-bit integers are zigzag-transformed, big-endian and byte-interleaved (all first bytes, then all second bytes, and so on); 32-bit floats move the sign bit to the lowest bit before the same interleaving; referent arrays are interleaved integers stored as running differences, so they are summed while reading;
+  - a `CFrame` value is a one-byte rotation id, followed by nine raw little-endian floats only when the id is 0; the 24 non-zero ids name axis-aligned rotations, and the positions follow afterwards as one interleaved `Vector3` array for the whole column;
+  - the type ids we decode are 0x01 to 0x0E, 0x10 and 0x12 to 0x22 (string, bool, int32, float32, float64, `UDim`, `UDim2`, `Ray`, `Faces`, `Axes`, `BrickColor`, `Color3`, `Vector2`, `Vector3`, `CFrame`, enum, referent, `Vector3int16`, `NumberSequence`, `ColorSequence`, `NumberRange`, `Rect`, `PhysicalProperties`, `Color3uint8`, int64, shared string, bytecode, optional `CFrame`, `UniqueId`, `Font`, and the newer content type). An unknown type id skips that property for that class with `RE9803`, never the file.
+- **XML format facts:** one `roblox` element with `version="4"`; `Item` elements with `class` and a file-unique `referent` (the literal `null` is reserved for an empty reference); one `Properties` element per item whose children are typed elements carrying the property in a `name` attribute (`CoordinateFrame` with twelve children `X` to `R22`, `Ref`, `token` for enums, `BinaryString` and shared strings in base64, `ProtectedString` for script source, and so on); an optional `SharedStrings` table keyed by its `md5` attribute; `Meta` and the legacy `External` elements are read and ignored.
+- **Serialised names.** Files store some properties under names scripts do not see (lower-case or legacy names, and colour stored as `Color3uint8`). `crates/re_import/data/serialized_names.json` maps them to our class properties, written by hand from the classes our data covers (ADR-0034). A property with no mapping is listed in the import report with `RE9804`, never dropped without a word.
+- **What the reader does not import.** Terrain voxel data and CSG solid data are kept out of the scene and listed in the report (terrain voxels are an M3 non-goal). Asset ids stay ids and resolve through the substitute table (`RE9350` at use), as they do today.
+- **Untrusted input.** Every length is checked against the bytes left before anything is allocated; a chunk may expand to at most 256 MB, a file to at most 10,000,000 instances; references to missing referents and parent cycles are errors with the chunk and offset (`RE9802`). The reader never panics on bad input: the tests feed it truncated and bit-flipped files built from our synthetic fixtures.
+- **Fixtures** are synthetic: a small test-only writer in `re_import/tests/` produces binary and XML files for each type id from a hand-written instance tree, and the tests read them back. The private samples are checked by the private kit only (ADR-0033).
+- **New dependencies**, rows for `docs/DEPENDENCIES.md` (versions checked against crates.io on 2026-10-15):
+
+  | Crate | Version | License | MSRV | For | Features |
+  |---|---|---|---|---|---|
+  | `lz4_flex` | 0.14.0 | MIT | 1.81 | LZ4 chunk bodies | `default-features = false`, `std`, `safe-decode`, `checked-decode` |
+  | `ruzstd` | 0.9.1 | MIT | 1.87 | ZSTD chunk bodies, pure Rust | `default-features = false`, `std` |
+  | `quick-xml` | 0.41.0 | MIT | 1.79 | `.rbxlx`/`.rbxmx` | defaults; the version already in the lockfile through `wayland-scanner`, so no duplicate (0.42.0 is newest) |
+  | `base64` | 0.23.1 | MIT OR Apache-2.0 | 1.71 | binary and shared strings in XML | the version already in the lockfile through `rmcp` |
+
+  All four are used only by `re_import`, a tooling crate, so none ships in a packaged game (WP19).
+
+**5. Skinned `MeshPart`s and compat post effects use WP21's and WP20's public APIs.**
+- `MeshPart` and `Bone` get class rows. A `MeshPart` whose `MeshId` resolves (through the substitute table) to a glTF file with a skin becomes a skinned draw item on WP21's `SkinData`; each `Bone` under the part maps to the joint of the same name, and its `Transform` (written by the compat `Animator` or by scripts) drives that joint. A mesh without a skin draws as a rigid mesh. A bone name the skin does not have, or a joint with no bone, is `RE9440` once per part. The vendor's own mesh format is not read: offline there is no way to fetch it, and projects bring glTF through substitutes.
+- `BloomEffect` (`Intensity`, `Size`, `Threshold`) maps onto WP20's bloom settings. `BlurEffect` (`Size`) and `SunRaysEffect` (`Intensity`, `Spread`) need two settings WP20's frozen post contract does not list yet; WP27 asks WP20 (through the maintainer, as a new defaulted field) for a full-screen blur radius and a sun-rays pass. If WP20 does not add them, those two stay `partial`. `DepthOfFieldEffect` gets a row as `partial` ("stored; not drawn") unless WP20 adds depth of field.
+- Effects are read from `Lighting` and from the current camera. When several enabled effects of one class are present, the first in tree order is used and `RE9441` is logged once; the vendor's stacking rules are not modelled.
+- Effects do not touch simulation, so D2 is unaffected.
+
+**6. Codes and order.**
+- `re_compat` block `RE9400`–`RE9449` (reserved by the maintainer in `src/codes.rs`): `RE9400` data request rejected, `RE9401` data request queue full, `RE9402` data file unreadable, `RE9403` memory store request failed, `RE9410` surface or viewport cannot be drawn as asked, `RE9420` changed script did not compile, `RE9440` skin and bones do not match, `RE9441` stacked post effects. The rest stay free.
+- `re_import` keeps `RE9800`–`RE9899`: `RE9801` now covers only extensions it does not know; new are `RE9802` malformed place file, `RE9803` unknown value type, `RE9804` unmapped serialised property.
+- PRs land in the order persistence, reload, place files, surfaces, skins and effects. "surfaces" needs the `re_render` change below; "skins and effects" waits on WP21 "skins" and WP20 "post".
+
+**Changes WP27 needs from other owners.**
+- Maintainer: the codes and `explain` pages; new class rows under `src/class/` where the shared code needs them (`DataStore`, `OrderedDataStore`, `DataStoreKeyInfo`, `DataStorePages`, the three memory store classes and their pages, `SurfaceGui` members, `ViewportFrame`, `WorldModel`, `MeshPart`, `Bone`, `DepthOfFieldEffect`); `CompatConfig`'s `data` and `gui` sections; the four `DEPENDENCIES.md` rows; the `re_app` hook for compat reload.
+- WP20 (`re_render`): a way to use a `Capture` as the texture of a world-space quad (a texture handle from a render target, drawn depth-tested or on top), for `SurfaceGui`; the blur and sun-rays settings above.
+- WP21: nothing beyond its "skins" contract.
+
+**Alternatives.**
+- **rbx_binary and rbx_xml 3.0.1** (MIT, maintained by the Rojo project). Rejected: both pull `rbx_reflection_database`, a packed copy of the vendor's API reflection data (including defaults) regenerated for each vendor release, which duplicates our class data and conflicts with ADR-0034's rule that such facts are written by us; they also bring `zstd` (C, through `zstd-sys`), `xml-rs`, `ahash`, `log` and `dirs`, and convert into their own DOM types that we would then convert again. Our reader is a few modules over two pure-Rust decompressors.
+- **The `zstd` crate** for ZSTD bodies. Rejected: it builds the C library on all three platforms; `ruzstd` decodes in pure Rust, and decoding is all we need.
+- **One SQLite file for data stores.** Rejected: a new C dependency for small data; per-store JSON files are readable, diffable and easy to seed.
+- **Memory stores in RAM only.** Rejected: the plan asks for local persistence of both services, and a play that restarts would lose queues mid-use. Keeping expiry on the data clock makes persisting them safe.
+- **Drawing `SurfaceGui` meshes straight into the 3D pass** (transforming egui's triangles onto the face). Crisper text, but it needs its own pipeline for egui's textures and clipping in 3D and does nothing for `ViewportFrame`; render-to-texture serves both, as the plan says.
+- **Reloading compat modules in place**, as the native runtime does. Rejected: compat code has no hook to carry state across, and a half-replaced module graph is worse than a clean restart.
+
+**Consequences.**
+- Save and load paths in compat games run locally, with the same yields, limits and error numbers scripts check for, and verify runs stay repeatable through the seed directory and the data clock.
+- Budgets match one server only. A game that is fine locally can still hit the vendor's per-experience or per-key limits online.
+- Surfaces and viewports cost one offscreen render each when they change. Many animated surfaces will hit the redraw budget and update at a lower rate, by design.
+- Script reload is a restart, so edits during play lose the edited script's local state; modules restart everything that uses them.
+- Place files import without Studio, Rojo or network access. Anything we cannot map is in the report, not lost silently. The format is undocumented by the vendor, so a future vendor change can need a reader update; unknown chunks and type ids degrade to warnings, not failures.
+- Four small MIT-family crates join the tooling build; none ships in the runtime.
+
 ## Open questions for the owner
 
 1. **License.**
