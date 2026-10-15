@@ -171,7 +171,7 @@ cargo test --locked -p re_compat enums
 
 ## WP11: The data model, signals and the scheduler
 
-**Status:** PR "data model" merged in #47; PR "runtime" is next. `RE9006`–`RE9019` are WP11's; "data model" uses `RE9007` and `RE9008`.
+**Status:** done. PR "data model" merged in #47 and PR "runtime" in #56. `RE9006`–`RE9019` are WP11's; "data model" uses `RE9007` and `RE9008`.
 
 **Goal.** The instance tree that scripts see: `game`, services, `workspace` and `script`; instance handles with properties, methods and events; signals; attributes and tags; `require` by instance; `RunService`; and `task`, `wait`, `delay` and `spawn`, all running in `server` and `client` script contexts.
 
@@ -373,6 +373,8 @@ cargo test --locked -p re_compat character
 ---
 
 ## WP15: Rendering, UI, tweens and sound
+
+**Status:** PR "tweens and sound" merged in #55 (`RE9350`–`RE9352`, `[compat] assets` and `effect_budget`). UI, rendering and the fonts (ADR-0035) are next.
 
 **Goal.** Draw what Roblox-style projects build (parts with materials, lights, effects, billboards and screen UI) and play their tweens and sounds.
 
