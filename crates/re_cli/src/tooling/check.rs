@@ -120,11 +120,26 @@ pub fn run(args: CheckArgs, project: &Path) -> anyhow::Result<ExitCode> {
             .filter(|d| d.exists() || !args.scripts_dirs.is_empty())
             .collect()
     };
+    // In a project the checker reads `.real/types/engine.d.luau`, the same file
+    // editors and agents use; outside one it gets a temporary copy.
+    let definitions = match (&config, args.types) {
+        (Some(_), true) => match re_script::write_definitions(project) {
+            Ok(path) => Some(path),
+            Err(e) => {
+                eprintln!(
+                    "warning: cannot write {}: {e}; the type checker uses a temporary copy",
+                    re_script::DEFINITIONS_PATH
+                );
+                None
+            }
+        },
+        _ => None,
+    };
     let options = CorpusOptions {
         types: args.types,
         types_options: TypesOptions {
             checker: checker(project, &args, config.as_ref()),
-            definitions: None,
+            definitions,
         },
     };
     let report = corpus::run(&dirs, &options);

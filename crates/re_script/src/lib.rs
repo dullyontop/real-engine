@@ -12,7 +12,8 @@
 //!   engine API, a CPU budget `pcall` cannot swallow, a memory limit and
 //!   project-confined `require`), the per-phase entry point and hot reload.
 //!   **Frozen** at WP3's exit; `re_app` drives it through a [`ScriptHost`].
-//! * [`definitions`]: `engine.d.luau`, generated from the API registrations.
+//! * [`definitions`]: `engine.d.luau`, generated from the API registrations;
+//!   [`write_definitions`] puts it at `.real/types/engine.d.luau` in a project.
 //!
 //! Diagnostic codes: `RE3000`–`RE3079` and the compatibility block `RE9xxx`
 //! (ARCHITECTURE §7); see [`codes`].
@@ -30,7 +31,7 @@ mod runtime;
 mod scheduler;
 pub mod vm;
 
-pub use api::definitions;
+pub use api::{DEFINITIONS_PATH, definitions, write_definitions};
 pub use compile::compile_check;
 pub use diag::{ErrorKind, ScriptError};
 pub use host::{CommandHost, NoServices, ScriptHost, WorldHost};

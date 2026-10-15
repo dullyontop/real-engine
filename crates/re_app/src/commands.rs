@@ -1,10 +1,11 @@
 //! The runtime commands `re_app` registers (ARCHITECTURE §6): `verify`,
-//! `screenshot`, `play.run` and `asset.import`.
+//! `screenshot`, `play.run` and `asset.import`, and a `describe` that adds the
+//! procedural node kinds and the project's scripts to the built-in one.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use re_command::{CommandRegistry, Tier};
+use re_command::{CommandRegistry, NoArgs, Tier};
 use re_core::{Diagnostic, Location};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -202,8 +203,41 @@ fn import(app: &mut App, args: ImportArgs, dry_run: bool) -> Result<serde_json::
     Ok(json!({ "path": dest, "id": meta.id().to_string() }))
 }
 
-/// Registers the runtime commands on `registry`.
+/// `describe`: the built-in description (components, generators, commands)
+/// plus `nodes`, the node kinds procedural graphs can use (ports, parameters),
+/// and `scripts`, the project's `.luau` files under `scripts/`.
+fn describe(app: &mut App, specs: &[re_command::CommandSpec]) -> serde_json::Value {
+    let world = app.world();
+    let mut d = world.describe();
+    let nodes = world.ecs.get_resource::<re_proc::GraphStore>().map_or_else(
+        || re_proc::NodeRegistry::m1().describe(),
+        |store| store.evaluator().registry().describe(),
+    );
+    let scripts: Vec<serde_json::Value> = verify::content_files(app.project(), "scripts", ".luau")
+        .into_iter()
+        .map(|path| json!({ "path": path }))
+        .collect();
+    if let Some(obj) = d.as_object_mut() {
+        obj.insert("nodes".into(), nodes);
+        obj.insert("scripts".into(), json!(scripts));
+        obj.insert(
+            "commands".into(),
+            serde_json::to_value(specs).unwrap_or_default(),
+        );
+    }
+    d
+}
+
+/// Registers the runtime commands on `registry`. Its `describe` replaces the
+/// built-in one, so register the built-ins first.
 pub fn register(registry: &mut CommandRegistry<App>) {
+    registry.register_typed::<NoArgs, _>(
+        "describe",
+        "Describe what exists: every component (fields, types, defaults, docs), every generator, every procedural node kind, the project's scripts and every command.",
+        Tier::Read,
+        true,
+        |app, _args, call| Ok(describe(app, call.specs())),
+    );
     registry.register_typed::<ScreenshotArgs, _>(
         "screenshot",
         "Capture the current view (the scene and the HUD) as a PNG in the project; returns its path, size and graphics backend.",

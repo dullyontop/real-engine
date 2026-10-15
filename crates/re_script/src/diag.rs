@@ -9,7 +9,7 @@
 //! Luau frame of the traceback is used instead.
 //!
 //! Engine functions raise errors whose message starts with a bracketed code, such
-//! as `[RE1101] ...`; the diagnostic then carries that code instead of the generic
+//! as `[RE1003] ...`; the diagnostic then carries that code instead of the generic
 //! [`RUNTIME`](crate::codes::RUNTIME).
 
 use std::fmt;

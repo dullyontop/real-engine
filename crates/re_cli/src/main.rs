@@ -72,7 +72,8 @@ enum Command {
     },
     /// Run the project.
     Run(RunArgs),
-    /// Describe what the project can use: components, generators and commands.
+    /// Describe what the project can use: components, generators, procedural
+    /// node kinds, scripts and commands.
     Describe {
         /// Print JSON.
         #[arg(long)]
@@ -300,19 +301,22 @@ fn cmd_describe(project: &Path, json: bool, luau_defs: bool) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let d = &outcome.data;
-    let list = |key: &str| -> Vec<String> {
+    let list_by = |key: &str, field: &str| -> Vec<String> {
         d.get(key)
             .and_then(|v| v.as_array())
             .map(|a| {
                 a.iter()
-                    .filter_map(|c| c.get("name").and_then(|n| n.as_str()))
+                    .filter_map(|c| c.get(field).and_then(|n| n.as_str()))
                     .map(str::to_string)
                     .collect()
             })
             .unwrap_or_default()
     };
+    let list = |key: &str| list_by(key, "name");
     println!("components: {}", list("components").join(", "));
     println!("generators: {}", list("generators").join(", "));
+    println!("nodes: {}", list_by("nodes", "kind").join(", "));
+    println!("scripts: {}", list_by("scripts", "path").join(", "));
     println!("commands:");
     for spec in app.commands().specs() {
         println!(

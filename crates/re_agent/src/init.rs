@@ -6,6 +6,8 @@
 //! * `CLAUDE.md`: `@AGENTS.md`, so Claude Code reads the same file;
 //! * `.real/agent-policy.toml`: [`Policy::init_default`] (`edit` within the
 //!   default scopes; committing it is the opt-in);
+//! * `.real/types/engine.d.luau`: the engine's Luau API
+//!   ([`re_script::write_definitions`]), for luau-lsp and agents;
 //! * client configs, each in its client's own format, all naming the server
 //!   `real-engine`: `.mcp.json` (Claude Code, `mcpServers`),
 //!   `.vscode/mcp.json` (VS Code, `servers` with `type`), `.cursor/mcp.json`
@@ -313,6 +315,16 @@ pub fn init(
             report.written.push("CLAUDE.md".to_string());
         }
     }
+
+    // The engine API for luau-lsp and agents (ignored by git: it follows the
+    // engine build, not the project).
+    re_script::write_definitions(project).map_err(|e| {
+        init_error(
+            &project.join(re_script::DEFINITIONS_PATH),
+            format!("cannot write {}: {e}", re_script::DEFINITIONS_PATH),
+        )
+    })?;
+    report.written.push(re_script::DEFINITIONS_PATH.to_string());
 
     for config in client_configs(&options.program) {
         match merged_config(project, &config) {

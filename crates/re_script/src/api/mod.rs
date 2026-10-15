@@ -180,3 +180,28 @@ pub fn definitions() -> String {
     out.push('\n');
     out
 }
+
+/// Where [`write_definitions`] puts `engine.d.luau` in a project, so editors
+/// running luau-lsp and agents find it at a stable path.
+pub const DEFINITIONS_PATH: &str = ".real/types/engine.d.luau";
+
+/// Writes [`definitions`] to [`DEFINITIONS_PATH`] under `project` and returns
+/// its full path. The contents depend only on the engine build; a file that
+/// already holds them is left untouched, so its modification time only changes
+/// with the engine.
+///
+/// # Errors
+///
+/// The directory cannot be created or the file cannot be written.
+pub fn write_definitions(project: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let path = project.join(DEFINITIONS_PATH);
+    let text = definitions();
+    if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
+        return Ok(path);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, text)?;
+    Ok(path)
+}

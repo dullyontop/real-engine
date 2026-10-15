@@ -112,6 +112,27 @@ fn check_types_without_a_checker_is_re3090() {
 }
 
 #[test]
+fn check_types_and_agent_init_write_the_engine_definitions() {
+    let dir = project(&[("scripts/ok.luau", "print(\"hi\")\n")]);
+    let game = dir.path().join("game");
+    let defs = game.join(".real/types/engine.d.luau");
+    let expected = real(&["describe", "--luau-defs"], &game);
+    assert!(expected.status.success(), "{}", text(&expected));
+
+    // Written even when the checker is missing: editors use the file too.
+    real(
+        &["check", "--types", "--checker", "no-such-luau-lsp"],
+        &game,
+    );
+    assert_eq!(std::fs::read(&defs).unwrap(), expected.stdout);
+
+    std::fs::remove_file(&defs).unwrap();
+    let o = real(&["agent", "init"], &game);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(std::fs::read(&defs).unwrap(), expected.stdout);
+}
+
+#[test]
 fn check_corpus_needs_directories() {
     let dir = tempfile::tempdir().unwrap();
     let o = Command::new(env!("CARGO_BIN_EXE_real"))
