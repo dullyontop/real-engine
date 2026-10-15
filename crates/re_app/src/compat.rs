@@ -284,9 +284,17 @@ pub fn install_default_scripts(
         return Ok(());
     };
     // The defaults drive a character made of parts and the camera; until the
-    // class layer has both, a character is an empty `Model` and they would
-    // only wait for it.
-    if classes.class("Part").is_err() || classes.member("Workspace", "CurrentCamera").is_err() {
+    // class layer has parts, `Workspace.CurrentCamera` and the camera's own
+    // members (WP15), a character is an empty `Model` and they would only
+    // wait for it, or fail on the camera.
+    let needs = [
+        ("Workspace", "CurrentCamera"),
+        ("Camera", "CameraType"),
+        ("Camera", "CameraSubject"),
+        ("Camera", "CFrame"),
+        ("Camera", "Focus"),
+    ];
+    if classes.class("Part").is_err() || needs.iter().any(|(c, m)| classes.member(c, m).is_err()) {
         return Ok(());
     }
     for script in re_compat::humanoid::scripts::DEFAULT_SCRIPTS {

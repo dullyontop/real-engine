@@ -6,6 +6,7 @@
 pub mod app;
 pub mod datatypes;
 pub mod import;
+pub mod physics;
 pub mod runtime;
 pub mod sha256;
 
@@ -74,6 +75,7 @@ pub fn step(name: &str) -> Option<Step> {
     import::step(name)
         .or_else(|| datatypes::step(name))
         .or_else(|| runtime::step(name))
+        .or_else(|| physics::step(name))
         .or_else(|| app::step(name))
 }
 

@@ -86,10 +86,8 @@ expression: snapshot
       "Vector3.new": 1
     },
     "gap": {
-      "covered": 34,
-      "missing": {
-        "Instance.new(Part)": 1
-      }
+      "covered": 35,
+      "missing": {}
     },
     "parse_failed": [
       {

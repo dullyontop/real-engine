@@ -27,6 +27,13 @@
           "Archivable": true,
           "Secret": ""
         },
+        "Compat_Model": {
+          "PrimaryPart": null
+        },
+        "Compat_Workspace": {
+          "Gravity": 196.2,
+          "FallenPartsDestroyHeight": -500.0
+        },
         "ServiceTag": {}
       }
     },
@@ -41,6 +48,9 @@
         "Compat_Instance": {
           "Archivable": true,
           "Secret": ""
+        },
+        "Compat_Model": {
+          "PrimaryPart": null
         }
       }
     },

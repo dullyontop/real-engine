@@ -1108,6 +1108,11 @@ impl App {
         {
             self.diagnostics.push(d);
         }
+        // The server's parts (WP13), with their touch events.
+        if self.compat.is_some() {
+            let dt: f64 = self.clock.dt_secs().into();
+            self.compat_call(ContextKind::Server, |vm, h| vm.physics(h, dt));
+        }
         self.perf.physics_step(step.elapsed());
         self.physics.poses_into(&mut self.poses);
         self.contacts.extend_from_slice(self.physics.events());
@@ -1727,7 +1732,8 @@ impl App {
 
     /// The client half of a compat frame, after the server's fixed steps:
     /// replication, the client's deliveries and phases (one round of fixed
-    /// phases per server step, with character physics, tweens and sounds),
+    /// phases per server step, with character and part physics, tweens and
+    /// sounds),
     /// then the sound commands for the mixer.
     fn compat_client_frame(&mut self, frame_dt: f64, steps: u32) {
         if let Some(c) = &mut self.compat {
@@ -1741,6 +1747,7 @@ impl App {
                 d.extend(vm.pre_animation(h, step_dt));
                 d.extend(vm.pre_simulation(h, step_dt));
                 d.extend(crate::compat::step_characters(h.world, step_dt));
+                d.extend(vm.physics(h, step_dt));
                 d.extend(vm.media(h, step_dt));
                 d.extend(vm.post_simulation(h, step_dt));
             }

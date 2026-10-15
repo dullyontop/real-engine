@@ -29,6 +29,7 @@ use crate::codes;
 use crate::config::{LayerTable, PhysicsConfig};
 use crate::convert::{gq, grv, gv, jq, jv, rv, unit_rotation};
 use crate::jobs::JoltRayonJobs;
+use crate::parts::{PartGate, PartListener, PartsState};
 use crate::shapes;
 
 /// The engine's physics world: Jolt behind a command-buffer API.
@@ -49,7 +50,7 @@ use crate::shapes;
 pub struct Physics {
     pub(crate) world: PhysicsWorld,
     jobs: Arc<JoltRayonJobs>,
-    config: PhysicsConfig,
+    pub(crate) config: PhysicsConfig,
     pub(crate) bodies: BTreeMap<EntityId, BodyEntry>,
     /// Body → entity, including bodies removed since the last step (see the module docs)
     /// and characters' inner bodies.
@@ -61,6 +62,7 @@ pub struct Physics {
     removed: Vec<BodyId>,
     diagnostics: Vec<Diagnostic>,
     scratch_poses: Vec<oxijolt::BodyPose>,
+    pub(crate) parts: PartsState,
 }
 
 /// What the world knows about one body.
@@ -185,12 +187,15 @@ impl MotionState {
 
 /// Filters what characters collide with by group mask (Jolt asks it during
 /// `update_character`; it never touches the world).
-#[derive(Default)]
+/// A character meets an assembly's part only when the part collides and the
+/// character's group bits include the part's collision group.
 struct GroupGate {
     /// Raw body id → group bits.
     masks: RwLock<HashMap<u32, u32>>,
     /// The group bits of the character being updated.
     current: AtomicU32,
+    /// The assemblies' parts.
+    parts: Arc<PartGate>,
 }
 
 impl GroupGate {
@@ -215,6 +220,12 @@ impl CharacterContactListener for GroupGate {
             return true;
         };
         let current = self.current.load(Ordering::Relaxed);
+        if let Some(asm) = self.parts.body(body) {
+            let Some(part) = asm.child(contact.sub_shape_id).map(|i| asm.parts[i]) else {
+                return true;
+            };
+            return part.collide && part.group < 32 && current & (1 << part.group) != 0;
+        }
         self.masks
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -249,13 +260,16 @@ fn collision_layers(table: &LayerTable) -> CollisionLayers {
     layers
 }
 
+/// How far from the simulation origin, per axis, a body may be (Jolt's
+/// limit for single precision), in studs.
+#[allow(clippy::unnecessary_cast)]
+pub const WORLD_LIMIT: f32 = oxijolt::limits::MAX_POSITION as f32;
+
 fn max_position() -> f32 {
-    #[allow(clippy::unnecessary_cast)]
-    let max = oxijolt::limits::MAX_POSITION as f32;
-    max
+    WORLD_LIMIT
 }
 
-fn in_world(p: Vec3) -> bool {
+pub(crate) fn in_world(p: Vec3) -> bool {
     p.is_finite() && p.abs().max_element() <= max_position()
 }
 
@@ -263,7 +277,7 @@ fn at(id: EntityId) -> Location {
     Location::entity(id.to_string())
 }
 
-fn outside_world(id: EntityId, what: &str, p: Vec3) -> Diagnostic {
+pub(crate) fn outside_world(id: EntityId, what: &str, p: Vec3) -> Diagnostic {
     Diagnostic::error(
         codes::OUTSIDE_WORLD,
         format!(
@@ -318,7 +332,13 @@ impl Physics {
                 .contacts(true)
                 .body_activation(true),
         );
-        let gate = Arc::new(GroupGate::default());
+        let parts = PartsState::default();
+        world.set_contact_listener(Some(Arc::new(PartListener(parts.gate.clone()))));
+        let gate = Arc::new(GroupGate {
+            masks: RwLock::default(),
+            current: AtomicU32::new(0),
+            parts: parts.gate.clone(),
+        });
         world.set_character_contact_listener(Some(gate.clone()));
         Ok(Physics {
             world,
@@ -333,6 +353,7 @@ impl Physics {
             removed: Vec::new(),
             diagnostics: Vec::new(),
             scratch_poses: Vec::new(),
+            parts,
         })
     }
 
@@ -561,6 +582,7 @@ impl Physics {
             .map_err(|e| body_invalid(id, e))?;
         self.bodies.remove(&id);
         self.end_pairs_of(body);
+        self.end_part_pairs_of_body(body);
         self.gate.forget(body);
         self.state.kin_targets.remove(&id);
         self.state.kin_moved.remove(&id);
@@ -876,6 +898,7 @@ impl Physics {
         self.state.slept.clear();
 
         self.drive_kinematics(dt);
+        self.drive_joints(dt);
         self.update_characters(dt);
 
         let report = self.world.step(dt).map_err(|e| {
@@ -897,7 +920,14 @@ impl Physics {
             );
         }
         self.gather_events();
+        let slept = std::mem::take(&mut self.state.slept);
+        self.refresh_moved_assemblies(&slept);
+        self.state.slept = slept;
         Ok(())
+    }
+
+    pub(crate) fn push_diagnostic(&mut self, d: Diagnostic) {
+        self.diagnostics.push(d);
     }
 
     fn drive_kinematics(&mut self, dt: f32) {
@@ -996,7 +1026,9 @@ impl Physics {
     }
 
     fn gather_events(&mut self) {
-        let events = self.world.take_events();
+        let mut events = self.world.take_events();
+        let contacts = std::mem::take(&mut events.contacts);
+        events.contacts = self.gather_part_contacts(contacts);
         for a in &events.activations {
             match a {
                 ActivationEvent::Deactivated(body) => self.state.slept.push(*body),

@@ -1,0 +1,2259 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "PVInstance",
+      "extend": true,
+      "methods": [
+        {
+          "name": "GetPivot",
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "The frame the instance moves and turns about: a part's CFrame, or a model's pivot."
+        },
+        {
+          "name": "PivotTo",
+          "params": [
+            {
+              "name": "targetCFrame",
+              "type": "CFrame"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Moves the instance so that its pivot lands on the given frame; a model's parts move together, keeping their offsets."
+        }
+      ]
+    },
+    {
+      "name": "Model",
+      "extend": true,
+      "properties": [
+        {
+          "name": "PrimaryPart",
+          "type": "Instance<BasePart>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The part whose frame is the model's pivot, or nil."
+        },
+        {
+          "name": "WorldPivot",
+          "type": "CFrame",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "partial",
+          "note": "With a primary part, setting it moves that part (PivotOffset is not built). Without one, the pivot set is kept while the place runs, not saved; until set it is the bounding-box centre.",
+          "doc": "The model's pivot in the world: the primary part's frame, or the centre of the model's bounding box when it has none."
+        }
+      ],
+      "methods": [
+        {
+          "name": "GetBoundingBox",
+          "returns": [
+            "CFrame",
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The frame and size of the box around every part in the model, aligned with the pivot's rotation."
+        },
+        {
+          "name": "GetExtentsSize",
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The size of the box around every part in the model."
+        },
+        {
+          "name": "MoveTo",
+          "params": [
+            {
+              "name": "position",
+              "type": "Vector3"
+            }
+          ],
+          "status": "partial",
+          "note": "Does not step up over parts in the way.",
+          "doc": "Moves the model so its pivot is at the given position, keeping its rotation."
+        },
+        {
+          "name": "TranslateBy",
+          "params": [
+            {
+              "name": "delta",
+              "type": "Vector3"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Moves every part of the model by the given offset."
+        },
+        {
+          "name": "SetPrimaryPartCFrame",
+          "params": [
+            {
+              "name": "cframe",
+              "type": "CFrame"
+            }
+          ],
+          "deprecated": "PivotTo",
+          "status": "implemented",
+          "doc": "Moves the model so its primary part lands on the frame."
+        },
+        {
+          "name": "GetPrimaryPartCFrame",
+          "returns": [
+            "CFrame"
+          ],
+          "deprecated": "GetPivot",
+          "status": "implemented",
+          "doc": "The primary part's frame."
+        }
+      ]
+    },
+    {
+      "name": "BasePart",
+      "superclass": "PVInstance",
+      "components": [
+        "Transform"
+      ],
+      "status": "implemented",
+      "doc": "A solid block of the 3D world that can be simulated, collide, be touched and be found by queries.",
+      "properties": [
+        {
+          "name": "Size",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            4,
+            1,
+            2
+          ],
+          "status": "implemented",
+          "doc": "The part's dimensions in studs along its own X, Y and Z axes. Each is at least 0.001."
+        },
+        {
+          "name": "Color",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.639,
+            0.635,
+            0.647
+          ],
+          "status": "partial",
+          "note": "Stored and replicated; the renderer does not draw it yet.",
+          "doc": "The part's colour."
+        },
+        {
+          "name": "Transparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "status": "partial",
+          "note": "Stored and replicated; the renderer does not draw it yet.",
+          "doc": "How see-through the part is, from 0 (opaque) to 1 (invisible)."
+        },
+        {
+          "name": "Anchored",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the part does not move by physics; it still collides and can be moved by scripts."
+        },
+        {
+          "name": "CanCollide",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false other parts pass through this one."
+        },
+        {
+          "name": "CanQuery",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, and the part does not collide, spatial queries do not see it."
+        },
+        {
+          "name": "CanTouch",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the part fires no Touched or TouchEnded events."
+        },
+        {
+          "name": "Massless",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the part adds no mass to its assembly, unless it is the assembly's root."
+        },
+        {
+          "name": "Material",
+          "type": "Enum.Material",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Plastic",
+          "status": "implemented",
+          "doc": "The part's material; it sets the default density, friction and elasticity."
+        },
+        {
+          "name": "CollisionGroup",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Default",
+          "status": "implemented",
+          "doc": "The name of the collision group the part belongs to (see PhysicsService)."
+        },
+        {
+          "name": "RootPriority",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The part with the highest value becomes its assembly's root, after anchored parts."
+        },
+        {
+          "name": "CFrame",
+          "type": "CFrame",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The part's position and rotation in the world."
+        },
+        {
+          "name": "Position",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The part's position in the world."
+        },
+        {
+          "name": "Orientation",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The part's rotation in degrees about X, Y and Z, applied in Y, X, Z order."
+        },
+        {
+          "name": "Rotation",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The part's rotation in degrees about X, Y and Z, applied in X, Y, Z order."
+        },
+        {
+          "name": "CustomPhysicalProperties",
+          "type": "PhysicalProperties",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "partial",
+          "note": "Kept while the place runs; not saved with the scene. Setting it back to nil from a script is refused.",
+          "doc": "Physical properties that replace the material's, or nil to use the material's."
+        },
+        {
+          "name": "CurrentPhysicalProperties",
+          "type": "PhysicalProperties",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The physical properties in effect: the custom ones, or the material's."
+        },
+        {
+          "name": "Mass",
+          "type": "number",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The part's own mass: density times volume."
+        },
+        {
+          "name": "AssemblyLinearVelocity",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "partial",
+          "doc": "The velocity of the assembly's centre of mass, in studs per second. Setting it changes the whole assembly's velocity.",
+          "note": "On a client, a part the server simulates reads zero: the client does not simulate it."
+        },
+        {
+          "name": "AssemblyAngularVelocity",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "partial",
+          "doc": "The assembly's angular velocity in radians per second.",
+          "note": "On a client, a part the server simulates reads zero: the client does not simulate it."
+        },
+        {
+          "name": "AssemblyMass",
+          "type": "number",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The total mass of the parts in the assembly, massless parts aside."
+        },
+        {
+          "name": "AssemblyCenterOfMass",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The centre of mass of the assembly in the world."
+        },
+        {
+          "name": "AssemblyRootPart",
+          "type": "Instance<BasePart>",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The root part of the assembly the part belongs to."
+        },
+        {
+          "name": "Velocity",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "deprecated": "AssemblyLinearVelocity",
+          "status": "implemented",
+          "doc": "The assembly's linear velocity."
+        },
+        {
+          "name": "RotVelocity",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "deprecated": "AssemblyAngularVelocity",
+          "status": "implemented",
+          "doc": "The assembly's angular velocity."
+        }
+      ],
+      "methods": [
+        {
+          "name": "ApplyImpulse",
+          "params": [
+            {
+              "name": "impulse",
+              "type": "Vector3"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Adds an impulse at the assembly's centre of mass."
+        },
+        {
+          "name": "ApplyImpulseAtPosition",
+          "params": [
+            {
+              "name": "impulse",
+              "type": "Vector3"
+            },
+            {
+              "name": "position",
+              "type": "Vector3"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Adds an impulse at a point in the world, which can also turn the assembly."
+        },
+        {
+          "name": "ApplyAngularImpulse",
+          "params": [
+            {
+              "name": "impulse",
+              "type": "Vector3"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Adds an angular impulse to the assembly."
+        },
+        {
+          "name": "GetMass",
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The part's own mass."
+        },
+        {
+          "name": "GetRootPart",
+          "returns": [
+            "BasePart"
+          ],
+          "status": "implemented",
+          "doc": "The root part of the part's assembly."
+        },
+        {
+          "name": "GetConnectedParts",
+          "params": [
+            {
+              "name": "recursive",
+              "type": "bool",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The parts joined to this one by welds and joints; with recursive true, every part reachable through them."
+        },
+        {
+          "name": "GetJoints",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The welds, joints and constraints attached to this part or its attachments."
+        },
+        {
+          "name": "IsGrounded",
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True when the part is anchored or joined to an anchored part."
+        },
+        {
+          "name": "GetTouchingParts",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The parts this part is touching now."
+        },
+        {
+          "name": "GetVelocityAtPosition",
+          "params": [
+            {
+              "name": "position",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The velocity of the point of the assembly at the given world position."
+        },
+        {
+          "name": "CanCollideWith",
+          "params": [
+            {
+              "name": "part",
+              "type": "BasePart"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True if the two parts' collision groups collide and both parts collide."
+        },
+        {
+          "name": "BreakJoints",
+          "deprecated": "Destroy",
+          "status": "implemented",
+          "doc": "Destroys the welds and joints attached to the part."
+        },
+        {
+          "name": "SetNetworkOwner",
+          "params": [
+            {
+              "name": "player",
+              "type": "Player",
+              "optional": true
+            }
+          ],
+          "status": "partial",
+          "note": "Recorded on the assembly's parts and used by replication; the server still simulates the assembly.",
+          "doc": "Makes a player's client (or the server, for nil) the owner of the part's assembly. Server only; refused on a grounded assembly."
+        },
+        {
+          "name": "GetNetworkOwner",
+          "returns": [
+            "Player"
+          ],
+          "status": "implemented",
+          "doc": "The player that owns the part, or nil for the server. Server only."
+        },
+        {
+          "name": "SetNetworkOwnershipAuto",
+          "status": "partial",
+          "note": "Gives ownership back to the server; ownership is never assigned automatically.",
+          "doc": "Lets the engine choose the owner of the part's assembly. Server only."
+        },
+        {
+          "name": "CanSetNetworkOwnership",
+          "returns": [
+            "bool",
+            "string"
+          ],
+          "status": "implemented",
+          "doc": "Whether the ownership of the part's assembly can be set, and why not if it cannot."
+        }
+      ],
+      "events": [
+        {
+          "name": "Touched",
+          "params": [
+            {
+              "name": "otherPart",
+              "type": "BasePart"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when another part starts touching this one, if both can touch."
+        },
+        {
+          "name": "TouchEnded",
+          "params": [
+            {
+              "name": "otherPart",
+              "type": "BasePart"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when another part stops touching this one."
+        }
+      ]
+    },
+    {
+      "name": "Part",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A basic part: a block, ball, cylinder, wedge or corner wedge.",
+      "properties": [
+        {
+          "name": "Shape",
+          "type": "Enum.PartType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Block",
+          "status": "implemented",
+          "doc": "The part's shape. A ball's diameter is its smallest dimension; a cylinder lies along X."
+        }
+      ]
+    },
+    {
+      "name": "WedgePart",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A wedge: a block cut diagonally, sloping up from its front bottom edge to its back top edge."
+    },
+    {
+      "name": "CornerWedgePart",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A corner wedge: a pyramid-like part with its apex above one corner."
+    },
+    {
+      "name": "TrussPart",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "partial",
+      "note": "Climbing is not built; it collides as a block.",
+      "doc": "A lattice beam. It collides as a block."
+    },
+    {
+      "name": "SpawnLocation",
+      "superclass": "Part",
+      "creatable": true,
+      "status": "partial",
+      "note": "The properties are stored; spawning characters here belongs to the character work.",
+      "doc": "A part where characters appear.",
+      "properties": [
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false characters do not spawn here."
+        },
+        {
+          "name": "Neutral",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When true any player may spawn here."
+        },
+        {
+          "name": "AllowTeamChangeOnTouch",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored; touching the spawn does not change a player's team yet.",
+          "doc": "When true touching it moves a player to its team."
+        },
+        {
+          "name": "Duration",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 10,
+          "status": "implemented",
+          "doc": "Seconds of protection a spawned character gets; 0 gives none."
+        }
+      ]
+    },
+    {
+      "name": "Terrain",
+      "superclass": "BasePart",
+      "status": "partial",
+      "note": "Always empty: no voxels, water or terrain methods.",
+      "doc": "The place's voxel terrain. It is always empty here."
+    },
+    {
+      "name": "Camera",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "This file declares the class; its properties come with the rendering work.",
+      "doc": "A viewpoint in the 3D world. Workspace.CurrentCamera is the one the place is seen through."
+    },
+    {
+      "name": "WorldRoot",
+      "extend": true,
+      "methods": [
+        {
+          "name": "Raycast",
+          "params": [
+            {
+              "name": "origin",
+              "type": "Vector3"
+            },
+            {
+              "name": "direction",
+              "type": "Vector3"
+            },
+            {
+              "name": "raycastParams",
+              "type": "RaycastParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "RaycastResult"
+          ],
+          "status": "partial",
+          "note": "IgnoreWater has no effect: there is no terrain water.",
+          "doc": "Casts a ray from origin along direction (its length is the reach) and returns the first part it enters, or nil. Parts the ray starts inside are not hit."
+        },
+        {
+          "name": "Blockcast",
+          "params": [
+            {
+              "name": "cframe",
+              "type": "CFrame"
+            },
+            {
+              "name": "size",
+              "type": "Vector3"
+            },
+            {
+              "name": "direction",
+              "type": "Vector3"
+            },
+            {
+              "name": "params",
+              "type": "RaycastParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "RaycastResult"
+          ],
+          "status": "implemented",
+          "doc": "Sweeps a box along direction and returns the first part it meets, or nil. Parts the box starts in are not hit."
+        },
+        {
+          "name": "Spherecast",
+          "params": [
+            {
+              "name": "position",
+              "type": "Vector3"
+            },
+            {
+              "name": "radius",
+              "type": "number"
+            },
+            {
+              "name": "direction",
+              "type": "Vector3"
+            },
+            {
+              "name": "params",
+              "type": "RaycastParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "RaycastResult"
+          ],
+          "status": "implemented",
+          "doc": "Sweeps a ball along direction and returns the first part it meets, or nil. Parts the ball starts in are not hit."
+        },
+        {
+          "name": "Shapecast",
+          "params": [
+            {
+              "name": "part",
+              "type": "BasePart"
+            },
+            {
+              "name": "direction",
+              "type": "Vector3"
+            },
+            {
+              "name": "params",
+              "type": "RaycastParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "RaycastResult"
+          ],
+          "status": "implemented",
+          "doc": "Sweeps the shape of a part along direction and returns the first other part it meets, or nil."
+        },
+        {
+          "name": "GetPartBoundsInBox",
+          "params": [
+            {
+              "name": "cframe",
+              "type": "CFrame"
+            },
+            {
+              "name": "size",
+              "type": "Vector3"
+            },
+            {
+              "name": "overlapParams",
+              "type": "OverlapParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The parts whose bounding boxes overlap the given box."
+        },
+        {
+          "name": "GetPartBoundsInRadius",
+          "params": [
+            {
+              "name": "position",
+              "type": "Vector3"
+            },
+            {
+              "name": "radius",
+              "type": "number"
+            },
+            {
+              "name": "overlapParams",
+              "type": "OverlapParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The parts whose bounding boxes overlap the given ball."
+        },
+        {
+          "name": "GetPartsInPart",
+          "params": [
+            {
+              "name": "part",
+              "type": "BasePart"
+            },
+            {
+              "name": "overlapParams",
+              "type": "OverlapParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The parts whose shapes overlap the shape of the given part."
+        },
+        {
+          "name": "BulkMoveTo",
+          "params": [
+            {
+              "name": "partList",
+              "type": "table"
+            },
+            {
+              "name": "cframeList",
+              "type": "table"
+            },
+            {
+              "name": "eventMode",
+              "type": "Enum.BulkMoveMode",
+              "optional": true
+            }
+          ],
+          "status": "partial",
+          "note": "The event mode is ignored: CFrame change events fire as for single moves.",
+          "doc": "Moves many parts to their frames at once."
+        },
+        {
+          "name": "FindPartOnRay",
+          "params": [
+            {
+              "name": "ray",
+              "type": "Ray"
+            },
+            {
+              "name": "ignoreDescendantsInstance",
+              "type": "Instance",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "BasePart",
+            "Vector3",
+            "Vector3",
+            "Enum.Material"
+          ],
+          "deprecated": "Raycast",
+          "status": "stub-error",
+          "note": "Use Raycast.",
+          "doc": "Casts a ray and returns the part hit, the point, the normal and the material."
+        }
+      ]
+    },
+    {
+      "name": "Workspace",
+      "extend": true,
+      "properties": [
+        {
+          "name": "Gravity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 196.2,
+          "status": "implemented",
+          "doc": "Downward acceleration in studs per second squared."
+        },
+        {
+          "name": "FallenPartsDestroyHeight",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": -500,
+          "status": "implemented",
+          "doc": "Unanchored parts that fall below this height are destroyed."
+        },
+        {
+          "name": "CurrentCamera",
+          "type": "Instance<Camera>",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "partial",
+          "note": "The camera's own properties come with the rendering work.",
+          "doc": "The camera the place is seen through. A Camera is made under the workspace when there is none."
+        },
+        {
+          "name": "Terrain",
+          "type": "Instance<Terrain>",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The place's terrain, made when first read. It is always empty."
+        }
+      ]
+    },
+    {
+      "name": "PhysicsService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "note": "Groups registered while the place runs are not saved with the scene.",
+      "doc": "Keeps the collision groups: named sets of parts and which sets collide with which.",
+      "methods": [
+        {
+          "name": "RegisterCollisionGroup",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Adds a collision group that collides with every group. Up to 32 groups exist, Default included."
+        },
+        {
+          "name": "UnregisterCollisionGroup",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Removes a collision group; its parts behave as Default."
+        },
+        {
+          "name": "RenameCollisionGroup",
+          "params": [
+            {
+              "name": "from",
+              "type": "string"
+            },
+            {
+              "name": "to",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Renames a collision group; parts naming the old name behave as Default until renamed."
+        },
+        {
+          "name": "CollisionGroupSetCollidable",
+          "params": [
+            {
+              "name": "name1",
+              "type": "string"
+            },
+            {
+              "name": "name2",
+              "type": "string"
+            },
+            {
+              "name": "collidable",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sets whether parts of two groups collide."
+        },
+        {
+          "name": "CollisionGroupsAreCollidable",
+          "params": [
+            {
+              "name": "name1",
+              "type": "string"
+            },
+            {
+              "name": "name2",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "Whether parts of two groups collide."
+        },
+        {
+          "name": "GetRegisteredCollisionGroups",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "One table per group, with name and mask fields."
+        },
+        {
+          "name": "IsCollisionGroupRegistered",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "Whether a group of that name exists."
+        },
+        {
+          "name": "GetMaxCollisionGroups",
+          "returns": [
+            "int"
+          ],
+          "status": "implemented",
+          "doc": "The most groups there can be (32)."
+        },
+        {
+          "name": "CreateCollisionGroup",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "int"
+          ],
+          "deprecated": "RegisterCollisionGroup",
+          "status": "implemented",
+          "doc": "Adds a group and returns its id."
+        },
+        {
+          "name": "RemoveCollisionGroup",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "deprecated": "UnregisterCollisionGroup",
+          "status": "implemented",
+          "doc": "Removes a group."
+        },
+        {
+          "name": "GetCollisionGroupId",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "int"
+          ],
+          "deprecated": "GetRegisteredCollisionGroups",
+          "status": "implemented",
+          "doc": "The id of a group."
+        },
+        {
+          "name": "GetCollisionGroupName",
+          "params": [
+            {
+              "name": "id",
+              "type": "int"
+            }
+          ],
+          "returns": [
+            "string"
+          ],
+          "deprecated": "GetRegisteredCollisionGroups",
+          "status": "implemented",
+          "doc": "The name of a group id."
+        },
+        {
+          "name": "SetPartCollisionGroup",
+          "params": [
+            {
+              "name": "part",
+              "type": "BasePart"
+            },
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "deprecated": "BasePart.CollisionGroup",
+          "status": "implemented",
+          "doc": "Puts a part in a group."
+        }
+      ]
+    },
+    {
+      "name": "Attachment",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A frame fixed to a part, which constraints and movers attach to.",
+      "properties": [
+        {
+          "name": "CFrame",
+          "type": "CFrame",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Position": [
+              0,
+              0,
+              0
+            ],
+            "XVector": [
+              1,
+              0,
+              0
+            ],
+            "YVector": [
+              0,
+              1,
+              0
+            ],
+            "ZVector": [
+              0,
+              0,
+              1
+            ]
+          },
+          "status": "implemented",
+          "doc": "The attachment's frame relative to its parent part."
+        },
+        {
+          "name": "Visible",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the attachment is drawn in tools."
+        },
+        {
+          "name": "Position",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The attachment's position relative to its parent part."
+        },
+        {
+          "name": "Orientation",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The attachment's rotation relative to its parent part, in degrees."
+        },
+        {
+          "name": "Axis",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The attachment's X axis relative to its parent part."
+        },
+        {
+          "name": "SecondaryAxis",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The attachment's Y axis relative to its parent part."
+        },
+        {
+          "name": "WorldCFrame",
+          "type": "CFrame",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The attachment's frame in the world."
+        },
+        {
+          "name": "WorldPosition",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The attachment's position in the world."
+        },
+        {
+          "name": "WorldOrientation",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The attachment's rotation in the world, in degrees."
+        },
+        {
+          "name": "WorldAxis",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The attachment's X axis in the world."
+        },
+        {
+          "name": "WorldSecondaryAxis",
+          "type": "Vector3",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The attachment's Y axis in the world."
+        }
+      ]
+    },
+    {
+      "name": "JointInstance",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "A joint that holds Part1 at a fixed offset from Part0.",
+      "properties": [
+        {
+          "name": "Part0",
+          "type": "Instance<BasePart>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The first part."
+        },
+        {
+          "name": "Part1",
+          "type": "Instance<BasePart>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The second part, held at Part0.CFrame * C0 * C1:Inverse()."
+        },
+        {
+          "name": "C0",
+          "type": "CFrame",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Position": [
+              0,
+              0,
+              0
+            ],
+            "XVector": [
+              1,
+              0,
+              0
+            ],
+            "YVector": [
+              0,
+              1,
+              0
+            ],
+            "ZVector": [
+              0,
+              0,
+              1
+            ]
+          },
+          "status": "implemented",
+          "doc": "The joint's frame relative to Part0."
+        },
+        {
+          "name": "C1",
+          "type": "CFrame",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Position": [
+              0,
+              0,
+              0
+            ],
+            "XVector": [
+              1,
+              0,
+              0
+            ],
+            "YVector": [
+              0,
+              1,
+              0
+            ],
+            "ZVector": [
+              0,
+              0,
+              1
+            ]
+          },
+          "status": "implemented",
+          "doc": "The joint's frame relative to Part1."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the joint holds nothing."
+        },
+        {
+          "name": "Active",
+          "type": "bool",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True while the joint holds its parts: enabled, with both parts in the workspace."
+        }
+      ]
+    },
+    {
+      "name": "Weld",
+      "superclass": "JointInstance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A rigid joint: Part1 stays at Part0.CFrame * C0 * C1:Inverse()."
+    },
+    {
+      "name": "ManualWeld",
+      "superclass": "Weld",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A weld made by hand in an editor; it behaves as a Weld."
+    },
+    {
+      "name": "Snap",
+      "superclass": "JointInstance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A rigid joint left by older tools; it behaves as a Weld."
+    },
+    {
+      "name": "Motor",
+      "superclass": "JointInstance",
+      "creatable": true,
+      "status": "partial",
+      "note": "The angle is held; it does not turn toward DesiredAngle.",
+      "doc": "A joint that turns Part1 about C0's Z axis toward DesiredAngle.",
+      "properties": [
+        {
+          "name": "DesiredAngle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored; the motor does not turn toward it.",
+          "doc": "The angle the motor turns toward, in radians."
+        },
+        {
+          "name": "MaxVelocity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "How far the motor may turn per step, in radians."
+        },
+        {
+          "name": "CurrentAngle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "The motor's angle, in radians."
+        }
+      ]
+    },
+    {
+      "name": "Motor6D",
+      "superclass": "Motor",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A joint that animations drive: Part1 stays at Part0.CFrame * C0 * Transform * C1:Inverse().",
+      "properties": [
+        {
+          "name": "Transform",
+          "type": "CFrame",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Position": [
+              0,
+              0,
+              0
+            ],
+            "XVector": [
+              1,
+              0,
+              0
+            ],
+            "YVector": [
+              0,
+              1,
+              0
+            ],
+            "ZVector": [
+              0,
+              0,
+              1
+            ]
+          },
+          "status": "implemented",
+          "doc": "The animated offset between C0 and C1."
+        }
+      ]
+    },
+    {
+      "name": "WeldConstraint",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Holds two parts at the offset they had when it was joined, or when either part was last moved by a script.",
+      "properties": [
+        {
+          "name": "Part0",
+          "type": "Instance<BasePart>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The first part."
+        },
+        {
+          "name": "Part1",
+          "type": "Instance<BasePart>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The second part."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the parts move independently."
+        },
+        {
+          "name": "Active",
+          "type": "bool",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True while the weld holds its parts."
+        }
+      ]
+    },
+    {
+      "name": "Constraint",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "Joins two attachments with a rule or a force.",
+      "properties": [
+        {
+          "name": "Attachment0",
+          "type": "Instance<Attachment>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The first attachment."
+        },
+        {
+          "name": "Attachment1",
+          "type": "Instance<Attachment>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The second attachment."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the constraint does nothing."
+        },
+        {
+          "name": "Visible",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the constraint is drawn in tools."
+        },
+        {
+          "name": "Active",
+          "type": "bool",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True while the constraint acts: enabled, with its attachments on parts in the workspace."
+        }
+      ]
+    },
+    {
+      "name": "BallSocketConstraint",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "note": "Restitution and friction torque are stored only.",
+      "doc": "Keeps two attachments at the same point, letting them turn, within optional angle limits.",
+      "properties": [
+        {
+          "name": "LimitsEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the angle between the attachments' X axes stays within UpperAngle."
+        },
+        {
+          "name": "UpperAngle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 45,
+          "status": "implemented",
+          "doc": "The largest angle between the X axes, in degrees."
+        },
+        {
+          "name": "TwistLimitsEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the twist about X stays between the twist angles."
+        },
+        {
+          "name": "TwistLowerAngle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": -45,
+          "status": "implemented",
+          "doc": "The lowest twist, in degrees."
+        },
+        {
+          "name": "TwistUpperAngle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 45,
+          "status": "implemented",
+          "doc": "The highest twist, in degrees."
+        },
+        {
+          "name": "Restitution",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "Bounciness at the limits."
+        },
+        {
+          "name": "MaxFrictionTorque",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "Torque that resists turning."
+        }
+      ]
+    },
+    {
+      "name": "HingeConstraint",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "note": "Motor acceleration limits and restitution are stored only.",
+      "doc": "Lets two attachments turn about their shared X axis, freely, as a motor or as a servo.",
+      "properties": [
+        {
+          "name": "ActuatorType",
+          "type": "Enum.ActuatorType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "None",
+          "status": "implemented",
+          "doc": "None, Motor or Servo."
+        },
+        {
+          "name": "AngularVelocity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The motor's target speed, radians per second."
+        },
+        {
+          "name": "MotorMaxTorque",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The most torque the motor uses."
+        },
+        {
+          "name": "MotorMaxAcceleration",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1e+30,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "The motor's acceleration limit."
+        },
+        {
+          "name": "TargetAngle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The servo's target angle, degrees."
+        },
+        {
+          "name": "AngularSpeed",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The servo's turning speed, radians per second."
+        },
+        {
+          "name": "ServoMaxTorque",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The most torque the servo uses."
+        },
+        {
+          "name": "LimitsEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the angle stays between LowerAngle and UpperAngle."
+        },
+        {
+          "name": "LowerAngle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": -45,
+          "status": "implemented",
+          "doc": "The lowest angle, degrees."
+        },
+        {
+          "name": "UpperAngle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 45,
+          "status": "implemented",
+          "doc": "The highest angle, degrees."
+        },
+        {
+          "name": "Restitution",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "Bounciness at the limits."
+        },
+        {
+          "name": "CurrentAngle",
+          "type": "number",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The hinge's angle now, in degrees."
+        }
+      ]
+    },
+    {
+      "name": "RopeConstraint",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "note": "Winches and restitution are stored only.",
+      "doc": "Keeps two attachments no further apart than Length.",
+      "properties": [
+        {
+          "name": "Length",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 5,
+          "status": "implemented",
+          "doc": "The rope's length in studs."
+        },
+        {
+          "name": "Restitution",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "Bounciness when the rope goes taut."
+        },
+        {
+          "name": "WinchEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "When true a winch changes the length."
+        },
+        {
+          "name": "CurrentDistance",
+          "type": "number",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The distance between the attachments now."
+        }
+      ]
+    },
+    {
+      "name": "RodConstraint",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Keeps two attachments exactly Length apart.",
+      "properties": [
+        {
+          "name": "Length",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 5,
+          "status": "implemented",
+          "doc": "The rod's length in studs."
+        },
+        {
+          "name": "CurrentDistance",
+          "type": "number",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The distance between the attachments now."
+        }
+      ]
+    },
+    {
+      "name": "LinearVelocity",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "note": "Plane mode and force limit modes other than Magnitude are not built.",
+      "doc": "Drives the velocity of Attachment0's assembly toward a target, using at most MaxForce.",
+      "properties": [
+        {
+          "name": "VelocityConstraintMode",
+          "type": "Enum.VelocityConstraintMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Vector",
+          "status": "partial",
+          "note": "Plane mode is not built: the constraint applies no force in it.",
+          "doc": "Vector drives the whole velocity; Line drives the velocity along LineDirection only."
+        },
+        {
+          "name": "VectorVelocity",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The target velocity in Vector mode."
+        },
+        {
+          "name": "LineDirection",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The direction of the line in Line mode."
+        },
+        {
+          "name": "LineVelocity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The target speed along the line in Line mode."
+        },
+        {
+          "name": "MaxForce",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1000,
+          "status": "implemented",
+          "doc": "The most force used."
+        },
+        {
+          "name": "ForceLimitsEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the force is unlimited."
+        },
+        {
+          "name": "RelativeTo",
+          "type": "Enum.ActuatorRelativeTo",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "World",
+          "status": "implemented",
+          "doc": "Whether the target is in world space or in the frame of an attachment."
+        }
+      ]
+    },
+    {
+      "name": "AngularVelocity",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Drives the angular velocity of Attachment0's assembly toward a target, using at most MaxTorque.",
+      "properties": [
+        {
+          "name": "AngularVelocity",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The target angular velocity, radians per second."
+        },
+        {
+          "name": "MaxTorque",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The most torque used."
+        },
+        {
+          "name": "RelativeTo",
+          "type": "Enum.ActuatorRelativeTo",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "World",
+          "status": "implemented",
+          "doc": "Whether the target is in world space or in the frame of an attachment."
+        }
+      ]
+    },
+    {
+      "name": "AlignPosition",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "note": "Reaction forces on Attachment1's assembly are not applied.",
+      "doc": "Pulls Attachment0 toward Attachment1, or toward Position in one-attachment mode.",
+      "properties": [
+        {
+          "name": "Mode",
+          "type": "Enum.PositionAlignmentMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "TwoAttachment",
+          "status": "implemented",
+          "doc": "OneAttachment aims at Position; TwoAttachment aims at Attachment1."
+        },
+        {
+          "name": "Position",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The target in one-attachment mode."
+        },
+        {
+          "name": "MaxForce",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 10000,
+          "status": "implemented",
+          "doc": "The most force used."
+        },
+        {
+          "name": "MaxVelocity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1e+30,
+          "status": "implemented",
+          "doc": "The fastest the attachment is pulled."
+        },
+        {
+          "name": "Responsiveness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 10,
+          "status": "implemented",
+          "doc": "How quickly the attachment reaches the target; higher is quicker."
+        },
+        {
+          "name": "RigidityEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the attachment is pulled as hard and fast as the solver allows."
+        },
+        {
+          "name": "ApplyAtCenterOfMass",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the force acts at the assembly's centre of mass, so it does not turn it."
+        },
+        {
+          "name": "ReactionForceEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "When true Attachment1's assembly is pulled back."
+        }
+      ]
+    },
+    {
+      "name": "AlignOrientation",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "note": "Primary-axis-only alignment and reaction torques are not built.",
+      "doc": "Turns Attachment0 toward the rotation of Attachment1, or toward CFrame in one-attachment mode.",
+      "properties": [
+        {
+          "name": "Mode",
+          "type": "Enum.OrientationAlignmentMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "TwoAttachment",
+          "status": "implemented",
+          "doc": "OneAttachment aims at CFrame; TwoAttachment aims at Attachment1."
+        },
+        {
+          "name": "CFrame",
+          "type": "CFrame",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Position": [
+              0,
+              0,
+              0
+            ],
+            "XVector": [
+              1,
+              0,
+              0
+            ],
+            "YVector": [
+              0,
+              1,
+              0
+            ],
+            "ZVector": [
+              0,
+              0,
+              1
+            ]
+          },
+          "status": "implemented",
+          "doc": "The target rotation in one-attachment mode (its position is ignored)."
+        },
+        {
+          "name": "MaxTorque",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 10000,
+          "status": "implemented",
+          "doc": "The most torque used."
+        },
+        {
+          "name": "MaxAngularVelocity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1e+30,
+          "status": "implemented",
+          "doc": "The fastest the attachment is turned."
+        },
+        {
+          "name": "Responsiveness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 10,
+          "status": "implemented",
+          "doc": "How quickly the attachment reaches the target; higher is quicker."
+        },
+        {
+          "name": "RigidityEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the attachment is turned as hard and fast as the solver allows."
+        },
+        {
+          "name": "PrimaryAxisOnly",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored only: all three axes align.",
+          "doc": "When true only the X axes are aligned."
+        },
+        {
+          "name": "ReactionTorqueEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "When true Attachment1's assembly is turned back."
+        }
+      ]
+    },
+    {
+      "name": "VectorForce",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Pushes Attachment0's assembly with a constant force.",
+      "properties": [
+        {
+          "name": "Force",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The force."
+        },
+        {
+          "name": "RelativeTo",
+          "type": "Enum.ActuatorRelativeTo",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Attachment0",
+          "status": "implemented",
+          "doc": "Whether Force is in world space or in an attachment's frame."
+        },
+        {
+          "name": "ApplyAtCenterOfMass",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the force acts at the assembly's centre of mass, so it does not turn it."
+        }
+      ]
+    }
+  ]
+}

@@ -65,6 +65,15 @@ pub const BAD_ANIMATION_MAP: Code = Code::new("RE9202");
 /// default instead; the script goes on with it.
 pub const OFFLINE_DEFAULT: Code = Code::new("RE9203");
 
+/// A collision group operation was refused: the group is not registered, the
+/// name is invalid or taken, all groups are in use, or `Default` was to be
+/// removed or renamed (WP13 holds RE9250–RE9299).
+pub const COLLISION_GROUP: Code = Code::new("RE9250");
+
+/// A physics member needs something the place lacks: a `Model` without a
+/// `PrimaryPart`, a workspace without its `Terrain`.
+pub const PHYSICS_SETUP: Code = Code::new("RE9251");
+
 /// An asset id (a sound, image or texture) is not in the project's
 /// substitute table; it plays or draws nothing (WP15 holds RE9350–RE9399).
 pub const UNKNOWN_ASSET: Code = Code::new("RE9350");

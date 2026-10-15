@@ -317,5 +317,14 @@ fn instance_doc_lists_the_class_components() {
     let r = test_registry();
     let d = scene::instance_doc(&r, "Workspace", "Workspace", "Workspace", Some("game")).unwrap();
     let names: Vec<&str> = d.components.keys().map(String::as_str).collect();
-    assert_eq!(names, ["ClassMarker", "Compat_Instance", "ServiceTag"]);
+    assert_eq!(
+        names,
+        [
+            "ClassMarker",
+            "Compat_Instance",
+            "Compat_Model",
+            "Compat_Workspace",
+            "ServiceTag"
+        ]
+    );
 }

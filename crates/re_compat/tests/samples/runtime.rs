@@ -82,10 +82,22 @@ fn setup(ctx: &Ctx, stubs: Option<&str>) -> Result<Arc<CompatSetup>, String> {
         let path = ctx.kit_path(file);
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{file}: {e}"))?;
         let mut data = ClassFile::parse(file, &text).map_err(|e| e.to_string())?;
-        // A class the crate's own data declares by now is no longer stood in.
         let known = re_compat::ClassRegistry::builtin().map_err(|e| e.to_string())?;
-        data.classes
-            .retain(|c| c.extend || known.class(&c.name).is_err());
+        // A class the crate's own data declares by now is no longer stood
+        // in: what is left of it extends the crate's class with the members
+        // the crate still lacks.
+        for c in data.classes.iter_mut() {
+            if !c.extend && known.class(&c.name).is_ok() {
+                c.extend = true;
+                c.superclass = None;
+                c.creatable = false;
+                c.service = false;
+                c.components.clear();
+                c.status = None;
+                c.note.clear();
+                c.doc.clear();
+            }
+        }
         // Nor is a member an extension adds that the class has by now.
         for c in data.classes.iter_mut().filter(|c| c.extend) {
             let has = |m: &str| known.member(&c.name, m).is_ok();
@@ -195,8 +207,16 @@ fn start(ctx: &mut Ctx, args: &J) -> Result<(), String> {
     }
 }
 
-/// The harness after a boot, kept for `runtime.graph`.
+/// The harness after a boot, kept for `runtime.graph` and later steps.
 struct Booted(Harness);
+
+/// The harness `runtime.boot` left, for later steps to drive further.
+pub fn booted(ctx: &mut Ctx) -> Option<&mut Harness> {
+    ctx.state
+        .get_mut("runtime.booted")
+        .and_then(|b| b.downcast_mut::<Booted>())
+        .map(|b| &mut b.0)
+}
 
 fn boot(ctx: &mut Ctx, args: &J) -> Result<(), String> {
     let frames = args["frames"].as_u64().unwrap_or(1) as u32;

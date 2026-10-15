@@ -303,3 +303,48 @@ fn a_scene_that_cannot_start_compat_keeps_its_world() {
     assert!(!r.ok());
     assert!(app.world().entity("box").is_ok());
 }
+
+#[test]
+fn the_servers_parts_fall_and_touch_and_the_client_sees_them_land() {
+    let server = r#"
+local base = Instance.new("Part")
+base.Name = "Base"
+base.Anchored = true
+base.Size = Vector3.new(50, 1, 50)
+base.Parent = workspace
+local box = Instance.new("Part")
+box.Name = "Box"
+box.Size = Vector3.new(2, 2, 2)
+box.Position = Vector3.new(20, 10, 0)
+box.Parent = workspace
+local said = false
+box.Touched:Connect(function(o)
+	if not said then said = true print("box touched", o.Name) end
+end)
+task.wait(1.5)
+print("box at", string.format("%.1f", box.Position.Y))
+local hit = workspace:Raycast(Vector3.new(20, 50, 0), Vector3.new(0, -100, 0))
+print("ray hits", hit and hit.Instance.Name)
+"#;
+    let client = r#"
+local box = workspace:WaitForChild("Box")
+task.wait(1.5)
+print("client box at", string.format("%.1f", box.Position.Y))
+"#;
+    let dir = project(server, client);
+    let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+    let r = app.run_headless(Some(150), None).unwrap();
+    assert!(r.ok(), "{:?}", r.diagnostics);
+    for line in [
+        "[server] box touched\tBase",
+        "[server] box at\t1.5",
+        "[server] ray hits\tBox",
+        "[client] client box at\t1.5",
+    ] {
+        assert!(
+            r.output.contains(&line.to_string()),
+            "{line}: {:?}",
+            r.output
+        );
+    }
+}
