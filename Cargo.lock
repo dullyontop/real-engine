@@ -3429,6 +3429,7 @@ dependencies = [
  "re_audio",
  "re_command",
  "re_core",
+ "re_editor",
  "re_input",
  "re_physics",
  "re_reflect",
@@ -3467,6 +3468,27 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracy-client",
+]
+
+[[package]]
+name = "re_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "egui",
+ "egui-winit",
+ "glam 0.34.1",
+ "re_agent",
+ "re_app",
+ "re_command",
+ "re_core",
+ "re_reflect",
+ "re_render",
+ "re_scene",
+ "re_types",
+ "serde_json",
+ "tempfile",
+ "winit",
 ]
 
 [[package]]
