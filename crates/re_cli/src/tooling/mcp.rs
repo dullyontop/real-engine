@@ -105,10 +105,7 @@ pub(crate) fn register_agent_tools(app: &mut App, agent: &Agent) -> Arc<Resource
     re_agent::resources::register_commands(commands, Arc::clone(&resources));
     re_agent::compat::register_commands(commands);
     register_verify_diff(commands, agent);
-    // An unreadable policy grants agents nothing (`real mcp` refuses to start
-    // on one anyway).
-    let policy = Policy::load(&project).unwrap_or_else(|_| Policy::read_only());
-    super::mcp_import::register(commands, agent, policy);
+    super::mcp_import::register(commands, agent);
     app.add_verify_stage(Arc::new(super::check::ScanStage));
     // Last, so a tool cannot take an engine command's name.
     let (_tools, problems) = re_agent::luau_tools::register(app.commands_mut(), &project);

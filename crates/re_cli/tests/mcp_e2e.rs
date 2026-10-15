@@ -716,6 +716,25 @@ fn an_agent_imports_a_loader_into_a_place_and_plays_it() {
     assert!(defs.contains("Instance"), "{defs}");
     ok("undo", &s.call(8, "undo", json!({})));
     assert_eq!(nodes(&mut s, 9), nodes_before);
+    // The scripts it wrote stay until the checkpoint it took is restored.
+    let written: Vec<String> = wrote["data"]["report"]["files"]["written"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap().to_string())
+        .collect();
+    let script = written
+        .iter()
+        .find(|f| f.ends_with(".luau"))
+        .unwrap_or_else(|| panic!("no script written: {wrote}"));
+    assert!(project.join(script).is_file());
+    let cp = wrote["data"]["checkpoint"].as_str().unwrap();
+    ok(
+        "checkpoint_restore",
+        &s.call(10, "checkpoint_restore", json!({ "checkpoint": cp })),
+    );
+    assert!(!project.join(script).exists(), "{script} is put back");
+    assert_eq!(nodes(&mut s, 11), nodes_before);
 
     s.finish();
 }
