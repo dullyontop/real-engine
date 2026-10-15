@@ -345,3 +345,55 @@ pub fn build(
     debug_assert!(tree::find_child(w, model, "HumanoidRootPart", false).is_some());
     Ok(model)
 }
+
+/// Fills `model`, a character model with no `Humanoid` (a starter character
+/// a project names but does not ship), with a rig of `rig_type` at the
+/// origin. Its own children (an `Animate` script, say) stay. Returns `false`,
+/// changing nothing, when `model` already has a `Humanoid`.
+pub fn fill(
+    w: &mut World,
+    classes: &ClassRegistry,
+    model: Entity,
+    rig_type: &str,
+) -> Result<bool, CompatError> {
+    let has_humanoid = tree::children(w, model)
+        .into_iter()
+        .any(|c| tree::is_a(w, classes, c, "Humanoid"));
+    if has_humanoid {
+        return Ok(false);
+    }
+    let name = tree::name(w, model);
+    let rig = build(w, classes, rig_type, &name, None, CFrame::IDENTITY)?;
+    for c in tree::children(w, rig) {
+        tree::set_parent(w, c, Some(model))?;
+    }
+    if classes.member("Model", "PrimaryPart").is_ok()
+        && let Some(root) = tree::find_child(w, model, "HumanoidRootPart", false)
+    {
+        classes.set_property(w, model, "PrimaryPart", Value::Entity(Some(root)))?;
+    }
+    re_scene::hierarchy::despawn_recursive(&mut w.ecs, rig);
+    Ok(true)
+}
+
+/// The rig a starter character gets when the project names one but ships no
+/// rig in it.
+pub const STARTER_STAND_IN: &str = "R6";
+
+/// Fills `StarterPlayer.StarterCharacter` under `game` with the
+/// [`STARTER_STAND_IN`] rig when it is a `Model` with no `Humanoid` (an
+/// import that implied the container without its rig), so players and the
+/// scripts that clone it get a character. Returns whether it filled one.
+pub fn fill_starter_character(
+    w: &mut World,
+    classes: &ClassRegistry,
+    game: Entity,
+) -> Result<bool, CompatError> {
+    let Some(model) = tree::find_child(w, game, "StarterPlayer", false)
+        .and_then(|sp| tree::find_child(w, sp, "StarterCharacter", false))
+        .filter(|m| tree::class(w, *m) == Some("Model"))
+    else {
+        return Ok(false);
+    };
+    fill(w, classes, model, STARTER_STAND_IN)
+}
