@@ -3,7 +3,7 @@
   "version": 1,
   "totals": {
     "implemented": 1749,
-    "partial": 209,
+    "partial": 216,
     "stub-error": 53,
     "missing": 3
   },
@@ -511,6 +511,18 @@
           "status": "implemented"
         },
         {
+          "name": "BackSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
+        },
+        {
+          "name": "BottomSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
+        },
+        {
           "name": "BreakJoints",
           "kind": "method",
           "status": "implemented"
@@ -572,6 +584,12 @@
           "note": "Kept while the place runs; not saved with the scene. Setting it back to nil from a script is refused."
         },
         {
+          "name": "FrontSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
+        },
+        {
           "name": "GetConnectedParts",
           "kind": "method",
           "status": "implemented"
@@ -612,9 +630,21 @@
           "status": "implemented"
         },
         {
+          "name": "LeftSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
+        },
+        {
           "name": "LocalTransparencyModifier",
           "kind": "property",
           "status": "implemented"
+        },
+        {
+          "name": "Locked",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the editor does not read it yet."
         },
         {
           "name": "Mass",
@@ -648,6 +678,12 @@
           "note": "Approximated: the surface gets smoother and more metallic; nothing is mirrored."
         },
         {
+          "name": "RightSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
+        },
+        {
           "name": "RootPriority",
           "kind": "property",
           "status": "implemented"
@@ -678,6 +714,12 @@
           "name": "Size",
           "kind": "property",
           "status": "implemented"
+        },
+        {
+          "name": "TopSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
         },
         {
           "name": "TouchEnded",
