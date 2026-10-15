@@ -1,0 +1,13 @@
+[project]
+name = "plaza"
+entry_scene = "scenes/main.scene.json"
+
+[sim]
+fixed_hz = 60
+
+# Roblox-style scripts may run up to 10 s without yielding.
+[scripts]
+cpu_budget_ms = 10000
+
+[compat]
+api = "roblox"

@@ -704,15 +704,38 @@ pub fn settle(lua: &Lua) -> Result<bool> {
     if roots.is_empty() {
         return Ok(false);
     }
+    // The subtrees to despawn; the instances scripts hold keep their
+    // property values (Roblox keeps a destroyed instance readable).
+    let Ok(subtrees) = with_world(lua, |w| {
+        roots
+            .into_iter()
+            .filter(|r| tree::alive(w, *r))
+            .map(|r| {
+                let mut all = vec![r];
+                all.extend(tree::descendants(w, r));
+                (r, all)
+            })
+            .collect::<Vec<_>>()
+    }) else {
+        return Ok(false);
+    };
+    let mut held = HashSet::new();
+    for (_, all) in &subtrees {
+        for e in all {
+            if instance::has_handle(lua, *e)? {
+                held.insert(*e);
+            }
+        }
+    }
+    let classes = state(lua)?.setup.classes.clone();
     let Ok(tombs) = with_world(lua, |w| {
         let mut tombs = Vec::new();
-        for root in roots {
-            if !tree::alive(w, root) {
-                continue;
-            }
-            tombs.push((root, Tombstone::of(w, root)));
-            for d in tree::descendants(w, root) {
-                tombs.push((d, Tombstone::of(w, d)));
+        for (root, all) in subtrees {
+            for e in all {
+                let props = held
+                    .contains(&e)
+                    .then(|| instance::snapshot(&classes, w, e));
+                tombs.push((e, Tombstone::of(w, e), props));
             }
             suppressed(w, |w| {
                 let _ = w.despawn_runtime(root);
@@ -725,8 +748,8 @@ pub fn settle(lua: &Lua) -> Result<bool> {
     }) else {
         return Ok(false);
     };
-    for (e, t) in tombs {
-        instance::bury(lua, e, t)?;
+    for (e, t, props) in tombs {
+        instance::bury(lua, e, t, props)?;
     }
     Ok(false)
 }

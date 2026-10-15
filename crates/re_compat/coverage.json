@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1748,
-    "partial": 201,
+    "implemented": 1749,
+    "partial": 214,
     "stub-error": 53,
     "missing": 3
   },
@@ -511,6 +511,18 @@
           "status": "implemented"
         },
         {
+          "name": "BackSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
+        },
+        {
+          "name": "BottomSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
+        },
+        {
           "name": "BreakJoints",
           "kind": "method",
           "status": "implemented"
@@ -572,6 +584,12 @@
           "note": "Kept while the place runs; not saved with the scene. Setting it back to nil from a script is refused."
         },
         {
+          "name": "FrontSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
+        },
+        {
           "name": "GetConnectedParts",
           "kind": "method",
           "status": "implemented"
@@ -612,9 +630,21 @@
           "status": "implemented"
         },
         {
+          "name": "LeftSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
+        },
+        {
           "name": "LocalTransparencyModifier",
           "kind": "property",
           "status": "implemented"
+        },
+        {
+          "name": "Locked",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the editor does not read it yet."
         },
         {
           "name": "Mass",
@@ -648,6 +678,12 @@
           "note": "Approximated: the surface gets smoother and more metallic; nothing is mirrored."
         },
         {
+          "name": "RightSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
+        },
+        {
           "name": "RootPriority",
           "kind": "property",
           "status": "implemented"
@@ -678,6 +714,12 @@
           "name": "Size",
           "kind": "property",
           "status": "implemented"
+        },
+        {
+          "name": "TopSurface",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth."
         },
         {
           "name": "TouchEnded",
@@ -3268,6 +3310,30 @@
           "status": "implemented"
         },
         {
+          "name": "FlipbookFramerate",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture."
+        },
+        {
+          "name": "FlipbookLayout",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture."
+        },
+        {
+          "name": "FlipbookMode",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture."
+        },
+        {
+          "name": "FlipbookStartRandom",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture."
+        },
+        {
           "name": "Lifetime",
           "kind": "property",
           "status": "implemented"
@@ -3347,6 +3413,12 @@
           "status": "implemented"
         },
         {
+          "name": "Squash",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are drawn unsquashed."
+        },
+        {
           "name": "Texture",
           "kind": "property",
           "status": "partial",
@@ -3367,6 +3439,12 @@
           "kind": "property",
           "status": "partial",
           "note": "Stored; not used."
+        },
+        {
+          "name": "WindAffectsDrag",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; there is no wind."
         },
         {
           "name": "ZOffset",
@@ -14140,6 +14218,11 @@
     },
     {
       "name": "Enum",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "EnumItem",
       "status": "implemented",
       "members": []
     },

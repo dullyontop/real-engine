@@ -6,7 +6,7 @@ M3 turns Real Engine from an engine that runs games from a project directory int
 
 The items come from [ROADMAP.md, "M3 and later"](ROADMAP.md#m3-and-later) and its AI track, plus the M2 follow-ups the M2 plan deferred (local persistence, `SurfaceGui` and `ViewportFrame`, compat hot reload, the `.rbxl`/`.rbxlx` reader). Each item still needs an ADR before its WP starts, as the roadmap says; this plan names them.
 
-This plan splits M3 into eleven work packages: WP18 to WP28. Numbering continues from M2, so a WP number always means one thing.
+This plan splits M3 into thirteen work packages: WP18 to WP30. WP29 (browser builds) and WP30 (online play) were added after the owner chose both on 2026-10-15; WP30's section is accepted with ADR-0050; WP29's is a placeholder until ADR-0049 is accepted. Numbering continues from M2, so a WP number always means one thing.
 
 **How M3 starts.**
 - **Phase 0, now.** Each M3 thread starts by researching and drafting its WP's ADR as a new file and sends it to the maintainer, who accepts it and commits it to `docs/DECISIONS.md`. WP25's debugger spike and the maintainer's entity-core track also start now. No other M3 code merges in phase 0, so M2 keeps the reviewers' attention.
@@ -14,6 +14,7 @@ This plan splits M3 into eleven work packages: WP18 to WP28. Numbering continues
 - **WP18** (platforms and D2 determinism) goes first. From its PR "blocking" on, every WP must stay green on three platforms; WPs that start before it merges fix their own platform breaks when it lands.
 - **WP19** (export and packaging) starts after WP18 PR "blocking", because its bundles are tested on all three platforms. **WP20** (rendering), **WP21** (skinned animation), **WP22** (vehicles, ragdolls and audio effects), **WP24** (procedural workflow), **WP25** (editor and debugger), **WP26** (the M3 AI track) and **WP27** (compat follow-ups) start once their ADRs are accepted.
 - **WP23** (world streaming and terrain) starts after WP24's PR "versioning", because streaming caches generated cells by generator version.
+- **WP29** (browser builds) and **WP30** (online play) start on a phase-0 spike and ADR now; their code waits for M2's definition of done, and WP29's packaging work for WP19 PR "archive".
 - **WP28** (`examples/valley`) starts once WP19, WP21, WP22 and WP23 have each merged their first PR, and closes M3.
 
 **Every WP section below is a self-contained brief**, as in [M1_PLAN.md](M1_PLAN.md) and [M2_PLAN.md](M2_PLAN.md). It gives the goal, the owned paths, when the WP starts, what to build, the non-goals, the acceptance commands and the definition of done.
@@ -27,9 +28,9 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 | Question | Default | Who decides |
 |---|---|---|
 | Scope of M3 | **Every item of ROADMAP "M3 and later"**, grouped into WP18–WP27, with `examples/valley` as the goal. The render thread is built only if PerfReport shows render submission is the bottleneck (WP20). | **Decided** (owner: "finish the whole thing") |
-| Platforms for packaged games | **Windows x86_64, macOS (arm64 and x86_64) and Linux x86_64**, desktop only. The web (wasm with WebGPU) and consoles are not in M3. | Owner |
+| Platforms for packaged games | **Windows x86_64, macOS (arm64 and x86_64), Linux x86_64, and the browser** (wasm with WebGPU, WP29). Consoles are not in M3. | **Decided** (owner, 2026-10-15: "Both") |
 | Second platform for the D2 exit check | **Windows x86_64**, the most common target that differs from Linux in compiler and maths library. | Plan |
-| Real networking for Roblox-style projects | **Not in M3.** Server and client stay two worlds in one process (M2 WP12). | Owner |
+| Real networking for Roblox-style projects | **In M3 (WP30):** a dedicated or listen server and clients over UDP, desktop only (ADR-0050). | **Decided** (owner, 2026-10-15: "Both") |
 | Luau type checker (DECISIONS, open question 2) | **(a) unchanged**: luau-lsp as an external tool. `real build` does not need it. | Owner |
 | License (DECISIONS, open question 1) | Whatever the owner settles. Packaged games (WP19) list the third-party notices the build contains either way. | Owner |
 | Scripts in packaged games | **Luau bytecode**, compiled at build time with mlua's `Compiler` at the engine's Luau version. Source is not shipped unless the project asks. | Plan (ADR-0037) |
@@ -39,7 +40,7 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 
 The M1 and M2 ownership rules carry over, with these changes:
 - The maintainer keeps every path it owns at the end of M2: the root files, `.github/`, `tools/`, `README.md`, `docs/`, the WP0 crates, `re_assets`, `re_geom`, `re_proc`, `re_editor`, and `re_compat`'s shared files (`Cargo.toml`, `src/lib.rs`, `src/codes.rs`, `src/class/`, `src/data.rs`, `src/scene.rs`).
-- The maintainer also runs the **entity-core track** (ROADMAP "Entity-core extensions"): a `#[derive]` component macro, undo coalescing for drags, a typed fast path for bulk spawns and scene loads, and comments in scene files. These touch only maintainer crates and frozen WP0 contracts, so they are maintainer PRs reviewed by the WPs that consume the changed contract.
+- The maintainer also runs the **entity-core track** (ROADMAP "Entity-core extensions"): a `#[derive]` component macro, undo coalescing for drags, a typed fast path for bulk spawns and scene loads, comments in scene files, and (for WP25's canvas, ADR-0044) a `set_doc` operation with open documents in the World and an optional `layout` map in `GraphDoc`. These touch only maintainer crates and frozen WP0 contracts, so they are maintainer PRs reviewed by the WPs that consume the changed contract.
 - Crates pass to the M3 WP that changes them most:
   - `.github/workflows/` and `tools/xtask/src/d2.rs` to WP18, for its PRs only; the maintainer reviews each change, and the files return to the maintainer when WP18 is done;
   - `re_cli/src/build/` (new) and the packaging parts of `re_app` to WP19;
@@ -51,11 +52,16 @@ The M1 and M2 ownership rules carry over, with these changes:
   - `re_agent`, `re_mcp`, `re_cli/src/tooling/{mcp,agent}.rs` and `templates/` (new) to WP26;
   - `re_compat` (except its shared files) and `re_import` to WP27;
   - `re_script` (except `src/debug/`) to WP24, for its `generator` context;
-  - `examples/valley/` to WP28.
+  - `re_script_check` returns to the maintainer;
+  - `examples/valley/` to WP28;
+  - the web build and runner (paths proposed in ADR-0049) to WP29;
+  - `re_net` (new) and `re_compat/src/net/` (from WP27) to WP30.
 - `re_app` and `re_cli` are shared. WP19 owns `re_app/src/package.rs` and `re_cli/src/build/`; every other change to them, such as WP24's `real migrate-graph` and WP26's new `real new` templates, goes through a small PR that the maintainer reviews, as M2 did for `re_compat`'s shared files.
 - **Planned edits across owners.** Each is a small PR in the owner's paths, reviewed by the owner:
   - WP21's GPU skinning path in `re_render` (WP20 reviews);
+  - WP24's generator versions, the losing-`Procedural` rule and structural overrides in `re_scene` and `re_command` (the maintainer reviews; ADR-0043, section 7);
   - WP23's streaming hooks in `re_scene` (the maintainer reviews), its per-chunk heightfield calls in `re_physics` (WP22 reviews), and its erosion node registered through WP24's `NodeRegistry` (WP24 reviews);
+  - WP30's frame hooks in `re_app/src/compat.rs`, its run options in `re_cli` and its `[net]` config in `re_app/src/config.rs` (the maintainer reviews);
   - WP27's skinned `MeshPart`s on WP21's `re_anim` API and its post effects on WP20's settings, through those WPs' public APIs only.
 
 ## Common rules for every WP
@@ -63,7 +69,7 @@ The M1 and M2 ownership rules carry over, with these changes:
 The M1 and M2 common rules hold unchanged. Four rules are added:
 - **Three platforms from the start.** From WP18 PR "blocking" on, `build-windows` and `build-macos` run the full test suite and block merges. A WP's acceptance commands must pass on all three. A test that cannot run on a platform says so with `#[cfg]` and a reason, never by being skipped silently.
 - **D2 is kept.** From WP18 PR "d2" on, `cargo xtask d2` runs the island's and the plaza's replays and compares `state_hash` across the three CI platforms. A WP that changes simulation, physics, procedural output or script scheduling keeps it green.
-- **Diagnostic codes.** New crates get a range through the maintainer. The current owners keep their ranges; WP19's packaging codes go in `re_app`'s and `re_cli`'s ranges, and WP25's debugger codes in `re_script`'s. `re_proc`'s range is split: WP24 `RE4000`–`RE4299`, WP23 `RE4300`–`RE4499`. WP27 gets `re_compat`'s block `RE9400`–`RE9449`, reserved in `src/codes.rs` by the maintainer, and keeps `re_import`'s `RE9800`–`RE9899`.
+- **Diagnostic codes.** New crates get a range through the maintainer. The current owners keep their ranges; WP19's packaging codes go in `re_app`'s and `re_cli`'s ranges, and WP25's debugger codes in `re_script`'s. `re_proc`'s range is split: WP24 `RE4000`–`RE4299`, WP23 `RE4300`–`RE4499`. WP27 gets `re_compat`'s block `RE9400`–`RE9449`, reserved in `src/codes.rs` by the maintainer, and keeps `re_import`'s `RE9800`–`RE9899`. WP29 takes `re_app`'s `RE0620`–`RE0649` and `re_cli`'s `RE0970`–`RE0989`; WP30 takes the new `re_net` range `RE8900`–`RE8999` and `re_compat`'s `RE9450`–`RE9499`.
 - **New dependencies** need an ADR and a `docs/DEPENDENCIES.md` row through the maintainer, as before. This plan expects a few (texture compression, the node canvas, HTTP transport); each WP lists its candidates below, and the ADR picks one after checking the crate's real API and version.
 
 ---
@@ -75,7 +81,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | Contract | Defined in | Defined by | Frozen at | Consumed by |
 |---|---|---|---|---|
 | D2 harness: `cargo xtask d2` input (project, replay, frames) and its JSON report (`state_hash` per platform and frame) | `tools/xtask/src/d2.rs` | WP18 | WP18 PR "d2" | every WP that changes simulation |
-| Package layout: the archive format, its index, the runtime-only binary's lookup order (archive, then project directory) and `real build` options | `crates/re_app/src/package.rs`, `docs/ARCHITECTURE.md` §8 | WP19 | WP19 PR "archive" | WP23, WP28 |
+| Package layout: the archive format, its index, the runtime-only binary's lookup order (archive, then project directory) and `real build` options | `crates/re_app/src/package.rs`, `crates/re_core/src/files.rs` (`ProjectFiles`, maintainer-reviewed, frozen at WP19 PR "files" except `writable()`, which stays open until ADR-0049), `docs/ARCHITECTURE.md` §8 | WP19 | WP19 PR "archive" | WP23, WP28 |
 | Post-processing settings in `RenderSnapshot` (exposure, tone mapping, bloom, colour grading) and the cascade settings of the sun | `crates/re_types/src/render.rs` | WP20 | WP20 PR "post" | WP27 (compat effects), WP28 |
 | Skins: `SkinData` (joints, inverse bind matrices, per-vertex weights) and the skinned draw item | `crates/re_types/src/render.rs` | WP21 | WP21 PR "skins" | WP20 (skinning path), WP22 (ragdolls), WP27, WP28 |
 | Animation graphs: `AnimGraph` (states, transitions, blend nodes) as plain data, and its parameters | `crates/re_types/src/anim.rs` | WP21 | WP21 PR "graphs" | WP25 (editing), WP28 |
@@ -83,6 +89,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | Ragdoll commands in `PhysicsCmd`, their poses and the animated/simulated blend | `crates/re_types/src/physics.rs` | WP22 | WP22 PR "ragdolls" | WP27, WP28 |
 | Generator versions: a version per generator and node kind in the per-node cache key, and the bake format | `crates/re_proc/src/` | WP24 | WP24 PR "versioning" | WP23, WP25 |
 | Streaming: `StreamCell` (key, bounds, generator version), the load and unload events scripts see, and the budget settings in `real.toml` | `crates/re_proc/src/stream/`, `crates/re_scene/` | WP23 | WP23 PR "cells" | WP28 |
+| Network protocol: the packet header, the protocol version, the handshake and Deny reasons, and the `[net]` keys in `real.toml` | `crates/re_net/src/`, `docs/ARCHITECTURE.md` (networking section) | WP30 | WP30 PR "transport" | WP19 (packaged servers), WP29 (PR "web") |
 
 Changes to `re_types` stay maintainer-reviewed frozen-contract changes, as in M2: a new field is added with a default, so nothing else breaks.
 
@@ -126,6 +133,8 @@ cargo xtask d2 --project examples/plaza --json
 **Owned paths:** `crates/re_cli/src/build/`, `crates/re_app/src/package.rs`, `tests/build/` under `re_cli`.
 
 **Starts after:** ADR-0037 is accepted. It needs WP18 PR "blocking" to test the bundles on all three platforms.
+
+**Build, PR "files"** (added by ADR-0037): every runtime read of a project file goes through `re_core::files::ProjectFiles`, a cross-owner PR the maintainer reviews with each owner asked.
 
 **Build, PR "archive":**
 - ADR-0037: package format. One archive per game with an index (path, offset, size, hash) over the processed assets from `.real/cache`, the scenes, the compiled Luau bytecode and `real.toml`. The runtime reads the archive first, then the project directory, so a development run and a packaged run use one code path.
@@ -356,10 +365,11 @@ cargo test --locked -p re_mcp
 - PR "persistence": `DataStoreService` and `MemoryStoreService` over local files under `.real/data/`, with the request budgets and errors scripts expect, instead of `RE9002`.
 - PR "surfaces": `SurfaceGui` and `ViewportFrame` rendered through WP15's UI and the render-to-texture path.
 - PR "reload": changed compat scripts restart in a running play, and a script set back to `Disabled = false` restarts (the WP11 follow-up).
+- PR "incremental render": `re_compat::render::build` is fed by a change journal instead of walking every part each frame (ADR-0048 amendment), so an idle 250,000-part map costs a small fixed amount per frame.
 - PR "place files": a general `.rbxl` (binary) and `.rbxlx` (XML) reader in `re_import`, deferred from M2 WP16, writing the same project as the Rojo-style and loader imports. ADR-0048 records the format facts it relies on, written for this repository.
 - PR "skins and effects": skinned `MeshPart`s on WP21's skins, and `BloomEffect`, `BlurEffect` and `SunRaysEffect` drawn by WP20's post chain, each moving from `partial` to `implemented`.
 
-**Non-goals:** real networking (see "Defaults this plan picks"), terrain voxels, online services other than data storage.
+**Non-goals:** real networking (WP30), terrain voxels, online services other than data storage.
 
 **Acceptance:**
 ```sh
@@ -368,7 +378,7 @@ real verify --project examples/plaza --json
 ```
 - Coverage rows move to `implemented` only with a fixture that calls them.
 
-**Definition of done:** the five PRs merged; `verify-plaza` stays green.
+**Definition of done:** the six PRs merged; `verify-plaza` stays green.
 
 ---
 
@@ -397,6 +407,63 @@ real build --project examples/valley --out out/valley-build
 
 ---
 
+## WP29: Browser builds
+
+**Goal.** Games built with Real Engine also run in a browser through WebGPU (owner's decision, 2026-10-15).
+
+**Starts after:** a phase-0 spike and ADR-0049, which settle whether and how Luau (mlua) and Jolt (oxijolt) build for wasm with crates.io dependencies only, wgpu's WebGPU backend with egui and winit's web event loop, loading `game.rpak` through a `ProjectFiles` layer (ADR-0037; `writable()` is not frozen until ADR-0049), audio, threads, and glam's SIMD path for D2 (ADR-0036). Packaging waits for WP19 PR "archive".
+
+**Direction for the definition of done:** the island and the plaza run in a headless browser in CI, and `real build --target web` writes a folder a static server can host. The thread drafts this section with its ADR.
+
+---
+
+## WP30: Online play
+
+**Goal.** A Roblox-style game is played by several people on different machines: one server process (dedicated, or a player's own game as a listen server) and any number of clients, with the same scripts as a single-process play test.
+
+**Owned paths:** `crates/re_net/` (new), `crates/re_compat/src/net/` (from WP27), `crates/re_compat/explain/RE945*.md`, and `tests/net/` under `re_app` (new).
+
+**Starts after:** M2 is done and ADR-0050 is accepted. It must stay green on three platforms once WP18 PR "blocking" merges. Compat APIs it extends follow WP27's (PR "persistence" runs data services on the server only, which WP30 keeps).
+
+**Build, PR "transport":**
+- The crate `re_net` (ADR-0050 §1): a non-blocking UDP endpoint polled from the frame, packets of at most 1,200 bytes with a versioned header, acks, an unreliable and a reliable ordered channel with fragmentation and resend, the Hello/Challenge/Response/Accept handshake with Deny reasons, keepalive and timeout, a token bucket per connection and a backlog read for backpressure.
+- The transport seam with UDP, an in-memory pair and a seeded link conditioner (loss, delay, duplication, reordering).
+- Codes `RE8900`–`RE8907` with explain pages; `re_net` added to ARCHITECTURE §2 as a subsystem crate (maintainer).
+- Tests: delivery in order and intact under 0 to 30 % loss, reordering and duplication through the conditioner; a seeded fuzz of malformed and truncated packets that must never panic or allocate without bound; version mismatch, server full, handshake timeout and connection timeout; and the spike's two-process loopback run as an integration test.
+
+**Build, PR "wire":**
+- Serialisable `Msg`, `NetValue` and `WireValue` (postcard), per-connection instance handles and the component table.
+- `replicate` split into diff (server, per connection, mirror on the server) and apply (client), for both directions (ADR-0050 §3); one `Frame` message per tick and direction.
+- The in-process two-world run goes through the same diff, encoding and apply over the in-memory transport. Every existing compat test and the island and plaza replays pass with unchanged hashes.
+- Several clients in one test process: two clients join one server and each sees the other's character move.
+
+**Build, PR "sessions":**
+- Join, Welcome, snapshot, leave and kick (ADR-0050 §5), with the game hash; per-connection players replacing `Shared`'s single local player.
+- Ownership and its limits (ADR-0050 §2): the networked `upstream` default, `RE9451`, the speed check (`RE9452`), remote size and rate limits (`RE9450`, `RE9453`), `RE9454`; backpressure and the 4 MiB cut-off (§4).
+- `real run --server`, `--connect`, `--host`, `--name`, `--port`, `--bind`, `--max-players` and `--lockstep`; `[net]` and `[compat.net]` in `real.toml` (maintainer-reviewed edits to `re_app` and `re_cli`).
+- The `net` stage of `real verify` and a `net-plaza` CI job (ADR-0023 amendment, through the maintainer).
+- Before the budgets are frozen, the private samples are measured over loopback; the numbers go under `research/m3/wp30/`.
+
+**Build, PR "web" (conditional):** only if WP29's ADR-0049 puts online play in the browser build in M3. A WebSocket implementation of the transport seam for the browser client and a WebSocket listener beside UDP on the native server, with its dependency chosen in an amendment to ADR-0050.
+
+**Non-goals:** encryption and authentication, NAT traversal, relays, matchmaking and server lists, client-side prediction and lag compensation beyond network ownership, interest management (`StreamingEnabled`), and a native networking API for `game` scripts (ADR-0050 §8).
+
+**Acceptance:**
+```sh
+cargo test --locked -p re_net
+cargo test --locked -p re_compat
+cargo test --locked -p re_app --test net
+real verify --project examples/plaza --json
+```
+- The plaza's `net` stage: `real run --server --lockstep` and one `real run --connect … --headless --lockstep --replay` per replay, as two processes over loopback, end with the server `state_hash` equal to the in-process run's, for `idle` and `walk`.
+- Two client processes join one server process; each sees the other player's character move, and a `FireAllClients` reaches both.
+- The private samples join a server across processes and play their scripted checks (private sample checks: passing).
+- `cargo xtask check-graph` passes: the runtime-only build reaches `re_net` and no tokio.
+
+**Definition of done:** PRs "transport", "wire" and "sessions" merged (and "web" if ADR-0049 calls for it); the `net-plaza` job is required and green on all three platforms; ADR-0050 is Accepted with the private-sample measurements recorded.
+
+---
+
 ## Dependencies and ADRs
 
 New dependencies are expected for texture compression (WP20), the node canvas and docking (WP25), and possibly `libm` (WP18) and `i_overlay` (WP24). rmcp's HTTP transport (WP26) is a feature of a crate already in the workspace, but it brings new transitive crates, which `cargo deny` checks. Each goes through an ADR and a `DEPENDENCIES.md` row.
@@ -414,7 +481,9 @@ The ADRs this plan adds:
 - ADR-0045 (WP25): the script debugger.
 - ADR-0046 (WP26): the HTTP transport and the evaluation harness.
 - ADR-0047 (WP20): the texture encoder crate.
-- ADR-0048 (WP27): local persistence for data services, `SurfaceGui` and `ViewportFrame`, and the `.rbxl`/`.rbxlx` reader.
+- ADR-0048 (WP27): local persistence for data services, `SurfaceGui` and `ViewportFrame`, the `.rbxl`/`.rbxlx` reader, and incremental compat rendering.
+- ADR-0049 (WP29): browser builds.
+- ADR-0050 (WP30): online play.
 - ADR-0023 amendments (WP18, WP28): Windows, macOS, `d2` and `verify-valley` become required jobs.
 
 ## Dependency graph
@@ -439,6 +508,9 @@ graph LR
   WP22 --> WP28
   WP23 --> WP28
   WP20 -.-> WP28
+  WP19 --> WP29p[WP29 packaging]
+  WP18 -.-> WP30
+  WP29 -.-> WP30w[WP30 web]
 ```
 
 A solid arrow means "starts after" (a merge). Every WP also waits for M2's definition of done and its own accepted ADR, which the graph leaves out. A dotted arrow from WP18 means "must stay green on three platforms once WP18 PR 'blocking' merges"; those WPs may start before it. The dotted arrow from WP20 to WP28 means the valley uses post-processing and cascades when they have merged.
@@ -455,4 +527,5 @@ M3 is done when **all** of these are true on a clean checkout, after the one-tim
 4. `real build` packages the valley for each platform, and the packaged game replays with the same `state_hash` as the project.
 5. Every ADR this plan lists is Accepted, or records why its feature was declined, with measurements.
 6. The M1, M2 and WP26 MCP end-to-end tests pass over stdio and HTTP.
-7. No document describes an unimplemented feature as done, and `coverage.json` matches the code.
+7. Browser builds meet ADR-0049's definition of done (WP29), and `real verify --project examples/plaza` passes its `net` stage on all three platforms: the server's `state_hash` over loopback equals the in-process run's (WP30).
+8. No document describes an unimplemented feature as done, and `coverage.json` matches the code.
