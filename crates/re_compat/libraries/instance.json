@@ -1,0 +1,57 @@
+{
+  "$schema": "../../../schemas/compat-libraries.schema.json",
+  "format": "real-engine/compat-libraries",
+  "version": 1,
+  "libraries": [
+    {
+      "name": "game",
+      "class": "DataModel",
+      "status": "implemented",
+      "doc": "The place's data model."
+    },
+    {
+      "name": "Game",
+      "class": "DataModel",
+      "deprecated": "game",
+      "status": "implemented"
+    },
+    {
+      "name": "workspace",
+      "class": "Workspace",
+      "status": "implemented",
+      "doc": "The place's Workspace service."
+    },
+    {
+      "name": "Workspace",
+      "class": "Workspace",
+      "deprecated": "workspace",
+      "status": "implemented"
+    },
+    {
+      "name": "Instance",
+      "status": "implemented",
+      "doc": "Makes instances.",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "className",
+              "type": "string"
+            },
+            {
+              "name": "parent",
+              "type": "Instance",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "A new instance of a creatable class, with its defaults, put under the parent when one is given."
+        }
+      ]
+    }
+  ]
+}

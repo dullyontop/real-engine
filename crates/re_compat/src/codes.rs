@@ -23,5 +23,13 @@ pub const SCENE_CONVENTION: Code = Code::new("RE9004");
 /// A script wrote a read-only property.
 pub const READ_ONLY: Code = Code::new("RE9005");
 
+/// `SetAttribute` refused a name or a value type (WP11 holds RE9006–RE9019).
+pub const INVALID_ATTRIBUTE: Code = Code::new("RE9007");
+
+/// A `Parent` change was refused: the instance was destroyed (its parent is
+/// locked), or the new parent is the instance itself or one of its
+/// descendants.
+pub const INVALID_PARENT: Code = Code::new("RE9008");
+
 /// A deprecated member was used; it works, and the note names its replacement.
 pub const DEPRECATED_MEMBER: Code = Code::new("RE9101");

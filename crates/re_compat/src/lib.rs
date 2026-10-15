@@ -10,13 +10,17 @@
 //!   the crate from `classes/`, `enums/` and `libraries/`, and the generated
 //!   coverage table `coverage.json` that the gap report reads;
 //! * the scene conventions ([`scene`]): the `game` root, services, the class
-//!   marker, script contexts and the `[compat]` section of `real.toml`.
-//!
+//!   marker, script contexts and the `[compat]` section of `real.toml`;
 //! * the datatypes ([`datatypes`]) and enums ([`enums`]): `Vector3`,
 //!   `CFrame`, `Color3` and the rest, and the `Enum` tables, which
 //!   [`datatypes::install`] puts into a compat VM.
 //!
-//! Instances, signals and services are added by later work packages.
+//! The behaviour lives in the runtime ([`runtime`]): [`runtime::CompatVm`] is
+//! one `server` or `client` script context bound to one world, with the
+//! instance handles ([`instance`]), signals ([`signal`]) and services
+//! ([`services`]) that scripts reach through `game`. Each area registers its
+//! accessors, methods, globals and value conversions in
+//! [`runtime::Bindings`].
 
 pub mod class;
 pub mod codes;
@@ -24,7 +28,11 @@ pub mod data;
 pub mod datatypes;
 pub mod enums;
 pub mod error;
+pub mod instance;
+pub mod runtime;
 pub mod scene;
+pub mod services;
+pub mod signal;
 
 pub use class::{
     Accessor, ClassDef, ClassMarker, ClassRegistry, ClassRegistryBuilder, Converter, EventDef,
@@ -34,7 +42,9 @@ pub use class::{
 pub use data::{COVERAGE_JSON, CoverageFile, DataSet, Status};
 pub use enums::EnumItem;
 pub use error::CompatError;
+pub use runtime::{Bindings, CompatSetup, CompatVm, ValueCodec};
 pub use scene::{CompatApi, CompatConfig, GAME_ID, ROOT_CLASS, ServiceTag, script_context};
+pub use signal::SignalBehavior;
 
 use re_core::DiagInfo;
 
@@ -59,6 +69,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::READ_ONLY,
         title: "Read-only property",
         page: include_str!("../explain/RE9005.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_ATTRIBUTE,
+        title: "Attribute refused",
+        page: include_str!("../explain/RE9007.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_PARENT,
+        title: "Parent change refused",
+        page: include_str!("../explain/RE9008.md"),
     },
     DiagInfo {
         code: codes::DEPRECATED_MEMBER,

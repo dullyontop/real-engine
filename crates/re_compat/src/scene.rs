@@ -273,6 +273,9 @@ pub enum CompatApi {
 pub struct CompatConfig {
     /// The API the project's scripts use.
     pub api: CompatApi,
+    /// When signal handlers run: `deferred` (the default) or `immediate`.
+    #[serde(default)]
+    pub signal_behavior: crate::signal::SignalBehavior,
 }
 
 impl CompatConfig {
@@ -299,6 +302,13 @@ impl CompatConfig {
         let api = match self.api {
             CompatApi::Roblox => "roblox",
         };
-        format!("[compat]\napi = \"{api}\"\n")
+        let mut out = format!("[compat]\napi = \"{api}\"\n");
+        if self.signal_behavior != crate::signal::SignalBehavior::default() {
+            out.push_str(&format!(
+                "signal_behavior = \"{}\"\n",
+                self.signal_behavior.as_str()
+            ));
+        }
+        out
     }
 }

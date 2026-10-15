@@ -43,14 +43,23 @@ pub fn class_name() -> Accessor {
 /// The builder of the built-in data plus the test classes, with their
 /// converter and accessor.
 pub fn test_builder() -> ClassRegistryBuilder {
-    ClassRegistryBuilder::builtin()
-        .unwrap()
-        .classes(
-            "tests/fixtures/class/test_classes.json",
-            ClassFile::parse("test_classes.json", TEST_CLASSES).unwrap(),
-        )
-        .converter("double", double())
-        .accessor("Instance", "ClassName", class_name())
+    instance_accessors(
+        ClassRegistryBuilder::builtin()
+            .unwrap()
+            .classes(
+                "tests/fixtures/class/test_classes.json",
+                ClassFile::parse("test_classes.json", TEST_CLASSES).unwrap(),
+            )
+            .converter("double", double()),
+    )
+}
+
+/// Registers the `Instance` accessors (`Name`, `Parent`, `ClassName`).
+pub fn instance_accessors(mut b: ClassRegistryBuilder) -> ClassRegistryBuilder {
+    for (prop, a) in re_compat::instance::accessors() {
+        b = b.accessor("Instance", prop, a);
+    }
+    b
 }
 
 pub fn test_registry() -> ClassRegistry {
