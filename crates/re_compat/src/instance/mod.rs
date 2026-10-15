@@ -306,13 +306,19 @@ fn not_member(
     let hint = suggestion
         .map(|s| format!(" (did you mean {s:?}?)"))
         .unwrap_or_default();
-    lua_error(
-        UNSUPPORTED_MEMBER,
+    crate::runtime::unsupported(
+        lua,
+        format!("{class}.{key}"),
         format!("{key} is not a valid member of {class} \"{path}\"{hint}"),
     )
 }
 
 fn index(lua: &Lua, this: &InstanceRef, key: &str) -> Result<LuaValue> {
+    if state(lua)?.loading.get() {
+        return Err(mlua::Error::runtime(
+            "instances are not read while a chunk loads",
+        ));
+    }
     let (alive, class) = class_of(lua, this)?;
     let Some(class) = class else {
         return match key {
@@ -321,6 +327,12 @@ fn index(lua: &Lua, this: &InstanceRef, key: &str) -> Result<LuaValue> {
         };
     };
     match resolve(lua, &class, key)? {
+        Resolved::Prop(ty) if &*ty == CALLBACK_TYPE => {
+            if !alive {
+                return Err(stale(this, key));
+            }
+            callback(lua, this.entity, key).map(|f| f.map_or(LuaValue::Nil, LuaValue::Function))
+        }
         Resolved::Prop(ty) => {
             if !alive {
                 let tomb = this
@@ -342,7 +354,11 @@ fn index(lua: &Lua, this: &InstanceRef, key: &str) -> Result<LuaValue> {
         }
         Resolved::Method(f) => Ok(LuaValue::Function(f)),
         Resolved::Event => signal::push(lua, this.entity, key),
-        Resolved::Unsupported(msg) => Err(lua_error(UNSUPPORTED_MEMBER, msg)),
+        Resolved::Unsupported(msg) => Err(crate::runtime::unsupported(
+            lua,
+            format!("{class}.{key}"),
+            msg,
+        )),
         Resolved::None(suggestion) => {
             if !alive {
                 return Err(stale(this, key));
@@ -373,6 +389,7 @@ fn newindex(lua: &Lua, this: &InstanceRef, key: &str, value: LuaValue) -> Result
     }
     let class = class.expect("a live instance has a class");
     match resolve(lua, &class, key)? {
+        Resolved::Prop(ty) if &*ty == CALLBACK_TYPE => set_callback(lua, this.entity, key, value),
         Resolved::Prop(ty) => {
             let st = state(lua)?;
             let v = st.setup.codec.from_lua(lua, value, &ty).map_err(|m| {
@@ -389,7 +406,11 @@ fn newindex(lua: &Lua, this: &InstanceRef, key: &str, value: LuaValue) -> Result
             member: key.to_string(),
             kind: "method or event",
         })),
-        Resolved::Unsupported(msg) => Err(lua_error(UNSUPPORTED_MEMBER, msg)),
+        Resolved::Unsupported(msg) => Err(crate::runtime::unsupported(
+            lua,
+            format!("{class}.{key}"),
+            msg,
+        )),
         Resolved::None(suggestion) => Err(not_member(lua, this.entity, &class, key, suggestion)),
     }
 }
@@ -440,6 +461,56 @@ impl UserData for InstanceRef {
     }
 }
 
+/// The declared type of a callback property (`RemoteFunction.OnServerInvoke`,
+/// `BindableFunction.OnInvoke`): a function the engine calls, kept in the VM
+/// rather than in the world. Such a property is declared with `builtin`
+/// storage; its accessor is never used.
+pub const CALLBACK_TYPE: &str = "function";
+
+/// Registry key of the callback table: entity bits → { property → function }.
+const CALLBACKS: &str = "re_compat.callbacks";
+
+/// The function set on callback property `name` of `e`, if any.
+pub fn callback(lua: &Lua, e: Entity, name: &str) -> Result<Option<Function>> {
+    let all: Table = lua.named_registry_value(CALLBACKS)?;
+    match all.raw_get::<Option<Table>>(e.to_bits())? {
+        Some(t) => t.raw_get(name),
+        None => Ok(None),
+    }
+}
+
+fn set_callback(lua: &Lua, e: Entity, name: &str, value: LuaValue) -> Result<()> {
+    let f = match value {
+        LuaValue::Function(f) => Some(f),
+        LuaValue::Nil => None,
+        other => {
+            return Err(lua_error(
+                BAD_ARGUMENT,
+                format!(
+                    "{name} must be a function or nil, got a {}",
+                    type_name(&other)
+                ),
+            ));
+        }
+    };
+    let all: Table = lua.named_registry_value(CALLBACKS)?;
+    let t = match all.raw_get::<Option<Table>>(e.to_bits())? {
+        Some(t) => t,
+        None => {
+            let t = lua.create_table()?;
+            all.raw_set(e.to_bits(), &t)?;
+            t
+        }
+    };
+    t.raw_set(name, f)
+}
+
+/// Drops the callbacks of a destroyed instance.
+pub(crate) fn drop_callbacks(lua: &Lua, e: Entity) -> Result<()> {
+    let all: Table = lua.named_registry_value(CALLBACKS)?;
+    all.raw_set(e.to_bits(), LuaValue::Nil)
+}
+
 /// Installs the handle table and the member cache into a new VM.
 pub(crate) fn install(lua: &Lua) -> Result<()> {
     let cache = lua.create_table()?;
@@ -447,6 +518,7 @@ pub(crate) fn install(lua: &Lua) -> Result<()> {
     mt.raw_set("__mode", "v")?;
     cache.set_metatable(Some(mt))?;
     lua.set_named_registry_value(HANDLES, cache)?;
+    lua.set_named_registry_value(CALLBACKS, lua.create_table()?)?;
     lua.set_app_data(MemberCache::default());
     Ok(())
 }

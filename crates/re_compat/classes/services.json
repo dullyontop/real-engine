@@ -38,6 +38,85 @@
       ]
     },
     {
+      "name": "DataModel",
+      "extend": true,
+      "properties": [
+        {
+          "name": "PlaceId",
+          "type": "number",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The place's id, from real.toml [compat.game] place_id (0 by default, as in an unpublished Studio place)."
+        },
+        {
+          "name": "GameId",
+          "type": "number",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The experience's id, from [compat.game] game_id (0 by default)."
+        },
+        {
+          "name": "CreatorId",
+          "type": "number",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The creator's id, from [compat.game] creator_id (0 by default)."
+        },
+        {
+          "name": "JobId",
+          "type": "string",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The server's id, from [compat.game] job_id (empty by default, as in Studio)."
+        },
+        {
+          "name": "PrivateServerId",
+          "type": "string",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The private server's id, from [compat.game] private_server_id (empty: not a private server)."
+        },
+        {
+          "name": "PrivateServerOwnerId",
+          "type": "number",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The private server owner's user id, from [compat.game] private_server_owner_id (0: not a private server)."
+        }
+      ],
+      "methods": [
+        {
+          "name": "BindToClose",
+          "params": [
+            {
+              "name": "function",
+              "type": "function"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Calls the function when the game shuts down. Callbacks run side by side and may yield; shutdown waits for them for up to 30 s of game time."
+        }
+      ]
+    },
+    {
       "name": "WorldRoot",
       "superclass": "Model",
       "status": "partial",
@@ -232,6 +311,168 @@
           ],
           "status": "implemented",
           "doc": "A signal that fires with each instance that loses the tag."
+        }
+      ]
+    },
+    {
+      "name": "RunService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "The frame events, functions bound to the render step, and which context a script runs in.",
+      "methods": [
+        {
+          "name": "BindToRenderStep",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "priority",
+              "type": "number"
+            },
+            {
+              "name": "function",
+              "type": "function"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Calls the function every frame before the frame is drawn (client only), with the frame's delta time. Bindings run by priority, lowest first; equal priorities run in bind order."
+        },
+        {
+          "name": "UnbindFromRenderStep",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Removes the bindings with this name."
+        },
+        {
+          "name": "IsServer",
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True in the server context."
+        },
+        {
+          "name": "IsClient",
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True in the client context."
+        },
+        {
+          "name": "IsStudio",
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True unless real.toml sets [compat.game] studio = false."
+        },
+        {
+          "name": "IsRunning",
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "Always true: scripts only run while the game runs."
+        },
+        {
+          "name": "IsEdit",
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "Always false: scripts never run in edit mode."
+        }
+      ],
+      "events": [
+        {
+          "name": "PreRender",
+          "params": [
+            {
+              "name": "deltaTimeRender",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires every frame before the frame is drawn, after the render-step bindings (client only)."
+        },
+        {
+          "name": "RenderStepped",
+          "params": [
+            {
+              "name": "deltaTime",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires every frame after PreRender (client only)."
+        },
+        {
+          "name": "PreAnimation",
+          "params": [
+            {
+              "name": "deltaTimeSim",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires each simulation step before animations are applied."
+        },
+        {
+          "name": "PreSimulation",
+          "params": [
+            {
+              "name": "deltaTimeSim",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires each simulation step before physics."
+        },
+        {
+          "name": "Stepped",
+          "params": [
+            {
+              "name": "time",
+              "type": "number"
+            },
+            {
+              "name": "deltaTime",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires each simulation step before physics, after PreSimulation, with the time since the game started."
+        },
+        {
+          "name": "PostSimulation",
+          "params": [
+            {
+              "name": "deltaTimeSim",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires each simulation step after physics."
+        },
+        {
+          "name": "Heartbeat",
+          "params": [
+            {
+              "name": "deltaTime",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires each simulation step after PostSimulation; threads whose task.wait is due resume after it."
         }
       ]
     }

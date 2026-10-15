@@ -260,15 +260,17 @@ pub fn validate(world: &mut World, classes: &ClassRegistry) -> Vec<Diagnostic> {
 }
 
 /// The API a compat project's scripts are written against.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CompatApi {
     /// The Roblox-style API.
+    #[default]
     Roblox,
 }
 
-/// The `[compat]` section of `real.toml`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// The `[compat]` section of `real.toml`. Build one with `..Default::default()`
+/// so later fields need no change.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompatConfig {
     /// The API the project's scripts use.
@@ -276,6 +278,50 @@ pub struct CompatConfig {
     /// When signal handlers run: `deferred` (the default) or `immediate`.
     #[serde(default)]
     pub signal_behavior: crate::signal::SignalBehavior,
+    /// What `game` and `RunService` report about the session
+    /// (`[compat.game]`); Studio-like by default.
+    #[serde(default)]
+    pub game: GameInfo,
+    /// Seeds `Random.new()` called without a seed (the client context uses
+    /// `seed + 1`), so runs repeat.
+    #[serde(default)]
+    pub seed: u64,
+}
+
+/// The `[compat.game]` section: the values scripts read from `game`
+/// (`PlaceId`, `JobId`, ...) and `RunService:IsStudio()`. The defaults are
+/// those of an unpublished place in a Studio play test.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct GameInfo {
+    /// `game.PlaceId`.
+    pub place_id: i64,
+    /// `game.GameId`.
+    pub game_id: i64,
+    /// `game.CreatorId`.
+    pub creator_id: i64,
+    /// `game.JobId`.
+    pub job_id: String,
+    /// `game.PrivateServerId`.
+    pub private_server_id: String,
+    /// `game.PrivateServerOwnerId`.
+    pub private_server_owner_id: i64,
+    /// `RunService:IsStudio()`.
+    pub studio: bool,
+}
+
+impl Default for GameInfo {
+    fn default() -> Self {
+        GameInfo {
+            place_id: 0,
+            game_id: 0,
+            creator_id: 0,
+            job_id: String::new(),
+            private_server_id: String::new(),
+            private_server_owner_id: 0,
+            studio: true,
+        }
+    }
 }
 
 impl CompatConfig {
@@ -308,6 +354,14 @@ impl CompatConfig {
                 "signal_behavior = \"{}\"\n",
                 self.signal_behavior.as_str()
             ));
+        }
+        if self.seed != 0 {
+            out.push_str(&format!("seed = {}\n", self.seed));
+        }
+        if self.game != GameInfo::default() {
+            let g = toml::to_string(&self.game).expect("plain values serialize");
+            out.push_str("\n[compat.game]\n");
+            out.push_str(&g);
         }
         out
     }

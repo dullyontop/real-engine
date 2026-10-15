@@ -41,7 +41,8 @@ fn builtin_registry_builds_with_the_core_tree() {
         .map(|c| c.name.as_str())
         .collect();
     assert_eq!(names, ["ModuleScript", "LuaSourceContainer", "Instance"]);
-    // Scripts are not built yet: they stay honestly missing.
+    // Scripts start and modules load (WP11 "runtime"); Source and Enabled
+    // are not built.
     for c in [
         "LuaSourceContainer",
         "BaseScript",
@@ -49,7 +50,7 @@ fn builtin_registry_builds_with_the_core_tree() {
         "LocalScript",
         "ModuleScript",
     ] {
-        assert_eq!(r.class(c).unwrap().status, Status::Missing, "{c}");
+        assert_eq!(r.class(c).unwrap().status, Status::Partial, "{c}");
     }
 }
 

@@ -18,8 +18,12 @@
 //! ([`ScriptHost`]) for the duration of the call, as the native runtime does.
 
 mod codec;
+mod globals;
+pub mod scripts;
+pub mod session;
+pub mod testing;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -33,6 +37,8 @@ pub use codec::{EnumFromLuaFn, EnumToLuaFn, FromUserdataFn, ToLuaFn, ValueCodec}
 use crate::class::{Accessor, ClassMarker, ClassRegistry, ClassRegistryBuilder, Converter};
 use crate::data::Status;
 use crate::error::CompatError;
+use crate::scene::CompatConfig;
+use crate::services::core::run_service;
 use crate::signal::SignalBehavior;
 use crate::{GAME_ID, ROOT_CLASS};
 
@@ -88,6 +94,10 @@ impl Bindings {
         let mut b = Bindings::new(ClassRegistryBuilder::builtin()?);
         crate::instance::register(&mut b);
         crate::services::core::register(&mut b);
+        scripts::register(&mut b);
+        session::register(&mut b);
+        globals::register(&mut b);
+        datatype_codec(&mut b.codec);
         Ok(b)
     }
 
@@ -134,6 +144,48 @@ impl Bindings {
     pub fn global(&mut self, name: &str, f: Arc<GlobalFn>) {
         self.globals.push((name.to_string(), f));
     }
+}
+
+/// The datatypes whose stored form [`crate::datatypes`] converts.
+const DATATYPES: &[&str] = &[
+    "Color3",
+    "CFrame",
+    "Vector2",
+    "UDim",
+    "UDim2",
+    "Rect",
+    "Font",
+    "NumberRange",
+    "NumberSequence",
+    "NumberSequenceKeypoint",
+    "ColorSequence",
+    "ColorSequenceKeypoint",
+    "PhysicalProperties",
+];
+
+/// Hooks the datatypes and enum items into the codec: their userdata store
+/// as their values, and stored values read back as userdata.
+fn datatype_codec(codec: &mut ValueCodec) {
+    use crate::enums::EnumItem;
+    codec.add_from_userdata(Arc::new(|lua, ud| {
+        crate::datatypes::userdata_to_value(lua, ud)
+    }));
+    for ty in DATATYPES {
+        codec.set_to_lua(
+            ty,
+            Arc::new(move |lua, v| crate::datatypes::to_lua(lua, ty, v.clone())),
+        );
+    }
+    codec.set_enum_to_lua(Arc::new(|lua, ty, item| match EnumItem::lookup(ty, item) {
+        Some(i) => i.to_lua(lua),
+        None => Ok(LuaValue::String(lua.create_string(item)?)),
+    }));
+    codec.set_enum_from_lua(Arc::new(|_, ty, v| {
+        if !crate::enums::enum_names().any(|n| n == ty) {
+            return Ok(None);
+        }
+        EnumItem::coerce(v, ty).map(|i| Some(i.name().to_string()))
+    }));
 }
 
 /// The class registry and the bindings, built once and shared by every VM.
@@ -209,6 +261,12 @@ pub(crate) struct State {
     pub(crate) behavior: SignalBehavior,
     pub(crate) game: Entity,
     pub(crate) setup: Arc<CompatSetup>,
+    /// The project root; script sources are read relative to it.
+    pub(crate) project_root: std::path::PathBuf,
+    /// What `game` and `RunService` report about the session.
+    pub(crate) info: crate::scene::GameInfo,
+    /// True while a chunk loads ([`load_chunk`]).
+    pub(crate) loading: std::cell::Cell<bool>,
 }
 
 /// The VM's [`State`].
@@ -223,14 +281,70 @@ pub(crate) fn lua_error(code: Code, message: impl std::fmt::Display) -> mlua::Er
     mlua::Error::runtime(format!("[{code}] {message}"))
 }
 
+/// How often scripts reached each member the layer does not have, by
+/// `Class.Member` (also `GetService(Name)` and `Instance.new(Class)`).
+#[derive(Default)]
+pub(crate) struct UnsupportedHits(pub(crate) BTreeMap<String, u32>);
+
+/// Counts a use of a member the layer does not have and returns its `RE9001`
+/// error.
+pub(crate) fn unsupported(lua: &Lua, key: String, message: impl std::fmt::Display) -> mlua::Error {
+    if let Some(mut h) = lua.app_data_mut::<UnsupportedHits>() {
+        *h.0.entry(key).or_default() += 1;
+    }
+    lua_error(re_script::codes::UNSUPPORTED_MEMBER, message)
+}
+
 /// A [`CompatError`] as a Luau error carrying its code.
 pub(crate) fn compat_error(e: CompatError) -> mlua::Error {
     lua_error(e.code(), e)
 }
 
+/// Compiles a script chunk with environment `env`.
+///
+/// While it loads, instance handles refuse to be indexed: Luau resolves
+/// `global.a.b` chains when it loads a chunk in a safe environment and keeps
+/// the values it got, so an instance read at load time (`workspace.Part`, a
+/// property) would stay fixed, and the read would run before the script
+/// does. Refused, the chain resolves each time the code runs.
+pub(crate) fn load_chunk(
+    lua: &Lua,
+    name: &str,
+    source: &str,
+    env: mlua::Table,
+) -> mlua::Result<mlua::Function> {
+    let st = state(lua)?;
+    st.loading.set(true);
+    // Compiling is not the script's time.
+    let f = re_script::untimed(|| {
+        lua.load(source)
+            .set_name(format!("={name}"))
+            .set_environment(env)
+            .into_function()
+    });
+    st.loading.set(false);
+    f
+}
+
 /// Runs `f` with the world of the bound host.
 pub(crate) fn with_world<R>(lua: &Lua, f: impl FnOnce(&mut World) -> R) -> mlua::Result<R> {
     re_script::host::with_host(lua, |h| Ok(f(h.world())))
+}
+
+/// Every builtin-property accessor of the layer, by `(class, property)`: what
+/// a class registry built outside [`Bindings`] (tools, tests) needs so the
+/// built-in data checks.
+pub fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
+    let mut out: Vec<_> = crate::instance::accessors()
+        .into_iter()
+        .map(|(p, a)| ("Instance", p, a))
+        .collect();
+    out.extend(
+        session::accessors()
+            .into_iter()
+            .map(|(p, a)| ("DataModel", p, a)),
+    );
+    out
 }
 
 /// One `server` or `client` script context of the compatibility layer, bound
@@ -264,6 +378,23 @@ impl CompatVm {
         config: &RuntimeConfig,
         behavior: SignalBehavior,
     ) -> Result<CompatVm, Diagnostic> {
+        let compat = CompatConfig {
+            signal_behavior: behavior,
+            ..CompatConfig::default()
+        };
+        CompatVm::with_config(setup, kind, world, config, &compat)
+    }
+
+    /// [`CompatVm::new`] with the whole `[compat]` section of `real.toml`
+    /// (signal behaviour, and what `game` reports).
+    pub fn with_config(
+        setup: &Arc<CompatSetup>,
+        kind: ContextKind,
+        world: &mut World,
+        config: &RuntimeConfig,
+        compat: &CompatConfig,
+    ) -> Result<CompatVm, Diagnostic> {
+        let behavior = compat.signal_behavior;
         let classes = &setup.classes;
         classes.register_components(world)?;
         crate::signal::events::prepare_world(world);
@@ -276,11 +407,15 @@ impl CompatVm {
             );
         }
         let workspace = crate::services::core::ensure_service(world, classes, game, "Workspace")?;
+        session::prepare_world(world, &compat.game);
         let state = Rc::new(State {
             kind,
             behavior,
             game,
             setup: setup.clone(),
+            project_root: config.project_root.clone(),
+            info: compat.game.clone(),
+            loading: std::cell::Cell::new(false),
         });
         let env = GlobalEnv {
             kind,
@@ -289,9 +424,19 @@ impl CompatVm {
         };
         let install = |lua: &Lua| -> mlua::Result<()> {
             lua.set_app_data(state.clone());
+            lua.set_app_data(UnsupportedHits::default());
+            let seed = match kind {
+                ContextKind::Client => compat.seed.wrapping_add(1),
+                _ => compat.seed,
+            };
+            crate::datatypes::install(lua, &lua.globals(), seed)?;
             crate::instance::install(lua)?;
             crate::signal::install(lua)?;
             crate::signal::events::install(lua)?;
+            scripts::install(lua)?;
+            session::install(lua);
+            globals::install(lua);
+            crate::services::core::run_service::install(lua);
             let globals = lua.globals();
             for (name, f) in &setup.globals {
                 globals.raw_set(name.as_str(), f(lua, &env)?)?;
@@ -334,24 +479,104 @@ impl CompatVm {
     pub fn exec(&self, host: &mut dyn ScriptHost, name: &str, source: &str) -> Vec<Diagnostic> {
         self.run(host, |lua| {
             let env = re_script::vm::environment(lua, LuaValue::Nil)?;
-            let f = lua
-                .load(source)
-                .set_name(format!("={name}"))
-                .set_environment(env)
-                .into_function()?;
+            let f = load_chunk(lua, name, source, env)?;
             sched::spawn(lua, f, MultiValue::new(), name)?;
             Ok(())
         })
     }
 
+    /// Starts the scripts of the tree that run in this context
+    /// ([`scripts::start_side`]), in tree order; returns the diagnostics of
+    /// scripts that failed to load or raised while starting.
+    pub fn start_scripts(
+        &self,
+        host: &mut dyn ScriptHost,
+        opts: scripts::StartOptions,
+    ) -> Vec<Diagnostic> {
+        let kind = self.state.kind;
+        let game = self.state.game;
+        let list = scripts::startable(host.world(), &self.state.setup.classes, game, kind, opts);
+        let mut out = Vec::new();
+        for e in list {
+            out.extend(self.start_script(host, e));
+        }
+        out
+    }
+
+    /// Starts script instance `e` now (whatever its place in the tree).
+    pub fn start_script(&self, host: &mut dyn ScriptHost, e: Entity) -> Vec<Diagnostic> {
+        self.run(host, |lua| scripts::start(lua, e))
+    }
+
     /// Advances the simulation time by `dt` seconds, resumes the threads that
-    /// are due and settles. The runtime's phase driver calls the finer steps.
+    /// are due and settles, without firing any `RunService` event.
     pub fn step(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
         self.run(host, |lua| {
             sched::advance(lua, dt)?;
             sched::resume_due(lua)?;
             Ok(())
         })
+    }
+
+    /// The `PreRender` phase (once per frame, frame time `dt`): on the
+    /// client, the render-step bindings by priority, then `PreRender` and
+    /// `RenderStepped`. Nothing on the server.
+    pub fn pre_render(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+        self.run(host, |lua| run_service::pre_render(lua, dt))
+    }
+
+    /// The `PreAnimation` phase of a fixed step of `dt` seconds: the clock
+    /// advances by `dt`, then `PreAnimation` fires.
+    pub fn pre_animation(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+        self.run(host, |lua| run_service::pre_animation(lua, dt))
+    }
+
+    /// The `PreSimulation` phase of a fixed step: `PreSimulation`, then
+    /// `Stepped(time, dt)`.
+    pub fn pre_simulation(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+        self.run(host, |lua| run_service::pre_simulation(lua, dt))
+    }
+
+    /// The `PostSimulation` phase of a fixed step: `PostSimulation`,
+    /// `Heartbeat`, then the threads whose `task.wait` (or `delay`, or yield
+    /// timeout) is due.
+    pub fn post_simulation(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+        self.run(host, |lua| run_service::post_simulation(lua, dt))
+    }
+
+    /// One headless frame of one fixed step of `dt` seconds: [`pre_render`],
+    /// then [`pre_animation`], [`pre_simulation`] and [`post_simulation`]
+    /// (there is no physics between them here).
+    ///
+    /// [`pre_render`]: CompatVm::pre_render
+    /// [`pre_animation`]: CompatVm::pre_animation
+    /// [`pre_simulation`]: CompatVm::pre_simulation
+    /// [`post_simulation`]: CompatVm::post_simulation
+    pub fn frame(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+        let mut out = self.pre_render(host, dt);
+        out.extend(self.pre_animation(host, dt));
+        out.extend(self.pre_simulation(host, dt));
+        out.extend(self.post_simulation(host, dt));
+        out
+    }
+
+    /// Shutdown: runs every `game:BindToClose` callback, then steps the clock
+    /// in steps of `dt` until they have all finished or
+    /// [`session::CLOSE_TIMEOUT_SECS`] pass. Returns the diagnostics and
+    /// whether every callback finished in time.
+    pub fn close(&self, host: &mut dyn ScriptHost, dt: f64) -> (Vec<Diagnostic>, bool) {
+        let mut threads = Vec::new();
+        let mut out = self.run(host, |lua| {
+            threads = session::start_close(lua)?;
+            Ok(())
+        });
+        let dt = if dt > 0.0 { dt } else { 1.0 / 60.0 };
+        let mut waited = 0.0;
+        while session::any_running(&threads) && waited < session::CLOSE_TIMEOUT_SECS {
+            out.extend(self.step(host, dt));
+            waited += dt;
+        }
+        (out, !session::any_running(&threads))
     }
 
     /// Drains what `print` and `warn` wrote.
@@ -363,6 +588,22 @@ impl CompatVm {
     /// `Signal:Wait`), in park order.
     pub fn parked(&self) -> Vec<String> {
         sched::parked_labels(self.ctx.lua()).unwrap_or_default()
+    }
+
+    /// How often scripts reached each member the layer does not have (an
+    /// `RE9001` raised), by `Class.Member`, `GetService(Name)` or
+    /// `Instance.new(Class)`; caught errors count too.
+    pub fn unsupported(&self) -> BTreeMap<String, u32> {
+        self.ctx
+            .lua()
+            .app_data_ref::<UnsupportedHits>()
+            .map(|h| h.0.clone())
+            .unwrap_or_default()
+    }
+
+    /// The modules `require` has run in this context.
+    pub fn required(&self) -> Vec<Entity> {
+        scripts::required(self.ctx.lua())
     }
 
     /// The `game` root.

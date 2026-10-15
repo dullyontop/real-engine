@@ -33,6 +33,7 @@ pub mod runtime;
 pub mod scene;
 pub mod services;
 pub mod signal;
+pub use runtime::testing;
 
 pub use class::{
     Accessor, ClassDef, ClassMarker, ClassRegistry, ClassRegistryBuilder, Converter, EventDef,
