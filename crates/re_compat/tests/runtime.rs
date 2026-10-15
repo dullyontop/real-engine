@@ -661,6 +661,42 @@ mod model {
     }
 
     #[test]
+    fn a_reference_to_a_despawned_instance_no_script_held_reads_nil() {
+        let mut p = Project::new();
+        let ws = p.service("Workspace");
+        let folder = p.folder("Box", ws);
+        let r = p.setup.classes.clone();
+        let part = spawn_instance(&mut p.world, &r, "Part", None, "Inner", Some(folder)).unwrap();
+        let weld = spawn_instance(&mut p.world, &r, "Weld", None, "W", Some(ws)).unwrap();
+        r.set_property(&mut p.world, weld, "Part0", Value::Entity(Some(part)))
+            .unwrap();
+        let sss = p.service("ServerScriptService");
+        p.script(
+            "Script",
+            "Main",
+            sss,
+            None,
+            r#"
+            local held = Instance.new("Part")
+            held.Name = "Held"
+            held.Parent = workspace
+            local w2 = Instance.new("Weld")
+            w2.Part0 = held
+            w2.Parent = workspace
+            workspace.Box:Destroy()
+            held:Destroy()
+            task.wait(2/60)
+            print(workspace.W.Part0, w2.Part0 == held, w2.Part0.Name)
+            "#,
+        );
+        let (mut h, _dir) = p.open();
+        h.start();
+        h.step(4);
+        no_errors(&h);
+        assert_eq!(out(&mut h, Side::Server), ["nil\ttrue\tHeld"]);
+    }
+
+    #[test]
     fn destroying_a_script_stops_its_threads() {
         let mut p = Project::new();
         let sss = p.service("ServerScriptService");

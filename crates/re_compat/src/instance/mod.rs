@@ -111,6 +111,19 @@ pub fn push(lua: &Lua, entity: Entity) -> Result<LuaValue> {
     Ok(LuaValue::UserData(handle(lua, entity)?))
 }
 
+/// The value of an instance reference a property holds: the instance's
+/// handle, or, for an instance already despawned, the handle a script still
+/// holds (with its tombstone and property values) and otherwise `nil` (there
+/// is nothing left to read).
+pub fn push_ref(lua: &Lua, entity: Entity) -> Result<LuaValue> {
+    let alive = with_world(lua, |w| tree::alive(w, entity))?;
+    if alive || has_handle(lua, entity)? {
+        push(lua, entity)
+    } else {
+        Ok(LuaValue::Nil)
+    }
+}
+
 /// The handle of an entity that may already be gone: when it is, the handle
 /// gets `tomb` (so its name and class still read).
 pub fn push_with_tomb(lua: &Lua, entity: Entity, tomb: &Tombstone) -> Result<LuaValue> {
