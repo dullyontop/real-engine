@@ -87,7 +87,7 @@ fn server_and_client_contexts_are_sandboxed_compat_contexts() {
             r#"
             assert(loadstring == nil and getfenv == nil and setfenv == nil)
             assert(type(task.wait) == "function" and type(task.spawn) == "function")
-            print("ok")
+            print(setmetatable({}, { __tostring = function() return "ok" end }))
             "#,
         );
         let out = r.ctx.take_output();

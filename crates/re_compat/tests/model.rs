@@ -443,4 +443,119 @@ mod model {
         assert_eq!(index.tagged("Coin").count(), 2);
         assert_eq!(index.tagged("Shiny").count(), 1);
     }
+
+    #[test]
+    fn print_shows_instances_and_tables() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(r#"print(workspace, game.ReplicatedStorage) print(type({}))"#);
+        assert_eq!(p.out(), ["Workspace\tReplicatedStorage", "table"]);
+    }
+
+    #[test]
+    fn deferred_handlers_still_read_a_destroyed_instance() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local f = Instance.new("Folder", workspace)
+            local c = Instance.new("Folder", f); c.Name = "C"
+            c:SetAttribute("Id", 7)
+            f.ChildRemoved:Connect(function(x)
+                print(x.Name, x:GetAttribute("Id"), x.Archivable, x.Parent)
+            end)
+            c:Destroy()
+            c:Destroy() -- a second Destroy does nothing
+            task.wait()
+            print(c.Name, c.ClassName)
+            "#,
+        );
+        p.step(1.0 / 60.0);
+        assert_eq!(p.out(), ["C\t7\ttrue\tnil", "C\tFolder"]);
+    }
+
+    #[test]
+    fn game_and_services_are_locked() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            for _, f in {
+                function() workspace.Parent = nil end,
+                function() workspace.Parent = game.ReplicatedStorage end,
+                function() workspace:Destroy() end,
+                function() game:Destroy() end,
+                function() game.Parent = workspace end,
+            } do
+                local ok, err = pcall(f)
+                assert(not ok)
+                assert(string.find(tostring(err), "RE9008"), tostring(err))
+            end
+            workspace.Parent = game -- unchanged: allowed
+            assert(game.Workspace == workspace and workspace.Parent == game)
+            print("ok")
+            "#,
+        );
+        assert_eq!(p.out(), ["ok"]);
+    }
+
+    #[test]
+    fn wait_for_child_with_an_infinite_timeout_never_times_out_or_warns() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(r#"print("got", workspace:WaitForChild("X", math.huge).Name)"#);
+        p.step(1.0);
+        p.step(100.0);
+        assert!(p.out().is_empty());
+        p.run(r#"local x = Instance.new("Folder"); x.Name = "X"; x.Parent = workspace"#);
+        assert_eq!(p.out(), ["got\tX"]);
+    }
+
+    #[test]
+    fn collection_service_counts_only_instances_in_the_place() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local cs = game:GetService("CollectionService")
+            cs:GetInstanceAddedSignal("T"):Connect(function(i) print("+" .. i.Name) end)
+            cs:GetInstanceRemovedSignal("T"):Connect(function(i) print("-" .. i.Name) end)
+            local a = Instance.new("Folder"); a.Name = "A"
+            a:AddTag("T")
+            local inner = Instance.new("Folder", a); inner.Name = "Inner"
+            inner:AddTag("T")
+            task.wait()
+            print("tagged " .. #cs:GetTagged("T"))
+            a.Parent = workspace
+            task.wait()
+            print("tagged " .. #cs:GetTagged("T"))
+            local b = Instance.new("Folder", workspace); b.Name = "B"
+            a.Parent = b -- moving inside the place changes nothing
+            task.wait()
+            a.Parent = nil
+            task.wait()
+            print("tagged " .. #cs:GetTagged("T"))
+            "#,
+        );
+        for _ in 0..4 {
+            p.step(1.0 / 60.0);
+        }
+        assert_eq!(
+            p.out(),
+            [
+                "tagged 0", "+A", "+Inner", "tagged 2", "-A", "-Inner", "tagged 0"
+            ]
+        );
+    }
+
+    #[test]
+    fn moving_an_instance_fires_on_both_parents() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local a = Instance.new("Folder", workspace); a.Name = "A"
+            local b = Instance.new("Folder", workspace); b.Name = "B"
+            local x = Instance.new("Folder", a); x.Name = "X"
+            a.ChildRemoved:Connect(function(c) print("A- " .. c.Name) end)
+            b.ChildAdded:Connect(function(c) print("B+ " .. c.Name) end)
+            x.Parent = b
+            "#,
+        );
+        assert_eq!(p.out(), ["A- X", "B+ X"]);
+    }
 }

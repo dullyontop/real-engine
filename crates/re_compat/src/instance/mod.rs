@@ -181,6 +181,10 @@ struct MemberCache {
     methods: HashMap<(String, String), Function>,
 }
 
+/// How many names one class's member cache holds before it stops caching
+/// misses.
+const MAX_CACHED_PER_CLASS: usize = 4096;
+
 fn resolve(lua: &Lua, class: &str, key: &str) -> Result<Resolved> {
     if let Some(r) = lua
         .app_data_ref::<MemberCache>()
@@ -202,11 +206,13 @@ fn resolve(lua: &Lua, class: &str, key: &str) -> Result<Resolved> {
         Err(CompatError::UnknownMember { suggestion, .. }) => Resolved::None(suggestion),
         Err(_) => Resolved::None(None),
     };
+    // Misses (child names, mostly) are cached up to a bound per class, since
+    // scripts index children by arbitrary names.
     if let Some(mut c) = lua.app_data_mut::<MemberCache>() {
-        c.by_class
-            .entry(class.to_string())
-            .or_default()
-            .insert(key.to_string(), r.clone());
+        let map = c.by_class.entry(class.to_string()).or_default();
+        if !matches!(r, Resolved::None(_)) || map.len() < MAX_CACHED_PER_CLASS {
+            map.insert(key.to_string(), r.clone());
+        }
     }
     Ok(r)
 }

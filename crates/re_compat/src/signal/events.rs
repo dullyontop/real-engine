@@ -7,23 +7,24 @@
 //! * Tree changes are recorded by **observers** on `ChildOf`
 //!   (`On<Insert<ChildOf>>` and `On<Discard<ChildOf>>`), never hooks:
 //!   `ChildOf` is a bevy relationship that owns its hooks (ARCHITECTURE §4).
-//!   They push to the world's [`HierarchyFeed`]. `Destroy` records its
-//!   removal itself, with the subtree's names and classes, and silences the
-//!   observers while it despawns.
+//!   They push to the world's [`HierarchyFeed`]. `Destroy` detaches the
+//!   subtree like any other move; [`settle`] despawns it, with the observers
+//!   silenced, once nothing is left to dispatch.
 //! * Attribute and tag changes come from the world's change feeds, which the
-//!   VM turns on and is the one consumer of.
+//!   VM turns on and is the one consumer of. `CollectionService` counts only
+//!   instances inside the place, so moves in and out of it count as tag
+//!   changes too.
 //! * Property changes come from a per-property diff of the instances someone
 //!   watches (a `Changed` or property-changed connection), checked only when
 //!   one of the instance's components changed since the last dispatch
 //!   (bevy's change ticks). `Parent` changes come from the tree events.
 //!
-//! [`dispatch`] runs as the scheduler's settle hook, at the end of every
+//! [`dispatch`] runs from [`settle`], the scheduler's settle hook, at the end of every
 //! resumption cycle, and right after each write when signals are immediate.
 //! It gathers the events with the world borrowed, then fires them with the
 //! world released, so handlers can use the engine.
 
-use std::collections::{BTreeMap, HashMap};
-use std::rc::Rc;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use mlua::{Lua, MultiValue, Result, Value as LuaValue};
 use re_reflect::Value;
@@ -39,7 +40,7 @@ use re_script::sched::{self, YieldToken};
 use super::{Guard, SignalBehavior, SignalHub, SignalKey, fire_with};
 use crate::class::{ClassMarker, Member};
 use crate::data::Status;
-use crate::instance::{self, Tombstone, tree};
+use crate::instance::{self, Tombstone, attributes, tree};
 use crate::runtime::{state, with_world};
 
 /// One change of the tree.
@@ -62,9 +63,6 @@ pub enum HierEvent {
         chain: Vec<Entity>,
         /// The child's name and class at that moment.
         tomb: Tombstone,
-        /// For a destroyed subtree: every instance in it, the child first,
-        /// with names and classes (the entities are gone by dispatch).
-        subtree: Vec<(Entity, Tombstone)>,
     },
 }
 
@@ -132,7 +130,6 @@ fn on_unparented(
         parent,
         chain,
         tomb,
-        subtree: Vec::new(),
     });
 }
 
@@ -160,28 +157,6 @@ pub fn suppressed<R>(w: &mut World, f: impl FnOnce(&mut World) -> R) -> R {
     let r = f(w);
     set(w, false);
     r
-}
-
-/// Records the removal of a subtree that `Destroy` is about to despawn.
-pub(crate) fn record_destroy(w: &mut World, root: Entity, subtree: Vec<(Entity, Tombstone)>) {
-    let Some(parent) = tree::parent(w, root) else {
-        return; // a root: no parent to tell
-    };
-    let mut chain = vec![parent];
-    chain.extend(tree::ancestors(w, parent));
-    let tomb = subtree
-        .first()
-        .map(|(_, t)| t.clone())
-        .unwrap_or_else(|| Tombstone::of(w, root));
-    if let Some(mut feed) = w.ecs.get_resource_mut::<HierarchyFeed>() {
-        feed.events.push(HierEvent::Removed {
-            child: root,
-            parent,
-            chain,
-            tomb,
-            subtree,
-        });
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +190,10 @@ struct ChildWaiters(Vec<ChildWaiter>);
 #[derive(Default)]
 struct Dispatching(bool);
 
+/// Destroyed subtrees (by root) waiting to be despawned when the cycle settles.
+#[derive(Default)]
+struct PendingDespawn(Vec<Entity>);
+
 /// How long `WaitForChild` without a timeout waits before it warns.
 pub const INFINITE_YIELD_WARNING_SECS: f64 = 5.0;
 
@@ -223,6 +202,7 @@ pub(crate) fn install(lua: &Lua) -> Result<()> {
     lua.set_app_data(Watches::default());
     lua.set_app_data(ChildWaiters::default());
     lua.set_app_data(Dispatching::default());
+    lua.set_app_data(PendingDespawn::default());
     Ok(())
 }
 
@@ -363,7 +343,10 @@ fn gather(lua: &Lua, w: &mut World) -> Batch {
         }
     };
 
-    // The tree.
+    // The tree. `moved` holds, for each instance that moved, whether it was
+    // in the place before its first move of this batch.
+    let mut moved: HashMap<Entity, bool> = HashMap::new();
+    let mut order: Vec<Entity> = Vec::new();
     let events = w
         .ecs
         .get_resource_mut::<HierarchyFeed>()
@@ -375,6 +358,8 @@ fn gather(lua: &Lua, w: &mut World) -> Batch {
                 if !tree::is_instance(w, child) {
                     continue;
                 }
+                moved.entry(child).or_insert(false);
+                order.push(child);
                 push(&mut b, parent, "ChildAdded", vec![Arg::Inst(child, None)]);
                 let mut chain = vec![parent];
                 chain.extend(tree::ancestors(w, parent));
@@ -407,8 +392,9 @@ fn gather(lua: &Lua, w: &mut World) -> Batch {
                 parent,
                 chain,
                 tomb,
-                subtree,
             } => {
+                moved.entry(child).or_insert_with(|| chain.contains(&game));
+                order.push(child);
                 if tree::alive(w, parent) {
                     push(
                         &mut b,
@@ -423,9 +409,7 @@ fn gather(lua: &Lua, w: &mut World) -> Batch {
                     .collect();
                 let alive = tree::is_instance(w, child);
                 if !listening.is_empty() {
-                    let sub: Vec<(Entity, Tombstone)> = if !subtree.is_empty() {
-                        subtree
-                    } else if alive {
+                    let sub: Vec<(Entity, Tombstone)> = if alive {
                         let mut s = vec![(child, tomb.clone())];
                         s.extend(
                             tree::descendants(w, child)
@@ -481,21 +465,67 @@ fn gather(lua: &Lua, w: &mut World) -> Batch {
         );
     }
 
-    // Tags, on CollectionService.
+    // CollectionService tracks the tagged instances inside the place: an
+    // instance entering or leaving it counts as its tags being added or
+    // removed, and a tag change outside it counts for nothing.
+    let cs = crate::services::core::find_service(w, game, "CollectionService");
+    let mut covered: HashSet<Entity> = HashSet::new();
+    // Outermost first, so a moved subtree counts once, from its root.
+    let mut seen: HashSet<Entity> = HashSet::new();
+    order.retain(|e| seen.insert(*e));
+    order.sort_by_key(|e| tree::ancestors(w, *e).len());
+    for root in order {
+        if covered.contains(&root) {
+            continue;
+        }
+        let before = moved[&root];
+        let now = tree::is_instance(w, root)
+            && !tree::is_destroyed(w, root)
+            && tree::in_game(w, game, root);
+        if before == now || !tree::is_instance(w, root) {
+            continue;
+        }
+        // The subtree, less the parts that moved on their own (they count
+        // from their own first move).
+        let mut sub = Vec::new();
+        let mut stack = vec![root];
+        while let Some(d) = stack.pop() {
+            if d != root && moved.contains_key(&d) {
+                continue;
+            }
+            sub.push(d);
+            stack.extend(tree::children(w, d).into_iter().rev());
+        }
+        for d in sub {
+            covered.insert(d);
+            let Some(cs) = cs else { continue };
+            for tag in attributes::tags(w, d) {
+                let name = if now {
+                    format!("InstanceAdded:{tag}")
+                } else {
+                    format!("InstanceRemoved:{tag}")
+                };
+                push(&mut b, cs, &name, vec![Arg::Inst(d, None)]);
+            }
+        }
+    }
     let tag_changes = w.drain_tag_changes();
-    if !tag_changes.is_empty()
-        && let Some(cs) = crate::services::core::find_service(w, game, "CollectionService")
-    {
+    if let Some(cs) = cs {
         for ch in tag_changes {
+            let e = ch.entity;
+            if covered.contains(&e)
+                || !tree::is_instance(w, e)
+                || tree::is_destroyed(w, e)
+                || !tree::in_game(w, game, e)
+            {
+                continue;
+            }
             let name = if ch.added {
                 format!("InstanceAdded:{}", ch.tag)
             } else {
                 format!("InstanceRemoved:{}", ch.tag)
             };
-            if ch.added && !tree::is_instance(w, ch.entity) {
-                continue;
-            }
-            push(&mut b, cs, &name, vec![Arg::Inst(ch.entity, None)]);
+            push(&mut b, cs, &name, vec![Arg::Inst(e, None)]);
         }
     }
 
@@ -654,6 +684,53 @@ fn dispatch_rounds(lua: &Lua) -> Result<bool> {
     Ok(any)
 }
 
+/// Despawns the subtree of a destroyed instance when the cycle settles.
+pub(crate) fn despawn_later(lua: &Lua, root: Entity) {
+    if let Some(mut p) = lua.app_data_mut::<PendingDespawn>() {
+        p.0.push(root);
+    }
+}
+
+/// The settle hook: dispatches what is pending, and once nothing is left,
+/// despawns the destroyed subtrees (their handles keep their name and class).
+pub fn settle(lua: &Lua) -> Result<bool> {
+    if dispatch(lua)? {
+        return Ok(true);
+    }
+    let roots = lua
+        .app_data_mut::<PendingDespawn>()
+        .map(|mut p| std::mem::take(&mut p.0))
+        .unwrap_or_default();
+    if roots.is_empty() {
+        return Ok(false);
+    }
+    let Ok(tombs) = with_world(lua, |w| {
+        let mut tombs = Vec::new();
+        for root in roots {
+            if !tree::alive(w, root) {
+                continue;
+            }
+            tombs.push((root, Tombstone::of(w, root)));
+            for d in tree::descendants(w, root) {
+                tombs.push((d, Tombstone::of(w, d)));
+            }
+            suppressed(w, |w| {
+                let _ = w.despawn_runtime(root);
+            });
+        }
+        // The despawned tags and attributes are no news to anyone.
+        w.drain_tag_changes();
+        w.drain_attribute_changes();
+        tombs
+    }) else {
+        return Ok(false);
+    };
+    for (e, t) in tombs {
+        instance::bury(lua, e, t)?;
+    }
+    Ok(false)
+}
+
 /// Called after a script changed the world: with immediate signals, the
 /// changes fire now.
 pub(crate) fn after_write(lua: &Lua) -> Result<()> {
@@ -662,6 +739,3 @@ pub(crate) fn after_write(lua: &Lua) -> Result<()> {
     }
     Ok(())
 }
-
-#[allow(dead_code)]
-fn _assert_rc(_: Rc<()>) {}

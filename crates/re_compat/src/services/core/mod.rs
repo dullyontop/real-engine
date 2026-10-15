@@ -152,13 +152,15 @@ fn cs_get_tags(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
     ret(lua, lua.create_sequence_from(tags)?)
 }
 
-/// The instances with `tag`, in stable-id order (so the order survives a
-/// reload).
-pub fn tagged(w: &World, tag: &str) -> Vec<Entity> {
+/// The instances inside the place under `game` with `tag`, in stable-id
+/// order (so the order survives a reload).
+pub fn tagged(w: &World, game: Entity, tag: &str) -> Vec<Entity> {
     let mut found: Vec<(String, Entity)> = w
         .tag_index()
         .tagged(tag)
-        .filter(|e| tree::is_instance(w, *e))
+        .filter(|e| {
+            tree::is_instance(w, *e) && !tree::is_destroyed(w, *e) && tree::in_game(w, game, *e)
+        })
         .map(|e| (w.id_of(e).unwrap_or_default().to_string(), e))
         .collect();
     found.sort();
@@ -167,16 +169,18 @@ pub fn tagged(w: &World, tag: &str) -> Vec<Entity> {
 
 fn cs_get_tagged(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
     let tag: String = args(lua, a, "CollectionService:GetTagged")?;
-    let list = with_world(lua, |w| tagged(w, &tag))?;
+    let game = state(lua)?.game;
+    let list = with_world(lua, |w| tagged(w, game, &tag))?;
     ret(lua, push_list(lua, &list)?)
 }
 
 fn cs_get_all_tags(lua: &Lua, _: Entity, _: MultiValue) -> Result<MultiValue> {
+    let game = state(lua)?.game;
     let tags: Vec<String> = with_world(lua, |w| {
         w.tag_index()
             .tags()
             .into_iter()
-            .filter(|t| !tagged(w, t).is_empty())
+            .filter(|t| !tagged(w, game, t).is_empty())
             .map(str::to_string)
             .collect()
     })?;

@@ -5,13 +5,39 @@
 //! (native entities parented under instances) are not instances, so the
 //! queries here skip them and their subtrees.
 
+use re_scene::ecs as bevy_ecs;
+use re_scene::ecs::component::Component;
 use re_scene::ecs::hierarchy::ChildOf;
 use re_scene::{Entity, Name, World, hierarchy};
 
 use crate::class::{ClassMarker, ClassRegistry};
 use crate::codes;
 use crate::error::CompatError;
+use crate::scene::ServiceTag;
 use crate::{GAME_ID, ROOT_CLASS};
+
+/// Marks an instance (and each of its descendants) that `Destroy` took out of
+/// the tree. It stays alive, readable and locked until the current resumption
+/// cycle settles, so deferred handlers still see its state; then it is
+/// despawned.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct Destroyed;
+
+/// True if `e` was destroyed (despawned, or waiting to be).
+pub fn is_destroyed(w: &World, e: Entity) -> bool {
+    !alive(w, e) || w.ecs.get::<Destroyed>(e).is_some()
+}
+
+/// True for the `game` root and the services, whose `Parent` never changes.
+pub fn is_locked(w: &World, e: Entity) -> bool {
+    w.ecs.get::<ServiceTag>(e).is_some()
+        || (w.id_of(e) == Some(GAME_ID) && class(w, e) == Some(ROOT_CLASS))
+}
+
+/// True if `e` is `game` or one of its descendants.
+pub fn in_game(w: &World, game: Entity, e: Entity) -> bool {
+    e == game || hierarchy::is_self_or_ancestor(&w.ecs, game, e)
+}
 
 /// True if `e` is alive.
 pub fn alive(w: &World, e: Entity) -> bool {
@@ -114,13 +140,19 @@ pub fn is_a(w: &World, classes: &ClassRegistry, e: Entity, class: &str) -> bool 
     self::class(w, e).is_some_and(|c| classes.is_a(c, class))
 }
 
-/// Moves `e` under `new` (`None` makes it a root). Refuses a cycle and a dead
-/// instance (`RE9008`).
+/// Moves `e` under `new` (`None` makes it a root). Refuses a cycle, a
+/// destroyed instance or parent, and moving `game` or a service (`RE9008`).
 pub fn set_parent(w: &mut World, e: Entity, new: Option<Entity>) -> Result<(), CompatError> {
-    if !alive(w, e) {
+    if is_destroyed(w, e) {
         return Err(CompatError::Runtime {
             code: codes::INVALID_PARENT,
             message: "The Parent property is locked: the instance was destroyed".into(),
+        });
+    }
+    if is_locked(w, e) && new != parent(w, e) {
+        return Err(CompatError::Runtime {
+            code: codes::INVALID_PARENT,
+            message: format!("The Parent property of {} is locked", name(w, e)),
         });
     }
     match new {
@@ -130,7 +162,7 @@ pub fn set_parent(w: &mut World, e: Entity, new: Option<Entity>) -> Result<(), C
             }
         }
         Some(p) => {
-            if !alive(w, p) {
+            if is_destroyed(w, p) {
                 return Err(CompatError::Runtime {
                     code: codes::INVALID_PARENT,
                     message: format!(

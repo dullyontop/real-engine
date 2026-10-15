@@ -299,7 +299,7 @@ impl CompatVm {
             Ok(())
         };
         let ctx = Context::compat(config, kind, &install).map_err(|e| e.to_diagnostic())?;
-        sched::set_settle_hook(ctx.lua(), Rc::new(crate::signal::events::dispatch))
+        sched::set_settle_hook(ctx.lua(), Rc::new(crate::signal::events::settle))
             .map_err(|e| re_script::ScriptError::from_mlua(kind.name(), &e).to_diagnostic())?;
         Ok(CompatVm { ctx, state })
     }

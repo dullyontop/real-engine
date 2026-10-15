@@ -365,6 +365,23 @@ fn connection(
 fn wait(lua: &Lua, this: &SignalRef) -> Result<MultiValue> {
     let label = format!("{}:Wait()", this.0.name);
     events::dispatch(lua)?;
+    // Drop waits on this signal whose park was cancelled (a `Wait` called
+    // where the caller could not yield), so they do not pile up.
+    let stale: Vec<u64> = hub(lua, |h| {
+        h.by_key
+            .get(&this.0)
+            .into_iter()
+            .flatten()
+            .filter(|id| {
+                matches!(h.conns.get(id), Some(Conn { target: Target::Wait(t), .. })
+                    if !sched::is_parked(lua, *t).unwrap_or(false))
+            })
+            .copied()
+            .collect()
+    })?;
+    for id in stale {
+        hub(lua, |h| h.remove(id))?;
+    }
     let (values, token) = sched::park(lua, &label, None)?;
     hub(lua, |h| h.add(this.0.clone(), Target::Wait(token), true))?;
     events::watch_connected(lua, &this.0)?;

@@ -7,7 +7,7 @@ use re_scene::Entity;
 use re_script::codes::{BAD_ARGUMENT, UNSUPPORTED_MEMBER};
 use re_script::sched;
 
-use super::{Tombstone, attributes, bury, clone, handle, push, push_list, tree};
+use super::{Tombstone, attributes, clone, handle, push, push_list, tree};
 use crate::error::CompatError;
 use crate::runtime::{Bindings, compat_error, lua_error, state, with_world};
 use crate::scene::spawn_instance;
@@ -213,25 +213,31 @@ fn get_full_name(lua: &Lua, e: Entity, _: MultiValue) -> Result<MultiValue> {
     ret(lua, name)
 }
 
-/// Destroys an instance: fires `Destroying` on it and its descendants, gives
-/// their handles tombstones, disconnects their signals, records the removal
-/// for `ChildRemoved` and `DescendantRemoving`, and despawns the subtree. A
-/// destroyed instance is left alone.
+/// Destroys an instance: fires `Destroying` on it and its descendants,
+/// disconnects their signals, takes the subtree out of the tree (so
+/// `ChildRemoved`, `DescendantRemoving` and `CollectionService` see it leave)
+/// and locks its `Parent`. The subtree stays readable until the resumption
+/// cycle settles, so deferred handlers see its properties and attributes;
+/// then it is despawned and its handles keep only its name and class. A
+/// destroyed instance is left alone; `game` and services refuse (`RE9008`).
 pub fn destroy(lua: &Lua, e: Entity) -> Result<()> {
     let info = with_world(lua, |w| {
-        if !tree::is_instance(w, e) {
-            return None;
+        if !tree::is_instance(w, e) || tree::is_destroyed(w, e) {
+            return Ok(None);
+        }
+        if tree::is_locked(w, e) {
+            return Err(CompatError::Runtime {
+                code: crate::codes::INVALID_PARENT,
+                message: format!("The Parent property of {} is locked", tree::name(w, e)),
+            });
         }
         let mut sub = vec![e];
         sub.extend(tree::descendants(w, e));
-        Some(
-            sub.into_iter()
-                .map(|x| (x, Tombstone::of(w, x)))
-                .collect::<Vec<_>>(),
-        )
-    })?;
-    let Some(tombs) = info else { return Ok(()) };
-    for (x, _) in &tombs {
+        Ok(Some(sub))
+    })?
+    .map_err(compat_error)?;
+    let Some(sub) = info else { return Ok(()) };
+    for x in &sub {
         signal::fire_with(
             lua,
             &SignalKey::new(*x, "Destroying"),
@@ -239,20 +245,22 @@ pub fn destroy(lua: &Lua, e: Entity) -> Result<()> {
             Guard::None,
         )?;
     }
-    for (x, t) in &tombs {
-        bury(lua, *x, t.clone())?;
-    }
-    let entities: Vec<Entity> = tombs.iter().map(|(x, _)| *x).collect();
-    signal::disconnect_entities(lua, &entities)?;
-    with_world(lua, |w| {
-        if !tree::alive(w, e) {
-            return; // a Destroying handler destroyed it already
+    signal::disconnect_entities(lua, &sub)?;
+    let detached = with_world(lua, |w| {
+        if tree::is_destroyed(w, e) {
+            return false; // a Destroying handler destroyed it already
         }
-        events::record_destroy(w, e, tombs);
-        events::suppressed(w, |w| {
-            let _ = w.despawn_runtime(e);
-        });
+        if tree::parent(w, e).is_some() {
+            re_scene::hierarchy::remove_parent(&mut w.ecs, e);
+        }
+        for x in tree::descendants(w, e).into_iter().chain([e]) {
+            w.ecs.entity_mut(x).insert(tree::Destroyed);
+        }
+        true
     })?;
+    if detached {
+        events::despawn_later(lua, e);
+    }
     events::after_write(lua)
 }
 
@@ -447,8 +455,13 @@ fn instance_new(lua: &Lua, (class, parent): (String, LuaValue)) -> Result<LuaVal
     };
     let e = with_world(lua, |w| -> std::result::Result<Entity, CompatError> {
         let e = spawn_instance(w, classes, &class, None, &class, None)?;
-        if let Some(p) = parent {
-            tree::set_parent(w, e, Some(p))?;
+        if let Some(p) = parent
+            && let Err(err) = tree::set_parent(w, e, Some(p))
+        {
+            events::suppressed(w, |w| {
+                let _ = w.despawn_runtime(e);
+            });
+            return Err(err);
         }
         Ok(e)
     })?

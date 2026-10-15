@@ -895,7 +895,9 @@ pub fn park(
         let token = s.next_token;
         s.next_token += 1;
         let owner = s.current_owner();
+        // An infinite timeout never expires; NaN counts as zero.
         let on_timeout = match timeout {
+            Some((secs, _)) if secs == f64::INFINITY => None,
             Some((secs, values)) => {
                 let secs = if secs.is_finite() { secs.max(0.0) } else { 0.0 };
                 s.deadlines.push(Reverse((WakeTime(s.now + secs), token)));

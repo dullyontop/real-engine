@@ -273,7 +273,7 @@
         {
           "name": "Destroy",
           "status": "implemented",
-          "doc": "Fires Destroying, disconnects the instance's connections, takes it and its subtree out of the tree and locks its Parent. Handles keep their last name and class."
+          "doc": "Fires Destroying, disconnects the connections of the instance and its descendants, takes the instance out of the tree and locks its Parent. The instance stays readable until the current resumption cycle ends, so deferred handlers still see it; after that its handles keep only its name and class. game and services refuse (RE9008)."
         },
         {
           "name": "destroy",
