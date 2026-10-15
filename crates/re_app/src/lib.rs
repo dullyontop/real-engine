@@ -23,6 +23,7 @@ pub mod app;
 pub mod codes;
 pub mod commands;
 pub mod compat;
+pub mod compat_view;
 pub mod config;
 pub mod gfx;
 pub mod host;

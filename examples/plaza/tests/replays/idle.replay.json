@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "seed": 7,
+  "frames": 600,
+  "checks": [
+    {
+      "frame": 120,
+      "screenshot": "tests/goldens/{backend}/idle_f120.png"
+    },
+    {
+      "frame": 599,
+      "screenshot": "tests/goldens/{backend}/idle_f599.png"
+    }
+  ]
+}
