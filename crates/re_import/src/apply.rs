@@ -75,6 +75,8 @@ pub fn project_toml(name: &str) -> String {
         CompatConfig {
             api: CompatApi::Roblox,
             signal_behavior: Default::default(),
+            assets: Default::default(),
+            effect_budget: None,
         }
         .to_toml()
     )

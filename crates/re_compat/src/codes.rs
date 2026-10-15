@@ -33,3 +33,14 @@ pub const INVALID_PARENT: Code = Code::new("RE9008");
 
 /// A deprecated member was used; it works, and the note names its replacement.
 pub const DEPRECATED_MEMBER: Code = Code::new("RE9101");
+
+/// An asset id (a sound, image or texture) is not in the project's
+/// substitute table; it plays or draws nothing (WP15 holds RE9350–RE9399).
+pub const UNKNOWN_ASSET: Code = Code::new("RE9350");
+
+/// More particles, beam segments or trail points than the frame's effect
+/// budget; the excess was not drawn.
+pub const EFFECT_BUDGET: Code = Code::new("RE9351");
+
+/// `TweenService:Create` was given a property whose type cannot be tweened.
+pub const NOT_TWEENABLE: Code = Code::new("RE9352");
