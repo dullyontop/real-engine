@@ -26,6 +26,10 @@ pub fn all() -> Vec<(&'static str, Json)> {
             "graph.schema.json",
             to_json(schemars::schema_for!(re_types::GraphDoc)),
         ),
+        (
+            "material.schema.json",
+            to_json(schemars::schema_for!(re_assets::MaterialFile)),
+        ),
         ("prefab.schema.json", prefab),
         (
             "replay.schema.json",

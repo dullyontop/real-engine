@@ -69,3 +69,15 @@ pub const SCENE_SAVE_FAILED: Code = Code::new("RE0518");
 
 /// A run reported errors (subsystem or script errors during frames).
 pub const RUN_ERRORS: Code = Code::new("RE0519");
+
+/// `asset.import` could not copy a file into the project.
+pub const ASSET_IMPORT_FAILED: Code = Code::new("RE0517");
+
+/// A mesh, material or clip a component names cannot be loaded.
+pub const ASSET_UNAVAILABLE: Code = Code::new("RE0520");
+
+/// The window or its GPU surface could not be opened.
+pub const WINDOW_FAILED: Code = Code::new("RE0521");
+
+/// An animation clip animates a node that no entity under the player is named after.
+pub const ANIM_TARGET_MISSING: Code = Code::new("RE0522");

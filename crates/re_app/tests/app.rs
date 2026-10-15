@@ -57,8 +57,30 @@ fn project() -> tempfile::TempDir {
 
 fn write_project(dir: &Path, scene: &str) {
     std::fs::create_dir_all(dir.join("scenes")).unwrap();
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
     std::fs::write(dir.join("real.toml"), CONFIG).unwrap();
     std::fs::write(dir.join("scenes/main.scene.json"), scene).unwrap();
+    std::fs::write(dir.join("assets/music.wav"), wav(800)).unwrap();
+}
+
+/// A silent 16-bit mono PCM WAV of `samples` samples at 8 kHz.
+fn wav(samples: u32) -> Vec<u8> {
+    let data = samples * 2;
+    let mut w = Vec::new();
+    w.extend_from_slice(b"RIFF");
+    w.extend_from_slice(&(36 + data).to_le_bytes());
+    w.extend_from_slice(b"WAVEfmt ");
+    w.extend_from_slice(&16u32.to_le_bytes());
+    w.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    w.extend_from_slice(&1u16.to_le_bytes()); // mono
+    w.extend_from_slice(&8000u32.to_le_bytes());
+    w.extend_from_slice(&16000u32.to_le_bytes());
+    w.extend_from_slice(&2u16.to_le_bytes());
+    w.extend_from_slice(&16u16.to_le_bytes());
+    w.extend_from_slice(b"data");
+    w.extend_from_slice(&data.to_le_bytes());
+    w.resize(w.len() + data as usize, 0);
+    w
 }
 
 fn open(dir: &Path) -> App {
@@ -489,6 +511,7 @@ fn verify_passes_on_a_good_project_and_reports_broken_content() {
     let options = VerifyOptions {
         boot_frames: 30,
         warmup_frames: 5,
+        ..VerifyOptions::default()
     };
     let report = re_app::verify::run_project(dir.path(), &config, &options, &[]);
     assert!(

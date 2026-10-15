@@ -104,6 +104,7 @@ fn schema_writes_every_schema() {
     assert!(o.status.success(), "{}", text(&o));
     for name in [
         "graph.schema.json",
+        "material.schema.json",
         "prefab.schema.json",
         "replay.schema.json",
         "scene.schema.json",
@@ -119,8 +120,30 @@ fn schema_writes_every_schema() {
 fn usage_errors_exit_2() {
     let dir = tempfile::tempdir().unwrap();
     real(&["new", "g"], dir.path());
-    let o = real(&["run", "--project", "g", "--frames", "1"], dir.path());
+    let o = real(&["run", "--project", "g", "--frmaes", "1"], dir.path());
     assert_eq!(o.status.code(), Some(2), "{}", text(&o));
     let o = real(&["frobnicate"], dir.path());
     assert_eq!(o.status.code(), Some(2));
+}
+
+#[test]
+fn run_headless_writes_a_screenshot() {
+    let dir = tempfile::tempdir().unwrap();
+    real(&["new", "g"], dir.path());
+    let o = real(
+        &[
+            "run",
+            "--project",
+            "g",
+            "--headless",
+            "--frames",
+            "30",
+            "--screenshot",
+            "out/f30.png",
+        ],
+        dir.path(),
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let png = std::fs::read(dir.path().join("out/f30.png")).unwrap();
+    assert_eq!(&png[1..4], b"PNG");
 }

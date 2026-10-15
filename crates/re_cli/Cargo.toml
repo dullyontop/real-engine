@@ -20,7 +20,6 @@ path = "src/main.rs"
 default = ["tooling"]
 tooling = []
 
-# Workspace crates without a `[workspace.dependencies]` entry yet are named by path.
 [dependencies]
 re_core.workspace = true
 re_types = { workspace = true, features = ["schemars"] }
@@ -30,6 +29,10 @@ re_command.workspace = true
 re_app.workspace = true
 re_input.workspace = true
 re_physics.workspace = true
+re_render.workspace = true
+re_assets = { workspace = true, features = ["schemars"] }
+re_audio.workspace = true
+re_anim.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
