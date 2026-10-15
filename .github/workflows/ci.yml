@@ -175,7 +175,9 @@ jobs:
           jq -c '.stages[] | select(.name == "goldens") | .data' out/verify.json
           # Goldens are blessed on Linux only (lavapipe and GL). Here every other
           # stage must pass, and goldens must match where a set for this backend
-          # exists; a backend with no set at all is reported, not failed.
+          # exists; a backend with no set at all is reported, not failed. WP18's
+          # PR "d2" adds the dx12 and metal sets and removes this rule.
+          jq -r '.stages[] | select(.name == "goldens") | select(.data.checks | length > 0 and all(.missing == true)) | "::warning::no golden set for backend \(.data.backend): \(.data.checks | length) images not compared"' out/verify.json
           jq -e '.ok == true or (
             ([.stages[] | select(.name != "goldens") | .ok] | all) and
             (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)))
@@ -220,7 +222,9 @@ jobs:
           jq -c '.stages[] | select(.name == "goldens") | .data' out/verify.json
           # Goldens are blessed on Linux only (lavapipe and GL). Here every other
           # stage must pass, and goldens must match where a set for this backend
-          # exists; a backend with no set at all is reported, not failed.
+          # exists; a backend with no set at all is reported, not failed. WP18's
+          # PR "d2" adds the dx12 and metal sets and removes this rule.
+          jq -r '.stages[] | select(.name == "goldens") | select(.data.checks | length > 0 and all(.missing == true)) | "::warning::no golden set for backend \(.data.backend): \(.data.checks | length) images not compared"' out/verify.json
           jq -e '.ok == true or (
             ([.stages[] | select(.name != "goldens") | .ok] | all) and
             (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)))
