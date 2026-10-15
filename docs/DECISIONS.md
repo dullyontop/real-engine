@@ -810,6 +810,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Consequences.** Static maps cost a few thousand bodies instead of one per part, and splitting a touched part out costs one cell rebuild. A map wider than 10 km needs a different scheme (several simulation regions), which is not planned for M2.
 
+**Amendment (M2, WP13 #79; accepted by the maintainer, 2026-10-15).** A part outside the world limits keeps its frame without a physics body; it is reported once (`RE5006`, warning) and gets its body back when moved inside. It still renders and replicates. The ±5 km limit and the compat stud scale are unchanged. Scripts often park idle parts far away, so this is not a boot failure.
+
 ## ADR-0032: Component reflection: our own registry with a closed set of field types; no bevy_reflect
 
 **Status:** Accepted. Evidence: the core spike (research bundle `spikes/core/`; published as `docs/research/core.md` in M1 WP0), including its bevy_reflect 0.20.0 comparison.
