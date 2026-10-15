@@ -669,3 +669,27 @@ fn find_takes_a_shared_world() {
     assert_eq!(shared.find("WORLD/CRATE/LAMP"), w.entity("lamp").ok());
     assert_eq!(shared.find("WORLD/NOPE"), None);
 }
+
+#[test]
+fn a_declared_script_component_no_authored_entity_uses_is_saved() {
+    // A prefab's generated entities may be the only users of a script
+    // component: the saved scene still declares it, so it loads again.
+    let text = r#"{
+  "format": "real-engine/scene",
+  "version": 1,
+  "script_components": [
+    { "name": "Collectible", "fields": [ { "name": "value", "type": { "kind": "i32" }, "default": 1 } ] }
+  ],
+  "entities": [ { "id": "a", "components": {} } ]
+}"#;
+    let mut w = world();
+    w.load(&scene::from_json(text).unwrap()).unwrap();
+    let saved = scene_json(&mut w);
+    let doc = scene::from_json(&saved).unwrap();
+    assert_eq!(doc.script_components.len(), 1, "{saved}");
+    assert_eq!(doc.script_components[0].name, "Collectible");
+    // And the round trip is stable.
+    let mut w2 = world();
+    w2.load(&doc).unwrap();
+    assert_eq!(scene_json(&mut w2), saved);
+}
