@@ -247,8 +247,9 @@ fn an_agent_edits_checks_and_restores_the_island() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // The 25 of M1, plus WP17's resource.list, resource.read,
-    // checkpoint.create, compat.coverage, scene.dump_tree and verify.diff.
-    assert_eq!(names.len(), 31, "{names:?}");
+    // checkpoint.create, compat.coverage, scene.dump_tree, verify.diff and
+    // project.import.
+    assert_eq!(names.len(), 32, "{names:?}");
     for tool in [
         "entity_spawn",
         "graph_set_param",
@@ -603,6 +604,118 @@ fn an_agent_uses_luau_tools_resources_and_verify_diff() {
         &s.call(15, "scene_dump_tree", json!({ "depth": 0 })),
     );
     assert!(tree["data"]["nodes"].as_u64().unwrap() > 0);
+
+    s.finish();
+}
+
+#[test]
+fn an_agent_imports_a_loader_into_a_place_and_plays_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("place");
+    let made = Command::new(env!("CARGO_BIN_EXE_real"))
+        .args(["new", "place", "--template", "roblox"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    std::fs::create_dir_all(project.join("import")).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../re_import/tests/fixtures/loader_basic.luau"),
+        project.join("import/garden.luau"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(project.join(".real")).unwrap();
+    std::fs::write(
+        project.join(".real/agent-policy.toml"),
+        "max_tier = \"edit\"\n[scopes]\nallow = [\"scripts/**\", \"scenes/**\"]\n",
+    )
+    .unwrap();
+    let scene = project.join("scenes/main.scene.json");
+    let scene_before = std::fs::read(&scene).unwrap();
+
+    let mut s = Server::start(&project);
+    s.request(
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "mcp_e2e", "version": "0" }
+        }),
+    );
+    s.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
+    let nodes = |s: &mut Server, id: u64| -> u64 {
+        let tree = ok("scene_dump_tree", &s.call(id, "scene_dump_tree", json!({})));
+        tree["data"]["nodes"].as_u64().unwrap()
+    };
+    let nodes_before = nodes(&mut s, 2);
+
+    // A dry run by default: the report, and nothing written.
+    let dry = ok(
+        "project_import",
+        &s.call(
+            3,
+            "project_import",
+            json!({ "input": "import/garden.luau" }),
+        ),
+    );
+    assert_eq!(dry["data"]["written"], false);
+    assert_eq!(dry["data"]["report"]["format"], "loader");
+    let created = dry["data"]["report"]["created"].as_array().unwrap().len();
+    assert!(created > 0, "{dry}");
+    assert_eq!(std::fs::read(&scene).unwrap(), scene_before);
+    assert_eq!(nodes(&mut s, 4), nodes_before);
+
+    // Only inputs inside the project.
+    let outside = s.call(5, "project_import", json!({ "input": "../elsewhere.luau" }));
+    assert_eq!(outside["isError"], true);
+    assert_eq!(body(&outside)["code"], "RE8002");
+
+    // The write: files, and the World, as one undoable step.
+    let wrote = ok(
+        "project_import",
+        &s.call(
+            6,
+            "project_import",
+            json!({ "input": "import/garden.luau", "write": true }),
+        ),
+    );
+    assert_eq!(wrote["data"]["written"], true, "{wrote}");
+    assert_eq!(
+        wrote["data"]["report"]["created"],
+        dry["data"]["report"]["created"]
+    );
+    assert_ne!(std::fs::read(&scene).unwrap(), scene_before);
+    assert!(nodes(&mut s, 7) > nodes_before);
+
+    // The imported place plays: a player joins and the tree shows the import.
+    let played = ok(
+        "play_run",
+        &s.call_within(
+            70,
+            "play_run",
+            json!({
+                "frames": 10,
+                "screenshot": false,
+                "steps": ["add_player", { "dump_tree": { "path": "ReplicatedStorage", "depth": 3 } }]
+            }),
+            SLOW,
+        ),
+    );
+    let played_text = played.to_string();
+    assert!(played_text.contains("add_player"), "{played}");
+    assert!(played_text.contains("Garden"), "{played}");
+
+    // The Roblox-style API's types are a resource.
+    let defs = s.request(
+        71,
+        "resources/read",
+        json!({ "uri": "real://luau/roblox.d.luau" }),
+    );
+    let defs = defs["result"]["contents"][0]["text"].as_str().unwrap();
+    assert!(defs.contains("Instance"), "{defs}");
+    ok("undo", &s.call(8, "undo", json!({})));
+    assert_eq!(nodes(&mut s, 9), nodes_before);
 
     s.finish();
 }

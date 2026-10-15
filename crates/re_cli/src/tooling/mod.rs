@@ -10,3 +10,4 @@ pub mod do_cmd;
 pub mod editor;
 pub mod import;
 pub mod mcp;
+mod mcp_import;

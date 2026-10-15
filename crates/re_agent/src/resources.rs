@@ -12,6 +12,7 @@
 //! real://explain/RE8001          one explain page
 //! real://docs/ARCHITECTURE.md    a document under docs/
 //! real://luau/engine.d.luau      the engine's Luau definitions
+//! real://luau/roblox.d.luau      the Roblox-style API's definitions
 //! ```
 
 use std::sync::Arc;
