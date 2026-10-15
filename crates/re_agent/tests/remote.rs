@@ -327,3 +327,25 @@ fn too_long_socket_paths_are_reported() {
     assert_eq!(err.code.to_string(), "RE8005");
     assert!(err.message.contains("too long"), "{}", err.message);
 }
+
+#[test]
+fn guarded_handle_applies_the_agent_policy_before_the_editor() {
+    use std::sync::Arc;
+    let dir = tempfile::tempdir().unwrap();
+    let editor = Editor::start(dir.path());
+    let handle = connect_to_editor(dir.path());
+    let guarded = re_agent::guard::guarded(
+        handle,
+        Arc::new(re_agent::Policy::read_only()),
+        Origin::Agent("mcp".into()),
+    );
+    let refused = guarded.call("entity.spawn", json!({ "id": "x" }), false);
+    assert_eq!(refused.diagnostics[0].code.to_string(), "RE8001");
+    let dry = guarded.call("entity.spawn", json!({ "id": "x", "dry_run": true }), false);
+    assert!(dry.ok, "{:?}", dry.diagnostics);
+    assert!(guarded.list_specs().unwrap().len() >= 13);
+    let unknown = guarded.call("nope", json!({}), false);
+    assert_eq!(unknown.diagnostics[0].code.to_string(), "RE2004");
+    let state = editor.stop();
+    assert!(state.world.entity("x").is_err());
+}

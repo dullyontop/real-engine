@@ -1,0 +1,16 @@
+{
+  "format": "real-engine/prefab",
+  "version": 1,
+  "entities": [
+    {
+      "id": "rock",
+      "name": "Rock",
+      "components": {
+        "Collider": { "shape": "Sphere", "radius": 0.8 },
+        "MaterialRef": { "asset": "materials/stone.material.json" },
+        "MeshRef": { "asset": "assets/models/rock.glb" },
+        "Transform": { "translation": [0.0, 0.3, 0.0] }
+      }
+    }
+  ]
+}

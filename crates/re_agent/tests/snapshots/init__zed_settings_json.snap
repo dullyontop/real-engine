@@ -1,0 +1,16 @@
+---
+source: crates/re_agent/tests/init.rs
+expression: "init::zed_snippet(\"real\", p)"
+---
+{
+  "context_servers": {
+    "real-engine": {
+      "command": "real",
+      "args": [
+        "mcp",
+        "--project",
+        "/home/me/game"
+      ]
+    }
+  }
+}

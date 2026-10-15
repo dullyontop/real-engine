@@ -1,0 +1,5 @@
+---
+source: crates/re_agent/tests/init.rs
+expression: "read(project, \"CLAUDE.md\")"
+---
+@AGENTS.md

@@ -1,0 +1,7 @@
+---
+source: crates/re_agent/tests/init.rs
+expression: "init::codex_snippet(\"real\", p)"
+---
+[mcp_servers.real-engine]
+command = "real"
+args = ["mcp", "--project", "/home/me/game"]

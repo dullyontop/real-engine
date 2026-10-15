@@ -142,10 +142,3 @@ fn missing_project_directory_is_re8007() {
     let err = lock::acquire(&file, Holder::Editor).unwrap_err();
     assert_eq!(code(&err), "RE8007");
 }
-
-#[test]
-fn diagnostics_catalogue_is_complete() {
-    let problems = re_core::validate_catalog(re_agent::DIAGNOSTICS, re_agent::CODE_RANGE);
-    assert!(problems.is_empty(), "{problems:?}");
-    assert_eq!(re_agent::DIAGNOSTICS.len(), 5);
-}

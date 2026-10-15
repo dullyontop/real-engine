@@ -1,0 +1,24 @@
+{
+  "format": "real-engine/prefab",
+  "version": 1,
+  "entities": [
+    {
+      "id": "palm",
+      "name": "Palm",
+      "components": {
+        "Collider": { "shape": "Capsule", "radius": 0.3, "half_height": 2.0 },
+        "Transform": { "translation": [0.0, 2.3, 0.0] }
+      }
+    },
+    {
+      "id": "leaves",
+      "name": "Leaves",
+      "parent": "palm",
+      "components": {
+        "MaterialRef": { "asset": "materials/leaves.material.json" },
+        "MeshRef": { "asset": "assets/models/palm_leaves.glb" },
+        "Transform": { "translation": [0.0, 2.3, 0.0] }
+      }
+    }
+  ]
+}
