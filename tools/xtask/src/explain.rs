@@ -31,7 +31,8 @@ pub fn ranges(krate: &str) -> &'static [(u16, u16)] {
         // re_script also owns the compatibility block in M1.
         "re_script" => &[(3000, 3999), (9000, 9999)],
         "re_script_check" => &[(3000, 3999)],
-        "re_proc" | "re_geom" => &[(4000, 4999)],
+        "re_proc" => &[(4000, 4499)],
+        "re_geom" => &[(4500, 4599)],
         "re_physics" => &[(5000, 5999)],
         "re_render" => &[(6000, 6999)],
         "re_assets" => &[(7000, 7199)],
