@@ -55,10 +55,11 @@ There is no `eframe`. We own the wgpu device and pass `(&Device, &Queue, &Textur
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| oxijolt | 1.1.0+jolt-5.6.0 (pin `=1.1.0`) | MIT OR Apache-2.0 | 1.88 | Rust bindings to Jolt Physics 5.6.0. Bodies, shapes, constraints, CharacterVirtual, queries, sensors, state save. | `default-features = false`. Later: `cross-platform-deterministic` (M3, D2) | physics spike, 12 scenarios plus a bench; source build about 55 s | Verified |
+| oxijolt | 1.1.0+jolt-5.6.0 (pin `=1.1.0`) | MIT OR Apache-2.0 | 1.88 | Rust bindings to Jolt Physics 5.6.0. Bodies, shapes, constraints, CharacterVirtual, queries, sensors, state save. | `default-features = false`. M3: `cross-platform-deterministic`, always on (ADR-0036, lands with WP18 PR "d2") | physics spike, 12 scenarios plus a bench; source build about 55 s | Verified |
 
 Notes:
 - The available features are `asserts`, `bindgen`, `cross-platform-deterministic`, `debug-renderer`, `double-precision`, `glam032`, `mint` and `prebuilt`. We leave `glam032` off, because it would pull a third glam version. Conversion is a two-line function in `re_physics`.
+- `libm` 0.2.16 (MIT, already in the lockfile through naga and num-traits) becomes a workspace dependency, and glam gets its `libm` feature, with WP18 PR "d2": every transcendental function in the workspace goes through it, and a root `clippy.toml` bans the platform ones (ADR-0036). That PR adds its full row.
 - A source build needs `cmake` and a C++17 compiler (see System packages). It does not need libclang: `oxijolt-sys` ships committed bindings for the Linux, Windows and macOS targets, and `bindgen` is an optional build dependency behind its `bindgen` feature, which we leave off (physics spike §1).
 - The crate has few downloads (464 when checked). We pin it exactly and hide it entirely behind `re_physics` (ADR-0008).
 
