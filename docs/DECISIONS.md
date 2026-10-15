@@ -853,7 +853,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - The runner is public and generic: `crates/re_compat/tests/samples.rs`. It reads expectation files from the directory in `REAL_SAMPLE_KIT`, and prints `skipped: REAL_SAMPLE_KIT not set` and passes when the variable is unset.
 - An expectation file names its input (path and sha256 prefix), the `real import` options, any stand-in content to add (a ground plane, generated content for missing parts of the sample), the boot expectations (frames, exact script output, allowed warnings), and a list of `play.run` drivers, each with assertions on `dump_tree` output, attributes and logged values.
 - The kit (expectation files, drivers and stand-ins) lives in the private research folder with the samples. It is never committed.
-- PR descriptions report pass and fail counts from the kit only, with no sample names, output or paths.
+- A PR description says only whether its private checks pass, with no counts, sample names, output or paths; counts and details go in the private research folder. (Amended during M2: counts were allowed at first, but even counts describe the samples.)
 
 **Alternatives.** Manual runs, which are not repeatable. Committing redacted samples, which is still sample content.
 
