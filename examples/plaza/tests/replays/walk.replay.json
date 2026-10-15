@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "seed": 7,
+  "frames": 900,
+  "raw": [
+    {
+      "frame": 60,
+      "key": "KeyW",
+      "down": true
+    },
+    {
+      "frame": 200,
+      "key": "KeyD",
+      "down": true
+    },
+    {
+      "frame": 230,
+      "key": "Space",
+      "down": true
+    },
+    {
+      "frame": 236,
+      "key": "Space",
+      "down": false
+    },
+    {
+      "frame": 260,
+      "key": "KeyW",
+      "down": false
+    },
+    {
+      "frame": 300,
+      "key": "KeyD",
+      "down": false
+    },
+    {
+      "frame": 320,
+      "key": "KeyA",
+      "down": true
+    },
+    {
+      "frame": 420,
+      "key": "KeyA",
+      "down": false
+    },
+    {
+      "frame": 640,
+      "key": "KeyE",
+      "down": true
+    },
+    {
+      "frame": 700,
+      "key": "KeyE",
+      "down": false
+    },
+    {
+      "mouse_move": [
+        40.0,
+        0.0
+      ],
+      "frame": 720
+    }
+  ],
+  "checks": [
+    {
+      "frame": 600,
+      "screenshot": "tests/goldens/{backend}/walk_f600.png"
+    }
+  ]
+}
