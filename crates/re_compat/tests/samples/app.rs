@@ -14,7 +14,10 @@
 //!   lists lines the output must contain. Uncaught errors fail it as in
 //!   `app.boot`.
 //!
-//! Both read `players` (default 1) as `real.toml` `[compat] players`.
+//! Both read `players` (default 1) as `real.toml` `[compat] players`, and
+//! `stand_ins`, a map from a name to a kit Luau file: each becomes a server
+//! `Script` of that name in `Workspace`, which starts before the scripts of
+//! `ServerScriptService` (to build what the sample lacks, say).
 
 use re_app::verify::{self, VerifyOptions};
 use re_app::{App, AppConfig};
@@ -45,6 +48,9 @@ fn strings(v: &J) -> Vec<String> {
 fn config(ctx: &mut Ctx, args: &J) -> Result<AppConfig, String> {
     ctx.import()?;
     let project = ctx.project();
+    if let Some(files) = args["stand_ins"].as_object() {
+        add_stand_ins(ctx, &project, files)?;
+    }
     if let Some(n) = args["players"].as_u64() {
         let path = project.join("real.toml");
         let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -61,6 +67,45 @@ fn config(ctx: &mut Ctx, args: &J) -> Result<AppConfig, String> {
         persist_edits: false,
         ..config
     })
+}
+
+/// Adds each stand-in script to the imported project and its scene, once.
+fn add_stand_ins(
+    ctx: &Ctx,
+    project: &std::path::Path,
+    files: &serde_json::Map<String, J>,
+) -> Result<(), String> {
+    let config = AppConfig::load(project).map_err(|d| d.render_human())?;
+    let scene_path = project.join(&config.project.entry_scene);
+    let text = std::fs::read_to_string(&scene_path).map_err(|e| e.to_string())?;
+    let mut scene: J = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let entities = scene["entities"]
+        .as_array_mut()
+        .ok_or("the scene has no entities")?;
+    for (name, from) in files {
+        let from = ctx.kit_path(from.as_str().ok_or("stand_ins: a kit path expected")?);
+        let rel = format!("scripts/Workspace/{name}.server.luau");
+        let to = project.join(&rel);
+        std::fs::create_dir_all(to.parent().expect("a parent")).map_err(|e| e.to_string())?;
+        std::fs::copy(&from, &to).map_err(|e| format!("stand_ins: {}: {e}", from.display()))?;
+        let id = format!("kit-{name}");
+        if entities.iter().any(|e| e["id"] == id.as_str()) {
+            continue;
+        }
+        entities.push(serde_json::json!({
+            "id": id,
+            "name": name,
+            "parent": "Workspace",
+            "components": {
+                "ClassMarker": { "class": "Script" },
+                "Compat_BaseScript": { "RunContext": "Legacy" },
+                "Compat_Instance": { "Archivable": true },
+                "ScriptRef": { "path": rel, "context": "Server" },
+            },
+        }));
+    }
+    let text = serde_json::to_string_pretty(&scene).map_err(|e| e.to_string())?;
+    std::fs::write(&scene_path, text).map_err(|e| e.to_string())
 }
 
 /// The failures `allow` does not excuse.
