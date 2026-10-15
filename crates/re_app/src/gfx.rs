@@ -76,6 +76,12 @@ impl Graphics {
     /// Graphics on `gpu` whose main target has `format` (a window surface's).
     pub fn new(gpu: Gpu, format: wgpu::TextureFormat) -> Graphics {
         let renderer = Renderer::new(&gpu, format);
+        Graphics::from_parts(gpu, renderer)
+    }
+
+    /// Graphics around a renderer the caller made on `gpu` (the editor's, which
+    /// also paints its UI), so the app uploads its meshes and materials there.
+    pub fn from_parts(gpu: Gpu, renderer: Renderer) -> Graphics {
         Graphics {
             renderer,
             egui: egui::Context::default(),
@@ -84,6 +90,12 @@ impl Graphics {
             keep_derived: false,
             gpu,
         }
+    }
+
+    /// The device and the renderer back (to drop the renderer first, or move
+    /// them to another app).
+    pub fn into_parts(self) -> (Gpu, Renderer) {
+        (self.gpu, self.renderer)
     }
 
     /// The device.

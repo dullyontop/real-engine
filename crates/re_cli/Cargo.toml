@@ -18,7 +18,7 @@ path = "src/main.rs"
 # ownership rule).
 [features]
 default = ["tooling"]
-tooling = ["dep:re_editor"]
+tooling = ["dep:re_editor", "dep:re_script_check"]
 
 [dependencies]
 re_core.workspace = true
@@ -33,6 +33,8 @@ re_render.workspace = true
 re_assets = { workspace = true, features = ["schemars"] }
 re_audio.workspace = true
 re_anim.workspace = true
+re_script.workspace = true
+re_script_check = { workspace = true, optional = true }
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true

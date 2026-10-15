@@ -390,3 +390,28 @@ fn asset_import_refuses_files_it_cannot_import() {
     assert!(!out.ok);
     assert!(!dir.path().join("assets/notes.txt").exists());
 }
+
+#[test]
+fn edit_frames_upload_and_draw_with_a_renderer_the_caller_made() {
+    let dir = project(SCENE);
+    let mut app = open(dir.path());
+    // What an editor does: its own device and renderer, handed to the app.
+    let backends = re_app::gfx::backends(&[]).unwrap();
+    let gpu = re_render::Gpu::headless(backends).unwrap();
+    let renderer = re_render::Renderer::new(&gpu, re_render::Capture::FORMAT);
+    app.set_graphics(re_app::Graphics::from_parts(gpu, renderer));
+    app.edit_frame();
+    assert_eq!(app.snapshot().items.len(), 1);
+    let capture = {
+        let gpu = app.graphics().unwrap().gpu();
+        re_render::Capture::new(&gpu.device, 160, 120).unwrap()
+    };
+    app.draw_into(capture.view(), [160, 120], 1.0).unwrap();
+    let gpu = app.graphics().unwrap().gpu();
+    let image = capture.read(&gpu.device, &gpu.queue).unwrap();
+    let [r, g, b, _] = image.pixel(80, 60);
+    assert!(r > 200 && g < 40 && b < 40, "centre is {:?}", [r, g, b]);
+    // Edit mode simulates nothing and runs no scripts.
+    assert_eq!(app.frame_count(), 0);
+    assert!(app.scripts().is_none());
+}

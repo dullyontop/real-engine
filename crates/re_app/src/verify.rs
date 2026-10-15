@@ -186,6 +186,25 @@ fn read(project: &Path, file: &str) -> Result<String, Diagnostic> {
 }
 
 /// Stage 1: every content file parses and loads.
+/// Every `scripts/**/*.luau` compiles (validation tier 1).
+fn stage_compile(project: &Path) -> StageReport {
+    let scripts = content_files(project, "scripts", ".luau");
+    let mut diags = Vec::new();
+    for file in &scripts {
+        match std::fs::read_to_string(project.join(file)) {
+            Ok(source) => diags.extend(re_script::compile_check(&source, file)),
+            Err(e) => diags.push(
+                Diagnostic::error(
+                    re_script::codes::SCRIPT_READ,
+                    format!("cannot read {file}: {e}"),
+                )
+                .at(Location::file(file)),
+            ),
+        }
+    }
+    StageReport::new("compile", diags, json!({ "scripts": scripts.len() }))
+}
+
 fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
     let mut diags = Vec::new();
     let mut counts = serde_json::Map::new();
@@ -597,10 +616,7 @@ pub fn run_project(
     let ctx = VerifyContext { project, config };
     let mut stages = Vec::new();
     stages.push(timed(|| stage_schema(project, config)));
-    stages.push(StageReport::skipped(
-        "compile",
-        "script compilation joins verify when scripting is integrated into the runtime",
-    ));
+    stages.push(timed(|| stage_compile(project)));
     for stage in extra {
         stages.push(timed(|| stage.run(&ctx)));
     }

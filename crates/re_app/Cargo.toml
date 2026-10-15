@@ -20,6 +20,7 @@ re_render.workspace = true
 re_assets.workspace = true
 re_audio.workspace = true
 re_anim.workspace = true
+re_script.workspace = true
 winit.workspace = true
 glam.workspace = true
 serde.workspace = true

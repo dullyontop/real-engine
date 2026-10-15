@@ -38,6 +38,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "Output file could not be written",
         page: include_str!("../explain/RE0902.md"),
     },
+    DiagInfo {
+        code: codes::SCRIPT_API_GAP,
+        title: "Script uses an API the engine does not provide",
+        page: include_str!("../explain/RE0903.md"),
+    },
 ];
 
 #[derive(Parser, Debug)]
@@ -71,6 +76,10 @@ enum Command {
         /// Print JSON.
         #[arg(long)]
         json: bool,
+        /// Print `engine.d.luau`, the Luau definitions of the engine API (for
+        /// luau-lsp and editors).
+        #[arg(long, conflicts_with = "json")]
+        luau_defs: bool,
     },
     /// Check the project: content, scripts, boot, replays, goldens and frame times.
     Verify {
@@ -92,6 +101,10 @@ enum Command {
         #[arg(long, default_value = "schemas")]
         out: PathBuf,
     },
+    /// Check the project's scripts: compile, the static API scan and (with
+    /// --types) the Luau type checker.
+    #[cfg(feature = "tooling")]
+    Check(tooling::check::CheckArgs),
     /// Serve the project's commands to MCP clients over stdio.
     #[cfg(feature = "tooling")]
     Mcp(tooling::mcp::McpArgs),
@@ -138,7 +151,19 @@ fn fail(d: Diagnostic) -> ExitCode {
 }
 
 fn open(project: &Path) -> Result<App, Diagnostic> {
-    App::open(project, AppConfig::load(project)?)
+    #[allow(unused_mut)]
+    let mut app = App::open(project, AppConfig::load(project)?)?;
+    #[cfg(feature = "tooling")]
+    app.add_verify_stage(std::sync::Arc::new(tooling::check::ScanStage));
+    Ok(app)
+}
+
+/// The verify stages this build adds (the static scan, with `tooling`).
+fn extra_stages() -> Vec<Box<dyn re_app::verify::VerifyStage>> {
+    vec![
+        #[cfg(feature = "tooling")]
+        Box::new(tooling::check::ScanStage),
+    ]
 }
 
 fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
@@ -238,7 +263,11 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_describe(project: &Path, json: bool) -> ExitCode {
+fn cmd_describe(project: &Path, json: bool, luau_defs: bool) -> ExitCode {
+    if luau_defs {
+        print!("{}", re_script::definitions());
+        return ExitCode::SUCCESS;
+    }
     let mut app = match open(project) {
         Ok(a) => a,
         Err(d) => return fail(d),
@@ -294,7 +323,11 @@ fn cmd_verify(project: &Path, json: bool, update_goldens: bool) -> ExitCode {
         ..VerifyOptions::default()
     };
     let report = match AppConfig::load(project) {
-        Ok(config) => re_app::verify::run_project(project, &config, &options, &[]),
+        Ok(config) => {
+            let stages = extra_stages();
+            let refs: Vec<&dyn re_app::verify::VerifyStage> = stages.iter().map(|s| &**s).collect();
+            re_app::verify::run_project(project, &config, &options, &refs)
+        }
         // Without `--json` this is a plain error; with it, still a report
         // (a failed schema stage), so tools always get one JSON document.
         Err(d) if !json => return fail(d),
@@ -400,13 +433,15 @@ fn main() -> ExitCode {
             Err(d) => fail(d),
         },
         Command::Run(args) => cmd_run(&project, args),
-        Command::Describe { json } => cmd_describe(&project, json),
+        Command::Describe { json, luau_defs } => cmd_describe(&project, json, luau_defs),
         Command::Verify {
             json,
             update_goldens,
         } => cmd_verify(&project, json, update_goldens),
         Command::Explain { code } => cmd_explain(code),
         Command::Schema { out } => cmd_schema(&out),
+        #[cfg(feature = "tooling")]
+        Command::Check(args) => tooling_exit(tooling::check::run(args, &project)),
         #[cfg(feature = "tooling")]
         Command::Mcp(args) => tooling_exit(tooling::mcp::run(args, &project)),
         #[cfg(feature = "tooling")]
