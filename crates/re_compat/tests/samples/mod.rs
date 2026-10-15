@@ -3,6 +3,7 @@
 
 #![allow(dead_code)]
 
+pub mod datatypes;
 pub mod import;
 pub mod sha256;
 
@@ -68,7 +69,7 @@ pub type Step = fn(&mut Ctx, &J) -> Result<(), String>;
 
 /// The steps, by name. Add one line per step module.
 pub fn step(name: &str) -> Option<Step> {
-    import::step(name)
+    import::step(name).or_else(|| datatypes::step(name))
 }
 
 /// The state a sample's checks share.
