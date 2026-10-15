@@ -16,9 +16,9 @@ grants you.
 
 ## The loop
 
-1. Look first: `describe` lists every component, generator and command;
-   `query` finds entities; `entity.get` shows one; `command.describe` gives a
-   command's full input schema.
+1. Look first: `describe` lists every component, generator, graph node kind,
+   project script and command; `query` finds entities; `entity.get` shows
+   one; `command.describe` gives a command's full input schema.
 2. Preview: every command that changes something accepts `"dry_run": true`
    and returns the operations it would apply, without applying them. Dry runs
    are allowed whatever the tier (budgets still apply).
