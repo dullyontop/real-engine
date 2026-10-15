@@ -1595,6 +1595,145 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 2. Bake's undo does not delete the asset files it wrote; `real check` reports unreferenced files under `assets/baked/`.
 3. Luau node kinds start with `project.`; a shared library of nodes uses `project.<library>.<name>`.
 
+## ADR-0044: Editor node canvas, docking and gizmos: egui-snarl, egui_dock and our own gizmos; graph files become open documents edited by `graph.*` commands
+
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP25). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). The maintainer chose our own gizmos over transform-gizmo-egui (below).
+
+**Context.**
+- WP25 (M3_PLAN) adds a node canvas for ProcGraph, translate/rotate/scale gizmos and dockable panels to `re_editor`. Every edit must be a command, so it is undoable and agents see the same changes (ADR-0003).
+- The engine pins egui, egui-wgpu and egui-winit `=0.36.2` and glam `=0.34.1` (ADR-0028). No second egui is ever accepted (DEPENDENCIES, `deny.toml`).
+- Checked on crates.io on 2026-10-15, by reading each crate's published source and by building the chosen crates together in a scratch crate on egui 0.36.2 (one egui in the tree):
+
+  | Crate | Version (date) | egui | License | Fit |
+  |---|---|---|---|---|
+  | egui-snarl | 0.12.0 (2026-08-26) | `^0.36` | MIT OR Apache-2.0 | Port and pin node editor. Deps: ahash, egui-scale (243 lines, same author), slab, smallvec; serde optional. No unsafe. |
+  | egui_node_editor | 0.11.0 (2026-08-21) | `^0.36` | MIT | Fork of egui_node_graph, small user base; applies each edit itself and reports it afterwards. |
+  | egui_node_graph / egui_node_graph2 / egui_nodes / egui_graph | yanked / 0.7.0 / 0.1.3 / 0.16.5 | none on 0.36 (0.29, 0.14, 0.34) | MIT | Not usable. |
+  | egui_graphs | 0.32.0 | `^0.36` | MIT | A graph visualiser (petgraph), no ports. Not a node editor. |
+  | egui_dock | 0.21.1 (2026-08-06) | `^0.36` | MIT | Tabs, splits, floating windows; `DockState` serialises with the `serde` feature. Deps: duplicate, paste, thiserror. `forbid(unsafe_code)`. |
+  | egui_tiles | 0.17.1 (2026-08-18) | `^0.36.0` | MIT OR Apache-2.0 | Tabs and splits, no floating windows; serde on by default. |
+  | transform-gizmo-egui | 0.11.0 (2026-08-17) | `^0.36` | MIT OR Apache-2.0 | Translate, rotate, scale and arcball gizmos; its core crate uses glam 0.32 internally and mint at its API. |
+
+- The workspace MSRV is Rust 1.95 (`rust-version` in the root `Cargo.toml`). transform-gizmo-egui 0.10 and 0.11 declare Rust 1.96, and 0.9 is built on egui 0.34.
+- Graph structure today lives only in files (`graphs/*.graph.json`, a `GraphDoc`). The `graph.*` commands set per-source overrides (`graph.set_param`) or regenerate; none adds a node or an edge. File writes such as `script.write` are not in undo history (checkpoints cover them). So "every canvas edit is an undoable command" needs a way to edit a graph file inside a transaction.
+- `GraphDoc` has no node positions, and `NodeDoc` is `deny_unknown_fields`. WP24's per-node cache key will hash node contents, so layout must not be part of a node.
+
+**Decision.**
+- **Crates.** Add two workspace dependencies, used only by `re_editor` (a tooling crate, ADR-0027):
+  - `egui-snarl = "=0.12.0"` with `serde` for the node canvas;
+  - `egui_dock = "=0.21.1"` with `serde` for docking;
+  - Gizmos are our own code in `re_editor`, on glam 0.34 only (see **Gizmos**). transform-gizmo-egui is not taken: its current versions need Rust 1.96, above the workspace MSRV, and it would bring a third glam (0.32.1) plus enum_dispatch and enumset.
+  - Other new crates in the tree: egui-scale 0.6.1 (canvas); duplicate 2.0.1 and proc-macro2-diagnostics 0.10.1 (docking, compile-time). ahash, slab, smallvec, paste, heck and thiserror 2 are already in the lockfile. Each new crate gets a DEPENDENCIES row.
+- **Graph files are open documents.** A graph file the editor or an agent edits is loaded into the World as an open document, edited in memory, and written back by the ordinary project save, as scenes are.
+  - A new operation joins the closed set (ADR-0003): `set_doc {doc, pointer, value?}` adds, replaces or removes the JSON value at a JSON-pointer path in an open document (`doc` is a project-relative path) and returns its exact inverse. A document kind registers a validator by suffix (`.graph.json` → `GraphDoc::validate`, registered by `re_proc`), and a transaction whose result does not validate is rejected and rolled back, like any failing op.
+  - `re_proc`'s `GraphStore` reads an open document in preference to the file, so regeneration sees unsaved edits. Unsaved documents are reported by `project.status` and saved by `scene.save`.
+  - The undo, redo, dry-run and log machinery is unchanged: `set_doc` is one more op.
+- **New `graph.*` commands** in `re_proc` (WP24's crate; WP25 writes them, WP24 reviews). Each is one transaction of `set_doc` ops, so the canvas, `real do` and MCP agents share them:
+  - `graph.add_node {graph, kind, id?, params?, pos?}`: checks the kind and parameters against the `NodeRegistry` and records the kind's current version (ADR-0043); a fresh id is generated and logged when omitted (as `entity.spawn` does).
+  - `graph.remove_node {graph, node}`: removes the node, its edges and its layout entry in one transaction.
+  - `graph.connect {graph, from: [node, port], to: [node, port]}`: checks that the ports exist and their types match; connecting to an input that already has an edge replaces that edge, in the same transaction.
+  - `graph.disconnect {graph, from, to}`.
+  - `graph.move_nodes {graph, positions: {node: [x, y]}}`: one command per finished drag, however many nodes moved.
+  - `graph.set_default {graph, node, param, value}`: the parameter value in the graph file. `graph.set_param` keeps meaning a per-source override.
+- **Layout is not part of a node.** `GraphDoc` gets an optional top-level `layout: {"<node id>": [x, y]}`, omitted when empty and excluded from generation, from every node cache key and from the graph-document hash in a source's fingerprint (ADR-0043), so moving a node never regenerates anything. The canvas lays out nodes that have no entry (by topological depth) and writes an entry only when a node is moved, so agent-built graphs need no positions. This changes the `GraphDoc` format, so it lands with or before WP24 PR "versioning" and is agreed with WP24.
+- **The canvas never edits the document itself.** The editor rebuilds a `Snarl<NodeRef>` view-model from the open document whenever the document's revision changes and treats it as read-only:
+  - `SnarlViewer::connect`, `disconnect`, `drop_inputs` and `drop_outputs` are overridden to queue commands instead of changing the snarl;
+  - nodes are added and removed only through our menus, which queue `graph.add_node` and `graph.remove_node`;
+  - three snarl paths change the snarl without asking the viewer (node dragging, Ctrl-drag re-routing from a connected pin, and the collapse toggle; `src/ui.rs` lines 1388, 1509, 1669 and 2423 in 0.12.0). After each `show()` the editor diffs the snarl's wires against the document and turns differences into commands; positions are snapshotted when a drag starts and sent as one `graph.move_nodes` when it ends; collapse state is view state, kept in the editor layout, not in the document;
+  - a test drives each interaction and checks that the document equals the result of the logged commands, so a snarl upgrade that adds another direct edit fails CI.
+- **Docking.** Panels (game view, hierarchy, inspector, console, graph parameters, graph canvas per open graph, and later the debugger) are tabs in an `egui_dock::DockState<PanelId>`, where `PanelId` is a serde enum. The layout is UI state, not project content: no command, no undo, saved to `.real/editor/layout.json` (ignored by version control, like the rest of `.real/` except the agent policy) when it changes and on exit. A missing file gives the default layout; a file that does not parse, or names an unknown panel, gives the default layout and a warning diagnostic in the editor's range (`RE88xx`).
+- **Gizmos.** The gizmo works on the selected entities' world transforms (several at once). During a drag only the gizmo preview moves; on release the editor sends one transaction of `set_field` ops on each entity's local `Transform` (world-to-local conversion through the parent), so a drag is one undo step. A generated entity's edit records an override, as every `set_field` on one does (ADR-0017). When the entity-core track's undo coalescing lands, the gizmo switches to live `set_field` edits merged into one undo step, so physics and scripts see the drag as it happens. The gizmo is our own (`re_editor/src/gizmo/`): translate arrows and planes, rotate rings including a view-axis ring, scale handles, picking by screen-space distance to each handle, local or world orientation and snapping, with the drag maths unit-tested without a window. Its settings are editor UI state, kept with the layout.
+
+**Alternatives.**
+- **egui_node_editor** for the canvas. On egui 0.36, but it adds edges, removes nodes and moves nodes itself before reporting them, so every edit would have to be undone and replayed as a command, and its user base is small.
+- **Our own node canvas.** No dependency, full control over the command flow, but pan, zoom, wire hit-testing, pin layout and menus are a few thousand lines; snarl's three direct edits are cheaper to diff than to rewrite.
+- **egui_tiles** for docking. Dual-licensed and well maintained, but no floating windows, which the debugger and a second graph canvas want.
+- **transform-gizmo-egui** for gizmos. It has the picking and drag maths already, but 0.10 and 0.11 need Rust 1.96 (the workspace MSRV is 1.95), 0.9 is on egui 0.34, and it brings a third glam (0.32.1, behind mint), enum_dispatch and enumset. Our own gizmos are a few hundred lines. It can be reconsidered when the MSRV moves to 1.96 or later.
+- **Node positions inside `NodeDoc`.** Simpler to read, but moving a node would change its cache key and invalidate generation; it would also need `NodeDoc`'s deny-unknown-fields format to change.
+- **A sidecar layout file** (`graphs/island.layout.json` or under `.real/`). Keeps `GraphDoc` untouched, but positions get lost when a graph is renamed or copied, and an agent would have to edit two files.
+- **Write graph files directly from the canvas** and rely on checkpoints. Not undoable step by step, and agents could not see or dry-run canvas edits.
+- **A typed `graph_edit` op** instead of `set_doc`. Clearer in the log, but `re_command` cannot depend on `re_proc`, and WP25 also edits `AnimGraph` documents (WP21's contract); `set_doc` with a validator per document kind covers both.
+
+**Consequences.**
+- `re_command::Op` gains `set_doc` and the World gains open documents: a change to a maintainer-owned WP0 contract, made in a maintainer PR (entity-core track) and reviewed by WP24 and WP25.
+- `GraphDoc` gains `layout` (a maintainer frozen-contract change in `re_types`). WP24 agreed: "versioning" makes `re_proc`'s document hash and `version_stamp` ignore it; if the field lands after "versioning", the WP25 PR adds that skip for WP24 to review. `ProcGraph::to_doc` and `from_doc` carry `layout` through unchanged, so a parameter round trip keeps it.
+- `real migrate-graph` rewrites files, so the editor saves or discards an open graph document before a migration (`graph.migration_report` flags a source whose open document differs from its file).
+- The hierarchy panel maps a drag of a generated entity to `proc.move` (ADR-0043), not `reparent`.
+- `re_editor` gains two dependencies and three new transitive crates, all MIT or MIT OR Apache-2.0; none ships in the runtime binary, because `re_editor` is linked only with `re_cli`'s `tooling` feature (ADR-0027). No new duplicate versions.
+- egui-snarl is pinned exactly; an upgrade must re-check the list of direct edits, and the canvas test catches a new one.
+- A layout saved by a newer editor with a panel this editor does not know falls back to the default layout rather than failing.
+
+## ADR-0045: The script debugger: Luau's own breakpoints, stepping on temporary breakpoints, pausing by yield
+
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP25). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). The spike shows the full debugger can be built at no measurable cost when no breakpoint is hit, so WP25 builds it (editor panel and DAP) rather than the "stack and locals on error" fallback.
+
+**Context.**
+- WP25 (M3_PLAN) asks for breakpoints, step, locals and the call stack, in the editor and over the Debug Adapter Protocol (DAP), if a spike shows an acceptable cost; otherwise a stack and locals dump on error. ROADMAP's premise was that Luau has no `set_hook`, so a debugger would have to sit on the interrupt callback.
+- Luau does have a debugger interface, and mlua-sys 0.13.0 (under mlua 0.12.2, Luau 0.740) exposes all of it: `lua_breakpoint(L, funcindex, line, enabled)`, `lua_singlestep`, `lua_stackdepth`, `lua_getinfo`, `lua_getlocal`, `lua_break`, and the `debugbreak`, `debugstep`, `debuginterrupt` and `debugprotectederror` callbacks in `lua_Callbacks`.
+  - `lua_breakpoint` patches the opcode byte of the first instruction of a line into `LOP_BREAK`, in that function and every function nested in it, snapping to the next line with code. It keeps the original opcodes aside, and the `LOP_BREAK` handler calls `debugbreak` and then runs the original instruction. Nothing else in the interpreter changes.
+  - `lua_singlestep` makes the next entry into the interpreter use its single-step variant, which calls `debugstep` before every instruction. The interpreter variant is chosen when it is entered, so turning single-step on inside a callback does not affect the code already running.
+- The spike (WP25 research bundle: `research/m3/wp25/debugger-spike/`, a crate on the engine's exact mlua, 14 functional tests and a benchmark) tried both approaches.
+
+**What the spike found.**
+- **Interrupt-based breakpoints do not work for straight-line code.** The interrupt runs only at safepoints: calls, returns and loop back edges. In the fixture, breakpoints on lines 2, 6, 8, 10 and 11 were seen only on 8 (a call) and 11 (a return); lines 2, 6 and 10 were never seen. Checking lines at every safepoint also costs +20% to +183% in instructions executed while any breakpoint is set, even when it is never hit.
+- **Native breakpoints work, with full stack and locals.** A breakpoint on straight-line code stops on each pass with the right locals (`a`, `b` per call); the stack shows every caller with its line; breakpoints snap to the next line with code (lines 4, 9 and 12 snap to 5, 10 and 13; a line past the end is refused).
+  - Local names need **debug level 2**. The engine compiles at debug level 1, which keeps lines and function names but no local names, and folds a constant local away (`local label = "done"` has no instruction at level 1, so a breakpoint on its line snaps to the next one).
+- **Stepping.**
+  - Step over and step out work on temporary breakpoints: every line of every Luau function on the stack is patched; a stop counts only in the same frame (same depth and closure) or a shallower one (step out: shallower only). Stepping over a 3-iteration loop from line 6 stops on 6, 7, 8, 8, 8, 10, 11 and never inside the called function. In a generated 4,005-line chunk a step over or out takes 2 to 4 ms.
+  - Step into on temporary breakpoints has to patch every line of every loaded chunk. That costs about 100 ms per step in the 4,005-line chunk (98 to 131 ms over three runs), since each `lua_breakpoint` call walks the whole function tree.
+  - Step into by single-step works when the thread is suspended (below): turn single-step on, resume, and stop at the first instruction on a new line or depth. Measured cost per step: under 0.01 ms.
+- **Three ways to pause, and which work through mlua.**
+  - **Synchronous**: the handler runs inside `debugbreak` and the script waits for it. Works in every context, including inside `require`, metamethods and `table.sort` comparators, but it blocks the thread that runs the VM, so the editor's window would freeze.
+  - **Yield**: `debugbreak` calls `lua_yield(L, 0)`. mlua's `Thread::resume` sees an ordinary yield of no values, and the thread resumes later where it stopped. The resumed thread re-executes its `LOP_BREAK`, so the debugger skips that one hit. Possible only where the thread could `coroutine.yield`; elsewhere the spike falls back to synchronous (2 of 2 stops in a `table.sort` comparator).
+  - **`lua_break`**: `lua_resume` returns `LUA_BREAK` (6), which mlua 0.12.2 does not know: `Thread::resume` panics with "mlua internal error: unrecognized lua error code". Not usable without bypassing mlua's resume.
+  - After a yield from a hook, `lua_getinfo` on the suspended thread reports level 0 one instruction early (line 7 instead of 10 in the fixture), because the saved pc points at the `LOP_BREAK` itself. The debugger reads the stack inside the hook, before yielding.
+- **The CPU budget.** A synchronous pause counts against the script's CPU budget unless excluded: a 60 ms pause under a 40 ms budget stopped the script with "script exceeded its time budget"; moving the deadline by the pause time (as `re_script::untimed` does) let it finish.
+- **Cost when no breakpoint is hit.** Four Luau workloads (recursive calls, a numeric loop, tables and strings, vector entity updates), each with the engine's budget interrupt installed. Instructions executed under callgrind, relative to the engine's current setup (debug level 1, budget interrupt):
+
+  | Configuration | calls | numeric loop | tables and strings | entity update |
+  |---|---:|---:|---:|---:|
+  | debug level 2 | +0.00% | +0.00% | −0.03% | +0.00% |
+  | native: debugger attached, no breakpoints | +0.01% | +0.00% | −0.01% | +0.00% |
+  | native: a breakpoint set, never hit | +0.01% | +0.00% | −0.01% | +0.00% |
+  | interrupt: debugger check, nothing set | +1.85% | +2.20% | +0.21% | +0.72% |
+  | interrupt: a breakpoint set, never hit | +154.66% | +183.31% | +19.68% | +59.96% |
+  | single-step mode on | +288.83% | +317.77% | +41.45% | +232.43% |
+
+  The native rows execute the same interpreter path as today; the 0.01% is the session's setup. Wall-clock medians (15 runs, three runs, about ±10% noise on the 4-vCPU test machine) agree: the native rows fall between −11% and +16% with no consistent sign, the armed interrupt costs +6% to +198%, and single-step +19% to +287%.
+- A breakpoint that is hit and continued at once, reading the whole stack and its locals each time, costs about 1 µs per hit (921 to 1,157 ns over three runs).
+- Debug level 2 makes bytecode 5% to 11% larger (the five example scripts: 4,394 to 4,735 bytes).
+
+**Decision.**
+- **Build the full debugger**: breakpoints, step over, into and out, the call stack, locals and upvalues, in the editor and over DAP. It lives in `re_script/src/debug/` (WP25), with codes in `re_script`'s `RE3xxx` range and editor codes in `RE8800`–`RE8899`.
+- **Breakpoints are Luau's own** (`lua_breakpoint` and `debugbreak`), not the interrupt callback.
+  - Every chunk a context loads is registered with the debugger by its project-relative path (a registry reference to the chunk's function), so a breakpoint by file and line reaches every function in it. That needs a one-line call at each place a chunk is loaded: `re_script`'s module and script loaders (WP24's paths in M3) and `re_compat`'s `load_chunk` (WP27). Those are small PRs in their owners' paths.
+  - A hot-reloaded chunk is a new function: the debugger re-applies the file's breakpoints when it is registered.
+  - Scripts are compiled at **debug level 2** in development runs (`real run`, `real editor`, `real verify`, tests). Packaged games keep level 1 unless the project asks (WP19 decides its default).
+  - With the `jit` feature, native code ignores breakpoints, so a debugging session compiles its contexts without native code.
+- **Stepping.** Step over and step out use temporary breakpoints over the functions on the stack, filtered by depth and closure. Step into uses single-step on the suspended thread; where the stop is synchronous it uses temporary breakpoints over every registered chunk. Every temporary breakpoint is cleared at the next stop, and the user's breakpoints on the same lines are put back.
+- **Pausing.**
+  - Where the stopped thread can yield (script threads, signal handlers, `task.spawn`, `task.defer` and `task.delay`, which all run in scheduler threads), the debugger yields it with no values. The scheduler parks a thread the debugger stopped instead of treating it as a bare `coroutine.yield`; this is a one-line check in `scheduler.rs` (WP24's path, a small PR). The runtime then reports itself paused, and the app stops stepping the simulation after the current frame while the editor keeps drawing. Step and continue resume that thread through the scheduler at once; continue also unpauses the app.
+  - Where it cannot yield (inside `require`, a builder script, a metamethod or a Rust callback), the stop is **synchronous**: it waits inside the hook while a DAP client answers. The CPU budget's deadline moves by the time spent paused. In the editor with no DAP client attached, a synchronous stop would freeze the window with no way to continue, so instead the debugger records the stack and locals in the debugger panel, says why it did not stop (a warning in `RE3xxx`), and continues.
+  - A pause request ("pause" in the editor or DAP) is checked in the budget interrupt where it already reads the clock, every 1,024 safepoints, so it adds nothing to the safepoint path.
+- **Values are read without running Luau.** Locals, upvalues and table entries are read with raw stack and table access (`lua_getlocal`, `lua_getupvalue`, `lua_rawget`/`lua_next`). `__tostring` and `__index` are never called while paused; a userdata shows its type name and, for engine types, the fields the binding exposes.
+- **DAP.** `real run --debug [port]` and the editor's debugger setting listen on `127.0.0.1` only (default port 4711) and speak DAP over TCP: `initialize`, `attach`, `setBreakpoints`, `configurationDone`, `threads`, `stackTrace`, `scopes`, `variables`, `continue`, `next`, `stepIn`, `stepOut`, `pause` and `disconnect`, with `stopped`, `continued`, `output` and `terminated` events. The protocol's JSON is written with serde_json, which is already a dependency; no new crate. Threads in DAP are script contexts (game, tools, compat server and client). The editor's debugger panel uses the same session API in process.
+- **Not in scope:** conditional breakpoints and logpoints (DAP lets an adapter decline them; they are a follow-up), evaluating expressions while paused (it would run Luau on a paused VM), data breakpoints, and a VS Code extension (the adapter is a TCP server; editors with a generic DAP client such as Neovim's nvim-dap attach directly).
+
+**Alternatives.**
+- **The interrupt callback** (the M3 plan's premise). Rejected: it cannot stop on straight-line code at all, and while any breakpoint is set it costs up to +183% in instructions executed.
+- **Single-step mode for every session.** Rejected: +41% to +318% in instructions for the whole session, against nothing measurable for patched breakpoints.
+- **`lua_break` instead of a yield.** Rejected for now: mlua 0.12.2 panics on the `LUA_BREAK` status. Using it would mean resuming script threads with raw `lua_resume` in the scheduler, duplicating mlua's argument and error handling.
+- **Synchronous pauses only.** Simpler and works everywhere, but it freezes the editor window on every breakpoint, and the editor cannot pump its window events from inside a frame (winit runs the event loop).
+- **Only a stack and locals dump on error** (the plan's fallback). It is a subset of this design. A script thread that died with an error keeps its frames, and the spike read them with the same code (`x = 5`, `y = 10` in the failing function, `n` and `total` in its caller), so the runtime's error report in `real run` and `real verify` will carry locals as well.
+
+**Consequences.**
+- Development builds compile scripts at debug level 2: no measurable runtime cost, bytecode 5% to 11% larger.
+- `re_script` gains `src/debug/` and its unsafe FFI calls, alongside the budget interrupt's (ADR-0011): each call is commented with why it is sound, and the debug module is tested with the fixtures from the spike.
+- Three one-line hooks land in other owners' paths: chunk registration in `re_script`'s loaders and `re_compat`'s `load_chunk`, and the stopped-thread check in `scheduler.rs`.
+- A breakpoint inside `require` or a metamethod does not stop in the editor unless a DAP client is attached; it shows the stack instead.
+- Step into from a synchronous stop costs about 100 ms per step in a 4,000-line chunk.
+- If a later mlua version handles `LUA_BREAK`, the yield can be swapped for `lua_break` inside `re_script/src/debug/` without changing the scheduler hook.
+
 ## ADR-0046: The M3 AI track: templates and recipes as data, an evaluation harness that never calls a model, and MCP over streamable HTTP on localhost
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP26). The code waits for M2's definition of done (M3_PLAN, "How M3 starts").

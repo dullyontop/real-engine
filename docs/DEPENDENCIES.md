@@ -92,6 +92,15 @@ Used only inside `re_geom::polygon`, never in its public types (ADR-0043). Pinne
 
 `libm` 0.2.16 and `num-traits` 0.2.19, which these pull, are already in the lockfile.
 
+### Editor node canvas and docking (M3, tooling only)
+
+Used only by `re_editor`, a tooling crate, so the runtime-only binary does not link them (ADR-0044, ADR-0027). Pinned exactly; an egui-snarl upgrade re-checks its list of direct edits (ADR-0044). Checked against crates.io on 2026-10-15. With them the lockfile gains three transitive crates, all MIT OR Apache-2.0 and none a new duplicate: egui-scale 0.6.1, duplicate 2.0.1 and proc-macro2-diagnostics 0.10.1. ahash, slab, smallvec, paste, heck and thiserror 2 are already in the lockfile. Gizmos are our own code; transform-gizmo-egui is not used (ADR-0044).
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| egui-snarl | 0.12.0 | MIT OR Apache-2.0 | 1.92 | node canvas for ProcGraph (and later AnimGraph), as a read-only view-model | `serde` | WP25 `cratecheck` (built with egui 0.36.2, one egui in the tree) | Verified (probe); lands with WP25's canvas PR |
+| egui_dock | 0.21.1 | MIT | 1.95 | dockable editor panels with floating windows; layout saved as UI state | `serde` | WP25 `cratecheck` | Verified (probe); lands with WP25's docking PR |
+
 ### MCP over HTTP (M3, tooling only)
 
 Used only by `re_mcp`, a tooling crate, so the runtime-only binary does not link them (ADR-0046, ADR-0027). rmcp 3.5.1 gains its `transport-streamable-http-server` feature and tokio gains `net`. With them the lockfile gains 13 transitive crates, all under the license allow-list and none a new duplicate: http 1.5.0, http-body 1.1.0, http-body-util 0.1.5, httparse 1.10.1, httpdate 1.0.3, tower-service 0.3.3, sse-stream 0.2.6, tokio-stream 0.1.19, async-trait 0.1.92, rand 0.10.3, rand_core 0.10.1, chacha20 0.10.2 and socket2 0.6.5.
@@ -206,10 +215,10 @@ Never accepted: a second `wgpu`, `winit`, `egui` or `mlua` version, or a second 
 | profiling 1.0.18 | Pins tracy-client ^0.18, which conflicts with 0.19. We write our own `profile_scope!` macro (ADR-0021). |
 | crossbeam-channel, parking_lot, smallvec | std is enough for M1 |
 | naga_oil 0.23.0 | Our own `#include` preprocessor is enough for a small shader set |
-| egui_dock 0.21.1 | egui panels are enough for editor-lite |
-| transform-gizmo-egui 0.11.0 | Gizmos are cut from M1. It also needs Rust 1.96 and pulls glam 0.32. |
+| egui_dock 0.21.1 | egui panels are enough for editor-lite. Taken in M3 (ADR-0044). |
+| transform-gizmo-egui 0.11.0 | Gizmos are cut from M1. It also needs Rust 1.96 and pulls glam 0.32; M3 writes its own gizmos (ADR-0044). |
 | i_overlay 9.1.0 | Deferred. Published on 2026-10-14, the day we checked, and not needed until polygon boolean nodes (M3). |
-| meshopt 0.6.2, spade, manifold3d, egui-snarl, zstd, libm | Not needed in M1 |
+| meshopt 0.6.2, spade, manifold3d, egui-snarl, zstd, libm | Not needed in M1. egui-snarl is taken in M3 (ADR-0044). |
 | hecs 0.11.2, sparsey 0.13.4, shipyard 0.11.5, flecs_ecs 0.2.2 | Entity storage alternatives measured by the core spike; rejected in ADR-0005 (no hierarchy, hooks or per-component change ticks in hecs and sparsey; no hierarchy in shipyard; flecs is C and segfaulted from safe Rust) |
 | bevy_reflect 0.20.0 (bevy_ecs's default `bevy_reflect` feature) | Reflecting glam types needs bevy_reflect's optional `glam` feature, which ties it to glam 0.33.x (0.33.12 resolved; bevy_ecs's `bevy_reflect` feature does not turn it on by itself); no f64 → f32 coercion, `ReflectComponent::apply` panics on a type mismatch; rejected in ADR-0032 |
 | ron 0.12.2 | Scene format runner-up; its `deserialize_any` path is quadratic (ADR-0016). Used only in the core spike. |

@@ -39,7 +39,7 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 
 The M1 and M2 ownership rules carry over, with these changes:
 - The maintainer keeps every path it owns at the end of M2: the root files, `.github/`, `tools/`, `README.md`, `docs/`, the WP0 crates, `re_assets`, `re_geom`, `re_proc`, `re_editor`, and `re_compat`'s shared files (`Cargo.toml`, `src/lib.rs`, `src/codes.rs`, `src/class/`, `src/data.rs`, `src/scene.rs`).
-- The maintainer also runs the **entity-core track** (ROADMAP "Entity-core extensions"): a `#[derive]` component macro, undo coalescing for drags, a typed fast path for bulk spawns and scene loads, and comments in scene files. These touch only maintainer crates and frozen WP0 contracts, so they are maintainer PRs reviewed by the WPs that consume the changed contract.
+- The maintainer also runs the **entity-core track** (ROADMAP "Entity-core extensions"): a `#[derive]` component macro, undo coalescing for drags, a typed fast path for bulk spawns and scene loads, comments in scene files, and (for WP25's canvas, ADR-0044) a `set_doc` operation with open documents in the World and an optional `layout` map in `GraphDoc`. These touch only maintainer crates and frozen WP0 contracts, so they are maintainer PRs reviewed by the WPs that consume the changed contract.
 - Crates pass to the M3 WP that changes them most:
   - `.github/workflows/` and `tools/xtask/src/d2.rs` to WP18, for its PRs only; the maintainer reviews each change, and the files return to the maintainer when WP18 is done;
   - `re_cli/src/build/` (new) and the packaging parts of `re_app` to WP19;
