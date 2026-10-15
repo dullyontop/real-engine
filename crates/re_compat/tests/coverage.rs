@@ -27,7 +27,7 @@ fn committed_coverage_matches_the_data_files() {
         + parsed
             .libraries
             .iter()
-            .map(|l| l.members.len())
+            .map(|l| l.members.len() + l.value_members.len())
             .sum::<usize>();
     assert_eq!(rows, counted);
 }

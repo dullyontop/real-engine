@@ -1,0 +1,156 @@
+{
+  "$schema": "../../../schemas/compat-libraries.schema.json",
+  "format": "real-engine/compat-libraries",
+  "version": 1,
+  "libraries": [
+    {
+      "name": "NumberRange",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "min",
+              "type": "number"
+            },
+            {
+              "name": "max",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "NumberRange"
+          ],
+          "status": "implemented",
+          "doc": "A range; max defaults to min and may not be less than it."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Min",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The low end."
+        },
+        {
+          "name": "Max",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The high end."
+        }
+      ],
+      "record": [
+        {
+          "name": "Min",
+          "type": "f32"
+        },
+        {
+          "name": "Max",
+          "type": "f32"
+        }
+      ],
+      "status": "implemented",
+      "doc": "A closed range of f32 from Min to Max."
+    },
+    {
+      "name": "NumberSequenceKeypoint",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "time",
+              "type": "number"
+            },
+            {
+              "name": "value",
+              "type": "number"
+            },
+            {
+              "name": "envelope",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "NumberSequenceKeypoint"
+          ],
+          "status": "implemented",
+          "doc": "A keypoint at time (0 to 1); envelope defaults to 0."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Time",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Where it sits, 0 to 1."
+        },
+        {
+          "name": "Value",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The value there."
+        },
+        {
+          "name": "Envelope",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "How far a particle's value may vary either way."
+        }
+      ],
+      "record": [
+        {
+          "name": "Time",
+          "type": "f32"
+        },
+        {
+          "name": "Value",
+          "type": "f32"
+        },
+        {
+          "name": "Envelope",
+          "type": "f32"
+        }
+      ],
+      "status": "implemented",
+      "doc": "One stop of a NumberSequence."
+    },
+    {
+      "name": "NumberSequence",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "...",
+              "type": "any"
+            }
+          ],
+          "returns": [
+            "NumberSequence"
+          ],
+          "status": "implemented",
+          "doc": "From one number, two numbers (start and end) or an array of keypoints."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Keypoints",
+          "kind": "property",
+          "type": "table",
+          "status": "implemented",
+          "doc": "A new array of the keypoints."
+        }
+      ],
+      "status": "implemented",
+      "doc": "A curve over 0 to 1: 2 to 20 keypoints, the first at 0 and the last at 1, in time order."
+    }
+  ]
+}

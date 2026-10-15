@@ -35,5 +35,9 @@ Rules:
   `cargo xtask coverage`.
 
 `core.json` declares `RunContext`, which the scene conventions need to choose a
-script's context. The enum tables scripts see, and every other file here,
-belong to WP10 (docs/M2_PLAN.md).
+script's context. `roblox.json` declares every other enum type of the Roblox
+API, with the item names and numbers of the public API dump of Roblox client
+0.743.0.7431133. Items the API marks deprecated carry `deprecated`;
+the `doc` lines are written for this repository. Scripts reach all of them as
+`Enum.<Name>` (`src/enums.rs`). To add an enum or item, edit the file by hand
+and keep the items in value order.

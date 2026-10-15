@@ -12,12 +12,17 @@
 //! * the scene conventions ([`scene`]): the `game` root, services, the class
 //!   marker, script contexts and the `[compat]` section of `real.toml`.
 //!
-//! Behaviour (globals in the VM, signals, services, datatypes) is added by
-//! later work packages; this crate adds no globals to any VM by itself.
+//! * the datatypes ([`datatypes`]) and enums ([`enums`]): `Vector3`,
+//!   `CFrame`, `Color3` and the rest, and the `Enum` tables, which
+//!   [`datatypes::install`] puts into a compat VM.
+//!
+//! Instances, signals and services are added by later work packages.
 
 pub mod class;
 pub mod codes;
 pub mod data;
+pub mod datatypes;
+pub mod enums;
 pub mod error;
 pub mod scene;
 
@@ -27,6 +32,7 @@ pub use class::{
     own_component_name,
 };
 pub use data::{COVERAGE_JSON, CoverageFile, DataSet, Status};
+pub use enums::EnumItem;
 pub use error::CompatError;
 pub use scene::{CompatApi, CompatConfig, GAME_ID, ROOT_CLASS, ServiceTag, script_context};
 
