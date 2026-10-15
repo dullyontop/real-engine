@@ -1,0 +1,292 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "BaseRemoteEvent",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "The shared base of the event remotes."
+    },
+    {
+      "name": "RemoteEvent",
+      "superclass": "BaseRemoteEvent",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Sends one-way messages between the server and the clients. Arguments are deep copies; each message is delivered in order in the receiver's next phase, and messages that arrive before anything listens wait for the first connection.",
+      "methods": [
+        {
+          "name": "FireServer",
+          "params": [
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sends the arguments to the server, where OnServerEvent fires with the sending player first. Client only."
+        },
+        {
+          "name": "FireClient",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            },
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sends the arguments to one player's client, where OnClientEvent fires. Server only."
+        },
+        {
+          "name": "FireAllClients",
+          "params": [
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sends the arguments to every client. Server only."
+        }
+      ],
+      "events": [
+        {
+          "name": "OnServerEvent",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            },
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires on the server for each FireServer call, with the sending player and the copied arguments."
+        },
+        {
+          "name": "OnClientEvent",
+          "params": [
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires on a client for each FireClient or FireAllClients call that reaches it, with the copied arguments."
+        }
+      ]
+    },
+    {
+      "name": "UnreliableRemoteEvent",
+      "superclass": "BaseRemoteEvent",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A RemoteEvent whose messages may be dropped or reordered on a real network. In one process every message arrives, in order.",
+      "methods": [
+        {
+          "name": "FireServer",
+          "params": [
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sends the arguments to the server, where OnServerEvent fires with the sending player first. Client only."
+        },
+        {
+          "name": "FireClient",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            },
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sends the arguments to one player's client, where OnClientEvent fires. Server only."
+        },
+        {
+          "name": "FireAllClients",
+          "params": [
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sends the arguments to every client. Server only."
+        }
+      ],
+      "events": [
+        {
+          "name": "OnServerEvent",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            },
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires on the server for each FireServer call, with the sending player and the copied arguments."
+        },
+        {
+          "name": "OnClientEvent",
+          "params": [
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires on a client for each FireClient or FireAllClients call that reaches it, with the copied arguments."
+        }
+      ]
+    },
+    {
+      "name": "RemoteFunction",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Calls a function on the other side and waits for its results.",
+      "properties": [
+        {
+          "name": "OnServerInvoke",
+          "type": "function",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The server's handler: called with the invoking player and the arguments; what it returns goes back to the caller. Can be set, not read."
+        },
+        {
+          "name": "OnClientInvoke",
+          "type": "function",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The client's handler for InvokeClient: called with the arguments; what it returns goes back to the server. Can be set, not read."
+        }
+      ],
+      "methods": [
+        {
+          "name": "InvokeServer",
+          "params": [
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "returns": [
+            "..."
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Calls the server's OnServerInvoke with the arguments and waits for its results. Waits until a handler is set. An error in the handler is raised here. Client only."
+        },
+        {
+          "name": "InvokeClient",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            },
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "returns": [
+            "..."
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Calls a player's OnClientInvoke and waits for its results. An error in the handler, or the player leaving, is raised here. Server only."
+        }
+      ]
+    },
+    {
+      "name": "BindableEvent",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Sends a message to scripts in the same context.",
+      "methods": [
+        {
+          "name": "Fire",
+          "params": [
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires Event with deep copies of the arguments."
+        }
+      ],
+      "events": [
+        {
+          "name": "Event",
+          "params": [
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires for each Fire call, with the copied arguments."
+        }
+      ]
+    },
+    {
+      "name": "BindableFunction",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Calls a function set by a script in the same context and waits for its results.",
+      "properties": [
+        {
+          "name": "OnInvoke",
+          "type": "function",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The handler Invoke calls with copies of the arguments; what it returns goes back to the caller. Can be set, not read."
+        }
+      ],
+      "methods": [
+        {
+          "name": "Invoke",
+          "params": [
+            {
+              "name": "arguments",
+              "type": "..."
+            }
+          ],
+          "returns": [
+            "..."
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Calls OnInvoke with copies of the arguments in a new thread and waits for its results. Raises RE9301 when no handler is set, and the handler's error when it raises."
+        }
+      ]
+    }
+  ]
+}

@@ -640,8 +640,11 @@ impl ClassRegistry {
                             c.name, p.name
                         )));
                     }
+                    // A callback's function lives in the VM, not the world
+                    // (`crate::instance::callback`); it needs no accessor.
                     Storage::Builtin
                         if matches!(p.status, Status::Implemented | Status::Partial)
+                            && p.ty != crate::instance::CALLBACK_TYPE
                             && !self
                                 .accessors
                                 .contains_key(&(c.name.clone(), p.name.clone())) =>

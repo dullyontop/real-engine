@@ -140,6 +140,32 @@
           "doc": "The part's dimensions in studs along its own X, Y and Z axes. Each is at least 0.001."
         },
         {
+          "name": "Color",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.639,
+            0.635,
+            0.647
+          ],
+          "status": "partial",
+          "note": "Stored and replicated; the renderer does not draw it yet.",
+          "doc": "The part's colour."
+        },
+        {
+          "name": "Transparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "status": "partial",
+          "note": "Stored and replicated; the renderer does not draw it yet.",
+          "doc": "How see-through the part is, from 0 (opaque) to 1 (invisible)."
+        },
+        {
           "name": "Anchored",
           "type": "bool",
           "storage": {
@@ -584,18 +610,19 @@
             "kind": "own"
           },
           "default": false,
-          "status": "implemented",
+          "status": "partial",
+          "note": "Stored; touching the spawn does not change a player's team yet.",
           "doc": "When true touching it moves a player to its team."
         },
         {
           "name": "Duration",
-          "type": "int",
+          "type": "number",
           "storage": {
             "kind": "own"
           },
           "default": 10,
           "status": "implemented",
-          "doc": "Seconds of protection a spawned character gets."
+          "doc": "Seconds of protection a spawned character gets; 0 gives none."
         }
       ]
     },

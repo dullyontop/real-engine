@@ -165,6 +165,13 @@ pub(crate) struct PartSnap {
     pub(crate) root_priority: i64,
 }
 
+/// Whether `e` is a client world's copy of a server instance.
+fn replicated(w: &World, e: Entity) -> bool {
+    w.ecs
+        .get_resource::<crate::net::Replica>()
+        .is_some_and(|r| r.server_of(e).is_some())
+}
+
 impl PartSnap {
     pub(crate) fn read(w: &World, l: &Layout, e: Entity) -> PartSnap {
         let class = w
@@ -180,7 +187,9 @@ impl PartSnap {
         };
         PartSnap {
             geom: l.geom(w, e, class),
-            anchored: l.anchored.bool(w, e, false),
+            // A part the server replicates to this client moves where the
+            // server says: here it only stands in the way.
+            anchored: l.anchored.bool(w, e, false) || replicated(w, e),
             can_collide: l.can_collide.bool(w, e, true),
             can_query: l.can_query.bool(w, e, true),
             can_touch: l.can_touch.bool(w, e, true),
