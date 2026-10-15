@@ -381,7 +381,7 @@ cargo test --locked -p re_compat character
 
 ## WP15: Rendering, UI, tweens and sound
 
-**Status:** PR "tweens and sound" merged in #55 (`RE9350`–`RE9352`, `[compat] assets` and `effect_budget`) and PR "UI" in #61 (layout, text, painting, input, billboards and the fonts of ADR-0035). The 3D rendering PR is next.
+**Status:** PR "tweens and sound" merged in #55 (`RE9350`–`RE9352`, `[compat] assets` and `effect_budget`) PR "UI" in #61 (layout, text, painting, input, billboards and the fonts of ADR-0035), and PR "render" in #69 (parts, materials, lighting, camera, particles, beams, trails and highlights). Post effects other than `ColorCorrectionEffect` (`Bloom`, `Blur`, `SunRays`) are stored but not drawn, and marked `partial`. The host calls `re_compat::render::build` once a frame after `post_simulation`; wiring it into `re_app` comes with WP16 "plaza". WP15 is done.
 
 **Goal.** Draw what Roblox-style projects build (parts with materials, lights, effects, billboards and screen UI) and play their tweens and sounds.
 
