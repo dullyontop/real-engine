@@ -22,19 +22,47 @@ pub(crate) struct PointLightRaw {
     pub color: [f32; 4],
 }
 
+/// `struct SpotLight` in common.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub(crate) struct SpotLightRaw {
+    pub position_range: [f32; 4],
+    /// w: the cosine where the fade ends (full light inside).
+    pub color: [f32; 4],
+    /// w: the cosine of the half angle (no light outside).
+    pub direction: [f32; 4],
+}
+
 /// `struct Frame` in common.wgsl.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(crate) struct FrameUniform {
     pub view_proj: [[f32; 4]; 4],
     pub light_view_proj: [[f32; 4]; 4],
+    pub inv_view_proj: [[f32; 4]; 4],
     pub camera_pos: [f32; 4],
     pub sun_dir: [f32; 4],
     pub sun_color: [f32; 4],
     pub ambient_sky: [f32; 4],
     pub ambient_ground: [f32; 4],
     pub params: [f32; 4],
+    /// rgb: fog colour, w: fog start.
+    pub fog_color: [f32; 4],
+    /// x: fog end, y: 1 with fog, z: spot light count.
+    pub fog_params: [f32; 4],
+    /// x: brightness, y: contrast, z: saturation, w: 1 with grading.
+    pub grading: [f32; 4],
+    /// rgb: tint.
+    pub tint: [f32; 4],
+    /// rgb: zenith, w: 1 with a sky.
+    pub sky_zenith: [f32; 4],
+    pub sky_horizon: [f32; 4],
+    pub sky_ground: [f32; 4],
+    /// xyz: towards the sun disc, w: 1 with a disc.
+    pub sky_sun_dir: [f32; 4],
+    pub sky_sun_color: [f32; 4],
     pub points: [PointLightRaw; MAX_POINT_LIGHTS],
+    pub spots: [SpotLightRaw; crate::extras::MAX_SPOT_LIGHTS],
 }
 
 /// `struct Instance` in common.wgsl: one drawn instance, 128 bytes.
@@ -193,6 +221,67 @@ pub(crate) fn select_lights(lights: &[Light], camera_pos: Vec3, exposure: f32) -
     setup
 }
 
+/// Picks the spot lights to draw: the [`MAX_SPOT_LIGHTS`](crate::extras::MAX_SPOT_LIGHTS)
+/// nearest the camera, leaving out lights with non-finite values, no intensity
+/// or no cone. More lights give an `RE6017` warning.
+pub(crate) fn select_spots(
+    spots: &[crate::extras::SpotLight],
+    camera_pos: Vec3,
+    exposure: f32,
+    warnings: &mut Vec<Diagnostic>,
+) -> Vec<SpotLightRaw> {
+    use crate::extras::MAX_SPOT_LIGHTS;
+    let mut usable: Vec<&crate::extras::SpotLight> = spots
+        .iter()
+        .filter(|l| {
+            l.intensity.is_finite()
+                && l.intensity > 0.0
+                && finite3(l.color)
+                && l.position.is_finite()
+                && l.direction.is_finite()
+                && l.direction.length_squared() > 1e-12
+                && l.range.is_finite()
+                && l.range > 0.0
+                && l.half_angle.is_finite()
+                && l.half_angle > 0.0
+        })
+        .collect();
+    if usable.len() > MAX_SPOT_LIGHTS {
+        warnings.push(
+            Diagnostic::warning(
+                codes::TOO_MANY_LIGHTS,
+                format!(
+                    "{} spot lights in the frame; only the {MAX_SPOT_LIGHTS} nearest the camera are drawn",
+                    usable.len()
+                ),
+            )
+            .with_hint("merge lights, or turn off the ones far from the action"),
+        );
+        usable.sort_by(|a, b| {
+            let da = (a.position - camera_pos).length() - a.range;
+            let db = (b.position - camera_pos).length() - b.range;
+            da.total_cmp(&db)
+        });
+        usable.truncate(MAX_SPOT_LIGHTS);
+    }
+    let lumens_to_candela = 1.0 / (4.0 * std::f32::consts::PI);
+    usable
+        .into_iter()
+        .map(|l| {
+            let half = l.half_angle.min(std::f32::consts::FRAC_PI_2 * 0.999);
+            let outer = half.cos();
+            let inner = (half * 0.8).cos();
+            SpotLightRaw {
+                position_range: l.position.extend(l.range).to_array(),
+                color: (Vec3::from_array(l.color) * l.intensity * lumens_to_candela * exposure)
+                    .extend(inner)
+                    .to_array(),
+                direction: l.direction.normalize().extend(outer).to_array(),
+            }
+        })
+        .collect()
+}
+
 /// Checks a camera and returns its projection for `aspect` (glam's right-handed,
 /// DirectX-depth perspective: NDC depth 0..1 and Y up, the WebGPU convention).
 pub(crate) fn projection(camera: &Camera, aspect: f32) -> Result<Mat4, Diagnostic> {
@@ -340,7 +429,11 @@ mod tests {
     #[test]
     fn struct_sizes_match_the_shaders() {
         assert_eq!(std::mem::size_of::<PointLightRaw>(), 32);
-        assert_eq!(std::mem::size_of::<FrameUniform>(), 128 + 6 * 16 + 8 * 32);
+        assert_eq!(std::mem::size_of::<SpotLightRaw>(), 48);
+        assert_eq!(
+            std::mem::size_of::<FrameUniform>(),
+            192 + 15 * 16 + 8 * 32 + 8 * 48
+        );
         assert_eq!(std::mem::size_of::<InstanceRaw>(), 128);
         assert_eq!(std::mem::size_of::<MaterialUniform>(), 64);
         assert_eq!(std::mem::size_of::<LineVertex>(), 28);

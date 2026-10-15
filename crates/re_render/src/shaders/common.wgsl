@@ -3,6 +3,7 @@
 
 const PI: f32 = 3.14159265;
 const MAX_POINT_LIGHTS: u32 = 8u;
+const MAX_SPOT_LIGHTS: u32 = 8u;
 
 struct PointLight {
     // xyz: world position, w: range
@@ -11,10 +12,21 @@ struct PointLight {
     color: vec4<f32>,
 };
 
+struct SpotLight {
+    // xyz: world position, w: range
+    position_range: vec4<f32>,
+    // rgb: colour * intensity / (4 pi) * exposure, w: cosine where the fade ends
+    color: vec4<f32>,
+    // xyz: the direction it shines, w: cosine of the half angle
+    direction: vec4<f32>,
+};
+
 struct Frame {
     view_proj: mat4x4<f32>,
     // Projection from world space into the shadow map (uv in xy, depth in z).
     light_view_proj: mat4x4<f32>,
+    // Clip space back to world space (the sky pass).
+    inv_view_proj: mat4x4<f32>,
     // xyz: camera position
     camera_pos: vec4<f32>,
     // xyz: direction towards the sun, w: 1 when there is a sun
@@ -28,8 +40,25 @@ struct Frame {
     // x: shadow map texel size in uv, y: normal offset in world units,
     // z: point light count, w: exposure (applied to emissive here)
     params: vec4<f32>,
+    // rgb: fog colour (linear, unlit), w: fog start
+    fog_color: vec4<f32>,
+    // x: fog end, y: 1 with fog, z: spot light count
+    fog_params: vec4<f32>,
+    // x: brightness, y: contrast, z: saturation, w: 1 with colour correction
+    grading: vec4<f32>,
+    // rgb: tint
+    tint: vec4<f32>,
+    // rgb: sky colours, w of zenith: 1 with a sky
+    sky_zenith: vec4<f32>,
+    sky_horizon: vec4<f32>,
+    sky_ground: vec4<f32>,
+    // xyz: towards the sun disc, w: 1 with a disc
+    sky_sun_dir: vec4<f32>,
+    sky_sun_color: vec4<f32>,
     points: array<PointLight, 8>,
+    spots: array<SpotLight, 8>,
 };
+
 
 // One drawn instance (vertex buffer slot 1).
 struct Instance {
