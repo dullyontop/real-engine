@@ -31,6 +31,21 @@ pub const INVALID_ATTRIBUTE: Code = Code::new("RE9007");
 /// descendants.
 pub const INVALID_PARENT: Code = Code::new("RE9008");
 
+/// A value passed through a remote or bindable cannot be copied: a function,
+/// a thread, a cyclic table, a key that is neither a string nor a number, or
+/// a userdata that is not an instance, datatype or enum item (WP12 holds
+/// RE9300–RE9349).
+pub const REMOTE_VALUE: Code = Code::new("RE9300");
+
+/// A remote or bindable call failed: its callback raised, no callback is set
+/// (`BindableFunction:Invoke`), it was called from the wrong side, or the
+/// player it was waiting on left.
+pub const REMOTE_CALL: Code = Code::new("RE9301");
+
+/// A host step about players was refused: the player is not a `Player` in
+/// the game, or `[compat] players` is 0.
+pub const PLAYER_STEP: Code = Code::new("RE9302");
+
 /// A deprecated member was used; it works, and the note names its replacement.
 pub const DEPRECATED_MEMBER: Code = Code::new("RE9101");
 

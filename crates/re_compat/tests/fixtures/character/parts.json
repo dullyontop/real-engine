@@ -197,14 +197,6 @@
       "status": "partial",
       "note": "Test stand-in until the part classes land (WP13).",
       "doc": "Test stand-in for a weld."
-    },
-    {
-      "name": "ForceField",
-      "superclass": "Instance",
-      "creatable": true,
-      "status": "partial",
-      "note": "Test stand-in until the part classes land (WP13).",
-      "doc": "Test stand-in for a force field."
     }
   ]
 }
