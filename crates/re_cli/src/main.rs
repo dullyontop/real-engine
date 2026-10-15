@@ -1,0 +1,368 @@
+//! `real`: the Real Engine command-line tool (ADR-0001).
+//!
+//! A runtime-only build (`--no-default-features`) runs, verifies, describes and
+//! explains a project; the default `tooling` build adds the subcommands that
+//! edit it or connect tools to it (ADR-0027).
+//!
+//! Exit codes (ADR-0022): 0 success, 1 errors were reported, 2 usage errors,
+//! 101 a crash (a report is written to `.real/crash/`).
+
+mod codes;
+mod explain;
+mod new;
+mod schema;
+#[cfg(feature = "tooling")]
+mod tooling;
+
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use clap::{Parser, Subcommand};
+use re_app::{App, AppConfig, VerifyOptions};
+use re_core::{DiagInfo, Diagnostic};
+
+/// Every diagnostic code `re_cli` owns, with its title and explain page.
+pub const DIAGNOSTICS: &[DiagInfo] = &[
+    DiagInfo {
+        code: codes::UNKNOWN_CODE,
+        title: "Unknown diagnostic code",
+        page: include_str!("../explain/RE0900.md"),
+    },
+    DiagInfo {
+        code: codes::PROJECT_EXISTS,
+        title: "Directory is not empty",
+        page: include_str!("../explain/RE0901.md"),
+    },
+    DiagInfo {
+        code: codes::WRITE_FAILED,
+        title: "Output file could not be written",
+        page: include_str!("../explain/RE0902.md"),
+    },
+];
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "real",
+    version,
+    about = "Real Engine: run, verify, describe and edit a game project"
+)]
+struct Cli {
+    /// The project directory.
+    #[arg(long, global = true, default_value = ".")]
+    project: PathBuf,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Create a new project in DIR.
+    New {
+        /// The directory to create.
+        dir: PathBuf,
+        /// The project name (default: the directory name).
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Run the project.
+    Run(RunArgs),
+    /// Describe what the project can use: components, generators and commands.
+    Describe {
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check the project: content, scripts, boot, replays, goldens and frame times.
+    Verify {
+        /// Print the JSON report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explain a diagnostic code (or list every code).
+    Explain {
+        /// The code, such as RE1001.
+        code: Option<String>,
+    },
+    /// Write every JSON Schema the engine defines.
+    Schema {
+        /// The output directory.
+        #[arg(long, default_value = "schemas")]
+        out: PathBuf,
+    },
+    /// Serve the project's commands to MCP clients over stdio.
+    #[cfg(feature = "tooling")]
+    Mcp(tooling::mcp::McpArgs),
+    /// Set up and manage agent access.
+    #[cfg(feature = "tooling")]
+    Agent(tooling::agent::AgentArgs),
+    /// Open the editor.
+    #[cfg(feature = "tooling")]
+    Editor(tooling::editor::EditorArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct RunArgs {
+    /// Run without a window.
+    #[arg(long)]
+    headless: bool,
+    /// Frames to run (default: the replay's length, or 60 headless).
+    #[arg(long)]
+    frames: Option<u64>,
+    /// Drive the run with a replay file.
+    #[arg(long)]
+    replay: Option<PathBuf>,
+    /// Write the last frame to this PNG.
+    #[arg(long)]
+    screenshot: Option<PathBuf>,
+    /// Exit after the frames and print `RUN OK` when no error was reported.
+    #[arg(long)]
+    exit_after: bool,
+    /// Print the run report as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+fn print_diagnostics(diagnostics: &[Diagnostic]) {
+    if !diagnostics.is_empty() {
+        eprint!("{}", re_core::render_human_all(diagnostics));
+    }
+}
+
+fn fail(d: Diagnostic) -> ExitCode {
+    print_diagnostics(std::slice::from_ref(&d));
+    ExitCode::from(1)
+}
+
+fn open(project: &Path) -> Result<App, Diagnostic> {
+    App::open(project, AppConfig::load(project)?)
+}
+
+fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
+    if !args.headless {
+        eprintln!(
+            "real run: this build has no windowed runner yet; pass --headless \
+             (the window joins when the renderer is integrated)"
+        );
+        return ExitCode::from(2);
+    }
+    if args.screenshot.is_some() {
+        eprintln!(
+            "real run: --screenshot needs the renderer, which this build does not include yet"
+        );
+        return ExitCode::from(2);
+    }
+    let mut app = match open(project) {
+        Ok(a) => a,
+        Err(d) => return fail(d),
+    };
+    let replay = match &args.replay {
+        Some(path) => match re_input::load_replay(path) {
+            Ok(doc) => Some(doc),
+            Err(d) => return fail(d),
+        },
+        None => None,
+    };
+    let report = match app.run_headless(args.frames, replay) {
+        Ok(r) => r,
+        Err(d) => return fail(d),
+    };
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
+    } else {
+        print_diagnostics(&report.diagnostics);
+    }
+    let errors = report.diagnostics.iter().filter(|d| d.is_error()).count();
+    if errors > 0 {
+        if !args.json {
+            print_diagnostics(&[Diagnostic::error(
+                re_app::codes::RUN_ERRORS,
+                format!(
+                    "the run reported {errors} error{}",
+                    if errors == 1 { "" } else { "s" }
+                ),
+            )]);
+        }
+        return ExitCode::from(1);
+    }
+    if args.exit_after {
+        println!("RUN OK");
+    } else if !args.json {
+        println!(
+            "ran {} frames; state hash {}",
+            report.frames, report.state_hash
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn cmd_describe(project: &Path, json: bool) -> ExitCode {
+    let mut app = match open(project) {
+        Ok(a) => a,
+        Err(d) => return fail(d),
+    };
+    explain::register(app.commands_mut());
+    let outcome = app.dispatch(
+        "describe",
+        serde_json::Value::Null,
+        false,
+        &re_command::AllowAll,
+        re_command::Origin::User,
+    );
+    if !outcome.ok {
+        print_diagnostics(&outcome.diagnostics);
+        return ExitCode::from(1);
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&outcome.data).unwrap_or_default()
+        );
+        return ExitCode::SUCCESS;
+    }
+    let d = &outcome.data;
+    let list = |key: &str| -> Vec<String> {
+        d.get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|c| c.get("name").and_then(|n| n.as_str()))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    println!("components: {}", list("components").join(", "));
+    println!("generators: {}", list("generators").join(", "));
+    println!("commands:");
+    for spec in app.commands().specs() {
+        println!(
+            "  {:<20} {:<12} {}",
+            spec.name,
+            spec.tier.as_str(),
+            spec.summary
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn cmd_verify(project: &Path, json: bool) -> ExitCode {
+    let config = match AppConfig::load(project) {
+        Ok(c) => c,
+        Err(d) => return fail(d),
+    };
+    let report = re_app::verify::run_project(project, &config, &VerifyOptions::default(), &[]);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
+    } else {
+        for stage in &report.stages {
+            println!(
+                "{:<8} {:<4} {:>9.1} ms",
+                stage.name,
+                if stage.ok { "ok" } else { "FAIL" },
+                stage.duration_ms
+            );
+            print_diagnostics(&stage.diagnostics);
+        }
+        println!(
+            "{}",
+            if report.ok {
+                "verify: ok"
+            } else {
+                "verify: FAILED"
+            }
+        );
+    }
+    ExitCode::from(report.exit_code())
+}
+
+fn cmd_explain(code: Option<String>) -> ExitCode {
+    match code {
+        None => {
+            for d in explain::catalog() {
+                println!("{}  {}", d.code, d.title);
+            }
+            ExitCode::SUCCESS
+        }
+        Some(code) => match explain::lookup(&code) {
+            Ok(info) => {
+                print!("{}", info.page);
+                ExitCode::SUCCESS
+            }
+            Err(d) => fail(d),
+        },
+    }
+}
+
+fn cmd_schema(out: &Path) -> ExitCode {
+    match schema::write_all(out) {
+        Ok(files) => {
+            println!("wrote {} schemas to {}", files.len(), out.display());
+            ExitCode::SUCCESS
+        }
+        Err(d) => fail(d),
+    }
+}
+
+/// Writes a crash report to `<project>/.real/crash/` on a panic (ARCHITECTURE §7).
+fn install_crash_hook(project: PathBuf) {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default(info);
+        let dir = project.join(".real/crash");
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let report = format!(
+            "real {} crashed\n\n{info}\n\nbacktrace:\n{}\n",
+            env!("CARGO_PKG_VERSION"),
+            std::backtrace::Backtrace::force_capture()
+        );
+        if std::fs::create_dir_all(&dir).is_ok() {
+            let path = dir.join(format!("crash-{stamp}.txt"));
+            if std::fs::write(&path, report).is_ok() {
+                eprintln!("a crash report was written to {}", path.display());
+            }
+        }
+    }));
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    install_crash_hook(cli.project.clone());
+    let project = cli.project;
+    match cli.command {
+        Command::New { dir, name } => match new::create(&dir, name.as_deref()) {
+            Ok(files) => {
+                println!("created {} ({})", dir.display(), files.join(", "));
+                ExitCode::SUCCESS
+            }
+            Err(d) => fail(d),
+        },
+        Command::Run(args) => cmd_run(&project, args),
+        Command::Describe { json } => cmd_describe(&project, json),
+        Command::Verify { json } => cmd_verify(&project, json),
+        Command::Explain { code } => cmd_explain(code),
+        Command::Schema { out } => cmd_schema(&out),
+        #[cfg(feature = "tooling")]
+        Command::Mcp(args) => tooling_exit(tooling::mcp::run(args, &project)),
+        #[cfg(feature = "tooling")]
+        Command::Agent(args) => tooling_exit(tooling::agent::run(args, &project)),
+        #[cfg(feature = "tooling")]
+        Command::Editor(args) => tooling_exit(tooling::editor::run(args, &project)),
+    }
+}
+
+#[cfg(feature = "tooling")]
+fn tooling_exit(result: anyhow::Result<ExitCode>) -> ExitCode {
+    result.unwrap_or_else(|e| {
+        eprintln!("error: {e:#}");
+        ExitCode::from(1)
+    })
+}

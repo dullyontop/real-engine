@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VerifyReport",
+  "description": "The whole report (`schemas/verify-report.schema.json`).",
+  "type": "object",
+  "properties": {
+    "ok": {
+      "description": "True when every stage is ok.",
+      "type": "boolean"
+    },
+    "stages": {
+      "description": "The stages, in the order they ran.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StageReport"
+      }
+    },
+    "perf": {
+      "description": "The PerfReport of the boot run (absent when the project did not boot).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PerfReport"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "ok",
+    "stages"
+  ],
+  "$defs": {
+    "StageReport": {
+      "description": "The result of one stage.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The stage name (`schema`, `compile`, `scan`, `boot`, `replays`, `goldens`, `perf`).",
+          "type": "string"
+        },
+        "ok": {
+          "description": "False when the stage found an error.",
+          "type": "boolean"
+        },
+        "diagnostics": {
+          "description": "Errors, warnings and notes.",
+          "type": "array",
+          "items": true
+        },
+        "duration_ms": {
+          "description": "How long the stage took.",
+          "type": "number",
+          "format": "double"
+        },
+        "data": {
+          "description": "Stage-specific results.",
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "ok",
+        "diagnostics",
+        "duration_ms"
+      ]
+    },
+    "PerfReport": {
+      "description": "The performance report of a run.",
+      "type": "object",
+      "properties": {
+        "frames": {
+          "description": "Frames measured.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "frame": {
+          "description": "Whole frames.",
+          "$ref": "#/$defs/TimeStats"
+        },
+        "phases": {
+          "description": "Each phase of ADR-0009, by name (`input`, `pre_render`, … `end_frame`).\nFixed-step phases are summed over the frame's steps.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/TimeStats"
+          }
+        },
+        "physics_step": {
+          "description": "One physics step (`Physics::step` alone).",
+          "$ref": "#/$defs/TimeStats"
+        },
+        "counts": {
+          "description": "Counts at the end of the run.",
+          "$ref": "#/$defs/PerfCounts"
+        },
+        "renderer": {
+          "description": "The renderer's resource statistics, when a renderer ran."
+        }
+      },
+      "required": [
+        "frames",
+        "frame",
+        "phases",
+        "physics_step",
+        "counts"
+      ]
+    },
+    "TimeStats": {
+      "description": "Mean, 95th percentile and maximum of a set of durations, in milliseconds.",
+      "type": "object",
+      "properties": {
+        "samples": {
+          "description": "The number of samples.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "mean_ms": {
+          "description": "Mean, in ms.",
+          "type": "number",
+          "format": "double"
+        },
+        "p95_ms": {
+          "description": "95th percentile (nearest rank), in ms.",
+          "type": "number",
+          "format": "double"
+        },
+        "max_ms": {
+          "description": "Maximum, in ms.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "samples",
+        "mean_ms",
+        "p95_ms",
+        "max_ms"
+      ]
+    },
+    "PerfCounts": {
+      "description": "Counts taken at the end of the measured run.",
+      "type": "object",
+      "properties": {
+        "entities": {
+          "description": "Entities in the world.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "draw_items": {
+          "description": "Items drawn in the last frame.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "bodies": {
+          "description": "Physics bodies (character inner bodies included).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "characters": {
+          "description": "Physics characters.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "entities",
+        "draw_items",
+        "bodies",
+        "characters"
+      ]
+    }
+  }
+}
