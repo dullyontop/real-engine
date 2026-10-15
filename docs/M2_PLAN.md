@@ -459,7 +459,7 @@ cargo test --locked -p re_audio
 - `re_import` reads two input forms without executing any Luau:
   - **Rojo-style projects**: a `*.project.json` tree, `init.luau`, `*.server.luau`, `*.client.luau` and `*.model.json`/`*.meta.json` files.
   - **Studio command-bar loader scripts**: a Luau file that creates instances and assigns each script's `Source`. It is parsed with full_moon and interpreted statically for the statement shapes it recognises. Anything else is reported as unrecognised.
-  - A general `.rbxl`/`.rbxlx` reader is M3.
+  - A general `.rbxl`/`.rbxlx` reader is M3 (M3_PLAN WP27).
 - It writes a Real Engine project: `real.toml` with `[compat] api = "roblox"`, `scenes/main.scene.json` in the compat scene conventions, and the scripts under `scripts/`, with names that keep dots and odd characters intact.
 - Re-importing into an existing project is idempotent: it creates, adopts, removes and fails by path, and only removes instances it created.
 - `real import <INPUT> --project <DIR> [--dry-run] [--json]` prints the `ImportReport`.
