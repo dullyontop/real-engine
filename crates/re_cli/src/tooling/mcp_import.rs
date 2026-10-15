@@ -337,6 +337,10 @@ mod tests {
         input_path(project, "import")
     }
 
+    fn scope() -> String {
+        agent_codes::OUTSIDE_SCOPE.to_string()
+    }
+
     fn code(r: Result<std::path::PathBuf, Diagnostic>) -> String {
         r.unwrap_err().code.to_string()
     }
@@ -352,15 +356,15 @@ mod tests {
         // Out of the project, absolute, or into .git is not.
         assert_eq!(
             code(rojo(&project, r#"{ "$path": "../../../x" }"#)),
-            "RE8002"
+            scope()
         );
-        assert_eq!(code(rojo(&project, r#"{ "$path": "/etc" }"#)), "RE8002");
+        assert_eq!(code(rojo(&project, r#"{ "$path": "/etc" }"#)), scope());
         assert_eq!(
             code(rojo(&project, r#"{ "X": { "$path": "../.git" } }"#)),
-            "RE8002"
+            scope()
         );
-        assert_eq!(code(input_path(&project, ".git/config")), "RE8002");
-        assert_eq!(code(input_path(&project, "../x.luau")), "RE8002");
+        assert_eq!(code(input_path(&project, ".git/config")), scope());
+        assert_eq!(code(input_path(&project, "../x.luau")), scope());
     }
 
     #[cfg(unix)]
@@ -374,7 +378,7 @@ mod tests {
         assert!(rojo(&project, r#"{ "$path": "src" }"#).is_ok());
         // A link inside a mapped directory.
         std::os::unix::fs::symlink(&secret, project.join("import/src/link")).unwrap();
-        assert_eq!(code(rojo(&project, r#"{ "$path": "src" }"#)), "RE8002");
+        assert_eq!(code(rojo(&project, r#"{ "$path": "src" }"#)), scope());
         std::fs::remove_file(project.join("import/src/link")).unwrap();
         // A linked project file.
         let other = project.join("other");
@@ -384,6 +388,6 @@ mod tests {
             other.join("default.project.json"),
         )
         .unwrap();
-        assert_eq!(code(input_path(&project, "other")), "RE8002");
+        assert_eq!(code(input_path(&project, "other")), scope());
     }
 }
