@@ -864,6 +864,33 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Consequences.** The data covers what real scripts use rather than the whole vendor API. The gap report (ADR-0014) shows what to add next.
 
+## ADR-0035: Compat fonts are open-licensed substitutes, bundled as files
+
+**Status:** Accepted (it adds a file-level font exception alongside ADR-0019, which stays Provisional with the license question)
+
+**Context.** Compat GUI text (`TextLabel`, `TextButton`, `TextBox`, WP15) names font families from the vendor's catalogue. Those font files are not ours to ship, and egui's default fonts (ADR-0019) cover only one sans and one monospace family, so headings, body text and code would all look alike.
+
+**Decision.**
+- Ship three OFL-1.1 families as files under `assets/fonts/`: Montserrat (weights 400, 500, 700, 900), Source Sans 3 (400, 700) and Roboto Mono (400, 700). That is 8 files, about 307 KB, latin subset only.
+- The source is the `@fontsource` packages on npm: montserrat 5.3.0, source-sans-3 5.3.1, roboto-mono 5.3.0. Their WOFF 1.0 files are converted to TTF by a small script under `assets/fonts/tools/`, which only unpacks the zlib-compressed tables and changes no glyph data. `assets/fonts/README.md` records the package versions and the conversion step.
+- Each family's `OFL.txt` sits next to its files and goes into the generated third-party notice.
+- `assets/fonts/substitutes.json` maps compat font families to a bundled family:
+  - geometric display families (Gotham and its relatives) go to Montserrat;
+  - the default sans families go to Source Sans 3;
+  - code and monospace families go to Roboto Mono;
+  - any unknown family falls back to Source Sans 3.
+- No vendor font file, and no font derived from one, is in the repository or downloaded at run time.
+
+**Alternatives.**
+- egui's default fonts only. Rejected: two families cannot tell headings, body text and code apart.
+- Fetch fonts at run time. Rejected: the engine works offline and runs are deterministic.
+- Full (non-latin) subsets. Deferred: about ten times the size. A project can add its own fonts.
+
+**Consequences.**
+- Text metrics differ from the vendor's fonts, so text that relies on exact widths (`TextFits`, `TextBounds`) can wrap differently.
+- OFL-1.1 allows bundling and modification but forbids selling the fonts alone, and a modified font may not keep its reserved name. We ship them unmodified apart from the container format, which the OFL allows.
+- The license question (Open question 1) now covers these files as well as egui's fonts.
+
 ---
 
 ## Open questions for the owner
@@ -871,7 +898,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 1. **License.**
    - The repository has no `LICENSE` file. The crates declare `MIT OR Apache-2.0`, the render prototype's value.
    - Recommendation: dual MIT / Apache-2.0, the usual choice for Rust, which matches most crates' defaults and the prototype. Add `LICENSE-MIT` and `LICENSE-APACHE` at the root.
-   - This also needs a decision on the exceptions in ADR-0019. MPL-2.0 code ships **in the runtime** through one crate, kira's unconditional dependency `triple_buffer` (used unmodified), not only in tooling (full_moon). kira's `wav` feature and its symphonia crates have been dropped (`re_audio` decodes WAV itself). egui's default fonts bring OFL-1.1 and Ubuntu-font-1.0. Do you accept these, or should we replace kira or the default fonts?
+   - This also needs a decision on the exceptions in ADR-0019. MPL-2.0 code ships **in the runtime** through one crate, kira's unconditional dependency `triple_buffer` (used unmodified), not only in tooling (full_moon). kira's `wav` feature and its symphonia crates have been dropped (`re_audio` decodes WAV itself). egui's default fonts bring OFL-1.1 and Ubuntu-font-1.0, and the compat GUI bundles three OFL-1.1 font families as files (ADR-0035). Do you accept these, or should we replace kira or the default fonts?
    - Until the owner decides, the workspace `license` field keeps that value, and the README says the license is not final.
 2. **Which Luau type checker do we ship?** The engine cannot type-check in process today, because mlua's vendored Luau has no Analysis module (ADR-0013). The options:
    - **(a) An external official checker** (the current default). luau-lsp 1.70.1 works unpatched and also serves editors; a patched luau-analyze 0.740 (27-line `--definitions` patch, a 220 s source build) is the alternative. Both are MIT tools, not code dependencies, so the crates.io-only rule does not apply, but users must install them (or we bundle the release binaries), and the patched analyzer needs a rebase on each Luau upgrade.
