@@ -885,3 +885,45 @@ fn despawn_with_a_generated_referrer_undoes_exactly() {
     assert!(overrides_of(&w, "src").is_empty());
     assert_eq!(w.state_hash(), hash);
 }
+
+#[test]
+fn typed_output_commands_carry_an_output_schema() {
+    #[derive(serde::Serialize, schemars::JsonSchema)]
+    struct Out {
+        /// How many.
+        count: u32,
+    }
+    let mut reg: CommandRegistry<EditState> = CommandRegistry::new();
+    reg.register_typed::<re_command::NoArgs, _>(
+        "plain",
+        "No output schema.",
+        re_command::Tier::Read,
+        true,
+        |_t, _a, _c| Ok(json!(null)),
+    );
+    reg.register_typed_output::<re_command::NoArgs, Out, _>(
+        "typed",
+        "Has an output schema.",
+        re_command::Tier::Read,
+        true,
+        |_t, _a, _c| Ok(json!({ "count": 2 })),
+    );
+    assert!(reg.spec("plain").unwrap().output_schema.is_none());
+    let typed = reg.spec("typed").unwrap();
+    let schema = typed.output_schema.as_ref().unwrap();
+    assert_eq!(schema["properties"]["count"]["type"], "integer");
+    assert_eq!(schema["required"], json!(["count"]));
+    // `specs()` sees it too, and a spec without one serializes without the key.
+    assert!(
+        reg.specs()
+            .iter()
+            .any(|s| s.name == "typed" && s.output_schema.is_some())
+    );
+    let plain = serde_json::to_value(reg.spec("plain").unwrap()).unwrap();
+    assert!(plain.get("output_schema").is_none());
+    let back: re_command::CommandSpec = serde_json::from_value(plain).unwrap();
+    assert!(back.output_schema.is_none());
+    let mut s = EditState::new();
+    let out = reg.dispatch(&mut s, "typed", json!({}), false, &AllowAll);
+    assert_eq!(out.data, json!({ "count": 2 }));
+}

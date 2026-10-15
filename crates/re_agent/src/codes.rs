@@ -47,3 +47,21 @@ pub const NO_SESSION: Code = Code::new("RE8012");
 
 /// A file command's target is missing, not a file, or could not be written.
 pub const FILE_ERROR: Code = Code::new("RE8013");
+
+/// `resource.read` named a URI that is not in the resource set.
+pub const UNKNOWN_RESOURCE: Code = Code::new("RE8014");
+
+/// A Luau tool script under `scripts/tools/commands/` could not be loaded or
+/// does not return a valid tool; it is not registered.
+pub const INVALID_TOOL: Code = Code::new("RE8015");
+
+/// A Luau tool failed in a way only tools can: it changed the world without
+/// `command.run` (the change was reverted).
+pub const TOOL_FAILED: Code = Code::new("RE8016");
+
+/// A line a Luau tool printed (a note in the call's outcome).
+pub const TOOL_OUTPUT: Code = Code::new("RE8017");
+
+/// `compat.coverage` was asked for a class, enum or library the coverage
+/// table does not have.
+pub const UNKNOWN_COMPAT_NAME: Code = Code::new("RE8018");

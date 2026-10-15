@@ -51,6 +51,11 @@ fn open(project: &Path) -> Result<App, Diagnostic> {
     crate::explain::register(app.commands_mut());
     re_agent::register_commands(app.commands_mut(), &re_agent::Agent::new(project));
     app.add_verify_stage(Arc::new(super::check::ScanStage));
+    // Last, so a Luau tool cannot take an engine command's name.
+    let (_tools, problems) = re_agent::luau_tools::register(app.commands_mut(), project);
+    if !problems.is_empty() {
+        eprint!("{}", re_core::render_human_all(&problems));
+    }
     Ok(app)
 }
 

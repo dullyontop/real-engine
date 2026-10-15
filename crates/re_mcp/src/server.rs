@@ -9,8 +9,9 @@ use re_command::{CommandOutcome, CommandSpec, EngineHandle, Tier};
 use re_core::Diagnostic;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-    JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
-    ToolAnnotations,
+    JsonObject, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
+    ResourceContents, ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, ServiceExt};
@@ -38,25 +39,8 @@ pub fn command_name<'a>(tool: &str, specs: &'a [CommandSpec]) -> Option<&'a str>
 /// an object with `type: "object"` and no `anyOf`/`oneOf`/`allOf`, and no
 /// `format` or `$schema` keywords remain anywhere.
 pub fn sanitize_schema(schema: &Json) -> JsonObject {
-    fn strip(value: &mut Json) {
-        match value {
-            Json::Object(map) => {
-                // `format` as a keyword, not as a property called "format".
-                if map.get("format").is_some_and(Json::is_string) {
-                    map.remove("format");
-                }
-                map.remove("$schema");
-                for v in map.values_mut() {
-                    strip(v);
-                }
-            }
-            Json::Array(items) => items.iter_mut().for_each(strip),
-            _ => {}
-        }
-    }
-    let mut value = schema.clone();
-    strip(&mut value);
-    let mut root = match value {
+    // `format` is removed as a keyword, not as a property called "format".
+    let mut root = match sanitize_schema_value(schema) {
         Json::Object(map) => map,
         _ => JsonObject::new(),
     };
@@ -102,22 +86,100 @@ fn title(spec: &CommandSpec) -> String {
     words
 }
 
+/// The output schema of a command's tool: the outcome envelope
+/// `{ ok, changes, diagnostics, data }`, with `data` described by the
+/// command's [`CommandSpec::output_schema`] when it has one (its `$defs` are
+/// moved to the root, so its references still resolve) and open otherwise.
+pub fn output_schema(spec: &CommandSpec) -> JsonObject {
+    let mut defs = JsonObject::new();
+    let data = match &spec.output_schema {
+        Some(schema) => {
+            let mut data = sanitize_schema_value(schema);
+            if let Some(map) = data.as_object_mut() {
+                // schemars (2020-12) refers to `#/$defs/<name>`.
+                if let Some(Json::Object(d)) = map.remove("$defs") {
+                    defs = d;
+                }
+                map.remove("title");
+            }
+            data
+        }
+        None => json!({ "description": "The command's result data." }),
+    };
+    let mut root = match json!({
+        "type": "object",
+        "properties": {
+            "ok": { "type": "boolean", "description": "True: the command succeeded." },
+            "changes": {
+                "type": "array",
+                "description": "The operations applied (for a dry run, those that would be).",
+                "items": { "type": "object" }
+            },
+            "diagnostics": {
+                "type": "array",
+                "description": "Warnings and notes (errors come back as isError results).",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "code": { "type": "string" },
+                        "severity": { "type": "string" },
+                        "message": { "type": "string" }
+                    },
+                    "required": ["code", "severity", "message"]
+                }
+            },
+            "data": data
+        },
+        "required": ["ok", "changes", "diagnostics", "data"]
+    }) {
+        Json::Object(map) => map,
+        _ => unreachable!("a JSON object literal"),
+    };
+    if !defs.is_empty() {
+        root.insert("$defs".into(), Json::Object(defs));
+    }
+    root
+}
+
+/// [`sanitize_schema`]'s keyword cleanup without forcing an object root.
+fn sanitize_schema_value(schema: &Json) -> Json {
+    fn strip(value: &mut Json) {
+        match value {
+            Json::Object(map) => {
+                if map.get("format").is_some_and(Json::is_string) {
+                    map.remove("format");
+                }
+                map.remove("$schema");
+                for v in map.values_mut() {
+                    strip(v);
+                }
+            }
+            Json::Array(items) => items.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    let mut value = schema.clone();
+    strip(&mut value);
+    value
+}
+
 /// The MCP tool of a command.
 pub fn tool_for(spec: &CommandSpec) -> Tool {
     let a = spec.annotations;
-    Tool::new(
+    let mut tool = Tool::new(
         tool_name(&spec.name),
         description(spec),
         Arc::new(sanitize_schema(&spec.input_schema)),
-    )
-    .with_title(title(spec))
-    .with_annotations(ToolAnnotations::from_raw(
-        Some(title(spec)),
-        Some(a.read_only_hint),
-        Some(a.destructive_hint),
-        Some(a.idempotent_hint),
-        Some(a.open_world_hint),
-    ))
+    );
+    tool.output_schema = Some(Arc::new(output_schema(spec)));
+    tool.with_title(title(spec))
+        .with_annotations(ToolAnnotations::from_raw(
+            Some(title(spec)),
+            Some(a.read_only_hint),
+            Some(a.destructive_hint),
+            Some(a.idempotent_hint),
+            Some(a.open_world_hint),
+        ))
 }
 
 /// The JSON text of a failed outcome (ADR-0026): the first error's `code`,
@@ -209,10 +271,10 @@ fn result_for(outcome: CommandOutcome, project: &Path) -> CallToolResult {
             ),
         }
     }
-    let text = serde_json::to_string(&outcome).unwrap_or_default();
-    let mut content = vec![ContentBlock::text(text)];
-    content.extend(images);
-    CallToolResult::success(content)
+    let value = serde_json::to_value(&outcome).unwrap_or(Json::Null);
+    let mut result = CallToolResult::structured(value);
+    result.content.extend(images);
+    result
 }
 
 /// The MCP server over one engine handle.
@@ -268,12 +330,17 @@ impl RealEngineServer {
 
 impl ServerHandler for RealEngineServer {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                self.options.name.clone(),
-                env!("CARGO_PKG_VERSION"),
-            ))
-            .with_instructions(self.options.instructions.clone())
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(Implementation::new(
+            self.options.name.clone(),
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions(self.options.instructions.clone())
     }
 
     async fn list_tools(
@@ -285,6 +352,50 @@ impl ServerHandler for RealEngineServer {
         Ok(ListToolsResult::with_all_items(
             specs.iter().map(tool_for).collect(),
         ))
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        let resources = self
+            .options
+            .resources
+            .list()
+            .iter()
+            .map(|r| {
+                Resource::new(r.uri.clone(), r.name.clone())
+                    .with_description(r.description.clone())
+                    .with_mime_type(r.mime_type.clone())
+                    .with_size(r.text.len() as u64)
+            })
+            .collect();
+        Ok(ListResourcesResult::with_all_items(resources))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        match self.options.resources.read(&request.uri) {
+            Ok(r) => Ok(
+                ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
+                    uri: r.uri.clone(),
+                    mime_type: Some(r.mime_type.clone()),
+                    text: r.text.to_string(),
+                    meta: None,
+                }])
+                .into(),
+            ),
+            // MCP's "resource not found" error code.
+            Err(d) => Err(McpError::new(
+                rmcp::model::ErrorCode(-32002),
+                d.message.clone(),
+                Some(json!({ "uri": request.uri, "code": d.code.to_string() })),
+            )),
+        }
     }
 
     async fn call_tool(

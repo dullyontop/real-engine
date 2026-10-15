@@ -162,6 +162,7 @@ fn policy_checks_path_arguments_of_mutating_calls() {
         tier,
         input_schema: json!({}),
         annotations: re_command::CommandAnnotations::for_tier(tier, false),
+        output_schema: None,
     };
     let edit = spec(re_command::Tier::Edit);
     let out = p.check(&edit, &json!({ "path": "../x.luau" }), false);
@@ -259,6 +260,7 @@ fn budgets() {
         tier: re_command::Tier::Read,
         input_schema: json!({}),
         annotations: re_command::CommandAnnotations::for_tier(re_command::Tier::Read, true),
+        output_schema: None,
     };
     assert!(
         p.check(&spec("play.run"), &json!({ "frames": 600 }), false)
@@ -592,5 +594,5 @@ fn script_write_is_compile_gated_and_scoped() {
 fn diagnostics_catalogue_is_complete() {
     let problems = re_core::validate_catalog(re_agent::DIAGNOSTICS, re_agent::CODE_RANGE);
     assert!(problems.is_empty(), "{problems:?}");
-    assert_eq!(re_agent::DIAGNOSTICS.len(), 13);
+    assert_eq!(re_agent::DIAGNOSTICS.len(), 18);
 }
