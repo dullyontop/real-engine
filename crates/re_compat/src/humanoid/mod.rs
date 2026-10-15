@@ -742,6 +742,7 @@ fn fall_out(lua: &Lua, classes: &ClassRegistry, all: &[Entity]) -> Result<()> {
                 rt(w, classes, h).root = None;
             }
             set_own(w, HUM, h, "Health", Value::Float(0.0));
+            set_own(w, HUM, h, "RootPart", Value::Entity(None));
             out.extend(
                 tree::descendants(w, rig)
                     .into_iter()

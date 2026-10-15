@@ -247,3 +247,30 @@ fn a_character_that_falls_into_the_void_dies() {
     assert_eq!(p.out(), ["died", "0 0"]);
     assert_eq!(controllers(&mut p), 0);
 }
+
+#[test]
+fn the_default_camera_stops_following_a_character_that_fell_out() {
+    let mut p = character_place(ContextKind::Client);
+    p.character("R15", "Dummy", 0.0, 0.0);
+    // The default PlayerModule, with the dummy standing in for the local
+    // player's character. Its camera runs in every frame's render step, and
+    // a frame fails the test on any error it raises.
+    let source = re_compat::humanoid::scripts::DEFAULT_SCRIPTS
+        .iter()
+        .find(|s| s.name == "PlayerModule")
+        .unwrap()
+        .source
+        .replace(
+            "local player = Players.LocalPlayer",
+            "local player = { Character = workspace.Dummy }",
+        )
+        .replace("return PlayerModule.new()", "PlayerModule.new()");
+    p.run(&source);
+    p.frames(30);
+    p.run("print(workspace.CurrentCamera.CameraSubject.Name)");
+    p.run("workspace.Dummy:PivotTo(CFrame.new(0, -600, 0))");
+    p.frames(3);
+    p.run("print(workspace.Dummy.Humanoid.RootPart)");
+    p.frames(3);
+    assert_eq!(p.out(), ["Humanoid", "nil"]);
+}
