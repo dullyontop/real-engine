@@ -248,3 +248,260 @@ fn an_edit_saved_to_the_scene_keeps_the_island_loading() {
     assert!(again.world().entity("rock").is_ok());
     assert!(gems_left(&mut again) > 0);
 }
+
+/// Records `tests/replays/full_game.replay.json`: walks into a crate and
+/// pushes it, collects every gem (steering towards the nearest one each
+/// frame), waits on the win message and presses R. Run with
+/// `cargo test -p re_app --test island record_full_game -- --ignored` after
+/// a change to the island; the replay is played back by `real verify` and by
+/// [`the_full_game_replay_pushes_wins_and_restarts`]. The golden's name holds
+/// the win frame: after recording, run `real verify --update-goldens` on each
+/// backend (Vulkan, and `RE_BACKENDS=gl`) and delete the old `full_game_f*.png`.
+#[test]
+#[ignore = "writes the replay file; run by hand"]
+fn record_full_game() {
+    let project = island();
+    let mut app = App::open(&project, AppConfig::load(&project).unwrap()).unwrap();
+    let mut rec = Recorder::default();
+
+    // Land first, as the other replays do.
+    rec.run(&mut app, 150, [0.0, 0.0]);
+
+    // A crate: walk at it and keep pushing.
+    let crate_id = nearest(&mut app, "/crate")
+        .expect("the island has crates")
+        .0;
+    let crate_start = pos(&mut app, &crate_id);
+    let mut pushing = 0;
+    while pushing < 90 {
+        let to = pos(&mut app, &crate_id) - pos(&mut app, "hero");
+        if glam::Vec2::new(to.x, to.z).length() < 2.0 || pushing > 0 {
+            pushing += 10;
+        }
+        rec.run(&mut app, 10, towards(to));
+        assert!(rec.frame < 1200, "never reached the crate");
+    }
+    let moved = pos(&mut app, &crate_id) - crate_start;
+    assert!(
+        glam::Vec2::new(moved.x, moved.z).length() > 0.5,
+        "the crate moved {moved}"
+    );
+
+    // Every gem, nearest first; a sideways step when stuck.
+    let mut last = (pos(&mut app, "hero"), rec.frame);
+    while let Some((_, at)) = nearest(&mut app, "/gem") {
+        let here = pos(&mut app, "hero");
+        let to = at - here;
+        let mut dir = towards(to);
+        // Steer every 10 frames, every frame when close.
+        let frames = if glam::Vec2::new(to.x, to.z).length() > 4.0 {
+            10
+        } else {
+            1
+        };
+        if rec.frame - last.1 >= 90 {
+            if (here - last.0).length() < 2.0 {
+                rec.run(&mut app, 40, [dir[1], -dir[0]]);
+            }
+            last = (pos(&mut app, "hero"), rec.frame);
+            dir = towards(at - pos(&mut app, "hero"));
+        }
+        rec.run(&mut app, frames, dir);
+        assert!(rec.frame < 12_000, "stuck at {here}; {}", hud(&app));
+    }
+    rec.run(&mut app, 60, [0.0, 0.0]);
+    assert!(hud(&app).starts_with("All "), "{}", hud(&app));
+    let win_frame = rec.frame - 1;
+
+    // R: a new game.
+    rec.press(&mut app, "restart");
+    rec.run(&mut app, 90, [0.0, 0.0]);
+    assert_eq!(app.restarts(), 1);
+    assert!(hud(&app).starts_with("Gems: 0 / "), "{}", hud(&app));
+
+    let mut doc = re_types::ReplayDoc::new(1, rec.frame);
+    doc.input = rec.input;
+    doc.checks = vec![re_types::ReplayCheck {
+        frame: win_frame,
+        screenshot: Some(format!(
+            "tests/goldens/{{backend}}/full_game_f{win_frame}.png"
+        )),
+    }];
+    // One line per entry, like the hand-written replays.
+    let input: Vec<String> = doc
+        .input
+        .iter()
+        .map(|i| match (i.axis, i.down) {
+            (Some([x, y]), _) => format!(
+                "    {{ \"frame\": {}, \"action\": \"{}\", \"axis\": [{x:?}, {y:?}] }}",
+                i.frame, i.action
+            ),
+            (_, Some(down)) => format!(
+                "    {{ \"frame\": {}, \"action\": \"{}\", \"down\": {down} }}",
+                i.frame, i.action
+            ),
+            _ => unreachable!(),
+        })
+        .collect();
+    let text = format!(
+        "{{\n  \"version\": 1,\n  \"seed\": 1,\n  \"frames\": {},\n  \"input\": [\n{}\n  ],\n  \"checks\": [\n    {{ \"frame\": {win_frame}, \"screenshot\": \"{}\" }}\n  ]\n}}\n",
+        doc.frames,
+        input.join(",\n"),
+        doc.checks[0].screenshot.as_deref().unwrap(),
+    );
+    let back: re_types::ReplayDoc = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        serde_json::to_value(&back).unwrap(),
+        serde_json::to_value(&doc).unwrap()
+    );
+    std::fs::write(project.join("tests/replays/full_game.replay.json"), text).unwrap();
+    println!(
+        "full_game: {} frames, win at {win_frame}, hash {}",
+        rec.frame,
+        app.world().state_hash().to_hex()
+    );
+}
+
+/// Input recorded frame by frame: each frame is played as a one-frame replay
+/// carrying the current input, and every change is kept for the file. Each
+/// one-frame replay starts with every button up, so the frame after a press
+/// has no release edge here while the file has one: equivalent for scripts
+/// that use `on_pressed` and `down` (all the island's), not for `on_released`.
+#[derive(Default)]
+struct Recorder {
+    frame: u64,
+    axis: [f32; 2],
+    input: Vec<re_types::ReplayInput>,
+}
+
+impl Recorder {
+    fn run(&mut self, app: &mut App, frames: u64, axis: [f32; 2]) {
+        let axis = axis.map(|v| (v * 10.0).round() / 10.0);
+        if axis != self.axis {
+            self.axis = axis;
+            self.input.push(re_types::ReplayInput {
+                frame: self.frame,
+                action: "move".into(),
+                down: None,
+                axis: Some(axis),
+            });
+        }
+        for _ in 0..frames {
+            self.step(app, None);
+        }
+    }
+
+    /// Holds `button` down for one frame.
+    fn press(&mut self, app: &mut App, button: &str) {
+        for down in [true, false] {
+            self.input.push(re_types::ReplayInput {
+                frame: self.frame,
+                action: button.into(),
+                down: Some(down),
+                axis: None,
+            });
+            self.step(app, Some((button, down)));
+        }
+    }
+
+    fn step(&mut self, app: &mut App, button: Option<(&str, bool)>) {
+        let mut one = re_types::ReplayDoc::new(1, 1);
+        one.input.push(re_types::ReplayInput {
+            frame: 0,
+            action: "move".into(),
+            down: None,
+            axis: Some(self.axis),
+        });
+        if let Some((name, down)) = button {
+            one.input.push(re_types::ReplayInput {
+                frame: 0,
+                action: name.into(),
+                down: Some(down),
+                axis: None,
+            });
+        }
+        let report = app.run_headless(None, Some(one)).unwrap();
+        assert!(report.ok(), "{:?}", report.diagnostics);
+        self.frame += 1;
+    }
+}
+
+/// The move stick for walking along `to` (the camera starts looking down -Z:
+/// stick x is +X, stick y is -Z).
+fn towards(to: glam::Vec3) -> [f32; 2] {
+    let d = glam::Vec2::new(to.x, to.z).normalize_or_zero();
+    [d.x, -d.y]
+}
+
+fn pos(app: &mut App, id: &str) -> glam::Vec3 {
+    let world = app.world_mut();
+    let e = world.entity(id).unwrap();
+    glam::Vec3::from(
+        world
+            .ecs
+            .get::<re_scene::GlobalTransform>(e)
+            .unwrap()
+            .0
+            .translation,
+    )
+}
+
+/// The entity whose id ends with `suffix` nearest the hero, and where it is.
+fn nearest(app: &mut App, suffix: &str) -> Option<(String, glam::Vec3)> {
+    let hero = pos(app, "hero");
+    let world = app.world_mut();
+    let ids: Vec<String> = world
+        .ecs
+        .iter_entities()
+        .filter_map(|e| world.id_of(e.id()).map(str::to_string))
+        .filter(|id| id.ends_with(suffix))
+        .collect();
+    ids.into_iter()
+        .map(|id| {
+            let at = pos(app, &id);
+            (id, at)
+        })
+        .min_by(|a, b| {
+            let da = glam::Vec2::new(a.1.x - hero.x, a.1.z - hero.z).length();
+            let db = glam::Vec2::new(b.1.x - hero.x, b.1.z - hero.z).length();
+            da.total_cmp(&db)
+        })
+}
+
+#[test]
+fn the_full_game_replay_pushes_wins_and_restarts() {
+    let project = island();
+    let mut app = App::open(&project, AppConfig::load(&project).unwrap()).unwrap();
+    let doc = replay("full_game");
+    let win = doc.checks[0].frame;
+    let crates: Vec<(String, glam::Vec3)> = {
+        app.run_headless(Some(1), None).unwrap();
+        let world = app.world_mut();
+        let ids: Vec<String> = world
+            .ecs
+            .iter_entities()
+            .filter_map(|e| world.id_of(e.id()).map(str::to_string))
+            .filter(|id| id.ends_with("/crate"))
+            .collect();
+        ids.into_iter()
+            .map(|id| {
+                let at = pos(&mut app, &id);
+                (id, at)
+            })
+            .collect()
+    };
+    let mut app = App::open(&project, AppConfig::load(&project).unwrap()).unwrap();
+    let report = app.run_headless(Some(win + 1), Some(doc.clone())).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert!(hud(&app).starts_with("All "), "{}", hud(&app));
+    let pushed = crates.iter().any(|(id, at)| {
+        let moved = pos(&mut app, id) - *at;
+        glam::Vec2::new(moved.x, moved.z).length() > 0.5
+    });
+    assert!(pushed, "a crate was pushed");
+
+    let report = app.run_headless(Some(doc.frames - win - 1), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert_eq!(app.restarts(), 1);
+    assert!(hud(&app).starts_with("Gems: 0 / "), "{}", hud(&app));
+}

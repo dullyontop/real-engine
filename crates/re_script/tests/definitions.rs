@@ -8,6 +8,25 @@ fn engine_definitions_snapshot() {
     insta::assert_snapshot!("engine.d.luau", re_script::definitions());
 }
 
+#[test]
+fn write_definitions_puts_them_in_the_project_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = re_script::write_definitions(dir.path()).unwrap();
+    assert_eq!(path, dir.path().join(re_script::DEFINITIONS_PATH));
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        re_script::definitions()
+    );
+    // Unchanged contents are not rewritten.
+    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    re_script::write_definitions(dir.path()).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        before
+    );
+}
+
 /// Runs `luau-lsp analyze` over `script` with the generated definitions. `None`
 /// when luau-lsp is not installed (CI installs it, so there it must be found).
 fn analyze(dir: &Path, script: &str) -> Option<(bool, String)> {

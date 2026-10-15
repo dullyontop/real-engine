@@ -33,6 +33,7 @@ fn init_writes_every_client_config() {
             ".real/agent-policy.toml",
             "AGENTS.md",
             "CLAUDE.md",
+            ".real/types/engine.d.luau",
             ".mcp.json",
             ".vscode/mcp.json",
             ".cursor/mcp.json",
