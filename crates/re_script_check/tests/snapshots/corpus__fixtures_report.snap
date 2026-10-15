@@ -1,0 +1,222 @@
+---
+source: crates/re_script_check/tests/corpus.rs
+expression: snapshot
+---
+{
+  "dirs": [
+    "tests/fixtures"
+  ],
+  "files": 9,
+  "compile": {
+    "ok": 8,
+    "failed": [
+      {
+        "code": "RE3001",
+        "severity": "error",
+        "message": "Expected ')' (to close '(' at line 2), got '('",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/syntax_error.luau",
+          "line": 3
+        }
+      }
+    ]
+  },
+  "scan": {
+    "by_member": {
+      "Enum.KeyCode": 1,
+      "Instance.new": 1,
+      "Players.PlayerAdded": 1,
+      "RunService.Heartbeat": 1,
+      "Vector3.new": 1,
+      "game.GetService": 2,
+      "script.Parent": 1,
+      "task.spawn": 1,
+      "task.wait": 1,
+      "time.now": 1,
+      "time.on_step": 1,
+      "vector.create": 5,
+      "vector.dot": 1,
+      "vector.magnitude": 1,
+      "vector.normalize": 1,
+      "world.get": 1,
+      "world.query": 1,
+      "world.spawn": 1
+    },
+    "unknown_receivers": {
+      ".Anchored": 1,
+      ".Name": 1,
+      ".Parent": 1,
+      ".Position": 1,
+      ".flat": 1,
+      ".id": 1,
+      ".lerp": 1,
+      ".set": 1,
+      ".tick": 1,
+      ".x": 1,
+      ".z": 1
+    },
+    "dynamic_requires": 1,
+    "globals": {
+      "Enum": 1,
+      "Instance": 1,
+      "Vector3": 1,
+      "assert": 1,
+      "game": 2,
+      "print": 7,
+      "require": 3,
+      "script": 1,
+      "task": 2,
+      "time": 2,
+      "vector": 8,
+      "workspace": 1,
+      "world": 3
+    },
+    "services": {
+      "Players": 1,
+      "RunService": 1
+    },
+    "instance_new": {
+      "Part": 1
+    },
+    "enums": {
+      "KeyCode.Space": 1
+    },
+    "gap": {
+      "covered": 19,
+      "missing": {
+        "Enum": 1,
+        "Enum.KeyCode": 1,
+        "Instance": 1,
+        "Instance.new": 1,
+        "Players.PlayerAdded": 1,
+        "RunService.Heartbeat": 1,
+        "Vector3": 1,
+        "Vector3.new": 1,
+        "game": 2,
+        "game.GetService": 2,
+        "script.Parent": 1,
+        "workspace": 1
+      }
+    },
+    "parse_failed": [
+      {
+        "code": "RE3080",
+        "severity": "warning",
+        "message": "the static scan cannot parse this file: expected a `)`",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/syntax_error.luau",
+          "line": 3,
+          "column": 7
+        }
+      }
+    ]
+  },
+  "types": {
+    "checker": "luau-lsp",
+    "errors": 8,
+    "warnings": 1,
+    "diagnostics": [
+      {
+        "code": "RE3081",
+        "severity": "error",
+        "message": "TypeError: Unknown global 'game'; consider assigning to it first",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/roblox_style.luau",
+          "line": 3,
+          "column": 17
+        }
+      },
+      {
+        "code": "RE3081",
+        "severity": "error",
+        "message": "TypeError: Unknown global 'game'; consider assigning to it first",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/roblox_style.luau",
+          "line": 4,
+          "column": 20
+        }
+      },
+      {
+        "code": "RE3081",
+        "severity": "error",
+        "message": "TypeError: Unknown global 'Instance'; consider assigning to it first",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/roblox_style.luau",
+          "line": 7,
+          "column": 15
+        }
+      },
+      {
+        "code": "RE3081",
+        "severity": "error",
+        "message": "TypeError: Unknown global 'Vector3'; consider assigning to it first",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/roblox_style.luau",
+          "line": 9,
+          "column": 18
+        }
+      },
+      {
+        "code": "RE3081",
+        "severity": "error",
+        "message": "TypeError: Unknown global 'workspace'; consider assigning to it first",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/roblox_style.luau",
+          "line": 10,
+          "column": 16
+        }
+      },
+      {
+        "code": "RE3081",
+        "severity": "error",
+        "message": "TypeError: Unknown global 'Enum'; consider assigning to it first",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/roblox_style.luau",
+          "line": 11,
+          "column": 21
+        }
+      },
+      {
+        "code": "RE3082",
+        "severity": "warning",
+        "message": "FunctionUnused: Function 'broken' is never used; prefix with '_' to silence",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/syntax_error.luau",
+          "line": 2,
+          "column": 16
+        }
+      },
+      {
+        "code": "RE3081",
+        "severity": "error",
+        "message": "SyntaxError: Expected ')' (to close '(' at line 2), got '('",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/syntax_error.luau",
+          "line": 3,
+          "column": 7
+        }
+      },
+      {
+        "code": "RE3081",
+        "severity": "error",
+        "message": "TypeError: Expected this to be 'string', but got 'number'",
+        "location": {
+          "kind": "file",
+          "file": "tests/fixtures/type_error.luau",
+          "line": 3,
+          "column": 21
+        }
+      }
+    ]
+  }
+}
