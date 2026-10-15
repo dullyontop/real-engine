@@ -6,7 +6,8 @@
 //! cargo xtask explain          every RE#### code has an explain page, in range, one crate
 //! cargo xtask schemas [--check]  regenerate (or check) the JSON Schemas in schemas/
 //! cargo xtask coverage [--check] regenerate (or check) crates/re_compat/coverage.json
-//! cargo xtask check            all of the above, with `--check`
+//! cargo xtask members DIR      every implemented compat member is called from a fixture
+//! cargo xtask check            all of the above except members, with `--check`
 //! ```
 //!
 //! The alias lives in `.cargo/config.toml`. xtask links no engine crate: it reads
@@ -16,6 +17,7 @@ mod coverage;
 mod dupes;
 mod explain;
 mod graph;
+mod members;
 mod schemas;
 
 use std::path::{Path, PathBuf};
@@ -34,6 +36,9 @@ commands:
   schemas [--check]  regenerate schemas/ (or fail if the committed files differ)
   coverage [--check] regenerate crates/re_compat/coverage.json (or fail if the
                      committed file differs)
+  members DIR        check that every implemented compat member is called from a
+                     test fixture, from traces the tests wrote to DIR with
+                     REAL_COMPAT_MEMBER_TRACE=DIR
   check              run check-graph, dupes, explain, schemas --check and
                      coverage --check
 ";
@@ -54,6 +59,7 @@ fn main() -> ExitCode {
         ["schemas", "--check"] => schemas::run(&root, true),
         ["coverage"] => coverage::run(&root, false),
         ["coverage", "--check"] => coverage::run(&root, true),
+        ["members", dir] => members::run(&root, Path::new(dir)),
         ["check"] => check_all(&root),
         ["help" | "--help" | "-h"] => {
             print!("{USAGE}");

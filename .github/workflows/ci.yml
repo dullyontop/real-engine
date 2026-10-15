@@ -1,8 +1,8 @@
 # CI for Real Engine (ADR-0023, docs/M1_PLAN.md WP0).
 #
 # Required for merge: fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke
-# (all on Ubuntu); verify-plaza joins them once ADR-0023 is amended (M2_PLAN
-# WP16). build-windows and build-macos are reported only.
+# and verify-plaza (all on Ubuntu; verify-plaza by ADR-0023's M2 amendment).
+# build-windows and build-macos are reported only.
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
@@ -42,6 +42,10 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      # Each test process records the compat members its scripts reach
+      # (re_compat's class layer); the last step checks the union.
+      REAL_COMPAT_MEMBER_TRACE: ${{ github.workspace }}/target/member-trace
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
@@ -65,6 +69,8 @@ jobs:
           if [ -d crates/re_render ]; then
             RE_BACKENDS=gl cargo test --locked -p re_render -- --test-threads=1
           fi
+      - name: Every implemented compat member is called from a fixture (M2_PLAN, definition of done item 9)
+        run: cargo xtask members "$REAL_COMPAT_MEMBER_TRACE"
 
   msrv:
     runs-on: ubuntu-latest

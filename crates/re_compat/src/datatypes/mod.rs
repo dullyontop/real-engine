@@ -42,6 +42,7 @@ use re_script::codes;
 /// The datatypes whose stored form [`to_lua`] turns into their Luau form.
 const STORED_TYPES: &[&str] = &[
     "CFrame",
+    "EnumItem",
     "Color3",
     "ColorSequence",
     "ColorSequenceKeypoint",
@@ -62,10 +63,6 @@ const STORED_TYPES: &[&str] = &[
 ///
 /// A compat VM installs them with its run seed (`[compat] seed`) first; any
 /// other VM gets seed 0 for `Random.new()` without a seed.
-///
-/// Known limit: an attribute holding a `NumberSequence`, `ColorSequence` or
-/// `EnumItem` reads back as a list or the item's name, because attribute
-/// values carry no datatype name for the codec to pick a hook by.
 pub fn register(b: &mut crate::runtime::Bindings) {
     b.global(
         "Vector3",
