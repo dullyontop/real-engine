@@ -804,3 +804,27 @@ fn golden_billboard_distances() {
     }
     v.golden("billboard_distances");
 }
+
+#[test]
+fn emitter_members_drawn_later_are_stored() {
+    let mut p = place();
+    let out = eval(
+        &mut p,
+        r#"
+        local e = Instance.new("ParticleEmitter")
+        print(e.Squash.Keypoints[1].Value, e.FlipbookLayout, e.FlipbookMode, e.FlipbookFramerate.Min, e.WindAffectsDrag)
+        e.Squash = NumberSequence.new(0.5)
+        e.FlipbookLayout = Enum.ParticleFlipbookLayout.Grid4x4
+        e.FlipbookFramerate = NumberRange.new(10, 20)
+        e.FlipbookStartRandom = true
+        print(e.Squash.Keypoints[2].Value, e.FlipbookLayout, e.FlipbookFramerate.Max, e.FlipbookStartRandom)
+        "#,
+    );
+    assert_eq!(
+        out,
+        [
+            "0\tEnum.ParticleFlipbookLayout.None\tEnum.ParticleFlipbookMode.Loop\t1\tfalse",
+            "0.5\tEnum.ParticleFlipbookLayout.Grid4x4\t20\ttrue",
+        ]
+    );
+}
