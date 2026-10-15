@@ -127,10 +127,7 @@ impl CompatPlay {
             .ecs
             .insert_resource(re_scene::IdGen::seeded(SERVER_ID_SEED));
         let server = std::mem::replace(world, World::new());
-        let worlds = match CompatWorlds::new(&setup, server) {
-            Ok(w) => w,
-            Err(e) => return Err(e.into()),
-        };
+        let worlds = CompatWorlds::new(&setup, server)?;
         let CompatWorlds {
             server,
             mut client,

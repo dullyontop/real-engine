@@ -1521,7 +1521,11 @@ impl App {
     /// returns one JSON result per step (`{ "step", "ok", ... }`). Frames,
     /// diagnostics, output and the final state hash are added to `report`. A
     /// step that fails reports its diagnostic and the play goes on.
-    pub fn play_steps(&mut self, steps: &[crate::play::PlayStep], report: &mut RunReport) -> Vec<serde_json::Value> {
+    pub fn play_steps(
+        &mut self,
+        steps: &[crate::play::PlayStep],
+        report: &mut RunReport,
+    ) -> Vec<serde_json::Value> {
         use crate::play::PlayStep;
         use serde_json::json;
         let mut results = Vec::new();
@@ -1567,7 +1571,9 @@ impl App {
         let mut diagnostics = self.take_diagnostics();
         diagnostics.retain(|d| d.severity != re_core::Severity::Note || d.is_error());
         report.diagnostics.extend(diagnostics);
-        report.output.extend(std::mem::take(&mut self.script_output));
+        report
+            .output
+            .extend(std::mem::take(&mut self.script_output));
         report.state_hash = self.world.state_hash().to_hex().to_string();
         report.compat = self.compat.as_ref().map(|c| c.info());
         results
@@ -1594,7 +1600,9 @@ impl App {
         inv: &crate::play::InvokeStep,
     ) -> Result<serde_json::Value, Diagnostic> {
         let Some(c) = &self.compat else {
-            return Err(crate::play::step_failed("`invoke` needs a [compat] project"));
+            return Err(crate::play::step_failed(
+                "`invoke` needs a [compat] project",
+            ));
         };
         let (kind, world) = if inv.client {
             (ContextKind::Client, &c.client)

@@ -120,10 +120,19 @@ fn verify_fails_on_a_stuck_wait_for_child() {
     let report = verify::run_project(dir.path(), &config(dir.path()), &quick(), &[]);
     let boot = report.stage("boot").unwrap();
     assert!(!boot.ok);
-    assert!(boot.diagnostics.iter().any(|d| d.code.to_string() == "RE0526"));
+    assert!(
+        boot.diagnostics
+            .iter()
+            .any(|d| d.code.to_string() == "RE0526")
+    );
     let stuck = &boot.data["stuck_yields"][0];
     assert_eq!(stuck["context"], "client");
-    assert!(stuck["wait"].as_str().unwrap().contains("WaitForChild(\"Never\")"));
+    assert!(
+        stuck["wait"]
+            .as_str()
+            .unwrap()
+            .contains("WaitForChild(\"Never\")")
+    );
 }
 
 #[test]
@@ -138,7 +147,6 @@ fn verify_fails_on_an_uncaught_error_and_lists_it_once() {
     assert_eq!(uncaught[0]["context"], "server");
     assert!(uncaught[0]["message"].as_str().unwrap().contains("boom"));
 }
-
 
 const HOOKS: &str = r#"
 local Players = game:GetService("Players")
@@ -175,7 +183,13 @@ fn play_steps_join_players_chat_invoke_hooks_and_dump_the_tree() {
     ]));
     let (report, results, _) = app.play_copy(10, None, &plan, false).unwrap();
     assert_eq!(report.frames, 15);
-    assert!(report.output.contains(&"[server] Player2\tsaid\thello".to_string()), "{:?}", report.output);
+    assert!(
+        report
+            .output
+            .contains(&"[server] Player2\tsaid\thello".to_string()),
+        "{:?}",
+        report.output
+    );
     assert_eq!(results[0]["player"], "Player2");
     assert_eq!(results[3]["results"], serde_json::json!([42, 2]));
     let players = &results[4]["roots"][0]["children"];

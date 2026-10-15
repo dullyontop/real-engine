@@ -179,4 +179,3 @@ pub fn dump_tree(world: &World, args: &DumpArgs) -> Result<DumpOutput, Diagnosti
         truncated: dump.truncated,
     })
 }
-
