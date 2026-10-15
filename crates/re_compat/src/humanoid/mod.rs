@@ -1,6 +1,6 @@
 //! `Humanoid` characters: walking, jumping, sitting, health and the state
-//! machine; the R6 and R15 rigs ([`rig`]) and `HumanoidDescription`
-//! ([`description`]).
+//! machine; the R6 and R15 rigs ([`rig`]), `HumanoidDescription`
+//! ([`description`]) and seats ([`seat`]).
 //!
 //! A Humanoid drives the model it sits in. The model's `HumanoidRootPart`
 //! rides a character controller ([`body`]): a capsule as tall as twice the
@@ -8,7 +8,7 @@
 //! limbs follow through their `Motor6D` joints ([`crate::anim::pose`]).
 //!
 //! Each frame the host calls, around its physics step:
-//! - [`pre_simulation`]: health and death, the walk direction
+//! - [`pre_simulation`]: seating, health and death, the walk direction
 //!   (`Move`, `MoveTo`), jumps, and the move request to the controller;
 //! - [`post_simulation`]: the root part follows the controller, the limbs are
 //!   posed, and the state machine moves on (Running, Jumping, Freefall,
@@ -22,6 +22,7 @@ pub mod body;
 pub mod description;
 pub mod rig;
 pub mod scripts;
+pub mod seat;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -73,6 +74,10 @@ pub struct HumanoidRt {
     rebuild: bool,
     jump_now: bool,
     on_ground: bool,
+    /// The seat it sits in and the weld holding it there.
+    seat: Option<(Entity, Entity)>,
+    /// Seconds since it last stood up from a seat.
+    unseated: f32,
 }
 
 impl HumanoidRt {
@@ -91,6 +96,8 @@ impl HumanoidRt {
             rebuild: false,
             jump_now: false,
             on_ground: true,
+            seat: None,
+            unseated: seat::REST,
         }
     }
 
@@ -319,15 +326,25 @@ fn pre_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mut
     };
     if dead {
         if let Some(r) = has {
-            body::remove(w, r);
+            body::remove(w, classes, r);
             rt(w, classes, e).root = None;
         }
+        return;
+    }
+    // A seated character has no controller: it rides its seat.
+    if rt(w, classes, e).seat.is_some() {
+        let mut rt = rt(w, classes, e);
+        if rt.state != "Seated" {
+            set_state(&mut rt, "Seated", evs);
+        }
+        drop(rt);
+        set_own(w, HUM, e, "MoveDirection", Value::Vec3(Vec3::ZERO));
         return;
     }
     let root_cf = cframe_prop(w, classes, root, "CFrame").unwrap_or_default();
     if has != Some(root) || rebuild {
         if let Some(old) = has {
-            body::remove(w, old);
+            body::remove(w, classes, old);
         }
         let h = root_height(w, classes, e, root).max(0.5);
         let width = match classes.get_property(w, root, "Size") {
@@ -336,7 +353,17 @@ fn pre_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mut
         };
         let radius = width.clamp(0.25, h);
         let rot = facing(-Vec3::from_array(root_cf.look_vector()));
-        let added = body::add(w, root, 2.0 * h, radius, Vec3::from_array(root_cf.p), rot);
+        let slope = get_num(w, e, "MaxSlopeAngle") as f32;
+        let added = body::add(
+            w,
+            classes,
+            root,
+            2.0 * h,
+            radius,
+            Vec3::from_array(root_cf.p),
+            rot,
+            slope,
+        );
         let mut rt = rt(w, classes, e);
         rt.root = added.then_some(root);
         rt.rebuild = false;
@@ -412,10 +439,14 @@ fn pre_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mut
                     .max(0.0)
                     .sqrt()
             };
-            // The controller takes a step of gravity off before each move, so
-            // half a step more at launch makes the peak the continuous one,
-            // v² / 2g.
-            let v = if v > 0.0 { v + g * dt / 2.0 } else { 0.0 };
+            // The controller takes a substep of gravity off before each
+            // move, so half a substep more at launch makes the peak the
+            // continuous one, v² / 2g.
+            let v = if v > 0.0 {
+                v + g * body::substep(dt) / 2.0
+            } else {
+                0.0
+            };
             set_own(w, HUM, e, "Jump", Value::Bool(false));
             if sit {
                 set_own(w, HUM, e, "Sit", Value::Bool(false));
@@ -432,6 +463,10 @@ fn post_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mu
     let Some(rig) = tree::parent(w, e) else {
         return;
     };
+    if seat::place(w, classes, e) {
+        rt(w, classes, e).state_time += dt;
+        return;
+    }
     if rt(w, classes, e).root != Some(root) {
         return;
     }
@@ -579,9 +614,14 @@ fn fire(lua: &Lua, e: Entity, evs: Vec<Ev>) -> Result<()> {
 /// `BreakJointsOnDeath` the rig's joints are destroyed.
 fn die(lua: &Lua, e: Entity) -> Result<()> {
     let classes = state(lua)?.setup.classes.clone();
+    seat::leave(lua, &classes, e)?;
     let joints = with_world(lua, |w| {
         if let Some(r) = w.ecs.get::<HumanoidRt>(e).and_then(|rt| rt.root) {
-            body::remove(w, r);
+            body::remove(w, &classes, r);
+        }
+        // The body falls: as one piece, or apart once the joints break.
+        if let Some(rig) = tree::parent(w, e) {
+            body::loosen(w, &classes, rig);
         }
         if let Some(mut rt) = w.ecs.get_mut::<HumanoidRt>(e) {
             rt.root = None;
@@ -628,6 +668,7 @@ fn humanoids(lua: &Lua) -> Result<Vec<Entity>> {
 pub fn pre_simulation(lua: &Lua, dt: f64) -> Result<()> {
     let classes = state(lua)?.setup.classes.clone();
     for e in humanoids(lua)? {
+        seat::update(lua, &classes, e, dt as f32)?;
         let mut evs = Vec::new();
         with_world(lua, |w| pre_one(w, &classes, e, dt as f32, &mut evs))?;
         fire(lua, e, evs)?;
@@ -939,6 +980,7 @@ pub fn register(b: &mut Bindings) {
     for (name, f) in methods {
         b.method(HUM, name, Arc::new(*f));
     }
+    seat::register(b);
     b.method(
         "Players",
         "CreateHumanoidModelFromDescription",

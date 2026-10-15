@@ -44,21 +44,9 @@ fn two_with_spawns() -> Two {
     two_with(CompatSetup::new(b).unwrap())
 }
 
-/// Two worlds with WP14's test part classes, so the default character is a
-/// rig.
+/// Two worlds with the standard classes, so the default character is a rig.
 fn two_with_parts() -> Two {
-    let mut b = re_compat::Bindings::standard().unwrap();
-    b.classes(|c| {
-        c.classes(
-            "tests/fixtures/character/parts.json",
-            re_compat::data::ClassFile::parse(
-                "parts.json",
-                include_str!("fixtures/character/parts.json"),
-            )
-            .unwrap(),
-        )
-    });
-    two_with(CompatSetup::new(b).unwrap())
+    two_with(CompatSetup::standard().unwrap())
 }
 
 fn two_with(setup: Arc<CompatSetup>) -> Two {

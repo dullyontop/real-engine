@@ -1102,13 +1102,8 @@ impl App {
         if let Err(d) = self.physics.step(self.clock.dt_secs()) {
             self.diagnostics.push(d);
         }
-        if self.compat.is_some()
-            && let Some(d) =
-                crate::compat::step_characters(&mut self.world, self.clock.dt_secs().into())
-        {
-            self.diagnostics.push(d);
-        }
-        // The server's parts (WP13), with their touch events.
+        // The server's parts (WP13) and characters (WP14), with their touch
+        // events.
         if self.compat.is_some() {
             let dt: f64 = self.clock.dt_secs().into();
             self.compat_call(ContextKind::Server, |vm, h| vm.physics(h, dt));
@@ -1746,7 +1741,6 @@ impl App {
             for _ in 0..steps {
                 d.extend(vm.pre_animation(h, step_dt));
                 d.extend(vm.pre_simulation(h, step_dt));
-                d.extend(crate::compat::step_characters(h.world, step_dt));
                 d.extend(vm.physics(h, step_dt));
                 d.extend(vm.media(h, step_dt));
                 d.extend(vm.post_simulation(h, step_dt));

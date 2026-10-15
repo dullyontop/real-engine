@@ -1,6 +1,0 @@
-{
-  "$schema": "../../../../../schemas/compat-classes.schema.json",
-  "format": "real-engine/compat-classes",
-  "version": 1,
-  "classes": []
-}
