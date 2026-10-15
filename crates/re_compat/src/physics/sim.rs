@@ -42,12 +42,14 @@ use re_physics::{
 };
 use re_reflect::Value;
 use re_scene::ecs as bevy_ecs;
-use re_scene::ecs::change_detection::{DetectChangesMut, Tick};
+use re_scene::ecs::change_detection::{DetectChanges, DetectChangesMut, Tick};
 use re_scene::ecs::component::{Component, ComponentId};
 use re_scene::ecs::hierarchy::ChildOf;
 use re_scene::ecs::lifecycle::{Discard, Insert};
 use re_scene::ecs::observer::On;
+use re_scene::ecs::prelude::{QueryBuilder, QueryState, Ref};
 use re_scene::ecs::prelude::{ResMut, Resource};
+use re_scene::ecs::world::FilteredEntityRef;
 use re_scene::{Entity, GlobalTransform, Transform, World};
 use re_types::EntityId;
 use re_types::physics::BodyKind;
@@ -364,6 +366,7 @@ pub(crate) struct Sim {
     /// Scratch for moved assemblies.
     moved_asm: Vec<(EntityId, Pose)>,
     ids: Ids,
+    scans: Scans,
     pub(crate) cell_table: StaticCells,
 }
 
@@ -372,10 +375,35 @@ pub(crate) struct Sim {
 struct Ids {
     base_part: ComponentId,
     part: Option<ComponentId>,
-    transform: ComponentId,
     joint: Option<ComponentId>,
     motor6d: Option<ComponentId>,
     weld_constraint: Option<ComponentId>,
+}
+
+type OwnScan = QueryState<(Entity, FilteredEntityRef<'static, 'static>)>;
+
+/// Queries over the components the sync watches, so a change scan walks
+/// tables rather than looking entities up one by one.
+struct Scans {
+    transform: QueryState<(Entity, Ref<'static, Transform>)>,
+    own: Vec<(ComponentId, OwnScan)>,
+}
+
+impl Scans {
+    fn new(w: &mut World, own: &[ComponentId]) -> Scans {
+        Scans {
+            transform: w.ecs.query::<(Entity, Ref<Transform>)>(),
+            own: own
+                .iter()
+                .map(|&id| {
+                    let q = QueryBuilder::<(Entity, FilteredEntityRef)>::new(&mut w.ecs)
+                        .ref_id(id)
+                        .build();
+                    (id, q)
+                })
+                .collect(),
+        }
+    }
 }
 
 /// The world resource holding the simulation.
@@ -449,11 +477,15 @@ impl Sim {
         let ids = Ids {
             base_part: layout.size.component(w),
             part: comp("Part"),
-            transform: w.ecs.register_component::<Transform>(),
             joint: comp("JointInstance"),
             motor6d: comp("Motor6D"),
             weld_constraint: comp("WeldConstraint"),
         };
+        let own: Vec<ComponentId> = [Some(ids.base_part), ids.part]
+            .into_iter()
+            .flatten()
+            .collect();
+        let scans = Scans::new(w, &own);
         let config = PhysicsConfig {
             gravity: Vec3::new(0.0, -196.2, 0.0),
             max_bodies: 262_144,
@@ -484,6 +516,7 @@ impl Sim {
             moved: HashSet::new(),
             moved_asm: Vec::new(),
             ids,
+            scans,
             cell_table: StaticCells::default(),
         })
     }
@@ -756,15 +789,25 @@ impl Sim {
                 .and_then(|er| er.get_change_ticks_by_id(id))
                 .is_some_and(|t| t.is_changed(last, this))
         };
+        // Walk the components' tables: most parts changed nothing.
         let mut props = Vec::new();
-        for &e in self.parts.keys() {
-            if changed(e, ids.base_part) || ids.part.is_some_and(|p| changed(e, p)) {
-                props.push(e);
-            }
-            if changed(e, ids.transform) {
+        for (e, t) in self.scans.transform.iter(&w.ecs) {
+            if t.last_changed().is_newer_than(last, this) && self.parts.contains_key(&e) {
                 self.moved.insert(e);
             }
         }
+        for (id, q) in &mut self.scans.own {
+            for (e, r) in q.iter(&w.ecs) {
+                if r.get_change_ticks_by_id(*id)
+                    .is_some_and(|t| t.is_changed(last, this))
+                    && self.parts.contains_key(&e)
+                {
+                    props.push(e);
+                }
+            }
+        }
+        props.sort_unstable();
+        props.dedup();
         for e in props {
             let snap = PartSnap::read(w, &self.layout, e);
             let rec = self.parts.get_mut(&e).expect("tracked");

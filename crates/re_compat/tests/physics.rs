@@ -9,12 +9,15 @@ use glam::{Quat, Vec3};
 use re_compat::physics;
 use re_compat::scene::create_place;
 use re_compat::{ClassMarker, CompatSetup, CompatVm, SignalBehavior};
-use re_physics::parts::geom::{obb_overlap, obb_sphere_overlap};
+use re_physics::parts::geom::{Placed, gjk_distance, obb_overlap, obb_sphere_overlap};
 use re_physics::{PartGeom, PartShape, Pose};
 use re_reflect::Value;
 use re_scene::{Entity, World};
 use re_script::host::{NoServices, WorldHost};
 use re_script::{ContextKind, RuntimeConfig};
+
+#[path = "fixtures/physics/bigmap.rs"]
+mod bigmap;
 
 const DT: f32 = 1.0 / 60.0;
 
@@ -789,12 +792,15 @@ mod physics_parts {
                         best = Some((t, &part.name));
                     }
                 }
-                // A ray that grazes an edge may round either way.
+                // A ray that grazes an edge, or touches a slope at one point,
+                // may round either way.
                 let grazes = |name: &str, t: f32| {
                     parts.iter().find(|x| x.name == name).is_some_and(|x| {
-                        let at = x.pose.inv_point(*origin + unit * t);
-                        let grown = PartGeom::new(x.geom.shape, x.geom.size + Vec3::splat(2e-3));
-                        params.sees(x) && grown.contains_local(at)
+                        let at = Pose::new(*origin + unit * t, Quat::IDENTITY);
+                        let speck =
+                            Placed::new(PartGeom::new(PartShape::Ball, Vec3::splat(2e-3)), &at);
+                        params.sees(x)
+                            && gjk_distance(&Placed::new(x.geom, &x.pose), &speck).distance < 2e-3
                     })
                 };
                 match best {
@@ -825,6 +831,76 @@ mod physics_parts {
         assert_eq!(checked + grazing, 1000);
         assert!(grazing <= 5, "{grazing} grazing rays");
         assert!(hits > 300, "{hits} hits");
+    }
+
+    #[test]
+    fn blockcasts_match_brute_force() {
+        use re_physics::parts::geom::shape_cast;
+        let mut p = place();
+        let mut rng = Rng(31);
+        let parts = scattered(&mut p, &mut rng, 400);
+        let mut hits = 0;
+        let mut grazing = 0;
+        for chunk in 0..3 {
+            let mut s = String::new();
+            let mut cases = Vec::new();
+            for i in 0..100 {
+                let params = Params::random(&mut rng, "RaycastParams");
+                let from = rng.vec(-35.0, 35.0);
+                let size = rng.vec(0.5, 4.0);
+                let axis = rng.vec(-1.0, 1.0).normalize_or(Vec3::Y);
+                let angle = rng.range(0.0, std::f32::consts::TAU);
+                let target = rng.pick(&parts).pose.pos;
+                let dir = (target - from) * 1.5;
+                s += &format!(
+                    "do {} local r = workspace:Blockcast(CFrame.new({}, {}, {}) * CFrame.fromAxisAngle(Vector3.new({}, {}, {}), {angle}), Vector3.new({}, {}, {}), Vector3.new({}, {}, {}), params) if r then print({i}, r.Instance.Name, r.Distance) else print({i}, 'nil', 0) end end\n",
+                    params.lua,
+                    from.x,
+                    from.y,
+                    from.z,
+                    axis.x,
+                    axis.y,
+                    axis.z,
+                    size.x,
+                    size.y,
+                    size.z,
+                    dir.x,
+                    dir.y,
+                    dir.z
+                );
+                let pose = Pose::new(from, Quat::from_axis_angle(axis.normalize(), angle));
+                cases.push((params, pose, size, dir));
+            }
+            p.run(&s);
+            let out = p.out();
+            assert_eq!(out.len(), 100, "chunk {chunk}");
+            for (line, (params, pose, size, dir)) in out.iter().zip(&cases) {
+                let f: Vec<&str> = line.split('\t').collect();
+                let (name, dist): (&str, f32) = (f[1], f[2].parse().unwrap());
+                let block = Placed::new(PartGeom::new(PartShape::Block, *size).sanitized(), pose);
+                let mut best: Option<(f32, &str)> = None;
+                for part in parts.iter().filter(|x| params.sees(x)) {
+                    let target = Placed::new(part.geom, &part.pose);
+                    if let Some((frac, _, _)) = shape_cast(&block, &target, dir.as_dvec3(), 1e-4) {
+                        let t = (frac * dir.as_dvec3().length()) as f32;
+                        if best.is_none_or(|(b, _)| t < b) {
+                            best = Some((t, &part.name));
+                        }
+                    }
+                }
+                match (best, name) {
+                    (None, "nil") => {}
+                    (Some((t, want)), got) if got == want || (t - dist).abs() < 1e-3 => {
+                        assert!((t - dist).abs() < 1e-2, "{line}: brute force {want} at {t}");
+                        hits += 1;
+                    }
+                    // A cast that only grazes a face or edge may round either way.
+                    _ => grazing += 1,
+                }
+            }
+        }
+        assert!(grazing <= 3, "{grazing} grazing casts");
+        assert!(hits > 100, "{hits} hits");
     }
 
     #[test]
@@ -941,5 +1017,42 @@ mod physics_parts {
         assert_eq!(out[0][3], "Enum.Material.Plastic", "{out:?}");
         assert_eq!(out[3].join(" "), "1 Wall", "{out:?}");
         assert_eq!(out[4].join(" "), "RaycastResult nil", "{out:?}");
+    }
+}
+
+mod physics_bigmap_load {
+    use super::*;
+
+    /// The large-map path at a small size: the scene file round-trips, every
+    /// anchored part lands in a static cell, and stepping moves nothing.
+    #[test]
+    fn a_small_map_loads_into_static_cells_and_stays_put() {
+        let setup = CompatSetup::standard().unwrap();
+        let map = bigmap::generate(5_000, 3);
+        let text = re_scene::scene::to_json(&bigmap::scene(&map, &setup.classes).unwrap());
+        let doc = re_scene::scene::from_json(&text).unwrap();
+        let mut world = World::new();
+        setup.classes.register_components(&mut world).unwrap();
+        world.load(&doc).unwrap();
+        physics::prepare_world(&mut world, &setup.classes).unwrap();
+        assert!(physics::step(&mut world, 0.0).is_empty());
+        let cells = world.ecs.resource::<physics::StaticCells>().cells().len();
+        assert!(cells > 1, "{cells} cells");
+        let simulated = physics::with_physics(&mut world, |p| p.part_count()).unwrap_or_default();
+        assert_eq!(simulated, 5_000);
+        let mut q = world.ecs.query::<(Entity, &re_scene::Transform)>();
+        let parts: Vec<Entity> = q.iter(&world.ecs).map(|(e, _)| e).collect();
+        let before: Vec<_> = parts
+            .iter()
+            .map(|e| physics::world_pose(&world, *e))
+            .collect();
+        for _ in 0..30 {
+            assert!(physics::step(&mut world, DT).is_empty());
+        }
+        let after: Vec<_> = parts
+            .iter()
+            .map(|e| physics::world_pose(&world, *e))
+            .collect();
+        assert_eq!(before, after);
     }
 }

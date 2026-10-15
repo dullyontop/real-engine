@@ -333,7 +333,7 @@
           "name": "CustomPhysicalProperties",
           "kind": "property",
           "status": "partial",
-          "note": "Kept while the place runs; not saved with the scene."
+          "note": "Kept while the place runs; not saved with the scene. Setting it back to nil from a script is refused."
         },
         {
           "name": "GetConnectedParts",
@@ -954,7 +954,7 @@
           "name": "VelocityConstraintMode",
           "kind": "property",
           "status": "partial",
-          "note": "Plane mode acts as Vector."
+          "note": "Plane mode is not built: the constraint applies no force in it."
         }
       ]
     },

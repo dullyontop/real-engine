@@ -607,6 +607,10 @@ pub struct Separation {
     pub on_a: DVec3,
     /// The closest point on `b` (meaningful when separated).
     pub on_b: DVec3,
+    /// A distance the solids are certainly at least apart (GJK's `distance`
+    /// is an upper bound until it converges; this is the matching lower
+    /// bound).
+    pub lower: f64,
 }
 
 /// The closest point of a simplex to the origin, reducing the simplex to the
@@ -695,14 +699,23 @@ fn closest_on_tetra(s: &mut Vec<Vert>) -> (DVec3, Vec<f64>) {
     let faces = [[0, 1, 2, 3], [0, 1, 3, 2], [0, 2, 3, 1], [1, 2, 3, 0]];
     // The origin is inside when it is on the same side of every face as the
     // opposite vertex.
-    let mut inside = true;
+    // A flat tetrahedron (its points on one plane, to rounding) encloses
+    // nothing, and its face normals are noise: the closest point is then on
+    // whichever face is nearest.
+    let scale = (1..4)
+        .flat_map(|i| (0..i).map(move |j| (i, j)))
+        .map(|(i, j)| (pts[i].w - pts[j].w).length())
+        .fold(0.0f64, f64::max);
+    let volume = (pts[1].w - pts[0].w).dot((pts[2].w - pts[0].w).cross(pts[3].w - pts[0].w));
+    let flat = volume.abs() <= 1e-9 * scale * scale * scale;
+    let mut inside = !flat;
     let mut best: Option<(f64, Vec<Vert>, DVec3, Vec<f64>)> = None;
     for f in faces {
         let (a, b, c, d) = (pts[f[0]].w, pts[f[1]].w, pts[f[2]].w, pts[f[3]].w);
         let n = (b - a).cross(c - a);
         let side_o = n.dot(-a);
         let side_d = n.dot(d - a);
-        if side_o * side_d < 0.0 || side_d == 0.0 {
+        if flat || side_o * side_d < 0.0 || side_d == 0.0 {
             inside = false;
             let mut tri = vec![pts[f[0]], pts[f[1]], pts[f[2]]];
             let (p, w) = closest_on_triangle(&mut tri);
@@ -729,6 +742,7 @@ pub fn gjk_distance(a: &dyn Convex, b: &dyn Convex) -> Separation {
     let mut simplex: Vec<Vert> = vec![minkowski(a, b, -dir)];
     let mut closest = simplex[0].w;
     let mut weights = vec![1.0];
+    let mut lower = 0.0f64;
     for _ in 0..64 {
         let dist2 = closest.length_squared();
         if dist2 < 1e-20 {
@@ -736,9 +750,13 @@ pub fn gjk_distance(a: &dyn Convex, b: &dyn Convex) -> Separation {
                 distance: 0.0,
                 on_a: DVec3::ZERO,
                 on_b: DVec3::ZERO,
+                lower: 0.0,
             };
         }
         let v = minkowski(a, b, -closest);
+        // The Minkowski difference lies beyond the plane through `v.w`
+        // facing the origin: the distance is at least that plane's.
+        lower = lower.max(closest.dot(v.w) / dist2.sqrt());
         // No progress toward the origin: `closest` is the answer.
         let progress = dist2 - closest.dot(v.w);
         if progress <= 1e-12 * dist2.max(1e-12)
@@ -755,6 +773,7 @@ pub fn gjk_distance(a: &dyn Convex, b: &dyn Convex) -> Separation {
                 distance: 0.0,
                 on_a: DVec3::ZERO,
                 on_b: DVec3::ZERO,
+                lower: 0.0,
             };
         }
     }
@@ -764,10 +783,12 @@ pub fn gjk_distance(a: &dyn Convex, b: &dyn Convex) -> Separation {
         on_a += p.a * *w;
         on_b += p.b * *w;
     }
+    let distance = closest.length();
     Separation {
-        distance: closest.length(),
+        distance,
         on_a,
         on_b,
+        lower: lower.clamp(0.0, distance),
     }
 }
 
@@ -813,7 +834,32 @@ pub fn shape_cast(
         return None;
     }
     // Conservative advancement: the solids cannot meet before they close the
-    // current gap along the separating direction.
+    // gap they are certainly apart by (GJK's lower bound), along the
+    // separating direction.
+    let contact = |sep: &Separation, n: DVec3, t: f64| {
+        let normal = if sep.distance > 1e-12 {
+            (sep.on_a - sep.on_b) / sep.distance
+        } else {
+            n
+        };
+        let point = if sep.distance > 1e-12 {
+            sep.on_b
+        } else {
+            // Touching within GJK's precision: use the support point of the
+            // target toward the moving solid.
+            target.support(normal)
+        };
+        Some((t, point, normal))
+    };
+    let at = |t: f64| {
+        gjk_distance(
+            &Moved {
+                inner: moving,
+                offset: motion * t,
+            },
+            target,
+        )
+    };
     let mut t = 0.0f64;
     let mut sep = start;
     for _ in 0..64 {
@@ -822,32 +868,65 @@ pub fn shape_cast(
         if closing <= 1e-12 * len {
             return None;
         }
-        t += (sep.distance - tolerance * 0.5) / closing;
-        if t > 1.0 {
-            return None;
-        }
-        let moved = Moved {
-            inner: moving,
-            offset: motion * t,
+        let gap = sep.lower.max(tolerance * 0.5);
+        let next = t + (gap - tolerance * 0.5).max(0.0) / closing;
+        let step_next = if next <= t {
+            t + tolerance * 0.5 / len
+        } else {
+            next
         };
-        sep = gjk_distance(&moved, target);
-        if sep.distance <= tolerance {
-            let normal = if sep.distance > 1e-12 {
-                (sep.on_a - sep.on_b) / sep.distance
-            } else {
-                n
-            };
-            let point = if sep.distance > 1e-12 {
-                sep.on_b
-            } else {
-                // Touching within GJK's precision: use the support point of the target
-                // toward the moving solid.
-                target.support(normal)
-            };
-            return Some((t, point, normal));
+        if step_next > 1.0 {
+            // Check the end of the motion before giving up.
+            let end = at(1.0);
+            if end.distance > tolerance {
+                return None;
+            }
+            return refine(&at, t, 1.0, tolerance).and_then(|(t, s)| contact(&s, n, t));
         }
+        let s = at(step_next);
+        if s.distance <= tolerance {
+            // Gone too far (GJK's bounds are loose near contact): find the
+            // contact between the last separated time and this one.
+            if s.distance <= 0.0 {
+                return refine(&at, t, step_next, tolerance).and_then(|(t, s)| contact(&s, n, t));
+            }
+            return contact(&s, n, step_next);
+        }
+        t = step_next;
+        sep = s;
     }
     None
+}
+
+/// Bisects for the first time in `(lo, hi]` at which the solids are within
+/// `tolerance` without overlapping, given they are apart at `lo` and overlap
+/// or touch at `hi`.
+fn refine(
+    at: &dyn Fn(f64) -> Separation,
+    mut lo: f64,
+    mut hi: f64,
+    tolerance: f64,
+) -> Option<(f64, Separation)> {
+    let mut best = None;
+    for _ in 0..60 {
+        let mid = 0.5 * (lo + hi);
+        let s = at(mid);
+        if s.distance <= 0.0 {
+            hi = mid;
+        } else if s.distance <= tolerance {
+            best = Some((mid, s));
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+        if hi - lo < 1e-12 {
+            break;
+        }
+    }
+    best.or_else(|| {
+        let s = at(lo);
+        (s.distance > 0.0).then_some((lo, s))
+    })
 }
 
 #[cfg(test)]
@@ -993,6 +1072,38 @@ mod tests {
         // Starting inside: ignored.
         let inside = Placed::new(g, &Pose::new(Vec3::new(10.5, 0.0, 0.0), Quat::IDENTITY));
         assert!(shape_cast(&inside, &target, DVec3::new(5.0, 0.0, 0.0), 1e-5).is_none());
+    }
+
+    #[test]
+    fn block_and_cylinder_near_miss() {
+        // GJK near a cylinder's rim gathers almost equal support points; the
+        // flat tetrahedron they make must not read as enclosing the origin.
+        let block = geom(PartShape::Block, 3.098015, 0.7967377, 3.3080463);
+        let cyl = geom(PartShape::Cylinder, 1.4023231, 5.771388, 3.7762988);
+        let rot = Quat::from_xyzw(-0.14712766, -0.17189619, 0.29239056, -0.92914635);
+        let from = Vec3::new(3.3173523, 29.34523, -18.889305);
+        let target = Placed::new(
+            cyl,
+            &Pose::new(
+                Vec3::new(10.672276, -0.691864, -14.930919),
+                Quat::from_xyzw(-0.11823691, 0.07977787, -0.057707053, 0.9880918),
+            ),
+        );
+        let dir = DVec3::new(16.122133, -59.397114, 0.3717785);
+        let at = |d: f64| {
+            Placed::new(
+                block,
+                &Pose::new(from + (dir.normalize() * d).as_vec3(), rot),
+            )
+        };
+        assert!(!overlaps(&at(26.384), &target));
+        assert!(overlaps(&at(30.3), &target));
+        let (t, _, _) = shape_cast(&at(0.0), &target, dir, 1e-4).unwrap();
+        assert!(
+            (t * dir.length() - 30.2666).abs() < 1e-2,
+            "{}",
+            t * dir.length()
+        );
     }
 
     #[test]

@@ -262,7 +262,7 @@
             "kind": "builtin"
           },
           "status": "partial",
-          "note": "Kept while the place runs; not saved with the scene.",
+          "note": "Kept while the place runs; not saved with the scene. Setting it back to nil from a script is refused.",
           "doc": "Physical properties that replace the material's, or nil to use the material's."
         },
         {
@@ -1824,7 +1824,7 @@
           },
           "default": "Vector",
           "status": "partial",
-          "note": "Plane mode acts as Vector.",
+          "note": "Plane mode is not built: the constraint applies no force in it.",
           "doc": "Vector drives the whole velocity; Line drives the velocity along LineDirection only."
         },
         {
