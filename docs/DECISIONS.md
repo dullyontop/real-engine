@@ -987,6 +987,327 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - Cross-owner work is small but spread out: `re_scene` components and `HostServices` methods (maintainer), the `anim` Luau library (WP24), the commands and sync module in `re_app` (maintainer), and the skinned pipelines (WP20). WP21 writes each change and its owner reviews it.
 - Not in M3: morph targets, inverse kinematics beyond the two-bone solver, facial animation, retargeting between differently named skeletons, more than four influences per vertex, GPU-driven culling of skinned items, and interpolating poses between fixed steps.
 
+## ADR-0040: Vehicles and ragdolls: oxijolt's `vehicle` and `ragdoll` modules behind `PhysicsCmd`
+
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP22). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: WP22's phase-0 benches. They are summarised under "Measured"; the full tables are in the maintainers' research bundle.
+
+**Context.** M3 needs drivable vehicles and ragdolls for skinned characters (M3_PLAN, WP22). The valley example (WP28) drives a car, and WP27 maps Roblox-style characters onto ragdolls. The pinned `oxijolt =1.1.0+jolt-5.6.0` (MIT OR Apache-2.0, ADR-0008) already wraps both Jolt features, so neither needs a new dependency.
+
+Its vehicle and ragdoll APIs, as read from the crate source:
+
+- **Wheeled vehicles.**
+  - `PhysicsWorld::create_wheeled_vehicle(chassis: BodyId, &WheeledVehicleSettings)` attaches Jolt's `VehicleConstraint` with a `WheeledVehicleController` to a dynamic body the caller made.
+  - Settings: wheels (`WheelSettings`: attachment point, radius, width, suspension min/max/preload and spring, steering axis, max steer angle, longitudinal and lateral friction curves, brake and hand-brake torque), differentials (`VehicleDifferentialSettings`: wheel pair, ratio, left/right split, limited slip, share of engine torque), anti-roll bars, the engine (torque curve, min/max rpm, inertia), the transmission (automatic or manual gears, shift points, clutch), and the pitch/roll limit.
+  - Every value Jolt asserts on or divides by is validated, and a bad value returns `VehicleError::InvalidValue` instead of reaching Jolt.
+  - `WheeledVehicleSettings::car(front_left, radius, tester)` is a four-wheel front-drive preset.
+- **Collision testers.**
+  - `VehicleCollisionTester::{ray, cast_sphere, cast_cylinder}`, each querying as one object layer.
+  - Wheels never hit their own chassis, sensors or soft bodies.
+  - There is no per-sub-shape filter, so a wheel cannot skip one child of a compound.
+- **Driving.**
+  - `vehicle_mut(id).set_driver_input(DriverInput { forward, right, brake, hand_brake })`, with `forward` and `right` in [−1, 1] and `brake` in [0, 1].
+  - `set_gravity` overrides gravity per vehicle; `set_max_pitch_roll_angle` and `set_collision_tester` change those settings.
+- **Readout.** `vehicle(id)` gives per wheel the contact (body, point, normal, slip directions), suspension length, angular velocity, rotation and steer angle, plus `wheel_world_transform(i)`, `engine_rpm()` and `current_gear()`.
+- **Two more kinds.**
+  - `create_motorcycle(MotorcycleSettings)`: two wheels, a lean controller, and the same `DriverInput`.
+  - `create_tracked_vehicle(TrackedVehicleSettings)`: two tracks, with its own `TrackedDriverInput { forward, left_ratio, right_ratio, brake }`.
+  - The id is typed by kind (`VehicleId<K>`), so the wrong input does not compile.
+- **Ragdolls.**
+  - `Skeleton::new(&[SkeletonJoint { name, parent }])` defines the skeleton.
+  - `RagdollSettings::new` or `new_stabilized(skeleton, parts)` builds the settings. Each part is one body per joint plus a `RagdollJoint` to its parent: `SwingTwist`, `Hinge` or `SixDof`, with limits, friction and motors.
+  - `create_ragdoll(settings, pose, activation)` creates the ragdoll. A ragdoll's own parts never collide with each other, but they do collide with other ragdolls.
+- **Driving and reading a ragdoll.**
+  - Driving: `RagdollMut::{set_pose, drive_to_pose_using_kinematics, drive_to_pose_using_motors, stop_motors, set_motion_type, set_linear_and_angular_velocity, activate}`.
+  - Reading: `pose()`, `root_transform()`, `is_calm()`, and `SettleDetector`.
+- **Skeleton mapping.** `SkeletonMapper` maps poses between a coarse ragdoll skeleton and a detailed animation skeleton. Joints are matched by name. `map` goes from ragdoll to animation and `map_reverse` from animation to ragdoll, and both are pure functions. The mapper offers translation locks.
+- **Structure.**
+  - Vehicles and ragdolls take part in `WorldState` save and restore (driver input, drivetrain, track speeds), in `rebase` (the floating origin of ADR-0031), and in body-count and id checks.
+  - A chassis cannot be removed while its vehicle exists, and a ragdoll part cannot carry a vehicle.
+- **Determinism.** oxijolt's own tests run fleets of cars, tanks and motorcycles, and ragdolls, bit for bit across worker counts and processes. Our benches confirm this (below).
+- **Gotchas.**
+  - A sleeping chassis gets no drive force, and a new driver input does not wake it.
+  - `WorldState` saves driver input and drivetrain state, but not what the setters change (gravity override, pitch and roll limit, tester).
+
+The engine side has its own constraints:
+- `re_physics` hides oxijolt (ADR-0008).
+- Subsystem crates do not depend on each other (ARCHITECTURE §2), so `re_physics` cannot see `re_anim`'s skeletons.
+- Components live in `re_scene`, the sync in `re_app`, and the Luau API in `re_script`. All three have other owners in M3.
+
+**Decision.**
+
+*Vehicles (PR "vehicles").*
+- `re_types::physics` gains plain-data vehicle types and three commands, added in a maintainer-reviewed frozen-contract change.
+  - `PhysicsCmd::AddVehicle { id, desc: VehicleDesc }`: `id` is the chassis entity, which must already have a dynamic body (an `AddBody` in the same buffer sorts before it).
+  - `PhysicsCmd::RemoveVehicle { id }`: it leaves the chassis body in place.
+  - `PhysicsCmd::SetVehicleInput { id, input: VehicleInput }`: `throttle` in [−1, 1], `steer` in [−1, 1] (positive is right), `brake` and `handbrake` in [0, 1].
+- **Apply order.** The new commands take ranks after every existing kind, so the ranks of today's commands, which `re_types`' tests pin, do not change: `RemoveVehicle` 12, `AddVehicle` 13, `SetVehicleInput` 14.
+  - A removal and a re-creation of the same vehicle in one buffer still apply in that order.
+  - Because `RemoveVehicle` sorts after `RemoveBody`, removing a chassis body removes its vehicle first. Jolt would refuse the body otherwise. This is the same rule `RE5014` applies to constraints. The later `RemoveVehicle`, if any, is then a no-op.
+  - `PhysicsCmd` is matched exhaustively only inside `re_types` and `re_physics` today, so the new variants break no other crate.
+- **`VehicleDesc`.** It holds `kind: VehicleKind` (`Wheeled` default, `Motorcycle`), the wheels, the engine, the transmission, anti-roll bars, the pitch and roll limit, and the tester.
+  - Every field has a default taken from Jolt's defaults, through oxijolt's presets.
+  - Units are metres, kilograms, N·m, rpm and degrees.
+  - Wheels are `WheelDesc` values: chassis-local attachment point, radius, width, suspension travel and spring (frequency and damping), max steer angle, brake and hand-brake torque, and `driven`.
+  - Differentials are derived from the driven wheels: wheels with the same local z (within 1 cm) make an axle, with left being +X as in Jolt. An explicit `differentials` list overrides this.
+- **Testers.**
+  - The default tester is `CastCylinder`, which matches the tire. It cost the same as a ray within noise (below).
+  - `Ray` and `CastSphere` stay available.
+  - The tester queries as the chassis layer's moving object layer, so a wheel touches exactly what the chassis's `Layer` collides with in the `LayerTable`. No new object layers are needed.
+- **Tracked vehicles are declined for M3.** They need their own input (`left_ratio`, `right_ratio`) and the valley does not use one. They can be added later as a `VehicleKind` variant and a `SetTrackedInput` command, an additive change.
+- **Waking.** `re_physics` wakes the chassis when a `SetVehicleInput` differs from the last one. This makes up for the sleeping-chassis gotcha.
+- **Readout.**
+  - The chassis pose arrives through `poses_into` like any body.
+  - `Physics::vehicle(id) -> Option<VehicleState>` gives speed along forward, engine rpm, gear, and per wheel its contact entity, contact point, suspension length, angular velocity and steer angle.
+  - `Physics::vehicle_poses_into(&mut Vec<WheelPose>)` gives each wheel's world pose (`{ id, wheel, pos, rot }`) for rendering, once per step, in entity then wheel order.
+- **Errors.** Invalid vehicles get diagnostic `RE5018` ("Invalid vehicle"). This covers a missing or non-dynamic chassis, a body that already has a vehicle, a value oxijolt refuses (its message is kept), and a motorcycle without exactly two wheels. The command is dropped and nothing is created.
+- **Engine side** (cross-owner PRs):
+  - `re_scene` gets a `Vehicle` component on the chassis (kind, engine and transmission fields, tester) and a `VehicleWheel` component on child entities. The child's `Transform` is the attachment point, and wheels are ordered by `Children`. The maintainer reviews this.
+  - `re_app`'s physics sync turns them into `AddVehicle`, and writes wheel poses back to the wheel entities' rendered transforms each frame. The maintainer reviews this.
+  - The Luau API in `re_script` is `physics.drive(e, { throttle, steer, brake, handbrake })` and `physics.vehicle(e) -> { speed, rpm, gear, wheels = { … } }`, with `NoServices` refusing both with `RE3015`. WP24 reviews this.
+  - Procedural graphs can then emit vehicles as plain entities.
+
+*Ragdolls (PR "ragdolls", after WP21's PR "skins").*
+- **Skeleton data.** `re_physics` takes skeleton data as plain values in `re_types`, not WP21's types:
+  - `RagdollDesc`: the parts, plus the **animation skeleton**, which is joint names, parent indices and a neutral pose in model space.
+  - `re_app` fills the animation skeleton from WP21's `SkinData` (joint names, parents, inverse bind matrices), so `re_physics` never depends on `re_anim`.
+  - Each part is a `RagdollPartDesc`:
+    - the animation joint it follows, by name;
+    - a shape in that joint's space (capsule, box or sphere);
+    - mass;
+    - a joint to the parent part (`SwingTwist { cone_deg, twist_min_deg, twist_max_deg }`, `Hinge { min_deg, max_deg }` or `SixDof`);
+    - friction.
+- **`RagdollDesc::from_skeleton(skeleton, joints, total_mass)`.** This procedural default in `re_types` puts capsules along the bones between the chosen joints, gives them swing-twist joints with humanoid limits by default, and splits the mass by capsule volume. A project overrides it part by part. It is a pure function, tested on its own, and it follows the engine's rule that generated data stays editable.
+- **Mapping and stabilizing.**
+  - Inside `re_physics`, the parts become an oxijolt `Skeleton` and `RagdollSettings::new_stabilized`. A `SkeletonMapper` maps from the ragdoll skeleton to the animation skeleton, with translation locks on every descendant of the root.
+  - `new_stabilized` is the default because it bounds parent and child mass ratios, which keeps chains stiff. `stabilize: false` keeps the authored masses.
+- **Commands:**
+  - `AddRagdoll { id, desc, pose: Option<Vec<JointPose>> }` (in the animation skeleton's local space; `None` is the neutral pose);
+  - `RemoveRagdoll { id }`;
+  - `SetRagdollMode { id, mode }`;
+  - ranks 15 to 19, in the order `RemoveRagdoll`, `AddRagdoll`, `SetRagdollMode`, `SetRagdollTarget`, `ApplyRagdollImpulse`, after the vehicle commands; `RemoveBody` is never needed for parts, which the ragdoll owns;
+  - `SetRagdollTarget { id, pose }`: the animation pose the drive aims at, mapped with `map_reverse`;
+  - `ApplyRagdollImpulse { id, joint, impulse }`: hit reactions, applied to the part the joint maps to.
+- **Modes:**
+  - `Animated`: kinematic parts driven to the target with `drive_to_pose_using_kinematics` each step. The ragdoll pushes the world but does not fall.
+  - `Simulated`: dynamic parts, motors off, a limp ragdoll.
+  - `Powered { strength }`: dynamic parts with `drive_to_pose_using_motors`, an active ragdoll that holds the animation against hits. `strength` scales the motor spring frequency between 0 and the joint's authored value.
+  - Switching from `Animated` keeps the parts' current velocities, so a falling character carries its momentum.
+- **Ragdoll readout.** `Physics::ragdoll(id) -> Option<RagdollState>` gives the mode, the root pose, `calm` (from `SettleDetector`), and the **simulated pose in the animation skeleton's local space** (`SkeletonMapper::map`). The renderer and `re_anim` therefore read one skeleton.
+- **The animated/simulated blend** is plain data:
+  - It is in `re_types` (`RagdollBlend { weight, seconds }`). `blend_pose(animated, simulated, weight)` is a pure per-joint lerp of translation and slerp of rotation.
+  - `re_app` applies the blend after `PostSimulation`. It blends the animation graph's pose (WP21) with the ragdoll's simulated pose, ramping the weight over `seconds`.
+  - This gives "fall into a ragdoll" (weight 0 → 1 when the mode turns `Simulated`) and "get up" (1 → 0 while a get-up clip plays, after `calm`).
+  - Physics itself never blends, so a replay's physics state does not depend on render-rate blending.
+- **Ragdoll errors.** Diagnostic `RE5019` ("Invalid ragdoll") covers a part naming a missing joint, a broken hierarchy (oxijolt's `UnmappedJoint` and `HierarchyMismatch`), invalid limits and a bad pose. The command is dropped.
+- **Engine side, ragdolls** (cross-owner PRs as for vehicles):
+  - a `Ragdoll` component in `re_scene` (the part list or "generate", total mass, mode);
+  - Luau: `physics.ragdoll(e, mode)`, `physics.ragdoll_state(e)` and `physics.ragdoll_impulse(e, joint, impulse)`.
+
+*Both.*
+- **Determinism.**
+  - Vehicles and ragdolls run inside the Jolt step, and their only inputs are commands. The command sort and oxijolt's bit-for-bit behaviour across worker counts keep D1.
+  - Once WP18's PR "d2" turns on `cross-platform-deterministic`, the reference poses of the acceptance tests are recorded with it.
+  - D2 then compares exact bits across platforms. Turning the feature on moved our reference pose by 4.6 cm, so references recorded without it cannot be reused.
+- **Save and restore.** `save_state` and `restore_state` cover vehicles and ragdolls through `WorldState`. `motion_state` and `apply_motion_state` (carrying motion into a fresh world) carry the chassis and part bodies' velocities, but not drivetrain state (rpm, wheel spin). This is documented on `MotionState`.
+- **Limits.** Vehicles and ragdolls are bounded by the world's body limit and the ±5 km limit (`RE5006`).
+
+**Measured** (4 vCPU Xeon @ 2.80 GHz, release, 4 Jolt worker threads, 1/60 s steps).
+
+| What | Result |
+|---|---|
+| Open-loop path, flat and 10° ramp, 720 ticks: same run twice; 1 vs 4 threads | bit-identical; bit-identical |
+| Same path, gentle inputs: start moved 1 µm / 1 mm; start yaw 0.001° | end moves 0.2 mm / 1.0 mm; 0.11 m and 0.08° |
+| Same path, aggressive inputs (full throttle, two steering phases): start yaw 0.001° | end moves 0.47 m and 0.70° |
+| Same path with `cross-platform-deterministic` | end moves 4.6 cm; still bit-identical across threads |
+| 1 / 8 / 32 / 128 cars, ray tester, mean step | 0.128 / 0.177 / 0.340 / 0.803 ms (6.3 µs per car at 128) |
+| same, cylinder tester | 0.131 / 0.193 / 0.320 / 0.854 ms |
+| same, ray, with `cross-platform-deterministic` | 0.143 / 0.190 / 0.339 / 0.768 ms (within noise) |
+| 1 / 8 / 32 tumbling 12-part ragdolls, mean step (p95) | 0.291 (0.382) / 0.312 (0.533) / 0.594 (1.018) ms |
+| 8 ragdolls, 300 ticks, 1 vs 4 threads | bit-identical |
+
+Budgets for M3, checked by benches in `re_physics`:
+- 32 driving cars within 1 ms mean step;
+- 32 active ragdolls within 2 ms mean step.
+
+**Acceptance tests.**
+- **Vehicle path test.**
+  - A car drives the gentle open-loop path: flat ground, then a 10° slope, 720 ticks.
+  - It must end within **0.15 m and 1.0°** of the committed reference pose on any platform before D2 is on. This is three times the 4.6 cm a change of floating-point mode caused, and above the 0.11 m that a 0.001° start-yaw change caused; a last-bit difference is about 300 times smaller than that change.
+  - On the same machine it must be bit-identical with 1 and 4 threads.
+  - From WP18's PR "d2" on, the test also compares an exact digest of the chassis and wheel state with the committed one on all three CI platforms.
+- **Aggressive path.** It is not a tolerance test, because 0.001° at the start moves its end by 0.47 m. It only checks determinism on one machine.
+- **Ragdoll tests.**
+  - A ragdoll from a generated humanoid skeleton falls and becomes calm on flat ground.
+  - Animated mode follows a target pose within 1 cm per joint.
+  - Powered mode recovers a pose after an impulse.
+  - The mapped pose round-trips through `map_reverse`.
+  - Determinism holds across worker counts.
+
+**Alternatives.**
+- **Our own raycast vehicle** on plain bodies and `ShapeCast`. That duplicates Jolt's tested suspension, tire and drivetrain model for no gain, and adds Rust work in the step, which hurts determinism.
+- **Exposing oxijolt's settings structs directly.** This breaks ADR-0008, and pins game data to oxijolt's API.
+- **Ragdolls driven by WP21's skeleton type in `re_physics`.** This breaks the subsystem rule (§2). The plain-data `RagdollDesc` filled by `re_app` keeps the crates apart.
+- **Blending inside `re_physics`.** It would tie render-rate blending to the physics state, so we blend in the sync instead.
+- **Tracked vehicles now.** They have a different input path and no M3 consumer, so they are deferred.
+
+**Consequences.**
+- The vehicle and ragdoll contracts freeze at PRs "vehicles" and "ragdolls"; WP27 and WP28 consume them.
+- No new dependency and no DEPENDENCIES.md row.
+- `re_physics` gains `RE5018` and `RE5019` with explain pages.
+- Cross-owner PRs are needed for `re_scene` components, the `re_app` sync and the `re_script` API.
+- A wheel cannot ignore one child of a compound (oxijolt has no per-sub-shape filter). A vehicle driving over static cells (ADR-0031) sees the whole cell's compound, which is the wanted behaviour.
+- Soft bodies, destruction and tracked vehicles stay out of M3.
+
+## ADR-0041: Audio effects graph: named buses on kira tracks, kira's built-in effects, snapshots in `real.toml`
+
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP22). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: WP22's phase-0 kira bench, summarised under "Measured".
+
+**Context.** M3 needs audio buses with per-bus effects (reverb, low-pass and high-pass filters, delay, compressor), a mixer snapshot in `real.toml`, a Luau API, and a headless path that applies the same graph so tests can check levels without a device (M3_PLAN, WP22). `re_audio` today plays every sound on kira's main track. Spatial voices are spatial sub-tracks under it, and `CaptureBackend` (ADR-0030) drives kira's real `Renderer` at a fixed 48 kHz. The pinned `kira =0.12.5` (MIT OR Apache-2.0) provides the following, read from its source:
+
+- **Tracks.**
+  - The main track.
+  - Sub-tracks, which nest (`TrackHandle::add_sub_track`, `add_spatial_sub_track`); a child sums into its parent.
+  - Send tracks, which take volume and effects only, cannot play sounds, and output only to the main track.
+  - A sub-track routes to a send with `TrackBuilder::with_send(&send, volume)`. The send is post-effect and post-fader, on top of the normal output.
+- **Routes are fixed after build.** `set_send` changes an existing route's volume, and a new route is refused (`NonexistentRoute`).
+- **Effects** are added on the builder (`add_effect`, `with_effect`, `add_built_effect` for a custom `Box<dyn Effect>`) and run in insertion order. **No handle can add or remove an effect after the track is built.**
+- **Built-in effects** (none behind a feature):
+  - `reverb`: Freeverb, with feedback, damping, stereo width and mix.
+  - `filter`: a 12 dB/oct state-variable filter, with low-pass, band-pass, high-pass and notch modes, cutoff, resonance and mix.
+  - `delay`: delay time, which is fixed after init, plus feedback and mix.
+  - `compressor`: threshold, ratio, attack, release, makeup gain and mix. It has no sidechain, knee or lookahead.
+  - `eq_filter`: bell, low shelf and high shelf.
+  - `distortion`: hard and soft clip.
+  - `panning_control` and `volume_control`.
+- **Parameter changes.** Every parameter except the delay time has a handle setter taking `Value` (fixed, from a modulator, or from listener distance) and a `Tween`.
+  - Commands cross to the audio thread through `triple_buffer`, so only the last write per parameter between two render batches applies.
+- **Capacities** (`AudioManagerSettings`): 128 sub-tracks, 16 send tracks and 8 listeners. Each track also holds 128 sounds and 128 child sub-tracks. The number of effects per track is unbounded.
+- **Determinism and sample rate.**
+  - The DSP has no randomness, clock, SIMD or threads.
+  - Results depend on the sample rate: reverb and delay size their buffers in `init`, and the filter, EQ and compressor use `dt`.
+  - The filter, EQ and compressor call `tan`, `exp`, `powf` and `log10` from the platform maths library, so bits can differ between glibc, macOS and MSVC.
+- **Known panic.** `delay_time(Duration::ZERO)` panics (`chunks_mut(0)`, `delay.rs:76`).
+
+**Decision.**
+- **Buses.**
+  - A project declares named **buses** in `real.toml`. Each bus is a kira sub-track whose parent is another bus or the main track. The audio graph is a tree of buses plus up to 15 **sends** (kira's limit of 16, with one kept spare).
+  - The graph is built when `Audio` starts (`Audio::set_graph`), and rebuilt when `re_app` hands it a changed `[audio]` section after a project reload. The rebuild stops the sounds on the buses it replaces and reports this at info level.
+  - Without an `[audio]` section, `re_audio` builds the default graph: buses `music`, `sfx` and `ui` under the main track, and no effects. Projects that do not configure audio sound as they do today.
+- **Effects** are kira's built-ins, wrapped in a plain-data `re_types::audio::EffectDesc`:
+  - `Reverb { feedback, damping, stereo_width, mix }`;
+  - `Filter { mode: LowPass | HighPass | BandPass | Notch, cutoff_hz, resonance, mix }`;
+  - `Delay { seconds, feedback_db, mix }`;
+  - `Compressor { threshold_db, ratio, attack_ms, release_ms, makeup_db, mix }`;
+  - `Eq { kind: Bell | LowShelf | HighShelf, hz, gain_db, q }`;
+  - `Distortion { kind, drive_db, mix }`.
+  - Defaults are kira's, and the units are named.
+  - A bus's effects run in the listed order, followed by a meter (below).
+  - Steeper filters are written as several stages.
+- **Validation.**
+  - `re_audio` validates every value before kira sees it: a delay of at least 1 ms, a cutoff between 10 Hz and the Nyquist frequency, a ratio of at least 1, and finite values throughout.
+  - An invalid effect is dropped with the new `RE7406` ("Invalid audio effect") and the rest of the bus still builds. A cycle, an unknown parent or send, or more than 15 sends is `RE7407` ("Invalid audio bus graph"). A graph with that error falls back to the default graph, so a typo never silences a game.
+- **`real.toml` format** (added to ARCHITECTURE §8 by the maintainer):
+
+```toml
+[audio]
+default_bus = "sfx"              # where sources without a bus play
+
+[audio.buses.music]
+volume_db = -6.0
+
+[audio.buses.sfx]
+sends = { world_reverb = -9.0 }  # send name = level in dB
+effects = [
+  { kind = "compressor", threshold_db = -18.0, ratio = 3.0 },
+]
+
+[audio.buses.footsteps]
+parent = "sfx"
+effects = [{ kind = "filter", mode = "high_pass", cutoff_hz = 120.0 }]
+
+[audio.sends.world_reverb]
+effects = [{ kind = "reverb", feedback = 0.85, damping = 0.3, mix = 1.0 }]
+
+[audio.snapshots.underwater]     # a mixer snapshot: bus volumes and effect parameters
+buses = { music = -12.0, sfx = -3.0 }
+effects = [{ bus = "sfx", effect = 0, cutoff_hz = 600.0 }]   # sets only the fields given
+```
+
+- **Effects are addressed by bus and index.** A snapshot or command sets only the fields it names, through the effect's kira handle. A filter's `mode`, an EQ's `kind` and a distortion's `kind` can change through their handles, but turning one effect into another (a filter into a delay) cannot, and is refused with `RE7406`.
+- **Snapshots.**
+  - A snapshot is a named set of bus volumes and effect parameters.
+  - Applying one tweens to it over `seconds`, with kira's linear tween. Fields it does not name keep their current values.
+  - There is no stack of snapshots: the last one applied wins, and applying the empty snapshot `default` returns to the values in `real.toml`.
+- **Commands.** New `AudioCmd` variants, added in a maintainer-reviewed frozen-contract change, follow the existing `SetSourceAttenuation` pattern. Existing variants are not changed, so no constructor elsewhere breaks.
+  - `SetSourceBus { entity, bus }`: sent before `StartSource`, it applies until the next `StopSource`.
+  - `PlayOneShotOnBus { clip, position, volume, bus }`.
+  - `SetBusVolume { bus, volume_db, seconds }`.
+  - `SetEffectParam { bus, effect, param, value, seconds }`. `param` is a field name from `EffectDesc`.
+  - `ApplySnapshot { name, seconds }`.
+- **Unknown bus or snapshot.** A command naming an unknown bus or snapshot warns once per name with `RE7408` and falls back to `default_bus` or does nothing.
+- **Spatial voices** become spatial sub-tracks under their bus, through `TrackHandle::add_spatial_sub_track`, so a spatial footstep goes through the `footsteps` bus's filter and the reverb send.
+  - Spatial voices and buses share kira's sub-track capacity. `re_audio` raises `sub_track_capacity` to 256 on the manager and on each bus, and keeps `RE7403` when the capacity is reached.
+- **Levels.**
+  - A custom kira `Effect` written in `re_audio` (`Meter`, about 40 lines) is appended to every bus and send. It records peak and RMS per channel for each render batch into an atomic, lock-free slot.
+  - `Audio::bus_levels() -> Vec<BusLevel { bus, peak_db, rms_db }>` reads them. Tests use it headless, the editor's mixer panel (WP25) can draw it, and `real verify` can report it.
+  - kira has no metering API. This is our code, not a dependency.
+- **Headless fallback.**
+  - `CaptureBackend` already runs kira's real renderer at a fixed 48 kHz, so the same graph, effects and meters apply with and without a device.
+  - The sample rate is pinned in tests, because reverb, delay and filters depend on it.
+  - With a device, the graph runs at the device's rate. Kira re-initialises the effects on a rate change.
+- **Luau API** (in `re_script`, reviewed by WP24; `NoServices` refuses it with `RE3015`):
+  - `audio.play(clip, position?, volume?, bus?)`, which gains `bus`;
+  - `audio.set_bus_volume(bus, db, seconds?)`;
+  - `audio.set_effect(bus, index, { param = value, … }, seconds?)`;
+  - `audio.snapshot(name, seconds?)`;
+  - `audio.levels(bus) -> { peak_db, rms_db }`.
+  - The `AudioSource` component in `re_scene` gains `bus: String`, empty by default, which means `default_bus`. The maintainer reviews this.
+- **Compat.** Roblox-style `SoundGroup` and `SoundEffect` (WP27) map onto these buses and effects later, through the same commands.
+
+**Measured** (4 vCPU Xeon @ 2.80 GHz, release, 48 kHz, 512-frame render calls, CPU time per second of audio, best of 5).
+
+| Graph | CPU ms per audio s |
+|---|---|
+| one sound on a sub-track, no effects | 1.42 |
+| reverb (on the track / on a send) | 4.66 / 4.70 |
+| filter, low-pass / high-pass | 2.65 / 2.84 |
+| delay, 250 ms | 2.93 |
+| compressor | 6.50 |
+| EQ bell | 4.54 |
+| two buses and a reverb send, no effects | 2.58 |
+| two buses with filter, delay and compressor, and a reverb send | 13.49 (74× realtime) |
+
+**Determinism of the output.**
+- With fixed parameters, the output was bit-identical between two runs, between two processes, and across render-call sizes of 128, 480, 512, 800 and 480,000 frames.
+- Budget: the default graph plus a typical project graph of 4 buses and 1 reverb send stays within 2% of one core (20 ms per audio second). A bench in `re_audio` reports it.
+
+**Acceptance tests.**
+- **Reference buffers.**
+  - Effect graph tests render 0.2 s of a fixed stimulus headless (a sine plus a click, at 48 kHz, stereo). There is one case per effect kind, one with a send, one with nested buses and one with a snapshot tween.
+  - Each output is compared with a reference buffer committed under `crates/re_audio/tests/reference/`: raw little-endian f32, about 77 KB each, under 1 MB in all. `RE_UPDATE_AUDIO_REFERENCE=1` rewrites them, and a reviewer checks the rewrite.
+  - The comparison allows a **maximum absolute difference of 1e-4 per sample**. This absorbs last-bit differences from the platform maths library on Windows and macOS. Bit equality is checked only against a second render on the same machine.
+- **Level tests.**
+  - A bus at −6 dB measures −6 ± 0.1 dB RMS against the same sound on the main track.
+  - A low-pass at 500 Hz attenuates a 4 kHz sine by at least 18 dB.
+  - A send at −9 dB adds the reverb's tail.
+  - A snapshot's tween reaches its target within one render batch after `seconds`.
+  - An invalid graph falls back to the default graph with `RE7407`.
+
+**Alternatives.**
+- **Our own DSP** (biquads, Schroeder reverb) as `re_audio` code. It is more work and duplicates kira, and kira's effects already fit the list. It is still the route for any effect kira lacks (sidechain, chorus, convolution), as a custom `Effect`.
+- **fundsp or another DSP crate.** It would be a new dependency for effects kira already has.
+- **Rebuilding a bus to change its effect list at runtime.** It is allowed only on a `real.toml` reload. Scripts change parameters and snapshots, not structure, so a playing sound is never cut.
+- **HRTF or convolution spatial audio.** It is a non-goal of the plan.
+
+**Consequences.**
+- No new dependency and no DEPENDENCIES.md row. Kira's effects are modules of the pinned crate.
+- The MPL-2.0 `triple_buffer`, already listed in ADR-0019 and in open question 1, is unchanged.
+- `re_audio` gains `RE7406`, `RE7407` and `RE7408` with explain pages.
+- The bus graph is fixed per load: a script can change volumes and parameters but not add a bus.
+- There is no sidechain ducking. A snapshot or a volume tween does ducking instead.
+- Delay time cannot be tweened.
+- Audio output is not part of `state_hash` or D2. Cross-platform checks use the tolerance above.
+
 ## ADR-0046: The M3 AI track: templates and recipes as data, an evaluation harness that never calls a model, and MCP over streamable HTTP on localhost
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP26). The code waits for M2's definition of done (M3_PLAN, "How M3 starts").
