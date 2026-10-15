@@ -18,7 +18,7 @@ path = "src/main.rs"
 # ownership rule).
 [features]
 default = ["tooling"]
-tooling = ["dep:re_editor", "dep:re_script_check"]
+tooling = ["dep:re_editor", "dep:re_script_check", "dep:re_agent", "dep:re_mcp"]
 
 [dependencies]
 re_core.workspace = true
@@ -41,6 +41,8 @@ serde_json.workspace = true
 schemars.workspace = true
 anyhow.workspace = true
 re_editor = { workspace = true, optional = true }
+re_agent = { workspace = true, optional = true }
+re_mcp = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

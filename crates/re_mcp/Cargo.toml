@@ -1,0 +1,23 @@
+[package]
+name = "re_mcp"
+description = "Real Engine MCP server: one MCP tool per registered command, over stdio, using rmcp."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Tooling crate (ADR-0027). It never depends on re_app: re_cli opens the
+# project and hands it an EngineHandle (ADR-0025).
+[dependencies]
+re_core.workspace = true
+re_command.workspace = true
+re_agent.workspace = true
+rmcp.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
