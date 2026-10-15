@@ -8,6 +8,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use re_agent::resources::ResourceSet;
 use re_agent::{Agent, Policy, register_commands};
 use re_command::{
     CommandAnnotations, CommandRegistry, CommandSpec, EditState, EngineHandle, NoArgs, Tier,
@@ -19,7 +20,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, Lines, 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The commands of ARCHITECTURE §6 that other crates register, as stubs
-/// with their real tiers, so `tools/list` sees the full M1 set of 25.
+/// with their real tiers, so `tools/list` sees the full M1 set of 25 (27 with `resource.list` and
+/// `resource.read`).
 const STUBS: &[(&str, Tier, bool)] = &[
     ("graph.report", Tier::Read, true),
     ("graph.generate", Tier::Read, true),
@@ -32,10 +34,31 @@ const STUBS: &[(&str, Tier, bool)] = &[
     ("asset.import", Tier::Edit, false),
 ];
 
+/// The resources the test server serves: one explain page and one Luau file.
+fn resources() -> std::sync::Arc<ResourceSet> {
+    let mut set = ResourceSet::new();
+    set.add(
+        "real://explain/RE8001".into(),
+        "RE8001".into(),
+        "Explain page for RE8001".into(),
+        "text/markdown",
+        "# RE8001: Tier refused\n",
+    );
+    set.add(
+        "real://luau/engine.d.luau".into(),
+        "engine.d.luau".into(),
+        "Luau definitions".into(),
+        "text/x-luau",
+        "declare world: {}\n",
+    );
+    std::sync::Arc::new(set)
+}
+
 fn registry(project: &Path) -> CommandRegistry<EditState> {
     let mut r = CommandRegistry::new();
     register_builtin_commands(&mut r);
     register_commands(&mut r, &Agent::new(project));
+    re_agent::resources::register_commands(&mut r, resources());
     for &(name, tier, idempotent) in STUBS {
         let project = project.to_path_buf();
         r.register(
@@ -45,6 +68,7 @@ fn registry(project: &Path) -> CommandRegistry<EditState> {
                 tier,
                 input_schema: re_command::input_schema::<NoArgs>(tier),
                 annotations: CommandAnnotations::for_tier(tier, idempotent),
+                output_schema: None,
             },
             std::sync::Arc::new(move |_t, _args, _call| {
                 if name == "screenshot" {
@@ -100,7 +124,7 @@ impl Client {
         let (client, server) = tokio::io::duplex(1 << 20);
         let (server_read, server_write) = tokio::io::split(server);
         let handle = engine(dir.path(), policy);
-        let options = re_mcp::McpOptions::new(dir.path());
+        let options = re_mcp::McpOptions::new(dir.path()).with_resources(resources());
         rt.spawn(async move {
             let _ = re_mcp::serve_io(handle, options, server_read, server_write).await;
         });
@@ -209,19 +233,20 @@ fn initialize_advertises_capabilities_and_identity() {
     assert_eq!(r["protocolVersion"], "2025-11-25");
     assert_eq!(r["serverInfo"]["name"], "real-engine");
     assert!(r["capabilities"]["tools"].is_object());
+    assert!(r["capabilities"]["resources"].is_object());
     let instructions = r["instructions"].as_str().unwrap();
     assert!(instructions.starts_with("Real Engine"));
     assert!(instructions.len() < 4096);
 }
 
 #[test]
-fn tools_list_has_25_clean_tools() {
+fn tools_list_has_27_clean_tools() {
     let mut c = Client::initialized(Policy::read_only());
     let list = c.request(1, "tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
     assert_eq!(
         tools.len(),
-        25,
+        27,
         "{:#?}",
         tools.iter().map(|t| &t["name"]).collect::<Vec<_>>()
     );
@@ -264,6 +289,15 @@ fn tools_list_has_25_clean_tools() {
             assert!(a[hint].is_boolean(), "{name} lacks {hint}");
         }
         assert_eq!(a["openWorldHint"], false);
+        // Every tool describes its structured result: the outcome envelope.
+        let out = &tool["outputSchema"];
+        assert_eq!(out["type"], "object", "{name}");
+        assert_eq!(
+            out["required"],
+            json!(["ok", "changes", "diagnostics", "data"]),
+            "{name}"
+        );
+        assert!(!has_key(out, "$schema"), "{name}");
     }
     let by_name = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap();
     let query = &by_name("query")["annotations"];
@@ -433,7 +467,7 @@ fn stateless_2026_07_28_requests_carry_meta() {
     );
 
     let list = c.request(2, "tools/list", json!({ "_meta": meta }));
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 25);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 27);
     let query = c.request(
         3,
         "tools/call",
@@ -460,4 +494,62 @@ fn stateless_2026_07_28_requests_carry_meta() {
 fn diagnostics_catalogue_is_complete() {
     let problems = re_core::validate_catalog(re_mcp::DIAGNOSTICS, re_mcp::CODE_RANGE);
     assert!(problems.is_empty(), "{problems:?}");
+}
+
+#[test]
+fn typed_results_come_back_as_structured_content() {
+    let mut c = Client::initialized(Policy::read_only());
+    let list = c.request(1, "tools/list", json!({}));
+    let tools = list["result"]["tools"].as_array().unwrap();
+    let read = tools.iter().find(|t| t["name"] == "resource_read").unwrap();
+    let data = &read["outputSchema"]["properties"]["data"];
+    assert_eq!(data["type"], "object", "{read}");
+    assert!(data["properties"]["text"].is_object(), "{read}");
+    // A list result refers to its item type through the root `$defs`.
+    let listed = tools.iter().find(|t| t["name"] == "resource_list").unwrap();
+    let schema = &listed["outputSchema"];
+    assert!(schema["$defs"]["Resource"].is_object(), "{schema}");
+
+    let out = c.call(
+        2,
+        "resource_read",
+        json!({ "uri": "real://explain/RE8001" }),
+    );
+    assert_eq!(out["isError"], false, "{out}");
+    let structured = &out["structuredContent"];
+    assert_eq!(structured["ok"], true);
+    assert_eq!(structured["data"]["text"], "# RE8001: Tier refused\n");
+    // The text block carries the same JSON for clients that read only text.
+    assert_eq!(&text_json(&out), structured);
+
+    let missing = c.call(
+        3,
+        "resource_read",
+        json!({ "uri": "real://explain/RE8000" }),
+    );
+    assert_eq!(missing["isError"], true);
+    assert_eq!(text_json(&missing)["code"], "RE8014");
+}
+
+#[test]
+fn resources_are_listed_and_read() {
+    let mut c = Client::initialized(Policy::read_only());
+    let list = c.request(1, "resources/list", json!({}));
+    let uris: Vec<&str> = list["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(uris, ["real://explain/RE8001", "real://luau/engine.d.luau"]);
+    let read = c.request(
+        2,
+        "resources/read",
+        json!({ "uri": "real://luau/engine.d.luau" }),
+    );
+    let contents = &read["result"]["contents"][0];
+    assert_eq!(contents["text"], "declare world: {}\n");
+    assert_eq!(contents["mimeType"], "text/x-luau");
+    let missing = c.request(3, "resources/read", json!({ "uri": "real://nope" }));
+    assert_eq!(missing["error"]["code"], -32002, "{missing}");
 }

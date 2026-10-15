@@ -335,12 +335,19 @@ impl Session {
     /// be restored once the entities it references exist, so those fields
     /// are restored empty and set at the end).
     pub fn restore_ops(world: &World, cp: &Checkpoint) -> Vec<Op> {
+        Session::restore_roots_ops(world, &cp.roots)
+    }
+
+    /// The transaction that returns `world` to `roots` (from
+    /// [`snapshot_roots`]), as [`Session::restore_ops`] does for a
+    /// checkpoint.
+    pub fn restore_roots_ops(world: &World, roots: &[Op]) -> Vec<Op> {
         let mut ops: Vec<Op> = root_ids(world)
             .into_iter()
             .map(|id| Op::Despawn { id })
             .collect();
         let mut fixups = Vec::new();
-        for op in &cp.roots {
+        for op in roots {
             let Op::Restore {
                 entities,
                 index,
@@ -392,6 +399,94 @@ impl Session {
         }
         ops.extend(fixups);
         ops
+    }
+
+    /// The id of the session's latest checkpoint (`start` until another is
+    /// taken).
+    pub fn latest_checkpoint(&self) -> String {
+        if self.file.next > 1 {
+            format!("cp{}", self.file.next - 1)
+        } else {
+            self.file.start.clone()
+        }
+    }
+
+    fn baseline_path(&self, checkpoint: &str, key: &str) -> PathBuf {
+        self.dir
+            .join("checkpoints")
+            .join(format!("{checkpoint}.verify-{key}.json"))
+    }
+
+    /// The verify report stored for `checkpoint` under `key` (the verify
+    /// options it ran with), if there is one.
+    pub fn baseline(&self, checkpoint: &str, key: &str) -> Option<serde_json::Value> {
+        let path = self.baseline_path(checkpoint, key);
+        path.exists().then(|| read_json(&path).ok()).flatten()
+    }
+
+    /// Stores the verify report of `checkpoint` under `key`.
+    pub fn save_baseline(
+        &self,
+        checkpoint: &str,
+        key: &str,
+        report: &serde_json::Value,
+    ) -> Result<(), Diagnostic> {
+        write_json(&self.baseline_path(checkpoint, key), report)
+    }
+
+    /// True when `world` and every touched file are as they were at `cp`.
+    pub fn is_current(&self, cp: &Checkpoint, world: &World) -> Result<bool, Diagnostic> {
+        Ok(world.state_hash().to_hex().as_str() == cp.state_hash
+            && self.file_changes(cp)?.is_empty())
+    }
+
+    /// Copies the project to `dest` (an empty or missing directory; `.real/`,
+    /// `.git/` and `target/` are left out) with every touched file as it was
+    /// at `cp`. The scene file is copied as it is now: the caller restores the
+    /// world part of `cp` into it.
+    pub fn materialize(&self, cp: &Checkpoint, dest: &Path) -> Result<(), Diagnostic> {
+        fn copy(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
+            std::fs::create_dir_all(to)?;
+            for entry in std::fs::read_dir(from)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                if top && [".real", ".git", "target"].iter().any(|n| name == *n) {
+                    continue;
+                }
+                let kind = entry.file_type()?;
+                if kind.is_dir() {
+                    copy(&entry.path(), &to.join(&name), false)?;
+                } else if kind.is_file() {
+                    std::fs::copy(entry.path(), to.join(&name))?;
+                }
+            }
+            Ok(())
+        }
+        copy(&self.project, dest, true).map_err(|e| io_error(dest, "copy the project to", e))?;
+        for (rel, original) in &self.file.originals {
+            let state = cp.files.get(rel).unwrap_or(original);
+            let path = dest.join(rel);
+            match state {
+                FileState::Absent => match std::fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(io_error(&path, "remove", e)),
+                },
+                FileState::Present { hash } => {
+                    let blob = self.blob_path(hash);
+                    if let Some(dir) = path.parent() {
+                        std::fs::create_dir_all(dir).map_err(|e| io_error(dir, "create", e))?;
+                    }
+                    std::fs::copy(&blob, &path).map_err(|e| io_error(&blob, "copy", e))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The session's directory (`.real/agent/sessions/<id>`).
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     /// The file changes that return the touched files to `cp`, as

@@ -1,5 +1,6 @@
 //! The commands `re_agent` registers (ARCHITECTURE §6): `script.write`
-//! (edit, compile-gated), `checkpoint.restore` (edit) and `file.delete`
+//! (edit, compile-gated), `checkpoint.create` (read: it writes only agent
+//! state), `checkpoint.restore` (edit) and `file.delete`
 //! (destructive).
 
 use std::path::{Path, PathBuf};
@@ -9,7 +10,7 @@ use re_command::{Call, CommandRegistry, EditTarget, Tier};
 use re_core::{Diagnostic, Location};
 use re_scene::World;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
 use crate::codes;
@@ -64,7 +65,7 @@ impl Agent {
     }
 
     /// Runs `f` with the session, starting one from `world` if there is none.
-    fn with_session<R>(
+    pub fn with_session<R>(
         &self,
         world: &World,
         f: impl FnOnce(&mut Session) -> Result<R, Diagnostic>,
@@ -86,6 +87,24 @@ pub struct RestoreArgs {
     /// its id, so a restore can be restored.
     #[serde(default)]
     pub checkpoint: Option<String>,
+}
+
+/// Arguments of `checkpoint.create`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateArgs {
+    /// Why it is taken (shown by `real agent status` and kept in the file).
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// The result of `checkpoint.create`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CreateOutput {
+    /// The new checkpoint's id (`cp1`, `cp2`, ...).
+    pub checkpoint: String,
+    /// The world's state hash it holds.
+    pub state_hash: String,
 }
 
 /// Arguments of `script.write`.
@@ -288,8 +307,21 @@ pub fn write_file(
         .map_err(|e| file_error(command, rel, format!("cannot write {rel}: {e}")))
 }
 
-/// Registers `script.write`, `checkpoint.restore` and `file.delete` for
-/// `agent`.
+fn checkpoint_create<C: EditTarget>(
+    agent: &Agent,
+    target: &mut C,
+    args: CreateArgs,
+) -> Result<Json, Diagnostic> {
+    let label = args
+        .label
+        .unwrap_or_else(|| "taken by checkpoint.create".to_string());
+    let world: &World = target.world();
+    let cp = agent.with_session(world, |s| s.checkpoint(world, &label))?;
+    Ok(json!({ "checkpoint": cp.id, "state_hash": cp.state_hash }))
+}
+
+/// Registers `script.write`, `checkpoint.create`, `checkpoint.restore` and
+/// `file.delete` for `agent`.
 pub fn register_commands<C: EditTarget + 'static>(
     registry: &mut CommandRegistry<C>,
     agent: &Agent,
@@ -301,6 +333,14 @@ pub fn register_commands<C: EditTarget + 'static>(
         Tier::Edit,
         true,
         move |target, args, call| script_write(&a, target, args, call),
+    );
+    let a = agent.clone();
+    registry.register_typed_output::<CreateArgs, CreateOutput, _>(
+        "checkpoint.create",
+        "Save the scene and every file the agent session touched as a new checkpoint (it changes nothing in the project). `verify.diff` compares against the latest checkpoint, and `checkpoint.restore` can return to it.",
+        Tier::Read,
+        false,
+        move |target, args, _call| checkpoint_create(&a, target, args),
     );
     let a = agent.clone();
     registry.register_typed::<RestoreArgs, _>(
