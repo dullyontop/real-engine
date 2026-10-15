@@ -161,7 +161,50 @@ fn game_view_draws_meshes() {
         .unwrap();
     let after = image.pixel(centre.x as u32, centre.y as u32);
     assert!(!is_clear(after), "the cube is not drawn: {after:?}");
-    ed.release(&mut app);
+}
+
+/// A screenshot of a scene with a HUD (drawn by the app's renderer, with the
+/// HUD's own egui context) leaves the editor's panels as they were: the two
+/// egui contexts do not share a UI painter.
+#[test]
+fn a_hud_screenshot_leaves_the_panels_alone() {
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    let out = ed.editor.run(
+        &mut app,
+        &AllowAll,
+        "entity.spawn",
+        json!({ "id": "hud", "components": { "HudText": { "text": "3 / 7", "size": 14.0 } } }),
+        false,
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    ed.editor.select(Some("box"));
+    for _ in 0..2 {
+        ed.frame(&mut app, &AllowAll, egui::RawInput::default())
+            .unwrap();
+    }
+    let before = ed
+        .frame(&mut app, &AllowAll, egui::RawInput::default())
+        .unwrap();
+    let out = ed
+        .editor
+        .run(&mut app, &AllowAll, "screenshot", json!({}), false);
+    assert!(out.ok, "{:?}", out.diagnostics);
+    let after = ed
+        .frame(&mut app, &AllowAll, egui::RawInput::default())
+        .unwrap();
+    for panel in [Panel::Hierarchy, Panel::Toolbar, Panel::Inspector] {
+        let rect = ed.editor.rects().get(panel).unwrap();
+        let (x0, y0) = (rect.left().max(0.0) as u32, rect.top().max(0.0) as u32);
+        let x1 = (rect.right() as u32).min(after.width);
+        let y1 = (rect.bottom() as u32).min(after.height);
+        let changed = (y0..y1)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .filter(|&(x, y)| before.pixel(x, y) != after.pixel(x, y))
+            .count();
+        assert_eq!(changed, 0, "{panel:?} changed after the screenshot");
+    }
 }
 
 fn distinct_colours(image: &re_render::Image, rect: egui::Rect) -> usize {

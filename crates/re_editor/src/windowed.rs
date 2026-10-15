@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use re_app::{App, Graphics};
 use re_core::Diagnostic;
-use re_render::{Gpu, Renderer, UiFrame, wgpu};
+use re_render::{Capture, Gpu, Renderer, UiFrame, wgpu};
 
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -86,7 +86,7 @@ pub fn run_editor(mut app: App, mut options: EditorOptions) -> anyhow::Result<()
         .run_app(&mut host)
         .map_err(|e| no_display(format!("the editor's event loop failed: {e}")))?;
     if let Some(gfx) = host.gfx.as_mut() {
-        gfx.view.release(&mut host.app);
+        gfx.view.release(&mut gfx.ui);
     }
     // The surface before the window; the app keeps the device and renderer.
     host.gfx = None;
@@ -105,19 +105,20 @@ fn no_display(message: String) -> Diagnostic {
     .with_hint("run it in a desktop session, or under a virtual display: xvfb-run -a real editor")
 }
 
-/// The window's side of the GPU. The device and the renderer belong to the
-/// app ([`App::graphics`]), which uploads the World's meshes and materials to
-/// them; the editor paints its UI with the same renderer.
+/// The window's side of the GPU. The device and the scene renderer belong to
+/// the app ([`App::graphics`]), which uploads the World's meshes and
+/// materials to them; the panels are painted by the editor's own UI renderer
+/// on that device (see [`GameView`]).
 struct Gfx {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    ui: Renderer,
     view: GameView,
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
 }
 
 struct Host {
-    app: App,
     socket: EditorSocket,
     options: EditorOptions,
     backends: wgpu::Backends,
@@ -128,6 +129,9 @@ struct Host {
     frames: u64,
     last_render_error: Option<String>,
     error: Option<Diagnostic>,
+    // Last: the app holds the GPU device, dropped after the surface and the
+    // window on every path.
+    app: App,
 }
 
 impl Host {
@@ -146,7 +150,8 @@ impl Host {
         let config = gpu.surface_config(&surface, inner.width, inner.height)?;
         surface.configure(&gpu.device, &config);
         let max_texture = gpu.device.limits().max_texture_dimension_2d as usize;
-        let renderer = Renderer::new(&gpu, config.format);
+        let renderer = Renderer::new(&gpu, Capture::FORMAT);
+        let ui = Renderer::new(&gpu, config.format);
         self.app.set_graphics(Graphics::from_parts(gpu, renderer));
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -162,6 +167,7 @@ impl Host {
         self.gfx = Some(Gfx {
             surface,
             config,
+            ui,
             view: GameView::new(),
             egui_ctx,
             egui_state,
@@ -207,7 +213,7 @@ impl Host {
         let target = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        gfx.view.sync(&mut self.app, &mut self.editor)?;
+        gfx.view.sync(&self.app, &mut gfx.ui, &mut self.editor)?;
         let input = gfx.egui_state.take_egui_input(&window);
         let editor = &mut self.editor;
         let app = &mut self.app;
@@ -227,12 +233,10 @@ impl Host {
             Err(_) => {}
             Ok(_) => self.last_render_error = None,
         }
-        let graphics = self.app.graphics_mut().ok_or_else(view::no_graphics)?;
-        let (device, queue) = (graphics.gpu().device.clone(), graphics.gpu().queue.clone());
-        view::clear(&device, &queue, &target);
-        graphics
-            .renderer_mut()
-            .paint_ui(&device, &queue, &target, &ui)?;
+        let graphics = self.app.graphics().ok_or_else(view::no_graphics)?;
+        let (device, queue) = (&graphics.gpu().device, &graphics.gpu().queue);
+        view::clear(device, queue, &target);
+        gfx.ui.paint_ui(device, queue, &target, &ui)?;
         for d in graphics.take_errors() {
             self.editor.log_diagnostic(&d);
         }

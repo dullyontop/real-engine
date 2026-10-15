@@ -12,8 +12,9 @@ use crate::view::{self, GameView};
 /// The editor without a window: the same [`Editor`] and [`GameView`] as
 /// [`run_editor`](crate::run_editor), painted into a [`Capture`].
 ///
-/// [`HeadlessEditor::new`] gives the app a GPU device and renderer (its
-/// [`Graphics`]), which the editor then draws with; use it with that app.
+/// [`HeadlessEditor::new`] gives the app a GPU device and scene renderer
+/// (its [`Graphics`]), which the game view draws with; the panels are painted
+/// by the editor's own UI renderer on that device. Use it with that app.
 ///
 /// egui lays out a panel in the pass after it first sees it, so the first
 /// frame is a warm-up: read the image from the second frame on.
@@ -24,6 +25,7 @@ pub struct HeadlessEditor {
     pub view: GameView,
     ctx: egui::Context,
     capture: Capture,
+    ui: Renderer,
     time: f64,
 }
 
@@ -49,6 +51,7 @@ impl HeadlessEditor {
     pub fn new(app: &mut App, width: u32, height: u32) -> Result<HeadlessEditor, Diagnostic> {
         let gpu = re_render::Gpu::headless(re_render::backends_from_env()?)?;
         let renderer = Renderer::new(&gpu, Capture::FORMAT);
+        let ui = Renderer::new(&gpu, Capture::FORMAT);
         let capture = Capture::new(&gpu.device, width, height)?;
         app.set_graphics(Graphics::from_parts(gpu, renderer));
         Ok(HeadlessEditor {
@@ -56,6 +59,7 @@ impl HeadlessEditor {
             view: GameView::new(),
             ctx: egui::Context::default(),
             capture,
+            ui,
             time: 0.0,
         })
     }
@@ -79,7 +83,7 @@ impl HeadlessEditor {
         mut input: egui::RawInput,
     ) -> Result<Image, Diagnostic> {
         let size = [self.capture.width(), self.capture.height()];
-        self.view.sync(app, &mut self.editor)?;
+        self.view.sync(app, &mut self.ui, &mut self.editor)?;
         // The screen in points: the capture's pixels over the scale the input
         // asks for (1 unless it sets `native_pixels_per_point`).
         let ppp = input
@@ -97,16 +101,16 @@ impl HeadlessEditor {
         let mut output = self.ctx.run_ui(input, |ui| editor.ui(ui, app, policy));
         let ui = UiFrame::from_output(&self.ctx, &mut output, size);
         self.view.render(app)?;
-        let gfx = app.graphics_mut().ok_or_else(view::no_graphics)?;
-        let (device, queue) = (gfx.gpu().device.clone(), gfx.gpu().queue.clone());
-        view::clear(&device, &queue, self.capture.view());
-        gfx.renderer_mut()
-            .paint_ui(&device, &queue, self.capture.view(), &ui)?;
-        self.capture.read(&device, &queue)
+        let gpu = app.graphics().ok_or_else(view::no_graphics)?.gpu();
+        let (device, queue) = (&gpu.device, &gpu.queue);
+        view::clear(device, queue, self.capture.view());
+        self.ui.paint_ui(device, queue, self.capture.view(), &ui)?;
+        self.capture.read(device, queue)
     }
+}
 
-    /// Forgets the game view's texture in `app`'s renderer.
-    pub fn release(&mut self, app: &mut App) {
-        self.view.release(app);
+impl Drop for HeadlessEditor {
+    fn drop(&mut self) {
+        self.view.release(&mut self.ui);
     }
 }

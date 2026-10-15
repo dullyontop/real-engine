@@ -3,7 +3,7 @@
 
 use re_app::App;
 use re_core::Diagnostic;
-use re_render::{Capture, wgpu};
+use re_render::{Capture, Renderer, wgpu};
 
 use crate::Editor;
 
@@ -16,9 +16,14 @@ const VIEW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// simulates), drawn from its own camera into a texture the size of the
 /// viewport panel.
 ///
-/// The editor's GPU device and renderer belong to the [`App`] (its
+/// The editor's GPU device and scene renderer belong to the [`App`] (its
 /// [`Graphics`](re_app::Graphics)), so the app uploads the meshes and
-/// materials the World names to the renderer that draws them. Each frame:
+/// materials the World names to the renderer that draws them. The editor's
+/// panels are painted by a second renderer on the same device (the UI
+/// renderer), which also shows this texture: the app's renderer paints the
+/// game's HUD with its own egui context (for screenshots), and two egui
+/// contexts cannot share one UI painter (their font atlases have the same
+/// texture id). Each frame:
 /// [`GameView::sync`] resizes the texture to the size the viewport had in the
 /// last pass and gives its egui id to the [`Editor`]; after the egui pass,
 /// [`GameView::render`] draws the scene into it, before the UI is painted.
@@ -45,14 +50,19 @@ impl GameView {
     ///
     /// `RE0516` when the app has no GPU side, `RE6005` when the texture cannot
     /// be created.
-    pub fn sync(&mut self, app: &mut App, editor: &mut Editor) -> Result<(), Diagnostic> {
-        let gfx = app.graphics_mut().ok_or_else(no_graphics)?;
+    pub fn sync(
+        &mut self,
+        app: &App,
+        ui: &mut Renderer,
+        editor: &mut Editor,
+    ) -> Result<(), Diagnostic> {
+        let device = &app.graphics().ok_or_else(no_graphics)?.gpu().device;
         let want = editor.viewport_size_px().unwrap_or([64, 64]);
-        let limit = gfx.gpu().device.limits().max_texture_dimension_2d;
+        let limit = device.limits().max_texture_dimension_2d;
         let want = [want[0].clamp(1, limit), want[1].clamp(1, limit)];
         if self.size() != Some(want) {
-            let capture = Capture::with_format(&gfx.gpu().device, want[0], want[1], VIEW_FORMAT)?;
-            let renderer = gfx.renderer_mut();
+            let capture = Capture::with_format(device, want[0], want[1], VIEW_FORMAT)?;
+            let renderer = ui;
             let id = match self.target.take() {
                 Some((_, id)) => {
                     renderer.update_ui_texture(id, capture.view());
@@ -73,11 +83,10 @@ impl GameView {
     /// Draws the World into the texture: [`App::edit_frame`] regenerates
     /// changed procedural sources, uploads new meshes and materials and
     /// rebuilds the render snapshot from the World as it is (edit mode), which
-    /// is then drawn with the project's clear colour. A default material is
-    /// created the first time, so entities without a material are drawn.
+    /// is then drawn with the project's clear colour, with the runtime's
+    /// default material for entities without one, as `real run` draws it.
     ///
-    /// The game's HUD is not drawn here: it is egui too, and two egui
-    /// contexts cannot share the renderer's UI painter in one frame.
+    /// The game's HUD is not drawn here.
     ///
     /// # Errors
     ///
@@ -87,13 +96,6 @@ impl GameView {
         let Some((capture, _)) = &self.target else {
             return Ok(());
         };
-        if app.render_assets_mut().default_material.is_none() {
-            let gfx = app.graphics_mut().ok_or_else(no_graphics)?;
-            let material = gfx
-                .renderer_mut()
-                .create_material(&re_types::MaterialDesc::default())?;
-            app.render_assets_mut().default_material = Some(material);
-        }
         app.edit_frame();
         let snapshot = app.snapshot().clone();
         let gfx = app.graphics_mut().ok_or_else(no_graphics)?;
@@ -103,12 +105,10 @@ impl GameView {
         Ok(())
     }
 
-    /// Forgets the texture (before the app's renderer is dropped).
-    pub fn release(&mut self, app: &mut App) {
-        if let Some((_, id)) = self.target.take()
-            && let Some(gfx) = app.graphics_mut()
-        {
-            gfx.renderer_mut().free_ui_texture(id);
+    /// Forgets the texture (before the UI renderer is dropped).
+    pub fn release(&mut self, ui: &mut Renderer) {
+        if let Some((_, id)) = self.target.take() {
+            ui.free_ui_texture(id);
         }
     }
 }
