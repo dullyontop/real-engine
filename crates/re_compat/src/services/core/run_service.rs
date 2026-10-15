@@ -170,8 +170,9 @@ fn fire(lua: &Lua, name: &str, args: impl IntoLuaMulti) -> Result<()> {
     Ok(())
 }
 
-/// The render step (client only): the bindings by priority, then
-/// `PreRender` and `RenderStepped`.
+/// The render step: the Animator's pose reference on both sides; on the
+/// client, the frame's input, the bindings by priority, then `PreRender`
+/// and `RenderStepped`.
 pub(crate) fn pre_render(lua: &Lua, dt: f64) -> Result<()> {
     // Joint values now are the reference for this frame's pose rule
     // (WP14): a script's write after this point wins over the Animator.

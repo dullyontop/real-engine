@@ -259,15 +259,6 @@ pub fn client_sounds(vm: &CompatVm, listener: Option<(Vec3, Quat)>) -> Vec<re_ty
     re_compat::sound::take_commands(lua)
 }
 
-/// Steps a compat world's character physics (`CharacterPhysics`), when it
-/// has one, by `dt`.
-pub fn step_characters(world: &mut World, dt: f64) -> Option<Diagnostic> {
-    let mut physics = world
-        .ecs
-        .get_resource_mut::<re_compat::humanoid::body::CharacterPhysics>()?;
-    physics.0.step(dt as f32).err()
-}
-
 /// Adds the default player and character scripts
 /// ([`re_compat::humanoid::scripts::DEFAULT_SCRIPTS`]) that the place does
 /// not replace with its own (a child of the same name in the same

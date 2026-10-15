@@ -1,6 +1,6 @@
 //! `Humanoid` characters: walking, jumping, sitting, health and the state
-//! machine; the R6 and R15 rigs ([`rig`]) and `HumanoidDescription`
-//! ([`description`]).
+//! machine; the R6 and R15 rigs ([`rig`]), `HumanoidDescription`
+//! ([`description`]) and seats ([`seat`]).
 //!
 //! A Humanoid drives the model it sits in. The model's `HumanoidRootPart`
 //! rides a character controller ([`body`]): a capsule as tall as twice the
@@ -8,11 +8,12 @@
 //! limbs follow through their `Motor6D` joints ([`crate::anim::pose`]).
 //!
 //! Each frame the host calls, around its physics step:
-//! - [`pre_simulation`]: health and death, the walk direction
+//! - [`pre_simulation`]: seating, health and death, the walk direction
 //!   (`Move`, `MoveTo`), jumps, and the move request to the controller;
 //! - [`post_simulation`]: the root part follows the controller, the limbs are
 //!   posed, and the state machine moves on (Running, Jumping, Freefall,
-//!   Landed and the rest), firing the state events.
+//!   Landed and the rest), firing the state events; then the characters'
+//!   touches with parts fire.
 //!
 //! A jump leaves the ground at `JumpPower` studs/s, or, when `UseJumpPower`
 //! is false, at `sqrt(2 g JumpHeight)` so it rises `JumpHeight` studs under
@@ -22,6 +23,8 @@ pub mod body;
 pub mod description;
 pub mod rig;
 pub mod scripts;
+pub mod seat;
+pub mod touch;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -73,6 +76,10 @@ pub struct HumanoidRt {
     rebuild: bool,
     jump_now: bool,
     on_ground: bool,
+    /// The seat it sits in and the weld holding it there.
+    seat: Option<(Entity, Entity)>,
+    /// Seconds since it last stood up from a seat.
+    unseated: f32,
 }
 
 impl HumanoidRt {
@@ -91,6 +98,8 @@ impl HumanoidRt {
             rebuild: false,
             jump_now: false,
             on_ground: true,
+            seat: None,
+            unseated: seat::REST,
         }
     }
 
@@ -319,15 +328,26 @@ fn pre_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mut
     };
     if dead {
         if let Some(r) = has {
-            body::remove(w, r);
+            body::remove(w, classes, r);
             rt(w, classes, e).root = None;
         }
+        return;
+    }
+    // A seated character has no controller: it rides its seat.
+    if rt(w, classes, e).seat.is_some() {
+        {
+            let mut rt = rt(w, classes, e);
+            if rt.state != "Seated" {
+                set_state(&mut rt, "Seated", evs);
+            }
+        }
+        set_own(w, HUM, e, "MoveDirection", Value::Vec3(Vec3::ZERO));
         return;
     }
     let root_cf = cframe_prop(w, classes, root, "CFrame").unwrap_or_default();
     if has != Some(root) || rebuild {
         if let Some(old) = has {
-            body::remove(w, old);
+            body::remove(w, classes, old);
         }
         let h = root_height(w, classes, e, root).max(0.5);
         let width = match classes.get_property(w, root, "Size") {
@@ -336,7 +356,17 @@ fn pre_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mut
         };
         let radius = width.clamp(0.25, h);
         let rot = facing(-Vec3::from_array(root_cf.look_vector()));
-        let added = body::add(w, root, 2.0 * h, radius, Vec3::from_array(root_cf.p), rot);
+        let slope = get_num(w, e, "MaxSlopeAngle") as f32;
+        let added = body::add(
+            w,
+            classes,
+            root,
+            2.0 * h,
+            radius,
+            Vec3::from_array(root_cf.p),
+            rot,
+            slope,
+        );
         let mut rt = rt(w, classes, e);
         rt.root = added.then_some(root);
         rt.rebuild = false;
@@ -412,10 +442,14 @@ fn pre_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mut
                     .max(0.0)
                     .sqrt()
             };
-            // The controller takes a step of gravity off before each move, so
-            // half a step more at launch makes the peak the continuous one,
-            // v² / 2g.
-            let v = if v > 0.0 { v + g * dt / 2.0 } else { 0.0 };
+            // The controller takes a substep of gravity off before each
+            // move, so half a substep more at launch makes the peak the
+            // continuous one, v² / 2g.
+            let v = if v > 0.0 {
+                v + g * body::substep(dt) / 2.0
+            } else {
+                0.0
+            };
             set_own(w, HUM, e, "Jump", Value::Bool(false));
             if sit {
                 set_own(w, HUM, e, "Sit", Value::Bool(false));
@@ -432,6 +466,10 @@ fn post_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mu
     let Some(rig) = tree::parent(w, e) else {
         return;
     };
+    if seat::place(w, classes, e) {
+        rt(w, classes, e).state_time += dt;
+        return;
+    }
     if rt(w, classes, e).root != Some(root) {
         return;
     }
@@ -579,9 +617,14 @@ fn fire(lua: &Lua, e: Entity, evs: Vec<Ev>) -> Result<()> {
 /// `BreakJointsOnDeath` the rig's joints are destroyed.
 fn die(lua: &Lua, e: Entity) -> Result<()> {
     let classes = state(lua)?.setup.classes.clone();
+    seat::leave(lua, &classes, e)?;
     let joints = with_world(lua, |w| {
         if let Some(r) = w.ecs.get::<HumanoidRt>(e).and_then(|rt| rt.root) {
-            body::remove(w, r);
+            body::remove(w, &classes, r);
+        }
+        // The body falls: as one piece, or apart once the joints break.
+        if let Some(rig) = tree::parent(w, e) {
+            body::loosen(w, &classes, rig);
         }
         if let Some(mut rt) = w.ecs.get_mut::<HumanoidRt>(e) {
             rt.root = None;
@@ -623,11 +666,32 @@ fn humanoids(lua: &Lua) -> Result<Vec<Entity>> {
     })
 }
 
+/// Removes the controllers no live Humanoid owns any more (its character
+/// was destroyed, left the place or lost its root part).
+fn drop_orphans(w: &mut World, classes: &ClassRegistry, live: &[Entity]) {
+    let owned: BTreeSet<Entity> = live
+        .iter()
+        .filter_map(|h| w.ecs.get::<HumanoidRt>(*h).and_then(|rt| rt.root))
+        .filter(|r| !tree::is_destroyed(w, *r))
+        .collect();
+    let orphans: Vec<Entity> = w
+        .ecs
+        .get_resource::<body::Controllers>()
+        .map(|c| c.0.difference(&owned).copied().collect())
+        .unwrap_or_default();
+    for root in orphans {
+        body::remove(w, classes, root);
+    }
+}
+
 /// Before the physics step: health and death, the walk direction, jumps and
 /// the move requests.
 pub fn pre_simulation(lua: &Lua, dt: f64) -> Result<()> {
     let classes = state(lua)?.setup.classes.clone();
-    for e in humanoids(lua)? {
+    let all = humanoids(lua)?;
+    with_world(lua, |w| drop_orphans(w, &classes, &all))?;
+    for e in all {
+        seat::update(lua, &classes, e, dt as f32)?;
         let mut evs = Vec::new();
         with_world(lua, |w| pre_one(w, &classes, e, dt as f32, &mut evs))?;
         fire(lua, e, evs)?;
@@ -636,15 +700,62 @@ pub fn pre_simulation(lua: &Lua, dt: f64) -> Result<()> {
 }
 
 /// After the physics step: the root parts follow their controllers, the
-/// limbs are posed and the state machine moves on.
+/// limbs are posed, the state machine moves on, and the characters' touches
+/// with parts fire ([`touch`]).
 pub fn post_simulation(lua: &Lua, dt: f64) -> Result<()> {
     let classes = state(lua)?.setup.classes.clone();
-    for e in humanoids(lua)? {
+    let all = humanoids(lua)?;
+    for &e in &all {
         let mut evs = Vec::new();
         with_world(lua, |w| post_one(w, &classes, e, dt as f32, &mut evs))?;
         fire(lua, e, evs)?;
     }
+    fall_out(lua, &classes, &all)?;
+    touch::dispatch(lua, &classes, &all)?;
     signal::events::after_write(lua)
+}
+
+/// Destroys the parts of the characters whose root part fell below
+/// `Workspace.FallenPartsDestroyHeight` (the part simulation does this for
+/// its own parts); the Humanoid dies.
+fn fall_out(lua: &Lua, classes: &ClassRegistry, all: &[Entity]) -> Result<()> {
+    let game = state(lua)?.game;
+    let parts = with_world(lua, |w| {
+        let Some(ws) = crate::services::core::find_service(w, game, "Workspace") else {
+            return Vec::new();
+        };
+        let height = match classes.get_property(w, ws, "FallenPartsDestroyHeight") {
+            Ok(Value::Float(h)) => h as f32,
+            _ => -500.0,
+        };
+        let mut out = Vec::new();
+        for &h in all {
+            let (Some(root), Some(rig)) = (root_part(w, classes, h), tree::parent(w, h)) else {
+                continue;
+            };
+            let below = cframe_prop(w, classes, root, "CFrame").is_some_and(|cf| cf.p[1] < height);
+            if !below {
+                continue;
+            }
+            if let Some(r) = w.ecs.get::<HumanoidRt>(h).and_then(|rt| rt.root) {
+                body::remove(w, classes, r);
+                rt(w, classes, h).root = None;
+            }
+            set_own(w, HUM, h, "Health", Value::Float(0.0));
+            out.extend(
+                tree::descendants(w, rig)
+                    .into_iter()
+                    .filter(|d| tree::is_a(w, classes, *d, "BasePart")),
+            );
+        }
+        out
+    })?;
+    for p in parts {
+        if with_world(lua, |w| tree::alive(w, p) && !tree::is_destroyed(w, p))? {
+            crate::instance::destroy(lua, p)?;
+        }
+    }
+    Ok(())
 }
 
 /// Runs health bookkeeping for one Humanoid now (after `TakeDamage`).
@@ -939,6 +1050,7 @@ pub fn register(b: &mut Bindings) {
     for (name, f) in methods {
         b.method(HUM, name, Arc::new(*f));
     }
+    seat::register(b);
     b.method(
         "Players",
         "CreateHumanoidModelFromDescription",

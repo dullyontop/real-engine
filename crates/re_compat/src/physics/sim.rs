@@ -83,6 +83,11 @@ pub const MAX_GROUPS: usize = 32;
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct CharacterDriven;
 
+/// Marks a part of a dead character (WP14): the simulation treats it as an
+/// ordinary part again, so the body falls.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct CharacterLoose;
+
 /// A part's custom physical properties (`BasePart.CustomPhysicalProperties`),
 /// kept while the place runs.
 #[derive(Component, Clone, Copy, Debug)]
@@ -215,7 +220,7 @@ impl PartSnap {
             // character's part.
             anchored: l.anchored.bool(w, e, false)
                 || replicated(w, e)
-                || character_model(w, e).is_some(),
+                || (character_model(w, e).is_some() && w.ecs.get::<CharacterLoose>(e).is_none()),
             can_collide: l.can_collide.bool(w, e, true),
             can_query: l.can_query.bool(w, e, true),
             can_touch: l.can_touch.bool(w, e, true),
@@ -722,6 +727,14 @@ impl Sim {
                     if initial && anchored {
                         statics.push(e);
                     } else {
+                        self.dirty.insert(e);
+                    }
+                } else if let Some(rec) = self.parts.get_mut(&e) {
+                    // A change no setter reports (a character letting go of
+                    // its parts) shows when the part is examined again.
+                    let snap = PartSnap::read(w, &self.layout, e);
+                    if rec.snap != snap {
+                        rec.snap = snap;
                         self.dirty.insert(e);
                     }
                 }

@@ -15,4 +15,6 @@ mod character {
     mod input;
     #[path = "../character/replay.rs"]
     mod replay;
+    #[path = "../character/seat.rs"]
+    mod seat;
 }
