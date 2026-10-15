@@ -1,0 +1,681 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Real Engine prefab",
+  "type": "object",
+  "required": [
+    "format",
+    "version",
+    "entities"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "format": {
+      "const": "real-engine/prefab"
+    },
+    "version": {
+      "const": 1
+    },
+    "script_components": {
+      "type": "array",
+      "description": "Schemas of the script-defined components used in this file.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "fields"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "doc": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "type",
+                "default"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "object",
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "bool",
+                        "i32",
+                        "i64",
+                        "f32",
+                        "f64",
+                        "vec3",
+                        "quat",
+                        "color",
+                        "string",
+                        "entity",
+                        "enum"
+                      ]
+                    },
+                    "variants": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "default": {},
+                "doc": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/]+$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent": {
+            "type": "string"
+          },
+          "components": {
+            "type": "object",
+            "properties": {
+              "Transform": {
+                "$ref": "#/$defs/Transform"
+              },
+              "MeshRef": {
+                "$ref": "#/$defs/MeshRef"
+              },
+              "MaterialRef": {
+                "$ref": "#/$defs/MaterialRef"
+              },
+              "Visible": {
+                "$ref": "#/$defs/Visible"
+              },
+              "Camera": {
+                "$ref": "#/$defs/Camera"
+              },
+              "Light": {
+                "$ref": "#/$defs/Light"
+              },
+              "RigidBody": {
+                "$ref": "#/$defs/RigidBody"
+              },
+              "Collider": {
+                "$ref": "#/$defs/Collider"
+              },
+              "CharacterController": {
+                "$ref": "#/$defs/CharacterController"
+              },
+              "ScriptRef": {
+                "$ref": "#/$defs/ScriptRef"
+              },
+              "AudioSource": {
+                "$ref": "#/$defs/AudioSource"
+              },
+              "AnimPlayer": {
+                "$ref": "#/$defs/AnimPlayer"
+              },
+              "HudText": {
+                "$ref": "#/$defs/HudText"
+              },
+              "Procedural": {
+                "$ref": "#/$defs/Procedural"
+              },
+              "GraphSource": {
+                "$ref": "#/$defs/GraphSource"
+              }
+            },
+            "additionalProperties": false
+          },
+          "overrides": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "target",
+                    "component",
+                    "field",
+                    "value"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "target": {
+                      "type": "string"
+                    },
+                    "component": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "type": "string"
+                    },
+                    "value": {}
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "target",
+                    "deleted"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "target": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "const": true
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "Transform": {
+      "type": "object",
+      "description": "Position, rotation and scale relative to the parent entity (or to the\nworld for a root entity).",
+      "properties": {
+        "translation": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Offset from the parent's origin, in metres."
+        },
+        "rotation": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "description": "Orientation relative to the parent. Normalised on write."
+        },
+        "scale": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Per-axis scale relative to the parent."
+        }
+      },
+      "additionalProperties": false
+    },
+    "MeshRef": {
+      "type": "object",
+      "description": "The mesh drawn for this entity.",
+      "properties": {
+        "asset": {
+          "type": "string",
+          "default": "",
+          "description": "An asset path (`assets/crate.glb`), or `derived:<hash>` for a\nprocedurally generated mesh."
+        }
+      },
+      "additionalProperties": false
+    },
+    "MaterialRef": {
+      "type": "object",
+      "description": "The material the mesh is drawn with.",
+      "properties": {
+        "asset": {
+          "type": "string",
+          "default": "",
+          "description": "A material file path (`materials/stone.material.json`)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Visible": {
+      "type": "object",
+      "description": "Whether the entity is drawn.",
+      "properties": {
+        "visible": {
+          "type": "boolean",
+          "default": true,
+          "description": "False hides the entity (it still simulates)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Camera": {
+      "type": "object",
+      "description": "A perspective camera. The active camera renders the frame.",
+      "properties": {
+        "fov_y_deg": {
+          "type": "number",
+          "default": 60.0,
+          "description": "Vertical field of view, in degrees."
+        },
+        "near": {
+          "type": "number",
+          "default": 0.10000000149011612,
+          "description": "Near clipping distance, in metres."
+        },
+        "far": {
+          "type": "number",
+          "default": 1000.0,
+          "description": "Far clipping distance, in metres."
+        },
+        "active": {
+          "type": "boolean",
+          "default": false,
+          "description": "True for the camera that renders the frame (one at a time)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Light": {
+      "type": "object",
+      "description": "A light source. A directional light shines along the entity's -Z axis.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "Directional",
+            "Point"
+          ],
+          "default": "Point",
+          "description": "Directional (sun-like) or point."
+        },
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4,
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear colour."
+        },
+        "intensity": {
+          "type": "number",
+          "default": 800.0,
+          "description": "Intensity: lumens for point lights, lux for directional lights."
+        },
+        "range": {
+          "type": "number",
+          "default": 20.0,
+          "description": "Distance in metres beyond which a point light has no effect."
+        },
+        "shadows": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the light casts shadows."
+        }
+      },
+      "additionalProperties": false
+    },
+    "RigidBody": {
+      "type": "object",
+      "description": "Makes the entity a physics body. Needs a [`Collider`] to collide; a\n[`Collider`] without a `RigidBody` is a static body.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "Static",
+            "Dynamic",
+            "Kinematic"
+          ],
+          "default": "Static",
+          "description": "Static (never moves), dynamic (simulated) or kinematic (moved by code)."
+        },
+        "mass": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Mass in kilograms (dynamic bodies only)."
+        },
+        "friction": {
+          "type": "number",
+          "default": 0.5,
+          "description": "Friction coefficient."
+        },
+        "restitution": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Restitution (bounciness), 0 to 1."
+        },
+        "linear_damping": {
+          "type": "number",
+          "default": 0.05000000074505806,
+          "description": "Linear velocity damping per second."
+        },
+        "angular_damping": {
+          "type": "number",
+          "default": 0.05000000074505806,
+          "description": "Angular velocity damping per second."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Collider": {
+      "type": "object",
+      "description": "A collision shape, in the entity's local space.\n\n`re_app` maps it to a `re_types::physics::BodyDesc`: without a\n[`RigidBody`] the body is static, and `enabled = false` removes the body.\n`Mesh` and `Heightfield` shapes are static only (`re_physics` refuses them\non dynamic and kinematic bodies with `RE5003`).",
+      "properties": {
+        "shape": {
+          "enum": [
+            "Box",
+            "Sphere",
+            "Capsule",
+            "Convex",
+            "Mesh",
+            "Heightfield"
+          ],
+          "default": "Box",
+          "description": "The shape kind."
+        },
+        "half_extents": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "description": "Half extents of a box, in metres."
+        },
+        "radius": {
+          "type": "number",
+          "default": 0.5,
+          "description": "Radius of a sphere or capsule, in metres."
+        },
+        "half_height": {
+          "type": "number",
+          "default": 0.5,
+          "description": "Half height of a capsule's cylindrical part, in metres."
+        },
+        "source": {
+          "type": "string",
+          "default": "",
+          "description": "The mesh or heightfield asset for Convex, Mesh and Heightfield shapes. A\nheightfield asset carries its sample count per side (`n`), `spacing` and\n`offset` as well as the samples."
+        },
+        "layer": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "default": 0,
+          "description": "Object layer, 0 to 65535 (`re_types::physics::Layer`); the physics layer\ntable decides which layers collide."
+        },
+        "groups": {
+          "type": "integer",
+          "default": 1,
+          "description": "Collision group bit mask, 0 to `u32::MAX` (`re_types::physics::GroupMask`:\nbit `g` is group `g`, so the default 1 is group 0). Queries and characters\nonly see bodies whose groups intersect theirs."
+        },
+        "sensor": {
+          "type": "boolean",
+          "default": false,
+          "description": "A sensor reports contacts but does not collide."
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "False removes the body from the simulation."
+        }
+      },
+      "additionalProperties": false
+    },
+    "CharacterController": {
+      "type": "object",
+      "description": "A kinematic character (Jolt CharacterVirtual).",
+      "properties": {
+        "height": {
+          "type": "number",
+          "default": 1.7999999523162842,
+          "description": "Total height, in metres."
+        },
+        "radius": {
+          "type": "number",
+          "default": 0.4000000059604645,
+          "description": "Capsule radius, in metres."
+        },
+        "max_slope_deg": {
+          "type": "number",
+          "default": 45.0,
+          "description": "Steepest walkable slope, in degrees."
+        },
+        "step_height": {
+          "type": "number",
+          "default": 0.30000001192092896,
+          "description": "Highest step climbed without jumping, in metres."
+        },
+        "mass": {
+          "type": "number",
+          "default": 70.0,
+          "description": "Mass in kilograms, used when pushing bodies."
+        },
+        "inner_body": {
+          "type": "boolean",
+          "default": true,
+          "description": "True adds an inner rigid body, so the character takes part in contact events."
+        },
+        "layer": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "default": 0,
+          "description": "Object layer, 0 to 65535, as in [`Collider`]."
+        },
+        "groups": {
+          "type": "integer",
+          "default": 1,
+          "description": "Collision group bit mask, 0 to `u32::MAX`, as in [`Collider`]. The\ncharacter only collides with bodies whose groups intersect these."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ScriptRef": {
+      "type": "object",
+      "description": "A Luau script attached to the entity.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "default": "",
+          "description": "Script path relative to the project (`scripts/game/player.luau`)."
+        },
+        "context": {
+          "enum": [
+            "Game",
+            "Tools"
+          ],
+          "default": "Game",
+          "description": "The context (VM) the script runs in."
+        }
+      },
+      "additionalProperties": false
+    },
+    "AudioSource": {
+      "type": "object",
+      "description": "A sound emitter.",
+      "properties": {
+        "clip": {
+          "type": "string",
+          "default": "",
+          "description": "A project asset path such as `assets/sfx/pickup.wav`, as in `AudioCmd`."
+        },
+        "volume": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Linear volume, 0 to 1."
+        },
+        "looping": {
+          "type": "boolean",
+          "default": false,
+          "description": "Restart the clip when it ends."
+        },
+        "spatial": {
+          "type": "boolean",
+          "default": true,
+          "description": "Attenuate and pan by the entity's position."
+        },
+        "autoplay": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start playing when the entity appears."
+        }
+      },
+      "additionalProperties": false
+    },
+    "AnimPlayer": {
+      "type": "object",
+      "description": "Plays a node animation clip from a glTF asset.",
+      "properties": {
+        "clip": {
+          "type": "string",
+          "default": "",
+          "description": "`<model asset path>#<clip name>`, e.g. `assets/models/door.glb#open`; the\nclip name is `ClipData.name` (the glTF animation name, or\n`animation_<index>`). Playback time is runtime state in `re_app`, not a\nfield."
+        },
+        "speed": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Playback speed multiplier."
+        },
+        "looping": {
+          "type": "boolean",
+          "default": true,
+          "description": "Restart the clip when it ends."
+        },
+        "playing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the clip advances."
+        }
+      },
+      "additionalProperties": false
+    },
+    "HudText": {
+      "type": "object",
+      "description": "A line of text drawn on the heads-up display.",
+      "properties": {
+        "text": {
+          "type": "string",
+          "default": "",
+          "description": "The text."
+        },
+        "anchor": {
+          "enum": [
+            "TopLeft",
+            "Top",
+            "TopRight",
+            "Center",
+            "BottomLeft",
+            "Bottom",
+            "BottomRight"
+          ],
+          "default": "TopLeft",
+          "description": "Screen anchor."
+        },
+        "size": {
+          "type": "number",
+          "default": 18.0,
+          "description": "Font size in logical pixels."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Procedural": {
+      "type": "object",
+      "description": "Makes this entity the source of generated entities.",
+      "properties": {
+        "generator": {
+          "type": "string",
+          "default": "",
+          "description": "Name of a registered generator."
+        },
+        "seed": {
+          "type": "integer",
+          "default": 0,
+          "description": "Seed for the generator's random choices."
+        }
+      },
+      "additionalProperties": false
+    },
+    "GraphSource": {
+      "type": "object",
+      "description": "Parameters of the `graph` generator (a ProcGraph, ARCHITECTURE §5).\nNames either a `builder` script or a `graph` file.",
+      "properties": {
+        "graph": {
+          "type": "string",
+          "default": "",
+          "description": "A graph file (`graphs/island.graph.json`)."
+        },
+        "builder": {
+          "type": "string",
+          "default": "",
+          "description": "A builder script in the tools context (`scripts/tools/island_graph.luau`)."
+        },
+        "params": {
+          "type": "string",
+          "default": "",
+          "description": "Per-node parameter overrides as canonical JSON:\n`{\"<node id>\": {\"<param>\": <value>}}`."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
