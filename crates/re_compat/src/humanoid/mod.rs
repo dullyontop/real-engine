@@ -939,6 +939,83 @@ pub fn register(b: &mut Bindings) {
     for (name, f) in methods {
         b.method(HUM, name, Arc::new(*f));
     }
+    b.method(
+        "Players",
+        "CreateHumanoidModelFromDescription",
+        Arc::new(p_create_model),
+    );
+    b.method(
+        "Players",
+        "GetHumanoidDescriptionFromUserId",
+        Arc::new(p_description_from_user_id),
+    );
+}
+
+/// `Players:CreateHumanoidModelFromDescription(description, rigType)`: a new,
+/// unparented character model. A nil description gives the default look and
+/// a nil rig type R15 (the players runtime asks for the default character
+/// this way). Nil when the part classes are not loaded.
+fn p_create_model(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
+    const WHAT: &str = "Players:CreateHumanoidModelFromDescription";
+    let (desc, rig): (LuaValue, LuaValue) = args(lua, a, WHAT)?;
+    let desc = match desc {
+        LuaValue::Nil => None,
+        v => Some(arg_instance(&v, WHAT)?),
+    };
+    let rig = match rig {
+        LuaValue::Nil => "R15",
+        v => EnumItem::coerce(&v, "HumanoidRigType")?.name(),
+    };
+    let classes = state(lua)?.setup.classes.clone();
+    // Rigs are made of parts; without the part classes (a layer set up
+    // without part physics) there is no model to build.
+    if classes.class("Part").is_err() {
+        return ret(lua, LuaValue::Nil);
+    }
+    let model = with_world(
+        lua,
+        |w| -> std::result::Result<Entity, crate::error::CompatError> {
+            if let Some(d) = desc
+                && !tree::is_a(w, &classes, d, "HumanoidDescription")
+            {
+                return Err(crate::error::CompatError::InvalidData(format!(
+                    "bad argument #1 to {WHAT}: a HumanoidDescription expected"
+                )));
+            }
+            rig::build(w, &classes, rig, "Character", desc, CFrame::IDENTITY)
+        },
+    )?
+    .map_err(compat_error)?;
+    signal::events::after_write(lua)?;
+    ret(lua, push(lua, model)?)
+}
+
+/// `Players:GetHumanoidDescriptionFromUserId(userId)`: offline there is no
+/// avatar to read, so it returns a default description, with a note.
+fn p_description_from_user_id(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
+    let id: i64 = args(lua, a, "Players:GetHumanoidDescriptionFromUserId")?;
+    re_script::vm::output(
+        lua,
+        true,
+        format!(
+            "[{}] Players:GetHumanoidDescriptionFromUserId({id}) has no avatar to read offline; \
+             it returns a default HumanoidDescription",
+            crate::codes::OFFLINE_DEFAULT
+        ),
+    );
+    let classes = state(lua)?.setup.classes.clone();
+    let d = with_world(lua, |w| {
+        spawn_instance(
+            w,
+            &classes,
+            "HumanoidDescription",
+            None,
+            "HumanoidDescription",
+            None,
+        )
+    })?
+    .map_err(compat_error)?;
+    ret(lua, push(lua, d)?)
 }
 
 /// The state of a Humanoid, for hosts and tests.
