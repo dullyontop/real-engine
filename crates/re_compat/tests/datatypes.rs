@@ -55,6 +55,70 @@ mod datatypes {
         }
     }
 
+    /// The compat runtime registers the datatypes: the fixtures pass in a
+    /// server VM, and datatypes and enum items survive attributes.
+    #[test]
+    fn registered_with_the_compat_runtime() {
+        use re_compat::{CompatSetup, CompatVm, SignalBehavior};
+        use re_script::host::{NoServices, WorldHost};
+        use re_script::{ContextKind, RuntimeConfig};
+
+        let setup = CompatSetup::standard().unwrap();
+        let mut world = re_scene::World::new();
+        re_compat::scene::create_place(&mut world, &setup.classes, &["Workspace"]).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let vm = CompatVm::new(
+            &setup,
+            ContextKind::Server,
+            &mut world,
+            &RuntimeConfig::new(dir.path()),
+            SignalBehavior::Deferred,
+        )
+        .unwrap();
+        let mut services = NoServices::default();
+        let mut run = |name: &str, src: &str| {
+            let mut host = WorldHost {
+                world: &mut world,
+                services: &mut services,
+            };
+            let d = vm.exec(&mut host, name, src);
+            assert!(d.is_empty(), "{name}: {d:#?}");
+        };
+        for name in [
+            "vector3.luau",
+            "vector2.luau",
+            "cframe.luau",
+            "color.luau",
+            "udim.luau",
+            "sequences.luau",
+            "misc.luau",
+            "enums.luau",
+            "typeof.luau",
+        ] {
+            let path = format!(
+                "{}/tests/fixtures/datatypes/{name}",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            run(name, &std::fs::read_to_string(&path).unwrap());
+        }
+        run(
+            "attributes",
+            r#"
+            local f = Instance.new("Folder", workspace)
+            local cf = CFrame.new(1, 2, 3) * CFrame.Angles(0, 1, 0)
+            f:SetAttribute("C", Color3.new(1, 0.5, 0))
+            f:SetAttribute("F", cf)
+            f:SetAttribute("U", UDim2.new(0.5, 10, 1, -4))
+            f:SetAttribute("R", NumberRange.new(1, 2))
+            assert(f:GetAttribute("C") == Color3.new(1, 0.5, 0))
+            assert(f:GetAttribute("F"):FuzzyEq(cf))
+            assert(f:GetAttribute("U") == UDim2.new(0.5, 10, 1, -4))
+            assert(f:GetAttribute("R") == NumberRange.new(1, 2))
+            assert(typeof(Vector3.zero) == "Vector3" and typeof(Enum.Material.Plastic) == "EnumItem")
+            "#,
+        );
+    }
+
     #[test]
     fn unseeded_random_follows_the_run_seed() {
         let a = run_fixture("random.luau", 99);

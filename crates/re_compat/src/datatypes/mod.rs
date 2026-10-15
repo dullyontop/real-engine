@@ -39,6 +39,62 @@ use mlua::{AnyUserData, Lua, MetaMethod, Result, Table, UserDataMethods, Value};
 use re_core::Code;
 use re_script::codes;
 
+/// The datatypes whose stored form [`to_lua`] turns into their Luau form.
+const STORED_TYPES: &[&str] = &[
+    "CFrame",
+    "Color3",
+    "ColorSequence",
+    "ColorSequenceKeypoint",
+    "Font",
+    "NumberRange",
+    "NumberSequence",
+    "NumberSequenceKeypoint",
+    "PhysicalProperties",
+    "Rect",
+    "UDim",
+    "UDim2",
+    "Vector2",
+];
+
+/// Registers the datatypes with the compat runtime: the globals of
+/// [`install`] (through the `Vector3` global's constructor), the userdata
+/// and stored-value conversions, and enum items for enum properties.
+///
+/// `Random.new()` without a seed is seeded with 0 until the runtime has a run
+/// seed to pass.
+pub fn register(b: &mut crate::runtime::Bindings) {
+    b.global(
+        "Vector3",
+        std::sync::Arc::new(|lua: &Lua, _env: &crate::runtime::GlobalEnv| {
+            let globals = lua.globals();
+            install(lua, &globals, 0)?;
+            globals.raw_get::<Value>("Vector3")
+        }),
+    );
+    b.codec
+        .add_from_userdata(std::sync::Arc::new(userdata_to_value));
+    for &ty in STORED_TYPES {
+        b.codec.set_to_lua(
+            ty,
+            std::sync::Arc::new(move |lua: &Lua, v: &re_reflect::Value| to_lua(lua, ty, v.clone())),
+        );
+    }
+    b.codec
+        .set_enum_to_lua(std::sync::Arc::new(|lua: &Lua, ty: &str, item: &str| {
+            match crate::enums::EnumItem::lookup(ty, item) {
+                Some(item) => item.to_lua(lua),
+                // An item the enum data does not know stays readable as its name.
+                None => Ok(Value::String(lua.create_string(item)?)),
+            }
+        }));
+    b.codec
+        .set_enum_from_lua(std::sync::Arc::new(|_lua: &Lua, ty: &str, v: &Value| {
+            Ok(Some(
+                crate::enums::EnumItem::coerce(v, ty)?.name().to_string(),
+            ))
+        }));
+}
+
 /// Installs every datatype table (`Vector3`, `CFrame`, ...), `Enum` and the
 /// Roblox-style `typeof` into `globals`. `seed` seeds `Random.new()` called
 /// without a seed: the n-th such generator of a VM gets the same state on
