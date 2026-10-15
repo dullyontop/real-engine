@@ -28,7 +28,7 @@ fn two() -> Two {
     two_with(CompatSetup::standard().unwrap())
 }
 
-/// Two worlds with the test `SpawnLocation` and `Humanoid` classes added.
+/// Two worlds with the test classes added (none now that the part classes are built in).
 fn two_with_spawns() -> Two {
     let mut b = re_compat::Bindings::standard().unwrap();
     b.classes(|c| {

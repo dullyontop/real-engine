@@ -95,6 +95,7 @@ impl Bindings {
         crate::instance::register(&mut b);
         crate::services::core::register(&mut b);
         crate::datatypes::register(&mut b);
+        crate::physics::register(&mut b);
         crate::tween::register(&mut b);
         crate::sound::register(&mut b);
         crate::gui::register(&mut b);
@@ -317,6 +318,7 @@ pub fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
             .map(|(p, a)| ("DataModel", p, a)),
     );
     out.extend(crate::gui::accessors());
+    out.extend(crate::physics::accessors());
     out
 }
 
@@ -381,6 +383,7 @@ impl CompatVm {
         }
         let workspace = crate::services::core::ensure_service(world, classes, game, "Workspace")?;
         session::prepare_world(world, &compat.game);
+        crate::physics::prepare_world(world, classes)?;
         let state = Rc::new(State {
             kind,
             behavior,
@@ -518,20 +521,30 @@ impl CompatVm {
     }
 
     /// One headless frame of one fixed step of `dt` seconds: [`pre_render`],
-    /// then [`pre_animation`], [`pre_simulation`], [`media`] and
-    /// [`post_simulation`] (there is no physics between them here).
+    /// then [`pre_animation`], [`pre_simulation`], the [`physics`] step with
+    /// its `Touched` and `TouchEnded` events, [`media`] and [`post_simulation`].
     ///
     /// [`pre_render`]: CompatVm::pre_render
     /// [`pre_animation`]: CompatVm::pre_animation
     /// [`pre_simulation`]: CompatVm::pre_simulation
+    /// [`physics`]: CompatVm::physics
     /// [`media`]: CompatVm::media
     /// [`post_simulation`]: CompatVm::post_simulation
     pub fn frame(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
         let mut out = self.pre_render(host, dt);
         out.extend(self.pre_animation(host, dt));
         out.extend(self.pre_simulation(host, dt));
+        out.extend(self.physics(host, dt));
         out.extend(self.media(host, dt));
         out.extend(self.post_simulation(host, dt));
+        out
+    }
+
+    /// The physics of a fixed step of `dt` seconds ([`crate::physics::step`]),
+    /// then the touch events and fallen-part removals it produced.
+    pub fn physics(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+        let mut out = crate::physics::step(host.world(), dt as f32);
+        out.extend(self.run(host, crate::physics::dispatch));
         out
     }
 

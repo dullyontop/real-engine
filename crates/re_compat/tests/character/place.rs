@@ -83,7 +83,7 @@ pub fn place(kind: ContextKind) -> Place {
     build(kind, false)
 }
 
-/// Stand-in part classes until the part classes land (WP13).
+/// Stand-in members and classes the built-in data does not declare yet.
 const PARTS: &str = include_str!("../fixtures/character/parts.json");
 
 /// A place with part classes and a physics world for characters: a floor

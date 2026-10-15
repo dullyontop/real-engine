@@ -27,8 +27,9 @@
 //! client's frame. Scripts copied to a player or a character start at the
 //! next pump.
 //!
-//! Frames have one fixed step of [`HarnessOptions::dt`] seconds; nothing runs
-//! physics.
+//! Frames have one fixed step of [`HarnessOptions::dt`] seconds, physics
+//! included: a client world simulates the parts it made itself, and the
+//! parts the server replicates to it stand still between replications.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

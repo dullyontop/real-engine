@@ -36,6 +36,7 @@ pub mod humanoid;
 pub mod input;
 pub mod instance;
 pub mod net;
+pub mod physics;
 pub mod players;
 pub mod runtime;
 pub mod scene;
@@ -111,6 +112,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::OFFLINE_DEFAULT,
         title: "Offline default returned",
         page: include_str!("../explain/RE9203.md"),
+    },
+    DiagInfo {
+        code: codes::COLLISION_GROUP,
+        title: "Collision group refused",
+        page: include_str!("../explain/RE9250.md"),
+    },
+    DiagInfo {
+        code: codes::PHYSICS_SETUP,
+        title: "Physics setup missing",
+        page: include_str!("../explain/RE9251.md"),
     },
     DiagInfo {
         code: codes::UNKNOWN_ASSET,
