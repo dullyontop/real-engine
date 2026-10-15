@@ -3499,6 +3499,7 @@ dependencies = [
  "re_assets",
  "re_audio",
  "re_command",
+ "re_compat",
  "re_core",
  "re_geom",
  "re_input",

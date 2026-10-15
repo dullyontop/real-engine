@@ -69,6 +69,10 @@ pub struct RunReport {
     /// What scripts printed (`print` and `warn`), one line each.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub output: Vec<String>,
+    /// For a compat project: uncaught script errors, stuck yields and
+    /// unsupported members ([`crate::compat::CompatRunInfo`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compat: Option<crate::compat::CompatRunInfo>,
 }
 
 impl RunReport {
@@ -130,6 +134,11 @@ pub struct App {
 
     scripts: Option<ScriptRuntime>,
     scripts_failed: bool,
+    /// `[compat]`, when the project is a compat project; its scripts then run
+    /// in [`CompatPlay`](crate::compat::CompatPlay) instead of `scripts`.
+    compat_config: Option<re_compat::CompatConfig>,
+    compat: Option<crate::compat::CompatPlay>,
+    compat_failed: bool,
     script_output: Vec<String>,
     /// Script errors already reported (a failing `on_step` fails every step).
     script_errors: std::collections::HashSet<String>,
@@ -209,6 +218,7 @@ impl App {
         commands: Arc<CommandRegistry<App>>,
     ) -> Result<App, Diagnostic> {
         let mut world = world;
+        let compat_config = crate::compat::compat_config(&config)?;
         let graph_inputs = procedural::inputs(&mut world);
         let physics = Physics::new(physics_config(&config), TaskPool::global())?;
         let clock = FixedClock::new(config.sim.fixed_hz, config.sim.max_steps_per_frame);
@@ -244,6 +254,9 @@ impl App {
             link_tried: Default::default(),
             scripts: None,
             scripts_failed: false,
+            compat_config,
+            compat: None,
+            compat_failed: false,
             script_output: Vec::new(),
             script_errors: Default::default(),
             audio: headless_audio(project),
@@ -870,6 +883,7 @@ impl App {
             perf: self.perf_report(),
             screenshots: std::mem::take(&mut self.screenshots),
             output: std::mem::take(&mut self.script_output),
+            compat: self.compat.as_ref().map(|c| c.info()),
         })
     }
 
@@ -926,9 +940,21 @@ impl App {
         }
         self.perf.add(Phase::Input, t.elapsed());
 
-        // PreRender: variable-step script callbacks.
+        // PreRender: variable-step script callbacks (in a compat project,
+        // the server context's, after its remotes are delivered).
         let t = Instant::now();
-        self.run_scripts(Phase::PreRender, frame_time.as_secs_f64());
+        self.ensure_compat();
+        if self.compat.is_some() {
+            let dt = frame_time.as_secs_f64();
+            self.compat_call(ContextKind::Server, |vm, h| {
+                let mut d = re_compat::net::pump(vm, h);
+                d.extend(crate::compat::step_tweens(vm, h, dt));
+                d.extend(vm.pre_render(h, dt));
+                d
+            });
+        } else {
+            self.run_scripts(Phase::PreRender, frame_time.as_secs_f64());
+        }
         self.perf.add(Phase::PreRender, t.elapsed());
 
         // Fixed steps.
@@ -937,6 +963,9 @@ impl App {
         self.contacts.clear();
         for _ in 0..steps.count {
             self.fixed_step();
+        }
+        if self.compat.is_some() {
+            self.compat_client_frame(frame_time.as_secs_f64(), steps.count);
         }
 
         // Sync.
@@ -949,8 +978,16 @@ impl App {
             alpha: self.alpha,
             clear: self.config.render.clear,
         };
-        self.snapshot = render::build(&mut self.world, &inputs);
-        self.hud = hud::collect(&mut self.world);
+        // A compat game shows the local player's world.
+        let shown = match &mut self.compat {
+            Some(c) => {
+                c.client.propagate();
+                &mut c.client
+            }
+            None => &mut self.world,
+        };
+        self.snapshot = render::build(shown, &inputs);
+        self.hud = hud::collect(shown);
         audio::build(&mut self.world, &mut self.audio_sync, &mut self.audio_cmds);
         self.perf.add(Phase::Sync, t.elapsed());
 
@@ -983,6 +1020,10 @@ impl App {
             self.clock.dt_secs(),
             &mut self.diagnostics,
         );
+        if self.compat.is_some() {
+            // The compat clock advances here, then `PreAnimation` fires.
+            self.run_scripts(Phase::PreAnimation, self.clock.dt_secs().into());
+        }
         self.perf.add(Phase::PreAnimation, t.elapsed());
 
         // PreSimulation: fixed-update script callbacks; what they queue reaches
@@ -1387,9 +1428,130 @@ impl App {
     }
 
     fn run_scripts(&mut self, phase: Phase, dt: f64) {
+        if self.compat_config.is_some() {
+            // The server context's fixed-step phases; PreRender is in `frame`.
+            if self.compat.is_some() {
+                self.compat_call(ContextKind::Server, |vm, h| match phase {
+                    Phase::PreAnimation => vm.pre_animation(h, dt),
+                    Phase::PreSimulation => vm.pre_simulation(h, dt),
+                    Phase::PostSimulation => vm.post_simulation(h, dt),
+                    _ => Vec::new(),
+                });
+            }
+            return;
+        }
         if let Some(diags) = self.with_scripts(|s, host| s.run_phase(host, phase, dt)) {
             self.report_script_errors(diags);
         }
+    }
+
+    /// Starts the compat contexts on the first frame of a compat project:
+    /// splits the World, starts both sides' scripts and joins the
+    /// `[compat] players`. A failure is reported once; the game then runs
+    /// without scripts.
+    fn ensure_compat(&mut self) {
+        if self.compat.is_some() || self.compat_failed {
+            return;
+        }
+        let Some(cfg) = self.compat_config.clone() else {
+            return;
+        };
+        let mut clips = std::collections::HashMap::new();
+        for path in cfg.assets.values() {
+            if let Ok(secs) = self.audio.clip_seconds(path) {
+                clips.insert(path.clone(), secs);
+            }
+        }
+        match crate::compat::CompatPlay::new(
+            &self.project,
+            &self.config,
+            &cfg,
+            &mut self.world,
+            clips,
+        ) {
+            Ok(play) => self.compat = Some(play),
+            Err(d) => {
+                self.compat_failed = true;
+                self.diagnostics.push(d);
+                return;
+            }
+        }
+        for kind in [ContextKind::Server, ContextKind::Client] {
+            self.compat_call(kind, |vm, h| crate::compat::start_scripts(vm, h));
+        }
+        for n in 1..=cfg.players {
+            self.compat_call(ContextKind::Server, |vm, h| {
+                crate::compat::add_player(vm, h, n)
+            });
+        }
+    }
+
+    /// Calls `f` with a compat context's VM and a host over its world, then
+    /// keeps and reports the errors and collects the output.
+    fn compat_call(
+        &mut self,
+        kind: ContextKind,
+        f: impl FnOnce(&re_compat::CompatVm, &mut PlayHost<'_>) -> Vec<Diagnostic>,
+    ) {
+        let Some(c) = self.compat.as_mut() else {
+            return;
+        };
+        let (world, vm) = match kind {
+            ContextKind::Client => (&mut c.client, &c.client_vm),
+            _ => (&mut self.world, &c.server_vm),
+        };
+        let mut host = PlayHost {
+            world,
+            services: Host {
+                physics: &self.physics,
+                links: &self.physics_sync,
+                actions: &self.actions,
+                physics_cmds: &mut self.physics_cmds,
+                audio_cmds: &mut self.audio_cmds,
+                pending: &mut self.pending,
+            },
+        };
+        let diags = f(vm, &mut host);
+        let diags = c.keep(kind, diags);
+        let output = c.take_output();
+        self.report_script_errors(diags);
+        for line in output {
+            let text = format!("[{}] {}", line.context.name(), line.text);
+            if line.warn {
+                tracing::warn!(target: "script", "{text}");
+            } else {
+                tracing::info!(target: "script", "{text}");
+            }
+            self.script_output.push(text);
+        }
+    }
+
+    /// The client half of a compat frame, after the server's fixed steps:
+    /// replication, the client's deliveries and phases (one round of fixed
+    /// phases per server step, without physics), then its tweens and sounds.
+    fn compat_client_frame(&mut self, frame_dt: f64, steps: u32) {
+        if let Some(c) = &mut self.compat {
+            c.replicate(&mut self.world);
+        }
+        let step_dt: f64 = self.clock.dt_secs().into();
+        self.compat_call(ContextKind::Client, |vm, h| {
+            let mut d = re_compat::net::pump(vm, h);
+            d.extend(crate::compat::step_tweens(vm, h, frame_dt));
+            d.extend(vm.pre_render(h, frame_dt));
+            for _ in 0..steps {
+                d.extend(vm.pre_animation(h, step_dt));
+                d.extend(vm.pre_simulation(h, step_dt));
+                d.extend(vm.post_simulation(h, step_dt));
+            }
+            d
+        });
+        let mut sounds = Vec::new();
+        self.compat_call(ContextKind::Client, |vm, h| {
+            let (cmds, d) = crate::compat::client_media(vm, h, frame_dt, None);
+            sounds = cmds;
+            d
+        });
+        self.audio_cmds.extend(sounds);
     }
 
     /// Reports script diagnostics, one per code and place until the scripts
@@ -1478,6 +1640,9 @@ impl App {
                 self.audio_sync = AudioSync::new();
                 self.anim_sync = AnimSync::new();
                 self.script_errors.clear();
+                // The compat contexts start again on the next frame.
+                self.compat = None;
+                self.compat_failed = false;
                 if let Some(scripts) = &mut self.scripts
                     && let Err(e) = scripts.reset()
                 {
@@ -1535,6 +1700,14 @@ fn load_world(project: &Path, config: &AppConfig) -> Result<(World, Vec<Diagnost
     })?;
     let mut world = World::new();
     procedural::install(&mut world, project);
+    if config.compat.is_some() {
+        // A compat scene's instances carry the class layer's components.
+        let setup = crate::compat::setup()?;
+        setup
+            .classes
+            .register_components(&mut world)
+            .map_err(|e| fail(format!("the compat classes do not register: {e}")))?;
+    }
     world.load(&doc).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not load")).with_related(e.to_diagnostic())
     })?;

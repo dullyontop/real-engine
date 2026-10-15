@@ -21,6 +21,7 @@
 
 pub mod app;
 pub mod codes;
+pub mod compat;
 pub mod commands;
 pub mod config;
 pub mod gfx;
