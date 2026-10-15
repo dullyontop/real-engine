@@ -379,7 +379,8 @@ This works during play. The M1 demo regenerates the island with a new seed while
 | Surface | For | Built on |
 |---|---|---|
 | `real describe [--json]` | What commands, components, nodes and scripts exist | The command registry plus reflection |
-| `real describe --luau-defs` / `engine.d.luau` | The exact native Luau API, for type checkers, editors and agents | The binding registry in `re_script` |
+| `real describe --luau-defs` / `engine.d.luau` | The exact native Luau API, for type checkers, editors and agents (prints `engine.d.luau`; not combinable with `--json`) | The binding registry in `re_script` |
+| `real check [--types] [--checker PATH] [--corpus] [--scripts-dir DIR…] [--json]` | Compile and scan scripts; `--types` runs the external type checker (without luau-lsp it reports `RE3090` and exits 1); `--corpus` runs the corpus suite over the `--scripts-dir` directories (exit 2 without any); `--scripts-dir` works without a project | `re_script`, `re_script_check` |
 | `real do <command> --args '{json}' [--dry-run]` (tooling build) | One edit from a shell | The registry |
 | `real verify --json` | Is the project healthy? | ADR-0022 |
 | `real explain RE####` | What an error means and how to fix it | Compiled explain pages |
@@ -456,7 +457,7 @@ Annotations are derived from the tier and set explicitly on every tool (ADR-0025
 - **Explain pages.** Each crate has `explain/RE####.md` and exports `pub const DIAGNOSTICS: &[DiagInfo]`, built with `include_str!`. `re_cli` collects all of them. A test fails on a missing page, a duplicate code, or a code outside the crate's range, and `cargo xtask explain` fails on a page that no `include_str!` in the crate's sources references (so every code used in source is in `DIAGNOSTICS`).
 - **Output.** Human output looks like rustc's: `error[RE3004]: ... --> scripts/game/player.luau:12:5`, followed by a hint. `--json` gives the same data as JSON lines.
 - **Panics** are bugs. A panic hook writes a crash report to `.real/crash/` and exits with code 101.
-- **Script errors** carry file, line and traceback. When mlua gives no line (errors raised from Rust, timeouts at the top of a chunk), the line of the first Luau frame in the traceback is used. The duplicated "runtime error:" prefix from mlua is removed. An error in one script callback disconnects nothing and does not stop the frame. It is reported once per distinct location per second.
+- **Script errors** carry file, line and traceback. When mlua gives no line (errors raised from Rust, timeouts at the top of a chunk), the line of the first Luau frame in the traceback is used. The duplicated "runtime error:" prefix from mlua is removed. An error in one script callback disconnects nothing and does not stop the frame. Each distinct code and location is reported once, until the script is reloaded or the game restarts.
 - **Type-check results** from the external checker are parsed into the same `Diagnostic` shape (`RE3xxx`), so the CLI, the editor and agents see one format.
 - **GPU errors** go through `on_uncaptured_error` to `RE6001`, instead of wgpu's default panic.
 

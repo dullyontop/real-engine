@@ -600,8 +600,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Decision.**
 - `real verify [--project DIR] [--json]` runs these stages in order:
   1. schema check of all content files;
-  2. script compile (tier 1);
-  3. static API scan (tier 2, report only; present when `real` is built with `tooling`, otherwise reported as skipped);
+  2. script compile (tier 1; the stage's `data.scripts` counts the scripts compiled);
+  3. static API scan (tier 2; present when `real` is built with `tooling`, otherwise reported as skipped). Its `data` is `{ scripts, covered, missing }`. API gaps are warnings (`RE0903`, "scripts use an API the engine does not provide"), and a script the scan cannot parse is an error;
   4. headless boot;
   5. input replays under `tests/replays/*.replay.json`, with `state_hash` compared across two runs;
   6. golden screenshots under `tests/goldens/<backend>/`;
