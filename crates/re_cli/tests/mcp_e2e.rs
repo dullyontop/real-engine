@@ -246,7 +246,9 @@ fn an_agent_edits_checks_and_restores_the_island() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names.len(), 25, "{names:?}");
+    // The 25 of M1, plus WP17's resource.list, resource.read,
+    // checkpoint.create, compat.coverage, scene.dump_tree and verify.diff.
+    assert_eq!(names.len(), 31, "{names:?}");
     for tool in [
         "entity_spawn",
         "graph_set_param",
@@ -417,6 +419,192 @@ fn an_agent_edits_checks_and_restores_the_island() {
         &again.call(2, "graph_regenerate", json!({ "source": "island" })),
     );
     again.finish();
+}
+
+/// A Luau tool the e2e test adds to the copied demo.
+const MARKERS: &str = r#"
+return {
+    name = "e2e.markers",
+    summary = "Spawn N marker entities named e2e_marker_1 to e2e_marker_N.",
+    input = {
+        type = "object",
+        properties = { count = { type = "integer", minimum = 1, maximum = 10 } },
+        required = { "count" },
+    },
+    output = {
+        type = "object",
+        properties = { placed = { type = "integer" } },
+        required = { "placed" },
+    },
+    run = function(args)
+        for i = 1, args.count do
+            local out = command.run("entity.spawn", { id = `e2e_marker_{i}` })
+            assert(out.ok, out.diagnostics[1] and out.diagnostics[1].message)
+        end
+        return { placed = args.count }
+    end,
+}
+"#;
+
+/// A tool that asks for more than tools may have; it is never registered.
+const WIPE: &str = r#"
+return {
+    name = "e2e.wipe",
+    summary = "Delete things.",
+    tier = "destructive",
+    run = function() end,
+}
+"#;
+
+#[test]
+fn an_agent_uses_luau_tools_resources_and_verify_diff() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("island");
+    copy_project(&island(), &project);
+    let tools = project.join("scripts/tools/commands");
+    std::fs::create_dir_all(&tools).unwrap();
+    std::fs::write(tools.join("markers.luau"), MARKERS).unwrap();
+    std::fs::write(tools.join("wipe.luau"), WIPE).unwrap();
+
+    let mut s = Server::start(&project);
+    let init = s.request(
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "mcp_e2e", "version": "0" }
+        }),
+    );
+    assert!(init["result"]["capabilities"]["resources"].is_object());
+    s.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
+
+    // The Luau tool is listed like any command, with its schemas; the
+    // destructive one is not.
+    let list = s.request(2, "tools/list", json!({}));
+    let tools = list["result"]["tools"].as_array().unwrap();
+    let markers = tools
+        .iter()
+        .find(|t| t["name"] == "e2e_markers")
+        .unwrap_or_else(|| panic!("the Luau tool is not listed: {list}"));
+    assert_eq!(markers["inputSchema"]["required"], json!(["count"]));
+    assert_eq!(
+        markers["outputSchema"]["properties"]["data"]["required"],
+        json!(["placed"])
+    );
+    assert!(tools.iter().all(|t| t["name"] != "e2e_wipe"));
+    // Every tool carries an output schema.
+    for tool in tools {
+        assert_eq!(tool["outputSchema"]["type"], "object", "{}", tool["name"]);
+    }
+
+    // verify.diff before any change: this run is the baseline.
+    let first = ok(
+        "verify_diff",
+        &s.call_within(3, "verify_diff", json!({}), SLOW),
+    );
+    assert_eq!(first["data"]["checkpoint"], "start");
+    assert_eq!(first["data"]["baseline"], "current");
+    assert_eq!(first["data"]["diff"]["changed"], false, "{first}");
+
+    // The Luau tool runs as one undoable transaction.
+    let placed = s.call(4, "e2e_markers", json!({ "count": 3 }));
+    let placed_body = ok("e2e_markers", &placed);
+    assert_eq!(placed["structuredContent"]["data"]["placed"], 3);
+    assert_eq!(placed_body["changes"].as_array().unwrap().len(), 3);
+    ok(
+        "entity_get",
+        &s.call(5, "entity_get", json!({ "id": "e2e_marker_3" })),
+    );
+    // Its arguments are checked against its schema.
+    let bad = s.call(6, "e2e_markers", json!({ "count": 0 }));
+    assert_eq!(bad["isError"], true);
+    assert_eq!(body(&bad)["code"], "RE2005");
+    // A destructive call stays refused: the policy grants `edit`.
+    let refused = s.call(7, "file_delete", json!({ "path": "scripts/game/x.luau" }));
+    assert_eq!(refused["isError"], true);
+    assert_eq!(body(&refused)["code"], "RE8001");
+
+    // verify.diff after the change compares against the stored baseline.
+    let second = ok(
+        "verify_diff",
+        &s.call_within(8, "verify_diff", json!({}), SLOW),
+    );
+    assert_eq!(second["data"]["baseline"], "stored");
+    assert!(second["data"]["diff"]["summary"].is_string());
+    // Other verify options have no stored baseline, and the project is no
+    // longer at the checkpoint: verify runs on a copy restored to it.
+    let rebuilt = ok(
+        "verify_diff",
+        &s.call_within(
+            80,
+            "verify_diff",
+            json!({ "checkpoint": "start", "boot_frames": 2 }),
+            SLOW,
+        ),
+    );
+    assert_eq!(rebuilt["data"]["baseline"], "rebuilt", "{rebuilt}");
+    let session = std::fs::read_dir(project.join(".real/agent/sessions"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(
+        !session.join("baseline-start").exists(),
+        "the copy is removed"
+    );
+    assert!(session.join("checkpoints/start.verify-2.json").is_file());
+
+    // One undo reverts the whole tool.
+    ok("undo", &s.call(9, "undo", json!({})));
+    let gone = s.call(10, "entity_get", json!({ "id": "e2e_marker_1" }));
+    assert_eq!(gone["isError"], true);
+
+    // A resource, read both ways.
+    let page = s.request(
+        11,
+        "resources/read",
+        json!({ "uri": "real://explain/RE8015" }),
+    );
+    let text = page["result"]["contents"][0]["text"].as_str().unwrap();
+    assert!(text.starts_with("# RE8015"), "{text}");
+    let via_tool = ok(
+        "resource_read",
+        &s.call(
+            12,
+            "resource_read",
+            json!({ "uri": "real://docs/ROADMAP.md" }),
+        ),
+    );
+    assert!(
+        via_tool["data"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("AI track")
+    );
+    let listed = s.request(13, "resources/list", json!({}));
+    assert!(
+        listed["result"]["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["uri"] == "real://luau/engine.d.luau")
+    );
+
+    // The coverage table and the entity tree.
+    let cov = ok(
+        "compat_coverage",
+        &s.call(14, "compat_coverage", json!({ "name": "Folder" })),
+    );
+    assert_eq!(cov["data"]["rows"][0]["key"], "Folder");
+    let tree = ok(
+        "scene_dump_tree",
+        &s.call(15, "scene_dump_tree", json!({ "depth": 0 })),
+    );
+    assert!(tree["data"]["nodes"].as_u64().unwrap() > 0);
+
+    s.finish();
 }
 
 #[test]

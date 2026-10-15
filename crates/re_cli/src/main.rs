@@ -290,6 +290,15 @@ fn cmd_describe(project: &Path, json: bool, luau_defs: bool) -> ExitCode {
         Err(d) => return fail(d),
     };
     explain::register(app.commands_mut());
+    // The project's Luau tools are commands too (WP17); load problems go to
+    // stderr so `--json` output stays one document.
+    #[cfg(feature = "tooling")]
+    {
+        let (_tools, problems) = re_agent::luau_tools::register(app.commands_mut(), project);
+        if !problems.is_empty() {
+            eprint!("{}", re_core::render_human_all(&problems));
+        }
+    }
     let outcome = app.dispatch(
         "describe",
         serde_json::Value::Null,

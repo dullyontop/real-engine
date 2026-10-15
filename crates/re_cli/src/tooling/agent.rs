@@ -74,8 +74,8 @@ pub fn run(args: AgentArgs, project: &Path) -> anyhow::Result<ExitCode> {
 
 fn cmd_init(project: &Path, options: InitOptions) -> ExitCode {
     // AGENTS.md lists the commands an agent will see, so open the project.
-    let (app, _agent) = match open_for_agents(project) {
-        Ok(x) => x,
+    let app = match open_for_agents(project) {
+        Ok(x) => x.app,
         Err(d) => return fail(&d),
     };
     // The Codex and Zed snippets name the project by its full path.
@@ -157,7 +157,7 @@ fn cmd_rollback(project: &Path, session: Option<String>, checkpoint: Option<Stri
         Err(d) => return fail(&d),
     };
     let (mut app, agent) = match open_for_agents(project) {
-        Ok(x) => x,
+        Ok(x) => (x.app, x.agent),
         Err(d) => return fail(&d),
     };
     if let Err(d) = agent.resume_session(&session) {

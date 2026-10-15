@@ -16,9 +16,9 @@ grants you.
 
 ## The loop
 
-1. Look first: `describe` lists every component, generator and command;
-   `query` finds entities; `entity.get` shows one; `command.describe` gives a
-   command's full input schema.
+1. Look first: `describe` lists every component, generator, graph node kind,
+   project script and command; `query` finds entities; `entity.get` shows
+   one; `command.describe` gives a command's full input schema.
 2. Preview: every command that changes something accepts `"dry_run": true`
    and returns the operations it would apply, without applying them. Dry runs
    are allowed whatever the tier (budgets still apply).
@@ -28,6 +28,10 @@ grants you.
 4. Check: `verify` runs the project's checks, `screenshot` renders a frame
    (the PNG path is in the result), and `play.run` steps a copy of the game
    for some frames and reports what happened. None of them change the project.
+   `verify.diff` runs verify and lists only what changed since your latest
+   checkpoint: stages that now fail or pass, new or fixed diagnostics, and
+   changed values. Take a checkpoint with `checkpoint.create` when the
+   project is in a state you want to compare against.
 5. If it went wrong: `undo`, or `checkpoint.restore` to return the scene and
    every file you touched to the start of your session. A restore saves the
    state it replaces as a new checkpoint (its id, `saved`, is in the result);
@@ -81,6 +85,31 @@ syntax error nothing is written and the result carries the errors with their
 line. Scripts live under `scripts/`. `checkpoint.restore` returns a script to its
 earlier contents.
 
+## Project tools written in Luau
+
+The project can add its own commands: each script under
+`scripts/tools/commands/` returns a table with a `name`, a `summary`, a
+`tier` (`read` or `edit`), an `input` JSON Schema and a `run(args)` function
+that changes the project through `command.run(...)`. They appear in the tool
+list with the engine's commands, follow the same policy, and each call is one
+undoable transaction. `real explain RE8015` shows the shape. A tool you write
+with `script.write` is listed after the MCP server restarts.
+
+## Reference material
+
+The explain pages, the engine's documents and the Luau definitions
+(`engine.d.luau`) are MCP resources (`real://explain/RE2005`,
+`real://docs/ARCHITECTURE.md`, `real://luau/engine.d.luau`). Without
+resources, `resource.list` and `resource.read` return the same text.
+
+## Roblox-style projects
+
+`compat.coverage` says which Roblox-style classes, members, enums and
+libraries the engine implements (`implemented`, `partial` with the gap,
+`stub-error`, `missing`); ask for one class by `name` to see its inherited
+members. `scene.dump_tree` returns the instance tree with each entity's class,
+attributes and tags.
+
 ## What you may do
 
 `.real/agent-policy.toml` sets the most an agent may do. Every command has a
@@ -106,6 +135,7 @@ The MCP tool of each is its name with `_` for `.` (`entity.spawn` is `entity_spa
 
 | Command | Arguments | What it does |
 |---|---|---|
+| `checkpoint.create` | `label`? | Save the scene and every file the agent session touched as a new checkpoint (it changes nothing in the project). `verify.diff` compares against the latest checkpoint, and `checkpoint.restore` can return to it. |
 | `command.describe` | `name` | Describe one command: summary, tier, input schema and annotations. |
 | `describe` | none | Describe what exists: every component (fields, types, defaults, docs), every generator and every command. |
 | `entity.get` | `id`, `components`? | Read one entity: name, parent, children, generated source and key, components and overrides. |

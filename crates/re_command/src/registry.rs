@@ -94,6 +94,11 @@ pub struct CommandSpec {
     pub input_schema: Json,
     /// Tool annotations.
     pub annotations: CommandAnnotations,
+    /// JSON Schema of the outcome's `data` on success (from schemars), for
+    /// commands registered with [`CommandRegistry::register_typed_output`].
+    /// `None` means the data is not described.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Json>,
 }
 
 /// The result of a dispatch.
@@ -296,6 +301,7 @@ impl<C: EditTarget> CommandRegistry<C> {
             tier,
             input_schema: input_schema::<A>(tier),
             annotations: CommandAnnotations::for_tier(tier, idempotent),
+            output_schema: None,
         };
         let command = name.to_string();
         let handler: Handler<C> = Arc::new(move |target, args, call| {
@@ -317,6 +323,30 @@ impl<C: EditTarget> CommandRegistry<C> {
             handler(target, parsed, call)
         });
         self.register(spec, handler);
+    }
+
+    /// Registers a command like [`CommandRegistry::register_typed`] whose
+    /// result data is described by `O`: its schema becomes the spec's
+    /// [`CommandSpec::output_schema`]. The handler still returns JSON; `O`
+    /// only documents its shape.
+    pub fn register_typed_output<A, O, F>(
+        &mut self,
+        name: &str,
+        summary: &str,
+        tier: Tier,
+        idempotent: bool,
+        handler: F,
+    ) where
+        A: DeserializeOwned + JsonSchema + 'static,
+        O: JsonSchema,
+        F: Fn(&mut C, A, &mut Call) -> Result<Json, Diagnostic> + Send + Sync + 'static,
+    {
+        self.register_typed::<A, F>(name, summary, tier, idempotent, handler);
+        let schema = serde_json::to_value(schemars::schema_for!(O)).unwrap_or(Json::Null);
+        if let Some((spec, _)) = self.commands.get_mut(name) {
+            spec.output_schema = Some(schema);
+        }
+        self.specs = self.commands.values().map(|(s, _)| s.clone()).collect();
     }
 
     /// The spec of the command named `name`.

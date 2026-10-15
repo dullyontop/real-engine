@@ -3,7 +3,9 @@
 
 #![allow(dead_code)]
 
+pub mod datatypes;
 pub mod import;
+pub mod runtime;
 pub mod sha256;
 
 use std::any::Any;
@@ -69,6 +71,8 @@ pub type Step = fn(&mut Ctx, &J) -> Result<(), String>;
 /// The steps, by name. Add one line per step module.
 pub fn step(name: &str) -> Option<Step> {
     import::step(name)
+        .or_else(|| datatypes::step(name))
+        .or_else(|| runtime::step(name))
 }
 
 /// The state a sample's checks share.

@@ -61,6 +61,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "Invalid volume",
         page: include_str!("../explain/RE7404.md"),
     },
+    DiagInfo {
+        code: codes::INVALID_RATE,
+        title: "Invalid playback rate",
+        page: include_str!("../explain/RE7405.md"),
+    },
 ];
 
 #[cfg(test)]

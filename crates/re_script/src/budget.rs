@@ -92,3 +92,14 @@ pub(crate) fn restore(saved: Saved) {
     DEADLINE.with(|d| d.set(saved.deadline));
     TRIPPED.with(|t| t.set(saved.tripped));
 }
+
+/// Runs `f` outside the budget: the deadline moves back by the time `f` took.
+/// For Rust-side work a script asks for that is not script time, such as
+/// compiling a module it requires.
+pub fn untimed<R>(f: impl FnOnce() -> R) -> R {
+    let start = Instant::now();
+    let r = f();
+    let spent = start.elapsed();
+    DEADLINE.with(|d| d.set(d.get().map(|t| t + spent)));
+    r
+}

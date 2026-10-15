@@ -12,6 +12,14 @@
 //!   default policy and each MCP client's configuration;
 //! * [`lock`]: the single-writer project lock (`.real/editor.lock`), used by
 //!   every writer (`real do`, `real mcp`, `real editor`); code `RE8003`;
+//! * [`resources`]: the explain pages, engine documents and Luau definitions
+//!   as read-only resources, with `resource.list` and `resource.read`;
+//! * [`luau_tools`]: commands defined by Luau scripts in the `tools` context
+//!   (`scripts/tools/commands/`), capped at `edit`;
+//! * [`compat`]: `compat.coverage` (the Roblox-style coverage table) and
+//!   `scene.dump_tree` (the instance tree with classes, attributes and tags);
+//! * [`verify_diff`]: which verify results a change altered, for
+//!   `verify.diff`;
 //! * [`remote`]: the editor socket (`.real/editor.sock`): the protocol, the
 //!   server loop the editor hosts and the client that other writers use.
 //!
@@ -25,13 +33,17 @@
 
 pub mod codes;
 pub mod commands;
+pub mod compat;
 mod glob;
 pub mod guard;
 pub mod init;
 pub mod lock;
+pub mod luau_tools;
 pub mod policy;
 pub mod remote;
+pub mod resources;
 pub mod session;
+pub mod verify_diff;
 
 pub use commands::{Agent, register_commands};
 pub use init::generate_agents_md;
@@ -108,6 +120,31 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::FILE_ERROR,
         title: "File command failed",
         page: include_str!("../explain/RE8013.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_RESOURCE,
+        title: "Unknown resource",
+        page: include_str!("../explain/RE8014.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_TOOL,
+        title: "Invalid Luau tool",
+        page: include_str!("../explain/RE8015.md"),
+    },
+    DiagInfo {
+        code: codes::TOOL_FAILED,
+        title: "Luau tool changed the world directly",
+        page: include_str!("../explain/RE8016.md"),
+    },
+    DiagInfo {
+        code: codes::TOOL_OUTPUT,
+        title: "Luau tool output",
+        page: include_str!("../explain/RE8017.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_COMPAT_NAME,
+        title: "Unknown name in the coverage table",
+        page: include_str!("../explain/RE8018.md"),
     },
 ];
 

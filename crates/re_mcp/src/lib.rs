@@ -12,6 +12,15 @@
 //!   `anyOf`/`oneOf`/`allOf`; `format` and `$schema` keywords are removed;
 //!   descriptions start with the command's summary and stay under 4096
 //!   characters; all four annotation hints are set from the tier.
+//! * Every tool has an `outputSchema`: the outcome envelope
+//!   `{ ok, changes, diagnostics, data }`, with `data` described by the
+//!   command's own output schema when it has one. A successful call returns
+//!   that object as `structuredContent` too, and as JSON text for clients
+//!   that read only text.
+//! * Resources: the [`ResourceSet`] in [`McpOptions`] (explain pages, engine
+//!   documents, Luau definitions) is served by `resources/list` and
+//!   `resources/read`. The same items are reachable through the
+//!   `resource.list` and `resource.read` tools.
 //! * A failed command is an `isError` result whose text is JSON:
 //!   `{ "code", "message", "location", "hint", "explain", ... }`. JSON-RPC
 //!   errors are only for protocol problems (an unknown tool is `-32602`).
@@ -30,12 +39,15 @@ mod server;
 
 use std::path::PathBuf;
 
+use std::sync::Arc;
+
+use re_agent::resources::ResourceSet;
 use re_command::EngineHandle;
 use re_core::DiagInfo;
 
 pub use server::{
-    MAX_DESCRIPTION, RealEngineServer, command_name, error_json, sanitize_schema, tool_for,
-    tool_name,
+    MAX_DESCRIPTION, RealEngineServer, command_name, error_json, output_schema, sanitize_schema,
+    tool_for, tool_name,
 };
 
 /// What the server says about itself.
@@ -47,6 +59,8 @@ pub struct McpOptions {
     pub name: String,
     /// The `instructions` sent at initialization (and by `server/discover`).
     pub instructions: String,
+    /// The resources served (none by default).
+    pub resources: Arc<ResourceSet>,
 }
 
 impl McpOptions {
@@ -56,7 +70,14 @@ impl McpOptions {
             project: project.into(),
             name: re_agent::init::SERVER_NAME.to_string(),
             instructions: DEFAULT_INSTRUCTIONS.to_string(),
+            resources: Arc::new(ResourceSet::new()),
         }
+    }
+
+    /// The same options, serving `resources`.
+    pub fn with_resources(mut self, resources: Arc<ResourceSet>) -> McpOptions {
+        self.resources = resources;
+        self
     }
 }
 
@@ -64,7 +85,8 @@ impl McpOptions {
 pub const DEFAULT_INSTRUCTIONS: &str = "Real Engine project tools. Call `describe` first to see components, generators and commands. \
 Every tool that changes the project accepts `dry_run: true` to preview its changes; dry runs are allowed at any tier. \
 Use `scene_apply` for multi-step edits (one atomic, undoable transaction), `verify` and `screenshot` to check your work, \
-and `undo` or `checkpoint_restore` to go back. Wait for a call's result before a call that depends on it. Refused calls (RE8001 tier, RE8002 path, RE8008 budget) changed nothing; \
+`verify_diff` to see what a change altered since the last checkpoint, and `undo` or `checkpoint_restore` to go back. \
+Explain pages, the engine docs and engine.d.luau are resources (or `resource_list` and `resource_read`). Wait for a call's result before a call that depends on it. Refused calls (RE8001 tier, RE8002 path, RE8008 budget) changed nothing; \
 the project's .real/agent-policy.toml decides what agents may do. AGENTS.md in the project explains the operation JSON.";
 
 /// Serves MCP over stdin and stdout until the client closes stdin. Runs its
