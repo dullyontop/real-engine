@@ -113,7 +113,7 @@ pub fn step(world: &mut World, dt: f32) -> Vec<Diagnostic> {
         0.0
     };
     with_sim(world, |sim, w| {
-        sim.sync(w);
+        sim.sync(w, true);
         let movers = constraints::movers(sim, w);
         let mut out = Vec::new();
         if dt > 0.0 {

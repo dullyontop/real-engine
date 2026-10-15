@@ -53,7 +53,7 @@ use re_types::EntityId;
 use re_types::physics::BodyKind;
 
 use super::layout::{Field, Layout};
-use super::pose::{parent_pose, world_pose};
+use super::pose::world_pose;
 use crate::class::ClassMarker;
 use crate::datatypes::PhysicalProperties;
 
@@ -62,6 +62,13 @@ pub const CELL_SIZE: f32 = 128.0;
 
 /// Assembly keys of static cells have this bit set (entity bits never do).
 const CELL_BIT: u64 = 1 << 63;
+
+/// The fastest an assembly is set moving by an impulse, studs/s.
+const MAX_SPEED: f32 = 490.0;
+
+/// The fastest an assembly is set turning by an impulse, rad/s (the
+/// simulation caps turning at about 47).
+const MAX_SPIN: f32 = 46.0;
 
 /// The most collision groups (Default included).
 pub const MAX_GROUPS: usize = 32;
@@ -83,6 +90,8 @@ pub struct PhysicsFeed {
     pub(crate) tree: Vec<Entity>,
     /// Parts whose physical properties changed outside their own component.
     pub(crate) dirty: Vec<Entity>,
+    /// Parts a script moved (`CFrame`, `PivotTo`, ...).
+    pub(crate) moved: Vec<Entity>,
 }
 
 fn on_parented(ev: On<Insert<ChildOf>>, feed: Option<ResMut<PhysicsFeed>>) {
@@ -480,14 +489,27 @@ impl Sim {
     }
 
     /// Brings the physics world up to date with `w`.
-    pub(crate) fn sync(&mut self, w: &mut World) {
+    ///
+    /// A full sync also scans every tracked part, joint and constraint for
+    /// changes (once per frame, before stepping). Without it, only what the
+    /// feed names is seen (parts added, removed, moved through the part
+    /// members, or given custom physical properties): enough for the queries
+    /// scripts make between frames.
+    pub(crate) fn sync(&mut self, w: &mut World, full: bool) {
         let this = w.ecs.change_tick();
-        let (tree, dirty) = w
+        let (tree, dirty, moved) = w
             .ecs
             .get_resource_mut::<PhysicsFeed>()
-            .map(|mut f| (std::mem::take(&mut f.tree), std::mem::take(&mut f.dirty)))
+            .map(|mut f| {
+                (
+                    std::mem::take(&mut f.tree),
+                    std::mem::take(&mut f.dirty),
+                    std::mem::take(&mut f.moved),
+                )
+            })
             .unwrap_or_default();
-        if !self.started {
+        let initial = !self.started;
+        if initial {
             self.started = true;
             let all = crate::instance::tree::descendants(w, self.workspace);
             self.examine(w, &all, true);
@@ -514,10 +536,19 @@ impl Sim {
                 self.dirty.insert(e);
             }
         }
-        if let Some(last) = self.last_tick {
-            self.detect_changes(w, last, this);
+        // On the first sync every part is placed where it is; earlier moves
+        // do not count (they would take anchored parts out of their cells).
+        for e in moved {
+            if !initial && self.parts.contains_key(&e) {
+                self.moved.insert(e);
+            }
         }
-        self.last_tick = Some(this);
+        if full {
+            if let Some(last) = self.last_tick {
+                self.detect_changes(w, last, this);
+            }
+            self.last_tick = Some(this);
+        }
         if !self.groups_applied {
             self.physics.set_collision_groups(self.groups.table.clone());
             self.groups_applied = true;
@@ -533,7 +564,9 @@ impl Sim {
             }
         }
         // Writes after this sync carry a later tick than `this`.
-        w.ecs.increment_change_tick();
+        if full {
+            w.ecs.increment_change_tick();
+        }
     }
 
     /// Looks at `list` (tree changes, or the whole workspace at the start):
@@ -724,7 +757,7 @@ impl Sim {
                 .is_some_and(|t| t.is_changed(last, this))
         };
         let mut props = Vec::new();
-        for (&e, _) in self.parts.iter() {
+        for &e in self.parts.keys() {
             if changed(e, ids.base_part) || ids.part.is_some_and(|p| changed(e, p)) {
                 props.push(e);
             }
@@ -932,6 +965,7 @@ impl Sim {
         };
         let inv_root = root_pose.inverse();
         let mut descs = Vec::with_capacity(comp.len());
+        let mut joint_moved = Vec::new();
         for &e in comp {
             let local = inv_root.mul(&placed[&e]);
             let local = Pose::new(local.pos, local.rot.normalize());
@@ -946,10 +980,11 @@ impl Sim {
                 if (now.pos - want.pos).length_squared() > 1e-10
                     || now.rot.angle_between(want.rot) > 1e-5
                 {
-                    write_pose(w, e, want, &self.parts);
+                    joint_moved.push((e, want));
                 }
             }
         }
+        write_world_poses(w, &joint_moved);
         let (linear, angular) = carried.get(&root).copied().unwrap_or_default();
         let key = key_of(root);
         let desc = AssemblyDesc {
@@ -1155,14 +1190,13 @@ impl Sim {
                 continue;
             }
             // The other members follow.
-            let members = asm.members.clone();
-            for m in members {
-                if m == mover {
-                    continue;
-                }
-                let want = pose.mul(&self.parts[&m].local);
-                write_pose(w, m, want, &self.parts);
-            }
+            let follow: Vec<(Entity, Pose)> = asm
+                .members
+                .iter()
+                .filter(|m| **m != mover)
+                .map(|m| (*m, pose.mul(&self.parts[m].local)))
+                .collect();
+            write_world_poses(w, &follow);
         }
     }
 
@@ -1226,6 +1260,7 @@ impl Sim {
             if let Some(key) = self.parts.get(&e).and_then(|r| r.asm)
                 && let Some(info) = self.physics.assembly(key)
             {
+                let v = v.clamp_length_max(MAX_SPEED);
                 let _ = self.physics.set_assembly_velocity(key, v, info.angular);
             }
         }
@@ -1233,6 +1268,7 @@ impl Sim {
             if let Some(key) = self.parts.get(&e).and_then(|r| r.asm)
                 && let Some(info) = self.physics.assembly(key)
             {
+                let v = v.clamp_length_max(MAX_SPIN);
                 let _ = self.physics.set_assembly_velocity(key, info.linear, v);
             }
         }
@@ -1240,11 +1276,48 @@ impl Sim {
             let Some(key) = self.parts.get(&e).and_then(|r| r.asm) else {
                 continue;
             };
-            let _ = match imp {
+            let res = match imp {
                 Impulse::Linear(i) => self.physics.apply_assembly_impulse(key, i, None),
                 Impulse::AtPoint(i, at) => self.physics.apply_assembly_impulse(key, i, Some(at)),
                 Impulse::Angular(i) => self.physics.apply_assembly_angular_impulse(key, i),
             };
+            if res.is_err() {
+                // Too big a change for one step: apply it as a velocity
+                // change, capped at the fastest the simulation allows.
+                self.impulse_as_velocity(key, imp);
+            }
+        }
+    }
+
+    fn impulse_as_velocity(&mut self, key: EntityId, imp: Impulse) {
+        let Some(info) = self.physics.assembly(key) else {
+            return;
+        };
+        if info.kind != BodyKind::Dynamic || info.mass <= 0.0 {
+            return;
+        }
+        let inv_i = if info.inertia.determinant().abs() > 1e-12 {
+            info.inertia.inverse()
+        } else {
+            glam::Mat3::ZERO
+        };
+        let (dv, dw) = match imp {
+            Impulse::Linear(i) => (i / info.mass, Vec3::ZERO),
+            Impulse::AtPoint(i, at) => (i / info.mass, inv_i * (at - info.center_of_mass).cross(i)),
+            Impulse::Angular(i) => (Vec3::ZERO, inv_i * i),
+        };
+        let cap = |v: Vec3, max: f32| {
+            let l = v.length();
+            if l > max && l.is_finite() {
+                v * (max / l)
+            } else {
+                v
+            }
+        };
+        let lin = cap(info.linear + dv, MAX_SPEED);
+        let ang = cap(info.angular + dw, MAX_SPIN);
+        if lin.is_finite() && ang.is_finite() {
+            let _ = self.physics.set_assembly_velocity(key, lin, ang);
         }
     }
 
@@ -1258,6 +1331,7 @@ impl Sim {
             .fallen_height
             .map(|f| f.f32(w, self.workspace, -500.0))
             .unwrap_or(-500.0);
+        let mut targets = Vec::new();
         for (key, pose) in &moved {
             let Some(asm) = self.assemblies.get(key) else {
                 continue;
@@ -1270,12 +1344,13 @@ impl Sim {
                     continue;
                 };
                 let world = pose.mul(&rec.local);
-                write_physics_pose(w, m, world, &self.parts, &self.assemblies, &moved);
+                targets.push((m, world));
                 if asm.kind == BodyKind::Dynamic && world.pos.y < fallen_height {
                     self.fallen.push(m);
                 }
             }
         }
+        write_world_poses(w, &targets);
         self.moved_asm = moved;
         for ev in self.physics.take_part_events() {
             let (a, b, began) = match ev {
@@ -1392,42 +1467,55 @@ impl Sim {
     }
 }
 
-/// Writes a part's world pose after a script-side change (joint placement,
-/// teleport of an assembly): `Transform` without change detection, so the
-/// next sync does not take it for a script move, and `GlobalTransform`.
-fn write_pose(w: &mut World, e: Entity, world: Pose, parts: &HashMap<Entity, PartRec>) {
-    let _ = parts;
-    let parent = parent_pose(w, e);
-    set_pose_raw(w, e, world, parent);
-}
-
-/// Writes a part's world pose after a physics step. A parent that is a part
-/// moved this step too is read at its new pose.
-fn write_physics_pose(
-    w: &mut World,
-    e: Entity,
-    world: Pose,
-    parts: &HashMap<Entity, PartRec>,
-    assemblies: &HashMap<EntityId, AsmRec>,
-    moved: &[(EntityId, Pose)],
-) {
-    let parent = match w.ecs.get::<ChildOf>(e).map(|c| c.parent()) {
-        Some(p) if w.ecs.get::<Transform>(p).is_some() => {
-            // A parent part on the move: its pose this step.
-            match parts.get(&p).and_then(|r| r.asm.map(|k| (k, r.local))) {
-                Some((k, local)) if assemblies.get(&k).is_some_and(|a| a.cell.is_none()) => {
-                    match moved.iter().find(|(mk, _)| *mk == k) {
-                        Some((_, ap)) => ap.mul(&local),
-                        None => world_pose(w, p).unwrap_or(Pose::IDENTITY),
-                    }
-                }
-                _ => world_pose(w, p).unwrap_or(Pose::IDENTITY),
+/// Puts each entity of `targets` at its world pose, without change detection
+/// (so the next sync does not take it for a script move), and updates
+/// `GlobalTransform`. A part's `CFrame` is in the world whatever its parent,
+/// so the other children with a `Transform` of a moved entity keep their
+/// world poses. Parents are written before children.
+pub(crate) fn write_world_poses(w: &mut World, targets: &[(Entity, Pose)]) {
+    if targets.is_empty() {
+        return;
+    }
+    let mut want: HashMap<Entity, Pose> = targets.iter().copied().collect();
+    for &(e, _) in targets {
+        for k in re_scene::hierarchy::children(&w.ecs, e).to_vec() {
+            if w.ecs.get::<Transform>(k).is_some()
+                && !want.contains_key(&k)
+                && let Some(p) = world_pose(w, k)
+            {
+                want.insert(k, p);
             }
         }
-        Some(_) => parent_pose(w, e),
-        None => Pose::IDENTITY,
+    }
+    let depth = |e: Entity| {
+        let mut d = 0usize;
+        let mut cur = e;
+        while let Some(c) = w.ecs.get::<ChildOf>(cur) {
+            cur = c.parent();
+            d += 1;
+        }
+        d
     };
-    set_pose_raw(w, e, world, parent);
+    let mut order: Vec<(usize, Entity, Pose)> =
+        want.iter().map(|(e, p)| (depth(*e), *e, *p)).collect();
+    order.sort_unstable_by_key(|(d, e, _)| (*d, *e));
+    for (_, e, world) in order {
+        // The nearest ancestor with a Transform, at its new pose if it moved.
+        let mut cur = e;
+        let mut parent = Pose::IDENTITY;
+        while let Some(c) = w.ecs.get::<ChildOf>(cur) {
+            cur = c.parent();
+            if w.ecs.get::<Transform>(cur).is_some() {
+                parent = want
+                    .get(&cur)
+                    .copied()
+                    .or_else(|| world_pose(w, cur))
+                    .unwrap_or(Pose::IDENTITY);
+                break;
+            }
+        }
+        set_pose_raw(w, e, world, parent);
+    }
 }
 
 fn set_pose_raw(w: &mut World, e: Entity, world: Pose, parent: Pose) {
@@ -1443,16 +1531,5 @@ fn set_pose_raw(w: &mut World, e: Entity, world: Pose, parent: Pose) {
     let g = Affine3A::from_scale_rotation_translation(scale, world.rot.normalize(), world.pos);
     if let Some(mut gt) = w.ecs.get_mut::<GlobalTransform>(e) {
         gt.set_if_neq(GlobalTransform(g));
-    }
-    // Children with a Transform that are not parts follow (attachments carry
-    // none; lights, cameras and the like might).
-    let kids: Vec<Entity> = re_scene::hierarchy::children(&w.ecs, e).to_vec();
-    for k in kids {
-        if w.ecs.get::<Transform>(k).is_some() && w.ecs.get::<ClassMarker>(k).is_none() {
-            let lt = w.ecs.get::<Transform>(k).expect("checked").clone();
-            if let Some(mut gt) = w.ecs.get_mut::<GlobalTransform>(k) {
-                gt.set_if_neq(GlobalTransform(g * lt.affine()));
-            }
-        }
     }
 }

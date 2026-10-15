@@ -676,7 +676,7 @@ fn get_mass(lua: &Lua, e: Entity, a: MultiValue) -> mlua::Result<MultiValue> {
 fn synced<R>(lua: &Lua, f: impl FnOnce(&mut Sim, &mut World) -> R) -> mlua::Result<Option<R>> {
     with_world(lua, |w| {
         with_sim(w, |sim, w| {
-            sim.sync(w);
+            sim.sync(w, false);
             f(sim, w)
         })
     })

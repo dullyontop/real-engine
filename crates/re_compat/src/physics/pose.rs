@@ -52,12 +52,26 @@ pub fn set_world_pose(w: &mut World, e: Entity, pose: Pose) -> Result<(), Compat
             message: "the frame is not finite".into(),
         });
     }
-    let local = parent_pose(w, e).inverse().mul(&pose);
-    let Some(mut t) = w.ecs.get_mut::<Transform>(e) else {
+    if w.ecs.get::<Transform>(e).is_none() {
         return Err(CompatError::Scene("the instance has no Transform".into()));
-    };
-    t.translation = local.pos;
-    t.rotation = local.rot.normalize();
+    }
+    // Children with a frame keep theirs: a part's CFrame is in the world.
+    let kids: Vec<(Entity, Pose)> = re_scene::hierarchy::children(&w.ecs, e)
+        .to_vec()
+        .into_iter()
+        .filter_map(|k| world_pose(w, k).map(|p| (k, p)))
+        .collect();
+    let local = parent_pose(w, e).inverse().mul(&pose);
+    if let Some(mut t) = w.ecs.get_mut::<Transform>(e) {
+        t.translation = local.pos;
+        t.rotation = local.rot.normalize();
+    }
+    if !kids.is_empty() {
+        super::sim::write_world_poses(w, &kids);
+    }
+    if let Some(mut f) = w.ecs.get_resource_mut::<super::sim::PhysicsFeed>() {
+        f.moved.push(e);
+    }
     Ok(())
 }
 
