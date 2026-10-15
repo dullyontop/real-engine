@@ -92,6 +92,17 @@ Used only inside `re_geom::polygon`, never in its public types (ADR-0043). Pinne
 
 `libm` 0.2.16 and `num-traits` 0.2.19, which these pull, are already in the lockfile.
 
+### Package archive (M3, runtime)
+
+Used by `re_app::package` to read and write `game.rpak` (ADR-0037). With `default-features = false` it builds the bundled libzstd with `cc` (no pkg-config, no system library) and drops the legacy decoders and the dictionary builder. Checked against crates.io on 2026-10-15.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| zstd | 0.14.2 | BSD-3-Clause | 1.64 | per-entry and index compression in `game.rpak` | `default-features = false` | WP19 measurements (decode 400–700 MB/s at levels 3–9; `ldd` shows only libc and libgcc_s) | Verified (probe); lands with WP19 PR "archive" |
+| zstd-safe, zstd-sys | 8.1.0, 2.1.1+zstd.1.5.7 | BSD-3-Clause | ≤ 1.64 | zstd's bindings and the vendored C library | defaults of `zstd` | WP19 measurements | Verified (probe); transitive |
+
+blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile; `re_cli` takes `image` and `windows-sys` as direct dependencies in WP19's PRs.
+
 ### Editor node canvas and docking (M3, tooling only)
 
 Used only by `re_editor`, a tooling crate, so the runtime-only binary does not link them (ADR-0044, ADR-0027). Pinned exactly; an egui-snarl upgrade re-checks its list of direct edits (ADR-0044). Checked against crates.io on 2026-10-15. With them the lockfile gains three transitive crates, all MIT OR Apache-2.0 and none a new duplicate: egui-scale 0.6.1, duplicate 2.0.1 and proc-macro2-diagnostics 0.10.1. ahash, slab, smallvec, paste, heck and thiserror 2 are already in the lockfile. Gizmos are our own code; transform-gizmo-egui is not used (ADR-0044).
@@ -218,7 +229,7 @@ Never accepted: a second `wgpu`, `winit`, `egui` or `mlua` version, or a second 
 | egui_dock 0.21.1 | egui panels are enough for editor-lite. Taken in M3 (ADR-0044). |
 | transform-gizmo-egui 0.11.0 | Gizmos are cut from M1. It also needs Rust 1.96 and pulls glam 0.32; M3 writes its own gizmos (ADR-0044). |
 | i_overlay 9.1.0 | Deferred. Published on 2026-10-14, the day we checked, and not needed until polygon boolean nodes (M3). |
-| meshopt 0.6.2, spade, manifold3d, egui-snarl, zstd, libm | Not needed in M1. egui-snarl is taken in M3 (ADR-0044). |
+| meshopt 0.6.2, spade, manifold3d, egui-snarl, zstd, libm | Not needed in M1. egui-snarl (ADR-0044) and zstd (ADR-0037) are taken in M3. |
 | hecs 0.11.2, sparsey 0.13.4, shipyard 0.11.5, flecs_ecs 0.2.2 | Entity storage alternatives measured by the core spike; rejected in ADR-0005 (no hierarchy, hooks or per-component change ticks in hecs and sparsey; no hierarchy in shipyard; flecs is C and segfaulted from safe Rust) |
 | bevy_reflect 0.20.0 (bevy_ecs's default `bevy_reflect` feature) | Reflecting glam types needs bevy_reflect's optional `glam` feature, which ties it to glam 0.33.x (0.33.12 resolved; bevy_ecs's `bevy_reflect` feature does not turn it on by itself); no f64 → f32 coercion, `ReflectComponent::apply` panics on a type mismatch; rejected in ADR-0032 |
 | ron 0.12.2 | Scene format runner-up; its `deserialize_any` path is quadratic (ADR-0016). Used only in the core spike. |
