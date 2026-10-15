@@ -381,7 +381,7 @@ This works during play. The M1 demo regenerates the island with a new seed while
 | `real describe [--json]` | What commands, components, nodes and scripts exist | The command registry plus reflection |
 | `real describe --luau-defs` / `engine.d.luau` | The exact native Luau API, for type checkers, editors and agents (prints `engine.d.luau`; not combinable with `--json`) | The binding registry in `re_script` |
 | `real check [--types] [--checker PATH] [--corpus] [--scripts-dir DIR…] [--json]` | Compile and scan scripts; `--types` runs the external type checker (without luau-lsp it reports `RE3090` and exits 1); `--corpus` runs the corpus suite over the `--scripts-dir` directories (exit 2 without any); `--scripts-dir` works without a project | `re_script`, `re_script_check` |
-| `real do <command> --args '{json}' [--dry-run]` (tooling build) | One edit from a shell | The registry |
+| `real do <command> [--args '{json}'] [--dry-run] [--json]` (tooling build) | One edit from a shell. It sends the command to the editor if one is running; otherwise it takes the headless lock for the command's duration and saves the scene unless `--dry-run`. `--json` prints the `CommandOutcome` plus `via` (`"local"`, `"editor"`, or `null` when the project was never reached). Exit 0 on success, 1 when the command fails, the project is unreachable or the scene save fails (`RE0518`), 2 when `--args` is not a JSON object | The registry |
 | `real verify --json` | Is the project healthy? | ADR-0022 |
 | `real explain RE####` | What an error means and how to fix it | Compiled explain pages |
 | `real mcp` | MCP clients (Claude Code, Codex, VS Code, Cursor, Gemini CLI, Zed and others) | `re_mcp` → `EngineHandle` → the registry |
