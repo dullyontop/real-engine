@@ -523,3 +523,17 @@ fn aliases_must_name_registered_fields() {
     // Nothing was registered.
     assert!(w.registry.try_key("ClassMarker").is_none());
 }
+
+#[test]
+fn a_scene_with_host_components_fails_loudly_without_them() {
+    let r = test_registry();
+    let mut w = World::new();
+    block(&mut w, &r);
+    let doc = w.save(re_scene::SaveOptions::default());
+    // A world that never registered the class layer cannot guess the schemas.
+    let err = World::new().load(&doc).unwrap_err();
+    assert!(
+        err.to_string().contains("ClassMarker") || err.to_string().contains("Compat_"),
+        "{err}"
+    );
+}
