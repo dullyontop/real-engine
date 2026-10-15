@@ -49,6 +49,8 @@ fn new_then_run_verify_and_describe() {
     assert_eq!(report["ok"], true);
     assert_eq!(report["stages"].as_array().unwrap().len(), 7);
 
+    std::fs::create_dir_all(game.join("scripts")).unwrap();
+    std::fs::write(game.join("scripts/hello.luau"), "print(\"hi\")\n").unwrap();
     let o = real(&["describe", "--json"], &game);
     assert!(o.status.success(), "{}", text(&o));
     let d: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
@@ -61,6 +63,17 @@ fn new_then_run_verify_and_describe() {
     assert!(commands.contains(&"verify"));
     assert!(commands.contains(&"explain"));
     assert!(commands.contains(&"entity.spawn"));
+    let nodes: Vec<&str> = d["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["kind"].as_str().unwrap())
+        .collect();
+    assert!(nodes.contains(&"terrain.heightfield"), "{nodes:?}");
+    assert_eq!(
+        d["scripts"],
+        serde_json::json!([{ "path": "scripts/hello.luau" }])
+    );
 
     // `new` refuses to overwrite.
     let o = real(&["new", "game"], dir.path());

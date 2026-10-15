@@ -6,6 +6,8 @@
 //! * `CLAUDE.md`: `@AGENTS.md`, so Claude Code reads the same file;
 //! * `.real/agent-policy.toml`: [`Policy::init_default`] (`edit` within the
 //!   default scopes; committing it is the opt-in);
+//! * `.real/types/engine.d.luau`: the engine's Luau API
+//!   ([`re_script::write_definitions`]), for luau-lsp and agents;
 //! * client configs, each in its client's own format, all naming the server
 //!   `real-engine`: `.mcp.json` (Claude Code, `mcpServers`),
 //!   `.vscode/mcp.json` (VS Code, `servers` with `type`), `.cursor/mcp.json`
@@ -312,6 +314,17 @@ pub fn init(
             write(project, "CLAUDE.md", "@AGENTS.md\n")?;
             report.written.push("CLAUDE.md".to_string());
         }
+    }
+
+    // The engine API for luau-lsp and agents (not meant to be committed: it
+    // follows the engine build, not the project). Like `real check --types`,
+    // a failure here does not stop the rest.
+    match re_script::write_definitions(project) {
+        Ok(_) => report.written.push(re_script::DEFINITIONS_PATH.to_string()),
+        Err(e) => report.kept.push((
+            re_script::DEFINITIONS_PATH.to_string(),
+            format!("it cannot be written ({e}); `real describe --luau-defs` prints it"),
+        )),
     }
 
     for config in client_configs(&options.program) {

@@ -103,7 +103,7 @@ The MCP tool of each is its name with `_` for `.` (`entity.spawn` is `entity_spa
 | Command | Arguments | What it does |
 |---|---|---|
 | `command.describe` | `name` | Describe one command: summary, tier, input schema and annotations. |
-| `describe` | none | Describe what exists: every component (fields, types, defaults, docs), every generator and every command. |
+| `describe` | none | Describe what exists: every component (fields, types, defaults, docs), every generator, every procedural node kind, the project's scripts and every command. |
 | `entity.get` | `id`, `components`? | Read one entity: name, parent, children, generated source and key, components and overrides. |
 | `explain` | `code` | Explain a diagnostic code (RE####): what it means, an example and how to fix it. |
 | `graph.generate` | `source`, `seed`?, `params`?, `max_ms`?, `max_entities`? | Try a seed or parameters on a copy of the world, within a budget, and report the result; changes nothing. |
