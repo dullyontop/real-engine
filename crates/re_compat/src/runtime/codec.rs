@@ -168,7 +168,7 @@ impl ValueCodec {
             Value::Str(s) | Value::Enum(s) => LuaValue::String(lua.create_string(&s)?),
             Value::Vec3(v) => LuaValue::Vector(mlua::Vector::new(v.x, v.y, v.z)),
             Value::Entity(None) => LuaValue::Nil,
-            Value::Entity(Some(e)) => instance::push(lua, e)?,
+            Value::Entity(Some(e)) => instance::push_ref(lua, e)?,
             Value::Color(c) => match self.to_lua.get("Color3") {
                 Some(hook) => hook(lua, &Value::Color(c))?,
                 None => {
