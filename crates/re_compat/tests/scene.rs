@@ -261,6 +261,28 @@ fn compat_config_reads_and_writes_the_section() {
 }
 
 #[test]
+fn compat_config_round_trips_the_session_values() {
+    // An existing section without the new keys writes back unchanged.
+    let toml = std::fs::read_to_string(Path::new(PLACE).join("real.toml")).unwrap();
+    let doc: toml::Table = toml.parse().unwrap();
+    let cfg = CompatConfig::from_project_toml(&toml).unwrap().unwrap();
+    assert_eq!(cfg.game, re_compat::scene::GameInfo::default());
+    assert_eq!(cfg.seed, 0);
+    let section: toml::Table = cfg.to_toml().parse().unwrap();
+    assert_eq!(section["compat"], doc["compat"]);
+    // Non-default values survive a write and a read.
+    let text = "[compat]\napi = \"roblox\"\nseed = 7\n\n[compat.game]\nplace_id = 42\n\
+                game_id = 0\ncreator_id = 0\njob_id = \"job\"\nprivate_server_id = \"\"\n\
+                private_server_owner_id = 0\nstudio = false\n";
+    let cfg = CompatConfig::from_project_toml(text).unwrap().unwrap();
+    assert_eq!(cfg.seed, 7);
+    assert_eq!(cfg.game.place_id, 42);
+    assert!(!cfg.game.studio);
+    assert_eq!(cfg.to_toml(), text);
+    assert_eq!(CompatConfig::from_project_toml(&cfg.to_toml()).unwrap().unwrap(), cfg);
+}
+
+#[test]
 fn instance_doc_lists_the_class_components() {
     let r = test_registry();
     let d = scene::instance_doc(&r, "Workspace", "Workspace", "Workspace", Some("game")).unwrap();

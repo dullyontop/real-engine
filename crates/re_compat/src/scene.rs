@@ -280,12 +280,16 @@ pub struct CompatConfig {
     pub signal_behavior: crate::signal::SignalBehavior,
     /// What `game` and `RunService` report about the session
     /// (`[compat.game]`); Studio-like by default.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "GameInfo::is_default")]
     pub game: GameInfo,
     /// Seeds `Random.new()` called without a seed (the client context uses
     /// `seed + 1`), so runs repeat.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub seed: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// The `[compat.game]` section: the values scripts read from `game`
@@ -321,6 +325,13 @@ impl Default for GameInfo {
             private_server_owner_id: 0,
             studio: true,
         }
+    }
+}
+
+impl GameInfo {
+    /// True for the Studio-like defaults, which `real.toml` leaves out.
+    pub fn is_default(&self) -> bool {
+        *self == GameInfo::default()
     }
 }
 

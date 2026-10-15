@@ -94,10 +94,10 @@ impl Bindings {
         let mut b = Bindings::new(ClassRegistryBuilder::builtin()?);
         crate::instance::register(&mut b);
         crate::services::core::register(&mut b);
+        crate::datatypes::register(&mut b);
         scripts::register(&mut b);
         session::register(&mut b);
         globals::register(&mut b);
-        datatype_codec(&mut b.codec);
         Ok(b)
     }
 
@@ -144,48 +144,6 @@ impl Bindings {
     pub fn global(&mut self, name: &str, f: Arc<GlobalFn>) {
         self.globals.push((name.to_string(), f));
     }
-}
-
-/// The datatypes whose stored form [`crate::datatypes`] converts.
-const DATATYPES: &[&str] = &[
-    "Color3",
-    "CFrame",
-    "Vector2",
-    "UDim",
-    "UDim2",
-    "Rect",
-    "Font",
-    "NumberRange",
-    "NumberSequence",
-    "NumberSequenceKeypoint",
-    "ColorSequence",
-    "ColorSequenceKeypoint",
-    "PhysicalProperties",
-];
-
-/// Hooks the datatypes and enum items into the codec: their userdata store
-/// as their values, and stored values read back as userdata.
-fn datatype_codec(codec: &mut ValueCodec) {
-    use crate::enums::EnumItem;
-    codec.add_from_userdata(Arc::new(|lua, ud| {
-        crate::datatypes::userdata_to_value(lua, ud)
-    }));
-    for ty in DATATYPES {
-        codec.set_to_lua(
-            ty,
-            Arc::new(move |lua, v| crate::datatypes::to_lua(lua, ty, v.clone())),
-        );
-    }
-    codec.set_enum_to_lua(Arc::new(|lua, ty, item| match EnumItem::lookup(ty, item) {
-        Some(i) => i.to_lua(lua),
-        None => Ok(LuaValue::String(lua.create_string(item)?)),
-    }));
-    codec.set_enum_from_lua(Arc::new(|_, ty, v| {
-        if !crate::enums::enum_names().any(|n| n == ty) {
-            return Ok(None);
-        }
-        EnumItem::coerce(v, ty).map(|i| Some(i.name().to_string()))
-    }));
 }
 
 /// The class registry and the bindings, built once and shared by every VM.
