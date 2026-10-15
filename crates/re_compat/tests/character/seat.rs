@@ -247,3 +247,74 @@ fn a_character_that_falls_into_the_void_dies() {
     assert_eq!(p.out(), ["died", "0 0"]);
     assert_eq!(controllers(&mut p), 0);
 }
+
+#[test]
+fn the_default_camera_stops_following_a_character_that_fell_out() {
+    let mut p = character_place(ContextKind::Client);
+    p.character("R15", "Dummy", 0.0, 0.0);
+    // The default PlayerModule, with the dummy standing in for the local
+    // player's character. Its camera runs in every frame's render step, and
+    // a frame fails the test on any error it raises.
+    let source = re_compat::humanoid::scripts::DEFAULT_SCRIPTS
+        .iter()
+        .find(|s| s.name == "PlayerModule")
+        .unwrap()
+        .source
+        .replace(
+            "local player = Players.LocalPlayer",
+            "local player = { Character = workspace.Dummy }",
+        )
+        .replace("return PlayerModule.new()", "PlayerModule.new()");
+    p.run(&source);
+    p.frames(30);
+    p.run("print(workspace.CurrentCamera.CameraSubject.Name)");
+    p.run("workspace.Dummy:PivotTo(CFrame.new(0, -600, 0))");
+    p.frames(3);
+    p.run("print(workspace.Dummy.Humanoid.RootPart)");
+    p.frames(3);
+    assert_eq!(p.out(), ["Humanoid", "nil"]);
+}
+
+#[test]
+fn a_starter_character_with_no_rig_gets_the_r6_rig() {
+    let mut p = character_place(ContextKind::Server);
+    p.run(
+        "local sc = Instance.new('Model')
+         sc.Name = 'StarterCharacter'
+         local animate = Instance.new('LocalScript')
+         animate.Name = 'Animate'
+         animate.Parent = sc
+         sc.Parent = game:GetService('StarterPlayer')",
+    );
+    let classes = p.setup.classes.clone();
+    let game = p.game;
+    assert!(
+        re_compat::humanoid::rig::fill_starter_character(&mut p.world, &classes, game).unwrap()
+    );
+    // A second call finds the Humanoid and leaves the model alone.
+    assert!(
+        !re_compat::humanoid::rig::fill_starter_character(&mut p.world, &classes, game).unwrap()
+    );
+    p.run(
+        "local sc = game.StarterPlayer.StarterCharacter
+         print(sc.Humanoid.RigType.Name, sc:FindFirstChild('Torso') ~= nil, sc:FindFirstChild('Animate') ~= nil, sc.PrimaryPart.Name)",
+    );
+    // A template outside the Workspace is not simulated: it stays put.
+    p.frames(30);
+    let root = p.find(&["StarterPlayer", "StarterCharacter", "HumanoidRootPart"]);
+    let y = p.cframe(root, "CFrame").p[1];
+    assert_eq!(controllers(&mut p), 0);
+    assert_eq!(p.out(), ["R6 true true HumanoidRootPart"]);
+    assert!(y > 0.0, "the template fell to {y}");
+}
+
+#[test]
+fn a_long_fall_stays_within_the_physics_speed_limit() {
+    let mut p = settled("R15");
+    // From 1,000 studs a fall reaches about 625 studs/s, past the physics
+    // limit of 500; a frame fails the test on any physics diagnostic.
+    p.run("workspace.Dummy:PivotTo(CFrame.new(0, 1000, 0))");
+    p.frames(240);
+    p.run("print(workspace.Dummy.Humanoid.Health > 0, workspace.Dummy.HumanoidRootPart.Position.Y < 10)");
+    assert_eq!(p.out(), ["true true"]);
+}

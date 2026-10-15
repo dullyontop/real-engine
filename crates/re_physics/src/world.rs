@@ -260,6 +260,11 @@ fn collision_layers(table: &LayerTable) -> CollisionLayers {
     layers
 }
 
+/// The fastest a character moves: a little under Jolt's
+/// [`oxijolt::limits::MAX_LINEAR_VELOCITY`], so a clamped velocity's rounding
+/// stays inside it.
+const TERMINAL_SPEED: f32 = 0.98 * oxijolt::limits::MAX_LINEAR_VELOCITY;
+
 /// How far from the simulation origin, per axis, a body may be (Jolt's
 /// limit for single precision), in studs.
 #[allow(clippy::unnecessary_cast)]
@@ -991,6 +996,9 @@ impl Physics {
             };
             new_velocity += gravity * dt;
             new_velocity += desired - up * desired.dot(up);
+            // Jolt refuses a faster character; a long fall stops speeding up
+            // a little below that (a terminal velocity).
+            new_velocity = new_velocity.clamp_length_max(TERMINAL_SPEED);
             let step_up = jv(up * ch.step_height);
             let extended = ExtendedUpdateSettings::default().walk_stairs_step_up(step_up);
             self.gate.current.store(ch.groups.0, Ordering::Relaxed);
