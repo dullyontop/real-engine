@@ -629,6 +629,38 @@ mod model {
     }
 
     #[test]
+    fn a_destroyed_instance_keeps_its_property_values() {
+        let mut p = Project::new();
+        let sss = p.service("ServerScriptService");
+        p.script(
+            "Script",
+            "Main",
+            sss,
+            None,
+            r#"
+            local part = Instance.new("Part")
+            part.Name = "Root"
+            part.Position = Vector3.new(1, 2, 3)
+            part.Transparency = 0.5
+            part.Parent = workspace
+            part:Destroy()
+            task.wait(2/60)
+            print(part.Parent, part.Name, part.ClassName, part.Position.Y, part.Transparency)
+            local ok, err = pcall(function() part.Transparency = 1 end)
+            print(ok, string.find(err, "RE3007", 1, true) ~= nil)
+            "#,
+        );
+        let (mut h, _dir) = p.open();
+        h.start();
+        h.step(4);
+        no_errors(&h);
+        assert_eq!(
+            out(&mut h, Side::Server),
+            ["nil\tRoot\tPart\t2\t0.5", "false\ttrue"]
+        );
+    }
+
+    #[test]
     fn destroying_a_script_stops_its_threads() {
         let mut p = Project::new();
         let sss = p.service("ServerScriptService");
