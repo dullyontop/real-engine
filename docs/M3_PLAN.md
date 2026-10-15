@@ -51,6 +51,7 @@ The M1 and M2 ownership rules carry over, with these changes:
   - `re_agent`, `re_mcp`, `re_cli/src/tooling/{mcp,agent}.rs` and `templates/` (new) to WP26;
   - `re_compat` (except its shared files) and `re_import` to WP27;
   - `re_script` (except `src/debug/`) to WP24, for its `generator` context;
+  - `re_script_check` returns to the maintainer;
   - `examples/valley/` to WP28.
 - `re_app` and `re_cli` are shared. WP19 owns `re_app/src/package.rs` and `re_cli/src/build/`; every other change to them, such as WP24's `real migrate-graph` and WP26's new `real new` templates, goes through a small PR that the maintainer reviews, as M2 did for `re_compat`'s shared files.
 - **Planned edits across owners.** Each is a small PR in the owner's paths, reviewed by the owner:
