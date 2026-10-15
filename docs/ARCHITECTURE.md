@@ -83,6 +83,8 @@ graph TD
     compat[re_compat] --> script
     compat --> command
     compat --> scene
+    compat --> anim
+    compat --> physics
     cli --> compat
   end
 
@@ -131,7 +133,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_mcp` | The MCP server (rmcp, stdio) | `serve_stdio(EngineHandle, McpOptions)` | `re_app` |
 | `re_editor` | Editor-lite UI and the editor socket | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
 | `re_import` | Static importer for Rojo-style projects and Studio loader scripts (tooling, M2 WP16); it never runs Luau | `import`, `ImportReport`, `new_project` | `re_app` |
-| `re_compat` | The Roblox-style compatibility layer (M2, in progress): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, and the compat VM with instances, signals and core services (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | subsystems (it reaches them through `HostServices`), full_moon, tokio |
+| `re_compat` | The Roblox-style compatibility layer (M2, in progress): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, and the compat VM with instances, signals and core services (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app` |
 
 Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
 
@@ -456,6 +458,14 @@ Each M1 command is one MCP tool. There is no generic `command.run` tool in M1, b
 | Destructive | `file.delete` | `re_agent` |
 
 Annotations are derived from the tier and set explicitly on every tool (ADR-0025): `read` gives `readOnlyHint: true, destructiveHint: false`; `edit` gives `readOnlyHint: false, destructiveHint: false`; `destructive` gives `destructiveHint: true`. `idempotentHint` is set per command, and `openWorldHint` is `false` for all of them.
+
+### MCP additions (M2, WP17)
+
+- **Output schemas.** Every tool has an `outputSchema`: the outcome envelope `{ok, changes, diagnostics, data}`. `data` is typed when the command was registered with `CommandRegistry::register_typed_output`, and open otherwise. A successful call also returns `structuredContent`.
+- **Resources.** The server offers the MCP resources capability (`resources/list`, `resources/read`) over the explain pages (`real://explain/RE8001`), the documents under `docs/` (`real://docs/ARCHITECTURE.md`) and the Luau definition files (`real://luau/engine.d.luau`). Clients without resources reach the same content through the `resource.list` and `resource.read` tools.
+- **New tools:** `verify.diff` (run verify and report what changed against a checkpoint), `checkpoint.create`, `resource.list`, `resource.read`, `compat.coverage` (query the coverage table) and `scene.dump_tree` (instances with their attributes and tags, as JSON).
+- **Luau tools.** Scripts under `scripts/tools/commands/` register commands with a JSON schema. A Luau tool is capped at the `edit` tier and runs as one transaction per call, and its direct world writes are reverted. Its result is checked against its declared output schema. Luau tools are listed in `tools/list`, `real describe` and `real do`.
+- `real mcp` registers all of these. The editor's socket registers only the M1 agent commands for now; a shared registration helper is planned so that both expose the same tools.
 
 ## 7. Diagnostics and error model
 

@@ -24,7 +24,8 @@ use crate::{Editor, EditorOptions, EditorSocket, codes};
 /// It first takes the project's single-writer lock as the editor and serves
 /// `.real/editor.sock` ([`EditorSocket`]); commands that other writers send
 /// are applied between frames. With [`EditorOptions::agent_commands`] it also
-/// registers `re_agent`'s commands and starts an agent session. Then it opens a window with the game view and
+/// registers `re_agent`'s commands (unless [`EditorOptions::agent`] says
+/// the caller did) and starts an agent session. Then it opens a window with the game view and
 /// the panels. The lock is released and the socket removed when it returns.
 ///
 /// Must run on the main thread (winit's rule).
@@ -42,8 +43,14 @@ pub fn run_editor(mut app: App, mut options: EditorOptions) -> anyhow::Result<()
     if options.agent_commands {
         // After the lock: the session's start checkpoint is the scene as the
         // editor opened it, before any agent edit arrives on the socket.
-        let agent = re_agent::Agent::new(app.project());
-        re_agent::register_commands(app.commands_mut(), &agent);
+        let agent = match options.agent.take() {
+            Some(agent) => agent,
+            None => {
+                let agent = re_agent::Agent::new(app.project());
+                re_agent::register_commands(app.commands_mut(), &agent);
+                agent
+            }
+        };
         agent.start_session(app.world())?;
     }
     let mut status = match socket.path() {

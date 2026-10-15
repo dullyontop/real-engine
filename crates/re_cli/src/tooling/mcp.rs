@@ -73,25 +73,35 @@ pub(crate) fn open_for_agents(project: &Path) -> Result<AgentApp, Diagnostic> {
     let mut config = AppConfig::load(project)?;
     config.persist_edits = true;
     let mut app = App::open(project, config)?;
-    crate::explain::register(app.commands_mut());
     let agent = Agent::new(project);
-    let resources = resources();
-    let commands = app.commands_mut();
-    re_agent::register_commands(commands, &agent);
-    re_agent::resources::register_commands(commands, Arc::clone(&resources));
-    re_agent::compat::register_commands(commands);
-    register_verify_diff(commands, &agent);
-    app.add_verify_stage(Arc::new(super::check::ScanStage));
-    // Last, so a tool cannot take an engine command's name.
-    let (_tools, problems) = re_agent::luau_tools::register(app.commands_mut(), project);
-    if !problems.is_empty() {
-        eprint!("{}", re_core::render_human_all(&problems));
-    }
+    let resources = register_agent_tools(&mut app, &agent);
     Ok(AgentApp {
         app,
         agent,
         resources,
     })
+}
+
+/// Registers every agent-facing command on `app` (see the module docs) and
+/// the scan verify stage, for `real mcp` and `real editor` alike, so the two
+/// serve the same tools. Luau tools that fail to load are reported on
+/// stderr and left out. Returns the resources, for the MCP server.
+pub(crate) fn register_agent_tools(app: &mut App, agent: &Agent) -> Arc<ResourceSet> {
+    let project = app.project().to_path_buf();
+    let resources = resources();
+    let commands = app.commands_mut();
+    crate::explain::register(commands);
+    re_agent::register_commands(commands, agent);
+    re_agent::resources::register_commands(commands, Arc::clone(&resources));
+    re_agent::compat::register_commands(commands);
+    register_verify_diff(commands, agent);
+    app.add_verify_stage(Arc::new(super::check::ScanStage));
+    // Last, so a tool cannot take an engine command's name.
+    let (_tools, problems) = re_agent::luau_tools::register(app.commands_mut(), &project);
+    if !problems.is_empty() {
+        eprint!("{}", re_core::render_human_all(&problems));
+    }
+    resources
 }
 
 // ---- verify.diff -----------------------------------------------------------
