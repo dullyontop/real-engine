@@ -465,7 +465,7 @@ Annotations are derived from the tier and set explicitly on every tool (ADR-0025
 - **Resources.** The server offers the MCP resources capability (`resources/list`, `resources/read`) over the explain pages (`real://explain/RE8001`), the documents under `docs/` (`real://docs/ARCHITECTURE.md`) and the Luau definition files (`real://luau/engine.d.luau`). Clients without resources reach the same content through the `resource.list` and `resource.read` tools.
 - **New tools:** `verify.diff` (run verify and report what changed against a checkpoint), `checkpoint.create`, `resource.list`, `resource.read`, `compat.coverage` (query the coverage table) and `scene.dump_tree` (instances with their attributes and tags, as JSON).
 - **Luau tools.** Scripts under `scripts/tools/commands/` register commands with a JSON schema. A Luau tool is capped at the `edit` tier and runs as one transaction per call, and its direct world writes are reverted. Its result is checked against its declared output schema. Luau tools are listed in `tools/list`, `real describe` and `real do`.
-- `real mcp` registers all of these. The editor's socket registers only the M1 agent commands for now; a shared registration helper is planned so that both expose the same tools.
+- `real mcp` and `real editor` register all of these through one helper in re_cli (`register_agent_tools`), so an agent sees the same tools whether `real mcp` runs headless or serves through a running editor.
 
 ## 7. Diagnostics and error model
 

@@ -9,7 +9,8 @@
 //!   message contains one of `allow` (each an allowed substring, for the
 //!   parts of the API later work packages build). Until those parts exist,
 //!   `stubs` names a class data file in the kit whose classes stand in for
-//!   them (every method declared there returns an empty value of its
+//!   them (a new class the crate's data already declares is skipped; every
+//!   method declared there returns an empty value of its
 //!   declared type, and a builtin property of an instance type reads as what
 //!   was written to it, else the instance's first child of that class), and `prelude` gives Luau run in `server` and `client`
 //!   before the scripts start (to make stand-in instances such as the local
@@ -79,7 +80,11 @@ fn setup(ctx: &Ctx, stubs: Option<&str>) -> Result<Arc<CompatSetup>, String> {
     if let Some(file) = stubs {
         let path = ctx.kit_path(file);
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{file}: {e}"))?;
-        let data = ClassFile::parse(file, &text).map_err(|e| e.to_string())?;
+        let mut data = ClassFile::parse(file, &text).map_err(|e| e.to_string())?;
+        // A class the crate's own data declares by now is no longer stood in.
+        let known = re_compat::ClassRegistry::builtin().map_err(|e| e.to_string())?;
+        data.classes
+            .retain(|c| c.extend || known.class(&c.name).is_err());
         for c in &data.classes {
             for p in &c.properties {
                 if !matches!(p.storage, re_compat::data::StorageDoc::Builtin) {

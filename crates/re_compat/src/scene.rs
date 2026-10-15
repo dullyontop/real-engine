@@ -21,6 +21,8 @@
 //! * A project in the compat layout says so in `real.toml`:
 //!   `[compat]` with `api = "roblox"` ([`CompatConfig`]).
 
+use std::collections::BTreeMap;
+
 use indexmap::IndexMap;
 use re_core::Diagnostic;
 use re_reflect::{Doc, Value, component};
@@ -287,6 +289,16 @@ pub struct CompatConfig {
     /// written to `real.toml` must be at most `i64::MAX`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub seed: u64,
+    /// Asset substitutes: an asset id (`"rbxassetid://123"` or `"123"`, both
+    /// stored as [`asset_key`] gives them) to a project-relative file path.
+    /// Sounds, images and textures resolve through it; an id that is not
+    /// here, or whose file is missing, is `RE9350` when it is used.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub assets: BTreeMap<String, String>,
+    /// Particles plus beam and trail segments drawn per frame (default
+    /// [`DEFAULT_EFFECT_BUDGET`]); the excess is `RE9351`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_budget: Option<u32>,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -336,6 +348,19 @@ impl GameInfo {
     }
 }
 
+/// The effect budget when `[compat] effect_budget` is absent.
+pub const DEFAULT_EFFECT_BUDGET: u32 = 20_000;
+
+/// The one key of an asset id in [`CompatConfig::assets`]: `rbxassetid://N`
+/// and the asset URL form become the bare `N`; any other id is kept as given.
+pub fn asset_key(id: &str) -> &str {
+    let id = id.trim();
+    id.strip_prefix("rbxassetid://")
+        .or_else(|| id.strip_prefix("http://www.roblox.com/asset/?id="))
+        .or_else(|| id.strip_prefix("https://www.roblox.com/asset/?id="))
+        .unwrap_or(id)
+}
+
 impl CompatConfig {
     /// The `[compat]` section of a `real.toml`'s text, if it has one. Other
     /// sections are not checked here.
@@ -345,14 +370,61 @@ impl CompatConfig {
             .map_err(|e: toml::de::Error| CompatError::Scene(format!("real.toml: {e}")))?;
         match doc.get("compat") {
             None => Ok(None),
-            Some(v) => v
-                .clone()
-                .try_into()
-                .map(Some)
-                .map_err(|e: toml::de::Error| {
+            Some(v) => {
+                let cfg: CompatConfig = v.clone().try_into().map_err(|e: toml::de::Error| {
                     CompatError::Scene(format!("real.toml [compat]: {e}"))
-                }),
+                })?;
+                cfg.validated().map(Some)
+            }
         }
+    }
+
+    /// The section with its asset keys normalised ([`asset_key`]), refusing
+    /// two keys for one id, a path that is absolute or leaves the project,
+    /// and an effect budget of 0.
+    fn validated(mut self) -> Result<CompatConfig, CompatError> {
+        let bad = |m: String| CompatError::Scene(format!("real.toml [compat]: {m}"));
+        let mut assets = BTreeMap::new();
+        for (id, path) in std::mem::take(&mut self.assets) {
+            let key = asset_key(&id).to_string();
+            if key.is_empty() {
+                return Err(bad(format!("assets: the id {id:?} is empty")));
+            }
+            let p = std::path::Path::new(&path);
+            if path.is_empty()
+                || p.is_absolute()
+                || path.starts_with('/')
+                || path.starts_with('\\')
+                || p.components().any(|c| {
+                    !matches!(
+                        c,
+                        std::path::Component::Normal(_) | std::path::Component::CurDir
+                    )
+                })
+                || path.split(['/', '\\']).any(|part| part == "..")
+            {
+                return Err(bad(format!(
+                    "assets: {id:?} = {path:?} must be a path inside the project, \
+                     relative and without `..`"
+                )));
+            }
+            if assets.insert(key.clone(), path).is_some() {
+                return Err(bad(format!(
+                    "assets: {id:?} and another entry name the same id; \
+                     \"rbxassetid://{key}\" and \"{key}\" are one id, give it once"
+                )));
+            }
+        }
+        self.assets = assets;
+        if self.effect_budget == Some(0) {
+            return Err(bad("effect_budget must be at least 1".into()));
+        }
+        Ok(self)
+    }
+
+    /// The effect budget: `effect_budget`, or [`DEFAULT_EFFECT_BUDGET`].
+    pub fn effect_budget(&self) -> u32 {
+        self.effect_budget.unwrap_or(DEFAULT_EFFECT_BUDGET)
     }
 
     /// The section as the importer writes it.
@@ -370,12 +442,25 @@ impl CompatConfig {
         if self.seed != 0 {
             out.push_str(&format!("seed = {}\n", self.seed));
         }
+        if let Some(b) = self.effect_budget {
+            out.push_str(&format!("effect_budget = {b}\n"));
+        }
         // Tables last: plain `key = value` lines go above this point, or they
         // would land inside `[compat.game]`.
         if self.game != GameInfo::default() {
             let g = toml::to_string(&self.game).expect("plain values serialize");
             out.push_str("\n[compat.game]\n");
             out.push_str(&g);
+        }
+        if !self.assets.is_empty() {
+            out.push_str("\n[compat.assets]\n");
+            for (id, path) in &self.assets {
+                out.push_str(&format!(
+                    "{} = {}\n",
+                    toml::Value::String(id.clone()),
+                    toml::Value::String(path.clone())
+                ));
+            }
         }
         out
     }

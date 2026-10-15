@@ -95,6 +95,8 @@ impl Bindings {
         crate::instance::register(&mut b);
         crate::services::core::register(&mut b);
         crate::datatypes::register(&mut b);
+        crate::tween::register(&mut b);
+        crate::sound::register(&mut b);
         scripts::register(&mut b);
         session::register(&mut b);
         globals::register(&mut b);
