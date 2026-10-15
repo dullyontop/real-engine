@@ -144,6 +144,7 @@ fn verify_options(boot_frames: Option<u64>) -> VerifyOptions {
     let mut options = VerifyOptions::default();
     if let Some(n) = boot_frames {
         options.boot_frames = n.max(1);
+        options.compat_boot_frames = options.boot_frames;
         options.warmup_frames = options.warmup_frames.min(options.boot_frames - 1);
     }
     options

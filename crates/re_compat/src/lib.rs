@@ -29,6 +29,7 @@ pub mod class;
 pub mod codes;
 pub mod data;
 pub mod datatypes;
+pub mod dump;
 pub mod enums;
 pub mod error;
 pub mod gui;

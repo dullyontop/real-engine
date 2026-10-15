@@ -80,6 +80,27 @@ fn diagnostics(report: &CorpusReport) -> Vec<Diagnostic> {
     all
 }
 
+/// Writes `.real/types/roblox.d.luau` for a compat project and returns its
+/// path; on failure, warns and returns `None` (the scripts are then checked
+/// against the engine API alone).
+fn compat_definitions(project: &Path) -> Option<PathBuf> {
+    let written = re_compat::ClassRegistry::builtin()
+        .map_err(|e| e.to_string())
+        .and_then(|reg| {
+            re_script_check::roblox::write_definitions(project, &reg).map_err(|e| e.to_string())
+        });
+    match written {
+        Ok(path) => Some(path),
+        Err(e) => {
+            eprintln!(
+                "warning: cannot write {}: {e}; the scripts are checked without the compat API",
+                re_script_check::roblox::DEFINITIONS_PATH
+            );
+            None
+        }
+    }
+}
+
 /// Runs `real check`.
 ///
 /// # Errors
@@ -135,11 +156,17 @@ pub fn run(args: CheckArgs, project: &Path) -> anyhow::Result<ExitCode> {
         },
         _ => None,
     };
+    // A compat project's scripts also see the Roblox-style API.
+    let compat_definitions = match &config {
+        Some(c) if args.types && c.compat.is_some() => compat_definitions(project),
+        _ => None,
+    };
     let options = CorpusOptions {
         types: args.types,
         types_options: TypesOptions {
             checker: checker(project, &args, config.as_ref()),
             definitions,
+            compat_definitions,
         },
     };
     let report = corpus::run(&dirs, &options);

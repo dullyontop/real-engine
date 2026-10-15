@@ -30,6 +30,9 @@ pub struct Pending {
     pub regenerate: Vec<(String, i64)>,
     /// HUD text writes: `(entity, text)`.
     pub hud: Vec<(EntityId, String)>,
+    /// The cursor settings scripts asked for last (`MouseBehavior`,
+    /// `MouseIconEnabled`), for the window.
+    pub mouse: Option<(re_types::input::MouseLock, bool)>,
 }
 
 /// The [`HostServices`] implementation handed to the script runtime.
@@ -40,6 +43,8 @@ pub struct Host<'a> {
     pub links: &'a PhysicsSync,
     /// This frame's actions.
     pub actions: &'a ActionFrame,
+    /// This frame's raw input (from the window, or a replay's raw frames).
+    pub raw: &'a re_types::input::RawInputFrame,
     /// Physics commands for the next physics phase.
     pub physics_cmds: &'a mut Vec<PhysicsCmd>,
     /// Audio commands for this frame.
@@ -159,6 +164,19 @@ impl HostServices for Host<'_> {
 
     fn actions(&self) -> &ActionFrame {
         self.actions
+    }
+
+    fn raw_input(&self) -> Option<&re_types::input::RawInputFrame> {
+        Some(self.raw)
+    }
+
+    fn set_mouse_behavior(
+        &mut self,
+        lock: re_types::input::MouseLock,
+        icon_visible: bool,
+    ) -> HostResult<()> {
+        self.pending.mouse = Some((lock, icon_visible));
+        Ok(())
     }
 
     fn set_hud_text(&mut self, entity: EntityId, text: &str) -> HostResult<()> {

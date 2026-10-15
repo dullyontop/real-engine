@@ -9,7 +9,7 @@ This file lists every third-party crate Real Engine plans to use in M1: its exac
 3. **Exact versions.** The workspace sets every dependency in `[workspace.dependencies]` as `"=X.Y.Z"`. Member crates write `foo.workspace = true`. `Cargo.lock` is committed. CI builds with `--locked`.
 4. **License allow-list**, enforced by `cargo deny check licenses`: MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, BSL-1.0, ISC, Zlib, CC0-1.0, Unicode-3.0. (BSL-1.0 is for `clipboard-win` and `error-code`, which egui-winit pulls on Windows.) Per-crate exceptions, and nothing else (ADR-0019):
    - MPL-2.0: `full_moon` and `full_moon_derive` (tooling only) and `triple_buffer` (an unconditional dependency of kira). **`triple_buffer` is the only MPL-2.0 crate that ships in the runtime.** kira is built without its `wav` feature, so the symphonia crates are not in the build; `re_audio` decodes WAV itself.
-   - OFL-1.1 and Ubuntu-font-1.0: `epaint_default_fonts` (egui's bundled fonts).
+   - OFL-1.1 and Ubuntu-font-1.0: `epaint_default_fonts` (egui's bundled fonts). The compat UI's own font files are OFL-1.1 too; they are bundled assets, not crates (see below and ADR-0035).
    MPL-2.0 is file-level copyleft. We use these crates unmodified, so it puts no obligation on our own code. This list comes from a license scan of a lockfile with every crate and feature below.
 5. **Duplicate versions are tracked.** `deny.toml` limits `[graph] targets` to the three desktop triples (`x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`) and sets `[bans] multiple-versions = "warn"`, so cargo-deny reports duplicates but the gate is `cargo xtask dupes`. That command runs `cargo tree -d --workspace -e normal --target <triple>` for each of the three triples (it needs no cross toolchain; it only reads the lockfile) and compares the result with the allow-list in `deny.toml` (`[bans] skip`) as **(name, version) pairs**. The same version appearing twice (a host build and a target build with different features) is not a duplicate. A new duplicate fails CI until someone adds it to the list below with a reason.
 
@@ -78,6 +78,16 @@ Notes:
 | cargo-deny | 0.20.2 | MIT OR Apache-2.0 | The `deny` CI job (`cargo install cargo-deny --version 0.20.2 --locked`) | WP0: `cargo deny check` on this tree passes (advisories, bans, licenses, sources ok; `unmatched-skip` and `unused-wrapper` warnings only for crates not yet in the tree) | Verified |
 
 These are tools, like cmake. The crates.io-only rule covers code dependencies. CI pins each tool's version, and the downloaded luau-lsp release by its sha256.
+
+### Bundled assets (files, not crates)
+
+| Asset | Version | License | Role | Source | Status |
+|---|---|---|---|---|---|
+| Montserrat, weights 400, 500, 700, 900 (latin subset, TTF) | `@fontsource/montserrat` 5.3.0 | OFL-1.1 | Compat UI substitute for geometric display families (ADR-0035) | npm package, WOFF 1.0 unpacked to TTF by `crates/re_compat/assets/fonts/tools/woff2ttf.py`; glyph data unchanged | Verified (WP15, #61) |
+| Source Sans 3, weights 400, 700 (latin subset, TTF) | `@fontsource/source-sans-3` 5.3.1 | OFL-1.1 | Compat UI default and substitute for sans families (ADR-0035) | as above | Verified (WP15, #61) |
+| Roboto Mono, weights 400, 700 (latin subset, TTF) | `@fontsource/roboto-mono` 5.3.0 | OFL-1.1 | Compat UI substitute for monospace families (ADR-0035) | as above | Verified (WP15, #61) |
+
+The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each family next to its `OFL-*.txt`. `substitutes.json` maps compat font families to them. They are files rather than crates, so the crates.io-only rule does not apply, and `cargo deny` does not see them; their licenses travel with them and go into the third-party notice.
 
 ### Core, data and serialization
 

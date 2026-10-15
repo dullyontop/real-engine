@@ -22,7 +22,7 @@ pub const PLAY_MAX_FRAMES: u64 = 3600;
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VerifyArgs {
-    /// Frames the boot stage runs (default 120).
+    /// Frames the boot stage runs (default 120; 600 in a `[compat]` project).
     #[serde(default)]
     pub boot_frames: Option<u64>,
 }
@@ -50,6 +50,12 @@ pub struct PlayArgs {
     /// Capture the last frame (default true); written under `.real/out/play/`.
     #[serde(default = "yes")]
     pub screenshot: bool,
+    /// Steps to run in order after the first `frames`: `{"frames": n}`,
+    /// `"add_player"`, `{"say": {...}}`, `{"invoke": {...}}` and
+    /// `{"dump_tree": {...}}` (all but `frames` and `dump_tree` need a
+    /// `[compat]` project). Their frames count toward the 3600.
+    #[serde(default)]
+    pub steps: Vec<crate::play::PlayStep>,
 }
 
 fn default_play_frames() -> u64 {
@@ -118,7 +124,17 @@ fn play(app: &mut App, args: PlayArgs) -> Result<serde_json::Value, Diagnostic> 
         None => None,
     };
     let started = Instant::now();
-    let (report, image) = app.play_copy(frames, replay, args.screenshot)?;
+    let step_frames: u64 = args.steps.iter().map(crate::play::PlayStep::frames).sum();
+    if frames.saturating_add(step_frames) > PLAY_MAX_FRAMES {
+        return Err(Diagnostic::error(
+            codes::PLAY_STEP_FAILED,
+            format!(
+                "play.run plays at most {PLAY_MAX_FRAMES} frames; frames and steps ask for {}",
+                frames.saturating_add(step_frames)
+            ),
+        ));
+    }
+    let (report, steps, image) = app.play_copy(frames, replay, &args.steps, args.screenshot)?;
     let screenshot = match image {
         Some(image) => {
             let rel = format!(".real/out/play/play-{}.png", app.frame_count());
@@ -133,6 +149,9 @@ fn play(app: &mut App, args: PlayArgs) -> Result<serde_json::Value, Diagnostic> 
         "state_hash": report.state_hash,
         "diagnostics": report.diagnostics,
         "perf": report.perf,
+        "output": report.output,
+        "compat": report.compat,
+        "steps": steps,
         "screenshot": screenshot,
         "wall_ms": started.elapsed().as_secs_f64() * 1000.0,
         "notes": [
@@ -255,7 +274,7 @@ pub fn register(registry: &mut CommandRegistry<App>) {
     );
     registry.register_typed::<PlayArgs, _>(
         "play.run",
-        "Play a copy of the world for N frames (at most 3600), optionally driven by a replay, and return a report (state hash, diagnostics, timings) and a screenshot of the last frame. The live world is not changed.",
+        "Play a copy of the world for N frames (at most 3600), optionally driven by a replay, then optional steps (more frames; in a Roblox-style project, add_player, say, invoke a BindableFunction; dump_tree), and return a report (state hash, diagnostics, timings, script output, step results) and a screenshot of the last frame. The live world is not changed.",
         Tier::Read,
         false,
         |app, args, _call| play(app, args),
@@ -276,6 +295,7 @@ pub fn register(registry: &mut CommandRegistry<App>) {
             let mut options = VerifyOptions::default();
             if let Some(n) = args.boot_frames {
                 options.boot_frames = n.max(1);
+                options.compat_boot_frames = options.boot_frames;
                 options.warmup_frames = options.warmup_frames.min(options.boot_frames - 1);
             }
             let stages = app.verify_stages();

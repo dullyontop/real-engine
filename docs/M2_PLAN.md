@@ -327,7 +327,7 @@ cargo run --release --locked -p re_compat --example bigmap -- --parts 250000 --f
 
 ## WP14: Characters, animation and input
 
-**Status:** merged in #62 (`RE9200`–`RE9202`, `[compat.animations]`, the raw input contract). WP16 "boot" implements `raw_input` and `set_mouse_behavior` in `re_app`'s host.
+**Status:** merged in #62 (`RE9200`–`RE9202`, `[compat.animations]`, the raw input contract) and #66 (frame phases, `Players:CreateHumanoidModelFromDescription`, and `RE9203`, the offline-default warning `GetHumanoidDescriptionFromUserId` gives instead of `RE9101`). WP16 "boot" implements `raw_input` and `set_mouse_behavior` in `re_app`'s host.
 
 **Goal.** Humanoid characters that walk, jump, sit, take damage and die, driven by the default player scripts or by game scripts; rigs and animation; and the input services.
 
@@ -346,7 +346,7 @@ cargo run --release --locked -p re_compat --example bigmap -- --parts 250000 --f
   - state: `FloorMaterial`, `GetState`, `ChangeState`, `SetStateEnabled`, `StateChanged`, `Running`, `Jumping`, `FreeFalling` and `Seated`;
   - display: `RigType`, `DisplayName`, and the name and health display properties.
   - The state machine covers Running, Jumping, Freefall, Landed, Seated, Physics, Ragdoll, FallingDown, GettingUp and Dead, the states the scripts read.
-- Rigs: procedural R6 and R15 rigs with the standard part, joint and attachment names, sizes and C0 and C1 values. They are written for this repository as data in `assets/rigs/`. `HumanoidDescription` with body colours and scales, `ApplyDescription`, `Players:CreateHumanoidModelFromDescription` and `GetHumanoidDescriptionFromUserId` (which returns a default description offline, with an `RE9101` note), and `StarterCharacter` override.
+- Rigs: procedural R6 and R15 rigs with the standard part, joint and attachment names, sizes and C0 and C1 values. They are written for this repository as data in `assets/rigs/`. `HumanoidDescription` with body colours and scales, `ApplyDescription`, `Players:CreateHumanoidModelFromDescription` and `GetHumanoidDescriptionFromUserId` (which returns a default description offline, with an `RE9203` offline-default warning), and `StarterCharacter` override.
 - Default player scripts, built in and replaced when a project supplies its own: WASD and space movement into the Humanoid, the default (`Custom`) camera with mouse orbit and zoom, and seat exit on jump.
 - `Seat` and `VehicleSeat` seating (`SeatWeld`, `Occupant`). Throttle and steer come from input, and the vehicle simulation is the game's own.
 - Animation:
@@ -379,7 +379,7 @@ cargo test --locked -p re_compat character
 
 ## WP15: Rendering, UI, tweens and sound
 
-**Status:** PR "tweens and sound" merged in #55 (`RE9350`–`RE9352`, `[compat] assets` and `effect_budget`). UI, rendering and the fonts (ADR-0035) are next.
+**Status:** PR "tweens and sound" merged in #55 (`RE9350`–`RE9352`, `[compat] assets` and `effect_budget`) and PR "UI" in #61 (layout, text, painting, input, billboards and the fonts of ADR-0035). The 3D rendering PR is next.
 
 **Goal.** Draw what Roblox-style projects build (parts with materials, lights, effects, billboards and screen UI) and play their tweens and sounds.
 

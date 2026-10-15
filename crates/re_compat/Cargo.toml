@@ -39,7 +39,9 @@ egui.workspace = true
 tempfile.workspace = true
 # Replays of raw input drive the character tests (WP14).
 re_input.workspace = true
-# The sample runner (tests/samples.rs) imports each sample (WP16).
+# The sample runner (tests/samples.rs) imports each sample and boots and
+# plays it through the runtime (WP16).
 re_import.workspace = true
+re_app.workspace = true
 # WP15: the UI golden images paint through re_render.
 re_render.workspace = true
