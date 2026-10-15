@@ -1,0 +1,130 @@
+{
+ "format": "real-engine/compat-clip",
+ "version": 1,
+ "name": "r6_idle",
+ "doc": "R6 idle: a slow, small arm and head sway.",
+ "looped": true,
+ "priority": "Core",
+ "keyframes": [
+  {
+   "time": 0,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 1.5,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      0.06
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -0.06
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Head": {
+     "angles": [
+      -0.03,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 3.0,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  }
+ ]
+}

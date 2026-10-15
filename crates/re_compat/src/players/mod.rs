@@ -12,8 +12,9 @@
 //!   Other players exist only on the server and in replication.
 //! * [`load_character`] (and `Player:LoadCharacter`) replaces the character:
 //!   a copy of `StarterPlayer.StarterCharacter`, else the default character
-//!   (WP14's `Players:CreateHumanoidModelFromDescription` when registered),
-//!   else an empty `Model`; with copies of `StarterCharacterScripts`, at a
+//!   (WP14's `Players:CreateHumanoidModelFromDescription` when registered,
+//!   else WP14's default R15 rig, or an empty `Model` until the part
+//!   classes exist); with copies of `StarterCharacterScripts`, at a
 //!   `SpawnLocation` (enabled, matching the player's team or neutral) with a
 //!   `ForceField` for the spawn's `Duration`; parented to `Workspace`, owned
 //!   by the player ([`crate::net::set_network_owner`]). The `Backpack` is
@@ -467,10 +468,24 @@ pub fn load_character(lua: &Lua, player: Entity) -> Result<Entity> {
         Some(s) => with_world(lua, |w| clone_subtree(w, s))?,
         None => default_character(lua)?,
     };
+    // The rig is made of parts; until the part classes exist (WP13) the
+    // default character is an empty `Model`.
+    let rig = c.class("Part").is_ok();
     let model = match model {
         Some(m) => m,
-        None => with_world(lua, |w| spawn_instance(w, &c, "Model", None, &name, None))?
+        None if !rig => with_world(lua, |w| spawn_instance(w, &c, "Model", None, &name, None))?
             .map_err(compat_error)?,
+        None => with_world(lua, |w| {
+            crate::humanoid::rig::build(
+                w,
+                &c,
+                DEFAULT_RIG,
+                &name,
+                None,
+                crate::datatypes::CFrame::IDENTITY,
+            )
+        })?
+        .map_err(compat_error)?,
     };
     let workspace =
         with_world(lua, |w| ensure_service(w, &c, g, "Workspace"))?.map_err(compat_error)?;
@@ -534,6 +549,9 @@ pub fn load_character(lua: &Lua, player: Entity) -> Result<Entity> {
     )?;
     Ok(model)
 }
+
+/// The rig of the default character when no description makes one.
+const DEFAULT_RIG: &str = "R15";
 
 /// The default character from WP14's `CreateHumanoidModelFromDescription`,
 /// when that is registered.

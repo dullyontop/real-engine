@@ -240,6 +240,9 @@ pub(crate) fn start(lua: &Lua, e: Entity) -> Result<()> {
 
 /// Stops what script instance `e` started (when it is destroyed).
 pub(crate) fn stop(lua: &Lua, e: Entity) -> Result<()> {
+    if let Some(mut s) = lua.app_data_mut::<Started>() {
+        s.0.remove(&e);
+    }
     let owner = owner_of(e);
     crate::signal::disconnect_owner(lua, owner)?;
     crate::services::core::run_service::drop_owner(lua, owner)?;

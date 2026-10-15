@@ -10,6 +10,11 @@
 //!   playing).
 //! * [`Tween`] moves a value from one end to another over a duration with an
 //!   [`Easing`] curve. Scripts use it for doors, camera moves and UI.
+//! * [`keyframes`] animates jointed rigs from keyframe poses: a
+//!   [`KeyframeClip`] is played by [`Track`]s (fades, speed, looping, events)
+//!   and a [`Mixer`] blends the tracks of one rig by [`Priority`].
+//! * [`ik`] aims joints ([`ik::look_at_delta`]) and bends two-bone chains to
+//!   reach a target ([`ik::two_bone`]).
 //!
 //! `re_app` matches a clip's targets to entities by name below the animated root
 //! and writes the sampled values into their transforms; skinning and blend trees
@@ -22,9 +27,16 @@
 #![warn(missing_docs)]
 
 pub mod codes;
+pub mod ik;
+pub mod keyframes;
 mod sampler;
 mod tween;
 
+pub use keyframes::{
+    DEFAULT_FADE_TIME, DEFAULT_SPEED, DEFAULT_WEIGHT, JointKey, Keyframe, KeyframeClip, Marker,
+    Mixer, PoseDirection, PoseEasing, PoseStyle, Priority, SampledPoses, Track, TrackEvent,
+    TrackId,
+};
 pub use sampler::{Playhead, Sampler, TargetPose};
 pub use tween::{Easing, Tween, Tweenable};
 
@@ -47,6 +59,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::TWEEN_INVALID,
         title: "Invalid tween duration",
         page: include_str!("../explain/RE7602.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_POSE_EASING,
+        title: "Unknown pose easing name",
+        page: include_str!("../explain/RE7603.md"),
+    },
+    DiagInfo {
+        code: codes::KEYFRAME_CLIP_MALFORMED,
+        title: "Malformed keyframe clip",
+        page: include_str!("../explain/RE7604.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_PRIORITY,
+        title: "Unknown animation priority",
+        page: include_str!("../explain/RE7605.md"),
     },
 ];
 

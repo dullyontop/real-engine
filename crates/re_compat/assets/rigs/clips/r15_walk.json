@@ -1,0 +1,559 @@
+{
+ "format": "real-engine/compat-clip",
+ "version": 1,
+ "name": "r15_walk",
+ "doc": "R15 walk: opposed arm and leg swing with bent knees and elbows.",
+ "looped": true,
+ "priority": "Core",
+ "keyframes": [
+  {
+   "time": 0.0,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.1,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      0.495,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      -0.495,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      -0.495,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      0.495,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.2,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      0.7,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      -0.7,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      -0.7,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      0.7,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.3,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      0.495,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      -0.495,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      -0.495,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      0.495,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.4,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.5,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      -0.495,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      0.495,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      0.495,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      -0.495,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.397,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.397,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.6,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      -0.7,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      0.7,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      0.7,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      -0.7,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.52,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.52,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.7,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      -0.495,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      0.495,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      0.495,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      -0.495,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.397,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.397,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.8,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.3,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.1,
+      0,
+      0
+     ]
+    }
+   }
+  }
+ ]
+}
