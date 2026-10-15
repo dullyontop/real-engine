@@ -11,6 +11,7 @@ use serde_json::{Map, Value as Json, json};
 
 use crate::doc::Doc;
 use crate::error::ReflectError;
+use crate::record::RecordId;
 use crate::registry::{ComponentOrigin, ComponentSchema, FieldSchema, Registry};
 use crate::value::FieldType;
 
@@ -21,8 +22,9 @@ pub const SCENE_VERSION: u32 = 1;
 /// The `format` value of [`Registry::describe`]'s output.
 pub const DESCRIBE_FORMAT: &str = "real-engine/schema";
 
-/// A field type as written in files and descriptions:
-/// `{"kind": "f32"}` or `{"kind": "enum", "variants": ["A", "B"]}`.
+/// A field type as written in files and descriptions: `{"kind": "f32"}`,
+/// `{"kind": "enum", "variants": ["A", "B"]}`, `{"kind": "list", "item":
+/// {"kind": "f32"}}`, `{"kind": "map"}` or `{"kind": "record", "record": "UDim2"}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FieldTypeDoc {
@@ -31,6 +33,12 @@ pub struct FieldTypeDoc {
     /// The variants, for `"enum"` only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variants: Vec<String>,
+    /// The item type, for `"list"` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<Box<FieldTypeDoc>>,
+    /// The record type's name, for `"record"` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<String>,
 }
 
 impl From<&FieldType> for FieldTypeDoc {
@@ -41,7 +49,54 @@ impl From<&FieldType> for FieldTypeDoc {
                 FieldType::Enum(v) => v.iter().map(|s| s.to_string()).collect(),
                 _ => Vec::new(),
             },
+            item: match ty {
+                FieldType::List(item) => Some(Box::new(FieldTypeDoc::from(&**item))),
+                _ => None,
+            },
+            record: match ty {
+                FieldType::Record(id) => Some(id.name().to_string()),
+                _ => None,
+            },
         }
+    }
+}
+
+impl FieldTypeDoc {
+    /// The field type this document names, checked against the nesting
+    /// rules ([`FieldType::validate`]). A record must already be registered.
+    pub fn to_field_type(&self) -> Result<FieldType, String> {
+        let ty = match self.kind.as_str() {
+            "list" => {
+                let item = self
+                    .item
+                    .as_ref()
+                    .ok_or("a list type needs `item`")?
+                    .to_field_type()?;
+                FieldType::List(Box::new(item))
+            }
+            "record" => {
+                let name = self.record.as_ref().ok_or("a record type needs `record`")?;
+                FieldType::Record(
+                    RecordId::by_name(name).ok_or(format!("no record type named {name:?}"))?,
+                )
+            }
+            kind => FieldType::from_name(kind, &self.variants)
+                .ok_or(format!("unknown field type {kind:?}"))?,
+        };
+        if self.item.is_some() && !matches!(ty, FieldType::List(_)) {
+            return Err(format!(
+                "`item` is only valid for a list, not {:?}",
+                self.kind
+            ));
+        }
+        if self.record.is_some() && !matches!(ty, FieldType::Record(_)) {
+            return Err(format!(
+                "`record` is only valid for a record, not {:?}",
+                self.kind
+            ));
+        }
+        ty.validate()?;
+        Ok(ty)
     }
 }
 
@@ -100,11 +155,8 @@ impl ComponentSchemaDoc {
     pub fn to_schema(&self) -> Result<ComponentSchema, ReflectError> {
         let mut fields = Vec::with_capacity(self.fields.len());
         for f in &self.fields {
-            let ty = FieldType::from_name(&f.ty.kind, &f.ty.variants).ok_or_else(|| {
-                ReflectError::InvalidSchema(format!(
-                    "{}.{}: unknown field type {:?}",
-                    self.name, f.name, f.ty.kind
-                ))
+            let ty = f.ty.to_field_type().map_err(|e| {
+                ReflectError::InvalidSchema(format!("{}.{}: {e}", self.name, f.name))
             })?;
             let default =
                 f.default
@@ -146,7 +198,57 @@ fn field_json_schema(ty: &FieldType) -> Json {
             json!({ "type": ["string", "null"], "description": "stable id of another entity" })
         }
         FieldType::Enum(variants) => json!({ "enum": variants }),
+        FieldType::List(item) => json!({ "type": "array", "items": field_json_schema(item) }),
+        FieldType::Map => json!({
+            "type": "object",
+            "description": "string keys; values are a bool, a number, a string or an object tagged with `$type`",
+            "additionalProperties": dynamic_json_schema()
+        }),
+        FieldType::Record(id) => record_json_schema(*id),
     }
+}
+
+fn record_json_schema(id: RecordId) -> Json {
+    let schema = id.schema();
+    let props: Map<String, Json> = schema
+        .fields
+        .iter()
+        .map(|f| (f.name.clone(), field_json_schema(&f.ty)))
+        .collect();
+    let names: Vec<&str> = schema.fields.iter().map(|f| f.name.as_str()).collect();
+    let items: Vec<Json> = schema
+        .fields
+        .iter()
+        .map(|f| field_json_schema(&f.ty))
+        .collect();
+    let n = schema.fields.len();
+    json!({
+        "description": format!("record {}", schema.name),
+        "oneOf": [
+            { "type": "object", "properties": props, "required": names, "additionalProperties": false },
+            { "type": "array", "prefixItems": items, "minItems": n, "maxItems": n }
+        ]
+    })
+}
+
+/// The schema of a map value: plain JSON for bools, numbers and strings, a
+/// `$type`-tagged object for everything else.
+fn dynamic_json_schema() -> Json {
+    json!({
+        "oneOf": [
+            { "type": ["boolean", "number", "string"] },
+            {
+                "type": "object",
+                "required": ["$type", "value"],
+                "properties": {
+                    "$type": { "enum": ["vec3", "quat", "color", "list", "record"] },
+                    "name": { "type": "string" },
+                    "value": {}
+                },
+                "additionalProperties": false
+            }
+        ]
+    })
 }
 
 fn doc_json(doc: &Doc) -> Json {
@@ -181,10 +283,42 @@ impl Registry {
                 })
             })
             .collect();
+        fn collect(ty: &FieldType, out: &mut Vec<RecordId>) {
+            match ty {
+                FieldType::Record(id) if !out.contains(id) => out.push(*id),
+                FieldType::List(item) => collect(item, out),
+                _ => {}
+            }
+        }
+        // Only the records this registry's fields use, by name, so the output
+        // does not depend on what else the process registered.
+        let mut used = Vec::new();
+        for s in self.schemas() {
+            for f in &s.fields {
+                collect(&f.ty, &mut used);
+            }
+        }
+        used.sort_by_key(|id| id.name());
+        let records: Vec<Json> = used
+            .into_iter()
+            .map(|id| {
+                let r = id.schema();
+                json!({
+                    "name": r.name,
+                    "doc": r.doc,
+                    "fields": r.fields.iter().map(|f| json!({
+                        "name": f.name,
+                        "type": FieldTypeDoc::from(&f.ty),
+                        "doc": f.doc,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
         json!({
             "format": DESCRIBE_FORMAT,
             "version": 1,
             "components": components,
+            "records": records,
         })
     }
 
@@ -233,8 +367,10 @@ impl Registry {
                     "required": ["kind"],
                     "additionalProperties": false,
                     "properties": {
-                        "kind": { "enum": ["bool", "i32", "i64", "f32", "f64", "vec3", "quat", "color", "string", "entity", "enum"] },
-                        "variants": { "type": "array", "items": { "type": "string" } }
+                        "kind": { "enum": ["bool", "i32", "i64", "f32", "f64", "vec3", "quat", "color", "string", "entity", "enum", "list", "map", "record"] },
+                        "variants": { "type": "array", "items": { "type": "string" } },
+                        "item": { "type": "object" },
+                        "record": { "type": "string" }
                     }
                 },
                 "default": {},

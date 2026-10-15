@@ -6,7 +6,18 @@
 //! Vectors are accepted as `[x, y, z]` or `{"x": .., "y": .., "z": ..}`,
 //! colours as 3 or 4 numbers, and numbers for `f32` fields go through
 //! [`f32_from_parsed_f64`].
+//!
+//! Containers (ADR-0032 amendment):
+//! * a list is a JSON array of its items;
+//! * a record is an object of its fields by name (`{"x": 1, "y": 2}`), and is
+//!   also accepted as an array of its fields in order;
+//! * a map is an object whose values carry their own type: `true`, a number
+//!   or a string as themselves, anything else tagged, as in
+//!   `{"$type": "vec3", "value": [1, 2, 3]}`, `{"$type": "list", "value":
+//!   [...]}` or `{"$type": "record", "name": "UDim2", "value": {...}}`. Map numbers are always floats, so
+//!   they are written with a decimal point (`5.0`).
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use bevy_ecs::entity::Entity;
@@ -16,7 +27,8 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::value::{Color, FieldType, Value, ValueError};
+use crate::record::RecordId;
+use crate::value::{Color, FieldType, Value, ValueError, at};
 
 /// An untyped value as written in a file or sent by an agent.
 #[derive(Clone, Debug, PartialEq)]
@@ -193,8 +205,18 @@ impl Doc {
                 FieldType::Quat => "quat as [x, y, z, w]".to_string(),
                 FieldType::Color => "color as [r, g, b] or [r, g, b, a]".to_string(),
                 FieldType::Entity => "entity id string or null".to_string(),
-                FieldType::Enum(v) => format!("one of {}", v.join(" | ")),
-                other => other.name().to_string(),
+                FieldType::Map => "map as an object".to_string(),
+                FieldType::Record(id) => format!(
+                    "record {} as an object of {} or a list of their values",
+                    id.name(),
+                    id.schema()
+                        .fields
+                        .iter()
+                        .map(|f| f.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                other => other.describe(),
             },
             found: self.describe(),
         };
@@ -238,9 +260,191 @@ impl Doc {
                     ValueError::Invalid(format!("no entity with id {id:?}"))
                 })?))
             }
+            (FieldType::List(item), Doc::List(items)) => Value::List(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| {
+                        d.to_value(item, resolve)
+                            .map_err(|e| at(format!("[{i}]"), e))
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+            (FieldType::Map, Doc::Map(map)) => Value::Map(
+                map.iter()
+                    .map(|(k, d)| {
+                        let v = d
+                            .dynamic_value(false)
+                            .map_err(|e| at(format!("[{k:?}]"), e))?;
+                        Ok((k.clone(), v))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, ValueError>>()?,
+            ),
+            (FieldType::Record(id), Doc::Map(map)) => {
+                let schema = id.schema();
+                if let Some(unknown) = map.keys().find(|k| schema.field_index(k).is_none()) {
+                    return Err(ValueError::Invalid(format!(
+                        "record {} has no field {unknown:?}{}",
+                        schema.name,
+                        crate::error::suggest(
+                            unknown,
+                            schema.fields.iter().map(|f| f.name.as_str())
+                        )
+                        .map(|s| format!(" (did you mean {s:?}?)"))
+                        .unwrap_or_default()
+                    )));
+                }
+                let mut values = Vec::with_capacity(schema.fields.len());
+                for f in &schema.fields {
+                    let d = map.get(&f.name).ok_or_else(|| {
+                        ValueError::Invalid(format!(
+                            "record {} needs field {:?}",
+                            schema.name, f.name
+                        ))
+                    })?;
+                    values.push(
+                        d.to_value(&f.ty, resolve)
+                            .map_err(|e| at(format!(".{}", f.name), e))?,
+                    );
+                }
+                Value::Record(*id, values)
+            }
+            (FieldType::Record(id), Doc::List(items))
+                if items.len() == id.schema().fields.len() =>
+            {
+                Value::Record(
+                    *id,
+                    id.schema()
+                        .fields
+                        .iter()
+                        .zip(items)
+                        .map(|(f, d)| {
+                            d.to_value(&f.ty, resolve)
+                                .map_err(|e| at(format!(".{}", f.name), e))
+                        })
+                        .collect::<Result<_, _>>()?,
+                )
+            }
             _ => return Err(mismatch()),
         };
         ty.coerce(raw)
+    }
+
+    /// Reads a map value, which carries its own type (see the module docs).
+    fn dynamic_value(&self, in_list: bool) -> Result<Value, ValueError> {
+        let no_entities = |_: &str| None;
+        let raw = match self {
+            Doc::Bool(b) => Value::Bool(*b),
+            Doc::Str(s) => Value::Str(s.clone()),
+            d @ (Doc::Int(_) | Doc::F32(_) | Doc::F64(_)) => {
+                d.to_value(&FieldType::F64, &no_entities)?
+            }
+            Doc::Map(m) if m.contains_key("$type") => {
+                let tag = match m.get("$type") {
+                    Some(Doc::Str(t)) => t.as_str(),
+                    _ => return Err(ValueError::Invalid("`$type` must be a string".into())),
+                };
+                let allowed: &[&str] = if tag == "record" {
+                    &["$type", "name", "value"]
+                } else {
+                    &["$type", "value"]
+                };
+                if let Some(extra) = m.keys().find(|k| !allowed.contains(&k.as_str())) {
+                    return Err(ValueError::Invalid(format!(
+                        "unexpected key {extra:?} in a {tag:?} map value"
+                    )));
+                }
+                let value = m.get("value").ok_or_else(|| {
+                    ValueError::Invalid(format!("a {tag:?} map value needs `value`"))
+                })?;
+                match tag {
+                    "vec3" => value.to_value(&FieldType::Vec3, &no_entities)?,
+                    "quat" => value.to_value(&FieldType::Quat, &no_entities)?,
+                    "color" => value.to_value(&FieldType::Color, &no_entities)?,
+                    "list" if !in_list => match value {
+                        Doc::List(items) => Value::List(
+                            items
+                                .iter()
+                                .enumerate()
+                                .map(|(i, d)| {
+                                    d.dynamic_value(true).map_err(|e| at(format!("[{i}]"), e))
+                                })
+                                .collect::<Result<_, _>>()?,
+                        ),
+                        other => {
+                            return Err(ValueError::TypeMismatch {
+                                expected: "list".into(),
+                                found: other.describe(),
+                            });
+                        }
+                    },
+                    "record" => {
+                        let name = match m.get("name") {
+                            Some(Doc::Str(n)) => n,
+                            _ => {
+                                return Err(ValueError::Invalid(
+                                    "a \"record\" map value needs `name`".into(),
+                                ));
+                            }
+                        };
+                        let id = RecordId::by_name(name).ok_or_else(|| {
+                            ValueError::Invalid(format!("no record type named {name:?}"))
+                        })?;
+                        value.to_value(&FieldType::Record(id), &no_entities)?
+                    }
+                    other => {
+                        return Err(ValueError::Invalid(format!(
+                            "unknown map value type {other:?} (types: vec3, quat, color, list, record{})",
+                            if in_list { "; lists cannot nest" } else { "" }
+                        )));
+                    }
+                }
+            }
+            other => {
+                return Err(ValueError::TypeMismatch {
+                    expected: "bool, number, string or an object with `$type`".into(),
+                    found: other.describe(),
+                });
+            }
+        };
+        crate::value::coerce_dynamic(raw, in_list)
+    }
+
+    /// Writes a map value with its type (see the module docs).
+    fn from_dynamic(value: &Value) -> Doc {
+        let tagged = |tag: &str, v: Doc| {
+            Doc::Map(IndexMap::from([
+                ("$type".to_string(), Doc::Str(tag.to_string())),
+                ("value".to_string(), v),
+            ]))
+        };
+        let no_names = |_| None;
+        match value {
+            Value::Bool(b) => Doc::Bool(*b),
+            Value::Int(i) => Doc::F64(*i as f64),
+            Value::Float(x) => Doc::F64(*x),
+            Value::Str(s) => Doc::Str(s.clone()),
+            Value::Vec3(_) => tagged("vec3", Doc::from_value(value, &FieldType::Vec3, &no_names)),
+            Value::Quat(_) => tagged("quat", Doc::from_value(value, &FieldType::Quat, &no_names)),
+            Value::Color(_) => tagged(
+                "color",
+                Doc::from_value(value, &FieldType::Color, &no_names),
+            ),
+            Value::List(items) => tagged(
+                "list",
+                Doc::List(items.iter().map(Doc::from_dynamic).collect()),
+            ),
+            Value::Record(id, _) => Doc::Map(IndexMap::from([
+                ("$type".to_string(), Doc::Str("record".into())),
+                ("name".to_string(), Doc::Str(id.name().to_string())),
+                (
+                    "value".to_string(),
+                    Doc::from_value(value, &FieldType::Record(*id), &no_names),
+                ),
+            ])),
+            // Not storable in a map (refused by coercion).
+            Value::Map(_) | Value::Entity(_) | Value::Enum(_) => Doc::Null,
+        }
     }
 
     /// Converts a typed value for writing. Entity references are named by
@@ -262,6 +466,34 @@ impl Doc {
             Value::Str(s) => Doc::Str(s.clone()),
             Value::Enum(s) => Doc::Str(s.clone()),
             Value::Entity(e) => e.and_then(name_of).map(Doc::Str).unwrap_or(Doc::Null),
+            Value::List(items) => {
+                let item = match ty {
+                    FieldType::List(item) => Some(&**item),
+                    _ => None,
+                };
+                Doc::List(
+                    items
+                        .iter()
+                        .map(|v| match item {
+                            Some(t) => Doc::from_value(v, t, name_of),
+                            None => Doc::from_dynamic(v),
+                        })
+                        .collect(),
+                )
+            }
+            Value::Map(map) => Doc::Map(
+                map.iter()
+                    .map(|(k, v)| (k.clone(), Doc::from_dynamic(v)))
+                    .collect(),
+            ),
+            Value::Record(id, values) => Doc::Map(
+                id.schema()
+                    .fields
+                    .iter()
+                    .zip(values)
+                    .map(|(f, v)| (f.name.clone(), Doc::from_value(v, &f.ty, name_of)))
+                    .collect(),
+            ),
         }
     }
 }

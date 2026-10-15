@@ -69,7 +69,10 @@
                         "color",
                         "string",
                         "entity",
-                        "enum"
+                        "enum",
+                        "list",
+                        "map",
+                        "record"
                       ]
                     },
                     "variants": {
@@ -77,6 +80,12 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "item": {
+                      "type": "object"
+                    },
+                    "record": {
+                      "type": "string"
                     }
                   }
                 },
@@ -157,6 +166,12 @@
               },
               "GraphSource": {
                 "$ref": "#/$defs/GraphSource"
+              },
+              "Attributes": {
+                "$ref": "#/$defs/Attributes"
+              },
+              "Tags": {
+                "$ref": "#/$defs/Tags"
               }
             },
             "additionalProperties": false
@@ -673,6 +688,67 @@
           "type": "string",
           "default": "",
           "description": "Per-node parameter overrides as canonical JSON:\n`{\"<node id>\": {\"<param>\": <value>}}`."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Attributes": {
+      "type": "object",
+      "description": "Named values attached to the entity by scripts, the editor or agents.",
+      "properties": {
+        "values": {
+          "type": "object",
+          "description": "The attributes by name. Values are bools, numbers, strings, vectors, colours, enum names, records, or lists of those.",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": [
+                  "boolean",
+                  "number",
+                  "string"
+                ]
+              },
+              {
+                "type": "object",
+                "required": [
+                  "$type",
+                  "value"
+                ],
+                "properties": {
+                  "$type": {
+                    "enum": [
+                      "vec3",
+                      "quat",
+                      "color",
+                      "list",
+                      "record"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "value": {}
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "Tags": {
+      "type": "object",
+      "description": "String labels on the entity, found through the tag index.",
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "The tags, each at most once, in the order they were added."
         }
       },
       "additionalProperties": false

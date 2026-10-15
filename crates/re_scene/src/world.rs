@@ -8,6 +8,7 @@ use bevy_ecs::world::World as EcsWorld;
 use re_reflect::{Doc, Registry, Value};
 use serde_json::{Value as Json, json};
 
+use crate::attributes::{AttributeChanged, AttributeFeed};
 use crate::components::{GlobalTransform, Name, register_builtins};
 use crate::error::SceneError;
 use crate::hierarchy::{self, children, propagate_all, propagate_changed, subtree};
@@ -15,6 +16,7 @@ use crate::ids::{IdGen, IdIndex, StableId};
 use crate::procedural::{
     self, Generated, GeneratedFingerprint, Generators, Overrides, RegenReport, Suppressions,
 };
+use crate::tags::{TagChanged, TagFeed, TagIndex};
 
 /// The world: bevy_ecs storage, the component registry and the generator registry.
 ///
@@ -57,6 +59,7 @@ impl World {
 
     fn from_parts(mut ecs: EcsWorld, registry: Registry, generators: Generators) -> Self {
         ecs.init_resource::<IdIndex>();
+        ecs.init_resource::<TagIndex>();
         ecs.init_resource::<IdGen>();
         ecs.init_resource::<Suppressions>();
         let mut changed = single_threaded_schedule();
@@ -75,6 +78,40 @@ impl World {
     /// The id index.
     pub fn ids(&self) -> &IdIndex {
         self.ecs.resource::<IdIndex>()
+    }
+
+    /// The tag index (tag to entities), kept exact by `Tags`' hooks.
+    pub fn tag_index(&self) -> &TagIndex {
+        self.ecs.resource::<TagIndex>()
+    }
+
+    /// Starts recording [`AttributeChanged`] events (a no-op if already
+    /// recording). Until then none are kept.
+    pub fn record_attribute_changes(&mut self) {
+        self.ecs.init_resource::<AttributeFeed>();
+    }
+
+    /// The attribute changes since the last call, in order (empty when not
+    /// recording).
+    pub fn drain_attribute_changes(&mut self) -> Vec<AttributeChanged> {
+        self.ecs
+            .get_resource_mut::<AttributeFeed>()
+            .map(|mut f| f.drain())
+            .unwrap_or_default()
+    }
+
+    /// Starts recording [`TagChanged`] events (a no-op if already
+    /// recording). Until then none are kept.
+    pub fn record_tag_changes(&mut self) {
+        self.ecs.init_resource::<TagFeed>();
+    }
+
+    /// The tag changes since the last call, in order (empty when not recording).
+    pub fn drain_tag_changes(&mut self) -> Vec<TagChanged> {
+        self.ecs
+            .get_resource_mut::<TagFeed>()
+            .map(|mut f| f.drain())
+            .unwrap_or_default()
     }
 
     /// The entity with stable id `id`.
@@ -301,8 +338,9 @@ impl World {
     /// stable id copied by value through the registry, including generated
     /// entities (with their keys), overrides, `GlobalTransform` and the
     /// session's suppressions. Ids, child order and [`World::state_hash`] are
-    /// identical. ECS resources are not copied, except `IdIndex` (rebuilt by
-    /// hooks) and the suppressions; a caller that needs one of its own
+    /// identical. ECS resources are not copied, except `IdIndex` and
+    /// `TagIndex` (rebuilt by hooks) and the suppressions; change feeds are
+    /// not copied either; a caller that needs one of its own
     /// resources in the copy clones it in. Undo history is not part of the
     /// world and is not copied. Components that are not in the registry
     /// (other than the ones named here) are not copied.

@@ -1,7 +1,7 @@
 //! The `world` library.
 
 use mlua::{Lua, Result, Table, Value};
-use re_reflect::{ComponentOrigin, ComponentSchema, FieldSchema, FieldType};
+use re_reflect::{ComponentOrigin, ComponentSchema, FieldSchema, FieldTypeDoc};
 use re_scene::{Entity, Name, StableId, World, hierarchy};
 
 use super::Lib;
@@ -221,48 +221,62 @@ fn schema_error(name: &str, msg: impl std::fmt::Display) -> mlua::Error {
     )
 }
 
+/// Reads a field's type: a type name, or a table with `type` and, as the type
+/// needs, `variants`, `item` (itself a type) or `record`.
+fn type_doc(name: &str, field: &str, spec: Value) -> Result<FieldTypeDoc> {
+    match spec {
+        Value::String(s) => Ok(FieldTypeDoc {
+            kind: s.to_str()?.to_string(),
+            variants: Vec::new(),
+            item: None,
+            record: None,
+        }),
+        Value::Table(t) => {
+            let kind: Option<String> = t.get("type")?;
+            let kind =
+                kind.ok_or_else(|| schema_error(name, format!("field {field:?} needs a `type`")))?;
+            let item = match t.get::<Value>("item")? {
+                Value::Nil => None,
+                item => Some(Box::new(type_doc(name, field, item)?)),
+            };
+            Ok(FieldTypeDoc {
+                kind,
+                variants: t
+                    .get::<Option<Vec<String>>>("variants")?
+                    .unwrap_or_default(),
+                item,
+                record: t.get("record")?,
+            })
+        }
+        _ => Err(schema_error(
+            name,
+            format!("field {field:?} must be a type name or a table with `type`"),
+        )),
+    }
+}
+
 fn read_schema(name: &str, fields: Table) -> Result<ComponentSchema> {
     let mut out = Vec::new();
     for pair in fields.pairs::<String, Value>() {
         let (field, spec) = pair?;
-        let (kind, default, doc, variants) = match spec {
-            Value::String(s) => (
-                s.to_str()?.to_string(),
-                Value::Nil,
-                String::new(),
-                Vec::new(),
+        let (ty_doc, default, doc) = match spec {
+            Value::Table(ref t) => (
+                type_doc(name, &field, spec.clone())?,
+                t.get::<Value>("default")?,
+                t.get::<Option<String>>("doc")?.unwrap_or_default(),
             ),
-            Value::Table(t) => {
-                let kind: Option<String> = t.get("type")?;
-                let kind = kind
-                    .ok_or_else(|| schema_error(name, format!("field {field:?} needs a `type`")))?;
-                let variants: Vec<String> = t
-                    .get::<Option<Vec<String>>>("variants")?
-                    .unwrap_or_default();
-                (
-                    kind,
-                    t.get::<Value>("default")?,
-                    t.get::<Option<String>>("doc")?.unwrap_or_default(),
-                    variants,
-                )
-            }
-            _ => {
-                return Err(schema_error(
-                    name,
-                    format!("field {field:?} must be a type name or a table with `type`"),
-                ));
-            }
+            spec => (type_doc(name, &field, spec)?, Value::Nil, String::new()),
         };
-        let ty = FieldType::from_name(&kind, &variants).ok_or_else(|| {
+        let ty = ty_doc.to_field_type().map_err(|e| {
             schema_error(
                 name,
                 format!(
-                    "field {field:?} has unknown type {kind:?} (types: bool, i32, i64, f32, f64, vec3, quat, color, string, entity, enum with `variants`)"
+                    "field {field:?}: {e} (types: bool, i32, i64, f32, f64, vec3, quat, color, string, entity, enum with `variants`, list with `item`, map, record with `record`)"
                 ),
             )
         })?;
         let default = match default {
-            Value::Nil => default_of(&ty),
+            Value::Nil => ty.default_value(),
             v => field_from_lua(RawValue::from_lua(v)?, &ty)
                 .map_err(|m| schema_error(name, format!("field {field:?}: {m}")))?,
         };
@@ -280,21 +294,6 @@ fn read_schema(name: &str, fields: Table) -> Result<ComponentSchema> {
         fields: out,
         origin: ComponentOrigin::Script,
     })
-}
-
-fn default_of(ty: &FieldType) -> re_reflect::Value {
-    use re_reflect::Value as V;
-    match ty {
-        FieldType::Bool => V::Bool(false),
-        FieldType::I32 | FieldType::I64 => V::Int(0),
-        FieldType::F32 | FieldType::F64 => V::Float(0.0),
-        FieldType::Vec3 => V::Vec3(glam::Vec3::ZERO),
-        FieldType::Quat => V::Quat(glam::Quat::IDENTITY),
-        FieldType::Color => V::Color(re_reflect::Color::WHITE),
-        FieldType::String => V::Str(String::new()),
-        FieldType::Entity => V::Entity(None),
-        FieldType::Enum(v) => V::Enum(v.first().copied().unwrap_or_default().to_string()),
-    }
 }
 
 fn define(w: &mut World, schema: ComponentSchema) -> Result<()> {

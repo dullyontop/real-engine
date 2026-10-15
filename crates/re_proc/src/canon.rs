@@ -158,6 +158,31 @@ fn hash_value(h: &mut blake3::Hasher, v: &Value) {
             h.update(&(t.len() as u64).to_le_bytes());
             h.update(t.as_bytes());
         }
+        Value::List(items) => {
+            h.update(&[9]);
+            h.update(&(items.len() as u64).to_le_bytes());
+            for item in items {
+                hash_value(h, item);
+            }
+        }
+        Value::Map(map) => {
+            h.update(&[10]);
+            h.update(&(map.len() as u64).to_le_bytes());
+            for (k, v) in map {
+                h.update(&(k.len() as u64).to_le_bytes());
+                h.update(k.as_bytes());
+                hash_value(h, v);
+            }
+        }
+        Value::Record(id, values) => {
+            h.update(&[11]);
+            let name = id.name();
+            h.update(&(name.len() as u64).to_le_bytes());
+            h.update(name.as_bytes());
+            for v in values {
+                hash_value(h, v);
+            }
+        }
     }
 }
 

@@ -6,7 +6,10 @@
 //! docs and defaults), and reads and writes fields through it:
 //!
 //! * [`value`]: the closed set of [`FieldType`]s, the dynamic [`Value`], the
-//!   coercion rules, [`Color`], [`FieldValue`] and the [`field_enum!`] macro;
+//!   coercion rules, [`Value::diff`], [`Color`], [`FieldValue`] and the
+//!   [`field_enum!`] macro;
+//! * [`record`]: [`RecordSchema`] and [`RecordId`], the registered record
+//!   types behind [`FieldType::Record`];
 //! * [`registry`]: [`Registry`] (native components through [`component!`],
 //!   script components through [`Registry::register_script`], by-name access,
 //!   equality-checked writes, [`Registry::references_to`]);
@@ -24,17 +27,20 @@
 pub mod codes;
 pub mod doc;
 pub mod error;
+pub mod record;
 pub mod registry;
 pub mod schema;
 pub mod value;
 
 pub use doc::{Doc, f32_from_parsed_f64};
 pub use error::{ReflectError, suggest};
+pub use record::{RecordField, RecordId, RecordSchema};
 pub use registry::{
-    ComponentKey, ComponentOrigin, ComponentSchema, FieldSchema, Reflect, Registry, is_identifier,
+    ComponentKey, ComponentOrigin, ComponentSchema, FieldSchema, Reflect, Registry, WriteMode,
+    is_identifier,
 };
 pub use schema::{ComponentSchemaDoc, FieldSchemaDoc, FieldTypeDoc};
-pub use value::{Color, FieldType, FieldValue, Value, ValueError};
+pub use value::{Color, FieldType, FieldValue, Value, ValueChange, ValueError, coerce_dynamic};
 
 use re_core::DiagInfo;
 
