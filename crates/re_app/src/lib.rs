@@ -177,6 +177,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "Regeneration broke the game",
         page: include_str!("../explain/RE0525.md"),
     },
+    DiagInfo {
+        code: codes::STUCK_YIELD,
+        title: "A script waits forever",
+        page: include_str!("../explain/RE0526.md"),
+    },
 ];
 
 /// The code range this crate owns (ARCHITECTURE §7; `re_cli` owns RE0900–0999).

@@ -33,9 +33,14 @@ use re_script::{ContextKind, OutputLine, RuntimeConfig, ScriptHost};
 use crate::codes;
 use crate::config::AppConfig;
 
-/// Park labels that count as stuck when a run ends: a thread still waiting
-/// in `WaitForChild` never got the instance it needs.
-pub const STUCK_LABEL: &str = "WaitForChild";
+/// The part of a park label that counts as stuck when a run ends
+/// (`<path>:WaitForChild("<name>")`): a thread still waiting in
+/// `WaitForChild` never got the instance it needs.
+pub const STUCK_LABEL: &str = ":WaitForChild(";
+
+/// The seed of the server world's id generator (the client world's has its
+/// own, in `re_compat::net`).
+const SERVER_ID_SEED: u64 = 0x7365_7276_6572_0001;
 
 /// The `[compat]` section of `config`, if the project has one.
 ///
@@ -114,6 +119,11 @@ impl CompatPlay {
         clip_seconds: HashMap<String, f64>,
     ) -> Result<CompatPlay, Diagnostic> {
         let setup = setup()?;
+        // Instances scripts make get ids from a fixed sequence, so a run
+        // and its replay end with the same state hash.
+        world
+            .ecs
+            .insert_resource(re_scene::IdGen::seeded(SERVER_ID_SEED));
         let server = std::mem::replace(world, World::new());
         let worlds = match CompatWorlds::new(&setup, server) {
             Ok(w) => w,
@@ -163,8 +173,12 @@ impl CompatPlay {
     /// Keeps a context's script errors for [`CompatPlay::info`] and returns
     /// them.
     pub fn keep(&mut self, kind: ContextKind, diags: Vec<Diagnostic>) -> Vec<Diagnostic> {
-        self.uncaught
-            .extend(diags.iter().filter(|d| d.is_error()).cloned().map(|d| (kind, d)));
+        for d in diags.iter().filter(|d| d.is_error()) {
+            // A callback that fails every frame is one entry.
+            if !self.uncaught.iter().any(|(k, u)| *k == kind && u == d) {
+                self.uncaught.push((kind, d.clone()));
+            }
+        }
         diags
     }
 
@@ -184,7 +198,7 @@ impl CompatPlay {
         ] {
             let waits = re_script::sched::parked_waits(vm.context().lua()).unwrap_or_default();
             for (label, thread) in waits {
-                if label.starts_with(STUCK_LABEL) {
+                if label.contains(STUCK_LABEL) {
                     stuck.push((name(kind), label, thread));
                 }
             }

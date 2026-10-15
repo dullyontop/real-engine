@@ -8,7 +8,11 @@
 //! 2. `compile`: every script compiles (tier 1);
 //! 3. `scan`: the static API scan (tier 2), passed in by `re_cli` as a
 //!    [`VerifyStage`] when it is built with `tooling`;
-//! 4. `boot`: the project opens headless and runs its warm-up frames;
+//! 4. `boot`: the project opens headless and runs its warm-up frames; a
+//!    `[compat]` project runs [`VerifyOptions::compat_boot_frames`] (600) and
+//!    fails on an uncaught script error or a thread still waiting in
+//!    `WaitForChild` at the end (`RE0526`), and its data adds `uncaught`,
+//!    `stuck_yields`, `unsupported` and `output`;
 //! 5. `replays`: each `tests/replays/*.replay.json` runs twice from a fresh
 //!    start, and both runs must end with the same `state_hash`;
 //! 6. `goldens`: the replays' screenshot checks against
@@ -124,6 +128,9 @@ pub trait VerifyStage {
 pub struct VerifyOptions {
     /// Frames the boot stage runs (and measures for the PerfReport).
     pub boot_frames: u64,
+    /// Frames the boot stage runs for a `[compat]` project instead of
+    /// `boot_frames`.
+    pub compat_boot_frames: u64,
     /// Frames at the start of the boot run that are not measured.
     pub warmup_frames: u64,
     /// Write missing or differing golden images from this run instead of
@@ -135,6 +142,7 @@ impl Default for VerifyOptions {
     fn default() -> Self {
         VerifyOptions {
             boot_frames: 120,
+            compat_boot_frames: 600,
             warmup_frames: 10,
             update_goldens: false,
         }
@@ -761,6 +769,111 @@ fn stage_goldens(project: &Path, config: &AppConfig, options: &VerifyOptions) ->
     )
 }
 
+/// Stage 4: the project opens headless and runs its boot frames; the
+/// measured part of the run (after the warm-up) is the PerfReport.
+fn stage_boot(
+    project: &Path,
+    config: &AppConfig,
+    options: &VerifyOptions,
+    perf: &mut Option<PerfReport>,
+) -> StageReport {
+    let mut app = match App::open(project, headless_config(config)) {
+        Ok(app) => app,
+        Err(d) => {
+            return StageReport::new(
+                "boot",
+                vec![
+                    Diagnostic::error(codes::BOOT_FAILED, "the project did not boot")
+                        .with_related(d),
+                ],
+                Json::Null,
+            );
+        }
+    };
+    let compat = config.compat.is_some();
+    let frames = if compat {
+        options.compat_boot_frames
+    } else {
+        options.boot_frames
+    }
+    .max(1);
+    let warm = options.warmup_frames.min(frames - 1);
+    let mut diags = Vec::new();
+    let mut output = Vec::new();
+    match app.run_headless(Some(warm), None) {
+        Ok(r) => {
+            diags.extend(r.diagnostics);
+            output.extend(r.output);
+        }
+        Err(d) => diags.push(d),
+    }
+    app.reset_perf();
+    let r = match app.run_headless(Some(frames - warm), None) {
+        Ok(r) => r,
+        Err(d) => {
+            diags.push(d);
+            return StageReport::new("boot", diags, Json::Null);
+        }
+    };
+    diags.extend(r.diagnostics);
+    output.extend(r.output);
+    let mut data = json!({
+        "frames": frames,
+        "entities": r.perf.counts.entities,
+        "bodies": r.perf.counts.bodies,
+        "characters": r.perf.counts.characters,
+        "state_hash": r.state_hash,
+    });
+    if let Some(info) = &r.compat {
+        diags.extend(compat_boot_checks(info, frames));
+        data["uncaught"] = json!(
+            info.uncaught
+                .iter()
+                .map(|(context, d)| json!({
+                    "context": context,
+                    "code": d.code.to_string(),
+                    "message": d.message,
+                }))
+                .collect::<Vec<_>>()
+        );
+        data["stuck_yields"] = json!(
+            info.stuck_yields
+                .iter()
+                .map(|(context, wait, thread)| json!({
+                    "context": context,
+                    "wait": wait,
+                    "thread": thread,
+                }))
+                .collect::<Vec<_>>()
+        );
+        data["unsupported"] = json!(
+            info.unsupported
+                .iter()
+                .map(|(member, count)| json!({ "member": member, "count": count }))
+                .collect::<Vec<_>>()
+        );
+        data["output"] = json!(output);
+    }
+    *perf = Some(r.perf);
+    StageReport::new("boot", diags, data)
+}
+
+/// The boot failure only a compat run has: threads still waiting in
+/// `WaitForChild`. (Uncaught script errors are already among the run's
+/// diagnostics, as errors.)
+fn compat_boot_checks(info: &crate::compat::CompatRunInfo, frames: u64) -> Vec<Diagnostic> {
+    info.stuck_yields
+        .iter()
+        .map(|(context, wait, thread)| {
+            Diagnostic::error(
+                codes::STUCK_YIELD,
+                format!("a {context} script still waits in {wait} after {frames} frames"),
+            )
+            .with_hint(format!("waiting: {thread}"))
+        })
+        .collect()
+}
+
 /// Stage 7: the perf budget.
 fn stage_perf(perf: &PerfReport, config: &AppConfig) -> StageReport {
     let mut diags = Vec::new();
@@ -816,40 +929,7 @@ pub fn run_project(
     }
 
     let mut perf = None;
-    let boot = timed(|| match App::open(project, headless_config(config)) {
-        Err(d) => StageReport::new(
-            "boot",
-            vec![Diagnostic::error(codes::BOOT_FAILED, "the project did not boot").with_related(d)],
-            Json::Null,
-        ),
-        Ok(mut app) => {
-            let warm = options.warmup_frames.min(options.boot_frames);
-            let mut diags = Vec::new();
-            match app.run_headless(Some(warm), None) {
-                Ok(r) => diags.extend(r.diagnostics),
-                Err(d) => diags.push(d),
-            }
-            app.reset_perf();
-            match app.run_headless(Some(options.boot_frames - warm), None) {
-                Ok(r) => {
-                    diags.extend(r.diagnostics);
-                    let data = json!({
-                        "frames": options.boot_frames,
-                        "entities": r.perf.counts.entities,
-                        "bodies": r.perf.counts.bodies,
-                        "characters": r.perf.counts.characters,
-                        "state_hash": r.state_hash,
-                    });
-                    perf = Some(r.perf);
-                    StageReport::new("boot", diags, data)
-                }
-                Err(d) => {
-                    diags.push(d);
-                    StageReport::new("boot", diags, Json::Null)
-                }
-            }
-        }
-    });
+    let boot = timed(|| stage_boot(project, config, options, &mut perf));
     let booted = boot.ok;
     stages.push(boot);
 
