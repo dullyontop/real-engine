@@ -224,7 +224,7 @@ The entity core is bevy_ecs 0.20.0 used standalone, behind our own API (ADR-0005
 - **Components**: bevy_ecs components registered in `re_reflect::Registry`, which gives typed, documented, defaulted fields readable and writable by name, with central coercion rules (Luau's f64 numbers into f32 fields, for example). Native components are declared with the `component!` macro; scripts and agents can declare new components at run time (`Registry::register_script`), and those are real ECS components that are queried, change-tracked, saved and undone like native ones. Field types are a closed set: `bool`, `i32`, `i64`, `f32`, `f64`, `vec3`, `quat`, `color`, `string`, `entity` and unit enums.
 - **M1 built-ins** (fields are frozen in [M1_PLAN.md, WP0](M1_PLAN.md#wp0-workspace-ci-contracts-and-the-entity-core)):
   - `Name` (written as the entity's `name` in files), `Transform` (`translation`, `rotation`, `scale`) and the derived `GlobalTransform`;
-  - `MeshRef`, `MaterialRef`, `Visible`;
+  - `MeshRef` (its `asset` is an asset path, `builtin:cube`, `builtin:sphere`, `builtin:plane`, `builtin:capsule`, or `derived:<key>` for procedural output), `MaterialRef`, `Visible`;
   - `Camera`, `Light`;
   - `RigidBody` (static, dynamic or kinematic), `Collider` (box, sphere, capsule, convex, mesh or heightfield, plus layer, group mask and sensor);
   - `CharacterController` (with its own layer and group mask);
@@ -515,6 +515,10 @@ restart = ["key:KeyR"]
 move = [{ composite = ["key:KeyW", "key:KeyS", "key:KeyA", "key:KeyD"] }, { stick = "left", dead_zone = 0.15 }]
 look = [{ mouse_delta = 0.002 }, { stick = "right", dead_zone = 0.15 }]
 
+[verify]
+golden_mean_tolerance = 2.0    # levels (0–255): a pixel that differs by more in any channel is an outlier
+golden_max_outliers = 0.01     # the largest share of outlier pixels (0–1) a matching screenshot may have
+
 [verify.perf]                  # warnings only in M1
 frame_ms_p95 = 33.0
 ```
@@ -577,7 +581,7 @@ Rules (verified by the core spike's round-trip tests, ADR-0016):
   "checks": [ { "frame": 600, "screenshot": "tests/goldens/{backend}/island_600.png" } ] }
 ```
 
-Goldens are kept per backend, because GL and Vulkan differ in small ways (ADR-0010). `verify` compares against the set for the backend it ran on.
+Goldens are kept per backend, because GL and Vulkan differ in small ways (ADR-0010). `verify` compares against the set for the backend it ran on, using `[verify]` `golden_mean_tolerance` and `golden_max_outliers` from `real.toml`. `real verify --update-goldens` rewrites the current backend's set from this run; review the images before committing them.
 
 ### Caches
 

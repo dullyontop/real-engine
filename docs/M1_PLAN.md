@@ -270,7 +270,7 @@ All paths are in the private research folder `/mnt/project-files/real-engine/res
      | Component | Fields (type = default) | Reviewed by |
      |---|---|---|
      | `Transform` (requires `GlobalTransform`) | `translation: vec3 = 0`, `rotation: quat = identity`, `scale: vec3 = 1` | all |
-     | `MeshRef` | `asset: string = ""` (an asset path, or `derived:<hash>`) | WP6 |
+     | `MeshRef` | `asset: string = ""` (an asset path, `builtin:cube`, `builtin:sphere`, `builtin:plane`, `builtin:capsule`, or `derived:<hash>`) | WP6 |
      | `MaterialRef` | `asset: string = ""` (a `materials/*.material.json` path) | WP6 |
      | `Visible` | `visible: bool = true` | WP6 |
      | `Camera` | `fov_y_deg: f32 = 60`, `near: f32 = 0.1`, `far: f32 = 1000`, `active: bool = false` | WP6 |
@@ -866,7 +866,7 @@ Everything WP6 builds before the CLI and the demo (the milestone PR plus those i
 - `run_windowed` and `run_headless(frames, replay)`.
 - `HostServices` implementation. A game script's `destroy()` of a generated entity calls `World::despawn_runtime`, which suppresses its key.
 - Commands registered by `re_app`:
-  - `play.run`: step a copy of the World for N frames, then return a report and a screenshot (`read` tier, budgeted). The copy is `World::fork()` with `GraphStore` cloned in; physics is a fresh `Physics` built from the copy by `sync::physics::push` (same body order), then `apply_motion_state` with the live world's `motion_state()`, so poses, velocities, sleep and characters' ground state carry over. Contacts start fresh, so the copy's first step reports `Begin` for touching bodies, and the copy continues close to the live world but not bit-identically; scripts run in fresh VMs on the copy, starting from their entry points (in-VM Luau state is not copied in M1, and the report says so); audio uses the capture backend. Nothing from the copy reaches the live world;
+  - `play.run`: step a copy of the World for N frames (at most 3600), then return a report and a screenshot (`read` tier, budgeted). The copy is `World::fork()` with `GraphStore` cloned in; physics is a fresh `Physics` built from the copy by `sync::physics::push` (same body order), then `apply_motion_state` with the live world's `motion_state()`, so poses, velocities, sleep and characters' ground state carry over. Contacts start fresh, so the copy's first step reports `Begin` for touching bodies, and the copy continues close to the live world but not bit-identically; scripts run in fresh VMs on the copy, starting from their entry points (in-VM Luau state is not copied in M1, and the report says so); audio uses the capture backend. Nothing from the copy reaches the live world;
   - `screenshot`: capture the current view (`read`);
   - `verify`: run `verify::run` and return its report (`read`);
   - `asset.import`: import a file into `assets/` with a `.meta.json` (`edit`).
