@@ -74,6 +74,12 @@ fn verify_outside_a_project_is_re0500() {
     let o = real(&["verify"], dir.path());
     assert_eq!(o.status.code(), Some(1));
     assert!(text(&o).contains("RE0500"));
+    // With --json there is still one report on stdout.
+    let o = real(&["verify", "--json"], dir.path());
+    assert_eq!(o.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["stages"][0]["name"], "schema");
 }
 
 #[test]

@@ -17,6 +17,10 @@ pub const CONFIG_FILE: &str = "real.toml";
 /// come from `real.toml` through [`AppConfig::load`]; every field has a default,
 /// so a minimal `real.toml` is `[project]` with a name. The remaining fields are
 /// runtime options and are never read from the file.
+///
+/// Fields will be added: build one from [`AppConfig::load`] or
+/// `AppConfig::default()` and set fields, or end a struct literal with
+/// `..AppConfig::default()`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {

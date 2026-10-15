@@ -206,7 +206,8 @@ fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
         });
         diags.extend(checked.err());
     }
-    if !scenes.contains(&config.project.entry_scene) {
+    // Scenes outside `scenes/` are allowed; boot loads (and so checks) the entry.
+    if !project.join(&config.project.entry_scene).is_file() {
         diags.push(invalid(
             &config.project.entry_scene,
             format!(

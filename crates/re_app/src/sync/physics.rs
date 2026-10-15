@@ -114,6 +114,9 @@ struct Link {
     /// The local translation and rotation last written by [`pull`] or seen by
     /// [`push`]; a different value means someone else moved the entity.
     written: (Vec3, Quat),
+    /// The parent's world transform when `written` was recorded; a different
+    /// value means the parent moved and the body moves with it.
+    parent: Affine3A,
     /// World pose before and after the last step, for interpolation.
     prev: (Vec3, Quat),
     cur: (Vec3, Quat),
@@ -450,11 +453,18 @@ pub fn push(
         let (pos, rot, _) = world_pose;
         let fp = fingerprint(&w);
         let local = local_tr(world, entity);
+        let parent = parent_affine(world, entity);
         match sync.links.get_mut(&id) {
             Some(link) if link.fingerprint == fp && link.entity == entity => {
-                if link.written != local {
+                if link.written != local || link.parent != parent {
                     link.written = local;
-                    link.cur = (pos, rot);
+                    link.parent = parent;
+                    // A teleport, not motion: nothing to interpolate across.
+                    // (A kinematic target is motion the next step performs.)
+                    if link.kind != LinkKind::Body(BodyKind::Kinematic) {
+                        link.prev = (pos, rot);
+                        link.cur = (pos, rot);
+                    }
                     cmds.push(match link.kind {
                         LinkKind::Body(BodyKind::Kinematic) => {
                             PhysicsCmd::SetKinematicTarget { id, pos, rot }
@@ -476,6 +486,7 @@ pub fn push(
                         kind,
                         fingerprint: fp,
                         written: local,
+                        parent,
                         prev: (pos, rot),
                         cur: (pos, rot),
                     },
@@ -512,6 +523,7 @@ pub fn pull(world: &mut World, sync: &mut PhysicsSync, poses: &[BodyPose]) {
         let rot = rot.normalize();
         link.cur = (pose.pos, pose.rot);
         link.written = (t, rot);
+        link.parent = parent;
         if let Some(mut tr) = world.ecs.get_mut::<Transform>(entity) {
             if tr.translation != t || tr.rotation != rot {
                 tr.translation = t;

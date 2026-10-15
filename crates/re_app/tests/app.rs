@@ -145,6 +145,41 @@ fn writing_a_transform_teleports_the_body() {
 }
 
 #[test]
+fn moving_a_parent_moves_its_static_collider() {
+    let dir = tempfile::tempdir().unwrap();
+    write_project(
+        dir.path(),
+        r#"{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    { "id": "rig", "components": { "Transform": { "translation": [0.0, 0.0, 0.0] } } },
+    { "id": "deck", "parent": "rig", "components": {
+        "Collider": { "shape": "Box", "half_extents": [1.0, 0.1, 1.0] },
+        "Transform": { "translation": [0.0, 2.0, 0.0] } } }
+  ]
+}
+"#,
+    );
+    let mut app = open(dir.path());
+    app.run_headless(Some(2), None).unwrap();
+    app.world_mut()
+        .set(
+            "rig",
+            "Transform",
+            "translation",
+            Value::Vec3(Vec3::new(5.0, 0.0, 0.0)),
+        )
+        .unwrap();
+    app.run_headless(Some(2), None).unwrap();
+    let (pos, _) = app.physics().pose(id_of(&app, "deck")).unwrap();
+    assert!(
+        (pos - Vec3::new(5.0, 2.0, 0.0)).length() < 1e-3,
+        "deck at {pos}"
+    );
+}
+
+#[test]
 fn changing_a_shape_replaces_the_body() {
     let dir = project();
     let mut app = open(dir.path());

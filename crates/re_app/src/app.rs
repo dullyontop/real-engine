@@ -139,14 +139,12 @@ impl App {
     /// own diagnostic as `related`), `RE0501` when the `[input]` bindings are
     /// invalid, or the physics world's error.
     pub fn open(project: &Path, config: AppConfig) -> Result<App, Diagnostic> {
-        let action_map = config.input.to_action_map().map_err(|mut ds| {
-            let first = ds.remove(0);
+        let action_map = config.input.to_action_map().map_err(|ds| {
             let mut d = Diagnostic::error(
                 codes::CONFIG_INVALID,
                 "the [input] section of real.toml has invalid bindings",
             )
-            .at(Location::file(crate::config::CONFIG_FILE))
-            .with_related(first);
+            .at(Location::file(crate::config::CONFIG_FILE));
             for other in ds {
                 d = d.with_related(other);
             }

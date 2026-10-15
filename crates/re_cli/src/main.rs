@@ -188,7 +188,12 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         return ExitCode::from(1);
     }
     if args.exit_after {
-        println!("RUN OK");
+        // After `--json` output, stdout stays one JSON document.
+        if args.json {
+            eprintln!("RUN OK");
+        } else {
+            println!("RUN OK");
+        }
     } else if !args.json {
         println!(
             "ran {} frames; state hash {}",
@@ -249,11 +254,21 @@ fn cmd_describe(project: &Path, json: bool) -> ExitCode {
 }
 
 fn cmd_verify(project: &Path, json: bool) -> ExitCode {
-    let config = match AppConfig::load(project) {
-        Ok(c) => c,
-        Err(d) => return fail(d),
+    let report = match AppConfig::load(project) {
+        Ok(config) => re_app::verify::run_project(project, &config, &VerifyOptions::default(), &[]),
+        // Without `--json` this is a plain error; with it, still a report
+        // (a failed schema stage), so tools always get one JSON document.
+        Err(d) if !json => return fail(d),
+        Err(d) => re_app::VerifyReport {
+            ok: false,
+            stages: vec![re_app::StageReport::new(
+                "schema",
+                vec![d],
+                serde_json::Value::Null,
+            )],
+            perf: None,
+        },
     };
-    let report = re_app::verify::run_project(project, &config, &VerifyOptions::default(), &[]);
     if json {
         println!(
             "{}",
