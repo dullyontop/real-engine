@@ -219,6 +219,24 @@ pub(crate) fn reexamine(world: &mut World, e: Entity) {
     }
 }
 
+/// The simulated parts that can be touched whose boxes overlap the box of
+/// `size` at `pose`, at most `max` (the character's touches, WP14).
+pub(crate) fn touchable_in_box(
+    world: &World,
+    pose: re_physics::Pose,
+    size: glam::Vec3,
+    max: usize,
+) -> Vec<Entity> {
+    read_sim(world, |s| {
+        s.physics
+            .parts_in_box(pose, size, &mut |v: &re_physics::PartView| v.can_touch, max)
+            .into_iter()
+            .filter_map(sim::entity_of)
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
 /// The groups collision group `name` collides with, one bit per group id
 /// (an unknown name is `Default`).
 pub fn group_bits(world: &mut World, name: &str) -> u32 {

@@ -1,4 +1,4 @@
-//! Seats and vehicle seats, and the bodies of dead characters.
+//! Seats and vehicle seats, touches, and the bodies of dead characters.
 
 use re_script::ContextKind;
 
@@ -180,4 +180,31 @@ fn a_dead_seated_character_leaves_its_seat() {
     p.frames(2);
     p.run("print(workspace.Chair.Occupant, workspace.Chair:FindFirstChild('SeatWeld'))");
     assert_eq!(p.out(), ["nil nil"]);
+}
+
+#[test]
+fn a_walking_character_touches_parts() {
+    let mut p = settled("R15");
+    p.run(
+        "local coin = Instance.new('Part')
+         coin.Name = 'Coin'
+         coin.Anchored = true
+         coin.CanCollide = false
+         coin.Size = Vector3.new(1, 1, 1)
+         coin.CFrame = CFrame.new(0, 2, -6)
+         coin.Parent = workspace
+         local touching = {}
+         coin.Touched:Connect(function(hit)
+             if not touching[hit.Parent] and hit.Parent:FindFirstChild('Humanoid') then
+                 touching[hit.Parent] = true
+                 print('picked up by', hit.Parent.Name)
+             end
+         end)
+         coin.TouchEnded:Connect(function(hit)
+             if hit.Name == 'HumanoidRootPart' then print('left', hit.Name) end
+         end)
+         workspace.Dummy.Humanoid:Move(Vector3.new(0, 0, -1))",
+    );
+    p.frames(60);
+    assert_eq!(p.out(), ["picked up by Dummy", "left HumanoidRootPart"]);
 }

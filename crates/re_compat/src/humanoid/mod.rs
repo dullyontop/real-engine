@@ -12,7 +12,8 @@
 //!   (`Move`, `MoveTo`), jumps, and the move request to the controller;
 //! - [`post_simulation`]: the root part follows the controller, the limbs are
 //!   posed, and the state machine moves on (Running, Jumping, Freefall,
-//!   Landed and the rest), firing the state events.
+//!   Landed and the rest), firing the state events; then the characters'
+//!   touches with parts fire.
 //!
 //! A jump leaves the ground at `JumpPower` studs/s, or, when `UseJumpPower`
 //! is false, at `sqrt(2 g JumpHeight)` so it rises `JumpHeight` studs under
@@ -23,6 +24,7 @@ pub mod description;
 pub mod rig;
 pub mod scripts;
 pub mod seat;
+pub mod touch;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -333,11 +335,12 @@ fn pre_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mut
     }
     // A seated character has no controller: it rides its seat.
     if rt(w, classes, e).seat.is_some() {
-        let mut rt = rt(w, classes, e);
-        if rt.state != "Seated" {
-            set_state(&mut rt, "Seated", evs);
+        {
+            let mut rt = rt(w, classes, e);
+            if rt.state != "Seated" {
+                set_state(&mut rt, "Seated", evs);
+            }
         }
-        drop(rt);
         set_own(w, HUM, e, "MoveDirection", Value::Vec3(Vec3::ZERO));
         return;
     }
@@ -677,14 +680,17 @@ pub fn pre_simulation(lua: &Lua, dt: f64) -> Result<()> {
 }
 
 /// After the physics step: the root parts follow their controllers, the
-/// limbs are posed and the state machine moves on.
+/// limbs are posed, the state machine moves on, and the characters' touches
+/// with parts fire ([`touch`]).
 pub fn post_simulation(lua: &Lua, dt: f64) -> Result<()> {
     let classes = state(lua)?.setup.classes.clone();
-    for e in humanoids(lua)? {
+    let all = humanoids(lua)?;
+    for &e in &all {
         let mut evs = Vec::new();
         with_world(lua, |w| post_one(w, &classes, e, dt as f32, &mut evs))?;
         fire(lua, e, evs)?;
     }
+    touch::dispatch(lua, &classes, &all)?;
     signal::events::after_write(lua)
 }
 
