@@ -240,8 +240,11 @@ impl App {
         })
     }
 
-    /// Plays a copy of the World for `frames` frames (ADR-0021's `play.run`):
-    /// the copy is [`World::fork`] with a fresh physics world built from it and
+    /// Plays a copy of the World for `frames` frames (ADR-0021's `play.run`).
+    /// Scripts run in fresh VMs and start again from their entry points, on top
+    /// of the copied World state (in-VM state cannot be copied).
+    ///
+    /// The copy is [`World::fork`] with a fresh physics world built from it and
     /// given the live bodies' motion ([`Physics::motion_state`]), so it carries on
     /// from the live state; contacts start fresh. Audio goes to a silent mixer.
     /// With `screenshot`, the last frame is captured (the live app's GPU side is
@@ -1075,13 +1078,13 @@ impl App {
     /// The script runtime, created on first use (so editing never starts a VM).
     fn script_runtime(&mut self) -> Option<&mut ScriptRuntime> {
         if self.scripts.is_none() {
+            if self.scripts_failed {
+                return None;
+            }
             let config = RuntimeConfig::new(&self.project).with_limits(
                 self.config.scripts.cpu_budget_ms.max(0.0).ceil() as u64,
                 self.config.scripts.memory_limit_mb as usize,
             );
-            if self.scripts_failed {
-                return None;
-            }
             match ScriptRuntime::new(config) {
                 Ok(r) => self.scripts = Some(r),
                 Err(e) => {
@@ -1131,11 +1134,12 @@ impl App {
         }
     }
 
-    /// Reports script diagnostics, each distinct one once until the scripts
-    /// restart or reload; repeats only go to the log.
+    /// Reports script diagnostics, one per code and place until the scripts
+    /// restart or reload (a failing callback fails every step, possibly with a
+    /// different message each time); repeats only go to the log.
     fn report_script_errors(&mut self, diags: Vec<Diagnostic>) {
         for d in diags {
-            let key = format!("{}|{}|{:?}", d.code, d.message, d.location);
+            let key = format!("{}|{:?}", d.code, d.location);
             if self.script_errors.insert(key) {
                 self.diagnostics.push(d);
             } else {
@@ -1186,7 +1190,10 @@ impl App {
     ) -> Result<serde_json::Value, Vec<Diagnostic>> {
         match self.with_scripts(|s, host| s.exec(host, kind, name, source)) {
             Some(out) => out,
-            None => Err(self.take_diagnostics()),
+            None => Err(vec![Diagnostic::error(
+                re_script::codes::SERVICE_UNAVAILABLE,
+                "the script runtime could not be started (see the earlier error)",
+            )]),
         }
     }
 

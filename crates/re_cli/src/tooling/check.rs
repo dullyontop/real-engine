@@ -86,7 +86,8 @@ fn diagnostics(report: &CorpusReport) -> Vec<Diagnostic> {
 ///
 /// Never; problems are diagnostics and the exit code.
 pub fn run(args: CheckArgs, project: &Path) -> anyhow::Result<ExitCode> {
-    let config = if args.corpus {
+    // A directory given on the command line needs no project.
+    let config = if args.corpus || !args.scripts_dirs.is_empty() {
         None
     } else {
         match AppConfig::load(project) {

@@ -131,4 +131,8 @@ fn check_corpus_needs_directories() {
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
     let report: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(report["files"], 1);
+
+    // A directory alone needs no project either.
+    let o = real(&["check", "--scripts-dir", "corpus"], dir.path());
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
 }
