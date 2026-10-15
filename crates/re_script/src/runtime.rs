@@ -89,6 +89,68 @@ impl Context {
         Ok(Context { kind, lua, loaded })
     }
 
+    /// Creates a compatibility context ([`ContextKind::Server`] or
+    /// [`ContextKind::Client`]) with `config`'s CPU budget and memory limit.
+    /// It has the safe standard library, `print`, `warn` and `task`, and
+    /// whatever `install` adds to the globals before they are frozen; it has
+    /// no native engine library and no `require` (the layer installs its own).
+    ///
+    /// # Errors
+    ///
+    /// `kind` is a native context, or `install` failed.
+    pub fn compat(
+        config: &RuntimeConfig,
+        kind: ContextKind,
+        install: &dyn Fn(&Lua) -> mlua::Result<()>,
+    ) -> Result<Context, ScriptError> {
+        if !kind.is_compat() {
+            return Err(ScriptError::from_mlua(
+                kind.name(),
+                &mlua::Error::runtime(format!(
+                    "{} is a native context; Context::compat creates server and client contexts",
+                    kind.name()
+                )),
+            ));
+        }
+        let lua = vm::create_compat(kind, config.cpu_budget, config.memory_limit, install)
+            .map_err(|e| ScriptError::from_mlua(kind.name(), &e))?;
+        Ok(Context {
+            kind,
+            lua,
+            loaded: Loaded::default(),
+        })
+    }
+
+    /// The context's VM. Engine functions called from it reach the host only
+    /// inside [`Context::run`].
+    pub fn lua(&self) -> &Lua {
+        &self.lua
+    }
+
+    /// Binds `host`, runs `f`, then runs deferred threads and the settle hook
+    /// until no work is left, and returns the diagnostics of every error raised
+    /// meanwhile (in `f` itself or in any thread that ran).
+    pub fn run(
+        &self,
+        host: &mut dyn ScriptHost,
+        f: impl FnOnce(&Lua) -> mlua::Result<()>,
+    ) -> Vec<Diagnostic> {
+        run_in(self, host, f)
+    }
+
+    /// Drains what `print` and `warn` wrote.
+    pub fn take_output(&self) -> Vec<OutputLine> {
+        self.lua
+            .app_data_mut::<vm::Output>()
+            .map(|mut o| std::mem::take(&mut o.lines))
+            .unwrap_or_default()
+    }
+
+    /// Threads parked by a yielding host call (`WaitForChild`, `Signal:Wait`).
+    pub fn parked_threads(&self) -> usize {
+        scheduler::with(&self.lua, |s| s.parked()).unwrap_or(0)
+    }
+
     /// Which context this is.
     pub fn kind(&self) -> ContextKind {
         self.kind
@@ -126,6 +188,17 @@ impl Context {
         let errors = scheduler::with(&self.lua, |s| s.take_errors()).unwrap_or_default();
         errors.iter().map(report).collect()
     }
+}
+
+/// The error for a compat context asked of the native runtime.
+fn not_native(kind: ContextKind) -> Diagnostic {
+    Diagnostic::error(
+        codes::SERVICE_UNAVAILABLE,
+        format!(
+            "the {} context is not run by the native script runtime (it belongs to the compatibility layer)",
+            kind.name()
+        ),
+    )
 }
 
 fn report(e: &ScriptError) -> Diagnostic {
@@ -191,11 +264,20 @@ impl ScriptRuntime {
         &self.config
     }
 
-    /// A context.
+    /// A native context.
+    ///
+    /// # Panics
+    ///
+    /// For [`ContextKind::Server`] and [`ContextKind::Client`]: the runtime has
+    /// only the native contexts (`re_compat` owns the others).
     pub fn context(&self, kind: ContextKind) -> &Context {
         match kind {
             ContextKind::Game => &self.game,
             ContextKind::Tools => &self.tools,
+            ContextKind::Server | ContextKind::Client => panic!(
+                "ScriptRuntime has no {} context: compat contexts are created with Context::compat",
+                kind.name()
+            ),
         }
     }
 
@@ -363,6 +445,9 @@ impl ScriptRuntime {
         kind: ContextKind,
         entity: Option<Entity>,
     ) -> Vec<Diagnostic> {
+        if kind.is_compat() {
+            return vec![not_native(kind)];
+        }
         let owner = self.new_owner();
         self.entries.push(Entry {
             kind,
@@ -412,6 +497,9 @@ impl ScriptRuntime {
         name: &str,
         source: &str,
     ) -> Result<serde_json::Value, Vec<Diagnostic>> {
+        if kind.is_compat() {
+            return Err(vec![not_native(kind)]);
+        }
         let ctx = self.context(kind);
         let mut value = serde_json::Value::Null;
         let diags = run_in(ctx, host, |lua| {
@@ -548,7 +636,7 @@ fn run_in(
     let lua = &ctx.lua;
     let mut diags = Vec::new();
     host::bind(lua, host, || {
-        let r = f(lua).and_then(|()| scheduler::drain_deferred(lua));
+        let r = f(lua).and_then(|()| scheduler::settle(lua));
         if let Err(e) = r {
             if matches!(e, mlua::Error::MemoryError(_)) {
                 let _ = lua.gc_collect();

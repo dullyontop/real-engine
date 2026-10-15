@@ -2,9 +2,17 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "missing": 14
+    "implemented": 73,
+    "partial": 7,
+    "missing": 8
   },
   "classes": [
+    {
+      "name": "BasePlayerGui",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": []
+    },
     {
       "name": "BaseScript",
       "superclass": "LuaSourceContainer",
@@ -18,28 +26,314 @@
       ]
     },
     {
+      "name": "CollectionService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AddTag",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAllTags",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetInstanceAddedSignal",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetInstanceRemovedSignal",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetTagged",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetTags",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "HasTag",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "RemoveTag",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Configuration",
       "superclass": "Instance",
       "creatable": true,
-      "status": "missing",
+      "status": "implemented",
       "members": []
     },
     {
       "name": "DataModel",
       "superclass": "ServiceProvider",
-      "status": "missing",
+      "status": "partial",
       "members": []
     },
     {
       "name": "Folder",
       "superclass": "Instance",
       "creatable": true,
-      "status": "missing",
+      "status": "implemented",
       "members": []
     },
     {
       "name": "Instance",
-      "status": "missing",
+      "status": "partial",
+      "members": [
+        {
+          "name": "AddTag",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "AncestryChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Archivable",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AttributeChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Changed",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "ChildAdded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "ChildRemoved",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "ClassName",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClearAllChildren",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Clone",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "DescendantAdded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "DescendantRemoving",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Destroy",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Destroying",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "FindFirstAncestor",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FindFirstAncestorOfClass",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FindFirstAncestorWhichIsA",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FindFirstChild",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FindFirstChildOfClass",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FindFirstChildWhichIsA",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FindFirstDescendant",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAttribute",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAttributeChangedSignal",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAttributes",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetChildren",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetDescendants",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetFullName",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPropertyChangedSignal",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetTags",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "HasTag",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsA",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsAncestorOf",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsDescendantOf",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Name",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Parent",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Remove",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "RemoveTag",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "SetAttribute",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "WaitForChild",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "children",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "clone",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "destroy",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "findFirstChild",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "getChildren",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "isA",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "remove",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Lighting",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
       "members": []
     },
     {
@@ -59,7 +353,7 @@
       "name": "Model",
       "superclass": "PVInstance",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
       "members": []
     },
     {
@@ -76,6 +370,13 @@
       "members": []
     },
     {
+      "name": "ReplicatedStorage",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
       "name": "Script",
       "superclass": "BaseScript",
       "creatable": true,
@@ -83,9 +384,73 @@
       "members": []
     },
     {
+      "name": "ServerScriptService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "ServerStorage",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
       "name": "ServiceProvider",
       "superclass": "Instance",
-      "status": "missing",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "FindService",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetService",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "StarterCharacterScripts",
+      "superclass": "StarterPlayerScripts",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "StarterGui",
+      "superclass": "BasePlayerGui",
+      "service": true,
+      "status": "partial",
+      "members": []
+    },
+    {
+      "name": "StarterPlayer",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "StarterPlayerScripts",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "Workspace",
+      "superclass": "WorldRoot",
+      "service": true,
+      "status": "partial",
+      "members": []
+    },
+    {
+      "name": "WorldRoot",
+      "superclass": "Model",
+      "status": "partial",
       "members": []
     }
   ],
@@ -101,5 +466,41 @@
       ]
     }
   ],
-  "libraries": []
+  "libraries": [
+    {
+      "name": "Game",
+      "class": "DataModel",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Workspace",
+      "class": "Workspace",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "game",
+      "class": "DataModel",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "workspace",
+      "class": "Workspace",
+      "status": "implemented",
+      "members": []
+    }
+  ]
 }

@@ -188,7 +188,7 @@ pub(crate) fn bind<R>(lua: &Lua, host: &mut dyn ScriptHost, f: impl FnOnce() -> 
 /// Runs `f` with the bound host. Fails when no host is bound (a script called an
 /// engine function outside an entry point, which cannot happen through the public
 /// API) or when the host is already borrowed further up the stack.
-pub(crate) fn with_host<R>(
+pub fn with_host<R>(
     lua: &Lua,
     f: impl FnOnce(&mut dyn ScriptHost) -> mlua::Result<R>,
 ) -> mlua::Result<R> {

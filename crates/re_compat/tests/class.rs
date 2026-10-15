@@ -41,8 +41,16 @@ fn builtin_registry_builds_with_the_core_tree() {
         .map(|c| c.name.as_str())
         .collect();
     assert_eq!(names, ["ModuleScript", "LuaSourceContainer", "Instance"]);
-    // WP9 adds no behaviour: everything is honestly missing.
-    assert!(r.classes().all(|c| c.status == Status::Missing));
+    // Scripts are not built yet: they stay honestly missing.
+    for c in [
+        "LuaSourceContainer",
+        "BaseScript",
+        "Script",
+        "LocalScript",
+        "ModuleScript",
+    ] {
+        assert_eq!(r.class(c).unwrap().status, Status::Missing, "{c}");
+    }
 }
 
 #[test]
@@ -351,10 +359,11 @@ fn bad_data_is_refused_with_re9003() {
         ),
         (
             "missing converter",
-            ClassRegistryBuilder::builtin()
-                .unwrap()
-                .classes("t.json", ClassFile::parse("t.json", TEST_CLASSES).unwrap())
-                .accessor("Instance", "ClassName", common::class_name()),
+            common::instance_accessors(
+                ClassRegistryBuilder::builtin()
+                    .unwrap()
+                    .classes("t.json", ClassFile::parse("t.json", TEST_CLASSES).unwrap()),
+            ),
             "no converter named double",
         ),
         (
@@ -363,7 +372,7 @@ fn bad_data_is_refused_with_re9003() {
                 .unwrap()
                 .classes("t.json", ClassFile::parse("t.json", TEST_CLASSES).unwrap())
                 .converter("double", common::double()),
-            "Instance.ClassName is implemented but no accessor",
+            "is implemented but no accessor",
         ),
         (
             "accessor for a non-builtin",

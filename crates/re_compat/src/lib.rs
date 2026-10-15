@@ -12,14 +12,22 @@
 //! * the scene conventions ([`scene`]): the `game` root, services, the class
 //!   marker, script contexts and the `[compat]` section of `real.toml`.
 //!
-//! Behaviour (globals in the VM, signals, services, datatypes) is added by
-//! later work packages; this crate adds no globals to any VM by itself.
+//! The behaviour lives in the runtime ([`runtime`]): [`runtime::CompatVm`] is
+//! one `server` or `client` script context bound to one world, with the
+//! instance handles ([`instance`]), signals ([`signal`]) and services
+//! ([`services`]) that scripts reach through `game`. Each area registers its
+//! accessors, methods, globals and value conversions in
+//! [`runtime::Bindings`].
 
 pub mod class;
 pub mod codes;
 pub mod data;
 pub mod error;
+pub mod instance;
+pub mod runtime;
 pub mod scene;
+pub mod services;
+pub mod signal;
 
 pub use class::{
     Accessor, ClassDef, ClassMarker, ClassRegistry, ClassRegistryBuilder, Converter, EventDef,
@@ -28,7 +36,9 @@ pub use class::{
 };
 pub use data::{COVERAGE_JSON, CoverageFile, DataSet, Status};
 pub use error::CompatError;
+pub use runtime::{Bindings, CompatSetup, CompatVm, ValueCodec};
 pub use scene::{CompatApi, CompatConfig, GAME_ID, ROOT_CLASS, ServiceTag, script_context};
+pub use signal::SignalBehavior;
 
 use re_core::DiagInfo;
 
@@ -53,6 +63,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::READ_ONLY,
         title: "Read-only property",
         page: include_str!("../explain/RE9005.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_ATTRIBUTE,
+        title: "Attribute refused",
+        page: include_str!("../explain/RE9007.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_PARENT,
+        title: "Parent change refused",
+        page: include_str!("../explain/RE9008.md"),
     },
     DiagInfo {
         code: codes::DEPRECATED_MEMBER,

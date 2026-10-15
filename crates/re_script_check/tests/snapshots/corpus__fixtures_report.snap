@@ -86,24 +86,19 @@ expression: snapshot
       "Vector3.new": 1
     },
     "gap": {
-      "covered": 19,
+      "covered": 24,
       "missing": {
         "Enum": 1,
         "Enum.KeyCode": 1,
         "Enum.KeyCode.Space": 1,
         "GetService(Players)": 1,
         "GetService(RunService)": 1,
-        "Instance": 1,
-        "Instance.new": 1,
         "Instance.new(Part)": 1,
         "Players.PlayerAdded": 1,
         "RunService.Heartbeat": 1,
         "Vector3": 1,
         "Vector3.new": 1,
-        "game": 2,
-        "game.GetService": 2,
-        "script.Parent": 1,
-        "workspace": 1
+        "script.Parent": 1
       }
     },
     "parse_failed": [
