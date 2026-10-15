@@ -32,6 +32,10 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup toolchain install stable --profile minimal --component rustfmt
       - run: cargo fmt --all --check
+      - name: No CRLF in tracked text files (.gitattributes, ADR-0036)
+        run: |
+          bad=$(git ls-files --eol | awk '$1 ~ /^i\/(crlf|mixed)$/ { print $NF }')
+          if [ -n "$bad" ]; then echo "CRLF line endings in:"; echo "$bad"; exit 1; fi
 
   clippy:
     runs-on: ubuntu-latest

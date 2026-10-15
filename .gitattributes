@@ -1,5 +1,12 @@
 # Text files are checked out with LF on every platform, so include_str! data,
 # content hashes and goldens of text assets are the same on Windows (ADR-0036).
+# The `eol` CI step fails on a CRLF in a tracked text file.
 * text=auto eol=lf
 *.png binary
+*.jpg binary
 *.ttf binary
+*.glb binary
+*.wav binary
+*.ogg binary
+*.ktx2 binary
+*.rpak binary
