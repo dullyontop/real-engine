@@ -346,6 +346,7 @@ impl Audio {
                 });
             }
             AudioCmd::StopSource { entity } => with_mixer!(self, m => {
+                m.unattenuated.remove(entity);
                 if let Some(mut v) = m.sources.remove(entity) {
                     v.sound.stop(NOW);
                 }
@@ -397,6 +398,7 @@ impl Audio {
                 with_mixer!(self, m => m.manager.main_track().set_volume(db, NOW));
             }
             AudioCmd::StopAll => with_mixer!(self, m => {
+                m.unattenuated.clear();
                 for (_, mut v) in m.sources.drain() {
                     v.sound.stop(NOW);
                 }

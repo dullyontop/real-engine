@@ -2,7 +2,7 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 966,
+    "implemented": 967,
     "partial": 11,
     "stub-error": 2,
     "missing": 9
@@ -444,6 +444,11 @@
         {
           "name": "IsPlaying",
           "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Loaded",
+          "kind": "event",
           "status": "implemented"
         },
         {

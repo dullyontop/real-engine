@@ -21,6 +21,11 @@ pub struct Place {
 }
 
 pub fn place() -> Place {
+    place_with(SignalBehavior::Deferred)
+}
+
+/// The test place with handlers run as `behavior` says.
+pub fn place_with(behavior: SignalBehavior) -> Place {
     let mut b = Bindings::standard().unwrap();
     b.classes(|c| {
         c.classes(
@@ -42,7 +47,7 @@ pub fn place() -> Place {
         ContextKind::Client,
         &mut world,
         &RuntimeConfig::new(dir.path()),
-        SignalBehavior::Deferred,
+        behavior,
     )
     .unwrap();
     Place {

@@ -81,10 +81,10 @@ pub enum AudioCmd {
         seconds: f64,
     },
     /// Turn distance attenuation of an entity's spatial sound on or off (on by
-    /// default). Sent before `StartSource`, it applies to that sound and the
-    /// later ones of the entity. Off, the sound still pans by direction and
-    /// its volume is only what `volume` says, so the sender can apply its own
-    /// distance model.
+    /// default). Sent before `StartSource`, it applies to the entity's sounds
+    /// until its next `StopSource` (or `StopAll`). Off, the sound still pans
+    /// by direction and its volume is only what `volume` says, so the sender
+    /// can apply its own distance model.
     SetSourceAttenuation {
         /// The entity.
         entity: EntityId,

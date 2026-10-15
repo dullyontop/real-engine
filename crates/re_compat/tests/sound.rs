@@ -3,12 +3,16 @@
 use re_compat::sound::{RollOffMode, SoundEventKind, SoundSettings, roll_off};
 use re_types::audio::AudioCmd;
 
-use wp15::{Place, place};
+use re_compat::SignalBehavior;
+use wp15::{Place, place, place_with};
 
 mod wp15;
 
 fn sound_place() -> Place {
-    let mut p = place();
+    configured(place())
+}
+
+fn configured(mut p: Place) -> Place {
     p.lua(|lua| {
         re_compat::sound::configure(
             lua,
@@ -200,6 +204,72 @@ fn roll_off_curves() {
     ));
     let far = roll_off(RollOffMode::InverseTapered, 10.0, 100.0, 90.0);
     assert!(near(far, (10.0f32 / 90.0).powi(2)), "{far}");
+}
+
+#[test]
+fn length_and_loaded_follow_the_id_before_play() {
+    let mut p = sound_place();
+    p.run(
+        r#"
+        local s = Instance.new("Sound", workspace)
+        s.Loaded:Connect(function(id) print("loaded " .. id) end)
+        s.SoundId = "rbxassetid://1"
+        assert(not s.IsLoaded and s.TimeLength == 0)
+        "#,
+    );
+    p.frame(0.0);
+    p.run("local s = workspace.Sound assert(s.IsLoaded and s.TimeLength == 2 and not s.IsPlaying)");
+    assert_eq!(p.out(), vec!["loaded rbxassetid://1"]);
+    assert!(commands(&mut p).is_empty(), "nothing plays");
+    p.run("workspace.Sound.SoundId = '3'");
+    p.frame(0.0);
+    p.run("assert(workspace.Sound.TimeLength == 0.5)");
+}
+
+#[test]
+fn an_immediate_ended_handler_can_play_again() {
+    let mut p = configured(place_with(SignalBehavior::Immediate));
+    p.run(
+        r#"
+        local s = Instance.new("Sound", workspace)
+        s.SoundId = "3"
+        S.n = 0
+        s.Ended:Connect(function()
+            S.n += 1
+            if S.n < 2 then s:Play() end
+        end)
+        s:Play()
+        "#,
+    );
+    commands(&mut p);
+    p.frame(0.6);
+    p.run("local s = workspace.Sound assert(S.n == 1 and s.IsPlaying and s.Playing)");
+    assert_eq!(
+        commands(&mut p),
+        vec!["stop", "start assets/half.wav loop=false 3d=false vol=0.5"]
+    );
+    p.frame(0.6);
+    p.run("local s = workspace.Sound assert(S.n == 2 and not s.IsPlaying)");
+    assert_eq!(commands(&mut p), vec!["stop"]);
+}
+
+// 3D sounds need a part or attachment parent; those classes come with WP13
+// and WP14, and the 3D tests come with them.
+
+#[test]
+fn changing_the_id_while_playing_restarts_it() {
+    let mut p = sound_place();
+    p.run("local s = Instance.new('Sound', workspace) s.SoundId = '1' s.Looped = true s:Play()");
+    commands(&mut p);
+    p.run("workspace.Sound.SoundId = '3' workspace.Sound.PlaybackSpeed = 3");
+    p.frame(0.0);
+    let c = commands(&mut p);
+    assert!(
+        c.contains(&"start assets/half.wav loop=true 3d=false vol=0.5".to_string()),
+        "{c:?}"
+    );
+    assert!(c.contains(&"rate 3".to_string()), "{c:?}");
+    p.run("assert(workspace.Sound.TimeLength == 0.5 and workspace.Sound.IsPlaying)");
 }
 
 mod config {

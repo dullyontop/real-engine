@@ -166,6 +166,8 @@ pub enum SoundEventKind {
     Ended,
     /// Reached its end and started again (`Looped`).
     Looped,
+    /// Its id resolved to a clip that can play (fires `Loaded`).
+    Loaded,
 }
 
 /// The state of one sound as last applied.
@@ -186,6 +188,8 @@ struct Voice {
     rate: f32,
     looped: bool,
     at: Option<Vec3>,
+    /// True once `sound_id` has been looked up.
+    resolved: bool,
 }
 
 #[derive(Default)]
@@ -197,6 +201,9 @@ struct Hub {
     warned: HashSet<String>,
     time: f64,
     listener: Option<(Vec3, Quat)>,
+    /// Events to fire once the voices are stored, so a handler that runs
+    /// at once (`SignalBehavior::Immediate`) sees, and keeps, the new state.
+    pending: Vec<(Entity, SoundEventKind, String, i64)>,
 }
 
 fn hub_mut<R>(lua: &Lua, f: impl FnOnce(&mut Hub) -> R) -> R {
@@ -372,6 +379,7 @@ fn control(lua: &Lua, e: Entity, op: Op) -> mlua::Result<MultiValue> {
     hub_mut(lua, |h| {
         h.voices.insert(e.to_bits(), (e, v));
     });
+    flush(lua)?;
     signal::events::after_write(lua)?;
     ret(lua, ())
 }
@@ -389,7 +397,7 @@ fn fresh_voice(p: &Props) -> Voice {
 
 /// Resolves the voice's clip and length from its `SoundId`, warning once for
 /// an unknown id.
-fn resolve(lua: &Lua, v: &mut Voice, sound_id: &str) -> mlua::Result<()> {
+fn resolve(lua: &Lua, e: Entity, v: &mut Voice, sound_id: &str) -> mlua::Result<()> {
     v.sound_id = sound_id.to_string();
     let (clip, length, warn) = hub_mut(lua, |h| {
         let clip = h.settings.resolve(sound_id).map(str::to_string);
@@ -401,8 +409,16 @@ fn resolve(lua: &Lua, v: &mut Voice, sound_id: &str) -> mlua::Result<()> {
             && h.warned.insert(sound_id.to_string());
         (clip, length, warn)
     });
+    let was_loaded = v.clip.is_some();
     v.clip = clip.filter(|_| length.is_some());
     v.length = length.unwrap_or(0.0);
+    v.resolved = true;
+    if v.clip.is_some() && !was_loaded {
+        hub_mut(lua, |h| {
+            h.pending
+                .push((e, SoundEventKind::Loaded, v.sound_id.clone(), 0))
+        });
+    }
     if warn {
         let why = if v.clip.is_none() && length.is_none() {
             "is not in the [compat.assets] table of real.toml (or its file cannot be loaded)"
@@ -420,7 +436,7 @@ fn resolve(lua: &Lua, v: &mut Voice, sound_id: &str) -> mlua::Result<()> {
 
 fn begin(lua: &Lua, e: Entity, v: &mut Voice, p: &Props, kind: SoundEventKind) -> mlua::Result<()> {
     if v.clip.is_none() || v.sound_id != p.sound_id {
-        resolve(lua, v, &p.sound_id)?;
+        resolve(lua, e, v, &p.sound_id)?;
     }
     v.playing = true;
     v.looped = p.looped;
@@ -494,12 +510,15 @@ fn speed(s: f32) -> f32 {
 }
 
 fn gain_of(lua: &Lua, p: &Props) -> f32 {
+    // Until set_listener is called the listener is at the origin, as the
+    // audio backend's is.
     let listener = lua
         .app_data_ref::<Hub>()
-        .and_then(|h| h.listener.map(|(at, _)| at));
-    match (p.at, listener) {
-        (Some(at), Some(l)) => p.volume * roll_off(p.mode, p.min, p.max, at.distance(l)),
-        _ => p.volume,
+        .and_then(|h| h.listener.map(|(at, _)| at))
+        .unwrap_or(Vec3::ZERO);
+    match p.at {
+        Some(at) => p.volume * roll_off(p.mode, p.min, p.max, at.distance(listener)),
+        None => p.volume,
     }
 }
 
@@ -515,17 +534,35 @@ fn record(lua: &Lua, e: Entity, v: &Voice, kind: SoundEventKind) {
     });
 }
 
+/// Queues an event; [`flush`] fires it.
 fn fire(lua: &Lua, e: Entity, kind: SoundEventKind, v: &Voice) -> mlua::Result<()> {
-    let id = || -> mlua::Result<LuaValue> { Ok(LuaValue::String(lua.create_string(&v.sound_id)?)) };
-    let (name, args) = match kind {
-        SoundEventKind::Played => ("Played", vec![id()?]),
-        SoundEventKind::Paused => ("Paused", vec![id()?]),
-        SoundEventKind::Resumed => ("Resumed", vec![id()?]),
-        SoundEventKind::Stopped => ("Stopped", vec![id()?]),
-        SoundEventKind::Ended => ("Ended", vec![id()?]),
-        SoundEventKind::Looped => ("DidLoop", vec![id()?, LuaValue::Integer(v.loops)]),
-    };
-    signal::fire(lua, e, name, MultiValue::from_vec(args))
+    hub_mut(lua, |h| {
+        h.pending.push((e, kind, v.sound_id.clone(), v.loops))
+    });
+    Ok(())
+}
+
+/// Fires the queued events, after the voices that raised them are stored.
+fn flush(lua: &Lua) -> mlua::Result<()> {
+    loop {
+        let pending = hub_mut(lua, |h| std::mem::take(&mut h.pending));
+        if pending.is_empty() {
+            return Ok(());
+        }
+        for (e, kind, sound_id, loops) in pending {
+            let id = LuaValue::String(lua.create_string(&sound_id)?);
+            let (name, args) = match kind {
+                SoundEventKind::Played => ("Played", vec![id]),
+                SoundEventKind::Paused => ("Paused", vec![id]),
+                SoundEventKind::Resumed => ("Resumed", vec![id]),
+                SoundEventKind::Stopped => ("Stopped", vec![id]),
+                SoundEventKind::Ended => ("Ended", vec![id]),
+                SoundEventKind::Looped => ("DidLoop", vec![id, LuaValue::Integer(loops)]),
+                SoundEventKind::Loaded => ("Loaded", vec![id]),
+            };
+            signal::fire(lua, e, name, MultiValue::from_vec(args))?;
+        }
+    }
 }
 
 /// Writes the layer's view of a sound back to its properties.
@@ -563,7 +600,8 @@ pub fn set_listener(lua: &Lua, position: Vec3, rotation: Quat) {
 /// Advances every sound by `dt` seconds: picks up script writes to
 /// `Playing`, `TimePosition`, `SoundId`, `Volume`, `PlaybackSpeed` and
 /// `Looped`, moves the clocks, fires `Ended` and `DidLoop`, and queues the
-/// audio commands. Call it once per frame.
+/// audio commands. Call it once per frame, after [`set_listener`] for that
+/// frame's camera.
 pub fn step(lua: &Lua, dt: f64) -> mlua::Result<()> {
     let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
     let st = state(lua)?;
@@ -606,8 +644,8 @@ pub fn step(lua: &Lua, dt: f64) -> mlua::Result<()> {
         let mut v = match known {
             Some(v) => v,
             None => {
-                if !p.playing {
-                    // A sound nobody played needs no state yet.
+                if !p.playing && p.sound_id.is_empty() {
+                    // A sound with no id that nobody played needs no state.
                     continue;
                 }
                 let mut v = fresh_voice(&p);
@@ -628,8 +666,10 @@ pub fn step(lua: &Lua, dt: f64) -> mlua::Result<()> {
                 });
             }
         }
-        if p.sound_id != v.sound_id {
-            resolve(lua, &mut v, &p.sound_id)?;
+        // A new id resolves at once, so TimeLength, IsLoaded and Loaded
+        // follow it before any Play.
+        if !v.resolved || p.sound_id != v.sound_id {
+            resolve(lua, e, &mut v, &p.sound_id)?;
             if v.playing {
                 start_backend(lua, e, &mut v, &p);
             }
@@ -645,6 +685,11 @@ pub fn step(lua: &Lua, dt: f64) -> mlua::Result<()> {
         if v.playing {
             if p.looped != v.looped && v.started {
                 v.looped = p.looped;
+                start_backend(lua, e, &mut v, &p);
+            }
+            // Moving between a 2D and a 3D parent restarts the source where
+            // it is, as the other kind.
+            if v.started && p.at.is_some() != v.at.is_some() {
                 start_backend(lua, e, &mut v, &p);
             }
             v.looped = p.looped;
@@ -703,5 +748,6 @@ pub fn step(lua: &Lua, dt: f64) -> mlua::Result<()> {
             h.voices.insert(e.to_bits(), (e, v));
         });
     }
+    flush(lua)?;
     signal::events::after_write(lua)
 }

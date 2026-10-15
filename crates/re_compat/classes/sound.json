@@ -65,7 +65,7 @@
           "default": 0,
           "read_only": true,
           "status": "implemented",
-          "doc": "The clip's length in seconds once it has been played, 0 for an unknown id."
+          "doc": "The clip's length in seconds, from the frame after SoundId is set (or at once on Play); 0 for an unknown id."
         },
         {
           "name": "IsPlaying",
@@ -92,7 +92,7 @@
           "default": false,
           "read_only": true,
           "status": "implemented",
-          "doc": "True once the sound has been played with an id that resolves to a clip."
+          "doc": "True once SoundId resolves to a clip that can play (the frame after it is set, or at once on Play); Loaded fires then."
         },
         {
           "name": "RollOffMode",
@@ -199,6 +199,12 @@
           ],
           "status": "implemented",
           "doc": "Fires each time a looped sound starts over, with the number of times it has."
+        },
+        {
+          "name": "Loaded",
+          "params": [{ "name": "soundId", "type": "string" }],
+          "status": "implemented",
+          "doc": "Fires when SoundId resolves to a clip that can play."
         }
       ]
     }

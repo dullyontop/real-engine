@@ -122,6 +122,10 @@ struct Hub {
     by_entity: std::collections::HashMap<Entity, Run>,
     /// Steps since the last sweep of unreachable tweens.
     since_sweep: u32,
+    /// `Completed` events to fire once the runs are stored, so a handler
+    /// that runs at once (`SignalBehavior::Immediate`) sees, and keeps, the
+    /// new state.
+    pending: Vec<(Entity, PlaybackState)>,
 }
 
 fn hub_mut<R>(lua: &Lua, f: impl FnOnce(&mut Hub) -> R) -> R {
@@ -339,10 +343,25 @@ fn set_state(lua: &Lua, tween: Entity, s: PlaybackState) -> mlua::Result<()> {
     })?
     .map_err(compat_error)?;
     if matches!(s, PlaybackState::Completed | PlaybackState::Cancelled) {
-        let item = EnumItem::named("PlaybackState", s.name()).to_lua(lua)?;
-        signal::fire(lua, tween, "Completed", MultiValue::from_vec(vec![item]))?;
+        hub_mut(lua, |h| h.pending.push((tween, s)));
     }
     Ok(())
+}
+
+/// Fires the queued `Completed` events, then the change events of what the
+/// tweens wrote.
+fn flush(lua: &Lua) -> mlua::Result<()> {
+    loop {
+        let pending = hub_mut(lua, |h| std::mem::take(&mut h.pending));
+        if pending.is_empty() {
+            break;
+        }
+        for (tween, s) in pending {
+            let item = EnumItem::named("PlaybackState", s.name()).to_lua(lua)?;
+            signal::fire(lua, tween, "Completed", MultiValue::from_vec(vec![item]))?;
+        }
+    }
+    signal::events::after_write(lua)
 }
 
 fn play(lua: &Lua, tween: Entity, _a: MultiValue) -> mlua::Result<MultiValue> {
@@ -404,7 +423,7 @@ fn play(lua: &Lua, tween: Entity, _a: MultiValue) -> mlua::Result<MultiValue> {
             advance(lua, tween, 0.0)?;
         }
     }
-    signal::events::after_write(lua)?;
+    flush(lua)?;
     ret(lua, ())
 }
 
@@ -415,7 +434,7 @@ fn pause(lua: &Lua, tween: Entity, _a: MultiValue) -> mlua::Result<MultiValue> {
         run.state = PlaybackState::Paused;
         put(lua, tween, run);
         set_state(lua, tween, PlaybackState::Paused)?;
-        signal::events::after_write(lua)?;
+        flush(lua)?;
     }
     ret(lua, ())
 }
@@ -439,7 +458,7 @@ fn stop(lua: &Lua, tween: Entity, s: PlaybackState) -> mlua::Result<()> {
 fn cancel(lua: &Lua, tween: Entity, _a: MultiValue) -> mlua::Result<MultiValue> {
     run_of(lua, tween)?;
     stop(lua, tween, PlaybackState::Cancelled)?;
-    signal::events::after_write(lua)?;
+    flush(lua)?;
     ret(lua, ())
 }
 
@@ -474,8 +493,20 @@ fn advance(lua: &Lua, tween: Entity, dt: f64) -> mlua::Result<()> {
     let st = state(lua)?;
     let alive = with_world(lua, |w| tree::alive(w, run.target) && tree::alive(w, tween))?;
     if !alive {
+        // The target is gone: the tween stops where it is, quietly.
         run.state = PlaybackState::Cancelled;
         put(lua, tween, run);
+        with_world(lua, |w| {
+            if tree::alive(w, tween) {
+                let _ = set_own(
+                    w,
+                    tween,
+                    "TweenBase",
+                    "PlaybackState",
+                    Value::Enum(PlaybackState::Cancelled.name().into()),
+                );
+            }
+        })?;
         return Ok(());
     }
     run.elapsed += dt;
@@ -567,8 +598,8 @@ pub fn step(lua: &Lua, dt: f64) -> mlua::Result<()> {
     for tween in order {
         advance(lua, tween, dt)?;
     }
-    sweep(lua)?;
-    signal::events::after_write(lua)
+    flush(lua)?;
+    sweep(lua)
 }
 
 /// Destroys tweens that are not running and that no script can reach (their
@@ -586,8 +617,6 @@ fn sweep(lua: &Lua) -> mlua::Result<()> {
     if !due {
         return Ok(());
     }
-    lua.gc_collect()?;
-    let handles = weak_handles(lua)?;
     let candidates: Vec<(u64, Entity, bool)> = lua
         .app_data_ref::<Hub>()
         .map(|h| {
@@ -600,8 +629,17 @@ fn sweep(lua: &Lua) -> mlua::Result<()> {
                 .collect()
         })
         .unwrap_or_default();
+    // A full collection clears the weak handles of unreachable tweens; it
+    // only runs when some tween is idle.
+    if candidates.iter().any(|&(_, _, idle)| idle) {
+        lua.gc_collect()?;
+    }
+    let handles = weak_handles(lua)?;
     for (k, e, idle) in candidates {
-        let alive = with_world(lua, |w| tree::alive(w, e))?;
+        let (alive, parented) =
+            with_world(lua, |w| (tree::alive(w, e), tree::parent(w, e).is_some()))?;
+        // A tween a script parented is reachable through the tree.
+        let idle = idle && !parented;
         let reachable = !matches!(
             handles.raw_get::<LuaValue>(e.to_bits() as i64)?,
             LuaValue::Nil

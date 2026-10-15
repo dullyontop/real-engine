@@ -1,6 +1,7 @@
 //! WP15: TweenService as scripts see it, in a client VM.
 
-use wp15::place;
+use re_compat::SignalBehavior;
+use wp15::{place, place_with};
 
 mod wp15;
 
@@ -162,8 +163,6 @@ fn every_tweenable_type_at_half_way() {
         "#,
     );
     p.frame(1.0);
-    p.run("print(S.tw.PlaybackState.Name, workspace.TweenTarget.N)");
-    eprintln!("{:?}", p.out());
     p.run(
         r#"
         local t = workspace.TweenTarget
@@ -357,4 +356,111 @@ fn zero_length_tween_completes_on_play() {
         assert(t.N == 3 and tw.PlaybackState == Enum.PlaybackState.Completed)
         "#,
     );
+}
+
+#[test]
+fn pause_while_delayed_and_endless_repeats() {
+    let mut p = place();
+    p.run(
+        r#"
+        local TS = game:GetService("TweenService")
+        local a = Instance.new("TweenTarget", workspace)
+        a.Name = "A"
+        S.a = TS:Create(a, TweenInfo.new(1, Enum.EasingStyle.Linear, Enum.EasingDirection.In, 0, false, 1), { N = 10 })
+        S.a:Play()
+        local b = Instance.new("TweenTarget", workspace)
+        b.Name = "B"
+        -- A negative repeat count repeats forever.
+        S.b = TS:Create(b, TweenInfo.new(1, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), { N = 10 })
+        S.b:Play()
+        "#,
+    );
+    p.frame(0.5);
+    p.run("S.a:Pause() assert(S.a.PlaybackState == Enum.PlaybackState.Paused)");
+    p.frame(5.0);
+    p.run("S.a:Play() assert(S.a.PlaybackState == Enum.PlaybackState.Delayed)");
+    p.frame(0.75);
+    p.run("assert(math.abs(workspace.A.N - 2.5) < 1e-9, workspace.A.N)");
+    for _ in 0..40 {
+        p.frame(0.25);
+    }
+    p.run(
+        r#"
+        assert(S.b.PlaybackState == Enum.PlaybackState.Playing)
+        assert(math.abs(workspace.B.N - 2.5) < 1e-9, workspace.B.N) -- 16.25 s in
+        "#,
+    );
+}
+
+#[test]
+fn a_destroyed_target_cancels_quietly() {
+    let mut p = place();
+    p.run(
+        r#"
+        local t = Instance.new("TweenTarget", workspace)
+        S.tw = game:GetService("TweenService"):Create(t, TweenInfo.new(1), { N = 10 })
+        S.tw:Play()
+        t:Destroy()
+        "#,
+    );
+    p.frame(0.1);
+    p.run("assert(S.tw.PlaybackState == Enum.PlaybackState.Cancelled)");
+}
+
+#[test]
+fn a_referenced_or_parented_tween_survives_the_sweep() {
+    let mut p = place();
+    p.run(
+        r#"
+        local TS = game:GetService("TweenService")
+        local t = Instance.new("TweenTarget", workspace)
+        S.kept = TS:Create(t, TweenInfo.new(0.1), { N = 1 })
+        S.kept:Play()
+        local parented = TS:Create(t, TweenInfo.new(0.1), { I = 1 })
+        parented.Name = "Parented"
+        parented.Parent = workspace
+        parented:Play()
+        "#,
+    );
+    for _ in 0..250 {
+        p.frame(1.0 / 60.0);
+    }
+    p.run(
+        r#"
+        local tw = workspace:FindFirstChild("Parented")
+        assert(tw, "a parented tween is kept")
+        S.kept:Play()
+        assert(S.kept.PlaybackState == Enum.PlaybackState.Playing)
+        tw:Play()
+        assert(tw.PlaybackState == Enum.PlaybackState.Playing)
+        "#,
+    );
+}
+
+#[test]
+fn an_immediate_completed_handler_keeps_what_it_starts() {
+    let mut p = place_with(SignalBehavior::Immediate);
+    p.run(
+        r#"
+        local TS = game:GetService("TweenService")
+        local t = Instance.new("TweenTarget", workspace)
+        local a = TS:Create(t, TweenInfo.new(1, Enum.EasingStyle.Linear), { N = 10 })
+        local b = TS:Create(t, TweenInfo.new(1, Enum.EasingStyle.Linear), { N = -10 })
+        -- When b cancels a, a's handler restarts a, which cancels b in turn.
+        a.Completed:Connect(function(s)
+            if s == Enum.PlaybackState.Cancelled then a:Play() end
+        end)
+        a:Play()
+        b:Play()
+        S.a, S.b = a, b
+        "#,
+    );
+    p.run(
+        r#"
+        assert(S.a.PlaybackState == Enum.PlaybackState.Playing, S.a.PlaybackState.Name)
+        assert(S.b.PlaybackState == Enum.PlaybackState.Cancelled, S.b.PlaybackState.Name)
+        "#,
+    );
+    p.frame(0.5);
+    p.run("assert(math.abs(workspace.TweenTarget.N - 5) < 1e-9, workspace.TweenTarget.N)");
 }
