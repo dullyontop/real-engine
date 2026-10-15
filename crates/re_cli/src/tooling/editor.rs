@@ -35,13 +35,14 @@ pub fn run(args: EditorArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Ok(socket) => socket,
         Err(d) => return Ok(fail(&d)),
     };
-    let app = match open(project, config) {
-        Ok(app) => app,
+    let (app, agent) = match open(project, config) {
+        Ok(x) => x,
         Err(d) => return Ok(fail(&d)),
     };
     let options = EditorOptions {
         max_frames: args.frames,
         socket: Some(socket),
+        agent: Some(agent),
         ..EditorOptions::default()
     };
     match re_editor::run_editor(app, options) {
@@ -53,7 +54,10 @@ pub fn run(args: EditorArgs, project: &Path) -> anyhow::Result<ExitCode> {
     }
 }
 
-fn open(project: &Path, config: AppConfig) -> Result<App, Diagnostic> {
+/// Opens the project for the editor, with the same agent-facing commands
+/// `real mcp` registers (so `real mcp` through the editor serves the same
+/// tools) and the scan verify stage.
+fn open(project: &Path, config: AppConfig) -> Result<(App, re_agent::Agent), Diagnostic> {
     // The editor is the project's writer: every change, its own and those
     // that other writers send through its socket, is saved to the scene.
     let config = AppConfig {
@@ -61,13 +65,54 @@ fn open(project: &Path, config: AppConfig) -> Result<App, Diagnostic> {
         ..config
     };
     let mut app = App::open(project, config)?;
-    crate::explain::register(app.commands_mut());
-    // `verify` run in the editor scans scripts as `real verify` does.
-    app.add_verify_stage(std::sync::Arc::new(super::check::ScanStage));
-    Ok(app)
+    let agent = re_agent::Agent::new(project);
+    super::mcp::register_agent_tools(&mut app, &agent);
+    Ok((app, agent))
 }
 
 fn fail(d: &Diagnostic) -> ExitCode {
     eprint!("{}", d.render_human());
     ExitCode::from(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(app: &App) -> Vec<String> {
+        let mut names: Vec<String> = app
+            .commands()
+            .specs()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn the_editor_serves_the_same_tools_as_real_mcp() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("p");
+        crate::new::create(&project, None).unwrap();
+        let tools = project.join(re_agent::luau_tools::TOOLS_DIR);
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(
+            tools.join("hi.luau"),
+            "return { name = \"demo.hi\", summary = \"Say hi.\", tier = \"read\", run = function() return \"hi\" end }",
+        )
+        .unwrap();
+        let (editor, _agent) = open(&project, AppConfig::load(&project).unwrap()).unwrap();
+        let mcp = super::super::mcp::open_for_agents(&project).unwrap();
+        let editor_names = names(&editor);
+        assert!(
+            editor_names.iter().any(|n| n == "demo.hi"),
+            "{editor_names:?}"
+        );
+        assert!(
+            editor_names.iter().any(|n| n == "verify.diff"),
+            "{editor_names:?}"
+        );
+        assert_eq!(editor_names, names(&mcp.app));
+    }
 }

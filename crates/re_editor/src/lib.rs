@@ -69,6 +69,12 @@ pub struct EditorOptions {
     /// that `real mcp` works through the editor and `checkpoint.restore`
     /// returns to the scene as the editor opened it. Default: on.
     pub agent_commands: bool,
+    /// The agent state the caller registered its agent-facing commands with
+    /// (`real editor` registers the same set as `real mcp`). With
+    /// [`EditorOptions::agent_commands`] the session starts on it; `None`:
+    /// a new one, with only `re_agent`'s commands registered.
+    /// Ignored (and dropped) when `agent_commands` is off.
+    pub agent: Option<re_agent::Agent>,
     /// The project lock and socket, when the caller took them before opening
     /// the project (as `real editor` does, so that no other writer can
     /// change the scene between loading it and locking it). `None`: taken
@@ -84,6 +90,7 @@ impl Default for EditorOptions {
             size: None,
             max_frames: None,
             agent_commands: true,
+            agent: None,
             socket: None,
         }
     }
