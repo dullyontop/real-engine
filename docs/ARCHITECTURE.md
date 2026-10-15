@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** partly implemented (M1 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. Every M1 work package has merged; the definition of done is being checked. Still design: `re_compat` (M2). Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** partly implemented (M1 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. Every M1 work package has merged; the definition of done is being checked. In progress: `re_compat` (M2), whose class layer, data formats, coverage table and scene conventions have merged (WP9); its behaviour is still design. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -120,6 +120,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_agent` | Agent policy, sessions, checkpoints, agent commands, `AGENTS.md` and client configs, the editor socket (client and server loop; Unix only in M1) and the single-writer lock | `Policy`, `Session`, `Checkpoint`, `register_commands`, `generate_agents_md`, `remote::{connect, serve}`, `lock::{acquire, probe}` | tokio |
 | `re_mcp` | The MCP server (rmcp, stdio) | `serve_stdio(EngineHandle, McpOptions)` | `re_app` |
 | `re_editor` | Editor-lite UI and the editor socket | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
+| `re_compat` | The Roblox-style compatibility layer (M2, in progress): the class layer, the class, enum and library data, the coverage table and the compat scene conventions (§4) | `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | subsystems (it reaches them through `HostServices`), full_moon, tokio |
 
 Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
 
@@ -262,7 +263,7 @@ task.wait(0.5)
 
 ### M2 Roblox-style compatibility layer (`re_compat`)
 
-The layer is Luau plus Rust on top of the native model. The core spike checked how a Roblox-style object model maps onto bevy_ecs: relationships, hooks, observers, change ticks and runtime-defined components cover the instance tree, its signals and script-defined classes. Two pieces are missing from M1 and are M2 work: **container field types** (a string-keyed map and lists, for attributes and tags) and a **class layer** over components. The mapping:
+The layer is Luau plus Rust on top of the native model. The core spike checked how a Roblox-style object model maps onto bevy_ecs: relationships, hooks, observers, change ticks and runtime-defined components cover the instance tree, its signals and script-defined classes. Two pieces were missing from M1 and are M2 work: **container field types** (lists, string-keyed maps and records, for attributes and tags) and a **class layer** over components. Both have merged (WP9). The mapping:
 
 | Roblox-style concept | Engine mapping |
 |---|---|
@@ -288,6 +289,12 @@ The layer is Luau plus Rust on top of the native model. The core spike checked h
 | Services that need an online backend (data storage, teleport, marketplace) | They exist and return a clear `RE9002` "not available offline" error. Nothing hangs. |
 | Deprecated members that real scripts still use | Implemented where cheap, each with an `RE9101` deprecation note |
 | Large static maps | Static cells (ADR-0031) |
+
+The class layer as built (WP9):
+- `ClassRegistry` is built from the data files `classes/*.json`, `enums/*.json` and `libraries/*.json` (globals that are not classes: datatype tables, function libraries such as `task`, and instance globals such as `game`), which are embedded at build time. Each class has a superclass, `creatable`, the components it adds, and its properties, methods and events, each with a coverage status. A class file can `extend` a class declared in another file, so each WP owns the rows it implements.
+- A property is stored in one of three ways: an alias to a native field (optionally through a converter), an `own` field of the class's host component `Compat_<Class>`, or a `builtin` Rust accessor. Host components are registered with `Registry::register_host` before a scene loads; scene files store their fields by name without declaring their schemas, so adding a property never breaks a saved scene (ADR-0032).
+- Unknown and unimplemented members raise `RE9001` with a "did you mean" suggestion. A write to a read-only property raises `RE9005`, and a deprecated member gives an `RE9101` warning with its replacement.
+- Every instance carries a `ClassMarker { class }`. The root entity has the stable id `game` and class `DataModel`. Each service is a child of `game` whose stable id and name are its class name, with a `ServiceTag`. A script instance's `ScriptRef.context` is `Server`, `Client` or `Module`, from its class and `RunContext`; the native runtime starts only `Game` and `Tools` scripts. A compat project says `[compat] api = "roblox"` in `real.toml`, and convention breaks are reported as `RE9004`.
 
 Coverage is a data file, `crates/re_compat/coverage.json`, listing each class and member with its status (`implemented`, `partial`, `stub-error` or `missing`). The static scan (§7) compares real scripts against this file. M2 also ships a compatibility definitions file, so the type checker knows the Roblox-style globals.
 
@@ -455,7 +462,11 @@ Annotations are derived from the tier and set explicitly on every tool (ADR-0025
 | RE8000–8099 | `re_agent` |
 | RE8500–8599 | `re_mcp` |
 | RE8800–8899 | `re_editor` |
-| RE9xxx | compatibility (`re_script` in M1, `re_compat` in M2) |
+| RE9000 | reserved |
+| RE9001 | `re_script` ("unsupported API member", raised by every layer) |
+| RE9002–9799 | `re_compat` |
+| RE9800–9899 | `re_import` |
+| RE9900–9999 | reserved |
 
 - **Explain pages.** Each crate has `explain/RE####.md` and exports `pub const DIAGNOSTICS: &[DiagInfo]`, built with `include_str!`. `re_cli` collects all of them. A test fails on a missing page, a duplicate code, or a code outside the crate's range, and `cargo xtask explain` fails on a page that no `include_str!` in the crate's sources references (so every code used in source is in `DIAGNOSTICS`).
 - **Output.** Human output looks like rustc's: `error[RE3004]: ... --> scripts/game/player.luau:12:5`, followed by a hint. `--json` gives the same data as JSON lines.

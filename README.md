@@ -8,7 +8,7 @@ Real Engine is an open-source 3D game engine written in Rust. It is built around
 
 ## Status
 
-**M1 nearly done.** All nine M1 work packages have merged, and `examples/island` is a playable demo: walk, push crates, collect items, win and restart, and regenerate the island with a new seed during play. CI runs `real verify` on it headless and a windowed smoke run under Xvfb. The MCP end-to-end test has merged too, so what is left for M1 is checking the [definition of done](docs/M1_PLAN.md#definition-of-done-for-m1). M2, the Roblox-style compatibility layer (`re_compat`), is planned in [M2_PLAN.md](docs/M2_PLAN.md) and has not started.
+**M1 nearly done.** All nine M1 work packages have merged, and `examples/island` is a playable demo: walk, push crates, collect items, win and restart, and regenerate the island with a new seed during play. CI runs `real verify` on it headless and a windowed smoke run under Xvfb. The MCP end-to-end test has merged too, so what is left for M1 is checking the [definition of done](docs/M1_PLAN.md#definition-of-done-for-m1). M2, the Roblox-style compatibility layer (`re_compat`), is planned in [M2_PLAN.md](docs/M2_PLAN.md). Its first work package has merged: container field types, attributes and tags, and the `re_compat` crate with its class layer and data formats.
 
 The workspace holds:
 
@@ -19,6 +19,7 @@ The workspace holds:
 - Scripting: `re_script` (Luau through mlua) and `re_script_check` (the validation suite).
 - The runtime and CLI: `re_app` and `re_cli` (the `real` binary).
 - Tooling: `re_agent`, `re_mcp` (the MCP server) and `re_editor` (editor-lite).
+- Compatibility (M2, in progress): `re_compat`, the Roblox-style layer.
 
 Try it with `cargo run --release -p re_cli -- run --project examples/island`, or `real verify --project examples/island --json` for the headless checks.
 

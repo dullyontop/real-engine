@@ -45,7 +45,7 @@ The M1 ownership rule ([M1_PLAN.md](M1_PLAN.md)) carries over, with these change
   - `re_agent`, `re_mcp` and `re_cli/src/tooling/{mcp,agent}.rs` to WP17;
   - `re_assets`, `re_geom`, `re_proc` and `re_editor` to the maintainer, who folds in requests.
 - `re_compat` is split by directory, as listed in each WP. `crates/re_compat/Cargo.toml`, `src/lib.rs` and `src/codes.rs` belong to WP9. Other WPs ask WP9's owner (the maintainer, once WP9 is done) for new modules, dependencies and code blocks.
-- Class and enum data are split into one file per area under `crates/re_compat/classes/` and `crates/re_compat/enums/`. Each file belongs to the WP named in its section. Nobody edits `crates/re_compat/coverage.json` by hand: `cargo xtask coverage` writes it from the class, enum, datatype and service tables, like `schemas/`.
+- Class, enum and library data are split into one file per area under `crates/re_compat/classes/`, `enums/` and `libraries/`. Each class or enum file belongs to the WP named in its section; `enums/core.json`, which WP9 created for `RunContext`, belongs to WP10. Each `libraries/*.json` file belongs to the WP that implements the globals it declares. A class file may `extend` a class from another file, so a WP adds rows to a class it does not own in its own file. Nobody edits `crates/re_compat/coverage.json` by hand: `cargo xtask coverage` writes it from the class, enum, datatype and service tables, like `schemas/`.
 
 ## Common rules for every WP
 
@@ -71,8 +71,8 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | Container field types: `FieldType::{List, Map, Record}`, `Value::{List, Map, Record}`, `RecordSchema`, their coercion, JSON form, Luau mapping and per-element diff | `crates/re_reflect/src/value.rs`, `record.rs` | WP9 | WP9 PR "containers" | all |
 | `Attributes` (string → `Value` map) and `Tags` (string list) components, `TagIndex` (exact, kept by hooks), the attribute and tag change events | `crates/re_scene/src/attributes.rs`, `tags.rs` | WP9 | WP9 PR "containers" | WP11–WP16 |
 | Class layer: `ClassDef`, `ClassRegistry`, `PropertyDef` (alias to a native field, or storage in the class's own runtime component), `MethodDef`, `EventDef`, inheritance and `IsA`, `ClassMarker` | `crates/re_compat/src/class/` | WP9 | WP9 PR "skeleton" | WP10–WP16 |
-| Class, enum and coverage data formats (`classes/*.json`, `enums/*.json`, `coverage.json`, with their JSON Schemas in `schemas/`) | `crates/re_compat/src/data.rs` | WP9 | WP9 PR "skeleton" | WP10–WP17, `re_script_check` |
-| Compat scene conventions: the `game` root entity, `ServiceTag`, the `ClassMarker` per class, `ScriptRef` with `context = "server" \| "client" \| "module"`, `RunContext`, how the importer writes a project (`real.toml` `[compat] api = "roblox"`) | `crates/re_compat/src/scene.rs` | WP9 | WP9 PR "skeleton" | WP11, WP12, WP16 |
+| Class, enum, library and coverage data formats (`classes/*.json`, `enums/*.json`, `libraries/*.json`, `coverage.json`, with their JSON Schemas in `schemas/`) | `crates/re_compat/src/data.rs` | WP9 | WP9 PR "skeleton" | WP10–WP17, `re_script_check` |
+| Compat scene conventions: the `game` root entity, `ServiceTag`, the `ClassMarker` per class, `ScriptRef` with `context` = `Server`, `Client` or `Module`, `RunContext`, how the importer writes a project (`real.toml` `[compat] api = "roblox"`) | `crates/re_compat/src/scene.rs` | WP9 | WP9 PR "skeleton" | WP11, WP12, WP16 |
 | Datatypes on the Rust side: `CFrame` (f32 position and rotation matrix), `Color3`, `UDim`, `UDim2`, `Rect`, `NumberRange`, `NumberSequence`, `ColorSequence`, `TweenInfo`, `PhysicalProperties`, `EnumItem`, and their `Value::Record` forms | `crates/re_compat/src/datatypes/` | WP10 | WP10 PR "core datatypes" | WP11–WP16 |
 | Instance handles: `InstanceRef` (Luau userdata over `Entity`, with identity equality), property get and set by name through the class layer, member functions that work when read as values (`f(inst, ...)`) | `crates/re_compat/src/instance/` | WP11 | WP11 PR "data model" | WP12–WP16 |
 | Signals: `SignalHub`, `Signal::fire`, `Connection`, the Luau `RBXScriptSignal` shape (`Connect`, `Once`, `Wait`, `Disconnect`, legacy `connect` and `disconnect`), deferred and immediate firing | `crates/re_compat/src/signal/` | WP11 | WP11 PR "data model" | WP12–WP16 |
@@ -84,6 +84,8 @@ A contract is **frozen** at the point named here. After that, changing it follow
 ---
 
 ## WP9: Container types and the compat skeleton
+
+**Status:** done. PR "containers" merged in #38 and PR "skeleton" in #42. WP9's paths in `re_compat` now belong to the maintainer.
 
 **Goal.** Give the entity model the data shapes the compatibility layer needs. Then create `re_compat` with the class layer, the data formats, the coverage file and the scene conventions, so that WP10–WP17 can work in parallel.
 
@@ -107,7 +109,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 - The crate itself, which is a runtime crate (ADR-0027). It depends on `re_core`, `re_types`, `re_reflect`, `re_scene`, `re_command`, `re_script` and `mlua`.
 - `ClassRegistry`, loaded from `classes/*.json` at start-up:
   - Each class has a superclass, `creatable`, the component set it adds, its properties, methods and events, and a status per member.
-  - A property is either an alias to a native field (`Position` → `Transform.translation`, `Anchored` → `RigidBody.kind`) or stored in the class's own runtime component, registered with `Registry::register_script` as `Compat.<Class>`, so it is saved, undone and reflected like any other component.
+  - A property is either an alias to a native field (`Position` → `Transform.translation`, `Anchored` → `RigidBody.kind`) or stored in the class's own runtime component, registered with `Registry::register_host` as the host component `Compat_<Class>` (component names are identifiers), so it is saved, undone and reflected like any other component, and saved scenes store only its field values (ADR-0032 amendment).
   - Unknown members raise `RE9001` with a "did you mean" suggestion.
 - `classes/core.json` covers `Instance`, `Folder`, `Model`, `Configuration`, `ModuleScript`, `Script` and `LocalScript`.
 - The data formats and their JSON Schemas, plus `cargo xtask coverage`, which writes `coverage.json`. `re_script_check`'s gap report reads `coverage.json` instead of its built-in list. WP16 owns `re_script_check` later; this one change is WP9's, with WP16's review.
