@@ -34,7 +34,10 @@ use re_physics::Physics;
 use re_scene::{Entity, World};
 
 pub use pose::{cframe_value, pose_of, world_pose};
-pub use sim::{CELL_SIZE, Cell, CellId, CharacterDriven, CompatPhysics, MAX_GROUPS, StaticCells};
+pub use sim::{
+    CELL_SIZE, Cell, CellId, CharacterDriven, CharacterLoose, CompatPhysics, MAX_GROUPS,
+    StaticCells,
+};
 
 use crate::class::{Accessor, ClassRegistry};
 use crate::error::CompatError;
@@ -119,6 +122,8 @@ pub fn step(world: &mut World, dt: f32) -> Vec<Diagnostic> {
         if dt > 0.0 {
             let h = dt / SUBSTEPS as f32;
             for _ in 0..SUBSTEPS {
+                // A character's move request lasts one step (WP14).
+                crate::humanoid::body::before_substep(w, &mut sim.physics);
                 constraints::apply_movers(sim, &movers, h);
                 if let Err(d) = sim.physics.step(h) {
                     out.push(d);
@@ -203,6 +208,33 @@ pub fn dispatch(lua: &Lua) -> mlua::Result<()> {
 /// work packages that add their own bodies (the character controller).
 pub fn with_physics<R>(world: &mut World, f: impl FnOnce(&mut Physics) -> R) -> Option<R> {
     with_sim(world, |sim, _| f(&mut sim.physics))
+}
+
+/// Has the simulation look at `e` and its descendants again at the next
+/// step (after a change it does not observe, such as [`CharacterDriven`]
+/// being added or removed).
+pub(crate) fn reexamine(world: &mut World, e: Entity) {
+    if let Some(mut feed) = world.ecs.get_resource_mut::<sim::PhysicsFeed>() {
+        feed.tree.push(e);
+    }
+}
+
+/// The simulated parts that can be touched whose boxes overlap the box of
+/// `size` at `pose`, at most `max` (the character's touches, WP14).
+pub(crate) fn touchable_in_box(
+    world: &World,
+    pose: re_physics::Pose,
+    size: glam::Vec3,
+    max: usize,
+) -> Vec<Entity> {
+    read_sim(world, |s| {
+        s.physics
+            .parts_in_box(pose, size, &mut |v: &re_physics::PartView| v.can_touch, max)
+            .into_iter()
+            .filter_map(sim::entity_of)
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 /// The groups collision group `name` collides with, one bit per group id

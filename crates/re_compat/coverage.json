@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1736,
-    "partial": 198,
+    "implemented": 1749,
+    "partial": 201,
     "stub-error": 53,
     "missing": 3
   },
@@ -1973,8 +1973,7 @@
         {
           "name": "MaxSlopeAngle",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; the character controller uses its own slope limit."
+          "status": "implemented"
         },
         {
           "name": "Move",
@@ -2047,8 +2046,7 @@
         {
           "name": "SeatPart",
           "kind": "property",
-          "status": "partial",
-          "note": "Seats are not supported yet; always nil."
+          "status": "implemented"
         },
         {
           "name": "Seated",
@@ -4210,6 +4208,29 @@
       ]
     },
     {
+      "name": "Seat",
+      "superclass": "Part",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Disabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Occupant",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Sit",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "ServerScriptService",
       "superclass": "Instance",
       "service": true,
@@ -5907,6 +5928,73 @@
           "name": "RelativeTo",
           "kind": "property",
           "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "VehicleSeat",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Disabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HeadsUpDisplay",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; no speed display is drawn."
+        },
+        {
+          "name": "MaxSpeed",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "Occupant",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Sit",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Steer",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SteerFloat",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Throttle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ThrottleFloat",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Torque",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "TurnSpeed",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
         }
       ]
     },
