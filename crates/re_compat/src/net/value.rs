@@ -238,10 +238,16 @@ pub fn decode(lua: &Lua, v: &NetValue, target: Target) -> Result<LuaValue> {
         NetValue::Data(ty, v) => datatypes::to_lua(lua, ty, v.clone())?,
         NetValue::Table(entries) => {
             let t = lua.create_table()?;
+            // An element that arrives as nil (an instance the receiver does
+            // not have) keeps its index: later elements do not shift.
+            let mut i = 0i64;
             for (k, v) in entries {
                 let v = decode(lua, v, target)?;
                 match k {
-                    NetKey::Index => t.raw_push(v)?,
+                    NetKey::Index => {
+                        i += 1;
+                        t.raw_set(i, v)?;
+                    }
                     NetKey::Str(s) => t.raw_set(lua.create_string(s)?, v)?,
                 }
             }

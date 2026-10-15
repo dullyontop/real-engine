@@ -17,7 +17,9 @@
 //! * In M2 there is one client: messages for other (simulated) players are
 //!   counted as undelivered ([`NetLink::undelivered`]).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use mlua::{Function, Lua, MultiValue, Result, Value as LuaValue};
@@ -28,7 +30,7 @@ use super::value::{NetValue, Target, decode_all, encode_all, instance_by_id};
 use super::{Msg, NetLink, Side, link};
 use crate::codes;
 use crate::instance::{self, arg_instance, push, tree};
-use crate::runtime::{Bindings, lua_error, with_world};
+use crate::runtime::{Bindings, lua_error, state, with_world};
 use crate::signal;
 
 /// How many undelivered messages one VM keeps waiting for a listener.
@@ -226,13 +228,16 @@ fn bindable_fire(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
 const RUNNER_KEY: &str = "re_compat.net.runner";
 
 /// Runs `cb` with `args` in a new script thread; `done` gets `pcall`'s
-/// results (`ok` first).
+/// results (`ok` first). `queued` runs it where a deferred signal handler
+/// would (at the end of the cycle, in order with them); otherwise it starts
+/// at once.
 fn run_handler(
     lua: &Lua,
     cb: Function,
     done: Function,
     args: MultiValue,
     label: &str,
+    queued: bool,
 ) -> Result<()> {
     let runner: Function = match lua.named_registry_value::<Option<Function>>(RUNNER_KEY)? {
         Some(r) => r,
@@ -247,7 +252,11 @@ fn run_handler(
     };
     let mut all = MultiValue::from_iter([LuaValue::Function(cb), LuaValue::Function(done)]);
     all.extend(args);
-    sched::spawn(lua, runner, all, label)?;
+    if queued {
+        sched::defer(lua, runner, all, label, None)?;
+    } else {
+        sched::spawn(lua, runner, all, label)?;
+    }
     Ok(())
 }
 
@@ -263,6 +272,14 @@ fn error_text(v: Option<&LuaValue>) -> String {
     }
 }
 
+/// Where a `BindableFunction:Invoke` stands: its outcome when the handler
+/// finished without yielding, else the caller's park.
+#[derive(Default)]
+struct Pending {
+    outcome: Option<std::result::Result<MultiValue, String>>,
+    token: Option<YieldToken>,
+}
+
 fn bindable_invoke(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
     let what = "BindableFunction:Invoke";
     let Some(cb) = instance::callback(lua, e, "OnInvoke")? else {
@@ -270,35 +287,48 @@ fn bindable_invoke(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
     };
     let args = encode_all(lua, a, what)?;
     let args = decode_all(lua, &args, Target::SameWorld)?;
-    let (values, token) = sched::park(lua, what, None)?;
+    let state: Rc<RefCell<Pending>> = Default::default();
+    let st = state.clone();
     let done = lua.create_function(move |lua, results: MultiValue| {
         let mut it = results.into_iter();
         let ok = matches!(it.next(), Some(LuaValue::Boolean(true)));
         let rest: MultiValue = it.collect();
-        if !ok {
-            let msg = format!("{what}: the handler raised: {}", error_text(rest.front()));
-            sched::wake_error(
-                lua,
-                token,
-                &format!("[{}] {msg}", codes::REMOTE_CALL),
-                WakeMode::Deferred,
-            )?;
-            return Ok(());
-        }
-        match encode_all(lua, rest, "BindableFunction.OnInvoke result")
-            .and_then(|r| decode_all(lua, &r, Target::SameWorld))
-        {
-            Ok(r) => {
-                sched::wake(lua, token, r, WakeMode::Deferred)?;
+        let outcome = if ok {
+            encode_all(lua, rest, "BindableFunction.OnInvoke result")
+                .and_then(|r| decode_all(lua, &r, Target::SameWorld))
+                .map_err(|e| e.to_string())
+        } else {
+            Err(format!(
+                "[{}] {what}: the handler raised: {}",
+                codes::REMOTE_CALL,
+                error_text(rest.front())
+            ))
+        };
+        let token = st.borrow().token;
+        match (token, outcome) {
+            (Some(t), Ok(r)) => {
+                sched::wake(lua, t, r, WakeMode::Deferred)?;
             }
-            Err(e) => {
-                sched::wake_error(lua, token, &e.to_string(), WakeMode::Deferred)?;
+            (Some(t), Err(m)) => {
+                sched::wake_error(lua, t, &m, WakeMode::Deferred)?;
             }
+            (None, o) => st.borrow_mut().outcome = Some(o),
         }
         Ok(())
     })?;
-    run_handler(lua, cb, done, args, "BindableFunction.OnInvoke")?;
-    Ok(values)
+    // The handler starts at once; a handler that does not yield returns its
+    // results before Invoke returns, as in Roblox.
+    run_handler(lua, cb, done, args, "BindableFunction.OnInvoke", false)?;
+    let finished = state.borrow_mut().outcome.take();
+    match finished {
+        Some(Ok(values)) => Ok(values),
+        Some(Err(m)) => Err(mlua::Error::runtime(m)),
+        None => {
+            let (values, token) = sched::park(lua, what, None)?;
+            state.borrow_mut().token = Some(token);
+            Ok(values)
+        }
+    }
 }
 
 /// Delivers the messages that arrived for this VM, and retries the ones that
@@ -434,7 +464,8 @@ fn deliver_one(lua: &Lua, l: &NetLink, m: Msg) -> Result<Option<Msg>> {
                 }
                 Ok(())
             })?;
-            run_handler(lua, cb, done, values, &label)?;
+            let queued = state(lua)?.behavior == crate::signal::SignalBehavior::Deferred;
+            run_handler(lua, cb, done, values, &label, queued)?;
             Ok(None)
         }
         Msg::Reply { call, result } => {
@@ -505,6 +536,23 @@ pub(crate) fn fail_calls_for(lua: &Lua, player: &str) -> Result<()> {
     Ok(())
 }
 
+/// Fails every invocation waiting in this VM (the client's player left).
+pub(crate) fn fail_all_calls(lua: &Lua, why: &str) -> Result<()> {
+    let tokens: Vec<YieldToken> = match lua.app_data_mut::<Calls>() {
+        Some(mut c) => c.0.drain().map(|(_, (t, _))| t).collect(),
+        None => Vec::new(),
+    };
+    for t in tokens {
+        sched::wake_error(
+            lua,
+            t,
+            &format!("[{}] RemoteFunction: {why}", codes::REMOTE_CALL),
+            WakeMode::Deferred,
+        )?;
+    }
+    Ok(())
+}
+
 /// Calls a `BindableFunction`'s `OnInvoke` from the host (a harness's
 /// `invoke` step) with already-built arguments, and waits for its results
 /// inside the same run. Returns them, or the handler's error message.
@@ -533,7 +581,7 @@ pub(crate) fn invoke_bindable_now(
         });
         Ok(())
     })?;
-    run_handler(lua, cb, done, args, "BindableFunction.OnInvoke")?;
+    run_handler(lua, cb, done, args, "BindableFunction.OnInvoke", false)?;
     sched::settle(lua)?;
     let r = slot.borrow_mut().take();
     Ok(r.unwrap_or_else(|| Err("the handler is still running (it yielded)".into())))

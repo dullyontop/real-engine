@@ -19,8 +19,9 @@
 //! pump(server VM)    remotes from the client; queued character loads
 //! server phases      PreRender .. PostSimulation (scripts, physics)
 //! replicate          owned components client → server, then server → client
-//! pump(client VM)    removals, player and character events, PlayerScripts
-//!                    and PlayerGui, remotes from the server, prompts
+//! pump(client VM)    player and character events (removals included),
+//!                    PlayerScripts and PlayerGui, removals, remotes from
+//!                    the server, prompts
 //! client phases      PreRender .. PostSimulation, then render from the client
 //! ```
 //!
@@ -338,34 +339,20 @@ fn pump_lua(lua: &Lua) -> Result<()> {
     Ok(())
 }
 
-/// Destroys, in the client VM, the subtrees the server removed: `Destroying`
-/// fires and the handles keep their name and class.
+/// Destroys, in the client VM, the subtrees the server removed, as
+/// `Destroy` would (`Destroying` fires, the handles keep their name and
+/// class), after the handlers already queued this pump.
 fn destroy_removed(lua: &Lua) -> Result<()> {
     let roots = with_world(lua, replicate::take_removed)?;
     for root in roots {
-        let sub = with_world(lua, |w| {
-            if !tree::alive(w, root) {
-                return Vec::new();
-            }
-            let mut sub = vec![root];
-            sub.extend(tree::descendants(w, root));
-            sub
-        })?;
-        if sub.is_empty() {
-            continue;
-        }
-        for x in &sub {
-            crate::signal::fire_with(
-                lua,
-                &crate::signal::SignalKey::new(*x, "Destroying"),
-                MultiValue::new(),
-                crate::signal::Guard::None,
-            )?;
-        }
-        crate::signal::disconnect_entities(lua, &sub)?;
-        crate::signal::events::despawn_later(lua, root);
+        crate::players::destroy_after_handlers(lua, root)?;
     }
     Ok(())
+}
+
+/// The client instances whose removal by the server is pending this pump.
+pub(crate) fn removing(lua: &Lua) -> Result<std::collections::HashSet<Entity>> {
+    with_world(lua, |w| replicate::removing(w))
 }
 
 /// Registry key of the function that sleeps through a park with a timeout.

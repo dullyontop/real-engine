@@ -383,7 +383,7 @@
             }
           ],
           "status": "implemented",
-          "doc": "Removes the player from the server, with an optional message written to the output."
+          "doc": "Removes the player from the server, with an optional message written to the output. A client can kick only its own player."
         },
         {
           "name": "Move",
@@ -399,7 +399,7 @@
             }
           ],
           "status": "partial",
-          "note": "Needs a Humanoid with a Move implementation (the character work); without one it raises RE9001.",
+          "note": "Forwards to the character's Humanoid:Move; does nothing without a character or Humanoid. Raises RE9001 until the Humanoid implements Move.",
           "doc": "Makes the character walk in a direction, through its Humanoid."
         },
         {

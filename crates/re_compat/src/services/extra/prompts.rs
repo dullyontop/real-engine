@@ -206,6 +206,16 @@ pub(crate) fn client_frame(lua: &Lua, link: &NetLink) -> Result<()> {
             )?;
         }
     }
+    // A held prompt that is gone or disabled is let go.
+    let held_now: Vec<Entity> = prompts(lua).held.keys().copied().collect();
+    for p in held_now {
+        let keep = with_world(lua, |w| {
+            tree::alive(w, p) && boolean(c.get_property(w, p, "Enabled").ok(), true)
+        })?;
+        if !keep {
+            prompts(lua).held.remove(&p);
+        }
+    }
     // Holds that lasted HoldDuration trigger.
     let t = sched::now(lua)?;
     let held: Vec<(Entity, f64)> = prompts(lua)

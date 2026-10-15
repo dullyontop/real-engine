@@ -47,7 +47,8 @@ use crate::{GAME_ID, ROOT_CLASS};
 pub struct NetworkOwner(pub Entity);
 
 /// Records `player` (a server `Player` instance) as the network owner of
-/// `entity` in the server world; `None` gives it back to the server.
+/// `entity` and its descendants (present and future, unless one has its own
+/// owner) in the server world; `None` gives it back to the server.
 pub fn set_network_owner(server: &mut World, entity: Entity, player: Option<Entity>) {
     let Ok(mut e) = server.ecs.get_entity_mut(entity) else {
         return;
@@ -91,6 +92,10 @@ struct Entry {
     parent: Option<Entity>,
     /// The server values last sent, by server component key.
     comps: Vec<(ComponentKey, Vec<Value>)>,
+    /// The components last sent with a reference to an instance the client
+    /// did not have yet (sent as nil), with the client values written; they
+    /// are sent again once the reference resolves.
+    unresolved: Vec<(ComponentKey, Vec<Value>)>,
 }
 
 impl Entry {
@@ -195,6 +200,16 @@ impl KeyMap {
 
 /// Maps entity references inside a value through `f` (`None`: no such
 /// instance on the other side).
+/// How many instance references `v` holds.
+fn refs(v: &Value) -> usize {
+    match v {
+        Value::Entity(Some(_)) => 1,
+        Value::List(items) => items.iter().map(refs).sum(),
+        Value::Map(m) => m.values().map(refs).sum(),
+        _ => 0,
+    }
+}
+
 fn remap(v: &Value, f: &dyn Fn(Entity) -> Option<Entity>) -> Value {
     match v {
         Value::Entity(Some(e)) => Value::Entity(f(*e)),
@@ -258,7 +273,9 @@ fn merged(kind: Merge, old: &Value, new: &Value, current: Option<&Value>) -> Val
 
 /// Writes the fields of component `k` that went from `old` to `new` on the
 /// sending side into `to`'s entity `e` (key `tk`), merging maps per key and
-/// tags per tag. Inserts the whole component when `to` lacks it. Returns true
+/// tags per tag (with no `old`, from an empty map or list, so the receiver's
+/// own keys and tags stay). Inserts the whole component when `to` lacks it.
+/// Returns true
 /// when something was written.
 fn write_changes(
     to: &mut World,
@@ -268,18 +285,34 @@ fn write_changes(
     old: Option<&Vec<Value>>,
     new: &[Value],
 ) -> bool {
-    let current = to.registry.get_all(&to.ecs, e, tk);
-    let (Some(old), Some(current)) = (old, current) else {
+    let Some(current) = to.registry.get_all(&to.ecs, e, tk) else {
         return to.registry.insert(&mut to.ecs, e, tk, new.to_vec()).is_ok();
     };
     let mut wrote = false;
     for (i, nv) in new.iter().enumerate() {
-        let Some(ov) = old.get(i) else { continue };
-        if ov == nv {
+        let kind = kinds.get(i).copied().unwrap_or(Merge::Value);
+        // A component the sender did not have before (its first attribute
+        // or tag) merges into what the receiver has on its own.
+        let empty = match kind {
+            Merge::Keys => Value::Map(Default::default()),
+            Merge::Set => Value::List(Vec::new()),
+            Merge::Value => Value::Bool(false),
+        };
+        let ov = match old {
+            Some(o) => match o.get(i) {
+                Some(ov) => ov,
+                None => continue,
+            },
+            None => &empty,
+        };
+        if old.is_some() && ov == nv {
             continue;
         }
-        let kind = kinds.get(i).copied().unwrap_or(Merge::Value);
-        let v = merged(kind, ov, nv, current.get(i));
+        let v = if old.is_some() || kind != Merge::Value {
+            merged(kind, ov, nv, current.get(i))
+        } else {
+            nv.clone()
+        };
         if current.get(i) != Some(&v) && to.registry.set_field(&mut to.ecs, e, tk, i, v).is_ok() {
             wrote = true;
         }
@@ -317,6 +350,7 @@ pub(crate) fn init(server: &mut World, client: &mut World, set: &ReplicationSet)
                     name: server.name_of(s).to_string(),
                     parent: hierarchy::parent(&server.ecs, s),
                     comps,
+                    unresolved: Vec::new(),
                 },
             );
             rep.by_client.insert(c, s);
@@ -363,12 +397,25 @@ pub fn replicate(
         .and_then(|id| server.entity(&id).ok());
     if let Some(lp) = local {
         let mut q = server.ecs.query::<(Entity, &NetworkOwner)>();
-        let mut sorted: Vec<Entity> = q
+        let roots: Vec<Entity> = q
             .iter(&server.ecs)
             .filter(|(_, o)| o.0 == lp)
             .map(|(e, _)| e)
             .collect();
+        // Ownership covers the owned instances' descendants too, including
+        // ones added later (a tool, an Animator), unless another player owns
+        // them.
+        let mut sorted: Vec<Entity> = Vec::new();
+        for r in roots {
+            for x in hierarchy::subtree(&server.ecs, r) {
+                let other = server.ecs.get::<NetworkOwner>(x).is_some_and(|o| o.0 != lp);
+                if !other {
+                    sorted.push(x);
+                }
+            }
+        }
         sorted.sort();
+        sorted.dedup();
         for s in sorted {
             let Some(entry) = rep.mirror.get(&s) else {
                 continue;
@@ -445,6 +492,9 @@ pub fn replicate(
             .is_none_or(|last| changed_since(server, s, last, server_this))
         {
             changed.push(s);
+        } else if !rep.mirror[&s].unresolved.is_empty() {
+            // A reference it holds may resolve to an instance created now.
+            changed.push(s);
         }
     }
 
@@ -496,6 +546,7 @@ pub fn replicate(
                 name,
                 parent: parent_s,
                 comps: Vec::new(),
+                unresolved: Vec::new(),
             },
         );
         rep.by_client.insert(c, s);
@@ -544,12 +595,18 @@ pub fn replicate(
         // go back down.
         let current = server.registry.components_of(&server.ecs, s);
         let mut updates: Vec<(ComponentKey, Vec<Value>)> = Vec::new();
+        let mut unresolved: Vec<(ComponentKey, Vec<Value>)> = Vec::new();
         for &sk in &current {
             let Some(sv) = server.registry.get_all(&server.ecs, s, sk) else {
                 continue;
             };
             let old = entry.comp(sk);
-            if old == Some(&sv) {
+            let pending = entry
+                .unresolved
+                .iter()
+                .find(|(k, _)| *k == sk)
+                .map(|(_, v)| v);
+            if old == Some(&sv) && pending.is_none() {
                 continue;
             }
             if let Some(ck) = keys.get(server, client, sk) {
@@ -557,17 +614,27 @@ pub fn replicate(
                     .iter()
                     .map(|v| remap(v, &|x| to_client(&rep, x)))
                     .collect();
-                let old_mapped: Option<Vec<Value>> = old.map(|o| {
-                    o.iter()
-                        .map(|v| remap(v, &|x| to_client(&rep, x)))
-                        .collect()
-                });
-                let kinds = kinds_of(client, ck);
-                if write_changes(client, c, ck, &kinds, old_mapped.as_ref(), &mapped) {
-                    wrote = true;
+                let old_mapped: Option<Vec<Value>> = match pending {
+                    Some(sent) if old == Some(&sv) => Some(sent.clone()),
+                    _ => old.map(|o| {
+                        o.iter()
+                            .map(|v| remap(v, &|x| to_client(&rep, x)))
+                            .collect()
+                    }),
+                };
+                if old_mapped.as_ref() != Some(&mapped) {
+                    let kinds = kinds_of(client, ck);
+                    if write_changes(client, c, ck, &kinds, old_mapped.as_ref(), &mapped) {
+                        wrote = true;
+                    }
+                }
+                if mapped.iter().map(refs).sum::<usize>() < sv.iter().map(refs).sum::<usize>() {
+                    unresolved.push((sk, mapped));
                 }
             }
-            updates.push((sk, sv));
+            if old != Some(&sv) {
+                updates.push((sk, sv));
+            }
         }
         let dropped: Vec<ComponentKey> = entry
             .comps
@@ -590,6 +657,10 @@ pub fn replicate(
             entry.set_comp(k, v);
         }
         entry.comps.retain(|(k, _)| !dropped.contains(k));
+        // What was re-checked this pass replaces what was pending.
+        let checked: Vec<ComponentKey> = current.clone();
+        entry.unresolved.retain(|(k, _)| !checked.contains(k));
+        entry.unresolved.extend(unresolved);
         if wrote && !entry.comps.is_empty() {
             report.updated += 1;
         }
@@ -620,13 +691,9 @@ pub fn replicate(
         }
     }
     roots.sort();
+    // The client VM destroys them in its pump, after the player and
+    // character events that need them in place.
     for root in roots {
-        if hierarchy::parent(&client.ecs, root).is_some() {
-            hierarchy::remove_parent(&mut client.ecs, root);
-        }
-        for x in hierarchy::subtree(&client.ecs, root) {
-            client.ecs.entity_mut(x).insert(tree::Destroyed);
-        }
         rep.pending.push(root);
         report.removed += 1;
     }
@@ -637,6 +704,20 @@ pub fn replicate(
     client.ecs.increment_change_tick();
     client.ecs.insert_resource(rep);
     report
+}
+
+/// The client instances the server removed whose destruction is pending
+/// (the roots and their descendants).
+pub(crate) fn removing(client: &World) -> HashSet<Entity> {
+    let mut out = HashSet::new();
+    if let Some(r) = client.ecs.get_resource::<Replica>() {
+        for root in &r.pending {
+            if tree::alive(client, *root) {
+                out.extend(hierarchy::subtree(&client.ecs, *root));
+            }
+        }
+    }
+    out
 }
 
 /// Takes the client subtree roots the server removed, for the client VM to

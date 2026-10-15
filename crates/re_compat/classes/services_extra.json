@@ -794,7 +794,7 @@
             "any"
           ],
           "status": "partial",
-          "note": "Reads back what SetCore recorded, or the option's default.",
+          "note": "Reads back what SetCore recorded, else the default of a readable option (ChatActive, TopbarEnabled, the notification and menu switches); raises for options with no readable value offline.",
           "doc": "The value of a built-in interface option. Raises for a name the built-in interface does not register. Client only."
         },
         {

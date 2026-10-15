@@ -706,7 +706,9 @@ mod net {
             local c = p.Character
             print(c.Name, c:FindFirstChild("CharScript") ~= nil, p.Backpack:FindFirstChild("Sword") ~= nil)
             p:LoadCharacter()
-            print(c.Parent == nil, p.Character ~= c, #p.Backpack:GetChildren())
+            print(c.Parent == workspace, p.Character ~= c, #p.Backpack:GetChildren())
+            task.wait()
+            print(c.Parent == nil)
             "#,
         );
         t.frames(2);
@@ -722,7 +724,12 @@ mod net {
         // Deferred signals: the handler runs after the calling script yields.
         assert_eq!(
             s,
-            ["Player1\ttrue\ttrue", "true\ttrue\t1", "removing\tPlayer1"]
+            [
+                "Player1\ttrue\ttrue",
+                "true\ttrue\t1",
+                "removing\tPlayer1",
+                "true"
+            ]
         );
         assert!(
             c[0].starts_with("false\t") && c[0].contains("server"),
@@ -1081,5 +1088,177 @@ mod net {
         t.no_errors();
         assert!(players::character_of(&t.worlds.server, p).is_some());
         assert_eq!(t.out().0, ["wave\ttrue"]);
+    }
+
+    #[test]
+    fn removal_handlers_see_the_instance_in_place() {
+        let mut t = two();
+        t.server(
+            r#"
+            local Players = game:GetService("Players")
+            Players.PlayerRemoving:Connect(function(p)
+                print("server removing", p.Parent == Players, p.Character ~= nil)
+            end)
+            Players.PlayerAdded:Connect(function(p)
+                p.CharacterRemoving:Connect(function(c)
+                    print("server char removing", c.Parent == workspace)
+                end)
+            end)
+            "#,
+        );
+        t.client(
+            r#"
+            local Players = game:GetService("Players")
+            Players.PlayerRemoving:Connect(function(p)
+                print("client removing", p.Parent == Players)
+            end)
+            Players.PlayerAdded:Connect(function(p)
+                p.CharacterRemoving:Connect(function(c)
+                    print("client char removing", c.Parent == workspace)
+                end)
+            end)
+            "#,
+        );
+        t.join(&PlayerSpec::numbered(1));
+        let p2 = t.join(&PlayerSpec::numbered(2));
+        t.frames(2);
+        t.leave(p2);
+        t.frames(2);
+        t.no_errors();
+        let (s, c) = t.out();
+        assert_eq!(
+            s,
+            ["server removing\ttrue\ttrue", "server char removing\ttrue"]
+        );
+        assert_eq!(c, ["client removing\ttrue", "client char removing\ttrue"]);
+    }
+
+    #[test]
+    fn copies_keep_array_holes_and_remotes_keep_order() {
+        let (mut t, _) = with_remotes();
+        t.server(
+            r#"
+            local rs = game.ReplicatedStorage
+            rs.Ev.OnServerEvent:Connect(function(_, n) print("ev", n) end)
+            rs.Fn.OnServerInvoke = function(_, n) print("fn", n) return n end
+            local secret = Instance.new("Folder", game.ServerStorage)
+            rs.Ev:FireAllClients({secret, "x", "y"}, -0)
+            "#,
+        );
+        t.client(
+            r#"
+            local rs = game.ReplicatedStorage
+            rs.Ev.OnClientEvent:Connect(function(a, z)
+                print(a[1] == nil, a[2], a[3], 1 / z)
+            end)
+            rs.Ev:FireServer(1)
+            task.spawn(function() rs.Fn:InvokeServer(2) end)
+            rs.Ev:FireServer(3)
+            "#,
+        );
+        t.frames(3);
+        t.no_errors();
+        let (s, c) = t.out();
+        assert_eq!(s, ["ev\t1", "fn\t2", "ev\t3"]);
+        assert_eq!(c, ["true\tx\ty\t-inf"]);
+    }
+
+    #[test]
+    fn client_attributes_survive_the_servers_first_one() {
+        let mut t = two();
+        t.server(r#"Instance.new("Folder", workspace).Name = "F""#);
+        t.frame();
+        t.client(
+            r#"
+            workspace.F:SetAttribute("Mine", 1)
+            workspace.F:AddTag("ClientTag")
+            "#,
+        );
+        t.server(
+            r#"
+            workspace.F:SetAttribute("Srv", 2)
+            workspace.F:AddTag("SrvTag")
+            "#,
+        );
+        t.frame();
+        t.client(
+            r#"
+            local f = workspace.F
+            print(f:GetAttribute("Mine"), f:GetAttribute("Srv"), f:HasTag("ClientTag"), f:HasTag("SrvTag"))
+            "#,
+        );
+        t.server(r#"workspace.F:SetAttribute("Srv", nil)"#);
+        t.frame();
+        t.client(r#"print(workspace.F:GetAttribute("Srv"), workspace.F:GetAttribute("Mine"))"#);
+        t.no_errors();
+        assert_eq!(t.out().1, ["1\t2\ttrue\ttrue", "nil\t1"]);
+    }
+
+    #[test]
+    fn references_resolve_when_their_target_replicates() {
+        let mut t = two();
+        t.server(r#"Instance.new("Folder", game.ServerStorage).Name = "Spot""#);
+        t.join(&PlayerSpec::numbered(1));
+        t.frame();
+        t.server(r#"game.Players.Player1.RespawnLocation = game.ServerStorage.Spot"#);
+        t.frame();
+        t.client(r#"print(game.Players.LocalPlayer.RespawnLocation)"#);
+        t.server(r#"game.ServerStorage.Spot.Parent = workspace"#);
+        t.frame();
+        t.client(r#"print(game.Players.LocalPlayer.RespawnLocation == workspace.Spot)"#);
+        t.no_errors();
+        assert_eq!(t.out().1, ["nil", "true"]);
+    }
+
+    #[test]
+    fn ownership_covers_children_added_later() {
+        let mut t = two();
+        t.join(&PlayerSpec::numbered(1));
+        t.frames(2);
+        t.server(r#"Instance.new("Folder", game.Players.Player1.Character).Name = "Tool""#);
+        t.frame();
+        t.client(r#"game.Players.LocalPlayer.Character.Tool:SetAttribute("Swing", 5)"#);
+        t.frames(2);
+        t.server(r#"print(game.Players.Player1.Character.Tool:GetAttribute("Swing"))"#);
+        t.no_errors();
+        assert_eq!(t.out().0, ["5"]);
+    }
+
+    #[test]
+    fn bindables_return_at_once_when_the_handler_does_not_yield() {
+        let mut t = two();
+        t.server(
+            r#"
+            local bf = Instance.new("BindableFunction")
+            bf.OnInvoke = function(x) return x end
+            task.defer(function() print("deferred") end)
+            print("got", bf:Invoke(1))
+            "#,
+        );
+        t.frame();
+        t.no_errors();
+        assert_eq!(t.out().0, ["got\t1", "deferred"]);
+    }
+
+    #[test]
+    fn core_settings_have_defaults_and_belong_to_the_client() {
+        let mut t = two();
+        t.client(
+            r#"
+            local sg = game:GetService("StarterGui")
+            print(sg:GetCore("ChatActive"), sg:GetCore("DevConsoleVisible"))
+            print(pcall(sg.GetCore, sg, "SendNotification"))
+            "#,
+        );
+        t.server(r#"print(pcall(function() game:GetService("StarterGui"):SetCore("ChatActive", false) end))"#);
+        t.frame();
+        t.no_errors();
+        let (s, c) = t.out();
+        assert_eq!(c[0], "true\tfalse");
+        assert!(c[1].starts_with("false\t"), "{c:?}");
+        assert!(
+            s[0].starts_with("false\t") && s[0].contains("client"),
+            "{s:?}"
+        );
     }
 }

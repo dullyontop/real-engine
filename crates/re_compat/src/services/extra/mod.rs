@@ -387,6 +387,7 @@ fn core_name(v: &str, what: &str) -> Result<()> {
 
 fn set_core(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
     let (name, value): (String, LuaValue) = args(lua, a, "SetCore")?;
+    client_only(lua, "SetCore")?;
     core_name(&name, "SetCore")?;
     let key = lua.create_registry_value(value)?;
     let old = extra(lua).core.insert(name, key);
@@ -398,8 +399,38 @@ fn set_core(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
 
 fn get_core(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
     let name: String = args(lua, a, "GetCore")?;
+    client_only(lua, "GetCore")?;
     core_name(&name, "GetCore")?;
-    ret(lua, core_value(lua, &name)?.unwrap_or(LuaValue::Nil))
+    if let Some(v) = core_value(lua, &name)? {
+        return ret(lua, v);
+    }
+    let default = match name.as_str() {
+        "ChatActive"
+        | "TopbarEnabled"
+        | "PointsNotificationsActive"
+        | "BadgesNotificationsActive" => true,
+        "ChatBarDisabled" | "DevConsoleVisible" | "AvatarContextMenuEnabled" | "EmotesMenuOpen" => {
+            false
+        }
+        _ => {
+            return Err(lua_error(
+                BAD_ARGUMENT,
+                format!("GetCore: {name} has no value to read until SetCore sets it"),
+            ));
+        }
+    };
+    ret(lua, default)
+}
+
+/// `SetCore` and `GetCore` belong to a client.
+fn client_only(lua: &Lua, what: &str) -> Result<()> {
+    if crate::net::is_server(lua)? {
+        return Err(lua_error(
+            BAD_ARGUMENT,
+            format!("{what} can only be called from a client"),
+        ));
+    }
+    Ok(())
 }
 
 /// The value a script gave core setting `name` with `StarterGui:SetCore` in

@@ -272,7 +272,7 @@ fn remove_player_lua(lua: &Lua, player: Entity) -> Result<()> {
             "CharacterRemoving",
             MultiValue::from_iter([push(lua, ch)?]),
         )?;
-        instance::destroy(lua, ch)?;
+        destroy_after_handlers(lua, ch)?;
     }
     let id = with_world(lua, |w| w.id_of(player).map(str::to_string))?.unwrap_or_default();
     net::remotes::fail_calls_for(lua, &id)?;
@@ -283,7 +283,15 @@ fn remove_player_lua(lua: &Lua, player: Entity) -> Result<()> {
         }
     }
     pending(lua).0.retain(|p| *p != player);
-    instance::destroy(lua, player)
+    destroy_after_handlers(lua, player)
+}
+
+/// Destroys `e` once the handlers already queued (`PlayerRemoving`,
+/// `CharacterRemoving`) have run, so they still see it in the game.
+pub(crate) fn destroy_after_handlers(lua: &Lua, e: Entity) -> Result<()> {
+    let f = lua.create_function(move |lua, ()| instance::destroy(lua, e))?;
+    re_script::sched::defer(lua, f, MultiValue::new(), "Destroy", None)?;
+    Ok(())
 }
 
 fn net_link(lua: &Lua) -> Result<Option<NetLink>> {
@@ -429,7 +437,7 @@ pub fn load_character(lua: &Lua, player: Entity) -> Result<Entity> {
             "CharacterRemoving",
             MultiValue::from_iter([push(lua, old)?]),
         )?;
-        instance::destroy(lua, old)?;
+        destroy_after_handlers(lua, old)?;
     }
     let name = with_world(lua, |w| tree::name(w, player))?;
     let starter = with_world(lua, |w| {
@@ -475,24 +483,23 @@ pub fn load_character(lua: &Lua, player: Entity) -> Result<Entity> {
             net::after(lua, duration, "ForceField", remove)?;
         }
     }
-    with_world(lua, |w| -> std::result::Result<(), CompatError> {
+    let old_tools = with_world(lua, |w| -> std::result::Result<Vec<Entity>, CompatError> {
         tree::set_parent(w, model, Some(workspace))?;
         set_own(w, "Player", player, "Character", Value::Entity(Some(model)))?;
         net::set_network_owner(w, model, Some(player));
-        for d in tree::descendants(w, model) {
-            net::set_network_owner(w, d, Some(player));
-        }
+        let mut old = Vec::new();
         if let Some(bp) = tree::find_child(w, player, "Backpack", false) {
-            for t in tree::children(w, bp) {
-                let _ = w.despawn_runtime(t);
-            }
+            old = tree::children(w, bp);
             if let Some(pack) = find_service(w, g, "StarterPack") {
                 clone_children_into(w, pack, bp);
             }
         }
-        Ok(())
+        Ok(old)
     })?
     .map_err(compat_error)?;
+    for t in old_tools {
+        instance::destroy(lua, t)?;
+    }
     events::after_write(lua)?;
     let m = push(lua, model)?;
     signal::fire(
@@ -545,7 +552,13 @@ pub(crate) fn client_frame(lua: &Lua, link: &NetLink) -> Result<()> {
     let g = game(lua)?;
     let c = classes(lua)?;
     let local = link.local_player();
-    let now = with_world(lua, |w| players_in(w, g))?;
+    // What the server removed is still in place until this pump destroys
+    // it, so the removal events see it whole.
+    let gone = net::removing(lua)?;
+    let now: Vec<Entity> = with_world(lua, |w| players_in(w, g))?
+        .into_iter()
+        .filter(|p| !gone.contains(p))
+        .collect();
     let (joined, left, changes) = {
         let mut view = lua.app_data_mut::<ClientView>().expect("set above");
         let joined: Vec<Entity> = now
@@ -562,7 +575,7 @@ pub(crate) fn client_frame(lua: &Lua, link: &NetLink) -> Result<()> {
         view.players = now.clone();
         let mut changes = Vec::new();
         for p in &now {
-            let ch = with_world(lua, |w| character_of(w, *p))?;
+            let ch = with_world(lua, |w| character_of(w, *p))?.filter(|c| !gone.contains(c));
             let old = view.characters.insert(*p, ch).flatten();
             if old != ch {
                 changes.push((*p, old, ch));
@@ -608,6 +621,12 @@ pub(crate) fn client_frame(lua: &Lua, link: &NetLink) -> Result<()> {
         }
     }
     for p in &left {
+        let was_local = lua
+            .app_data_mut::<ClientView>()
+            .is_some_and(|mut v| v.local_ready.remove(p));
+        if was_local {
+            net::remotes::fail_all_calls(lua, "the local player left before the server answered")?;
+        }
         if let Some(s) = players {
             signal::fire(
                 lua,
@@ -910,16 +929,26 @@ fn kick(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
         Some(m) if !m.is_empty() => format!("{name} was kicked: {m}"),
         _ => format!("{name} was kicked"),
     };
-    re_script::vm::output(lua, false, text);
     if net::is_server(lua)? {
+        re_script::vm::output(lua, false, text);
         remove_player_lua(lua, e)?;
-    } else if let Some(link) = net_link(lua)? {
+    } else {
         // A client can only kick itself: the server removes the player.
         let id = with_world(lua, |w| w.id_of(e).map(str::to_string))?;
-        if id.is_some() && id == link.local_player() {
-            link.lock().to_server.push_back(net::Msg::Kick {
-                player: id.unwrap_or_default(),
-            });
+        let link = net_link(lua)?;
+        match link {
+            Some(link) if id.is_some() && id == link.local_player() => {
+                re_script::vm::output(lua, false, text);
+                link.lock().to_server.push_back(net::Msg::Kick {
+                    player: id.unwrap_or_default(),
+                });
+            }
+            _ => {
+                return Err(lua_error(
+                    re_script::codes::BAD_ARGUMENT,
+                    "Kick: a client can only kick its own player",
+                ));
+            }
         }
     }
     ret(lua, ())

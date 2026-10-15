@@ -813,7 +813,7 @@
           "name": "Move",
           "kind": "method",
           "status": "partial",
-          "note": "Needs a Humanoid with a Move implementation (the character work); without one it raises RE9001."
+          "note": "Forwards to the character's Humanoid:Move; does nothing without a character or Humanoid. Raises RE9001 until the Humanoid implements Move."
         },
         {
           "name": "NameDisplayDistance",
@@ -1245,7 +1245,7 @@
           "name": "GetCore",
           "kind": "method",
           "status": "partial",
-          "note": "Reads back what SetCore recorded, or the option's default."
+          "note": "Reads back what SetCore recorded, else the default of a readable option (ChatActive, TopbarEnabled, the notification and menu switches); raises for options with no readable value offline."
         },
         {
           "name": "GetCoreGuiEnabled",
