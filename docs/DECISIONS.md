@@ -603,7 +603,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
   2. script compile (tier 1; the stage's `data.scripts` counts the scripts compiled);
   3. static API scan (tier 2; present when `real` is built with `tooling`, otherwise reported as skipped). Its `data` is `{ scripts, covered, missing }`. API gaps are warnings (`RE0903`, "scripts use an API the engine does not provide"), and a script the scan cannot parse is an error;
   4. headless boot;
-  5. input replays under `tests/replays/*.replay.json`, with `state_hash` compared across two runs;
+  5. input replays under `tests/replays/*.replay.json`, with `state_hash` compared across two runs. Each run also reports `regenerations[]` (`frame`, `characters_kept`, `grounded`, `collected_kept`, `script_errors`): a terrain regeneration during a replay (a change in the set of derived heightfield colliders) must keep each character's `Entity`, get each character on the ground within 60 frames, and keep collected (suppressed) ids absent, or the stage fails with `RE0525`. A restart drops the pending checks;
   6. golden screenshots under `tests/goldens/<backend>/`;
   7. PerfReport.
 - `re_app::verify::run` owns the stages. Stage 3 is passed in by `re_cli` as a `VerifyStage`, so `re_app` never links full_moon.
