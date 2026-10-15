@@ -1,0 +1,90 @@
+{
+ "format": "real-engine/compat-clip",
+ "version": 1,
+ "name": "r6_sit",
+ "doc": "R6 sit: legs forward, arms resting forward.",
+ "looped": true,
+ "priority": "Core",
+ "keyframes": [
+  {
+   "time": 0,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      1.5708
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -1.5708
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      1.5708
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      -1.5708
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 1.0,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      1.5708
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -1.5708
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      1.5708
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      -1.5708
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  }
+ ]
+}

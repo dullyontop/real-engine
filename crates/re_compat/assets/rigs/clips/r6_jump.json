@@ -1,0 +1,90 @@
+{
+ "format": "real-engine/compat-clip",
+ "version": 1,
+ "name": "r6_jump",
+ "doc": "R6 jump: arms go up.",
+ "looped": false,
+ "priority": "Core",
+ "keyframes": [
+  {
+   "time": 0,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.15,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      3.1416
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -3.1416
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  }
+ ]
+}

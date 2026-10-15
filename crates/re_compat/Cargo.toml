@@ -17,6 +17,9 @@ re_reflect.workspace = true
 re_scene.workspace = true
 re_command.workspace = true
 re_script.workspace = true
+# Keyframe sampling, track blending and two-bone IK for the Animator (WP14).
+# re_anim is plain computation (re_core, re_types, glam, serde).
+re_anim.workspace = true
 mlua.workspace = true
 glam.workspace = true
 indexmap.workspace = true

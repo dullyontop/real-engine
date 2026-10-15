@@ -2,11 +2,162 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 931,
-    "partial": 9,
+    "implemented": 1016,
+    "partial": 23,
+    "stub-error": 2,
     "missing": 9
   },
   "classes": [
+    {
+      "name": "Animation",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AnimationId",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "AnimationController",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "AnimationTrack",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AdjustSpeed",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "AdjustWeight",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Animation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DidLoop",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Ended",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMarkerReachedSignal",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetTimeOfKeyframe",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsPlaying",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "KeyframeReached",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Length",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Looped",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Play",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Priority",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Speed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Stop",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Stopped",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "TimePosition",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WeightCurrent",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WeightTarget",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Animator",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AnimationPlayed",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPlayingAnimationTracks",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LoadAnimation",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "StepAnimations",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
     {
       "name": "BasePlayerGui",
       "superclass": "Instance",
@@ -81,6 +232,84 @@
       "members": []
     },
     {
+      "name": "ContextActionService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "BindAction",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "BindActionAtPriority",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAllBoundActionInfo",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetBoundActionInfo",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetButton",
+          "kind": "method",
+          "status": "partial",
+          "note": "There are no touch buttons, so it is always nil."
+        },
+        {
+          "name": "LocalToolEquipped",
+          "kind": "event",
+          "status": "stub-error"
+        },
+        {
+          "name": "LocalToolUnequipped",
+          "kind": "event",
+          "status": "stub-error"
+        },
+        {
+          "name": "SetDescription",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons."
+        },
+        {
+          "name": "SetImage",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons."
+        },
+        {
+          "name": "SetPosition",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons."
+        },
+        {
+          "name": "SetTitle",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons."
+        },
+        {
+          "name": "UnbindAction",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "UnbindAllActions",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "DataModel",
       "superclass": "ServiceProvider",
       "status": "partial",
@@ -92,6 +321,96 @@
       "creatable": true,
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "IKControl",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ChainRoot",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EndEffector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Offset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Pole",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Priority",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Target",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Type",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Weight",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "InputObject",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Delta",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IsModifierKeyDown",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "KeyCode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Position",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "UserInputState",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "UserInputType",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "Instance",
@@ -330,6 +649,50 @@
       ]
     },
     {
+      "name": "Keyframe",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Time",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "KeyframeMarker",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Value",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "KeyframeSequence",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Loop",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Priority",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Lighting",
       "superclass": "Instance",
       "service": true,
@@ -368,6 +731,34 @@
       "superclass": "Instance",
       "status": "missing",
       "members": []
+    },
+    {
+      "name": "Pose",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CFrame",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EasingDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EasingStyle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Weight",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "ReplicatedStorage",
@@ -439,6 +830,165 @@
       "superclass": "Instance",
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "UserInputService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "AccelerometerEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GamepadConnected",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "GamepadDisconnected",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "GamepadEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GetConnectedGamepads",
+          "kind": "method",
+          "status": "partial",
+          "note": "Every connected pad reports as Gamepad1."
+        },
+        {
+          "name": "GetFocusedTextBox",
+          "kind": "method",
+          "status": "partial",
+          "note": "No TextBox takes keyboard focus yet, so it is always nil."
+        },
+        {
+          "name": "GetGamepadConnected",
+          "kind": "method",
+          "status": "partial",
+          "note": "Every connected pad reports as Gamepad1."
+        },
+        {
+          "name": "GetKeysPressed",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetLastInputType",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMouseButtonsPressed",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMouseDelta",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMouseLocation",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GyroscopeEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "InputBegan",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "InputChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "InputEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "IsGamepadButtonDown",
+          "kind": "method",
+          "status": "partial",
+          "note": "Every connected pad reports as Gamepad1."
+        },
+        {
+          "name": "IsKeyDown",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsMouseButtonPressed",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "JumpRequest",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "KeyboardEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LastInputTypeChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseBehavior",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseDeltaSensitivity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseIconEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextBoxFocusReleased",
+          "kind": "event",
+          "status": "partial",
+          "note": "No TextBox takes keyboard focus yet, so it never fires."
+        },
+        {
+          "name": "TextBoxFocused",
+          "kind": "event",
+          "status": "partial",
+          "note": "No TextBox takes keyboard focus yet, so it never fires."
+        },
+        {
+          "name": "TouchEnabled",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "Workspace",

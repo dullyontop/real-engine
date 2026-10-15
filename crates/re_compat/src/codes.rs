@@ -33,3 +33,11 @@ pub const INVALID_PARENT: Code = Code::new("RE9008");
 
 /// A deprecated member was used; it works, and the note names its replacement.
 pub const DEPRECATED_MEMBER: Code = Code::new("RE9101");
+
+/// A character rig could not be built: a rig data file or a
+/// `HumanoidDescription` is malformed (WP14 holds RE9200–RE9249).
+pub const INVALID_RIG: Code = Code::new("RE9200");
+
+/// An `Animation.AnimationId` resolves to no clip; the track plays as an
+/// empty clip.
+pub const UNKNOWN_ANIMATION: Code = Code::new("RE9201");
