@@ -3332,7 +3332,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "glam 0.34.1",
- "indexmap",
+ "indexmap 2.14.2",
  "insta",
  "re_command",
  "re_core",
@@ -3509,7 +3509,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "glam 0.34.1",
- "indexmap",
+ "indexmap 2.14.2",
  "postcard",
  "re_command",
  "re_core",
