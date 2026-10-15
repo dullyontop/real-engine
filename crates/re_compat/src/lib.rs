@@ -107,6 +107,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE9202.md"),
     },
     DiagInfo {
+        code: codes::OFFLINE_DEFAULT,
+        title: "Offline default returned",
+        page: include_str!("../explain/RE9203.md"),
+    },
+    DiagInfo {
         code: codes::UNKNOWN_ASSET,
         title: "Asset id not in the substitute table",
         page: include_str!("../explain/RE9350.md"),
