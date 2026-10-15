@@ -133,6 +133,8 @@ cargo xtask check
 
 ## WP10: Datatypes and enums
 
+**Status:** done. Its one PR, "core datatypes", merged in #45.
+
 **Goal.** Every Roblox-style datatype and enum that real scripts use, exact in arithmetic order and conventions, with no world needed.
 
 **Owned paths:** `crates/re_compat/src/datatypes/`, `crates/re_compat/src/enums.rs`, `crates/re_compat/enums/*.json` and `crates/re_compat/tests/fixtures/datatypes/`.
@@ -168,6 +170,8 @@ cargo test --locked -p re_compat enums
 ---
 
 ## WP11: The data model, signals and the scheduler
+
+**Status:** PR "data model" merged in #47; PR "runtime" is next. `RE9006`–`RE9019` are WP11's; "data model" uses `RE9007` and `RE9008`.
 
 **Goal.** The instance tree that scripts see: `game`, services, `workspace` and `script`; instance handles with properties, methods and events; signals; attributes and tags; `require` by instance; `RunService`; and `task`, `wait`, `delay` and `spawn`, all running in `server` and `client` script contexts.
 
@@ -426,6 +430,8 @@ cargo test --locked -p re_audio
 ---
 
 ## WP16: Import, runtime integration and the plaza example
+
+**Status:** PR "importer" merged in #46, with the sample runner; PRs "boot" and "plaza" are next.
 
 **Goal.** Bring Roblox-style projects in with `real import`, run them through `real run` and `real verify`, and prove the layer in CI with `examples/plaza`.
 
