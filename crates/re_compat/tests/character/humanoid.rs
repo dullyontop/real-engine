@@ -245,3 +245,26 @@ fn change_state_jumping_in_the_air_does_not_queue_a_jump() {
         "it jumped again after landing"
     );
 }
+
+#[test]
+fn players_build_characters_from_descriptions() {
+    let mut p = character_place(ContextKind::Server);
+    p.run(
+        "local Players = game:GetService('Players')
+         local d = Instance.new('HumanoidDescription')
+         d.HeadColor = Color3.new(0, 1, 0)
+         local m = Players:CreateHumanoidModelFromDescription(d, Enum.HumanoidRigType.R6)
+         print(m.Name, m.Parent, m.Humanoid.RigType.Name, m.Head.Color, m.Humanoid.RootPart.Name)
+         local r15 = Players:CreateHumanoidModelFromDescription(d, Enum.HumanoidRigType.R15)
+         print(r15:FindFirstChild('UpperTorso') ~= nil)
+         print(pcall(function() Players:CreateHumanoidModelFromDescription(workspace, Enum.HumanoidRigType.R6) end))
+         local def = Players:GetHumanoidDescriptionFromUserId(42)
+         print(def.ClassName, def.HeightScale)",
+    );
+    let out = p.out();
+    assert_eq!(out[0], "Character nil R6 0, 1, 0 HumanoidRootPart");
+    assert_eq!(out[1], "true");
+    assert!(out[2].starts_with("false"), "{out:?}");
+    assert!(out.iter().any(|l| l.contains("RE9203")), "{out:?}");
+    assert_eq!(out.last().unwrap(), "HumanoidDescription 1");
+}

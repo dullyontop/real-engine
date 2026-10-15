@@ -173,9 +173,15 @@ fn fire(lua: &Lua, name: &str, args: impl IntoLuaMulti) -> Result<()> {
 /// The render step (client only): the bindings by priority, then
 /// `PreRender` and `RenderStepped`.
 pub(crate) fn pre_render(lua: &Lua, dt: f64) -> Result<()> {
+    // Joint values now are the reference for this frame's pose rule
+    // (WP14): a script's write after this point wins over the Animator.
+    crate::anim::begin_frame(lua)?;
     if state(lua)?.kind != ContextKind::Client {
         return Ok(());
     }
+    // The frame's raw input reaches the input services before the
+    // render-step bindings (WP14).
+    crate::input::frame(lua)?;
     let order: Vec<u64> = {
         let steps = lua
             .app_data_ref::<RenderSteps>()
@@ -214,22 +220,31 @@ pub(crate) fn pre_render(lua: &Lua, dt: f64) -> Result<()> {
     fire(lua, "RenderStepped", dt)
 }
 
-/// The start of a fixed step: the clock advances, then `PreAnimation`.
+/// The start of a fixed step: the clock advances, `PreAnimation` fires,
+/// then the Animators step.
 pub(crate) fn pre_animation(lua: &Lua, dt: f64) -> Result<()> {
     sched::advance(lua, dt)?;
-    fire(lua, "PreAnimation", dt)
+    fire(lua, "PreAnimation", dt)?;
+    // The Animators step after `PreAnimation` (WP14).
+    crate::anim::step(lua, dt)
 }
 
-/// Before physics: `PreSimulation`, then `Stepped(time, dt)`.
+/// Before physics: `PreSimulation`, `Stepped(time, dt)`, then the Humanoids'
+/// movement.
 pub(crate) fn pre_simulation(lua: &Lua, dt: f64) -> Result<()> {
     fire(lua, "PreSimulation", dt)?;
     let now = sched::now(lua)?;
-    fire(lua, "Stepped", (now, dt))
+    fire(lua, "Stepped", (now, dt))?;
+    // Humanoids pass their movement to the character controllers (WP14).
+    crate::humanoid::pre_simulation(lua, dt)
 }
 
-/// After physics: `PostSimulation`, `Heartbeat`, then the threads whose wait
+/// After physics: the Humanoids follow their controllers, then
+/// `PostSimulation`, `Heartbeat`, then the threads whose wait
 /// is due.
 pub(crate) fn post_simulation(lua: &Lua, dt: f64) -> Result<()> {
+    // Humanoids follow their controllers and pose their rigs (WP14).
+    crate::humanoid::post_simulation(lua, dt)?;
     fire(lua, "PostSimulation", dt)?;
     fire(lua, "Heartbeat", dt)?;
     sched::resume_due(lua)?;

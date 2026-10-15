@@ -61,6 +61,10 @@ pub const UNKNOWN_ANIMATION: Code = Code::new("RE9201");
 /// value that is not a built-in clip or a dotted path, or one id twice.
 pub const BAD_ANIMATION_MAP: Code = Code::new("RE9202");
 
+/// A member that reads online data (a player's avatar) returned an offline
+/// default instead; the script goes on with it.
+pub const OFFLINE_DEFAULT: Code = Code::new("RE9203");
+
 /// An asset id (a sound, image or texture) is not in the project's
 /// substitute table; it plays or draws nothing (WP15 holds RE9350–RE9399).
 pub const UNKNOWN_ASSET: Code = Code::new("RE9350");
