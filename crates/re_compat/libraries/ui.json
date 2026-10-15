@@ -1,0 +1,436 @@
+{
+  "$schema": "../../../schemas/compat-libraries.schema.json",
+  "format": "real-engine/compat-libraries",
+  "version": 1,
+  "libraries": [
+    {
+      "name": "UDim",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "scale",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "offset",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "UDim"
+          ],
+          "status": "implemented",
+          "doc": "From scale and offset; offset is truncated to a whole number."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Scale",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The fraction of the parent's size."
+        },
+        {
+          "name": "Offset",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Pixels."
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "params": [
+            {
+              "name": "goal",
+              "type": "UDim"
+            },
+            {
+              "name": "alpha",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "UDim"
+          ],
+          "status": "implemented",
+          "doc": "Linear interpolation."
+        }
+      ],
+      "record": [
+        {
+          "name": "Scale",
+          "type": "f32"
+        },
+        {
+          "name": "Offset",
+          "type": "i32"
+        }
+      ],
+      "status": "implemented",
+      "doc": "One UI dimension: a fraction of the parent's size (Scale, f32) plus pixels (Offset, a whole number)."
+    },
+    {
+      "name": "UDim2",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "...",
+              "type": "any",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "UDim2"
+          ],
+          "status": "implemented",
+          "doc": "From four numbers (x scale, x offset, y scale, y offset) or two UDims."
+        },
+        {
+          "name": "fromScale",
+          "params": [
+            {
+              "name": "x",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "y",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "UDim2"
+          ],
+          "status": "implemented",
+          "doc": "Scales only."
+        },
+        {
+          "name": "fromOffset",
+          "params": [
+            {
+              "name": "x",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "y",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "UDim2"
+          ],
+          "status": "implemented",
+          "doc": "Offsets only."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "X",
+          "kind": "property",
+          "type": "UDim",
+          "status": "implemented",
+          "doc": "Horizontal."
+        },
+        {
+          "name": "Y",
+          "kind": "property",
+          "type": "UDim",
+          "status": "implemented",
+          "doc": "Vertical."
+        },
+        {
+          "name": "Width",
+          "kind": "property",
+          "type": "UDim",
+          "status": "implemented",
+          "doc": "The same as X."
+        },
+        {
+          "name": "Height",
+          "kind": "property",
+          "type": "UDim",
+          "status": "implemented",
+          "doc": "The same as Y."
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "params": [
+            {
+              "name": "goal",
+              "type": "UDim2"
+            },
+            {
+              "name": "alpha",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "UDim2"
+          ],
+          "status": "implemented",
+          "doc": "Linear interpolation of each part."
+        }
+      ],
+      "record": [
+        {
+          "name": "XScale",
+          "type": "f32"
+        },
+        {
+          "name": "XOffset",
+          "type": "i32"
+        },
+        {
+          "name": "YScale",
+          "type": "f32"
+        },
+        {
+          "name": "YOffset",
+          "type": "i32"
+        }
+      ],
+      "status": "implemented",
+      "doc": "A UI position or size: a UDim for X and one for Y. Supports + and - with another UDim2."
+    },
+    {
+      "name": "Font",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "family",
+              "type": "string"
+            },
+            {
+              "name": "weight",
+              "type": "Enum.FontWeight",
+              "optional": true
+            },
+            {
+              "name": "style",
+              "type": "Enum.FontStyle",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Font"
+          ],
+          "status": "implemented",
+          "doc": "From a family asset id, such as rbxasset://fonts/families/<Name>.json."
+        },
+        {
+          "name": "fromName",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "weight",
+              "type": "Enum.FontWeight",
+              "optional": true
+            },
+            {
+              "name": "style",
+              "type": "Enum.FontStyle",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Font"
+          ],
+          "status": "implemented",
+          "doc": "From a family name: rbxasset://fonts/families/<name>.json."
+        },
+        {
+          "name": "fromEnum",
+          "params": [
+            {
+              "name": "font",
+              "type": "Enum.Font"
+            }
+          ],
+          "returns": [
+            "Font"
+          ],
+          "status": "missing",
+          "doc": "From a legacy font."
+        },
+        {
+          "name": "fromId",
+          "params": [
+            {
+              "name": "id",
+              "type": "number"
+            },
+            {
+              "name": "weight",
+              "type": "Enum.FontWeight",
+              "optional": true
+            },
+            {
+              "name": "style",
+              "type": "Enum.FontStyle",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Font"
+          ],
+          "status": "missing",
+          "doc": "From a family asset number."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Family",
+          "kind": "property",
+          "type": "string",
+          "status": "implemented",
+          "doc": "The family asset id."
+        },
+        {
+          "name": "Weight",
+          "kind": "property",
+          "type": "Enum.FontWeight",
+          "status": "implemented",
+          "doc": "The weight."
+        },
+        {
+          "name": "Style",
+          "kind": "property",
+          "type": "Enum.FontStyle",
+          "status": "implemented",
+          "doc": "Upright or italic."
+        },
+        {
+          "name": "Bold",
+          "kind": "property",
+          "type": "boolean",
+          "status": "implemented",
+          "doc": "True if the weight is SemiBold or heavier."
+        }
+      ],
+      "record": [
+        {
+          "name": "Family",
+          "type": "string"
+        },
+        {
+          "name": "Weight",
+          "type": "Enum.FontWeight"
+        },
+        {
+          "name": "Style",
+          "type": "Enum.FontStyle"
+        }
+      ],
+      "status": "implemented",
+      "doc": "A font face: a family asset, a weight and a style."
+    },
+    {
+      "name": "TweenInfo",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "time",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "easingStyle",
+              "type": "Enum.EasingStyle",
+              "optional": true
+            },
+            {
+              "name": "easingDirection",
+              "type": "Enum.EasingDirection",
+              "optional": true
+            },
+            {
+              "name": "repeatCount",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "reverses",
+              "type": "boolean",
+              "optional": true
+            },
+            {
+              "name": "delayTime",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "TweenInfo"
+          ],
+          "status": "implemented",
+          "doc": "Defaults: 1 second, Quad, Out, no repeats, no reverse, no delay."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Time",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Seconds per run."
+        },
+        {
+          "name": "EasingStyle",
+          "kind": "property",
+          "type": "Enum.EasingStyle",
+          "status": "implemented",
+          "doc": "The curve."
+        },
+        {
+          "name": "EasingDirection",
+          "kind": "property",
+          "type": "Enum.EasingDirection",
+          "status": "implemented",
+          "doc": "Which end the curve applies to."
+        },
+        {
+          "name": "RepeatCount",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Extra runs; negative repeats forever."
+        },
+        {
+          "name": "Reverses",
+          "kind": "property",
+          "type": "boolean",
+          "status": "implemented",
+          "doc": "True if each run plays back after playing forward."
+        },
+        {
+          "name": "DelayTime",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Seconds before each run."
+        }
+      ],
+      "status": "implemented",
+      "doc": "How a tween runs: its length, easing curve, repeats and delay."
+    }
+  ]
+}

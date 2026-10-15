@@ -2,7 +2,9 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "missing": 14
+    "implemented": 856,
+    "partial": 4,
+    "missing": 15
   },
   "classes": [
     {
@@ -91,15 +93,8745 @@
   ],
   "enums": [
     {
+      "name": "AccessModifierType",
+      "status": "implemented",
+      "items": [
+        "Allow",
+        "Deny"
+      ]
+    },
+    {
+      "name": "AccessoryType",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Hat",
+        "Hair",
+        "Face",
+        "Neck",
+        "Shoulder",
+        "Front",
+        "Back",
+        "Waist",
+        "TShirt",
+        "Shirt",
+        "Pants",
+        "Jacket",
+        "Sweater",
+        "Shorts",
+        "LeftShoe",
+        "RightShoe",
+        "DressSkirt",
+        "Eyebrow",
+        "Eyelash"
+      ]
+    },
+    {
+      "name": "ActionOnAutoResumeSync",
+      "status": "implemented",
+      "items": [
+        "DontResume",
+        "KeepStudio",
+        "KeepLocal"
+      ]
+    },
+    {
+      "name": "ActionOnStopSync",
+      "status": "implemented",
+      "items": [
+        "AlwaysAsk",
+        "KeepLocalFiles",
+        "DeleteLocalFiles"
+      ]
+    },
+    {
+      "name": "ActionType",
+      "status": "implemented",
+      "items": [
+        "Nothing",
+        "Pause",
+        "Lose",
+        "Draw",
+        "Win"
+      ]
+    },
+    {
+      "name": "ActivePayerStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Never",
+        "Lapsed",
+        "Casual50Percent",
+        "Intermediate35Percent",
+        "Top15Percent"
+      ]
+    },
+    {
+      "name": "ActuatorRelativeTo",
+      "status": "implemented",
+      "items": [
+        "Attachment0",
+        "Attachment1",
+        "World"
+      ]
+    },
+    {
+      "name": "ActuatorType",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Motor",
+        "Servo"
+      ]
+    },
+    {
+      "name": "AdAvailabilityResult",
+      "status": "implemented",
+      "items": [
+        "IsAvailable",
+        "DeviceIneligible",
+        "ExperienceIneligible",
+        "InternalError",
+        "NoFill",
+        "PlayerIneligible",
+        "PublisherIneligible"
+      ]
+    },
+    {
+      "name": "AdEventType",
+      "status": "implemented",
+      "items": [
+        "VideoLoaded",
+        "VideoRemoved",
+        "UserCompletedVideo",
+        "RewardedAdLoaded",
+        "RewardedAdGrant",
+        "RewardedAdUnloaded"
+      ]
+    },
+    {
+      "name": "AdFormat",
+      "status": "implemented",
+      "items": [
+        "RewardedVideo"
+      ]
+    },
+    {
+      "name": "AdShape",
+      "status": "implemented",
+      "items": [
+        "HorizontalRectangle"
+      ]
+    },
+    {
+      "name": "AdTeleportMethod",
+      "status": "implemented",
+      "items": [
+        "Undefined",
+        "PortalForward",
+        "InGameMenuBackButton",
+        "UIBackButton"
+      ]
+    },
+    {
+      "name": "AdUIEventType",
+      "status": "implemented",
+      "items": [
+        "AdLabelClicked",
+        "VolumeButtonClicked",
+        "FullscreenButtonClicked",
+        "PlayButtonClicked",
+        "PauseButtonClicked",
+        "CloseButtonClicked",
+        "WhyThisAdClicked",
+        "PlayEventTriggered",
+        "PauseEventTriggered"
+      ]
+    },
+    {
+      "name": "AdUIType",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Image",
+        "Video"
+      ]
+    },
+    {
+      "name": "AdUnitStatus",
+      "status": "implemented",
+      "items": [
+        "Inactive",
+        "Active"
+      ]
+    },
+    {
+      "name": "AdornCullingMode",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "Never"
+      ]
+    },
+    {
+      "name": "AdornShading",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Shaded",
+        "XRay",
+        "XRayShaded",
+        "AlwaysOnTop"
+      ]
+    },
+    {
+      "name": "AgeCheckStatus",
+      "status": "implemented",
+      "items": [
+        "Unchecked",
+        "Checked"
+      ]
+    },
+    {
+      "name": "AlignType",
+      "status": "implemented",
+      "items": [
+        "Parallel",
+        "Perpendicular",
+        "PrimaryAxisParallel",
+        "PrimaryAxisPerpendicular",
+        "PrimaryAxisLookAt",
+        "AllAxes"
+      ]
+    },
+    {
+      "name": "AlphaMode",
+      "status": "implemented",
+      "items": [
+        "Overlay",
+        "Transparency",
+        "TintMask",
+        "Opaque"
+      ]
+    },
+    {
+      "name": "AnalyticsCustomFieldKeys",
+      "status": "implemented",
+      "items": [
+        "CustomField01",
+        "CustomField02",
+        "CustomField03"
+      ]
+    },
+    {
+      "name": "AnalyticsEconomyAction",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Acquire",
+        "Spend"
+      ]
+    },
+    {
+      "name": "AnalyticsEconomyFlowType",
+      "status": "implemented",
+      "items": [
+        "Sink",
+        "Source"
+      ]
+    },
+    {
+      "name": "AnalyticsEconomyTransactionType",
+      "status": "implemented",
+      "items": [
+        "IAP",
+        "Shop",
+        "Gameplay",
+        "ContextualPurchase",
+        "TimedReward",
+        "Onboarding"
+      ]
+    },
+    {
+      "name": "AnalyticsLogLevel",
+      "status": "implemented",
+      "items": [
+        "Trace",
+        "Debug",
+        "Information",
+        "Warning",
+        "Error",
+        "Fatal"
+      ]
+    },
+    {
+      "name": "AnalyticsProgressionStatus",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Begin",
+        "Complete",
+        "Abandon",
+        "Fail"
+      ]
+    },
+    {
+      "name": "AnalyticsProgressionType",
+      "status": "implemented",
+      "items": [
+        "Custom",
+        "Start",
+        "Fail",
+        "Complete"
+      ]
+    },
+    {
+      "name": "AnimatedImageScaleType",
+      "status": "implemented",
+      "items": [
+        "Stretch",
+        "Tile",
+        "Fit",
+        "Crop"
+      ]
+    },
+    {
+      "name": "AnimationClipFromVideoStatus",
+      "status": "implemented",
+      "items": [
+        "Initializing",
+        "Pending",
+        "Processing",
+        "ErrorGeneric",
+        "Success",
+        "ErrorVideoTooLong",
+        "ErrorNoPersonDetected",
+        "ErrorVideoUnstable",
+        "Timeout",
+        "Cancelled",
+        "ErrorMultiplePeople",
+        "ErrorUploadingVideo"
+      ]
+    },
+    {
+      "name": "AnimationNodeBlend2DInputMode",
+      "status": "implemented",
+      "items": [
+        "Cartesian",
+        "Polar"
+      ]
+    },
+    {
+      "name": "AnimationNodeBlendMode",
+      "status": "implemented",
+      "items": [
+        "Over",
+        "Add",
+        "Subtract"
+      ]
+    },
+    {
+      "name": "AnimationNodeInterruptible",
+      "status": "implemented",
+      "items": [
+        "Always",
+        "Finished",
+        "Trigger"
+      ]
+    },
+    {
+      "name": "AnimationNodePhaseSync",
+      "status": "implemented",
+      "items": [
+        "Synced",
+        "Unsynced"
+      ]
+    },
+    {
+      "name": "AnimationNodePlayMode",
+      "status": "implemented",
+      "items": [
+        "Loop",
+        "PingPong",
+        "OnceAndHold",
+        "OnceAndReset"
+      ]
+    },
+    {
+      "name": "AnimationNodeTransitionType",
+      "status": "implemented",
+      "items": [
+        "CrossFade",
+        "InertialBlend",
+        "DeadBlend"
+      ]
+    },
+    {
+      "name": "AnimationNodeTransitionWhen",
+      "status": "implemented",
+      "items": [
+        "Finished",
+        "BeforeFinished"
+      ]
+    },
+    {
+      "name": "AnimationNodeType",
+      "status": "implemented",
+      "items": [
+        "InvalidNode",
+        "AddNode",
+        "OverNode",
+        "Blend1DNode",
+        "Blend2DNode",
+        "ClipNode",
+        "GraphOutput",
+        "MaskNode",
+        "PrioritySelectNode",
+        "RandomSequenceNode",
+        "SelectNode",
+        "SequenceNode",
+        "SpeedNode",
+        "SubtractNode",
+        "OneShotNode",
+        "StateMachineNode"
+      ]
+    },
+    {
+      "name": "AnimationNodeWaitFor",
+      "status": "implemented",
+      "items": [
+        "Finished",
+        "Trigger"
+      ]
+    },
+    {
+      "name": "AnimationPriority",
+      "status": "implemented",
+      "items": [
+        "Idle",
+        "Movement",
+        "Action",
+        "Action2",
+        "Action3",
+        "Action4",
+        "Core"
+      ]
+    },
+    {
+      "name": "AnimationValueNodeType",
+      "status": "implemented",
+      "items": [
+        "Invalid",
+        "Expression"
+      ]
+    },
+    {
+      "name": "AnimatorRetargetingMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "AnnotationChannelContentPreference",
+      "status": "implemented",
+      "items": [
+        "None",
+        "All",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "AnnotationEditingMode",
+      "status": "implemented",
+      "items": [
+        "None",
+        "PlacingNew",
+        "WritingNew"
+      ]
+    },
+    {
+      "name": "AnnotationPlaceContentPreference",
+      "status": "implemented",
+      "items": [
+        "None",
+        "All",
+        "MentionsAndReplies",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "AnnotationRequestStatus",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "Loading",
+        "ErrorInternalFailure",
+        "ErrorNotFound",
+        "ErrorModerated"
+      ]
+    },
+    {
+      "name": "AnnotationRequestType",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Create",
+        "Resolve",
+        "Delete",
+        "Edit"
+      ]
+    },
+    {
+      "name": "AntiAliasing",
+      "status": "implemented",
+      "items": [
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "AppLifecycleManagerState",
+      "status": "implemented",
+      "items": [
+        "Detached",
+        "Active",
+        "Inactive",
+        "Hidden"
+      ]
+    },
+    {
+      "name": "AppShellActionType",
+      "status": "implemented",
+      "items": [
+        "None",
+        "OpenApp",
+        "TapChatTab",
+        "TapConversationEntry",
+        "TapAvatarTab",
+        "ReadConversation",
+        "TapGamePageTab",
+        "TapHomePageTab",
+        "GamePageLoaded",
+        "HomePageLoaded",
+        "AvatarEditorPageLoaded",
+        "HomePageInteractive"
+      ]
+    },
+    {
+      "name": "AppShellFeature",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Chat",
+        "AvatarEditor",
+        "GamePage",
+        "HomePage",
+        "More",
+        "Landing",
+        "WatchPage"
+      ]
+    },
+    {
+      "name": "AppUpdateStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "NotSupported",
+        "Failed",
+        "NotAvailable",
+        "Available",
+        "AvailableBoundChannel",
+        "AvailableBetaProgram"
+      ]
+    },
+    {
+      "name": "ApplyShadowMode",
+      "status": "implemented",
+      "items": [
+        "Shape",
+        "Text"
+      ]
+    },
+    {
+      "name": "ApplyStrokeMode",
+      "status": "implemented",
+      "items": [
+        "Contextual",
+        "Border"
+      ]
+    },
+    {
+      "name": "AspectType",
+      "status": "implemented",
+      "items": [
+        "FitWithinMaxSize",
+        "ScaleWithParentSize"
+      ]
+    },
+    {
+      "name": "AssetCreatorType",
+      "status": "implemented",
+      "items": [
+        "User",
+        "Group"
+      ]
+    },
+    {
+      "name": "AssetFetchStatus",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "Failure",
+        "None",
+        "Loading",
+        "TimedOut"
+      ]
+    },
+    {
+      "name": "AssetRepresentation",
+      "status": "implemented",
+      "items": [
+        "FullLength",
+        "ShortPreview"
+      ]
+    },
+    {
+      "name": "AssetType",
+      "status": "implemented",
+      "items": [
+        "Image",
+        "TShirt",
+        "Audio",
+        "Mesh",
+        "Lua",
+        "Hat",
+        "Place",
+        "Model",
+        "Shirt",
+        "Pants",
+        "Decal",
+        "Head",
+        "Face",
+        "Gear",
+        "Badge",
+        "Animation",
+        "Torso",
+        "RightArm",
+        "LeftArm",
+        "LeftLeg",
+        "RightLeg",
+        "Package",
+        "GamePass",
+        "Plugin",
+        "MeshPart",
+        "HairAccessory",
+        "FaceAccessory",
+        "NeckAccessory",
+        "ShoulderAccessory",
+        "FrontAccessory",
+        "BackAccessory",
+        "WaistAccessory",
+        "ClimbAnimation",
+        "DeathAnimation",
+        "FallAnimation",
+        "IdleAnimation",
+        "JumpAnimation",
+        "RunAnimation",
+        "SwimAnimation",
+        "WalkAnimation",
+        "PoseAnimation",
+        "EarAccessory",
+        "EyeAccessory",
+        "EmoteAnimation",
+        "Video",
+        "TShirtAccessory",
+        "ShirtAccessory",
+        "PantsAccessory",
+        "JacketAccessory",
+        "SweaterAccessory",
+        "ShortsAccessory",
+        "LeftShoeAccessory",
+        "RightShoeAccessory",
+        "DressSkirtAccessory",
+        "FontFamily",
+        "EyebrowAccessory",
+        "EyelashAccessory",
+        "MoodAnimation",
+        "DynamicHead",
+        "FaceMakeup",
+        "LipMakeup",
+        "EyeMakeup",
+        "AvatarBackground",
+        "TextDocument",
+        "AnimatedImage"
+      ]
+    },
+    {
+      "name": "AssetTypeVerification",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "ClientOnly",
+        "Always"
+      ]
+    },
+    {
+      "name": "AudioApiRollout",
+      "status": "implemented",
+      "items": [
+        "Disabled",
+        "Automatic",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "AudioChannelLayout",
+      "status": "implemented",
+      "items": [
+        "Mono",
+        "Stereo",
+        "Quad",
+        "Surround_5",
+        "Surround_5_1",
+        "Surround_7_1",
+        "Surround_7_1_4"
+      ]
+    },
+    {
+      "name": "AudioFilterType",
+      "status": "implemented",
+      "items": [
+        "Peak",
+        "LowShelf",
+        "HighShelf",
+        "Lowpass12dB",
+        "Lowpass24dB",
+        "Lowpass48dB",
+        "Highpass12dB",
+        "Highpass24dB",
+        "Highpass48dB",
+        "Bandpass",
+        "Notch",
+        "Lowpass6dB"
+      ]
+    },
+    {
+      "name": "AudioPositionType",
+      "status": "implemented",
+      "items": [
+        "Parent",
+        "Instance"
+      ]
+    },
+    {
+      "name": "AudioSampleFormat",
+      "status": "implemented",
+      "items": [
+        "Int16",
+        "Float32"
+      ]
+    },
+    {
+      "name": "AudioSimulationFidelity",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Automatic"
+      ]
+    },
+    {
+      "name": "AudioSubType",
+      "status": "implemented",
+      "items": [
+        "Music",
+        "SoundEffect"
+      ]
+    },
+    {
+      "name": "AudioWindowSize",
+      "status": "implemented",
+      "items": [
+        "Small",
+        "Medium",
+        "Large"
+      ]
+    },
+    {
+      "name": "AuthorityMode",
+      "status": "implemented",
+      "items": [
+        "Server",
+        "Automatic"
+      ]
+    },
+    {
+      "name": "AutoIndentRule",
+      "status": "implemented",
+      "items": [
+        "Off",
+        "Absolute",
+        "Relative"
+      ]
+    },
+    {
+      "name": "AutomaticSize",
+      "status": "implemented",
+      "items": [
+        "None",
+        "X",
+        "Y",
+        "XY"
+      ]
+    },
+    {
+      "name": "AvatarAssetType",
+      "status": "implemented",
+      "items": [
+        "TShirt",
+        "Hat",
+        "Shirt",
+        "Pants",
+        "Head",
+        "Face",
+        "Gear",
+        "Torso",
+        "RightArm",
+        "LeftArm",
+        "LeftLeg",
+        "RightLeg",
+        "HairAccessory",
+        "FaceAccessory",
+        "NeckAccessory",
+        "ShoulderAccessory",
+        "FrontAccessory",
+        "BackAccessory",
+        "WaistAccessory",
+        "ClimbAnimation",
+        "FallAnimation",
+        "IdleAnimation",
+        "JumpAnimation",
+        "RunAnimation",
+        "SwimAnimation",
+        "WalkAnimation",
+        "EmoteAnimation",
+        "TShirtAccessory",
+        "ShirtAccessory",
+        "PantsAccessory",
+        "JacketAccessory",
+        "SweaterAccessory",
+        "ShortsAccessory",
+        "LeftShoeAccessory",
+        "RightShoeAccessory",
+        "DressSkirtAccessory",
+        "EyebrowAccessory",
+        "EyelashAccessory",
+        "MoodAnimation",
+        "DynamicHead",
+        "FaceMakeup",
+        "LipMakeup",
+        "EyeMakeup",
+        "AvatarBackground"
+      ]
+    },
+    {
+      "name": "AvatarChatServiceFeature",
+      "status": "implemented",
+      "items": [
+        "None",
+        "UniverseAudio",
+        "UniverseVideo",
+        "PlaceAudio",
+        "PlaceVideo",
+        "UserAudioEligible",
+        "UserAudio",
+        "UserVideoEligible",
+        "UserVideo",
+        "UserBanned",
+        "UserVerifiedForVoice"
+      ]
+    },
+    {
+      "name": "AvatarContextMenuOption",
+      "status": "implemented",
+      "items": [
+        "Friend",
+        "Chat",
+        "Emote",
+        "InspectMenu"
+      ]
+    },
+    {
+      "name": "AvatarGenerationError",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Unknown",
+        "DownloadFailed",
+        "Canceled",
+        "Offensive",
+        "Timeout",
+        "JobNotFound"
+      ]
+    },
+    {
+      "name": "AvatarItemType",
+      "status": "implemented",
+      "items": [
+        "Asset",
+        "Bundle"
+      ]
+    },
+    {
+      "name": "AvatarPromptResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "PermissionDenied",
+        "Failed"
+      ]
+    },
+    {
+      "name": "AvatarSettingsAccessoryLimitMethod",
+      "status": "implemented",
+      "items": [
+        "Scale",
+        "Remove",
+        "PreviewScale",
+        "PreviewRemove"
+      ]
+    },
+    {
+      "name": "AvatarSettingsAccessoryMode",
+      "status": "implemented",
+      "items": [
+        "PlayerChoice",
+        "CustomLimit"
+      ]
+    },
+    {
+      "name": "AvatarSettingsAnimationClipsMode",
+      "status": "implemented",
+      "items": [
+        "PlayerChoice",
+        "CustomClips"
+      ]
+    },
+    {
+      "name": "AvatarSettingsAnimationPacksMode",
+      "status": "implemented",
+      "items": [
+        "PlayerChoice",
+        "StandardR15",
+        "StandardR6"
+      ]
+    },
+    {
+      "name": "AvatarSettingsAppearanceMode",
+      "status": "implemented",
+      "items": [
+        "PlayerChoice",
+        "CustomParts",
+        "CustomBody"
+      ]
+    },
+    {
+      "name": "AvatarSettingsBuildMode",
+      "status": "implemented",
+      "items": [
+        "PlayerChoice",
+        "CustomBuild"
+      ]
+    },
+    {
+      "name": "AvatarSettingsCharacterControllerMode",
+      "status": "implemented",
+      "items": [
+        "LegacyHumanoid",
+        "LuaCharacterController"
+      ]
+    },
+    {
+      "name": "AvatarSettingsClothingMode",
+      "status": "implemented",
+      "items": [
+        "PlayerChoice",
+        "CustomLimit"
+      ]
+    },
+    {
+      "name": "AvatarSettingsCollisionMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "SingleCollider",
+        "Legacy"
+      ]
+    },
+    {
+      "name": "AvatarSettingsCustomAccessoryMode",
+      "status": "implemented",
+      "items": [
+        "PlayerChoice",
+        "CustomAccessories"
+      ]
+    },
+    {
+      "name": "AvatarSettingsCustomBodyType",
+      "status": "implemented",
+      "items": [
+        "AvatarReference",
+        "BundleId"
+      ]
+    },
+    {
+      "name": "AvatarSettingsCustomClothingMode",
+      "status": "implemented",
+      "items": [
+        "PlayerChoice",
+        "CustomClothing"
+      ]
+    },
+    {
+      "name": "AvatarSettingsHitAndTouchDetectionMode",
+      "status": "implemented",
+      "items": [
+        "UseParts",
+        "UseCollider"
+      ]
+    },
+    {
+      "name": "AvatarSettingsJumpMode",
+      "status": "implemented",
+      "items": [
+        "JumpHeight",
+        "JumpPower"
+      ]
+    },
+    {
+      "name": "AvatarSettingsLegacyCollisionMode",
+      "status": "implemented",
+      "items": [
+        "R6Colliders",
+        "InnerBoxColliders"
+      ]
+    },
+    {
+      "name": "AvatarSettingsScaleMode",
+      "status": "implemented",
+      "items": [
+        "PlayerChoice",
+        "CustomScale"
+      ]
+    },
+    {
+      "name": "AvatarThumbnailCustomizationType",
+      "status": "implemented",
+      "items": [
+        "Closeup",
+        "FullBody"
+      ]
+    },
+    {
+      "name": "AvatarUnificationMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "Axis",
+      "status": "implemented",
+      "items": [
+        "X",
+        "Y",
+        "Z"
+      ]
+    },
+    {
+      "name": "BasicMeshPartShape",
+      "status": "implemented",
+      "items": [
+        "Capsule",
+        "Cone",
+        "RoundedBox"
+      ]
+    },
+    {
+      "name": "BenefitType",
+      "status": "implemented",
+      "items": [
+        "DeveloperProduct",
+        "AvatarAsset",
+        "AvatarBundle"
+      ]
+    },
+    {
+      "name": "BinType",
+      "status": "implemented",
+      "items": [
+        "Script",
+        "GameTool",
+        "Grab",
+        "Clone",
+        "Hammer"
+      ]
+    },
+    {
+      "name": "BodyPart",
+      "status": "implemented",
+      "items": [
+        "Head",
+        "Torso",
+        "LeftArm",
+        "RightArm",
+        "LeftLeg",
+        "RightLeg"
+      ]
+    },
+    {
+      "name": "BodyPartR15",
+      "status": "implemented",
+      "items": [
+        "Head",
+        "UpperTorso",
+        "LowerTorso",
+        "LeftFoot",
+        "LeftLowerLeg",
+        "LeftUpperLeg",
+        "RightFoot",
+        "RightLowerLeg",
+        "RightUpperLeg",
+        "LeftHand",
+        "LeftLowerArm",
+        "LeftUpperArm",
+        "RightHand",
+        "RightLowerArm",
+        "RightUpperArm",
+        "RootPart",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "BorderMode",
+      "status": "implemented",
+      "items": [
+        "Outline",
+        "Middle",
+        "Inset"
+      ]
+    },
+    {
+      "name": "BorderStrokePosition",
+      "status": "implemented",
+      "items": [
+        "Outer",
+        "Center",
+        "Inner"
+      ]
+    },
+    {
+      "name": "BranchStatus",
+      "status": "implemented",
+      "items": [
+        "Draft",
+        "ReadyToMerge",
+        "Merged",
+        "Archived"
+      ]
+    },
+    {
+      "name": "BreakReason",
+      "status": "implemented",
+      "items": [
+        "Other",
+        "Error",
+        "SpecialBreakpoint",
+        "UserBreakpoint"
+      ]
+    },
+    {
+      "name": "BreakpointRemoveReason",
+      "status": "implemented",
+      "items": [
+        "Requested",
+        "ScriptChanged",
+        "ScriptRemoved"
+      ]
+    },
+    {
+      "name": "BulkMoveMode",
+      "status": "implemented",
+      "items": [
+        "FireAllEvents",
+        "FireCFrameChanged"
+      ]
+    },
+    {
+      "name": "BundleType",
+      "status": "implemented",
+      "items": [
+        "BodyParts",
+        "Animations",
+        "Shoes",
+        "DynamicHead",
+        "DynamicHeadAvatar"
+      ]
+    },
+    {
+      "name": "Button",
+      "status": "implemented",
+      "items": [
+        "Dismount",
+        "Jump"
+      ]
+    },
+    {
+      "name": "ButtonStyle",
+      "status": "implemented",
+      "items": [
+        "Custom",
+        "RobloxButtonDefault",
+        "RobloxButton",
+        "RobloxRoundButton",
+        "RobloxRoundDefaultButton",
+        "RobloxRoundDropdownButton"
+      ]
+    },
+    {
+      "name": "CageType",
+      "status": "implemented",
+      "items": [
+        "Inner",
+        "Outer"
+      ]
+    },
+    {
+      "name": "CameraMode",
+      "status": "implemented",
+      "items": [
+        "Classic",
+        "LockFirstPerson"
+      ]
+    },
+    {
+      "name": "CameraNavigationModel",
+      "status": "implemented",
+      "items": [
+        "Roblox",
+        "IndustryCompatible"
+      ]
+    },
+    {
+      "name": "CameraPanMode",
+      "status": "implemented",
+      "items": [
+        "Classic",
+        "EdgeBump"
+      ]
+    },
+    {
+      "name": "CameraSpeedAdjustBinding",
+      "status": "implemented",
+      "items": [
+        "None",
+        "RmbScroll",
+        "AltScroll"
+      ]
+    },
+    {
+      "name": "CameraType",
+      "status": "implemented",
+      "items": [
+        "Fixed",
+        "Attach",
+        "Watch",
+        "Track",
+        "Follow",
+        "Custom",
+        "Scriptable",
+        "Orbital"
+      ]
+    },
+    {
+      "name": "CanCollaborateError",
+      "status": "implemented",
+      "items": [
+        "Invalid",
+        "None",
+        "NotAgeVerified",
+        "OutsideAgeBucket",
+        "TooManyCollaborators",
+        "PCBlock",
+        "NotFound",
+        "OutsideOwnerAgeBucket",
+        "NotAuthorized",
+        "OutsideAgeBucketTcPc",
+        "OtherCollaboratorSettingsPreventTrust",
+        "AgeVerificationCountryBlocked",
+        "OtherUserCannotCollaborate"
+      ]
+    },
+    {
+      "name": "CaptureGalleryPermission",
+      "status": "implemented",
+      "items": [
+        "ReadAndUpload"
+      ]
+    },
+    {
+      "name": "CaptureType",
+      "status": "implemented",
+      "items": [
+        "Screenshot",
+        "Video"
+      ]
+    },
+    {
+      "name": "CatalogCategoryFilter",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Featured",
+        "Collectibles",
+        "CommunityCreations",
+        "Premium",
+        "Recommended"
+      ]
+    },
+    {
+      "name": "CatalogSortAggregation",
+      "status": "implemented",
+      "items": [
+        "Past12Hours",
+        "PastDay",
+        "Past3Days",
+        "PastWeek",
+        "PastMonth",
+        "AllTime"
+      ]
+    },
+    {
+      "name": "CatalogSortType",
+      "status": "implemented",
+      "items": [
+        "Relevance",
+        "PriceHighToLow",
+        "PriceLowToHigh",
+        "MostFavorited",
+        "RecentlyCreated",
+        "Bestselling"
+      ]
+    },
+    {
+      "name": "CellBlock",
+      "status": "implemented",
+      "items": [
+        "Solid",
+        "VerticalWedge",
+        "CornerWedge",
+        "InverseCornerWedge",
+        "HorizontalWedge"
+      ]
+    },
+    {
+      "name": "CellMaterial",
+      "status": "implemented",
+      "items": [
+        "Empty",
+        "Grass",
+        "Sand",
+        "Brick",
+        "Granite",
+        "Asphalt",
+        "Iron",
+        "Aluminum",
+        "Gold",
+        "WoodPlank",
+        "WoodLog",
+        "Gravel",
+        "CinderBlock",
+        "MossyStone",
+        "Cement",
+        "RedPlastic",
+        "BluePlastic",
+        "Water"
+      ]
+    },
+    {
+      "name": "CellOrientation",
+      "status": "implemented",
+      "items": [
+        "NegZ",
+        "X",
+        "Z",
+        "NegX"
+      ]
+    },
+    {
+      "name": "CenterDialogType",
+      "status": "implemented",
+      "items": [
+        "UnsolicitedDialog",
+        "PlayerInitiatedDialog",
+        "ModalDialog",
+        "QuitDialog"
+      ]
+    },
+    {
+      "name": "CharacterControlMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Legacy",
+        "NoCharacterController",
+        "LuaCharacterController"
+      ]
+    },
+    {
+      "name": "ChatCallbackType",
+      "status": "implemented",
+      "items": [
+        "OnCreatingChatWindow",
+        "OnClientSendingMessage",
+        "OnClientFormattingMessage",
+        "OnServerReceivingMessage"
+      ]
+    },
+    {
+      "name": "ChatColor",
+      "status": "implemented",
+      "items": [
+        "Blue",
+        "Green",
+        "Red",
+        "White"
+      ]
+    },
+    {
+      "name": "ChatMode",
+      "status": "implemented",
+      "items": [
+        "Menu",
+        "TextAndMenu"
+      ]
+    },
+    {
+      "name": "ChatPrivacyMode",
+      "status": "implemented",
+      "items": [
+        "AllUsers",
+        "NoOne",
+        "Friends"
+      ]
+    },
+    {
+      "name": "ChatRestrictionStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "NotRestricted",
+        "Restricted"
+      ]
+    },
+    {
+      "name": "ChatStyle",
+      "status": "implemented",
+      "items": [
+        "Classic",
+        "Bubble",
+        "ClassicAndBubble"
+      ]
+    },
+    {
+      "name": "ChatVersion",
+      "status": "implemented",
+      "items": [
+        "LegacyChatService",
+        "TextChatService"
+      ]
+    },
+    {
+      "name": "ClientAnimatorThrottlingMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "CloseReason",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "RobloxMaintenance",
+        "DeveloperShutdown",
+        "DeveloperUpdate",
+        "ServerEmpty",
+        "OutOfMemory",
+        "Moderation"
+      ]
+    },
+    {
+      "name": "CollaboratorStatus",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Editing3D",
+        "Scripting",
+        "PrivateScripting"
+      ]
+    },
+    {
+      "name": "CollisionFidelity",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Hull",
+        "Box",
+        "PreciseConvexDecomposition",
+        "Tunable"
+      ]
+    },
+    {
+      "name": "CommandPermission",
+      "status": "implemented",
+      "items": [
+        "Plugin",
+        "LocalUser"
+      ]
+    },
+    {
+      "name": "CompileTarget",
+      "status": "implemented",
+      "items": [
+        "Client",
+        "CoreScript",
+        "Studio",
+        "CoreScriptRaw"
+      ]
+    },
+    {
+      "name": "CompletionAcceptanceBehavior",
+      "status": "implemented",
+      "items": [
+        "Insert",
+        "Replace",
+        "ReplaceOnEnterInsertOnTab",
+        "InsertOnEnterReplaceOnTab"
+      ]
+    },
+    {
+      "name": "CompletionItemKind",
+      "status": "implemented",
+      "items": [
+        "Text",
+        "Method",
+        "Function",
+        "Constructor",
+        "Field",
+        "Variable",
+        "Class",
+        "Interface",
+        "Module",
+        "Property",
+        "Unit",
+        "Value",
+        "Enum",
+        "Keyword",
+        "Snippet",
+        "Color",
+        "File",
+        "Reference",
+        "Folder",
+        "EnumMember",
+        "Constant",
+        "Struct",
+        "Event",
+        "Operator",
+        "TypeParameter"
+      ]
+    },
+    {
+      "name": "CompletionItemTag",
+      "status": "implemented",
+      "items": [
+        "Deprecated",
+        "IncorrectIndexType",
+        "PluginPermissions",
+        "CommandLinePermissions",
+        "RobloxPermissions",
+        "AddParens",
+        "PutCursorInParens",
+        "TypeCorrect",
+        "ClientServerBoundaryViolation",
+        "Invalidated",
+        "PutCursorBeforeEnd"
+      ]
+    },
+    {
+      "name": "CompletionTriggerKind",
+      "status": "implemented",
+      "items": [
+        "Invoked",
+        "TriggerCharacter",
+        "TriggerForIncompleteCompletions"
+      ]
+    },
+    {
+      "name": "CompositeValueCurveType",
+      "status": "implemented",
+      "items": [
+        "ColorRGB",
+        "ColorHSV",
+        "NumberRange",
+        "Rect",
+        "UDim",
+        "UDim2",
+        "Vector2",
+        "Vector3"
+      ]
+    },
+    {
+      "name": "CompressionAlgorithm",
+      "status": "implemented",
+      "items": [
+        "Zstd"
+      ]
+    },
+    {
+      "name": "ComputerCameraMovementMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Classic",
+        "Follow",
+        "Orbital",
+        "CameraToggle"
+      ]
+    },
+    {
+      "name": "ComputerMovementMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "KeyboardMouse",
+        "ClickToMove"
+      ]
+    },
+    {
+      "name": "ConfigSnapshotErrorState",
+      "status": "implemented",
+      "items": [
+        "None",
+        "LoadFailed"
+      ]
+    },
+    {
+      "name": "ConnectionError",
+      "status": "implemented",
+      "items": [
+        "OK",
+        "Unknown",
+        "ConnectErrors",
+        "AlreadyConnected",
+        "NoFreeIncomingConnections",
+        "ConnectionBanned",
+        "InvalidPassword",
+        "IncompatibleProtocolVersion",
+        "IPRecentlyConnected",
+        "OurSystemRequiresSecurity",
+        "SecurityKeyMismatch",
+        "DisconnectErrors",
+        "DisconnectBadhash",
+        "DisconnectSecurityKeyMismatch",
+        "DisconnectProtocolMismatch",
+        "DisconnectReceivePacketError",
+        "DisconnectReceivePacketStreamError",
+        "DisconnectSendPacketError",
+        "DisconnectIllegalTeleport",
+        "DisconnectDuplicatePlayer",
+        "DisconnectDuplicateTicket",
+        "DisconnectTimeout",
+        "DisconnectLuaKick",
+        "DisconnectOnRemoteSysStats",
+        "DisconnectHashTimeout",
+        "DisconnectCloudEditKick",
+        "DisconnectPlayerless",
+        "DisconnectNewSecurityKeyMismatch",
+        "DisconnectEvicted",
+        "DisconnectDevMaintenance",
+        "DisconnectRobloxMaintenance",
+        "DisconnectRejoin",
+        "DisconnectConnectionLost",
+        "DisconnectIdle",
+        "DisconnectRaknetErrors",
+        "DisconnectWrongVersion",
+        "DisconnectBySecurityPolicy",
+        "DisconnectBlockedIP",
+        "DisconnectClientFailure",
+        "DisconnectClientRequest",
+        "DisconnectPrivateServerKickout",
+        "DisconnectModeratedGame",
+        "ServerShutdown",
+        "ReplicatorTimeout",
+        "PlayerRemoved",
+        "DisconnectOutOfMemoryKeepPlayingLeave",
+        "DisconnectRomarkEndOfTest",
+        "DisconnectCollaboratorPermissionRevoked",
+        "DisconnectCollaboratorUnderage",
+        "NetworkInternal",
+        "NetworkSend",
+        "NetworkTimeout",
+        "NetworkMisbehavior",
+        "NetworkSecurity",
+        "ReplacementReady",
+        "ServerEmpty",
+        "PhantomFreeze",
+        "AndroidAnticheatKick",
+        "AndroidEmulatorKick",
+        "AndroidRootedKick",
+        "ScreentimeLockoutKick",
+        "DisconnectionNotification",
+        "DisconnectVerboselyModeratedGame",
+        "DisconnectCollaboratorNotAgeVerified",
+        "DisconnectCollaboratorTrustedConnectionsRequired",
+        "DisconnectCollaboratorOwnerActionRequired",
+        "DisconnectCollaboratorTooManyCollaborators",
+        "DisconnectCollaboratorUnknownError",
+        "DisconnectCollaboratorRequestedEviction",
+        "DisconnectCollaboratorTrustedConnectionsRequiredPC",
+        "DisconnectRemoteAttestationUnsupported",
+        "DisconnectRemoteAttestationGeneralFailure",
+        "DisconnectRemoteAttestationTimeout",
+        "DisconnectRemoteAttestationOSOutOfDate",
+        "DisconnectRemoteAttestationBootValidationFailure",
+        "PlacelaunchErrors",
+        "PlacelaunchDisabled",
+        "PlacelaunchError",
+        "PlacelaunchGameEnded",
+        "PlacelaunchGameFull",
+        "PlacelaunchUserLeft",
+        "PlacelaunchRestricted",
+        "PlacelaunchUnauthorized",
+        "PlacelaunchFlooded",
+        "PlacelaunchHashExpired",
+        "PlacelaunchHashException",
+        "PlacelaunchPartyCannotFit",
+        "PlacelaunchHttpError",
+        "PlacelaunchUserPrivacyUnauthorized",
+        "PlacelaunchVipOwnerNotPresent",
+        "PlacelaunchAgeVerificationRequired",
+        "PlacelaunchParentalApprovalRequired",
+        "PlacelaunchCoreGated",
+        "PlacelaunchCollaborationCoreGated",
+        "PlacelaunchCreatorBan",
+        "PlacelaunchDeviceBlock",
+        "PlacelaunchCustomMessage",
+        "PlacelaunchOtherError",
+        "TeleportErrors",
+        "TeleportFailure",
+        "TeleportGameNotFound",
+        "TeleportGameEnded",
+        "TeleportGameFull",
+        "TeleportUnauthorized",
+        "TeleportFlooded",
+        "TeleportIsTeleporting",
+        "TransportErrors",
+        "DisconnectTransportIoError",
+        "DisconnectTransportIoInternetError",
+        "DisconnectTransportProtocolError",
+        "DisconnectTransportNgtcp2Error",
+        "DisconnectTransportQuicError",
+        "DisconnectTransportRnaError"
+      ]
+    },
+    {
+      "name": "ConnectionState",
+      "status": "implemented",
+      "items": [
+        "Connected",
+        "Disconnected"
+      ]
+    },
+    {
+      "name": "ContentSourceType",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Uri",
+        "Object",
+        "Opaque"
+      ]
+    },
+    {
+      "name": "ContextActionPriority",
+      "status": "implemented",
+      "items": [
+        "Low",
+        "Medium",
+        "High"
+      ]
+    },
+    {
+      "name": "ContextActionResult",
+      "status": "implemented",
+      "items": [
+        "Sink",
+        "Pass"
+      ]
+    },
+    {
+      "name": "ControlMode",
+      "status": "implemented",
+      "items": [
+        "Classic",
+        "MouseLockSwitch"
+      ]
+    },
+    {
+      "name": "CoreGuiType",
+      "status": "implemented",
+      "items": [
+        "PlayerList",
+        "Health",
+        "Backpack",
+        "Chat",
+        "All",
+        "EmotesMenu",
+        "SelfView",
+        "Captures",
+        "AvatarSwitcher",
+        "ExperienceShop"
+      ]
+    },
+    {
+      "name": "CreateAssetResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "PermissionDenied",
+        "UploadFailed",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "CreateContentResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "PermissionDenied",
+        "UploadFailed",
+        "StorageLimitExceeded",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "CreateOutfitFailure",
+      "status": "implemented",
+      "items": [
+        "InvalidName",
+        "OutfitLimitReached",
+        "Other"
+      ]
+    },
+    {
+      "name": "CreatorType",
+      "status": "implemented",
+      "items": [
+        "User",
+        "Group"
+      ]
+    },
+    {
+      "name": "CreatorTypeFilter",
+      "status": "implemented",
+      "items": [
+        "User",
+        "Group",
+        "All"
+      ]
+    },
+    {
+      "name": "CurrencyType",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Robux",
+        "Tix"
+      ]
+    },
+    {
+      "name": "CustomCameraMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Classic",
+        "Follow"
+      ]
+    },
+    {
+      "name": "DataModelChangeType",
+      "status": "implemented",
+      "items": [
+        "Add",
+        "Remove",
+        "Modify",
+        "AddPackage"
+      ]
+    },
+    {
+      "name": "DataModelExtractorFileType",
+      "status": "implemented",
+      "items": [
+        "PlaceFile",
+        "FirstSlice",
+        "NonFirstSlice"
+      ]
+    },
+    {
+      "name": "DataStoreRequestType",
+      "status": "implemented",
+      "items": [
+        "GetAsync",
+        "SetIncrementAsync",
+        "UpdateAsync",
+        "GetSortedAsync",
+        "SetIncrementSortedAsync",
+        "OnUpdate",
+        "ListAsync",
+        "GetVersionAsync",
+        "RemoveVersionAsync",
+        "StandardRead",
+        "StandardWrite",
+        "StandardList",
+        "StandardRemove",
+        "OrderedRead",
+        "OrderedWrite",
+        "OrderedList",
+        "OrderedRemove"
+      ]
+    },
+    {
+      "name": "DebugBreakModeType",
+      "status": "implemented",
+      "items": [
+        "Never",
+        "Always",
+        "Unhandled"
+      ]
+    },
+    {
+      "name": "DebuggerEndReason",
+      "status": "implemented",
+      "items": [
+        "ClientRequest",
+        "Timeout",
+        "InvalidHost",
+        "Disconnected",
+        "ServerShutdown",
+        "ServerProtocolMismatch",
+        "ConfigurationFailed",
+        "RpcError"
+      ]
+    },
+    {
+      "name": "DebuggerExceptionBreakMode",
+      "status": "implemented",
+      "items": [
+        "Never",
+        "Always",
+        "Unhandled"
+      ]
+    },
+    {
+      "name": "DebuggerFrameType",
+      "status": "implemented",
+      "items": [
+        "C",
+        "Lua"
+      ]
+    },
+    {
+      "name": "DebuggerPauseReason",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Requested",
+        "Breakpoint",
+        "Exception",
+        "SingleStep",
+        "Entrypoint"
+      ]
+    },
+    {
+      "name": "DebuggerResumeType",
+      "status": "implemented",
+      "items": [
+        "StepInto",
+        "StepOut",
+        "StepOver",
+        "Resume"
+      ]
+    },
+    {
+      "name": "DebuggerStatus",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "Timeout",
+        "ConnectionLost",
+        "InvalidResponse",
+        "InternalError",
+        "InvalidState",
+        "RpcError",
+        "InvalidArgument",
+        "ConnectionClosed"
+      ]
+    },
+    {
+      "name": "DefaultScriptSyncFileType",
+      "status": "implemented",
+      "items": [
+        "Lua",
+        "Luau"
+      ]
+    },
+    {
+      "name": "DevCameraOcclusionMode",
+      "status": "implemented",
+      "items": [
+        "Zoom",
+        "Invisicam"
+      ]
+    },
+    {
+      "name": "DevComputerCameraMovementMode",
+      "status": "implemented",
+      "items": [
+        "UserChoice",
+        "Classic",
+        "Follow",
+        "Orbital",
+        "CameraToggle"
+      ]
+    },
+    {
+      "name": "DevComputerMovementMode",
+      "status": "implemented",
+      "items": [
+        "UserChoice",
+        "KeyboardMouse",
+        "ClickToMove",
+        "Scriptable"
+      ]
+    },
+    {
+      "name": "DevTouchCameraMovementMode",
+      "status": "implemented",
+      "items": [
+        "UserChoice",
+        "Classic",
+        "Follow",
+        "Orbital"
+      ]
+    },
+    {
+      "name": "DevTouchMovementMode",
+      "status": "implemented",
+      "items": [
+        "UserChoice",
+        "Thumbstick",
+        "DPad",
+        "Thumbpad",
+        "ClickToMove",
+        "Scriptable",
+        "DynamicThumbstick"
+      ]
+    },
+    {
+      "name": "DeveloperMemoryTag",
+      "status": "implemented",
+      "items": [
+        "Internal",
+        "HttpCache",
+        "Instances",
+        "Signals",
+        "LuaHeap",
+        "Script",
+        "PhysicsCollision",
+        "BaseParts",
+        "GraphicsSolidModels",
+        "GraphicsMeshParts",
+        "GraphicsParticles",
+        "GraphicsParts",
+        "GraphicsSpatialHash",
+        "GraphicsTerrain",
+        "GraphicsTexture",
+        "GraphicsTextureCharacter",
+        "Sounds",
+        "StreamingSounds",
+        "TerrainVoxels",
+        "Gui",
+        "Animation",
+        "Navigation",
+        "GeometryCSG",
+        "GraphicsSlimModels"
+      ]
+    },
+    {
+      "name": "DeviceFeatureType",
+      "status": "implemented",
+      "items": [
+        "DeviceCapture",
+        "InExperienceFAE"
+      ]
+    },
+    {
+      "name": "DeviceForm",
+      "status": "implemented",
+      "items": [
+        "Console",
+        "Phone",
+        "Tablet",
+        "Desktop",
+        "VR"
+      ]
+    },
+    {
+      "name": "DeviceLevel",
+      "status": "implemented",
+      "items": [
+        "Low",
+        "Medium",
+        "High"
+      ]
+    },
+    {
+      "name": "DeviceSimulatorScalingMode",
+      "status": "implemented",
+      "items": [
+        "ScaleToPhysicalSize",
+        "ActualResolution",
+        "FitToWindow"
+      ]
+    },
+    {
+      "name": "DeviceType",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Desktop",
+        "Tablet",
+        "Phone",
+        "TV"
+      ]
+    },
+    {
+      "name": "DialogBehaviorType",
+      "status": "implemented",
+      "items": [
+        "SinglePlayer",
+        "MultiplePlayers"
+      ]
+    },
+    {
+      "name": "DialogPurpose",
+      "status": "implemented",
+      "items": [
+        "Quest",
+        "Help",
+        "Shop"
+      ]
+    },
+    {
+      "name": "DialogTone",
+      "status": "implemented",
+      "items": [
+        "Neutral",
+        "Friendly",
+        "Enemy"
+      ]
+    },
+    {
+      "name": "DigitsRigDescriptionSide",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Left",
+        "Right"
+      ]
+    },
+    {
+      "name": "DiscountType",
+      "status": "implemented",
+      "items": [
+        "Uncategorized"
+      ]
+    },
+    {
+      "name": "DisplayScalingMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Legacy",
+        "Responsive"
+      ]
+    },
+    {
+      "name": "DisplaySize",
+      "status": "implemented",
+      "items": [
+        "Small",
+        "Medium",
+        "Large"
+      ]
+    },
+    {
+      "name": "DistanceAttenuationMode",
+      "status": "implemented",
+      "items": [
+        "Custom",
+        "InverseTapered",
+        "Linear",
+        "LinearSquared",
+        "Inverse"
+      ]
+    },
+    {
+      "name": "DomainType",
+      "status": "implemented",
+      "items": [
+        "EXPERIENCE",
+        "OAUTH"
+      ]
+    },
+    {
+      "name": "DominantAxis",
+      "status": "implemented",
+      "items": [
+        "Width",
+        "Height"
+      ]
+    },
+    {
+      "name": "DraftStatusCode",
+      "status": "implemented",
+      "items": [
+        "OK",
+        "DraftOutdated",
+        "ScriptRemoved",
+        "DraftCommitted"
+      ]
+    },
+    {
+      "name": "DragDetectorDragStyle",
+      "status": "implemented",
+      "items": [
+        "TranslateLine",
+        "TranslatePlane",
+        "TranslatePlaneOrLine",
+        "TranslateLineOrPlane",
+        "TranslateViewPlane",
+        "RotateAxis",
+        "RotateTrackball",
+        "Scriptable",
+        "BestForDevice"
+      ]
+    },
+    {
+      "name": "DragDetectorPermissionPolicy",
+      "status": "implemented",
+      "items": [
+        "Nobody",
+        "Everybody",
+        "Scriptable"
+      ]
+    },
+    {
+      "name": "DragDetectorResponseStyle",
+      "status": "implemented",
+      "items": [
+        "Geometric",
+        "Physical",
+        "Custom"
+      ]
+    },
+    {
+      "name": "DraggerCoordinateSpace",
+      "status": "implemented",
+      "items": [
+        "Object",
+        "World"
+      ]
+    },
+    {
+      "name": "DraggerMovementMode",
+      "status": "implemented",
+      "items": [
+        "Geometric",
+        "Physical"
+      ]
+    },
+    {
+      "name": "DraggingScrollBar",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Horizontal",
+        "Vertical"
+      ]
+    },
+    {
+      "name": "EasingDirection",
+      "status": "implemented",
+      "items": [
+        "In",
+        "Out",
+        "InOut"
+      ]
+    },
+    {
+      "name": "EasingStyle",
+      "status": "implemented",
+      "items": [
+        "Linear",
+        "Sine",
+        "Back",
+        "Quad",
+        "Quart",
+        "Quint",
+        "Bounce",
+        "Elastic",
+        "Exponential",
+        "Circular",
+        "Cubic"
+      ]
+    },
+    {
+      "name": "EditableStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Allowed",
+        "Disallowed"
+      ]
+    },
+    {
+      "name": "ElasticBehavior",
+      "status": "implemented",
+      "items": [
+        "WhenScrollable",
+        "Always",
+        "Never"
+      ]
+    },
+    {
+      "name": "EmitterPositionType",
+      "status": "implemented",
+      "items": [
+        "Parent",
+        "Instance"
+      ]
+    },
+    {
+      "name": "EngagementLevel",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Inactive",
+        "Low",
+        "Medium",
+        "High"
+      ]
+    },
+    {
+      "name": "EngineFolder",
+      "status": "implemented",
+      "items": [
+        "Screenshots",
+        "Videos",
+        "Logs"
+      ]
+    },
+    {
+      "name": "EnviromentalPhysicsThrottle",
+      "status": "implemented",
+      "items": [
+        "DefaultAuto",
+        "Disabled",
+        "Always",
+        "Skip2",
+        "Skip4",
+        "Skip8",
+        "Skip16"
+      ]
+    },
+    {
+      "name": "ExperienceActivationStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "New",
+        "Active",
+        "Lapsed",
+        "Reactivated"
+      ]
+    },
+    {
+      "name": "ExperienceAuthScope",
+      "status": "implemented",
+      "items": [
+        "DefaultScope",
+        "CreatorAssetsCreate"
+      ]
+    },
+    {
+      "name": "ExperienceEventStatus",
+      "status": "implemented",
+      "items": [
+        "Active",
+        "Cancelled",
+        "Moderated",
+        "Unpublished",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "ExperienceStateCaptureSelectionMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "SafetyHighlightMode"
+      ]
+    },
+    {
+      "name": "ExperienceStateRecordingLoadMode",
+      "status": "implemented",
+      "items": [
+        "NewReplay",
+        "ContiguousSlice",
+        "NoncontiguousSlice"
+      ]
+    },
+    {
+      "name": "ExperienceStateRecordingLoadSourceType",
+      "status": "implemented",
+      "items": [
+        "S3Url",
+        "File"
+      ]
+    },
+    {
+      "name": "ExperienceStateRecordingPlaybackMode",
+      "status": "implemented",
+      "items": [
+        "Undefined",
+        "Stopped",
+        "Playing",
+        "Rewinding"
+      ]
+    },
+    {
+      "name": "ExplosionType",
+      "status": "implemented",
+      "items": [
+        "NoCraters",
+        "Craters"
+      ]
+    },
+    {
+      "name": "ExternalEditorMode",
+      "status": "implemented",
+      "items": [
+        "SystemDefault",
+        "UserSelectedEditor"
+      ]
+    },
+    {
+      "name": "FACSDataLod",
+      "status": "implemented",
+      "items": [
+        "LOD0",
+        "LOD1",
+        "LODCount"
+      ]
+    },
+    {
+      "name": "FacialAgeEstimationResultType",
+      "status": "implemented",
+      "items": [
+        "Complete",
+        "Cancel",
+        "Error"
+      ]
+    },
+    {
+      "name": "FacialAnimationStreamingState",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Audio",
+        "Video",
+        "Place",
+        "Server"
+      ]
+    },
+    {
+      "name": "FacsActionUnit",
+      "status": "implemented",
+      "items": [
+        "ChinRaiserUpperLip",
+        "ChinRaiser",
+        "FlatPucker",
+        "Funneler",
+        "LowerLipSuck",
+        "LipPresser",
+        "LipsTogether",
+        "MouthLeft",
+        "MouthRight",
+        "Pucker",
+        "UpperLipSuck",
+        "LeftCheekPuff",
+        "LeftDimpler",
+        "LeftLipCornerDown",
+        "LeftLowerLipDepressor",
+        "LeftLipCornerPuller",
+        "LeftLipStretcher",
+        "LeftUpperLipRaiser",
+        "RightCheekPuff",
+        "RightDimpler",
+        "RightLipCornerDown",
+        "RightLowerLipDepressor",
+        "RightLipCornerPuller",
+        "RightLipStretcher",
+        "RightUpperLipRaiser",
+        "JawDrop",
+        "JawLeft",
+        "JawRight",
+        "Corrugator",
+        "LeftBrowLowerer",
+        "LeftOuterBrowRaiser",
+        "LeftNoseWrinkler",
+        "LeftInnerBrowRaiser",
+        "RightBrowLowerer",
+        "RightOuterBrowRaiser",
+        "RightInnerBrowRaiser",
+        "RightNoseWrinkler",
+        "EyesLookDown",
+        "EyesLookLeft",
+        "EyesLookUp",
+        "EyesLookRight",
+        "LeftCheekRaiser",
+        "LeftEyeUpperLidRaiser",
+        "LeftEyeClosed",
+        "RightCheekRaiser",
+        "RightEyeUpperLidRaiser",
+        "RightEyeClosed",
+        "TongueDown",
+        "TongueOut",
+        "TongueUp"
+      ]
+    },
+    {
+      "name": "FeatureChannelEncoding",
+      "status": "implemented",
+      "items": [
+        "Float32",
+        "Float16"
+      ]
+    },
+    {
+      "name": "FeatureNormalization",
+      "status": "implemented",
+      "items": [
+        "None",
+        "StandardScore",
+        "UnitL2"
+      ]
+    },
+    {
+      "name": "FeatureRestrictionAbuseVector",
+      "status": "implemented",
+      "items": [
+        "ExperienceChat",
+        "Communication"
+      ]
+    },
+    {
+      "name": "FeedbackType",
+      "status": "implemented",
+      "items": [
+        "Feedback",
+        "PlayerSupport"
+      ]
+    },
+    {
+      "name": "FieldOfViewMode",
+      "status": "implemented",
+      "items": [
+        "Vertical",
+        "Diagonal",
+        "MaxAxis"
+      ]
+    },
+    {
+      "name": "FillDirection",
+      "status": "implemented",
+      "items": [
+        "Horizontal",
+        "Vertical"
+      ]
+    },
+    {
+      "name": "FilterErrorType",
+      "status": "implemented",
+      "items": [
+        "BackslashNotEscapingAnything",
+        "BadBespokeFilter",
+        "BadName",
+        "IncompleteOr",
+        "IncompleteParenthesis",
+        "InvalidDoubleStar",
+        "InvalidTilde",
+        "PropertyBadOperator",
+        "PropertyDoesNotExist",
+        "PropertyInvalidField",
+        "PropertyInvalidValue",
+        "PropertyUnsupportedFields",
+        "PropertyUnsupportedProperty",
+        "UnexpectedNameIndex",
+        "UnexpectedToken",
+        "UnfinishedBinaryOperator",
+        "UnfinishedQuote",
+        "UnknownBespokeFilter",
+        "WildcardInProperty"
+      ]
+    },
+    {
+      "name": "FilterResult",
+      "status": "implemented",
+      "items": [
+        "Accepted",
+        "Rejected"
+      ]
+    },
+    {
+      "name": "FilterType",
+      "status": "implemented",
+      "items": [
+        "Exclude",
+        "Include"
+      ]
+    },
+    {
+      "name": "FinishRecordingOperation",
+      "status": "implemented",
+      "items": [
+        "Cancel",
+        "Commit",
+        "Append"
+      ]
+    },
+    {
+      "name": "FluidFidelity",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "UseCollisionGeometry",
+        "UsePreciseGeometry"
+      ]
+    },
+    {
+      "name": "FluidForces",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Experimental"
+      ]
+    },
+    {
+      "name": "Font",
+      "status": "implemented",
+      "items": [
+        "Legacy",
+        "Arial",
+        "ArialBold",
+        "SourceSans",
+        "SourceSansBold",
+        "SourceSansLight",
+        "SourceSansItalic",
+        "Bodoni",
+        "Garamond",
+        "Cartoon",
+        "Code",
+        "Highway",
+        "SciFi",
+        "Arcade",
+        "Fantasy",
+        "Antique",
+        "SourceSansSemibold",
+        "Gotham",
+        "GothamMedium",
+        "GothamBold",
+        "GothamBlack",
+        "AmaticSC",
+        "Bangers",
+        "Creepster",
+        "DenkOne",
+        "Fondamento",
+        "FredokaOne",
+        "GrenzeGotisch",
+        "IndieFlower",
+        "JosefinSans",
+        "Jura",
+        "Kalam",
+        "LuckiestGuy",
+        "Merriweather",
+        "Michroma",
+        "Nunito",
+        "Oswald",
+        "PatrickHand",
+        "PermanentMarker",
+        "Roboto",
+        "RobotoCondensed",
+        "RobotoMono",
+        "Sarpanch",
+        "SpecialElite",
+        "TitilliumWeb",
+        "Ubuntu",
+        "BuilderSans",
+        "BuilderSansMedium",
+        "BuilderSansBold",
+        "BuilderSansExtraBold",
+        "Arimo",
+        "ArimoBold",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "FontSize",
+      "status": "implemented",
+      "items": [
+        "Size8",
+        "Size9",
+        "Size10",
+        "Size11",
+        "Size12",
+        "Size14",
+        "Size18",
+        "Size24",
+        "Size36",
+        "Size48",
+        "Size28",
+        "Size32",
+        "Size42",
+        "Size60",
+        "Size96"
+      ]
+    },
+    {
+      "name": "FontStyle",
+      "status": "implemented",
+      "items": [
+        "Normal",
+        "Italic"
+      ]
+    },
+    {
+      "name": "FontWeight",
+      "status": "implemented",
+      "items": [
+        "Thin",
+        "ExtraLight",
+        "Light",
+        "Regular",
+        "Medium",
+        "SemiBold",
+        "Bold",
+        "ExtraBold",
+        "Heavy"
+      ]
+    },
+    {
+      "name": "ForceLimitMode",
+      "status": "implemented",
+      "items": [
+        "Magnitude",
+        "PerAxis"
+      ]
+    },
+    {
+      "name": "FormFactor",
+      "status": "implemented",
+      "items": [
+        "Symmetric",
+        "Brick",
+        "Plate",
+        "Custom"
+      ]
+    },
+    {
+      "name": "FrameStyle",
+      "status": "implemented",
+      "items": [
+        "Custom",
+        "ChatBlue",
+        "RobloxSquare",
+        "RobloxRound",
+        "ChatGreen",
+        "ChatRed",
+        "DropShadow"
+      ]
+    },
+    {
+      "name": "FramerateManagerMode",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "On",
+        "Off"
+      ]
+    },
+    {
+      "name": "FriendRequestEvent",
+      "status": "implemented",
+      "items": [
+        "Issue",
+        "Revoke",
+        "Accept",
+        "Deny"
+      ]
+    },
+    {
+      "name": "FriendStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "NotFriend",
+        "Friend",
+        "FriendRequestSent",
+        "FriendRequestReceived"
+      ]
+    },
+    {
+      "name": "FriendsCallingEndReason",
+      "status": "implemented",
+      "items": [
+        "None",
+        "LocalHangup",
+        "RemoteHangup",
+        "Missed",
+        "Declined",
+        "Failed",
+        "Canceled"
+      ]
+    },
+    {
+      "name": "FriendsCallingParticipantErrors",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Unknown",
+        "ConnectionFailed",
+        "PublishFailed",
+        "PermissionDenied"
+      ]
+    },
+    {
+      "name": "FriendsCallingParticipantLeaveReason",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Hangup",
+        "Declined",
+        "Missed",
+        "Removed",
+        "Failed",
+        "TimedOut"
+      ]
+    },
+    {
+      "name": "FriendsCallingParticipantStatus",
+      "status": "implemented",
+      "items": [
+        "Invited",
+        "Ringing",
+        "Joined",
+        "Declined",
+        "Left",
+        "Removed",
+        "Ineligible",
+        "TimedOut",
+        "Muted"
+      ]
+    },
+    {
+      "name": "FriendsCallingPhase",
+      "status": "implemented",
+      "items": [
+        "Idle",
+        "Ringing",
+        "Active",
+        "Ended"
+      ]
+    },
+    {
+      "name": "FrustumStreamingMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Enabled",
+        "Disabled",
+        "Automatic"
+      ]
+    },
+    {
+      "name": "FunctionalTestResult",
+      "status": "implemented",
+      "items": [
+        "Passed",
+        "Warning",
+        "Error"
+      ]
+    },
+    {
+      "name": "GameAvatarType",
+      "status": "implemented",
+      "items": [
+        "R6",
+        "R15",
+        "PlayerChoice"
+      ]
+    },
+    {
+      "name": "GamepadType",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "PS4",
+        "PS5",
+        "XboxOne"
+      ]
+    },
+    {
+      "name": "GearGenreSetting",
+      "status": "implemented",
+      "items": [
+        "AllGenres",
+        "MatchingGenreOnly"
+      ]
+    },
+    {
+      "name": "GearType",
+      "status": "implemented",
+      "items": [
+        "MeleeWeapons",
+        "RangedWeapons",
+        "Explosives",
+        "PowerUps",
+        "NavigationEnhancers",
+        "MusicalInstruments",
+        "SocialItems",
+        "BuildingTools",
+        "Transport"
+      ]
+    },
+    {
+      "name": "GenerateMomentTextResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "Pending",
+        "Failed",
+        "Filtered"
+      ]
+    },
+    {
+      "name": "Genre",
+      "status": "implemented",
+      "items": [
+        "All",
+        "TownAndCity",
+        "Fantasy",
+        "SciFi",
+        "Ninja",
+        "Scary",
+        "Pirate",
+        "Adventure",
+        "Sports",
+        "Funny",
+        "WildWest",
+        "War",
+        "SkatePark",
+        "Tutorial"
+      ]
+    },
+    {
+      "name": "GradientTileMode",
+      "status": "implemented",
+      "items": [
+        "Clamp",
+        "Repeat",
+        "Mirror"
+      ]
+    },
+    {
+      "name": "GradientType",
+      "status": "implemented",
+      "items": [
+        "Linear",
+        "Radial",
+        "Conical",
+        "Elliptical"
+      ]
+    },
+    {
+      "name": "GraphicsMode",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "Direct3D11",
+        "OpenGL",
+        "Metal",
+        "Vulkan",
+        "NoGraphics"
+      ]
+    },
+    {
+      "name": "GraphicsOptimizationMode",
+      "status": "implemented",
+      "items": [
+        "Performance",
+        "Balanced",
+        "Quality"
+      ]
+    },
+    {
+      "name": "GroupMembershipStatus",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Joined",
+        "JoinRequestPending",
+        "AlreadyMember"
+      ]
+    },
+    {
+      "name": "GuiState",
+      "status": "implemented",
+      "items": [
+        "Idle",
+        "Hover",
+        "Press",
+        "NonInteractable"
+      ]
+    },
+    {
+      "name": "GuiType",
+      "status": "implemented",
+      "items": [
+        "Core",
+        "Custom",
+        "PlayerNameplates",
+        "CustomBillboards",
+        "CoreBillboards"
+      ]
+    },
+    {
+      "name": "HandlesStyle",
+      "status": "implemented",
+      "items": [
+        "Resize",
+        "Movement"
+      ]
+    },
+    {
+      "name": "HapticEffectType",
+      "status": "implemented",
+      "items": [
+        "Custom",
+        "UIHover",
+        "UIClick",
+        "UINotification",
+        "GameplayExplosion",
+        "GameplayCollision"
+      ]
+    },
+    {
+      "name": "HashAlgorithm",
+      "status": "implemented",
+      "items": [
+        "Blake2b",
+        "Blake3",
+        "Md5",
+        "Sha1",
+        "Sha256"
+      ]
+    },
+    {
+      "name": "HighlightDepthMode",
+      "status": "implemented",
+      "items": [
+        "AlwaysOnTop",
+        "Occluded"
+      ]
+    },
+    {
+      "name": "HorizontalAlignment",
+      "status": "implemented",
+      "items": [
+        "Center",
+        "Left",
+        "Right"
+      ]
+    },
+    {
+      "name": "HoverAnimateSpeed",
+      "status": "implemented",
+      "items": [
+        "VerySlow",
+        "Slow",
+        "Medium",
+        "Fast",
+        "VeryFast"
+      ]
+    },
+    {
+      "name": "HttpCachePolicy",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Full",
+        "DataOnly",
+        "Default",
+        "InternalRedirectRefresh"
+      ]
+    },
+    {
+      "name": "HttpCompression",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Gzip"
+      ]
+    },
+    {
+      "name": "HttpContentType",
+      "status": "implemented",
+      "items": [
+        "ApplicationJson",
+        "ApplicationXml",
+        "ApplicationUrlEncoded",
+        "TextPlain",
+        "TextXml"
+      ]
+    },
+    {
+      "name": "HttpError",
+      "status": "implemented",
+      "items": [
+        "OK",
+        "InvalidUrl",
+        "DnsResolve",
+        "ConnectFail",
+        "OutOfMemory",
+        "TimedOut",
+        "TooManyRedirects",
+        "InvalidRedirect",
+        "NetFail",
+        "Aborted",
+        "SslConnectFail",
+        "SslVerificationFail",
+        "Unknown",
+        "ConnectionClosed",
+        "ServerProtocolError",
+        "CreatorEnvironmentsNotSupportedByService",
+        "InactivityTimeout",
+        "TooManyOutstandingRequests",
+        "InvalidRangeResponse"
+      ]
+    },
+    {
+      "name": "HttpRequestType",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "MarketplaceService",
+        "Players",
+        "Chat",
+        "Avatar",
+        "Analytics",
+        "Localization"
+      ]
+    },
+    {
+      "name": "HumanoidCollisionType",
+      "status": "implemented",
+      "items": [
+        "OuterBox",
+        "InnerBox"
+      ]
+    },
+    {
+      "name": "HumanoidDisplayDistanceType",
+      "status": "implemented",
+      "items": [
+        "Viewer",
+        "Subject",
+        "None"
+      ]
+    },
+    {
+      "name": "HumanoidHealthDisplayType",
+      "status": "implemented",
+      "items": [
+        "DisplayWhenDamaged",
+        "AlwaysOn",
+        "AlwaysOff"
+      ]
+    },
+    {
+      "name": "HumanoidRigType",
+      "status": "implemented",
+      "items": [
+        "R6",
+        "R15"
+      ]
+    },
+    {
+      "name": "HumanoidStateType",
+      "status": "implemented",
+      "items": [
+        "FallingDown",
+        "Ragdoll",
+        "GettingUp",
+        "Jumping",
+        "Swimming",
+        "Freefall",
+        "Flying",
+        "Landed",
+        "Running",
+        "RunningNoPhysics",
+        "StrafingNoPhysics",
+        "Climbing",
+        "Seated",
+        "PlatformStanding",
+        "Dead",
+        "Physics",
+        "None"
+      ]
+    },
+    {
+      "name": "IKCollisionsMode",
+      "status": "implemented",
+      "items": [
+        "NoCollisions",
+        "OtherMechanismsAnchored",
+        "IncludeContactedMechanisms"
+      ]
+    },
+    {
+      "name": "IKControlConstraintSupport",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "IKControlType",
+      "status": "implemented",
+      "items": [
+        "Transform",
+        "Position",
+        "Rotation",
+        "LookAt"
+      ]
+    },
+    {
+      "name": "IXPLoadingStatus",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Pending",
+        "Initialized",
+        "ErrorInvalidUser",
+        "ErrorConnection",
+        "ErrorJsonParse",
+        "ErrorTimedOut"
+      ]
+    },
+    {
+      "name": "ImageAlphaType",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "LockCanvasAlpha",
+        "LockCanvasColor"
+      ]
+    },
+    {
+      "name": "ImageCombineType",
+      "status": "implemented",
+      "items": [
+        "BlendSourceOver",
+        "Overwrite",
+        "Add",
+        "Multiply",
+        "AlphaBlend",
+        "NormalMapBlend",
+        "Subtract"
+      ]
+    },
+    {
+      "name": "InOut",
+      "status": "implemented",
+      "items": [
+        "Edge",
+        "Inset",
+        "Center"
+      ]
+    },
+    {
+      "name": "InfoType",
+      "status": "implemented",
+      "items": [
+        "Asset",
+        "Product",
+        "GamePass",
+        "Subscription",
+        "Bundle"
+      ]
+    },
+    {
+      "name": "InitialDockState",
+      "status": "implemented",
+      "items": [
+        "Top",
+        "Bottom",
+        "Left",
+        "Right",
+        "Float"
+      ]
+    },
+    {
+      "name": "InputActionType",
+      "status": "implemented",
+      "items": [
+        "Bool",
+        "Direction1D",
+        "Direction2D",
+        "Direction3D",
+        "ViewportPosition"
+      ]
+    },
+    {
+      "name": "InputBindingType",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "Scriptable"
+      ]
+    },
+    {
+      "name": "InputSink",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Activate",
+        "All"
+      ]
+    },
+    {
+      "name": "InputType",
+      "status": "implemented",
+      "items": [
+        "NoInput",
+        "Constant",
+        "Sin"
+      ]
+    },
+    {
+      "name": "InstanceFileSyncStatus",
+      "status": "implemented",
+      "items": [
+        "NotSynced",
+        "Errored",
+        "SyncedAsRoot",
+        "SyncedAsDescendant",
+        "AncestorErrored"
+      ]
+    },
+    {
+      "name": "IntermediateMeshGenerationResult",
+      "status": "implemented",
+      "items": [
+        "HighQualityMesh"
+      ]
+    },
+    {
+      "name": "InternalVideoUsage",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "WatchPage",
+        "HomeCarousel",
+        "FeatureTileAd"
+      ]
+    },
+    {
+      "name": "InterpolationThrottlingMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "InviteState",
+      "status": "implemented",
+      "items": [
+        "Placed",
+        "Accepted",
+        "Declined",
+        "Missed"
+      ]
+    },
+    {
+      "name": "ItemLineAlignment",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "Start",
+        "Center",
+        "End",
+        "Stretch"
+      ]
+    },
+    {
+      "name": "JoinSource",
+      "status": "implemented",
+      "items": [
+        "CreatedItemAttribution"
+      ]
+    },
+    {
+      "name": "JointCreationMode",
+      "status": "implemented",
+      "items": [
+        "All",
+        "Surface",
+        "None"
+      ]
+    },
+    {
+      "name": "KeyCode",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Backspace",
+        "Tab",
+        "Clear",
+        "Return",
+        "Pause",
+        "Escape",
+        "Space",
+        "QuotedDouble",
+        "Hash",
+        "Dollar",
+        "Percent",
+        "Ampersand",
+        "Quote",
+        "LeftParenthesis",
+        "RightParenthesis",
+        "Asterisk",
+        "Plus",
+        "Comma",
+        "Minus",
+        "Period",
+        "Slash",
+        "Zero",
+        "One",
+        "Two",
+        "Three",
+        "Four",
+        "Five",
+        "Six",
+        "Seven",
+        "Eight",
+        "Nine",
+        "Colon",
+        "Semicolon",
+        "LessThan",
+        "Equals",
+        "GreaterThan",
+        "Question",
+        "At",
+        "LeftBracket",
+        "BackSlash",
+        "RightBracket",
+        "Caret",
+        "Underscore",
+        "Backquote",
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "J",
+        "K",
+        "L",
+        "M",
+        "N",
+        "O",
+        "P",
+        "Q",
+        "R",
+        "S",
+        "T",
+        "U",
+        "V",
+        "W",
+        "X",
+        "Y",
+        "Z",
+        "LeftCurly",
+        "Pipe",
+        "RightCurly",
+        "Tilde",
+        "Delete",
+        "World0",
+        "World1",
+        "World2",
+        "World3",
+        "World4",
+        "World5",
+        "World6",
+        "World7",
+        "World8",
+        "World9",
+        "World10",
+        "World11",
+        "World12",
+        "World13",
+        "World14",
+        "World15",
+        "World16",
+        "World17",
+        "World18",
+        "World19",
+        "World20",
+        "World21",
+        "World22",
+        "World23",
+        "World24",
+        "World25",
+        "World26",
+        "World27",
+        "World28",
+        "World29",
+        "World30",
+        "World31",
+        "World32",
+        "World33",
+        "World34",
+        "World35",
+        "World36",
+        "World37",
+        "World38",
+        "World39",
+        "World40",
+        "World41",
+        "World42",
+        "World43",
+        "World44",
+        "World45",
+        "World46",
+        "World47",
+        "World48",
+        "World49",
+        "World50",
+        "World51",
+        "World52",
+        "World53",
+        "World54",
+        "World55",
+        "World56",
+        "World57",
+        "World58",
+        "World59",
+        "World60",
+        "World61",
+        "World62",
+        "World63",
+        "World64",
+        "World65",
+        "World66",
+        "World67",
+        "World68",
+        "World69",
+        "World70",
+        "World71",
+        "World72",
+        "World73",
+        "World74",
+        "World75",
+        "World76",
+        "World77",
+        "World78",
+        "World79",
+        "World80",
+        "World81",
+        "World82",
+        "World83",
+        "World84",
+        "World85",
+        "World86",
+        "World87",
+        "World88",
+        "World89",
+        "World90",
+        "World91",
+        "World92",
+        "World93",
+        "World94",
+        "World95",
+        "KeypadZero",
+        "KeypadOne",
+        "KeypadTwo",
+        "KeypadThree",
+        "KeypadFour",
+        "KeypadFive",
+        "KeypadSix",
+        "KeypadSeven",
+        "KeypadEight",
+        "KeypadNine",
+        "KeypadPeriod",
+        "KeypadDivide",
+        "KeypadMultiply",
+        "KeypadMinus",
+        "KeypadPlus",
+        "KeypadEnter",
+        "KeypadEquals",
+        "Up",
+        "Down",
+        "Right",
+        "Left",
+        "Insert",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "F6",
+        "F7",
+        "F8",
+        "F9",
+        "F10",
+        "F11",
+        "F12",
+        "F13",
+        "F14",
+        "F15",
+        "NumLock",
+        "CapsLock",
+        "ScrollLock",
+        "RightShift",
+        "LeftShift",
+        "RightControl",
+        "LeftControl",
+        "RightAlt",
+        "LeftAlt",
+        "RightMeta",
+        "LeftMeta",
+        "LeftSuper",
+        "RightSuper",
+        "Mode",
+        "Compose",
+        "Help",
+        "Print",
+        "SysReq",
+        "Break",
+        "Menu",
+        "Power",
+        "Euro",
+        "Undo",
+        "ButtonX",
+        "ButtonY",
+        "ButtonA",
+        "ButtonB",
+        "ButtonR1",
+        "ButtonL1",
+        "ButtonR2",
+        "ButtonL2",
+        "ButtonR3",
+        "ButtonL3",
+        "ButtonStart",
+        "ButtonSelect",
+        "DPadLeft",
+        "DPadRight",
+        "DPadUp",
+        "DPadDown",
+        "Thumbstick1",
+        "Thumbstick2",
+        "Thumbstick1Up",
+        "Thumbstick1Down",
+        "Thumbstick1Left",
+        "Thumbstick1Right",
+        "Thumbstick2Up",
+        "Thumbstick2Down",
+        "Thumbstick2Left",
+        "Thumbstick2Right",
+        "MouseLeftButton",
+        "MouseRightButton",
+        "MouseMiddleButton",
+        "MouseBackButton",
+        "MouseNoButton",
+        "MouseX",
+        "MouseY",
+        "MousePosition",
+        "TouchPosition",
+        "MouseWheel",
+        "TrackpadPan",
+        "TrackpadPinch",
+        "MouseDelta",
+        "TouchDelta",
+        "TouchPinch",
+        "ButtonCenter",
+        "ButtonBack",
+        "ButtonUp",
+        "ButtonDown",
+        "ButtonLeft",
+        "ButtonRight"
+      ]
+    },
+    {
+      "name": "KeyCodeStringFormat",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Abbreviated"
+      ]
+    },
+    {
+      "name": "KeyInterpolationMode",
+      "status": "implemented",
+      "items": [
+        "Constant",
+        "Linear",
+        "Cubic"
+      ]
+    },
+    {
+      "name": "KeywordFilterType",
+      "status": "implemented",
+      "items": [
+        "Include",
+        "Exclude"
+      ]
+    },
+    {
+      "name": "KnownWindow",
+      "status": "implemented",
+      "items": [
+        "Main"
+      ]
+    },
+    {
+      "name": "LeftRight",
+      "status": "implemented",
+      "items": [
+        "Left",
+        "Center",
+        "Right"
+      ]
+    },
+    {
+      "name": "LexemeType",
+      "status": "implemented",
+      "items": [
+        "Eof",
+        "Name",
+        "QuotedString",
+        "Number",
+        "And",
+        "Or",
+        "Equal",
+        "TildeEqual",
+        "GreaterThan",
+        "GreaterThanEqual",
+        "LessThan",
+        "LessThanEqual",
+        "Colon",
+        "Dot",
+        "LeftParenthesis",
+        "RightParenthesis",
+        "Star",
+        "DoubleStar",
+        "ReservedSpecial"
+      ]
+    },
+    {
+      "name": "LightingStyle",
+      "status": "implemented",
+      "items": [
+        "Realistic",
+        "Soft"
+      ]
+    },
+    {
+      "name": "Limb",
+      "status": "implemented",
+      "items": [
+        "Head",
+        "Torso",
+        "LeftArm",
+        "RightArm",
+        "LeftLeg",
+        "RightLeg",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "LineJoinMode",
+      "status": "implemented",
+      "items": [
+        "Round",
+        "Bevel",
+        "Miter"
+      ]
+    },
+    {
+      "name": "ListDisplayMode",
+      "status": "implemented",
+      "items": [
+        "Horizontal",
+        "Vertical"
+      ]
+    },
+    {
+      "name": "ListenerLocation",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "None",
+        "Character",
+        "Camera"
+      ]
+    },
+    {
+      "name": "ListenerPositionType",
+      "status": "implemented",
+      "items": [
+        "Parent",
+        "Instance"
+      ]
+    },
+    {
+      "name": "ListenerType",
+      "status": "implemented",
+      "items": [
+        "Camera",
+        "CFrame",
+        "ObjectPosition",
+        "ObjectCFrame"
+      ]
+    },
+    {
+      "name": "LiveEditingAtomicUpdateResponse",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "FailureGuidNotFound",
+        "FailureHashMismatch",
+        "FailureOperationIllegal"
+      ]
+    },
+    {
+      "name": "LiveEditingBroadcastMessageType",
+      "status": "implemented",
+      "items": [
+        "Normal",
+        "Warning",
+        "Error"
+      ]
+    },
+    {
+      "name": "LoadCharacterLayeredClothing",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "LoadDynamicHeads",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "LocationType",
+      "status": "implemented",
+      "items": [
+        "Character",
+        "Camera",
+        "ObjectPosition"
+      ]
+    },
+    {
+      "name": "LuauTypeCheckMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "NoCheck",
+        "Nonstrict",
+        "Strict"
+      ]
+    },
+    {
+      "name": "MakeupType",
+      "status": "implemented",
+      "items": [
+        "Face",
+        "Lip",
+        "Eye"
+      ]
+    },
+    {
+      "name": "MarketplaceBulkPurchasePromptStatus",
+      "status": "implemented",
+      "items": [
+        "Completed",
+        "Aborted",
+        "Error"
+      ]
+    },
+    {
+      "name": "MarketplaceItemPurchaseStatus",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "SystemError",
+        "AlreadyOwned",
+        "InsufficientRobux",
+        "QuantityLimitExceeded",
+        "QuotaExceeded",
+        "NotForSale",
+        "NotAvailableForPurchaser",
+        "PriceMismatch",
+        "SoldOut",
+        "PurchaserIsSeller",
+        "InsufficientMembership",
+        "PlaceInvalid"
+      ]
+    },
+    {
+      "name": "MarketplaceProductType",
+      "status": "implemented",
+      "items": [
+        "AvatarAsset",
+        "AvatarBundle"
+      ]
+    },
+    {
+      "name": "MarkupKind",
+      "status": "implemented",
+      "items": [
+        "PlainText",
+        "Markdown"
+      ]
+    },
+    {
+      "name": "MatchmakingType",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "XboxOnly",
+        "PlayStationOnly"
+      ]
+    },
+    {
+      "name": "Material",
+      "status": "implemented",
+      "items": [
+        "Plastic",
+        "SmoothPlastic",
+        "Neon",
+        "Wood",
+        "WoodPlanks",
+        "Marble",
+        "Basalt",
+        "Slate",
+        "CrackedLava",
+        "Concrete",
+        "Limestone",
+        "Granite",
+        "Pavement",
+        "Brick",
+        "Pebble",
+        "Cobblestone",
+        "Rock",
+        "Sandstone",
+        "CorrodedMetal",
+        "DiamondPlate",
+        "Foil",
+        "Metal",
+        "Grass",
+        "LeafyGrass",
+        "Sand",
+        "Fabric",
+        "Snow",
+        "Mud",
+        "Ground",
+        "Asphalt",
+        "Salt",
+        "Ice",
+        "Glacier",
+        "Glass",
+        "ForceField",
+        "Air",
+        "Water",
+        "Cardboard",
+        "Carpet",
+        "CeramicTiles",
+        "ClayRoofTiles",
+        "RoofShingles",
+        "Leather",
+        "Plaster",
+        "Rubber"
+      ]
+    },
+    {
+      "name": "MaterialPattern",
+      "status": "implemented",
+      "items": [
+        "Regular",
+        "Organic"
+      ]
+    },
+    {
+      "name": "MembershipType",
+      "status": "implemented",
+      "items": [
+        "None",
+        "BuildersClub",
+        "TurboBuildersClub",
+        "OutrageousBuildersClub",
+        "Premium"
+      ]
+    },
+    {
+      "name": "MergeResolution",
+      "status": "implemented",
+      "items": [
+        "None",
+        "UseSource",
+        "UseTarget",
+        "Manual"
+      ]
+    },
+    {
+      "name": "MergeStatus",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Loading",
+        "Merging"
+      ]
+    },
+    {
+      "name": "MeshAttribute",
+      "status": "implemented",
+      "items": [
+        "Vertex",
+        "Normal",
+        "Color",
+        "UV",
+        "Face"
+      ]
+    },
+    {
+      "name": "MeshPartDetailLevel",
+      "status": "implemented",
+      "items": [
+        "DistanceBased",
+        "Level00",
+        "Level01",
+        "Level02",
+        "Level03",
+        "Level04",
+        "Level05",
+        "Level06",
+        "Level07",
+        "Level08",
+        "Level09"
+      ]
+    },
+    {
+      "name": "MeshPartHeadsAndAccessories",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "MeshScaleUnit",
+      "status": "implemented",
+      "items": [
+        "Stud",
+        "Meter",
+        "CM",
+        "MM",
+        "Foot",
+        "Inch"
+      ]
+    },
+    {
+      "name": "MeshType",
+      "status": "implemented",
+      "items": [
+        "Head",
+        "Torso",
+        "Wedge",
+        "Sphere",
+        "Cylinder",
+        "FileMesh",
+        "Brick",
+        "Prism",
+        "Pyramid",
+        "ParallelRamp",
+        "RightAngleRamp",
+        "CornerWedge"
+      ]
+    },
+    {
+      "name": "MessageType",
+      "status": "implemented",
+      "items": [
+        "MessageOutput",
+        "MessageInfo",
+        "MessageWarning",
+        "MessageError"
+      ]
+    },
+    {
+      "name": "MetadataFieldType",
+      "status": "implemented",
+      "items": [
+        "UInt8",
+        "UInt16",
+        "UInt32",
+        "Float32",
+        "Int32",
+        "Int64",
+        "UInt64",
+        "Float64",
+        "Buffer",
+        "Vector3",
+        "CFrame",
+        "ContentId",
+        "TagMask32",
+        "Vector2"
+      ]
+    },
+    {
+      "name": "ModelLevelOfDetail",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "StreamingMesh",
+        "Disabled",
+        "SLIM"
+      ]
+    },
+    {
+      "name": "ModelStreamingBehavior",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Legacy",
+        "Improved"
+      ]
+    },
+    {
+      "name": "ModelStreamingMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Atomic",
+        "Persistent",
+        "PersistentPerPlayer",
+        "Nonatomic"
+      ]
+    },
+    {
+      "name": "ModerationResultCategory",
+      "status": "implemented",
+      "items": [
+        "ViolationDetected",
+        "Borderline",
+        "NoViolationDetected"
+      ]
+    },
+    {
+      "name": "ModerationResultLabel",
+      "status": "implemented",
+      "items": [
+        "ChildExploitation",
+        "SuicideSelfInjuryAndHarmfulBehavior",
+        "ThreatsBullyingAndHarassment",
+        "TerrorismAndViolentExtremism",
+        "DiscriminationSlursAndHateSpeech",
+        "RealWorldSensitiveEvents",
+        "ViolentContentAndGore",
+        "RomanticAndSexualContent",
+        "IllegalAndRegulatedGoodsAndActivities",
+        "Profanity",
+        "Other"
+      ]
+    },
+    {
+      "name": "ModerationStatus",
+      "status": "implemented",
+      "items": [
+        "ReviewedApproved",
+        "ReviewedRejected",
+        "NotReviewed",
+        "NotApplicable",
+        "Invalid"
+      ]
+    },
+    {
+      "name": "ModifierKey",
+      "status": "implemented",
+      "items": [
+        "Shift",
+        "Ctrl",
+        "Alt",
+        "Meta"
+      ]
+    },
+    {
+      "name": "MouseBehavior",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "LockCenter",
+        "LockCurrentPosition"
+      ]
+    },
+    {
+      "name": "MoveState",
+      "status": "implemented",
+      "items": [
+        "Stopped",
+        "Coasting",
+        "Pushing",
+        "Stopping",
+        "AirFree"
+      ]
+    },
+    {
+      "name": "MuteState",
+      "status": "implemented",
+      "items": [
+        "Unmuted",
+        "Muted"
+      ]
+    },
+    {
+      "name": "NameOcclusion",
+      "status": "implemented",
+      "items": [
+        "NoOcclusion",
+        "EnemyOcclusion",
+        "OccludeAll"
+      ]
+    },
+    {
+      "name": "NegateOperationHiddenHistory",
+      "status": "implemented",
+      "items": [
+        "None",
+        "NegatedUnion",
+        "NegatedIntersection"
+      ]
+    },
+    {
+      "name": "NetworkOwnership",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "Manual",
+        "OnContact"
+      ]
+    },
+    {
+      "name": "NetworkStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Connected",
+        "Disconnected"
+      ]
+    },
+    {
+      "name": "NoiseType",
+      "status": "implemented",
+      "items": [
+        "SimplexGabor"
+      ]
+    },
+    {
+      "name": "NormalId",
+      "status": "implemented",
+      "items": [
+        "Right",
+        "Top",
+        "Back",
+        "Left",
+        "Bottom",
+        "Front"
+      ]
+    },
+    {
+      "name": "NotificationButtonType",
+      "status": "implemented",
+      "items": [
+        "Primary",
+        "Secondary"
+      ]
+    },
+    {
+      "name": "OperationType",
+      "status": "implemented",
+      "items": [
+        "Null",
+        "Union",
+        "Subtraction",
+        "Intersection",
+        "Primitive"
+      ]
+    },
+    {
+      "name": "OrientationAlignmentMode",
+      "status": "implemented",
+      "items": [
+        "OneAttachment",
+        "TwoAttachment"
+      ]
+    },
+    {
+      "name": "OrthographicMode",
+      "status": "implemented",
+      "items": [
+        "Vertical",
+        "Horizontal",
+        "Diagonal",
+        "MaxAxis"
+      ]
+    },
+    {
+      "name": "OutfitSource",
+      "status": "implemented",
+      "items": [
+        "All",
+        "Created",
+        "Purchased"
+      ]
+    },
+    {
+      "name": "OutfitType",
+      "status": "implemented",
+      "items": [
+        "All",
+        "Avatar",
+        "DynamicHead",
+        "Shoes",
+        "Makeup"
+      ]
+    },
+    {
+      "name": "OutputLayoutMode",
+      "status": "implemented",
+      "items": [
+        "Horizontal",
+        "Vertical"
+      ]
+    },
+    {
+      "name": "OverrideMouseIconBehavior",
+      "status": "implemented",
+      "items": [
+        "None",
+        "ForceShow",
+        "ForceHide"
+      ]
+    },
+    {
+      "name": "PackagePermission",
+      "status": "implemented",
+      "items": [
+        "None",
+        "NoAccess",
+        "Revoked",
+        "UseView",
+        "Edit",
+        "Own"
+      ]
+    },
+    {
+      "name": "PageMilestoneType",
+      "status": "implemented",
+      "items": [
+        "Interactive",
+        "SurfaceMounted",
+        "FunctionallyReady",
+        "SurfaceReady"
+      ]
+    },
+    {
+      "name": "PageType",
+      "status": "implemented",
+      "items": [
+        "AvatarEditor",
+        "Party",
+        "ExperienceDetail",
+        "AvatarMarketplace"
+      ]
+    },
+    {
+      "name": "PartType",
+      "status": "implemented",
+      "items": [
+        "Ball",
+        "Block",
+        "Cylinder",
+        "Wedge",
+        "CornerWedge"
+      ]
+    },
+    {
+      "name": "ParticleEmitter2DEmissionMode",
+      "status": "implemented",
+      "items": [
+        "Point",
+        "BoundingBox"
+      ]
+    },
+    {
+      "name": "ParticleEmitterShape",
+      "status": "implemented",
+      "items": [
+        "Box",
+        "Sphere",
+        "Cylinder",
+        "Disc"
+      ]
+    },
+    {
+      "name": "ParticleEmitterShapeInOut",
+      "status": "implemented",
+      "items": [
+        "Outward",
+        "Inward",
+        "InAndOut"
+      ]
+    },
+    {
+      "name": "ParticleEmitterShapeStyle",
+      "status": "implemented",
+      "items": [
+        "Volume",
+        "Surface"
+      ]
+    },
+    {
+      "name": "ParticleFlipbookLayout",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Grid2x2",
+        "Grid4x4",
+        "Grid8x8",
+        "Custom"
+      ]
+    },
+    {
+      "name": "ParticleFlipbookMode",
+      "status": "implemented",
+      "items": [
+        "Loop",
+        "OneShot",
+        "PingPong",
+        "Random"
+      ]
+    },
+    {
+      "name": "ParticleFlipbookTextureCompatible",
+      "status": "implemented",
+      "items": [
+        "NotCompatible",
+        "Compatible",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "ParticleOrientation",
+      "status": "implemented",
+      "items": [
+        "FacingCamera",
+        "FacingCameraWorldUp",
+        "VelocityParallel",
+        "VelocityPerpendicular"
+      ]
+    },
+    {
+      "name": "PathStatus",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "ClosestNoPath",
+        "ClosestOutOfRange",
+        "FailStartNotEmpty",
+        "FailFinishNotEmpty",
+        "NoPath"
+      ]
+    },
+    {
+      "name": "PathWaypointAction",
+      "status": "implemented",
+      "items": [
+        "Walk",
+        "Jump",
+        "Custom"
+      ]
+    },
+    {
+      "name": "PathfindingUseImprovedSearch",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "PeoplePageLayout",
+      "status": "implemented",
+      "items": [
+        "Card",
+        "List"
+      ]
+    },
+    {
+      "name": "PerformanceOverlayMode",
+      "status": "implemented",
+      "items": [
+        "Overdraw",
+        "Transparent",
+        "Decals",
+        "Lights"
+      ]
+    },
+    {
+      "name": "PermissionLevelShown",
+      "status": "implemented",
+      "items": [
+        "Game",
+        "RobloxGame",
+        "RobloxScript",
+        "Studio",
+        "Roblox"
+      ]
+    },
+    {
+      "name": "PhysicalConstraintType",
+      "status": "implemented",
+      "items": [
+        "AnimationConstraint",
+        "Motor6D"
+      ]
+    },
+    {
+      "name": "PhysicsSimulationRate",
+      "status": "implemented",
+      "items": [
+        "Fixed240Hz",
+        "Fixed120Hz",
+        "Fixed60Hz"
+      ]
+    },
+    {
+      "name": "PhysicsSteppingMethod",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Fixed",
+        "Adaptive"
+      ]
+    },
+    {
+      "name": "PinExperienceStatus",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "Failure",
+        "AlreadyExists"
+      ]
+    },
+    {
+      "name": "PioneerSource",
+      "status": "implemented",
+      "items": [
+        "Roblox",
+        "DaveyBazooka",
+        "Oof",
+        "RobloxPioneerTest"
+      ]
+    },
+    {
+      "name": "PlaceContentPreference",
+      "status": "implemented",
+      "items": [
+        "None",
+        "All",
+        "MentionsAndReplies",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "PlacePublishType",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Publish",
+        "Save"
+      ]
+    },
+    {
+      "name": "Platform",
+      "status": "implemented",
+      "items": [
+        "Windows",
+        "OSX",
+        "IOS",
+        "Android",
+        "XBoxOne",
+        "PS4",
+        "PS3",
+        "XBox360",
+        "WiiU",
+        "NX",
+        "Ouya",
+        "AndroidTV",
+        "Chromecast",
+        "Linux",
+        "SteamOS",
+        "WebOS",
+        "DOS",
+        "BeOS",
+        "UWP",
+        "PS5",
+        "MetaOS",
+        "Web",
+        "None"
+      ]
+    },
+    {
+      "name": "PlaybackState",
+      "status": "implemented",
+      "items": [
+        "Begin",
+        "Delayed",
+        "Playing",
+        "Paused",
+        "Completed",
+        "Cancelled"
+      ]
+    },
+    {
+      "name": "PlayerActions",
+      "status": "implemented",
+      "items": [
+        "CharacterForward",
+        "CharacterBackward",
+        "CharacterLeft",
+        "CharacterRight",
+        "CharacterJump"
+      ]
+    },
+    {
+      "name": "PlayerCharacterDestroyBehavior",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "PlayerChatType",
+      "status": "implemented",
+      "items": [
+        "All",
+        "Team",
+        "Whisper"
+      ]
+    },
+    {
+      "name": "PlayerDataErrorState",
+      "status": "implemented",
+      "items": [
+        "LoadFailed",
+        "FlushFailed",
+        "ReleaseFailed",
+        "None"
+      ]
+    },
+    {
+      "name": "PlayerDataLoadFailureBehavior",
+      "status": "implemented",
+      "items": [
+        "Failure",
+        "FallbackToDefault",
+        "Kick"
+      ]
+    },
+    {
+      "name": "PlayerExitReason",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "PlatformKick",
+        "CreatorKick"
+      ]
+    },
+    {
+      "name": "PlayerPlatformActivationStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "New",
+        "Active",
+        "Lapsed",
+        "Reactivated"
+      ]
+    },
+    {
+      "name": "PlayerPlatformSpenderStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Active",
+        "OtherPayer"
+      ]
+    },
+    {
+      "name": "PluginConnectionTargetType",
+      "status": "implemented",
+      "items": [
+        "Edit",
+        "Test"
+      ]
+    },
+    {
+      "name": "PoseEasingDirection",
+      "status": "implemented",
+      "items": [
+        "In",
+        "Out",
+        "InOut"
+      ]
+    },
+    {
+      "name": "PoseEasingStyle",
+      "status": "implemented",
+      "items": [
+        "Linear",
+        "Constant",
+        "Elastic",
+        "Cubic",
+        "Bounce",
+        "CubicV2"
+      ]
+    },
+    {
+      "name": "PositionAlignmentMode",
+      "status": "implemented",
+      "items": [
+        "OneAttachment",
+        "TwoAttachment"
+      ]
+    },
+    {
+      "name": "PredictionMode",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "On",
+        "Off"
+      ]
+    },
+    {
+      "name": "PredictionStatus",
+      "status": "implemented",
+      "items": [
+        "Authoritative",
+        "Predicted",
+        "None"
+      ]
+    },
+    {
+      "name": "PredictiveStreamingMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Enabled",
+        "Disabled"
+      ]
+    },
+    {
+      "name": "PreferredInput",
+      "status": "implemented",
+      "items": [
+        "KeyboardAndMouse",
+        "Gamepad",
+        "Touch",
+        "MicroGamepad"
+      ]
+    },
+    {
+      "name": "PreferredTextSize",
+      "status": "implemented",
+      "items": [
+        "Medium",
+        "Large",
+        "Larger",
+        "Largest"
+      ]
+    },
+    {
+      "name": "PrefetchDownloadStatus",
+      "status": "implemented",
+      "items": [
+        "NotStarted",
+        "InProgress",
+        "Completed",
+        "Failed"
+      ]
+    },
+    {
+      "name": "PrimalPhysicsSolver",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Experimental",
+        "Disabled"
+      ]
+    },
+    {
+      "name": "PrimitiveType",
+      "status": "implemented",
+      "items": [
+        "Null",
+        "Ball",
+        "Cylinder",
+        "Block",
+        "Wedge",
+        "CornerWedge"
+      ]
+    },
+    {
+      "name": "PrivilegeType",
+      "status": "implemented",
+      "items": [
+        "Banned",
+        "Visitor",
+        "Member",
+        "Admin",
+        "Owner"
+      ]
+    },
+    {
+      "name": "ProductLocationRestriction",
+      "status": "implemented",
+      "items": [
+        "AvatarShop",
+        "AllowedGames",
+        "AllGames"
+      ]
+    },
+    {
+      "name": "ProductPurchaseChannel",
+      "status": "implemented",
+      "items": [
+        "InExperience",
+        "ExperienceDetailsPage",
+        "AdReward",
+        "CommerceProduct"
+      ]
+    },
+    {
+      "name": "ProductPurchaseDecision",
+      "status": "implemented",
+      "items": [
+        "NotProcessedYet",
+        "PurchaseGranted"
+      ]
+    },
+    {
+      "name": "ProjectionType",
+      "status": "implemented",
+      "items": [
+        "Perspective",
+        "Orthographic"
+      ]
+    },
+    {
+      "name": "PromptCreateAssetResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "PermissionDenied",
+        "Timeout",
+        "UploadFailed",
+        "NoUserInput",
+        "UnknownFailure",
+        "UGCValidationFailed",
+        "ModeratedName",
+        "PurchaseFailure",
+        "TokenInvalid"
+      ]
+    },
+    {
+      "name": "PromptCreateAvatarResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "PermissionDenied",
+        "Timeout",
+        "UploadFailed",
+        "NoUserInput",
+        "InvalidHumanoidDescription",
+        "UGCValidationFailed",
+        "ModeratedName",
+        "MaxOutfits",
+        "PurchaseFailure",
+        "UnknownFailure",
+        "TokenInvalid"
+      ]
+    },
+    {
+      "name": "PromptCreateOutfitResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "PartialSuccess",
+        "CreationFailure",
+        "PermissionDenied",
+        "Timeout",
+        "NoUserInput",
+        "UnknownFailure",
+        "UGCValidationFailed"
+      ]
+    },
+    {
+      "name": "PromptCreatePlatformContentResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "PermissionDenied",
+        "Timeout",
+        "UploadFailed",
+        "NoUserInput",
+        "UnknownFailure",
+        "UGCValidationFailed",
+        "ModeratedName",
+        "PurchaseFailure",
+        "TokenInvalid"
+      ]
+    },
+    {
+      "name": "PromptExperienceDetailsResult",
+      "status": "implemented",
+      "items": [
+        "PromptClosed",
+        "TeleportAttempted"
+      ]
+    },
+    {
+      "name": "PromptLinkSharingResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "PlayerLeft",
+        "InvalidLaunchData"
+      ]
+    },
+    {
+      "name": "PromptPublishAssetResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "PermissionDenied",
+        "Timeout",
+        "UploadFailed",
+        "NoUserInput",
+        "UnknownFailure"
+      ]
+    },
+    {
+      "name": "PropertyStatus",
+      "status": "implemented",
+      "items": [
+        "Ok",
+        "Warning",
+        "Error"
+      ]
+    },
+    {
+      "name": "ProximityPromptExclusivity",
+      "status": "implemented",
+      "items": [
+        "OnePerButton",
+        "OneGlobally",
+        "AlwaysShow"
+      ]
+    },
+    {
+      "name": "ProximityPromptInputType",
+      "status": "implemented",
+      "items": [
+        "Keyboard",
+        "Gamepad",
+        "Touch"
+      ]
+    },
+    {
+      "name": "ProximityPromptStyle",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Custom"
+      ]
+    },
+    {
+      "name": "PurchaseOption",
+      "status": "implemented",
+      "items": [
+        "TimedOption",
+        "Permanent"
+      ]
+    },
+    {
+      "name": "QualityLevel",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "Level01",
+        "Level02",
+        "Level03",
+        "Level04",
+        "Level05",
+        "Level06",
+        "Level07",
+        "Level08",
+        "Level09",
+        "Level10",
+        "Level11",
+        "Level12",
+        "Level13",
+        "Level14",
+        "Level15",
+        "Level16",
+        "Level17",
+        "Level18",
+        "Level19",
+        "Level20",
+        "Level21"
+      ]
+    },
+    {
+      "name": "QueueDecision",
+      "status": "implemented",
+      "items": [
+        "Commit",
+        "Defer"
+      ]
+    },
+    {
+      "name": "R15CollisionType",
+      "status": "implemented",
+      "items": [
+        "OuterBox",
+        "InnerBox"
+      ]
+    },
+    {
+      "name": "RaycastFilterType",
+      "status": "implemented",
+      "items": [
+        "Exclude",
+        "Include"
+      ]
+    },
+    {
+      "name": "ReadCapturesFromGalleryResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "NeedPermission"
+      ]
+    },
+    {
+      "name": "ReceiptDecision",
+      "status": "implemented",
+      "items": [
+        "NotProcessedYet",
+        "Processed"
+      ]
+    },
+    {
+      "name": "ReceiptType",
+      "status": "implemented",
+      "items": [
+        "DeveloperProduct",
+        "RobuxTransferSender",
+        "RobuxTransferReceiver"
+      ]
+    },
+    {
+      "name": "RecommendationActionType",
+      "status": "implemented",
+      "items": [
+        "AddReaction",
+        "RemoveReaction",
+        "Share",
+        "Report",
+        "Comment",
+        "Play",
+        "Purchase"
+      ]
+    },
+    {
+      "name": "RecommendationDepartureIntent",
+      "status": "implemented",
+      "items": [
+        "Neutral",
+        "Positive",
+        "Negative"
+      ]
+    },
+    {
+      "name": "RecommendationImpressionType",
+      "status": "implemented",
+      "items": [
+        "View",
+        "NotViewable"
+      ]
+    },
+    {
+      "name": "RecommendationItemContentType",
+      "status": "implemented",
+      "items": [
+        "Static",
+        "Dynamic",
+        "Interactive"
+      ]
+    },
+    {
+      "name": "RecommendationItemVisibility",
+      "status": "implemented",
+      "items": [
+        "Private",
+        "Public"
+      ]
+    },
+    {
+      "name": "RecommendationPreferenceTargetType",
+      "status": "implemented",
+      "items": [
+        "User",
+        "Universe",
+        "CustomTag"
+      ]
+    },
+    {
+      "name": "RecommendationPreferenceType",
+      "status": "implemented",
+      "items": [
+        "AddFollow",
+        "RemoveFollow",
+        "AddMute",
+        "RemoveMute"
+      ]
+    },
+    {
+      "name": "RejectCharacterDeletions",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "RenderFidelity",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "Precise",
+        "Performance"
+      ]
+    },
+    {
+      "name": "RenderPriority",
+      "status": "implemented",
+      "items": [
+        "First",
+        "Input",
+        "Camera",
+        "Character",
+        "Last"
+      ]
+    },
+    {
+      "name": "RenderingCacheOptimizationMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "RenderingTestComparisonMethod",
+      "status": "implemented",
+      "items": [
+        "psnr",
+        "diff"
+      ]
+    },
+    {
+      "name": "ReplicateInstanceDestroySetting",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "ReplicationMode",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "Low",
+        "Medium",
+        "High"
+      ]
+    },
+    {
+      "name": "ResamplerMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Pixelated"
+      ]
+    },
+    {
+      "name": "ReservedHighlightId",
+      "status": "implemented",
+      "items": [
+        "Standard",
+        "Active",
+        "Hover",
+        "Selection",
+        "NegatedPart"
+      ]
+    },
+    {
+      "name": "RestPose",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "RotationsReset",
+        "Custom"
+      ]
+    },
+    {
+      "name": "RestPoseModel",
+      "status": "implemented",
+      "items": [
+        "FromRigInACE",
+        "FromRigInFile",
+        "FromRigInFileZeroedRotations",
+        "FromCustomClip"
+      ]
+    },
+    {
+      "name": "ReturnKeyType",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Done",
+        "Go",
+        "Next",
+        "Search",
+        "Send"
+      ]
+    },
+    {
+      "name": "ReverbType",
+      "status": "implemented",
+      "items": [
+        "NoReverb",
+        "GenericReverb",
+        "PaddedCell",
+        "Room",
+        "Bathroom",
+        "LivingRoom",
+        "StoneRoom",
+        "Auditorium",
+        "ConcertHall",
+        "Cave",
+        "Arena",
+        "Hangar",
+        "CarpettedHallway",
+        "Hallway",
+        "StoneCorridor",
+        "Alley",
+        "Forest",
+        "City",
+        "Mountains",
+        "Quarry",
+        "Plain",
+        "ParkingLot",
+        "SewerPipe",
+        "UnderWater"
+      ]
+    },
+    {
+      "name": "ReviewableContentState",
+      "status": "implemented",
+      "items": [
+        "Pending",
+        "Completed",
+        "Failed"
+      ]
+    },
+    {
+      "name": "RibbonTool",
+      "status": "implemented",
+      "items": [
+        "Select",
+        "Scale",
+        "Rotate",
+        "Move",
+        "Transform",
+        "ColorPicker",
+        "MaterialPicker",
+        "Group",
+        "Ungroup",
+        "None",
+        "PivotEditor"
+      ]
+    },
+    {
+      "name": "RigLabel",
+      "status": "implemented",
+      "items": [
+        "Invalid",
+        "Root",
+        "LeftHip",
+        "LeftKnee",
+        "LeftAnkle",
+        "RightHip",
+        "RightKnee",
+        "RightAnkle",
+        "Waist",
+        "LeftShoulder",
+        "LeftElbow",
+        "LeftWrist",
+        "RightShoulder",
+        "RightElbow",
+        "RightWrist",
+        "Neck",
+        "Spine",
+        "Chest",
+        "HeadBase",
+        "LeftClavicle",
+        "RightClavicle",
+        "LeftToeBase",
+        "RightToeBase",
+        "Thumb1",
+        "Thumb2",
+        "Thumb3",
+        "Index1",
+        "Index2",
+        "Index3",
+        "Middle1",
+        "Middle2",
+        "Middle3",
+        "Ring1",
+        "Ring2",
+        "Ring3",
+        "Pinky1",
+        "Pinky2",
+        "Pinky3"
+      ]
+    },
+    {
+      "name": "RigScale",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Rthro",
+        "RthroNarrow"
+      ]
+    },
+    {
+      "name": "RigType",
+      "status": "implemented",
+      "items": [
+        "R15",
+        "CustomHumanoid",
+        "Custom",
+        "None"
+      ]
+    },
+    {
+      "name": "RobuxTransferEligibility",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Eligible",
+        "SenderNotEligible",
+        "ReceiverNotEligible"
+      ]
+    },
+    {
+      "name": "RollOffMode",
+      "status": "implemented",
+      "items": [
+        "Inverse",
+        "Linear",
+        "LinearSquare",
+        "InverseTapered"
+      ]
+    },
+    {
+      "name": "RolloutState",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "RotationOrder",
+      "status": "implemented",
+      "items": [
+        "XYZ",
+        "XZY",
+        "YZX",
+        "YXZ",
+        "ZXY",
+        "ZYX"
+      ]
+    },
+    {
+      "name": "RotationType",
+      "status": "implemented",
+      "items": [
+        "MovementRelative",
+        "CameraRelative"
+      ]
+    },
+    {
+      "name": "RsvpStatus",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Going",
+        "NotGoing"
+      ]
+    },
+    {
+      "name": "RtlTextSupport",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
       "name": "RunContext",
-      "status": "missing",
+      "status": "implemented",
       "items": [
         "Legacy",
         "Server",
         "Client",
         "Plugin"
       ]
+    },
+    {
+      "name": "RunState",
+      "status": "implemented",
+      "items": [
+        "Stopped",
+        "Running",
+        "Paused"
+      ]
+    },
+    {
+      "name": "RuntimeUndoBehavior",
+      "status": "implemented",
+      "items": [
+        "Aggregate",
+        "Snapshot",
+        "Hybrid"
+      ]
+    },
+    {
+      "name": "SafeAreaCompatibility",
+      "status": "implemented",
+      "items": [
+        "None",
+        "FullscreenExtension"
+      ]
+    },
+    {
+      "name": "SalesTypeFilter",
+      "status": "implemented",
+      "items": [
+        "All",
+        "Collectibles",
+        "Premium",
+        "TimedOptions"
+      ]
+    },
+    {
+      "name": "SandboxedInstanceMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Experimental"
+      ]
+    },
+    {
+      "name": "SaveAvatarThumbnailCustomizationFailure",
+      "status": "implemented",
+      "items": [
+        "BadThumbnailType",
+        "BadYRotDeg",
+        "BadFieldOfViewDeg",
+        "BadDistanceScale",
+        "Other",
+        "Throttled"
+      ]
+    },
+    {
+      "name": "SaveFilter",
+      "status": "implemented",
+      "items": [
+        "SaveWorld",
+        "SaveGame",
+        "SaveAll"
+      ]
+    },
+    {
+      "name": "SavedQualitySetting",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "QualityLevel1",
+        "QualityLevel2",
+        "QualityLevel3",
+        "QualityLevel4",
+        "QualityLevel5",
+        "QualityLevel6",
+        "QualityLevel7",
+        "QualityLevel8",
+        "QualityLevel9",
+        "QualityLevel10"
+      ]
+    },
+    {
+      "name": "ScaleType",
+      "status": "implemented",
+      "items": [
+        "Stretch",
+        "Slice",
+        "Tile",
+        "Fit",
+        "Crop"
+      ]
+    },
+    {
+      "name": "ScopeCheckResult",
+      "status": "implemented",
+      "items": [
+        "ConsentAccepted",
+        "InvalidScopes",
+        "Timeout",
+        "NoUserInput",
+        "BackendError",
+        "UnexpectedError",
+        "InvalidArgument",
+        "ConsentDenied"
+      ]
+    },
+    {
+      "name": "ScreenInsets",
+      "status": "implemented",
+      "items": [
+        "None",
+        "DeviceSafeInsets",
+        "CoreUISafeInsets",
+        "TopbarSafeInsets"
+      ]
+    },
+    {
+      "name": "ScreenOrientation",
+      "status": "implemented",
+      "items": [
+        "LandscapeLeft",
+        "LandscapeRight",
+        "LandscapeSensor",
+        "Portrait",
+        "Sensor"
+      ]
+    },
+    {
+      "name": "ScreenshotCaptureResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "OtherError",
+        "NoDeviceSupport",
+        "NoSpaceOnDevice"
+      ]
+    },
+    {
+      "name": "ScriptScannerUpdateType",
+      "status": "implemented",
+      "items": [
+        "Init",
+        "Added",
+        "Removed"
+      ]
+    },
+    {
+      "name": "ScriptStoppedReason",
+      "status": "implemented",
+      "items": [
+        "Breakpoint",
+        "Exception",
+        "Pause",
+        "Step",
+        "Entry"
+      ]
+    },
+    {
+      "name": "ScriptVariableScope",
+      "status": "implemented",
+      "items": [
+        "Local",
+        "Upvalue",
+        "Global"
+      ]
+    },
+    {
+      "name": "ScrollBarInset",
+      "status": "implemented",
+      "items": [
+        "None",
+        "ScrollBar",
+        "Always"
+      ]
+    },
+    {
+      "name": "ScrollState",
+      "status": "implemented",
+      "items": [
+        "Idle",
+        "Scrolling"
+      ]
+    },
+    {
+      "name": "ScrollingDirection",
+      "status": "implemented",
+      "items": [
+        "X",
+        "Y",
+        "XY"
+      ]
+    },
+    {
+      "name": "SecurityCapability",
+      "status": "implemented",
+      "items": [
+        "RunClientScript",
+        "RunServerScript",
+        "AccessOutsideWrite",
+        "AssetRequire",
+        "LoadString",
+        "ScriptGlobals",
+        "CreateInstances",
+        "Basic",
+        "Audio",
+        "DataStore",
+        "Network",
+        "Physics",
+        "UI",
+        "CSG",
+        "Chat",
+        "Animation",
+        "Avatar",
+        "Input",
+        "Environment",
+        "RemoteEvent",
+        "LegacySound",
+        "Players",
+        "CapabilityControl",
+        "Plugin",
+        "LocalUser",
+        "WritePlayer",
+        "RobloxScript",
+        "RobloxEngine",
+        "Unassigned",
+        "InternalTest",
+        "PluginOrOpenCloud",
+        "Assistant",
+        "RemoteCommand",
+        "AssetRead",
+        "AssetManagement",
+        "DynamicGeneration",
+        "PlatformAvatarEditing",
+        "AssetCreateUpdate",
+        "Capture",
+        "SensitiveInput",
+        "Monetization",
+        "LoadOwnedAsset",
+        "Social",
+        "ServerCommunication",
+        "Logging",
+        "PromptExternalPurchase",
+        "Groups",
+        "Teleport",
+        "Consequences",
+        "Material",
+        "AvatarBehavior",
+        "AvatarAppearance",
+        "LoadUnownedAsset"
+      ]
+    },
+    {
+      "name": "SelectionBehavior",
+      "status": "implemented",
+      "items": [
+        "Escape",
+        "Stop"
+      ]
+    },
+    {
+      "name": "SelectionRenderMode",
+      "status": "implemented",
+      "items": [
+        "Outlines",
+        "BoundingBoxes",
+        "Both"
+      ]
+    },
+    {
+      "name": "SelfViewPosition",
+      "status": "implemented",
+      "items": [
+        "LastPosition",
+        "TopLeft",
+        "TopRight",
+        "BottomLeft",
+        "BottomRight"
+      ]
+    },
+    {
+      "name": "SensorMode",
+      "status": "implemented",
+      "items": [
+        "Floor",
+        "Ladder",
+        "ClassicFloor",
+        "ClassicLadder"
+      ]
+    },
+    {
+      "name": "SensorUpdateType",
+      "status": "implemented",
+      "items": [
+        "OnRead",
+        "Manual"
+      ]
+    },
+    {
+      "name": "ServerLiveEditingMode",
+      "status": "implemented",
+      "items": [
+        "Uninitialized",
+        "Enabled",
+        "Disabled"
+      ]
+    },
+    {
+      "name": "ServiceVisibility",
+      "status": "implemented",
+      "items": [
+        "Always",
+        "Off",
+        "WithChildren"
+      ]
+    },
+    {
+      "name": "Severity",
+      "status": "implemented",
+      "items": [
+        "Error",
+        "Warning",
+        "Information",
+        "Hint"
+      ]
+    },
+    {
+      "name": "ShowAdResult",
+      "status": "implemented",
+      "items": [
+        "ShowCompleted",
+        "AdNotReady",
+        "AdAlreadyShowing",
+        "InternalError",
+        "ShowInterrupted",
+        "InsufficientMemory"
+      ]
+    },
+    {
+      "name": "SignalBehavior",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Immediate",
+        "Deferred",
+        "AncestryDeferred"
+      ]
+    },
+    {
+      "name": "SimulationMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Enabled",
+        "Disabled"
+      ]
+    },
+    {
+      "name": "SizeConstraint",
+      "status": "implemented",
+      "items": [
+        "RelativeXY",
+        "RelativeXX",
+        "RelativeYY"
+      ]
+    },
+    {
+      "name": "SlimTintMode",
+      "status": "implemented",
+      "items": [
+        "None",
+        "LevelOfDetail",
+        "Meshes",
+        "MeshResourcePtr",
+        "ContentId",
+        "DataModelState",
+        "TranscoderStatus"
+      ]
+    },
+    {
+      "name": "SlimTranscoderStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Transcoding",
+        "Succeeded",
+        "Failed"
+      ]
+    },
+    {
+      "name": "SlimViewContext",
+      "status": "implemented",
+      "items": [
+        "Player",
+        "Editor",
+        "ImGui"
+      ]
+    },
+    {
+      "name": "SolverConvergenceMetricType",
+      "status": "implemented",
+      "items": [
+        "IterationBased",
+        "AlgorithmAgnostic"
+      ]
+    },
+    {
+      "name": "SolverConvergenceVisualizationMode",
+      "status": "implemented",
+      "items": [
+        "Disabled",
+        "PerIsland",
+        "PerEdge"
+      ]
+    },
+    {
+      "name": "SortDirection",
+      "status": "implemented",
+      "items": [
+        "Ascending",
+        "Descending"
+      ]
+    },
+    {
+      "name": "SortOrder",
+      "status": "implemented",
+      "items": [
+        "Name",
+        "Custom",
+        "LayoutOrder"
+      ]
+    },
+    {
+      "name": "SpecialKey",
+      "status": "implemented",
+      "items": [
+        "Insert",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+        "ChatHotkey"
+      ]
+    },
+    {
+      "name": "StartCorner",
+      "status": "implemented",
+      "items": [
+        "TopLeft",
+        "TopRight",
+        "BottomLeft",
+        "BottomRight"
+      ]
+    },
+    {
+      "name": "StateObjectFieldType",
+      "status": "implemented",
+      "items": [
+        "Boolean",
+        "CFrame",
+        "Color3",
+        "Float",
+        "Instance",
+        "Random",
+        "Vector2",
+        "Vector3",
+        "INVALID"
+      ]
+    },
+    {
+      "name": "StateReferenceFrame",
+      "status": "implemented",
+      "items": [
+        "CurrentState",
+        "PreviousState",
+        "LastObservedState"
+      ]
+    },
+    {
+      "name": "Status",
+      "status": "implemented",
+      "items": [
+        "Poison",
+        "Confusion"
+      ]
+    },
+    {
+      "name": "StepFrequency",
+      "status": "implemented",
+      "items": [
+        "Hz60",
+        "Hz30",
+        "Hz15",
+        "Hz10",
+        "Hz5",
+        "Hz1"
+      ]
+    },
+    {
+      "name": "StreamOutBehavior",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "LowMemory",
+        "Opportunistic"
+      ]
+    },
+    {
+      "name": "StreamingIntegrityMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "MinimumRadiusPause",
+        "PauseOutsideLoadedArea"
+      ]
+    },
+    {
+      "name": "StreamingPauseMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "ClientPhysicsPause"
+      ]
+    },
+    {
+      "name": "StrokeSizingMode",
+      "status": "implemented",
+      "items": [
+        "FixedSize",
+        "ScaledSize"
+      ]
+    },
+    {
+      "name": "StudioAction",
+      "status": "implemented",
+      "items": [
+        "Undo",
+        "Redo",
+        "SelectAll",
+        "DeleteSelected",
+        "DuplicateSelection",
+        "ClearSelection",
+        "ZoomExtents",
+        "Copy",
+        "Cut",
+        "Paste"
+      ]
+    },
+    {
+      "name": "StudioCaptureBufferStatus",
+      "status": "implemented",
+      "items": [
+        "NotStarted",
+        "Pending",
+        "Ready",
+        "Error"
+      ]
+    },
+    {
+      "name": "StudioCaptureScreenshotFormat",
+      "status": "implemented",
+      "items": [
+        "RGBA8",
+        "PNG"
+      ]
+    },
+    {
+      "name": "StudioCloseMode",
+      "status": "implemented",
+      "items": [
+        "None",
+        "CloseStudio",
+        "CloseDoc",
+        "LogOut"
+      ]
+    },
+    {
+      "name": "StudioDataModelType",
+      "status": "implemented",
+      "items": [
+        "Edit",
+        "PlayClient",
+        "PlayServer",
+        "Standalone",
+        "None"
+      ]
+    },
+    {
+      "name": "StudioPlaceUpdateFailureReason",
+      "status": "implemented",
+      "items": [
+        "Other",
+        "TeamCreateConflict"
+      ]
+    },
+    {
+      "name": "StudioScriptEditorColorCategories",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Operator",
+        "Number",
+        "String",
+        "Comment",
+        "Keyword",
+        "Builtin",
+        "Method",
+        "Property",
+        "Nil",
+        "Bool",
+        "Function",
+        "Local",
+        "Self",
+        "LuauKeyword",
+        "FunctionName",
+        "TODO",
+        "Background",
+        "SelectionText",
+        "SelectionBackground",
+        "FindSelectionBackground",
+        "MatchingWordBackground",
+        "Warning",
+        "Error",
+        "Info",
+        "Hint",
+        "Whitespace",
+        "ActiveLine",
+        "DebuggerCurrentLine",
+        "DebuggerErrorLine",
+        "Ruler",
+        "Bracket",
+        "Type",
+        "MenuPrimaryText",
+        "MenuSecondaryText",
+        "MenuSelectedText",
+        "MenuBackground",
+        "MenuSelectedBackground",
+        "MenuScrollbarBackground",
+        "MenuScrollbarHandle",
+        "MenuBorder",
+        "DocViewCodeBackground",
+        "AICOOverlayText",
+        "AICOOverlayButtonBackground",
+        "AICOOverlayButtonBackgroundHover",
+        "AICOOverlayButtonBackgroundPressed",
+        "IndentationRuler",
+        "ReviewableChangeAddedText",
+        "ReviewableChangeRemovedText"
+      ]
+    },
+    {
+      "name": "StudioScriptEditorColorPresets",
+      "status": "implemented",
+      "items": [
+        "RobloxDefault",
+        "Extra1",
+        "Extra2",
+        "Custom"
+      ]
+    },
+    {
+      "name": "StudioStyleGuideColor",
+      "status": "implemented",
+      "items": [
+        "MainBackground",
+        "Titlebar",
+        "Dropdown",
+        "Tooltip",
+        "Notification",
+        "ScrollBar",
+        "ScrollBarBackground",
+        "TabBar",
+        "Tab",
+        "FilterButtonDefault",
+        "FilterButtonHover",
+        "FilterButtonChecked",
+        "FilterButtonAccent",
+        "FilterButtonBorder",
+        "FilterButtonBorderAlt",
+        "RibbonTab",
+        "RibbonTabTopBar",
+        "Button",
+        "MainButton",
+        "RibbonButton",
+        "ViewPortBackground",
+        "InputFieldBackground",
+        "Item",
+        "TableItem",
+        "CategoryItem",
+        "GameSettingsTableItem",
+        "GameSettingsTooltip",
+        "EmulatorBar",
+        "EmulatorDropDown",
+        "ColorPickerFrame",
+        "CurrentMarker",
+        "Border",
+        "DropShadow",
+        "Shadow",
+        "Light",
+        "Dark",
+        "Mid",
+        "MainText",
+        "SubText",
+        "TitlebarText",
+        "BrightText",
+        "DimmedText",
+        "LinkText",
+        "WarningText",
+        "ErrorText",
+        "InfoText",
+        "SensitiveText",
+        "ScriptSideWidget",
+        "ScriptBackground",
+        "ScriptText",
+        "ScriptSelectionText",
+        "ScriptSelectionBackground",
+        "ScriptFindSelectionBackground",
+        "ScriptMatchingWordSelectionBackground",
+        "ScriptOperator",
+        "ScriptNumber",
+        "ScriptString",
+        "ScriptComment",
+        "ScriptKeyword",
+        "ScriptBuiltInFunction",
+        "ScriptWarning",
+        "ScriptError",
+        "ScriptInformation",
+        "ScriptHint",
+        "ScriptWhitespace",
+        "ScriptRuler",
+        "DocViewCodeBackground",
+        "DebuggerCurrentLine",
+        "DebuggerErrorLine",
+        "DiffFilePathText",
+        "DiffTextHunkInfo",
+        "DiffTextNoChange",
+        "DiffTextAddition",
+        "DiffTextDeletion",
+        "DiffTextSeparatorBackground",
+        "DiffTextNoChangeBackground",
+        "DiffTextAdditionBackground",
+        "DiffTextDeletionBackground",
+        "DiffLineNum",
+        "DiffLineNumSeparatorBackground",
+        "DiffLineNumNoChangeBackground",
+        "DiffLineNumAdditionBackground",
+        "DiffLineNumDeletionBackground",
+        "DiffFilePathBackground",
+        "DiffFilePathBorder",
+        "ChatIncomingBgColor",
+        "ChatIncomingTextColor",
+        "ChatOutgoingBgColor",
+        "ChatOutgoingTextColor",
+        "ChatModeratedMessageColor",
+        "Separator",
+        "ButtonBorder",
+        "ButtonText",
+        "InputFieldBorder",
+        "CheckedFieldBackground",
+        "CheckedFieldBorder",
+        "CheckedFieldIndicator",
+        "HeaderSection",
+        "Midlight",
+        "StatusBar",
+        "DialogButton",
+        "DialogButtonText",
+        "DialogButtonBorder",
+        "DialogMainButton",
+        "DialogMainButtonText",
+        "InfoBarWarningBackground",
+        "InfoBarWarningText",
+        "ScriptEditorCurrentLine",
+        "ScriptMethod",
+        "ScriptProperty",
+        "ScriptNil",
+        "ScriptBool",
+        "ScriptFunction",
+        "ScriptLocal",
+        "ScriptSelf",
+        "ScriptLuauKeyword",
+        "ScriptFunctionName",
+        "ScriptTodo",
+        "ScriptBracket",
+        "AttributeCog",
+        "AICOOverlayText",
+        "AICOOverlayButtonBackground",
+        "AICOOverlayButtonBackgroundHover",
+        "AICOOverlayButtonBackgroundPressed",
+        "OnboardingCover",
+        "OnboardingHighlight",
+        "OnboardingShadow",
+        "BreakpointMarker",
+        "DiffLineNumHover",
+        "DiffLineNumSeparatorBackgroundHover"
+      ]
+    },
+    {
+      "name": "StudioStyleGuideModifier",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Selected",
+        "Pressed",
+        "Disabled",
+        "Hover"
+      ]
+    },
+    {
+      "name": "Style",
+      "status": "implemented",
+      "items": [
+        "AlternatingSupports",
+        "BridgeStyleSupports",
+        "NoSupports"
+      ]
+    },
+    {
+      "name": "SubscriptionExpirationReason",
+      "status": "implemented",
+      "items": [
+        "ProductInactive",
+        "ProductDeleted",
+        "SubscriberCancelled",
+        "SubscriberRefunded",
+        "Lapsed"
+      ]
+    },
+    {
+      "name": "SubscriptionPaymentStatus",
+      "status": "implemented",
+      "items": [
+        "Paid",
+        "Refunded"
+      ]
+    },
+    {
+      "name": "SubscriptionPeriod",
+      "status": "implemented",
+      "items": [
+        "Month"
+      ]
+    },
+    {
+      "name": "SubscriptionState",
+      "status": "implemented",
+      "items": [
+        "NeverSubscribed",
+        "SubscribedWillRenew",
+        "SubscribedWillNotRenew",
+        "SubscribedRenewalPaymentPending",
+        "Expired"
+      ]
+    },
+    {
+      "name": "SurfaceConstraint",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Hinge",
+        "SteppingMotor",
+        "Motor"
+      ]
+    },
+    {
+      "name": "SurfaceGuiShape",
+      "status": "implemented",
+      "items": [
+        "Flat",
+        "CurvedHorizontally"
+      ]
+    },
+    {
+      "name": "SurfaceGuiSizingMode",
+      "status": "implemented",
+      "items": [
+        "FixedSize",
+        "PixelsPerStud"
+      ]
+    },
+    {
+      "name": "SurfaceType",
+      "status": "implemented",
+      "items": [
+        "Smooth",
+        "Glue",
+        "Weld",
+        "Studs",
+        "Inlet",
+        "Universal",
+        "Hinge",
+        "Motor",
+        "SteppingMotor",
+        "SmoothNoOutlines"
+      ]
+    },
+    {
+      "name": "SwipeDirection",
+      "status": "implemented",
+      "items": [
+        "Right",
+        "Left",
+        "Up",
+        "Down",
+        "None"
+      ]
+    },
+    {
+      "name": "SystemThemeValue",
+      "status": "implemented",
+      "items": [
+        "error",
+        "light",
+        "dark",
+        "systemLight",
+        "systemDark"
+      ]
+    },
+    {
+      "name": "TableMajorAxis",
+      "status": "implemented",
+      "items": [
+        "RowMajor",
+        "ColumnMajor"
+      ]
+    },
+    {
+      "name": "TeamCreateErrorState",
+      "status": "implemented",
+      "items": [
+        "PlaceSizeTooLarge",
+        "PlaceSizeApproachingLimit",
+        "PlaceUploadFailing",
+        "NoError"
+      ]
+    },
+    {
+      "name": "Technology",
+      "status": "implemented",
+      "items": [
+        "Legacy",
+        "Voxel",
+        "Compatibility",
+        "ShadowMap",
+        "Future",
+        "Unified"
+      ]
+    },
+    {
+      "name": "TelemetryBackend",
+      "status": "implemented",
+      "items": [
+        "UNSPECIFIED",
+        "EventIngest",
+        "Points",
+        "Teletune",
+        "EphemeralCounter",
+        "EphemeralStat",
+        "Counter",
+        "Stat"
+      ]
+    },
+    {
+      "name": "TelemetryStandardizedField",
+      "status": "implemented",
+      "items": [
+        "AddDatacenterId",
+        "AddPlaceId",
+        "AddUniverseId",
+        "AddPlaceInstanceId",
+        "AddPlaySessionId",
+        "AddCurrentContextName",
+        "AddOsInfo",
+        "AddArchitectureInfo",
+        "AddCpuInfo",
+        "AddMemoryInfo",
+        "AddSessionInfo"
+      ]
+    },
+    {
+      "name": "TeleportMethod",
+      "status": "implemented",
+      "items": [
+        "TeleportToSpawnByName",
+        "TeleportToPlaceInstance",
+        "TeleportToPrivateServer",
+        "TeleportPartyAsync",
+        "TeleportToVIPServer",
+        "TeleportToInstanceBack",
+        "TeleportUnknown",
+        "Teleport",
+        "TeleportSwitchServer"
+      ]
+    },
+    {
+      "name": "TeleportResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "Failure",
+        "GameNotFound",
+        "GameEnded",
+        "GameFull",
+        "Unauthorized",
+        "Flooded",
+        "IsTeleporting"
+      ]
+    },
+    {
+      "name": "TeleportState",
+      "status": "implemented",
+      "items": [
+        "RequestedFromServer",
+        "Started",
+        "WaitingForServer",
+        "Failed",
+        "InProgress"
+      ]
+    },
+    {
+      "name": "TeleportType",
+      "status": "implemented",
+      "items": [
+        "ToPlace",
+        "ToInstance",
+        "ToReservedServer",
+        "ToVIPServer",
+        "ToInstanceBack"
+      ]
+    },
+    {
+      "name": "TerrainAcquisitionMethod",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Legacy",
+        "Template",
+        "Generate",
+        "Import",
+        "Convert",
+        "EditAddTool",
+        "EditSeaLevelTool",
+        "EditReplaceTool",
+        "RegionFillTool",
+        "RegionPasteTool",
+        "Other"
+      ]
+    },
+    {
+      "name": "TerrainFace",
+      "status": "implemented",
+      "items": [
+        "Top",
+        "Side",
+        "Bottom"
+      ]
+    },
+    {
+      "name": "TerrainLiquidMergeOperation",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Source",
+        "Union",
+        "Difference",
+        "Intersect"
+      ]
+    },
+    {
+      "name": "TerrainSolidMergeOperation",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Paint",
+        "Source",
+        "Union",
+        "Dig",
+        "Difference",
+        "Intersect",
+        "Cut",
+        "Place"
+      ]
+    },
+    {
+      "name": "TestCaseStatus",
+      "status": "implemented",
+      "items": [
+        "Pass",
+        "Fail",
+        "TimedOut",
+        "Skipped"
+      ]
+    },
+    {
+      "name": "TestRunStatus",
+      "status": "implemented",
+      "items": [
+        "Pass",
+        "Fail",
+        "NoTests",
+        "Skipped"
+      ]
+    },
+    {
+      "name": "TextChannelDisplayMode",
+      "status": "implemented",
+      "items": [
+        "AllTextChannels",
+        "DefaultTextChannels"
+      ]
+    },
+    {
+      "name": "TextChatMessageStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Success",
+        "Sending",
+        "TextFilterFailed",
+        "Floodchecked",
+        "InvalidPrivacySettings",
+        "InvalidTextChannelPermissions",
+        "MessageTooLong",
+        "ModerationTimeout"
+      ]
+    },
+    {
+      "name": "TextDirection",
+      "status": "implemented",
+      "items": [
+        "Auto",
+        "LeftToRight",
+        "RightToLeft"
+      ]
+    },
+    {
+      "name": "TextFilterContext",
+      "status": "implemented",
+      "items": [
+        "PublicChat",
+        "PrivateChat"
+      ]
+    },
+    {
+      "name": "TextInputType",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "NoSuggestions",
+        "Number",
+        "Email",
+        "Phone",
+        "Password",
+        "PasswordShown",
+        "Username",
+        "OneTimePassword",
+        "NewPassword",
+        "NewPasswordShown"
+      ]
+    },
+    {
+      "name": "TextTruncate",
+      "status": "implemented",
+      "items": [
+        "None",
+        "AtEnd",
+        "SplitWord"
+      ]
+    },
+    {
+      "name": "TextXAlignment",
+      "status": "implemented",
+      "items": [
+        "Left",
+        "Right",
+        "Center"
+      ]
+    },
+    {
+      "name": "TextYAlignment",
+      "status": "implemented",
+      "items": [
+        "Top",
+        "Center",
+        "Bottom"
+      ]
+    },
+    {
+      "name": "TextureMode",
+      "status": "implemented",
+      "items": [
+        "Stretch",
+        "Wrap",
+        "Static"
+      ]
+    },
+    {
+      "name": "TextureQueryType",
+      "status": "implemented",
+      "items": [
+        "NonHumanoid",
+        "NonHumanoidOrphaned",
+        "Humanoid",
+        "HumanoidOrphaned"
+      ]
+    },
+    {
+      "name": "ThreadPoolConfig",
+      "status": "implemented",
+      "items": [
+        "Auto",
+        "Threads1",
+        "Threads2",
+        "Threads3",
+        "Threads4",
+        "Threads8",
+        "Threads16",
+        "PerCore1",
+        "PerCore2",
+        "PerCore3",
+        "PerCore4"
+      ]
+    },
+    {
+      "name": "ThrottlingPriority",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "ElevatedOnServer",
+        "Extreme"
+      ]
+    },
+    {
+      "name": "ThumbnailSize",
+      "status": "implemented",
+      "items": [
+        "Size48x48",
+        "Size180x180",
+        "Size420x420",
+        "Size60x60",
+        "Size100x100",
+        "Size150x150",
+        "Size352x352"
+      ]
+    },
+    {
+      "name": "ThumbnailType",
+      "status": "implemented",
+      "items": [
+        "HeadShot",
+        "AvatarBust",
+        "AvatarThumbnail"
+      ]
+    },
+    {
+      "name": "TickCountSampleMethod",
+      "status": "implemented",
+      "items": [
+        "Fast",
+        "Benchmark",
+        "Precise"
+      ]
+    },
+    {
+      "name": "TitleBarControlsPosition",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Left",
+        "Right"
+      ]
+    },
+    {
+      "name": "TitleBarMode",
+      "status": "implemented",
+      "items": [
+        "Native",
+        "Custom"
+      ]
+    },
+    {
+      "name": "TonemapperPreset",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Retro"
+      ]
+    },
+    {
+      "name": "TopBottom",
+      "status": "implemented",
+      "items": [
+        "Top",
+        "Center",
+        "Bottom"
+      ]
+    },
+    {
+      "name": "TouchCameraMovementMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Classic",
+        "Follow",
+        "Orbital"
+      ]
+    },
+    {
+      "name": "TouchMovementMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Thumbstick",
+        "DPad",
+        "Thumbpad",
+        "ClickToMove",
+        "DynamicThumbstick"
+      ]
+    },
+    {
+      "name": "TrackerError",
+      "status": "implemented",
+      "items": [
+        "Ok",
+        "NoService",
+        "InitFailed",
+        "NoVideo",
+        "VideoError",
+        "VideoNoPermission",
+        "VideoUnsupported",
+        "NoAudio",
+        "AudioError",
+        "AudioNoPermission",
+        "UnsupportedDevice"
+      ]
+    },
+    {
+      "name": "TrackerExtrapolationFlagMode",
+      "status": "implemented",
+      "items": [
+        "ForceDisabled",
+        "ExtrapolateFacsAndPose",
+        "ExtrapolateFacsOnly",
+        "Auto"
+      ]
+    },
+    {
+      "name": "TrackerFaceTrackingStatus",
+      "status": "implemented",
+      "items": [
+        "FaceTrackingSuccess",
+        "FaceTrackingNoFaceFound",
+        "FaceTrackingUnknown",
+        "FaceTrackingLost",
+        "FaceTrackingHasTrackingError",
+        "FaceTrackingIsOccluded",
+        "FaceTrackingUninitialized"
+      ]
+    },
+    {
+      "name": "TrackerLodFlagMode",
+      "status": "implemented",
+      "items": [
+        "ForceFalse",
+        "ForceTrue",
+        "Auto"
+      ]
+    },
+    {
+      "name": "TrackerLodValueMode",
+      "status": "implemented",
+      "items": [
+        "Force0",
+        "Force1",
+        "Auto"
+      ]
+    },
+    {
+      "name": "TrackerMode",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Audio",
+        "Video",
+        "AudioVideo"
+      ]
+    },
+    {
+      "name": "TrackerPromptEvent",
+      "status": "implemented",
+      "items": [
+        "LODCameraRecommendDisable"
+      ]
+    },
+    {
+      "name": "TrackerType",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Face",
+        "UpperBody"
+      ]
+    },
+    {
+      "name": "TriStateBoolean",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "True",
+        "False"
+      ]
+    },
+    {
+      "name": "TweenStatus",
+      "status": "implemented",
+      "items": [
+        "Canceled",
+        "Completed"
+      ]
+    },
+    {
+      "name": "UIBlurStrength",
+      "status": "implemented",
+      "items": [
+        "Light",
+        "Medium",
+        "Heavy"
+      ]
+    },
+    {
+      "name": "UICaptureMode",
+      "status": "implemented",
+      "items": [
+        "All",
+        "None"
+      ]
+    },
+    {
+      "name": "UIDragDetectorBoundingBehavior",
+      "status": "implemented",
+      "items": [
+        "Automatic",
+        "EntireObject",
+        "HitPoint"
+      ]
+    },
+    {
+      "name": "UIDragDetectorDragRelativity",
+      "status": "implemented",
+      "items": [
+        "Absolute",
+        "Relative"
+      ]
+    },
+    {
+      "name": "UIDragDetectorDragSpace",
+      "status": "implemented",
+      "items": [
+        "Parent",
+        "LayerCollector",
+        "Reference"
+      ]
+    },
+    {
+      "name": "UIDragDetectorDragStyle",
+      "status": "implemented",
+      "items": [
+        "TranslatePlane",
+        "TranslateLine",
+        "Rotate",
+        "Scriptable"
+      ]
+    },
+    {
+      "name": "UIDragDetectorResponseStyle",
+      "status": "implemented",
+      "items": [
+        "Offset",
+        "Scale",
+        "CustomOffset",
+        "CustomScale"
+      ]
+    },
+    {
+      "name": "UIDragSpeedAxisMapping",
+      "status": "implemented",
+      "items": [
+        "XY",
+        "XX",
+        "YY"
+      ]
+    },
+    {
+      "name": "UIFlexAlignment",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Fill",
+        "SpaceAround",
+        "SpaceBetween",
+        "SpaceEvenly"
+      ]
+    },
+    {
+      "name": "UIFlexMode",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Grow",
+        "Shrink",
+        "Fill",
+        "Custom"
+      ]
+    },
+    {
+      "name": "UITheme",
+      "status": "implemented",
+      "items": [
+        "Light",
+        "Dark"
+      ]
+    },
+    {
+      "name": "UiMessageType",
+      "status": "implemented",
+      "items": [
+        "UiMessageError",
+        "UiMessageInfo"
+      ]
+    },
+    {
+      "name": "UpdateState",
+      "status": "implemented",
+      "items": [
+        "UpdateNotAvailable",
+        "UpdateAvailable",
+        "UpdateInProgress",
+        "UpdateReady",
+        "UpdateFailed"
+      ]
+    },
+    {
+      "name": "UploadCaptureResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "NeedPermission",
+        "CaptureModerated",
+        "CaptureNotInGallery",
+        "IneligibleCapture",
+        "UploadQuotaReached",
+        "UploadPending",
+        "UploadFailed"
+      ]
+    },
+    {
+      "name": "UsageContext",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Preview"
+      ]
+    },
+    {
+      "name": "UserAcquisitionSource",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "PendingAttribution",
+        "HomeRecommendation",
+        "ContinueToPlay",
+        "Curation",
+        "Friends",
+        "Search",
+        "Teleport",
+        "Ads",
+        "HomeOther",
+        "Other"
+      ]
+    },
+    {
+      "name": "UserCFrame",
+      "status": "implemented",
+      "items": [
+        "Head",
+        "LeftHand",
+        "RightHand",
+        "Floor"
+      ]
+    },
+    {
+      "name": "UserIdMode",
+      "status": "implemented",
+      "items": [
+        "Invalid",
+        "Global",
+        "Domain"
+      ]
+    },
+    {
+      "name": "UserInputState",
+      "status": "implemented",
+      "items": [
+        "Begin",
+        "Change",
+        "End",
+        "Cancel",
+        "None"
+      ]
+    },
+    {
+      "name": "UserInputType",
+      "status": "implemented",
+      "items": [
+        "MouseButton1",
+        "MouseButton2",
+        "MouseButton3",
+        "MouseWheel",
+        "MouseMovement",
+        "Touch",
+        "Keyboard",
+        "Focus",
+        "Accelerometer",
+        "Gyro",
+        "Gamepad1",
+        "Gamepad2",
+        "Gamepad3",
+        "Gamepad4",
+        "Gamepad5",
+        "Gamepad6",
+        "Gamepad7",
+        "Gamepad8",
+        "TextInput",
+        "InputMethod",
+        "None"
+      ]
+    },
+    {
+      "name": "UserNewReturningStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "New",
+        "Returning"
+      ]
+    },
+    {
+      "name": "UserReturnStatus",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "New",
+        "Returning"
+      ]
+    },
+    {
+      "name": "VRComfortSetting",
+      "status": "implemented",
+      "items": [
+        "Comfort",
+        "Normal",
+        "Expert",
+        "Custom"
+      ]
+    },
+    {
+      "name": "VRControllerModelMode",
+      "status": "implemented",
+      "items": [
+        "Disabled",
+        "Transparent"
+      ]
+    },
+    {
+      "name": "VRDeviceType",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "OculusRift",
+        "HTCVive",
+        "ValveIndex",
+        "OculusQuest"
+      ]
+    },
+    {
+      "name": "VRLaserPointerMode",
+      "status": "implemented",
+      "items": [
+        "Disabled",
+        "Pointer",
+        "DualPointer"
+      ]
+    },
+    {
+      "name": "VRPresentationMode",
+      "status": "implemented",
+      "items": [
+        "Stereo",
+        "Flat"
+      ]
+    },
+    {
+      "name": "VRSafetyBubbleMode",
+      "status": "implemented",
+      "items": [
+        "NoOne",
+        "OnlyFriends",
+        "Anyone"
+      ]
+    },
+    {
+      "name": "VRScaling",
+      "status": "implemented",
+      "items": [
+        "World",
+        "Off"
+      ]
+    },
+    {
+      "name": "VRSessionState",
+      "status": "implemented",
+      "items": [
+        "Undefined",
+        "Idle",
+        "Visible",
+        "Focused",
+        "Stopping"
+      ]
+    },
+    {
+      "name": "VRTouchpad",
+      "status": "implemented",
+      "items": [
+        "Left",
+        "Right"
+      ]
+    },
+    {
+      "name": "VRTouchpadMode",
+      "status": "implemented",
+      "items": [
+        "Touch",
+        "VirtualThumbstick",
+        "ABXY"
+      ]
+    },
+    {
+      "name": "VelocityConstraintMode",
+      "status": "implemented",
+      "items": [
+        "Line",
+        "Plane",
+        "Vector"
+      ]
+    },
+    {
+      "name": "VerifiedLevel",
+      "status": "implemented",
+      "items": [
+        "Low",
+        "High"
+      ]
+    },
+    {
+      "name": "VerticalAlignment",
+      "status": "implemented",
+      "items": [
+        "Center",
+        "Top",
+        "Bottom"
+      ]
+    },
+    {
+      "name": "VerticalScrollBarPosition",
+      "status": "implemented",
+      "items": [
+        "Right",
+        "Left"
+      ]
+    },
+    {
+      "name": "VibrationMotor",
+      "status": "implemented",
+      "items": [
+        "Large",
+        "Small",
+        "LeftTrigger",
+        "RightTrigger",
+        "LeftHand",
+        "RightHand"
+      ]
+    },
+    {
+      "name": "VideoCaptureResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "OtherError",
+        "ScreenSizeChanged",
+        "TimeLimitReached"
+      ]
+    },
+    {
+      "name": "VideoCaptureStartedResult",
+      "status": "implemented",
+      "items": [
+        "Success",
+        "OtherError",
+        "CapturingAlready",
+        "NoDeviceSupport",
+        "NoSpaceOnDevice"
+      ]
+    },
+    {
+      "name": "VideoDeviceCaptureQuality",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Low",
+        "Medium",
+        "High"
+      ]
+    },
+    {
+      "name": "VideoError",
+      "status": "implemented",
+      "items": [
+        "Ok",
+        "Eof",
+        "EAgain",
+        "BadParameter",
+        "AllocFailed",
+        "CodecInitFailed",
+        "CodecCloseFailed",
+        "DecodeFailed",
+        "ParsingFailed",
+        "Unsupported",
+        "Generic",
+        "DownloadFailed",
+        "StreamNotFound",
+        "EncodeFailed",
+        "CreateFailed",
+        "NoPermission",
+        "NoService",
+        "ReleaseFailed",
+        "Unknown"
+      ]
+    },
+    {
+      "name": "VideoSampleSize",
+      "status": "implemented",
+      "items": [
+        "Small",
+        "Medium",
+        "Large",
+        "Full"
+      ]
+    },
+    {
+      "name": "ViewMode",
+      "status": "implemented",
+      "items": [
+        "None",
+        "GeometryComplexity",
+        "Transparent",
+        "Decal"
+      ]
+    },
+    {
+      "name": "VirtualCursorMode",
+      "status": "implemented",
+      "items": [
+        "Default",
+        "Disabled",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "VirtualInputMode",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Recording",
+        "Playing"
+      ]
+    },
+    {
+      "name": "VoiceChatDistanceAttenuationType",
+      "status": "implemented",
+      "items": [
+        "Inverse",
+        "Legacy"
+      ]
+    },
+    {
+      "name": "VoiceChatState",
+      "status": "implemented",
+      "items": [
+        "Idle",
+        "Joining",
+        "JoiningRetry",
+        "Joined",
+        "Leaving",
+        "Ended",
+        "Failed"
+      ]
+    },
+    {
+      "name": "VoiceClientLeaveReasons",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "ClientNetworkDisconnected",
+        "PlayerLeft",
+        "ClientShutdown",
+        "PublishFailed",
+        "RejoinReceived",
+        "VoiceReboot",
+        "ImguiDebugLeave",
+        "LuaInitiated"
+      ]
+    },
+    {
+      "name": "VoiceControlPath",
+      "status": "implemented",
+      "items": [
+        "Publish",
+        "Subscribe",
+        "Join"
+      ]
+    },
+    {
+      "name": "VoiceRccReconnectReason",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Migration",
+        "CloseRoom",
+        "FAEUpdate",
+        "BlockListChanged"
+      ]
+    },
+    {
+      "name": "VolumetricAudio",
+      "status": "implemented",
+      "items": [
+        "Disabled",
+        "Automatic",
+        "Enabled"
+      ]
+    },
+    {
+      "name": "WaterDirection",
+      "status": "implemented",
+      "items": [
+        "NegX",
+        "X",
+        "NegY",
+        "Y",
+        "NegZ",
+        "Z"
+      ]
+    },
+    {
+      "name": "WaterForce",
+      "status": "implemented",
+      "items": [
+        "None",
+        "Small",
+        "Medium",
+        "Strong",
+        "Max"
+      ]
+    },
+    {
+      "name": "WebSocketState",
+      "status": "implemented",
+      "items": [
+        "Connecting",
+        "Open",
+        "Closing",
+        "Closed"
+      ]
+    },
+    {
+      "name": "WebStreamClientState",
+      "status": "implemented",
+      "items": [
+        "Connecting",
+        "Open",
+        "Error",
+        "Closed"
+      ]
+    },
+    {
+      "name": "WebStreamClientType",
+      "status": "implemented",
+      "items": [
+        "SSE",
+        "RawStream",
+        "WebSocket"
+      ]
+    },
+    {
+      "name": "WeldConstraintPreserve",
+      "status": "implemented",
+      "items": [
+        "All",
+        "None",
+        "Touching"
+      ]
+    },
+    {
+      "name": "WhenUserFirstPlayed",
+      "status": "implemented",
+      "items": [
+        "Unknown",
+        "Days0To30",
+        "Days31To90",
+        "Days91To180",
+        "Days181To365",
+        "Days366Plus"
+      ]
+    },
+    {
+      "name": "WhisperChatPrivacyMode",
+      "status": "implemented",
+      "items": [
+        "AllUsers",
+        "NoOne"
+      ]
+    },
+    {
+      "name": "WindSoundProfile",
+      "status": "implemented",
+      "items": [
+        "Turbulence",
+        "Whistle",
+        "Foliage"
+      ]
+    },
+    {
+      "name": "WindowState",
+      "status": "implemented",
+      "items": [
+        "Normal",
+        "Minimized",
+        "Maximized"
+      ]
+    },
+    {
+      "name": "WrapLayerAutoSkin",
+      "status": "implemented",
+      "items": [
+        "Disabled",
+        "EnabledPreserve",
+        "EnabledOverride"
+      ]
+    },
+    {
+      "name": "WrapLayerDebugMode",
+      "status": "implemented",
+      "items": [
+        "None",
+        "BoundCage",
+        "LayerCage",
+        "BoundCageAndLinks",
+        "Reference",
+        "Rbf",
+        "OuterCage",
+        "ReferenceMeshAfterMorph",
+        "HSROuterDetail",
+        "HSROuter",
+        "HSRInner",
+        "HSRInnerReverse",
+        "LayerCageFittedToBase",
+        "LayerCageFittedToPrev",
+        "PreWrapDeformerOuterCage",
+        "SkinningTransfer"
+      ]
+    },
+    {
+      "name": "WrapTargetDebugMode",
+      "status": "implemented",
+      "items": [
+        "None",
+        "TargetCageOriginal",
+        "TargetCageCompressed",
+        "TargetCageInterface",
+        "TargetLayerCageOriginal",
+        "TargetLayerCageCompressed",
+        "TargetLayerInterface",
+        "Rbf",
+        "OuterCageDetail",
+        "PreWrapDeformerCage"
+      ]
+    },
+    {
+      "name": "ZIndexBehavior",
+      "status": "implemented",
+      "items": [
+        "Global",
+        "Sibling"
+      ]
     }
   ],
-  "libraries": []
+  "libraries": [
+    {
+      "name": "CFrame",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Angles",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "fromAxisAngle",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "fromEulerAngles",
+          "kind": "function",
+          "status": "partial",
+          "note": "The rotation-order argument is ignored; the order is always XYZ."
+        },
+        {
+          "name": "fromEulerAnglesXYZ",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "fromEulerAnglesYXZ",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "fromMatrix",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "fromOrientation",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "identity",
+          "kind": "constant",
+          "status": "implemented"
+        },
+        {
+          "name": "lookAlong",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "lookAt",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "FuzzyEq",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetComponents",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Inverse",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LookVector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Orthonormalize",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PointToObjectSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PointToWorldSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Position",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RightVector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Rotation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ToAxisAngle",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ToEulerAngles",
+          "kind": "method",
+          "status": "partial",
+          "note": "The rotation-order argument is ignored; the order is always XYZ."
+        },
+        {
+          "name": "ToEulerAnglesXYZ",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ToEulerAnglesYXZ",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ToObjectSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ToOrientation",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ToWorldSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "UpVector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "VectorToObjectSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "VectorToWorldSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "X",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "XVector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Y",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "YVector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Z",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ZVector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "components",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "inverse",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "lerp",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "lookVector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "p",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "pointToObjectSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "pointToWorldSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "rightVector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "toObjectSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "toWorldSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "upVector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "vectorToObjectSpace",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "vectorToWorldSpace",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Color3",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "fromHSV",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "fromHex",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "fromRGB",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "toHSV",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "B",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "G",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "R",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ToHSV",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ToHex",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "b",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "g",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "lerp",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "r",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "ColorSequence",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Keypoints",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "ColorSequenceKeypoint",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Time",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Value",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Enum",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "Font",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "fromEnum",
+          "kind": "function",
+          "status": "missing"
+        },
+        {
+          "name": "fromId",
+          "kind": "function",
+          "status": "missing"
+        },
+        {
+          "name": "fromName",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Bold",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Family",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Style",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Weight",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "NumberRange",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Max",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Min",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "NumberSequence",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Keypoints",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "NumberSequenceKeypoint",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Envelope",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Time",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Value",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "OverlapParams",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "AddToFilter",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "BruteForceAllSlow",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CollisionGroup",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FilterDescendantsInstances",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FilterType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxParts",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RespectCanCollide",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "PhysicalProperties",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "partial",
+          "note": "The Material form uses this engine's table of the common materials; other materials get Plastic's values."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "AcousticAbsorption",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Density",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Elasticity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ElasticityWeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Friction",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FrictionWeight",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Random",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "partial",
+          "note": "This engine's own generator: the same seed gives different numbers than Roblox."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Clone",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "NextInteger",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "NextNumber",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "NextUnitVector",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Shuffle",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "RaycastParams",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "AddToFilter",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "BruteForceAllSlow",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CollisionGroup",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FilterDescendantsInstances",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FilterType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IgnoreWater",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RespectCanCollide",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Rect",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Height",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Max",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Min",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Width",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TweenInfo",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "DelayTime",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EasingDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EasingStyle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RepeatCount",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Reverses",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Time",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UDim",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Offset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Scale",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UDim2",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "fromOffset",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "fromScale",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Height",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Width",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "X",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Y",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Vector2",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "one",
+          "kind": "constant",
+          "status": "implemented"
+        },
+        {
+          "name": "xAxis",
+          "kind": "constant",
+          "status": "implemented"
+        },
+        {
+          "name": "yAxis",
+          "kind": "constant",
+          "status": "implemented"
+        },
+        {
+          "name": "zero",
+          "kind": "constant",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Abs",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Angle",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Ceil",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Cross",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Dot",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Floor",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FuzzyEq",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Magnitude",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Max",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Min",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Sign",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Unit",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "X",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Y",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "lerp",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "magnitude",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "unit",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "x",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "y",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Vector3",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "FromAxis",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "FromNormalId",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "one",
+          "kind": "constant",
+          "status": "implemented"
+        },
+        {
+          "name": "xAxis",
+          "kind": "constant",
+          "status": "implemented"
+        },
+        {
+          "name": "yAxis",
+          "kind": "constant",
+          "status": "implemented"
+        },
+        {
+          "name": "zAxis",
+          "kind": "constant",
+          "status": "implemented"
+        },
+        {
+          "name": "zero",
+          "kind": "constant",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Abs",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Angle",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Ceil",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Cross",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Dot",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Floor",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FuzzyEq",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Magnitude",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Max",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Min",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Sign",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Unit",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "X",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Y",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Z",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "lerp",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "magnitude",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "unit",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "typeof",
+      "status": "implemented",
+      "members": []
+    }
+  ]
 }

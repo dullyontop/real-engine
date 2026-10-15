@@ -1,0 +1,1409 @@
+{
+  "$schema": "../../../schemas/compat-libraries.schema.json",
+  "format": "real-engine/compat-libraries",
+  "version": 1,
+  "libraries": [
+    {
+      "name": "Vector3",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "x",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "y",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "z",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "A vector from its components; missing ones are 0."
+        },
+        {
+          "name": "zero",
+          "kind": "constant",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "(0, 0, 0)."
+        },
+        {
+          "name": "one",
+          "kind": "constant",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "(1, 1, 1)."
+        },
+        {
+          "name": "xAxis",
+          "kind": "constant",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "(1, 0, 0)."
+        },
+        {
+          "name": "yAxis",
+          "kind": "constant",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "(0, 1, 0)."
+        },
+        {
+          "name": "zAxis",
+          "kind": "constant",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "(0, 0, 1)."
+        },
+        {
+          "name": "FromNormalId",
+          "params": [
+            {
+              "name": "normal",
+              "type": "Enum.NormalId"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The unit vector pointing out of a box face."
+        },
+        {
+          "name": "FromAxis",
+          "params": [
+            {
+              "name": "axis",
+              "type": "Enum.Axis"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The unit vector along an axis."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "X",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The X component (also x)."
+        },
+        {
+          "name": "Y",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The Y component (also y)."
+        },
+        {
+          "name": "Z",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The Z component (also z)."
+        },
+        {
+          "name": "Magnitude",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The length."
+        },
+        {
+          "name": "magnitude",
+          "kind": "property",
+          "type": "number",
+          "deprecated": "Use Magnitude.",
+          "status": "implemented",
+          "doc": "The length."
+        },
+        {
+          "name": "Unit",
+          "kind": "property",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "The vector scaled to length 1 (NaN components for the zero vector)."
+        },
+        {
+          "name": "unit",
+          "kind": "property",
+          "type": "Vector3",
+          "deprecated": "Use Unit.",
+          "status": "implemented",
+          "doc": "The unit vector."
+        },
+        {
+          "name": "Dot",
+          "kind": "method",
+          "params": [
+            {
+              "name": "other",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The dot product."
+        },
+        {
+          "name": "Cross",
+          "kind": "method",
+          "params": [
+            {
+              "name": "other",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The cross product."
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "params": [
+            {
+              "name": "goal",
+              "type": "Vector3"
+            },
+            {
+              "name": "alpha",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "self + (goal - self) * alpha."
+        },
+        {
+          "name": "lerp",
+          "kind": "method",
+          "params": [
+            {
+              "name": "goal",
+              "type": "Vector3"
+            },
+            {
+              "name": "alpha",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "deprecated": "Use Lerp.",
+          "status": "implemented",
+          "doc": "Linear interpolation."
+        },
+        {
+          "name": "FuzzyEq",
+          "kind": "method",
+          "params": [
+            {
+              "name": "other",
+              "type": "Vector3"
+            },
+            {
+              "name": "epsilon",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "boolean"
+          ],
+          "status": "implemented",
+          "doc": "True if every component differs by at most epsilon (default 1e-5)."
+        },
+        {
+          "name": "Abs",
+          "kind": "method",
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "Absolute value per component."
+        },
+        {
+          "name": "Floor",
+          "kind": "method",
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "Floor per component."
+        },
+        {
+          "name": "Ceil",
+          "kind": "method",
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "Ceiling per component."
+        },
+        {
+          "name": "Sign",
+          "kind": "method",
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "Sign (-1, 0 or 1) per component."
+        },
+        {
+          "name": "Min",
+          "kind": "method",
+          "params": [
+            {
+              "name": "others",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The smallest value per component of this vector and the others."
+        },
+        {
+          "name": "Max",
+          "kind": "method",
+          "params": [
+            {
+              "name": "others",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The largest value per component of this vector and the others."
+        },
+        {
+          "name": "Angle",
+          "kind": "method",
+          "params": [
+            {
+              "name": "other",
+              "type": "Vector3"
+            },
+            {
+              "name": "axis",
+              "type": "Vector3",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The angle to other in radians; signed around axis when one is given."
+        }
+      ],
+      "status": "implemented",
+      "doc": "A 3D vector of f32. It is Luau's builtin vector type, so arithmetic, comparison and the X, Y and Z fields are native and fast; the other members come from the vector type metatable."
+    },
+    {
+      "name": "Vector2",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "x",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "y",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Vector2"
+          ],
+          "status": "implemented",
+          "doc": "A vector from its components; missing ones are 0."
+        },
+        {
+          "name": "zero",
+          "kind": "constant",
+          "type": "Vector2",
+          "status": "implemented",
+          "doc": "(0, 0)."
+        },
+        {
+          "name": "one",
+          "kind": "constant",
+          "type": "Vector2",
+          "status": "implemented",
+          "doc": "(1, 1)."
+        },
+        {
+          "name": "xAxis",
+          "kind": "constant",
+          "type": "Vector2",
+          "status": "implemented",
+          "doc": "(1, 0)."
+        },
+        {
+          "name": "yAxis",
+          "kind": "constant",
+          "type": "Vector2",
+          "status": "implemented",
+          "doc": "(0, 1)."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "X",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The X component."
+        },
+        {
+          "name": "Y",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The Y component."
+        },
+        {
+          "name": "x",
+          "kind": "property",
+          "type": "number",
+          "deprecated": "Use X.",
+          "status": "implemented",
+          "doc": "The X component."
+        },
+        {
+          "name": "y",
+          "kind": "property",
+          "type": "number",
+          "deprecated": "Use Y.",
+          "status": "implemented",
+          "doc": "The Y component."
+        },
+        {
+          "name": "Magnitude",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The length."
+        },
+        {
+          "name": "magnitude",
+          "kind": "property",
+          "type": "number",
+          "deprecated": "Use Magnitude.",
+          "status": "implemented",
+          "doc": "The length."
+        },
+        {
+          "name": "Unit",
+          "kind": "property",
+          "type": "Vector2",
+          "status": "implemented",
+          "doc": "The vector scaled to length 1."
+        },
+        {
+          "name": "unit",
+          "kind": "property",
+          "type": "Vector2",
+          "deprecated": "Use Unit.",
+          "status": "implemented",
+          "doc": "The unit vector."
+        },
+        {
+          "name": "Dot",
+          "kind": "method",
+          "params": [
+            {
+              "name": "other",
+              "type": "Vector2"
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The dot product."
+        },
+        {
+          "name": "Cross",
+          "kind": "method",
+          "params": [
+            {
+              "name": "other",
+              "type": "Vector2"
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The 2D cross product: x1*y2 - y1*x2."
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "params": [
+            {
+              "name": "goal",
+              "type": "Vector2"
+            },
+            {
+              "name": "alpha",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Vector2"
+          ],
+          "status": "implemented",
+          "doc": "Linear interpolation."
+        },
+        {
+          "name": "lerp",
+          "kind": "method",
+          "params": [
+            {
+              "name": "goal",
+              "type": "Vector2"
+            },
+            {
+              "name": "alpha",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Vector2"
+          ],
+          "deprecated": "Use Lerp.",
+          "status": "implemented",
+          "doc": "Linear interpolation."
+        },
+        {
+          "name": "Abs",
+          "kind": "method",
+          "returns": [
+            "Vector2"
+          ],
+          "status": "implemented",
+          "doc": "Absolute value per component."
+        },
+        {
+          "name": "Floor",
+          "kind": "method",
+          "returns": [
+            "Vector2"
+          ],
+          "status": "implemented",
+          "doc": "Floor per component."
+        },
+        {
+          "name": "Ceil",
+          "kind": "method",
+          "returns": [
+            "Vector2"
+          ],
+          "status": "implemented",
+          "doc": "Ceiling per component."
+        },
+        {
+          "name": "Sign",
+          "kind": "method",
+          "returns": [
+            "Vector2"
+          ],
+          "status": "implemented",
+          "doc": "Sign per component."
+        },
+        {
+          "name": "Min",
+          "kind": "method",
+          "params": [
+            {
+              "name": "others",
+              "type": "Vector2"
+            }
+          ],
+          "returns": [
+            "Vector2"
+          ],
+          "status": "implemented",
+          "doc": "The smallest value per component."
+        },
+        {
+          "name": "Max",
+          "kind": "method",
+          "params": [
+            {
+              "name": "others",
+              "type": "Vector2"
+            }
+          ],
+          "returns": [
+            "Vector2"
+          ],
+          "status": "implemented",
+          "doc": "The largest value per component."
+        },
+        {
+          "name": "Angle",
+          "kind": "method",
+          "params": [
+            {
+              "name": "other",
+              "type": "Vector2"
+            },
+            {
+              "name": "signed",
+              "type": "boolean",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The angle to other in radians, signed when asked."
+        },
+        {
+          "name": "FuzzyEq",
+          "kind": "method",
+          "params": [
+            {
+              "name": "other",
+              "type": "Vector2"
+            },
+            {
+              "name": "epsilon",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "boolean"
+          ],
+          "status": "implemented",
+          "doc": "True if every component differs by at most epsilon (default 1e-5)."
+        }
+      ],
+      "record": [
+        {
+          "name": "X",
+          "type": "f32"
+        },
+        {
+          "name": "Y",
+          "type": "f32"
+        }
+      ],
+      "status": "implemented",
+      "doc": "A 2D vector of f32, used by UI and screen positions."
+    },
+    {
+      "name": "CFrame",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "...",
+              "type": "any",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "No arguments: the identity. A Vector3: a position. Two Vector3s: a position looking at a point (deprecated form). 3 numbers: a position. 7 numbers: a position and a quaternion (x, y, z, w). 12 numbers: a position and the rotation matrix by rows."
+        },
+        {
+          "name": "identity",
+          "kind": "constant",
+          "type": "CFrame",
+          "status": "implemented",
+          "doc": "No translation, no rotation."
+        },
+        {
+          "name": "Angles",
+          "params": [
+            {
+              "name": "rx",
+              "type": "number"
+            },
+            {
+              "name": "ry",
+              "type": "number"
+            },
+            {
+              "name": "rz",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "Rotation by Euler angles in radians, applied Z first, then Y, then X: Angles(a, b, c) = Angles(a, 0, 0) * Angles(0, b, 0) * Angles(0, 0, c)."
+        },
+        {
+          "name": "fromEulerAnglesXYZ",
+          "params": [
+            {
+              "name": "rx",
+              "type": "number"
+            },
+            {
+              "name": "ry",
+              "type": "number"
+            },
+            {
+              "name": "rz",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "The same as Angles."
+        },
+        {
+          "name": "fromEulerAnglesYXZ",
+          "params": [
+            {
+              "name": "rx",
+              "type": "number"
+            },
+            {
+              "name": "ry",
+              "type": "number"
+            },
+            {
+              "name": "rz",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "Rotation Ry * Rx * Rz."
+        },
+        {
+          "name": "fromOrientation",
+          "params": [
+            {
+              "name": "rx",
+              "type": "number"
+            },
+            {
+              "name": "ry",
+              "type": "number"
+            },
+            {
+              "name": "rz",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "The same as fromEulerAnglesYXZ."
+        },
+        {
+          "name": "fromEulerAngles",
+          "params": [
+            {
+              "name": "rx",
+              "type": "number"
+            },
+            {
+              "name": "ry",
+              "type": "number"
+            },
+            {
+              "name": "rz",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "partial",
+          "note": "The rotation-order argument is ignored; the order is always XYZ.",
+          "doc": "Rotation in XYZ order."
+        },
+        {
+          "name": "lookAt",
+          "params": [
+            {
+              "name": "at",
+              "type": "Vector3"
+            },
+            {
+              "name": "target",
+              "type": "Vector3"
+            },
+            {
+              "name": "up",
+              "type": "Vector3",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "A frame at `at` looking at `target`; `up` (default +Y) sets the roll. When the look direction is parallel to up, the right vector is look x Z instead."
+        },
+        {
+          "name": "lookAlong",
+          "params": [
+            {
+              "name": "at",
+              "type": "Vector3"
+            },
+            {
+              "name": "direction",
+              "type": "Vector3"
+            },
+            {
+              "name": "up",
+              "type": "Vector3",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "A frame at `at` looking along `direction`."
+        },
+        {
+          "name": "fromAxisAngle",
+          "params": [
+            {
+              "name": "axis",
+              "type": "Vector3"
+            },
+            {
+              "name": "angle",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "A rotation of angle radians about axis (normalized)."
+        },
+        {
+          "name": "fromMatrix",
+          "params": [
+            {
+              "name": "pos",
+              "type": "Vector3"
+            },
+            {
+              "name": "vX",
+              "type": "Vector3"
+            },
+            {
+              "name": "vY",
+              "type": "Vector3"
+            },
+            {
+              "name": "vZ",
+              "type": "Vector3",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "A frame from a position and the rotation's columns; vZ defaults to vX x vY normalized. A non-orthonormal matrix is orthonormalized keeping vX's direction."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Position",
+          "kind": "property",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "The position."
+        },
+        {
+          "name": "p",
+          "kind": "property",
+          "type": "Vector3",
+          "deprecated": "Use Position.",
+          "status": "implemented",
+          "doc": "The position."
+        },
+        {
+          "name": "X",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Position X."
+        },
+        {
+          "name": "Y",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Position Y."
+        },
+        {
+          "name": "Z",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Position Z."
+        },
+        {
+          "name": "Rotation",
+          "kind": "property",
+          "type": "CFrame",
+          "status": "implemented",
+          "doc": "The same frame without translation."
+        },
+        {
+          "name": "LookVector",
+          "kind": "property",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "The forward direction, -Z."
+        },
+        {
+          "name": "lookVector",
+          "kind": "property",
+          "type": "Vector3",
+          "deprecated": "Use LookVector.",
+          "status": "implemented",
+          "doc": "The forward direction."
+        },
+        {
+          "name": "RightVector",
+          "kind": "property",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "The right direction, +X."
+        },
+        {
+          "name": "rightVector",
+          "kind": "property",
+          "type": "Vector3",
+          "deprecated": "Use RightVector.",
+          "status": "implemented",
+          "doc": "The right direction."
+        },
+        {
+          "name": "UpVector",
+          "kind": "property",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "The up direction, +Y."
+        },
+        {
+          "name": "upVector",
+          "kind": "property",
+          "type": "Vector3",
+          "deprecated": "Use UpVector.",
+          "status": "implemented",
+          "doc": "The up direction."
+        },
+        {
+          "name": "XVector",
+          "kind": "property",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "The rotation's first column."
+        },
+        {
+          "name": "YVector",
+          "kind": "property",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "The rotation's second column."
+        },
+        {
+          "name": "ZVector",
+          "kind": "property",
+          "type": "Vector3",
+          "status": "implemented",
+          "doc": "The rotation's third column."
+        },
+        {
+          "name": "Inverse",
+          "kind": "method",
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "The inverse frame."
+        },
+        {
+          "name": "inverse",
+          "kind": "method",
+          "returns": [
+            "CFrame"
+          ],
+          "deprecated": "Use Inverse.",
+          "status": "implemented",
+          "doc": "The inverse frame."
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "params": [
+            {
+              "name": "goal",
+              "type": "CFrame"
+            },
+            {
+              "name": "alpha",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "Interpolates the position linearly and the rotation along the shortest arc."
+        },
+        {
+          "name": "lerp",
+          "kind": "method",
+          "params": [
+            {
+              "name": "goal",
+              "type": "CFrame"
+            },
+            {
+              "name": "alpha",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "deprecated": "Use Lerp.",
+          "status": "implemented",
+          "doc": "Interpolation."
+        },
+        {
+          "name": "ToWorldSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "frames",
+              "type": "CFrame"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "self * frame, for each argument."
+        },
+        {
+          "name": "ToObjectSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "frames",
+              "type": "CFrame"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "self:Inverse() * frame, for each argument."
+        },
+        {
+          "name": "PointToWorldSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "points",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "self * point, for each argument."
+        },
+        {
+          "name": "PointToObjectSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "points",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "self:Inverse() * point, for each argument."
+        },
+        {
+          "name": "VectorToWorldSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "vectors",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The rotation applied to each vector."
+        },
+        {
+          "name": "VectorToObjectSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "vectors",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The inverse rotation applied to each vector."
+        },
+        {
+          "name": "toWorldSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "frames",
+              "type": "CFrame"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "deprecated": "Use ToWorldSpace.",
+          "status": "implemented",
+          "doc": ""
+        },
+        {
+          "name": "toObjectSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "frames",
+              "type": "CFrame"
+            }
+          ],
+          "returns": [
+            "CFrame"
+          ],
+          "deprecated": "Use ToObjectSpace.",
+          "status": "implemented",
+          "doc": ""
+        },
+        {
+          "name": "pointToWorldSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "points",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "deprecated": "Use PointToWorldSpace.",
+          "status": "implemented",
+          "doc": ""
+        },
+        {
+          "name": "pointToObjectSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "points",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "deprecated": "Use PointToObjectSpace.",
+          "status": "implemented",
+          "doc": ""
+        },
+        {
+          "name": "vectorToWorldSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "vectors",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "deprecated": "Use VectorToWorldSpace.",
+          "status": "implemented",
+          "doc": ""
+        },
+        {
+          "name": "vectorToObjectSpace",
+          "kind": "method",
+          "params": [
+            {
+              "name": "vectors",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3"
+          ],
+          "deprecated": "Use VectorToObjectSpace.",
+          "status": "implemented",
+          "doc": ""
+        },
+        {
+          "name": "ToEulerAnglesXYZ",
+          "kind": "method",
+          "returns": [
+            "number",
+            "number",
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "Angles (rx, ry, rz) such that Angles(rx, ry, rz) gives this rotation."
+        },
+        {
+          "name": "ToEulerAnglesYXZ",
+          "kind": "method",
+          "returns": [
+            "number",
+            "number",
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "Angles (rx, ry, rz) such that fromEulerAnglesYXZ(rx, ry, rz) gives this rotation."
+        },
+        {
+          "name": "ToOrientation",
+          "kind": "method",
+          "returns": [
+            "number",
+            "number",
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The same as ToEulerAnglesYXZ."
+        },
+        {
+          "name": "ToEulerAngles",
+          "kind": "method",
+          "returns": [
+            "number",
+            "number",
+            "number"
+          ],
+          "status": "partial",
+          "note": "The rotation-order argument is ignored; the order is always XYZ.",
+          "doc": "Angles in XYZ order."
+        },
+        {
+          "name": "ToAxisAngle",
+          "kind": "method",
+          "returns": [
+            "Vector3",
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The rotation as a unit axis and an angle in [0, pi]; the identity gives axis X and angle 0."
+        },
+        {
+          "name": "GetComponents",
+          "kind": "method",
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The 12 components: x, y, z, then the matrix by rows."
+        },
+        {
+          "name": "components",
+          "kind": "method",
+          "returns": [
+            "number"
+          ],
+          "deprecated": "Use GetComponents.",
+          "status": "implemented",
+          "doc": "The 12 components."
+        },
+        {
+          "name": "Orthonormalize",
+          "kind": "method",
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "The frame with its rotation made orthonormal."
+        },
+        {
+          "name": "FuzzyEq",
+          "kind": "method",
+          "params": [
+            {
+              "name": "other",
+              "type": "CFrame"
+            },
+            {
+              "name": "epsilon",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "boolean"
+          ],
+          "status": "implemented",
+          "doc": "True if all 12 components differ by at most epsilon (default 1e-5)."
+        }
+      ],
+      "record": [
+        {
+          "name": "Position",
+          "type": "Vector3"
+        },
+        {
+          "name": "XVector",
+          "type": "Vector3"
+        },
+        {
+          "name": "YVector",
+          "type": "Vector3"
+        },
+        {
+          "name": "ZVector",
+          "type": "Vector3"
+        }
+      ],
+      "status": "implemented",
+      "doc": "A coordinate frame: an f32 position and an f32 rotation matrix. Frames look down their -Z axis. Constructors orthonormalize a rotation that is not already orthonormal."
+    },
+    {
+      "name": "Rect",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "...",
+              "type": "any",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Rect"
+          ],
+          "status": "implemented",
+          "doc": "From two Vector2 corners or four numbers (min x, min y, max x, max y)."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Min",
+          "kind": "property",
+          "type": "Vector2",
+          "status": "implemented",
+          "doc": "The top-left corner."
+        },
+        {
+          "name": "Max",
+          "kind": "property",
+          "type": "Vector2",
+          "status": "implemented",
+          "doc": "The bottom-right corner."
+        },
+        {
+          "name": "Width",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Max.X - Min.X."
+        },
+        {
+          "name": "Height",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Max.Y - Min.Y."
+        }
+      ],
+      "record": [
+        {
+          "name": "MinX",
+          "type": "f32"
+        },
+        {
+          "name": "MinY",
+          "type": "f32"
+        },
+        {
+          "name": "MaxX",
+          "type": "f32"
+        },
+        {
+          "name": "MaxY",
+          "type": "f32"
+        }
+      ],
+      "status": "implemented",
+      "doc": "An axis-aligned 2D rectangle."
+    }
+  ]
+}

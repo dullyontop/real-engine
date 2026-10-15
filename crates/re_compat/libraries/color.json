@@ -1,0 +1,303 @@
+{
+  "$schema": "../../../schemas/compat-libraries.schema.json",
+  "format": "real-engine/compat-libraries",
+  "version": 1,
+  "libraries": [
+    {
+      "name": "Color3",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "r",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "g",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "b",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Color3"
+          ],
+          "status": "implemented",
+          "doc": "A colour from 0-1 channels; missing ones are 0."
+        },
+        {
+          "name": "fromRGB",
+          "params": [
+            {
+              "name": "r",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "g",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "b",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Color3"
+          ],
+          "status": "implemented",
+          "doc": "A colour from 0-255 channels."
+        },
+        {
+          "name": "fromHSV",
+          "params": [
+            {
+              "name": "h",
+              "type": "number"
+            },
+            {
+              "name": "s",
+              "type": "number"
+            },
+            {
+              "name": "v",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Color3"
+          ],
+          "status": "implemented",
+          "doc": "A colour from hue, saturation and value, each 0 to 1."
+        },
+        {
+          "name": "fromHex",
+          "params": [
+            {
+              "name": "hex",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Color3"
+          ],
+          "status": "implemented",
+          "doc": "A colour from \"#RRGGBB\", \"RRGGBB\", \"#RGB\" or \"RGB\"."
+        },
+        {
+          "name": "toHSV",
+          "params": [
+            {
+              "name": "color",
+              "type": "Color3"
+            }
+          ],
+          "returns": [
+            "number",
+            "number",
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "Hue, saturation and value of a colour."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "R",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Red."
+        },
+        {
+          "name": "G",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Green."
+        },
+        {
+          "name": "B",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Blue."
+        },
+        {
+          "name": "r",
+          "kind": "property",
+          "type": "number",
+          "deprecated": "Use R.",
+          "status": "implemented",
+          "doc": "Red."
+        },
+        {
+          "name": "g",
+          "kind": "property",
+          "type": "number",
+          "deprecated": "Use G.",
+          "status": "implemented",
+          "doc": "Green."
+        },
+        {
+          "name": "b",
+          "kind": "property",
+          "type": "number",
+          "deprecated": "Use B.",
+          "status": "implemented",
+          "doc": "Blue."
+        },
+        {
+          "name": "Lerp",
+          "kind": "method",
+          "params": [
+            {
+              "name": "goal",
+              "type": "Color3"
+            },
+            {
+              "name": "alpha",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Color3"
+          ],
+          "status": "implemented",
+          "doc": "Linear interpolation per channel."
+        },
+        {
+          "name": "lerp",
+          "kind": "method",
+          "params": [
+            {
+              "name": "goal",
+              "type": "Color3"
+            },
+            {
+              "name": "alpha",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Color3"
+          ],
+          "deprecated": "Use Lerp.",
+          "status": "implemented",
+          "doc": "Linear interpolation."
+        },
+        {
+          "name": "ToHSV",
+          "kind": "method",
+          "returns": [
+            "number",
+            "number",
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "Hue, saturation and value, each 0 to 1."
+        },
+        {
+          "name": "ToHex",
+          "kind": "method",
+          "returns": [
+            "string"
+          ],
+          "status": "implemented",
+          "doc": "Six uppercase hex digits, channels clamped to 0-1."
+        }
+      ],
+      "status": "implemented",
+      "doc": "An RGB colour of three f32 channels, normally 0 to 1 and not clamped. Stored as given; the conversion to the renderer's linear colour happens where a property maps to a native colour."
+    },
+    {
+      "name": "ColorSequenceKeypoint",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "time",
+              "type": "number"
+            },
+            {
+              "name": "color",
+              "type": "Color3"
+            }
+          ],
+          "returns": [
+            "ColorSequenceKeypoint"
+          ],
+          "status": "implemented",
+          "doc": "A keypoint at time (0 to 1)."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Time",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Where it sits, 0 to 1."
+        },
+        {
+          "name": "Value",
+          "kind": "property",
+          "type": "Color3",
+          "status": "implemented",
+          "doc": "The colour there."
+        }
+      ],
+      "record": [
+        {
+          "name": "Time",
+          "type": "f32"
+        },
+        {
+          "name": "Value",
+          "type": "Color3"
+        }
+      ],
+      "status": "implemented",
+      "doc": "One stop of a ColorSequence."
+    },
+    {
+      "name": "ColorSequence",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "...",
+              "type": "any"
+            }
+          ],
+          "returns": [
+            "ColorSequence"
+          ],
+          "status": "implemented",
+          "doc": "From one colour, two colours (start and end) or an array of keypoints."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Keypoints",
+          "kind": "property",
+          "type": "table",
+          "status": "implemented",
+          "doc": "A new array of the keypoints."
+        }
+      ],
+      "status": "implemented",
+      "doc": "A colour gradient over 0 to 1: 2 to 20 keypoints, the first at 0 and the last at 1, in time order."
+    }
+  ]
+}

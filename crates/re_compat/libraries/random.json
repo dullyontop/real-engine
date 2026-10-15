@@ -1,0 +1,102 @@
+{
+  "$schema": "../../../schemas/compat-libraries.schema.json",
+  "format": "real-engine/compat-libraries",
+  "version": 1,
+  "libraries": [
+    {
+      "name": "Random",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "seed",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Random"
+          ],
+          "status": "partial",
+          "note": "This engine's own generator: the same seed gives different numbers than Roblox.",
+          "doc": "A generator; the seed is truncated to an integer."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "NextNumber",
+          "kind": "method",
+          "params": [
+            {
+              "name": "min",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "max",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "A number in [0, 1), or in [min, max)."
+        },
+        {
+          "name": "NextInteger",
+          "kind": "method",
+          "params": [
+            {
+              "name": "min",
+              "type": "number"
+            },
+            {
+              "name": "max",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "An integer in [min, max], both included."
+        },
+        {
+          "name": "NextUnitVector",
+          "kind": "method",
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "A direction uniformly distributed on the unit sphere."
+        },
+        {
+          "name": "Shuffle",
+          "kind": "method",
+          "params": [
+            {
+              "name": "array",
+              "type": "table"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Shuffles an array in place."
+        },
+        {
+          "name": "Clone",
+          "kind": "method",
+          "returns": [
+            "Random"
+          ],
+          "status": "implemented",
+          "doc": "A generator in the same state."
+        }
+      ],
+      "status": "implemented",
+      "doc": "A seeded random number generator (PCG32). Without a seed, generators are seeded from the run seed, so runs repeat."
+    }
+  ]
+}
