@@ -666,9 +666,8 @@ fn humanoids(lua: &Lua) -> Result<Vec<Entity>> {
         let workspace = crate::services::core::find_service(w, game, "Workspace");
         out.retain(|e| {
             !tree::is_destroyed(w, *e)
-                && workspace.is_some_and(|ws| {
-                    re_scene::hierarchy::is_self_or_ancestor(&w.ecs, ws, *e)
-                })
+                && workspace
+                    .is_some_and(|ws| re_scene::hierarchy::is_self_or_ancestor(&w.ecs, ws, *e))
         });
         out.sort();
         out

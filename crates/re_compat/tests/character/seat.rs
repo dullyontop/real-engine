@@ -288,9 +288,13 @@ fn a_starter_character_with_no_rig_gets_the_r6_rig() {
     );
     let classes = p.setup.classes.clone();
     let game = p.game;
-    assert!(re_compat::humanoid::rig::fill_starter_character(&mut p.world, &classes, game).unwrap());
+    assert!(
+        re_compat::humanoid::rig::fill_starter_character(&mut p.world, &classes, game).unwrap()
+    );
     // A second call finds the Humanoid and leaves the model alone.
-    assert!(!re_compat::humanoid::rig::fill_starter_character(&mut p.world, &classes, game).unwrap());
+    assert!(
+        !re_compat::humanoid::rig::fill_starter_character(&mut p.world, &classes, game).unwrap()
+    );
     p.run(
         "local sc = game.StarterPlayer.StarterCharacter
          print(sc.Humanoid.RigType.Name, sc:FindFirstChild('Torso') ~= nil, sc:FindFirstChild('Animate') ~= nil, sc.PrimaryPart.Name)",

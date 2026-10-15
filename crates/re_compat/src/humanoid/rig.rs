@@ -383,12 +383,18 @@ pub const STARTER_STAND_IN: &str = "R6";
 /// Fills `StarterPlayer.StarterCharacter` under `game` with the
 /// [`STARTER_STAND_IN`] rig when it is a `Model` with no `Humanoid` (an
 /// import that implied the container without its rig), so players and the
-/// scripts that clone it get a character. Returns whether it filled one.
+/// scripts that clone it get a character. Returns whether it filled one:
+/// `false` when there is no such model, it has a `Humanoid`, or the class
+/// layer has no parts.
 pub fn fill_starter_character(
     w: &mut World,
     classes: &ClassRegistry,
     game: Entity,
 ) -> Result<bool, CompatError> {
+    // A rig is made of parts; without the part classes there is none.
+    if classes.class("Part").is_err() {
+        return Ok(false);
+    }
     let Some(model) = tree::find_child(w, game, "StarterPlayer", false)
         .and_then(|sp| tree::find_child(w, sp, "StarterCharacter", false))
         .filter(|m| tree::class(w, *m) == Some("Model"))
