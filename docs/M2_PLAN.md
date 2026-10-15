@@ -7,8 +7,8 @@ This plan splits M2 into nine work packages: WP9 to WP17. Numbering continues fr
   - **PR "containers"**: list, map and record field types in `re_reflect`, plus the `Attributes` and `Tags` components and the tag index in `re_scene`;
   - **PR "skeleton"**: the `re_compat` crate, with the class layer, the class and enum data formats, the coverage file and the compat scene conventions.
 - After "skeleton", **WP10** (datatypes and enums), **WP11** (the data model, signals and the scheduler), **WP16** (the importer) and **WP17** (the M2 AI track) start.
-- After WP11's first PR, **WP12** (players, server and client, remotes and services), **WP13** (physics), **WP14** (characters, animation and input) and **WP15** (rendering, UI, tweens and sound) start.
-- **WP16** integrates `re_compat` into `re_app` and `real`, and lands `examples/plaza` and the boot stage of `real verify`.
+- After WP11's first PR, "data model", **WP12** (players, server and client, remotes and services), **WP13** (physics), **WP14** (characters, animation and input) and **WP15** (rendering, UI, tweens and sound) start.
+- **WP16** lands in three PRs: "importer" (with the private sample runner), "boot" (which integrates `re_compat` into `re_app` and `real` and adds the boot stage of `real verify`) and "plaza" (`examples/plaza`).
 
 **Every WP section below is a self-contained brief**, as in [M1_PLAN.md](M1_PLAN.md). It gives the goal, the owned paths, when the WP starts, the interfaces it consumes, what to build, the non-goals, the acceptance commands and the definition of done.
 
@@ -50,7 +50,7 @@ The M1 ownership rule ([M1_PLAN.md](M1_PLAN.md)) carries over, with these change
 ## Common rules for every WP
 
 The M1 common rules hold unchanged: build settings, toolchain, one-time setup, headless, GPU tests, errors, clean ports, lints and output files. Five rules are added:
-- **Diagnostic codes.** `re_compat` owns `RE9002`–`RE9799`, and the new tooling crate `re_import` owns `RE9800`–`RE9899`. `re_script` keeps `RE3000`–`RE3999` and `RE9001` ("unsupported API member"), which every layer raises for a member with no implementation. WP9 changes the ranges in `tools/xtask/src/explain.rs` and ARCHITECTURE §7. Every code has an explain page, as in M1.
+- **Diagnostic codes.** `re_compat` owns `RE9002`–`RE9799`, and the new tooling crate `re_import` owns `RE9800`–`RE9899`. `re_script` keeps `RE3000`–`RE3999` and `RE9001` ("unsupported API member"), which every layer raises for a member with no implementation. `RE9000` and `RE9900`–`RE9999` are reserved: no crate owns them, so the range check fails if any code in them is raised or given an explain page. A later milestone assigns them through the maintainer. WP9 changes the ranges in `tools/xtask/src/explain.rs` and ARCHITECTURE §7. Every code has an explain page, as in M1.
 - **No copied reference text.** Class, member, enum and type names, signatures and default values are facts about an API and may be written into our data files. Descriptions, examples and other prose from any vendor's documentation are not copied. Each doc string in a data file is written for this repository (ADR-0034).
 - **Coverage status is honest.**
   - `implemented` means the behaviour matches for the cases our tests cover.
@@ -58,7 +58,7 @@ The M1 common rules hold unchanged: build settings, toolchain, one-time setup, h
   - `stub-error` means calling it raises `RE9001` or `RE9002` with the member's name.
   - A member that returns `nil` silently is a bug.
 - **Synthetic fixtures only.** Each WP's public tests use small Luau fixtures written for this repository under `crates/re_compat/tests/fixtures/<area>/`. They must not be paraphrases of sample code.
-- **The sample runner is private.** `crates/re_compat/tests/samples.rs` (WP16) prints `skipped: REAL_SAMPLE_KIT not set` and passes when the variable is unset. A WP's acceptance names the private checks that must pass. They run in the reference container with `REAL_SAMPLE_KIT` set, and the PR description reports pass and fail counts only, with no sample names, output or paths.
+- **The sample runner is public, the kit is private.** `crates/re_compat/tests/samples.rs` lands in WP16 PR "importer", before any WP needs it, and prints `skipped: REAL_SAMPLE_KIT not set` and passes when the variable is unset. It imports each sample with `re_import` (a dev-dependency, which the dependency graph allows) and runs it headless through `re_compat::testing` (WP11 "runtime"), so it needs neither `re_app` nor WP16 "boot". A WP whose private checks need a step the runner lacks adds it in its own module under `crates/re_compat/tests/samples/`, which that WP owns. A WP's definition of done names the private checks that must pass, so the WP needs WP16 "importer" merged before it can be done, though not before it starts. They run in the reference container with `REAL_SAMPLE_KIT` set, and the PR description reports pass and fail counts only, with no sample names, output or paths.
 
 ---
 
@@ -159,7 +159,7 @@ cargo test --locked -p re_compat enums
 ```
 - Property tests check `CFrame` against a reference matrix model: composition, inverse, the object and world space round trips, and Euler angles in both orders. Errors stay within 1e-5 over 10,000 random cases.
 - Hand-computed golden values check `Angles` order, `lookAt` with an up vector parallel to the look direction, `fromMatrix` with a non-orthonormal input, and `Lerp` at 0, 0.5 and 1.
-- Private: the samples' pure-function reference checks pass (`research/m2/acceptance.md`, "first").
+- Private (needs WP16 "importer"): the samples' pure-function reference checks pass (`research/m2/acceptance.md`, "first").
 
 **Definition of done:** merged, with every datatype member that real scripts use either `implemented` or listed in its `note` as `partial`.
 
@@ -175,9 +175,9 @@ cargo test --locked -p re_compat enums
 - `crates/re_compat/tests/fixtures/model/`;
 - `crates/re_script/`.
 
-**Starts after:** WP9 PR "skeleton". WP11's first PR, "data model", is the gate for WP12–WP15.
+**Starts after:** WP9 PR "skeleton". WP11 lands in two PRs. The first, "data model", is the gate for WP12–WP15. The second, "runtime", adds the script runtime on top of it. WP12–WP15 may start on "data model" alone; their tests that start scripts from the tree, `require` modules, step `RunService` or call `task` wait for "runtime".
 
-**Build, PR "data model":**
+**Build, PR "data model"**, exactly this list:
 - `re_script` gains `ContextKind::Server` and `ContextKind::Client`, one VM each, with the M1 sandbox, budget and memory limit. Each context keeps its own module cache.
 - `HostYield` lets a host call suspend the calling coroutine and resume it from a later phase. `WaitForChild`, `Signal:Wait`, `task.wait`, `InvokeServer` and `LoadCharacter` all use it.
 - `InstanceRef` userdata:
@@ -193,7 +193,9 @@ cargo test --locked -p re_compat enums
   - `Changed` and `GetPropertyChangedSignal`, from the per-field diff over change ticks, fired in the phase after the write;
   - `ChildAdded`, `ChildRemoved`, `DescendantAdded`, `DescendantRemoving` and `AncestryChanged`, from observers on `ChildOf` (ARCHITECTURE §4: never hooks on `ChildOf`);
   - deferred firing by default, with immediate firing as a config switch (`real.toml` `[compat] signal_behavior`).
-- `game:GetService(name)` and `game.<Service>` for the core services (`Workspace`, `ReplicatedStorage`, `ServerScriptService`, `ServerStorage`, `StarterPlayer` with `StarterPlayerScripts` and `StarterCharacterScripts`, `StarterGui`, `Lighting`, `CollectionService`, `RunService`). Unknown services raise `RE9001`.
+- `game:GetService(name)` and `game.<Service>` for the core services (`Workspace`, `ReplicatedStorage`, `ServerScriptService`, `ServerStorage`, `StarterPlayer` with `StarterPlayerScripts` and `StarterCharacterScripts`, `StarterGui`, `Lighting`, `CollectionService`, `RunService`). Unknown services raise `RE9001`. `RunService` exists as an instance here; its events and members come in "runtime".
+
+**Build, PR "runtime":**
 - `require(moduleScript)`: cached per context, cycle-safe (a cycle raises `RE3xxx` with the chain), and resolved by instance, not path.
 - Script start: `Script` instances under `ServerScriptService` and `Workspace` run in `server`. `LocalScript` instances under the player's `PlayerScripts`, `PlayerGui`, `Backpack` and character run in `client`. `RunContext` is honoured. Scripts under `ServerStorage` and `ReplicatedStorage` never start.
 - `RunService`:
@@ -204,17 +206,20 @@ cargo test --locked -p re_compat enums
 
 **Non-goals:** players and replication (WP12) and part physics (WP13).
 
+- A public headless test harness, `re_compat::testing`, that loads a compat scene into the server and client contexts and steps frames with the virtual clock. The frame-order test and the sample runner use it.
+
 **Acceptance:**
 ```sh
 cargo test --locked -p re_script
 cargo test --locked -p re_compat model
 ```
+"data model" passes the signal, `WaitForChild`, `Clone` and `Destroy` tests below. "runtime" adds the frame-order test.
 - Frame-order test: a fixture records the order of every `RunService` event and render-step binding over 3 frames. The order must equal ARCHITECTURE §3 exactly, including priorities 199, 200 and 201 around the camera priority.
 - Signal tests cover deferred against immediate firing, `Wait` across phases, and disconnect while firing.
 - `WaitForChild` tests cover the 5 s warning (once), the timeout, and an instance added later in the same frame.
 - `Clone` and `Destroy` keep the `TagIndex` and attributes exact.
 
-**Definition of done:** both PRs merged. Private: the samples' import graph and script start checks pass, and both samples reach their first frame with no uncaught error, with the players' parts stubbed until WP12.
+**Definition of done:** both PRs merged. Private (needs WP16 "importer"): the samples' import graph and script start checks pass, and both samples reach their first frame with no uncaught error, with the players' parts stubbed until WP12.
 
 ---
 
@@ -260,7 +265,7 @@ cargo test --locked -p re_compat net
 - Remote tests cover the argument round trip (NaN, nested tables, instance refs, rejected values), ordering, and `InvokeServer` yielding across frames.
 - Two simulated players join, spawn, leave and rejoin, and a spawned character appears in both worlds.
 
-**Definition of done:** merged. Private: both samples boot 600 frames with one player, and their boot output checks pass.
+**Definition of done:** merged. Private (needs WP16 "importer"): both samples boot 600 frames with one player, and their boot output checks pass.
 
 ---
 
@@ -305,7 +310,7 @@ cargo run --release --locked -p re_compat --example bigmap -- --parts 250000 --f
 - Weld tests: welded parts move as one body, and breaking a weld splits it.
 - `out/bigmap.json` meets the budgets in "Defaults this plan picks". ADR-0031 moves to Accepted with these numbers.
 
-**Definition of done:** merged. Private: the samples' physics checks pass.
+**Definition of done:** merged. Private (needs WP16 "importer"): the samples' physics checks pass.
 
 ---
 
@@ -355,7 +360,7 @@ cargo test --locked -p re_compat character
 - A pose-order test: an Animator track and a script both write one joint, and the script's value is final.
 - Replay test: a recorded `InputBegan` and `InputEnded` sequence gives the same character path on two runs (`state_hash`).
 
-**Definition of done:** merged. Private: the samples' movement and combat checks pass.
+**Definition of done:** merged. Private (needs WP16 "importer"): the samples' movement and combat checks pass.
 
 ---
 
@@ -414,7 +419,7 @@ cargo test --locked -p re_audio
 - Golden images (per backend, as in M1) cover a part-material sheet, a UI sheet, beams, trails and particles at a fixed seed and time, and a billboard at three distances.
 - Tween tests check the value at 0, 25, 50, 75 and 100 % for each easing pair.
 
-**Definition of done:** merged. Private: the samples' rendering checks pass.
+**Definition of done:** merged. Private (needs WP16 "importer"): the samples' rendering checks pass.
 
 ---
 
@@ -425,10 +430,10 @@ cargo test --locked -p re_audio
 **Owned paths:**
 - `crates/re_import/` (a new tooling crate);
 - `crates/re_app/`, `crates/re_cli/` (except `tooling/{mcp,agent,editor}.rs`) and `crates/re_script_check/`;
-- `crates/re_compat/tests/samples.rs`;
+- `crates/re_compat/tests/samples.rs` (the runner's step modules under `crates/re_compat/tests/samples/` belong to the WP that adds each);
 - `examples/plaza/`.
 
-**Starts after:** WP9 PR "skeleton" for PR "importer"; WP11 and WP12 for PR "boot"; WP13–WP15 for PR "plaza".
+**Starts after:** WP9 PR "skeleton" for PR "importer"; WP10, both WP11 PRs and WP12 for PR "boot"; WP13–WP15 for PR "plaza".
 
 **Build, PR "importer":**
 - `re_import` reads two input forms without executing any Luau:
@@ -439,6 +444,7 @@ cargo test --locked -p re_audio
 - Re-importing into an existing project is idempotent: it creates, adopts, removes and fails by path, and only removes instances it created.
 - `real import <INPUT> --project <DIR> [--dry-run] [--json]` prints the `ImportReport`.
 - `real new --template roblox` creates an empty compat project.
+- `samples.rs`, the private sample runner (ADR-0033). It reads the expectation files in `REAL_SAMPLE_KIT`, skips when it is unset, imports each sample and checks the import. Checks that need only a script context, such as WP10's pure-function checks, run the sample's modules in a bare compat VM; checks that boot a sample use WP11's `re_compat::testing` harness once WP11 "runtime" has merged. The `play.run` drivers of ADR-0033 join it in PR "boot".
 
 **Build, PR "boot":**
 - `re_app`:
@@ -448,7 +454,7 @@ cargo test --locked -p re_audio
 - `VerifyStage::Boot`, a new stage after `compile`. It runs N frames (default 600) headless with the virtual clock and the run seed, and fails on any uncaught error or any coroutine still yielding in `WaitForChild` at the end. It reports `unsupported[]`, the `RE9001` and `RE9002` hits with counts, and the script output.
 - `play.run` gains `add_player`, `say` (chat text as a player), `invoke` (call a `BindableFunction` with arguments, for a project's own test hooks) and `dump_tree` (instances with attributes and tags, as JSON).
 - `real check --types` loads a compatibility definitions file, `roblox.d.luau`, generated from the class, enum and datatype tables, when `[compat]` is set.
-- `samples.rs` is the private sample runner (ADR-0033). It reads the expectation files in `REAL_SAMPLE_KIT` and skips when it is unset.
+- `samples.rs` gains the `play.run` drivers (ADR-0033), run through `re_app`.
 
 **Build, PR "plaza":**
 - `examples/plaza` is a small original game, written for this repository in Roblox-style Luau. It uses:
@@ -523,6 +529,7 @@ graph LR
   WP9b --> WP16i[WP16 importer]
   WP9b --> WP17
   WP11 --> WP12
+  WP11 --> WP16b
   WP11 --> WP13
   WP11 --> WP14
   WP11 --> WP15
@@ -533,9 +540,14 @@ graph LR
   WP15 --> WP16p
   WP16b --> WP16p
   WP16b -.-> WP17
+  WP16i -.-> WP10
+  WP16i -.-> WP11
+  WP16i -.-> WP12
 ```
 
-Critical path: WP9 → WP11 → WP12 → WP16 "boot" → WP14 → WP16 "plaza". WP11 is the widest WP and gates four others, so its first PR stays small: contexts, `InstanceRef`, property access and signals. Everything else in WP11 follows in later PRs.
+A solid arrow means "starts after". WP11's arrows to WP12–WP15 mean its "data model" PR, and its arrow to WP16 "boot" means both its PRs. A dotted arrow from WP16 "importer" means the private sample runner, which those WPs need before they are done; WP13–WP15 need it too, and come after WP16 "importer" in any order that reaches them. The dotted arrow to WP17 means its compat tools only.
+
+Critical path: WP9 → WP11 → WP12 → WP16 "boot" → WP14 → WP16 "plaza". WP11 is the widest WP and gates four others, so its first PR, "data model", stays small: contexts and `HostYield`, `InstanceRef`, property access, attributes and tags, signals, and `GetService` for the core services. `require`, script start, `RunService`, `task` and the `game` fields follow in "runtime".
 
 ## Definition of done for M2
 
