@@ -518,8 +518,8 @@ impl CompatVm {
         out
     }
 
-    /// Shutdown: runs every `game:BindToClose` callback, then steps the clock
-    /// in steps of `dt` until they have all finished or
+    /// Shutdown: runs every `game:BindToClose` callback, then runs frames
+    /// ([`frame`](Self::frame)) of `dt` until they have all finished or
     /// [`session::CLOSE_TIMEOUT_SECS`] pass. Returns the diagnostics and
     /// whether every callback finished in time.
     pub fn close(&self, host: &mut dyn ScriptHost, dt: f64) -> (Vec<Diagnostic>, bool) {
@@ -531,7 +531,7 @@ impl CompatVm {
         let dt = if dt > 0.0 { dt } else { 1.0 / 60.0 };
         let mut waited = 0.0;
         while session::any_running(&threads) && waited < session::CLOSE_TIMEOUT_SECS {
-            out.extend(self.step(host, dt));
+            out.extend(self.frame(host, dt));
             waited += dt;
         }
         (out, !session::any_running(&threads))

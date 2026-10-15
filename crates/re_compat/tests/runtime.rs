@@ -400,6 +400,234 @@ mod model {
         }
     }
 
+    /// The standard setup plus `TestFunction`, a class with an `OnInvoke`
+    /// callback property that `Invoke` calls.
+    fn test_function_setup() -> Arc<CompatSetup> {
+        let mut b = re_compat::Bindings::standard().unwrap();
+        b.classes(|r| {
+            r.classes(
+                "test_callbacks.json",
+                re_compat::data::ClassFile::parse(
+                    "test_callbacks.json",
+                    r#"{
+                      "format": "real-engine/compat-classes", "version": 1,
+                      "classes": [{
+                        "name": "TestFunction", "superclass": "Instance", "creatable": true, "status": "implemented",
+                        "properties": [{ "name": "OnInvoke", "type": "function", "storage": { "kind": "builtin" }, "status": "implemented" }],
+                        "methods": [{ "name": "Invoke", "params": [{ "name": "x", "type": "any" }], "returns": ["any"], "status": "implemented" }]
+                      }]
+                    }"#,
+                )
+                .unwrap(),
+            )
+        });
+        b.accessor(
+            "TestFunction",
+            "OnInvoke",
+            re_compat::Accessor {
+                get: Arc::new(|_, _| Ok(Value::Entity(None))),
+                set: None,
+            },
+        );
+        b.method(
+            "TestFunction",
+            "Invoke",
+            Arc::new(|lua: &mlua::Lua, e, args| {
+                match re_compat::instance::callback(lua, e, "OnInvoke")? {
+                    Some(f) => f.call(args),
+                    None => Err(mlua::Error::runtime("no OnInvoke")),
+                }
+            }),
+        );
+        CompatSetup::new(b).unwrap()
+    }
+
+    #[test]
+    fn require_never_waits_forever() {
+        let mut p = Project::new();
+        let rs = p.service("ReplicatedStorage");
+        let sss = p.service("ServerScriptService");
+        // Two threads that each load a module the other one waits for.
+        p.script(
+            "ModuleScript",
+            "M1",
+            rs,
+            None,
+            "task.wait(0.05) return require(script.Parent.M2)",
+        );
+        p.script(
+            "ModuleScript",
+            "M2",
+            rs,
+            None,
+            "return require(script.Parent.M1)",
+        );
+        // A module whose loader is destroyed while it loads.
+        p.script(
+            "ModuleScript",
+            "Slow",
+            rs,
+            None,
+            "task.wait(0.1) return 'slow'",
+        );
+        // A module whose loader runs out of time.
+        p.script("ModuleScript", "Spin", rs, None, "while true do end");
+        p.script("ModuleScript", "Syntax", rs, None, "return (");
+        p.script(
+            "Script",
+            "A",
+            sss,
+            None,
+            "print('A', pcall(require, game.ReplicatedStorage.M1))",
+        );
+        p.script(
+            "Script",
+            "B",
+            sss,
+            None,
+            "print('B', pcall(require, game.ReplicatedStorage.M2))",
+        );
+        p.script(
+            "Script",
+            "Loader",
+            sss,
+            None,
+            "require(game.ReplicatedStorage.Slow)",
+        );
+        p.script(
+            "Script",
+            "Spinner",
+            sss,
+            None,
+            "require(game.ReplicatedStorage.Spin)",
+        );
+        p.script(
+            "Script",
+            "Main",
+            sss,
+            None,
+            r#"
+            local rs = game.ReplicatedStorage
+            task.wait(1/60)
+            game.ServerScriptService.Loader:Destroy()
+            print("Slow", require(rs.Slow))
+            print("Spin", pcall(require, rs.Spin))
+            for _ = 1, 2 do
+                print("Syntax", pcall(require, rs.Syntax))
+            end
+            "#,
+        );
+        let (mut h, _dir) = p.open();
+        h.start();
+        h.step(30);
+        // Only the spinning loader's own budget error is uncaught.
+        assert_eq!(h.uncaught().len(), 1, "{:#?}", h.uncaught());
+        let hint = h.uncaught()[0].1.hint.clone().unwrap_or_default();
+        assert!(hint.contains("Spinner"), "{:#?}", h.uncaught());
+        let lines = out(&mut h, Side::Server);
+        let find = |p: &str| {
+            lines
+                .iter()
+                .filter(|l| l.starts_with(p))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let a = find("A\t");
+        assert!(
+            a.len() == 1
+                && a[0].starts_with("A\tfalse")
+                && a[0].contains("[RE3004]")
+                && a[0].contains(
+                    "ReplicatedStorage.M2 -> ReplicatedStorage.M1 -> ReplicatedStorage.M2"
+                ),
+            "{lines:#?}"
+        );
+        let b = find("B\t");
+        assert!(
+            b.len() == 1 && b[0].starts_with("B\tfalse") && b[0].contains("[RE3004]"),
+            "{lines:#?}"
+        );
+        assert_eq!(find("Slow"), ["Slow\tslow"], "{lines:#?}");
+        let spin = find("Spin");
+        assert!(
+            spin.len() == 1
+                && spin[0].starts_with("Spin\tfalse")
+                && spin[0].contains("experienced an error while loading"),
+            "{lines:#?}"
+        );
+        let syntax = find("Syntax");
+        assert_eq!(syntax.len(), 2, "{lines:#?}");
+        assert!(!syntax[0].contains("experienced an error"), "{lines:#?}");
+        assert!(syntax[1].contains("experienced an error"), "{lines:#?}");
+        assert!(h.stuck(Side::Server).is_empty());
+    }
+
+    #[test]
+    fn destroying_a_script_drops_its_bindings_and_callbacks() {
+        let mut p = Project::with_setup(test_function_setup());
+        let sps = p.world.entity("StarterPlayerScripts").unwrap();
+        p.script(
+            "LocalScript",
+            "Binder",
+            sps,
+            None,
+            r#"
+            game:GetService("RunService"):BindToRenderStep("x", 100, function() print("step") end)
+            task.wait(1/60)
+            script:Destroy()
+            "#,
+        );
+        let sss = p.service("ServerScriptService");
+        let rs = p.service("ReplicatedStorage");
+        let f = p.folder("F", rs);
+        spawn_instance(
+            &mut p.world,
+            &p.setup.classes,
+            "TestFunction",
+            None,
+            "Fn",
+            Some(f),
+        )
+        .unwrap();
+        p.script(
+            "Script",
+            "Closer",
+            sss,
+            None,
+            r#"
+            game:BindToClose(function() print("closer") end)
+            game.ReplicatedStorage.F.Fn.OnInvoke = function() return 1 end
+            task.wait(1/60)
+            script:Destroy()
+            "#,
+        );
+        p.script(
+            "Script",
+            "Caller",
+            sss,
+            None,
+            r#"
+            task.wait(3/60)
+            print("invoke", pcall(function() return game.ReplicatedStorage.F.Fn:Invoke() end))
+            "#,
+        );
+        let (mut h, _dir) = p.open();
+        h.start();
+        h.step(5);
+        no_errors(&h);
+        let steps = out(&mut h, Side::Client)
+            .into_iter()
+            .filter(|l| l == "step")
+            .count();
+        assert!(steps <= 2, "the binding outlived its script: {steps} steps");
+        let lines = out(&mut h, Side::Server);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("invoke\tfalse"), "{lines:?}");
+        let (d, finished) = h.close();
+        assert!(d.is_empty() && finished, "{d:#?}");
+        assert!(out(&mut h, Side::Server).is_empty());
+    }
+
     #[test]
     fn destroying_a_script_stops_its_threads() {
         let mut p = Project::new();
@@ -541,6 +769,10 @@ mod model {
             game:BindToClose(function()
                 print("second")
             end)
+            game:BindToClose(function()
+                game:GetService("RunService").Heartbeat:Wait()
+                print("after a frame")
+            end)
             "#,
         );
         let (mut h, _dir) = p.open();
@@ -549,7 +781,10 @@ mod model {
         let (d, finished) = h.close();
         assert!(d.is_empty(), "{d:#?}");
         assert!(finished);
-        assert_eq!(out(&mut h, Side::Server), ["closing", "second", "saved"]);
+        assert_eq!(
+            out(&mut h, Side::Server),
+            ["closing", "second", "after a frame", "saved"]
+        );
 
         // A callback that never ends is abandoned after 30 s of game time.
         let mut p = Project::new();
@@ -680,43 +915,7 @@ mod model {
     /// (`OnInvoke`, `OnServerInvoke`); engine code calls it.
     #[test]
     fn callback_properties_hold_functions() {
-        let mut b = re_compat::Bindings::standard().unwrap();
-        b.classes(|r| {
-            r.classes(
-                "test_callbacks.json",
-                re_compat::data::ClassFile::parse(
-                    "test_callbacks.json",
-                    r#"{
-                      "format": "real-engine/compat-classes", "version": 1,
-                      "classes": [{
-                        "name": "TestFunction", "superclass": "Instance", "creatable": true, "status": "implemented",
-                        "properties": [{ "name": "OnInvoke", "type": "function", "storage": { "kind": "builtin" }, "status": "implemented" }],
-                        "methods": [{ "name": "Invoke", "params": [{ "name": "x", "type": "any" }], "returns": ["any"], "status": "implemented" }]
-                      }]
-                    }"#,
-                )
-                .unwrap(),
-            )
-        });
-        b.accessor(
-            "TestFunction",
-            "OnInvoke",
-            re_compat::Accessor {
-                get: Arc::new(|_, _| Ok(Value::Entity(None))),
-                set: None,
-            },
-        );
-        b.method(
-            "TestFunction",
-            "Invoke",
-            Arc::new(|lua: &mlua::Lua, e, args| {
-                match re_compat::instance::callback(lua, e, "OnInvoke")? {
-                    Some(f) => f.call(args),
-                    None => Err(mlua::Error::runtime("no OnInvoke")),
-                }
-            }),
-        );
-        let p = Project::with_setup(CompatSetup::new(b).unwrap());
+        let p = Project::with_setup(test_function_setup());
         let (mut h, _dir) = p.open();
         h.exec(
             Side::Server,

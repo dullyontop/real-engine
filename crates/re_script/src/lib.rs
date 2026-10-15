@@ -38,9 +38,9 @@ pub mod vm;
 pub mod sched {
     pub use crate::scheduler::{
         DeferCondition, Owner, SettleHook, WakeMode, YieldToken, advance, cancel_park,
-        current_owner, defer, defer_owned, is_parked, now, park, parked_labels, parked_waits,
-        resume_due_now as resume_due, set_settle_hook, settle, sleeping_count, spawn, spawn_owned,
-        stop_owner, wake, yielding,
+        current_owner, defer, defer_owned, is_parked, is_scheduled, now, park, parked_labels,
+        parked_waits, resume_due_now as resume_due, set_settle_hook, settle, sleeping_count, spawn,
+        spawn_owned, stop_owner, wake, yielding,
     };
 }
 

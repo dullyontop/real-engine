@@ -502,7 +502,39 @@ fn set_callback(lua: &Lua, e: Entity, name: &str, value: LuaValue) -> Result<()>
             t
         }
     };
+    // The script that set it; destroying that script clears it.
+    let owner = match &f {
+        Some(_) => re_script::sched::current_owner(lua)?.map(|o| o.to_string()),
+        None => None,
+    };
+    t.raw_set(format!("{OWNER_KEY}{name}"), owner)?;
     t.raw_set(name, f)
+}
+
+/// The prefix of the key that records which script set a callback.
+const OWNER_KEY: &str = "\0owner ";
+
+/// Clears the callbacks a stopped script set.
+pub(crate) fn drop_owner_callbacks(lua: &Lua, owner: re_script::sched::Owner) -> Result<()> {
+    let owner = owner.to_string();
+    let all: Table = lua.named_registry_value(CALLBACKS)?;
+    let mut gone = Vec::new();
+    for pair in all.pairs::<LuaValue, Table>() {
+        let (_, t) = pair?;
+        for pair in t.pairs::<String, LuaValue>() {
+            let (k, v) = pair?;
+            if let (Some(name), LuaValue::String(o)) = (k.strip_prefix(OWNER_KEY), &v)
+                && o.to_str().is_ok_and(|o| *o == *owner)
+            {
+                gone.push((t.clone(), k.clone(), name.to_string()));
+            }
+        }
+    }
+    for (t, k, name) in gone {
+        t.raw_set(k, LuaValue::Nil)?;
+        t.raw_set(name, LuaValue::Nil)?;
+    }
+    Ok(())
 }
 
 /// Drops the callbacks of a destroyed instance.

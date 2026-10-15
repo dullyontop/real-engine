@@ -1144,6 +1144,21 @@ pub fn yielding(lua: &Lua, name: &str, f: Function) -> Result<Function> {
     .call((f, marker, is_current, cancel, adopt))
 }
 
+/// True while the scheduler still holds thread `t`: running (and not
+/// cancelled), waiting, deferred or parked. A thread a stopped script owned,
+/// or one cancelled with `task.cancel`, is no longer held.
+pub fn is_scheduled(lua: &Lua, t: &Thread) -> Result<bool> {
+    let p = ptr(t);
+    sched(lua, |s| {
+        (s.running.iter().any(|(r, _)| *r == p) && !s.cancelled.contains(&p))
+            || s.sleeping.values().any(|x| ptr(&x.thread) == p)
+            || s.deferred.iter().any(|x| ptr(&x.thread) == p)
+            || s.parked
+                .values()
+                .any(|x| x.task.as_ref().is_some_and(|x| ptr(&x.thread) == p))
+    })
+}
+
 /// The owner of the code running now (the entry script that started it).
 pub fn current_owner(lua: &Lua) -> Result<Option<Owner>> {
     sched(lua, |s| s.current_owner())

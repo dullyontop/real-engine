@@ -23,7 +23,11 @@
 //! result. The module runs in the requiring thread, so it may yield. A module
 //! required again while it loads in the same thread is a cycle (`RE3004`,
 //! with the chain); another thread that requires it meanwhile waits for it.
-//! A module that raised an error raises again on every later `require`.
+//! A module that raised an error (or failed to compile) raises again on every
+//! later `require`. A wait that could never end is refused: two threads that
+//! each load a module the other waits for get `RE3004` with the chain, and a
+//! module whose loading thread was stopped (its script destroyed, or
+//! `task.cancel`) loads again in the next thread that requires it.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -172,8 +176,12 @@ pub(crate) fn start(lua: &Lua, e: Entity) -> Result<()> {
 
 /// Stops what script instance `e` started (when it is destroyed).
 pub(crate) fn stop(lua: &Lua, e: Entity) -> Result<()> {
-    crate::signal::disconnect_owner(lua, owner_of(e))?;
-    sched::stop_owner(lua, owner_of(e)).map(|_| ())
+    let owner = owner_of(e);
+    crate::signal::disconnect_owner(lua, owner)?;
+    crate::services::core::run_service::drop_owner(lua, owner)?;
+    super::session::drop_owner(lua, owner)?;
+    instance::drop_owner_callbacks(lua, owner)?;
+    sched::stop_owner(lua, owner).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -181,8 +189,8 @@ pub(crate) fn stop(lua: &Lua, e: Entity) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 enum Module {
-    /// Running in the thread with this pointer.
-    Loading(*const c_void),
+    /// Running in this thread.
+    Loading(Thread),
     Done(RegistryKey),
     Failed,
 }
@@ -192,6 +200,8 @@ struct Modules {
     by_entity: HashMap<Entity, Module>,
     /// The modules each thread is loading, outermost first.
     stacks: HashMap<*const c_void, Vec<Entity>>,
+    /// The threads waiting for a module another thread loads.
+    waiting: HashMap<*const c_void, (Thread, Entity)>,
 }
 
 pub(crate) fn install(lua: &Lua) -> Result<()> {
@@ -230,13 +240,104 @@ fn module_arg(lua: &Lua, v: &LuaValue) -> Result<Entity> {
     }
 }
 
+/// True while thread `t` can still finish what it runs: it has not ended
+/// and the scheduler still holds it (its script was not destroyed, it was
+/// not cancelled). A coroutine suspended outside the scheduler counts as
+/// gone.
+fn alive(lua: &Lua, t: &Thread) -> bool {
+    use mlua::thread::ThreadStatus;
+    matches!(t.status(), ThreadStatus::Resumable | ThreadStatus::Running)
+        && sched::is_scheduled(lua, t).unwrap_or(false)
+}
+
+/// Settles what dead threads were loading or waiting for: a module whose
+/// loader raised an error (its CPU budget ran out, say) failed; one whose
+/// loader was stopped or cancelled loads again on the next `require`.
+fn forget_dead(lua: &Lua) {
+    use mlua::thread::ThreadStatus;
+    let (loaders, waiters): (Vec<Thread>, Vec<Thread>) = {
+        let mods = lua.app_data_ref::<Modules>().expect("installed");
+        (
+            mods.by_entity
+                .values()
+                .filter_map(|m| match m {
+                    Module::Loading(t) => Some(t.clone()),
+                    _ => None,
+                })
+                .collect(),
+            mods.waiting.values().map(|(t, _)| t.clone()).collect(),
+        )
+    };
+    let dead_loaders: Vec<(*const c_void, bool)> = loaders
+        .iter()
+        .filter(|t| !alive(lua, t))
+        .map(|t| (t.to_pointer(), t.status() == ThreadStatus::Error))
+        .collect();
+    let dead_waiters: Vec<*const c_void> = waiters
+        .iter()
+        .filter(|t| !alive(lua, t))
+        .map(|t| t.to_pointer())
+        .collect();
+    let mut mods = lua.app_data_mut::<Modules>().expect("installed");
+    for (p, failed) in dead_loaders {
+        let theirs = |m: &Module| matches!(m, Module::Loading(t) if t.to_pointer() == p);
+        if failed {
+            for m in mods.by_entity.values_mut() {
+                if theirs(m) {
+                    *m = Module::Failed;
+                }
+            }
+        } else {
+            mods.by_entity.retain(|_, m| !theirs(m));
+        }
+        mods.stacks.remove(&p);
+    }
+    for p in dead_waiters {
+        mods.waiting.remove(&p);
+    }
+}
+
+/// The full names of `chain`, joined with arrows.
+fn chain_names(lua: &Lua, chain: &[Entity]) -> Result<String> {
+    with_world(lua, |w| {
+        chain
+            .iter()
+            .map(|x| tree::full_name(w, *x))
+            .collect::<Vec<_>>()
+            .join(" -> ")
+    })
+}
+
+/// The modules from `e` round to `e` again if waiting for `e` (loaded by
+/// another thread) would wait for this thread `me`: the loader of `e` waits
+/// for a module whose loader waits ... for a module `me` is loading.
+fn wait_cycle(mods: &Modules, me: *const c_void, e: Entity) -> Option<Vec<Entity>> {
+    let mut chain = vec![e];
+    let mut module = e;
+    for _ in 0..=mods.by_entity.len() {
+        let Some(Module::Loading(by)) = mods.by_entity.get(&module) else {
+            return None;
+        };
+        let by = by.to_pointer();
+        if by == me {
+            return Some(chain);
+        }
+        let (_, next) = mods.waiting.get(&by)?;
+        module = *next;
+        chain.push(module);
+    }
+    None
+}
+
 /// `require`'s first half: `("done", value)`, `("load", chunk)` or
 /// `("wait")` (another thread is loading the module).
 fn begin(lua: &Lua, (m, t): (LuaValue, Thread)) -> Result<(String, LuaValue)> {
     let e = module_arg(lua, &m)?;
     let me = t.to_pointer();
-    let cycle: Option<Vec<Entity>> = {
-        let mods = lua.app_data_ref::<Modules>().expect("installed");
+    forget_dead(lua);
+    let refused: Option<String> = {
+        let mut mods = lua.app_data_mut::<Modules>().expect("installed");
+        mods.waiting.remove(&me);
         match mods.by_entity.get(&e) {
             Some(Module::Done(k)) => {
                 let v: LuaValue = lua.registry_value(k)?;
@@ -250,33 +351,48 @@ fn begin(lua: &Lua, (m, t): (LuaValue, Thread)) -> Result<(String, LuaValue)> {
             }
             Some(Module::Loading(by)) => {
                 let stack = mods.stacks.get(&me).cloned().unwrap_or_default();
-                if *by == me || stack.contains(&e) {
-                    Some(stack)
+                if by.to_pointer() == me || stack.contains(&e) {
+                    let start = stack.iter().position(|x| *x == e).unwrap_or(0);
+                    let mut chain = stack[start..].to_vec();
+                    chain.push(e);
+                    Some(format!(
+                        "Requested module was required recursively: {}",
+                        chain_names(lua, &chain)?
+                    ))
+                } else if let Some(mut chain) = wait_cycle(&mods, me, e) {
+                    // The other thread waits, through its loaders, for a
+                    // module this one loads: neither can go on.
+                    if let Some(first) = stack.iter().position(|x| Some(x) == chain.last()) {
+                        chain.extend(stack[first + 1..].iter().copied());
+                    }
+                    chain.push(e);
+                    Some(format!(
+                        "Requested module was required recursively (by two threads that would wait for each other): {}",
+                        chain_names(lua, &chain)?
+                    ))
                 } else {
+                    mods.waiting.insert(me, (t.clone(), e));
                     return Ok(("wait".into(), LuaValue::Nil));
                 }
             }
             None => None,
         }
     };
-    if let Some(stack) = cycle {
-        let names = with_world(lua, |w| {
-            let start = stack.iter().position(|x| *x == e).unwrap_or(0);
-            stack[start..]
-                .iter()
-                .chain([&e])
-                .map(|x| tree::full_name(w, *x))
-                .collect::<Vec<_>>()
-                .join(" -> ")
-        })?;
-        return Err(lua_error(
-            REQUIRE,
-            format!("Requested module was required recursively: {names}"),
-        ));
+    if let Some(msg) = refused {
+        return Err(lua_error(REQUIRE, msg));
     }
-    let (_, f) = compile(lua, e)?;
+    // A module that does not compile fails for good, so a loop that retries
+    // it does not compile it again (compile time is not charged to scripts).
+    let f = match compile(lua, e) {
+        Ok((_, f)) => f,
+        Err(err) => {
+            let mut mods = lua.app_data_mut::<Modules>().expect("installed");
+            mods.by_entity.insert(e, Module::Failed);
+            return Err(err);
+        }
+    };
     let mut mods = lua.app_data_mut::<Modules>().expect("installed");
-    mods.by_entity.insert(e, Module::Loading(me));
+    mods.by_entity.insert(e, Module::Loading(t));
     mods.stacks.entry(me).or_default().push(e);
     Ok(("load".into(), LuaValue::Function(f)))
 }

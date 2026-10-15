@@ -4,7 +4,7 @@
 //! The values live in the world as the [`Session`] resource, so the builtin
 //! accessors (which see only the world) read them. Shutdown
 //! ([`CompatVm::close`](super::CompatVm::close)) runs every `BindToClose`
-//! callback as its own thread, in bind order, and keeps stepping the clock
+//! callback as its own thread, in bind order, and keeps running frames
 //! until they have all finished or [`CLOSE_TIMEOUT_SECS`] of game time pass,
 //! as Roblox gives them 30 seconds.
 
@@ -58,15 +58,16 @@ fn string(f: fn(&GameInfo) -> String) -> Accessor {
 
 /// The `BindToClose` callbacks of a VM, in bind order.
 #[derive(Default)]
-pub(crate) struct CloseCallbacks(Vec<RegistryKey>);
+pub(crate) struct CloseCallbacks(Vec<(RegistryKey, Option<re_script::sched::Owner>)>);
 
 fn bind_to_close(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
     let f: Function = args(lua, a, "DataModel:BindToClose")?;
     let k = lua.create_registry_value(f)?;
+    let owner = re_script::sched::current_owner(lua)?;
     lua.app_data_mut::<CloseCallbacks>()
         .ok_or_else(|| mlua::Error::runtime("this VM has no close callbacks"))?
         .0
-        .push(k);
+        .push((k, owner));
     ret(lua, ())
 }
 
@@ -83,17 +84,34 @@ pub(crate) fn start_close(lua: &Lua) -> Result<Vec<Thread>> {
         .map(|mut c| std::mem::take(&mut c.0))
         .unwrap_or_default();
     let mut threads = Vec::with_capacity(keys.len());
-    for k in keys {
+    for (k, owner) in keys {
         let f: Function = lua.registry_value(&k)?;
         lua.remove_registry_value(k)?;
-        threads.push(re_script::sched::spawn(
-            lua,
-            f,
-            MultiValue::new(),
-            "BindToClose",
-        )?);
+        let args = MultiValue::new();
+        threads.push(match owner {
+            Some(o) => re_script::sched::spawn_owned(lua, f, args, "BindToClose", o)?,
+            None => re_script::sched::spawn(lua, f, args, "BindToClose")?,
+        });
     }
     Ok(threads)
+}
+
+/// Drops the `BindToClose` callbacks a stopped script bound.
+pub(crate) fn drop_owner(lua: &Lua, owner: re_script::sched::Owner) -> Result<()> {
+    let gone: Vec<RegistryKey> = match lua.app_data_mut::<CloseCallbacks>() {
+        Some(mut c) => {
+            let (gone, kept) = std::mem::take(&mut c.0)
+                .into_iter()
+                .partition(|(_, o)| *o == Some(owner));
+            c.0 = kept;
+            gone.into_iter().map(|(k, _): (RegistryKey, _)| k).collect()
+        }
+        None => Vec::new(),
+    };
+    for k in gone {
+        lua.remove_registry_value(k)?;
+    }
+    Ok(())
 }
 
 /// True while any of `threads` has not finished.

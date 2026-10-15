@@ -36,6 +36,8 @@ struct Binding {
     priority: i64,
     seq: u64,
     f: RegistryKey,
+    /// The script that bound it; destroying that script unbinds it.
+    owner: Option<sched::Owner>,
 }
 
 /// The context's render-step bindings.
@@ -65,6 +67,7 @@ fn bind_to_render_step(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue
         )
     })?;
     let f = lua.create_registry_value(f)?;
+    let owner = sched::current_owner(lua)?;
     let mut steps = lua
         .app_data_mut::<RenderSteps>()
         .ok_or_else(|| mlua::Error::runtime("this VM has no render steps"))?;
@@ -75,26 +78,38 @@ fn bind_to_render_step(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue
         priority,
         seq,
         f,
+        owner,
     });
     ret(lua, ())
 }
 
 fn unbind_from_render_step(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
     let name: String = args(lua, a, "RunService:UnbindFromRenderStep")?;
+    unbind(lua, |b| b.name == name)?;
+    ret(lua, ())
+}
+
+/// Removes the bindings `gone` picks.
+fn unbind(lua: &Lua, gone: impl Fn(&Binding) -> bool) -> Result<()> {
     let removed: Vec<RegistryKey> = {
-        let mut steps = lua
-            .app_data_mut::<RenderSteps>()
-            .ok_or_else(|| mlua::Error::runtime("this VM has no render steps"))?;
+        let Some(mut steps) = lua.app_data_mut::<RenderSteps>() else {
+            return Ok(());
+        };
         let (gone, kept) = std::mem::take(&mut steps.list)
             .into_iter()
-            .partition(|b| b.name == name);
+            .partition(|b| gone(b));
         steps.list = kept;
         gone.into_iter().map(|b: Binding| b.f).collect()
     };
     for k in removed {
         lua.remove_registry_value(k)?;
     }
-    ret(lua, ())
+    Ok(())
+}
+
+/// Removes the bindings a stopped script made.
+pub(crate) fn drop_owner(lua: &Lua, owner: sched::Owner) -> Result<()> {
+    unbind(lua, |b| b.owner == Some(owner))
 }
 
 fn is_server(lua: &Lua, _: Entity, _: MultiValue) -> Result<MultiValue> {
@@ -161,23 +176,38 @@ pub(crate) fn pre_render(lua: &Lua, dt: f64) -> Result<()> {
     if state(lua)?.kind != ContextKind::Client {
         return Ok(());
     }
-    let order: Vec<(String, Function)> = {
+    let order: Vec<u64> = {
         let steps = lua
             .app_data_ref::<RenderSteps>()
             .ok_or_else(|| mlua::Error::runtime("this VM has no render steps"))?;
         let mut v: Vec<&Binding> = steps.list.iter().collect();
         v.sort_by_key(|b| (b.priority, b.seq));
-        v.into_iter()
-            .map(|b| Ok((b.name.clone(), lua.registry_value::<Function>(&b.f)?)))
-            .collect::<Result<_>>()?
+        v.into_iter().map(|b| b.seq).collect()
     };
-    for (name, f) in order {
-        sched::spawn(
-            lua,
-            f,
-            (dt,).into_lua_multi(lua)?,
-            &format!("render step {name}"),
-        )?;
+    for seq in order {
+        // A binding an earlier one removed this frame does not run.
+        let found = {
+            let steps = lua
+                .app_data_ref::<RenderSteps>()
+                .ok_or_else(|| mlua::Error::runtime("this VM has no render steps"))?;
+            match steps.list.iter().find(|b| b.seq == seq) {
+                Some(b) => Some((
+                    b.name.clone(),
+                    lua.registry_value::<Function>(&b.f)?,
+                    b.owner,
+                )),
+                None => None,
+            }
+        };
+        let Some((name, f, owner)) = found else {
+            continue;
+        };
+        let args = (dt,).into_lua_multi(lua)?;
+        let label = format!("render step {name}");
+        match owner {
+            Some(o) => sched::spawn_owned(lua, f, args, &label, o)?,
+            None => sched::spawn(lua, f, args, &label)?,
+        };
         sched::settle(lua)?;
     }
     fire(lua, "PreRender", dt)?;

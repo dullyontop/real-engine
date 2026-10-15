@@ -279,7 +279,12 @@ fn compat_config_round_trips_the_session_values() {
     assert_eq!(cfg.game.place_id, 42);
     assert!(!cfg.game.studio);
     assert_eq!(cfg.to_toml(), text);
-    assert_eq!(CompatConfig::from_project_toml(&cfg.to_toml()).unwrap().unwrap(), cfg);
+    assert_eq!(
+        CompatConfig::from_project_toml(&cfg.to_toml())
+            .unwrap()
+            .unwrap(),
+        cfg
+    );
 }
 
 #[test]
