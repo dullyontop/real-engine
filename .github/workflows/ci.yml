@@ -1,7 +1,8 @@
 # CI for Real Engine (ADR-0023, docs/M1_PLAN.md WP0).
 #
 # Required for merge: fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke
-# (all on Ubuntu). build-windows and build-macos are reported only.
+# (all on Ubuntu); verify-plaza joins them once ADR-0023 is amended (M2_PLAN
+# WP16). build-windows and build-macos are reported only.
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
@@ -122,6 +123,49 @@ jobs:
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
           jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic), regenerations=\(.regenerations | length)"' out/verify.json
           jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
+
+  verify-plaza:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/linux-setup
+      - name: Install luau-lsp 1.70.1
+        run: |
+          curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
+          echo "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567  /tmp/luau-lsp.zip" | sha256sum -c -
+          sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
+      - run: cargo build --locked --release -p re_cli
+      - name: real check --types on the plaza
+        run: target/release/real check --types --project examples/plaza
+      - name: real verify on the plaza
+        run: |
+          mkdir -p out
+          target/release/real verify --project examples/plaza --json > out/verify.json
+      - name: Check the verify report (M2_PLAN, definition of done item 2)
+        # Every stage ran and passed: the boot ran its 600 frames with no
+        # uncaught error or stuck yield, the scan found nothing missing, at least
+        # two replays ran twice with the same state_hash, and the goldens match.
+        run: |
+          jq -e '
+            .ok == true
+            and ([.stages[].name] | contains(["schema", "compile", "scan", "boot", "replays", "goldens", "perf"]))
+            and all(.stages[]; .ok and ((.data | type) != "object" or (.data | has("skipped") | not)))
+            and ([.stages[] | select(.name == "scan") | .data.missing] == [{}])
+            and ([.stages[] | select(.name == "boot") | .data] as [$b]
+                 | $b.frames == 600 and $b.uncaught == [] and $b.stuck_yields == [])
+            and ([.stages[] | select(.name == "replays") | .data.runs[]] as $r
+                 | ($r | length) >= 2 and all($r[]; .deterministic))
+            and ([.stages[] | select(.name == "goldens") | .data.checks[]] as $g
+                 | ($g | length) >= 2 and all($g[]; .matches))
+            and (.perf | type == "object")
+          ' out/verify.json
+          jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
+          jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic)"' out/verify.json
+          jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
+      - name: Windowed run under Xvfb (must print RUN OK)
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/plaza --frames 300 --exit-after | tee out/run.log
+          grep -qx 'RUN OK' out/run.log
 
   xvfb-smoke:
     runs-on: ubuntu-latest

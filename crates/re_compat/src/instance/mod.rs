@@ -14,9 +14,10 @@
 //! * A `stub-error` method with a registered implementation runs it when
 //!   called (the offline services raise `RE9002` from the call, so `pcall`
 //!   catches it); without one, reading it raises `RE9001`.
-//! * After `Destroy()` a handle keeps its name and class (a tombstone):
-//!   `Name` and `ClassName` still read, `Parent` reads `nil` and is locked,
-//!   queries find nothing.
+//! * After `Destroy()` a handle keeps its name and class (a tombstone) and,
+//!   as in Roblox, the property values the instance had when it was
+//!   despawned: they still read, `Parent` reads `nil` and is locked, writes
+//!   are refused (`RE3007`) and queries find nothing.
 //!
 //! [`ClassRegistry::get_property`]: crate::ClassRegistry::get_property
 
@@ -46,7 +47,7 @@ use re_reflect::Value;
 use re_scene::{Entity, World};
 use re_script::codes::{BAD_ARGUMENT, STALE_HANDLE, UNSUPPORTED_MEMBER};
 
-use crate::class::{Accessor, ClassMarker, Member};
+use crate::class::{Accessor, ClassMarker, ClassRegistry, Member};
 use crate::data::Status;
 use crate::error::CompatError;
 use crate::runtime::{Bindings, compat_error, lua_error, state, with_world};
@@ -80,6 +81,8 @@ pub struct InstanceRef {
     /// The entity.
     pub entity: Entity,
     tomb: RefCell<Option<Rc<Tombstone>>>,
+    /// The property values the instance had when it was despawned.
+    props: RefCell<Option<Rc<HashMap<String, Value>>>>,
 }
 
 /// The entity of an `Instance` userdata.
@@ -97,6 +100,7 @@ pub fn handle(lua: &Lua, entity: Entity) -> Result<AnyUserData> {
     let ud = lua.create_userdata(InstanceRef {
         entity,
         tomb: RefCell::new(None),
+        props: RefCell::new(None),
     })?;
     cache.raw_set(key, &ud)?;
     Ok(ud)
@@ -105,6 +109,19 @@ pub fn handle(lua: &Lua, entity: Entity) -> Result<AnyUserData> {
 /// The Luau value of `entity` (its handle).
 pub fn push(lua: &Lua, entity: Entity) -> Result<LuaValue> {
     Ok(LuaValue::UserData(handle(lua, entity)?))
+}
+
+/// The value of an instance reference a property holds: the instance's
+/// handle, or, for an instance already despawned, the handle a script still
+/// holds (with its tombstone and property values) and otherwise `nil` (there
+/// is nothing left to read).
+pub fn push_ref(lua: &Lua, entity: Entity) -> Result<LuaValue> {
+    let alive = with_world(lua, |w| tree::alive(w, entity))?;
+    if alive || has_handle(lua, entity)? {
+        push(lua, entity)
+    } else {
+        Ok(LuaValue::Nil)
+    }
 }
 
 /// The handle of an entity that may already be gone: when it is, the handle
@@ -120,13 +137,53 @@ pub fn push_with_tomb(lua: &Lua, entity: Entity, tomb: &Tombstone) -> Result<Lua
     Ok(LuaValue::UserData(ud))
 }
 
-/// Gives the live handle of `entity`, if one exists, its tombstone.
-pub(crate) fn bury(lua: &Lua, entity: Entity, tomb: Tombstone) -> Result<()> {
+/// True if this VM holds a handle of `entity`.
+pub(crate) fn has_handle(lua: &Lua, entity: Entity) -> Result<bool> {
+    let cache: Table = lua.named_registry_value(HANDLES)?;
+    let key = LightUserData(entity.to_bits() as usize as *mut c_void);
+    Ok(matches!(
+        cache.raw_get::<LuaValue>(key)?,
+        LuaValue::UserData(_)
+    ))
+}
+
+/// The property values of live instance `e` (except `Parent` and the
+/// callbacks), kept for its handle once it is despawned. A property that
+/// cannot be read now is left out.
+pub(crate) fn snapshot(classes: &ClassRegistry, w: &World, e: Entity) -> HashMap<String, Value> {
+    let mut out = HashMap::new();
+    let Some(class) = tree::class(w, e) else {
+        return out;
+    };
+    for c in classes.ancestry(class) {
+        for p in &c.properties {
+            if p.ty == CALLBACK_TYPE || p.name == "Parent" || out.contains_key(&p.name) {
+                continue;
+            }
+            if let Ok(v) = classes.get_property(w, e, &p.name) {
+                out.insert(p.name.clone(), v);
+            }
+        }
+    }
+    out
+}
+
+/// Gives the live handle of `entity`, if one exists, its tombstone and the
+/// property values it had.
+pub(crate) fn bury(
+    lua: &Lua,
+    entity: Entity,
+    tomb: Tombstone,
+    props: Option<HashMap<String, Value>>,
+) -> Result<()> {
     let cache: Table = lua.named_registry_value(HANDLES)?;
     let key = LightUserData(entity.to_bits() as usize as *mut c_void);
     if let LuaValue::UserData(ud) = cache.raw_get::<LuaValue>(key)? {
         let r = ud.borrow::<InstanceRef>()?;
         *r.tomb.borrow_mut() = Some(Rc::new(tomb));
+        if let Some(p) = props {
+            *r.props.borrow_mut() = Some(Rc::new(p));
+        }
     }
     Ok(())
 }
@@ -356,7 +413,17 @@ fn index(lua: &Lua, this: &InstanceRef, key: &str) -> Result<LuaValue> {
                     "Name" => Ok(LuaValue::String(lua.create_string(&tomb.name)?)),
                     "ClassName" => Ok(LuaValue::String(lua.create_string(&tomb.class)?)),
                     "Parent" => Ok(LuaValue::Nil),
-                    _ => Err(stale(this, key)),
+                    _ => {
+                        let kept = this
+                            .props
+                            .borrow()
+                            .as_ref()
+                            .and_then(|p| p.get(key).cloned());
+                        match kept {
+                            Some(v) => state(lua)?.setup.codec.to_lua(lua, v, &ty),
+                            None => Err(stale(this, key)),
+                        }
+                    }
                 };
             }
             let st = state(lua)?;

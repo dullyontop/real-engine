@@ -1,0 +1,259 @@
+{
+  "$schema": "../schemas/scene.schema.json",
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    {
+      "id": "game",
+      "name": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "DataModel"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        }
+      }
+    },
+    {
+      "id": "Workspace",
+      "name": "Workspace",
+      "parent": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "Workspace"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "Compat_Model": {
+          "PrimaryPart": null
+        },
+        "Compat_Workspace": {
+          "Gravity": 196.2,
+          "FallenPartsDestroyHeight": -500.0
+        },
+        "ServiceTag": {}
+      }
+    },
+    {
+      "id": "Lighting",
+      "name": "Lighting",
+      "parent": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "Lighting"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "ServiceTag": {}
+      }
+    },
+    {
+      "id": "ReplicatedStorage",
+      "name": "ReplicatedStorage",
+      "parent": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "ReplicatedStorage"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "ServiceTag": {}
+      }
+    },
+    {
+      "id": "imp-45009ab0d1a26648",
+      "name": "Shared",
+      "parent": "ReplicatedStorage",
+      "components": {
+        "ClassMarker": {
+          "class": "ModuleScript"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "ScriptRef": {
+          "path": "scripts/ReplicatedStorage/Shared.luau",
+          "context": "Module"
+        }
+      }
+    },
+    {
+      "id": "ServerScriptService",
+      "name": "ServerScriptService",
+      "parent": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "ServerScriptService"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "ServiceTag": {}
+      }
+    },
+    {
+      "id": "imp-d17e819a767f2db5",
+      "name": "Coins",
+      "parent": "ServerScriptService",
+      "components": {
+        "ClassMarker": {
+          "class": "ModuleScript"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "ScriptRef": {
+          "path": "scripts/ServerScriptService/Coins.luau",
+          "context": "Module"
+        }
+      }
+    },
+    {
+      "id": "imp-b62b1ca5de1084d7",
+      "name": "Main",
+      "parent": "ServerScriptService",
+      "components": {
+        "ClassMarker": {
+          "class": "Script"
+        },
+        "Compat_BaseScript": {
+          "RunContext": "Legacy"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "ScriptRef": {
+          "path": "scripts/ServerScriptService/Main.server.luau",
+          "context": "Server"
+        }
+      }
+    },
+    {
+      "id": "imp-01d635bb6d01edfe",
+      "name": "World",
+      "parent": "ServerScriptService",
+      "components": {
+        "ClassMarker": {
+          "class": "ModuleScript"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "ScriptRef": {
+          "path": "scripts/ServerScriptService/World.luau",
+          "context": "Module"
+        }
+      }
+    },
+    {
+      "id": "ServerStorage",
+      "name": "ServerStorage",
+      "parent": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "ServerStorage"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "ServiceTag": {}
+      }
+    },
+    {
+      "id": "StarterGui",
+      "name": "StarterGui",
+      "parent": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "StarterGui"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "Compat_StarterGui": {
+          "ShowDevelopmentGui": true
+        },
+        "ServiceTag": {}
+      }
+    },
+    {
+      "id": "StarterPlayer",
+      "name": "StarterPlayer",
+      "parent": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "StarterPlayer"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "Compat_StarterPlayer": {
+          "CharacterWalkSpeed": 16.0,
+          "CharacterJumpPower": 50.0,
+          "CharacterJumpHeight": 7.2,
+          "CharacterUseJumpPower": true,
+          "CharacterMaxSlopeAngle": 89.0,
+          "AutoJumpEnabled": true,
+          "EnableMouseLockOption": true,
+          "CameraMaxZoomDistance": 400.0,
+          "CameraMinZoomDistance": 0.5,
+          "CameraMode": "Classic",
+          "HealthDisplayDistance": 100.0,
+          "NameDisplayDistance": 100.0,
+          "LoadCharacterAppearance": true
+        },
+        "ServiceTag": {}
+      }
+    },
+    {
+      "id": "StarterPlayerScripts",
+      "name": "StarterPlayerScripts",
+      "parent": "StarterPlayer",
+      "components": {
+        "ClassMarker": {
+          "class": "StarterPlayerScripts"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        }
+      }
+    },
+    {
+      "id": "imp-b2269930d166912e",
+      "name": "Hud",
+      "parent": "StarterPlayerScripts",
+      "components": {
+        "ClassMarker": {
+          "class": "LocalScript"
+        },
+        "Compat_BaseScript": {
+          "RunContext": "Legacy"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        },
+        "ScriptRef": {
+          "path": "scripts/StarterPlayer/StarterPlayerScripts/Hud.client.luau",
+          "context": "Client"
+        }
+      }
+    },
+    {
+      "id": "StarterCharacterScripts",
+      "name": "StarterCharacterScripts",
+      "parent": "StarterPlayer",
+      "components": {
+        "ClassMarker": {
+          "class": "StarterCharacterScripts"
+        },
+        "Compat_Instance": {
+          "Archivable": true
+        }
+      }
+    }
+  ]
+}

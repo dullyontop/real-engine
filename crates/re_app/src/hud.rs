@@ -90,15 +90,8 @@ pub fn draw(ctx: &egui::Context, lines: &[HudLine]) {
     }
 }
 
-/// Runs egui for one HUD frame of `size_px` physical pixels at
-/// `pixels_per_point`, giving the output to paint.
-pub fn run(
-    ctx: &egui::Context,
-    lines: &[HudLine],
-    size_px: [u32; 2],
-    pixels_per_point: f32,
-    time: f64,
-) -> egui::FullOutput {
+/// egui's input for a pass over a target of `size_px` physical pixels.
+pub fn raw_input(size_px: [u32; 2], pixels_per_point: f32, time: f64) -> egui::RawInput {
     let points = egui::vec2(size_px[0] as f32, size_px[1] as f32) / pixels_per_point;
     let mut input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, points)),
@@ -108,6 +101,19 @@ pub fn run(
     if let Some(v) = input.viewports.get_mut(&egui::ViewportId::ROOT) {
         v.native_pixels_per_point = Some(pixels_per_point);
     }
+    input
+}
+
+/// Runs egui for one HUD frame of `size_px` physical pixels at
+/// `pixels_per_point`, giving the output to paint.
+pub fn run(
+    ctx: &egui::Context,
+    lines: &[HudLine],
+    size_px: [u32; 2],
+    pixels_per_point: f32,
+    time: f64,
+) -> egui::FullOutput {
+    let input = raw_input(size_px, pixels_per_point, time);
     // egui lays a new area out invisibly on its first pass, so a frame captured
     // on its own would have no HUD. Run twice and paint the second pass, keeping
     // the first pass's texture updates (the font atlas) in order.

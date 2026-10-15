@@ -175,7 +175,7 @@ impl ValueCodec {
             {
                 hook(lua, &v)?
             }
-            Value::Entity(Some(e)) => instance::push(lua, e)?,
+            Value::Entity(Some(e)) => instance::push_ref(lua, e)?,
             Value::Color(c) => match self.to_lua.get("Color3") {
                 Some(hook) => hook(lua, &Value::Color(c))?,
                 None => {
