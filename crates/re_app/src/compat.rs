@@ -288,6 +288,10 @@ pub fn install_default_scripts(
     if classes.class("Part").is_err() || needs.iter().any(|(c, m)| classes.member(c, m).is_err()) {
         return Ok(());
     }
+    // A starter character the project names but ships no rig in gets the
+    // engine's rig, so its players and the scripts that clone it have one.
+    re_compat::humanoid::rig::fill_starter_character(world, classes, game)
+        .map_err(|e| fail(format!("cannot fill StarterPlayer.StarterCharacter: {e}")))?;
     for script in re_compat::humanoid::scripts::DEFAULT_SCRIPTS {
         let Some(starter) = tree::find_child(world, game, "StarterPlayer", false) else {
             continue;
