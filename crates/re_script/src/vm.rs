@@ -53,11 +53,15 @@ impl ContextKind {
     }
 }
 
-impl From<ScriptContext> for ContextKind {
-    fn from(c: ScriptContext) -> ContextKind {
-        match c {
-            ScriptContext::Game => ContextKind::Game,
-            ScriptContext::Tools => ContextKind::Tools,
+impl ContextKind {
+    /// The native context a `ScriptRef` with `context` runs in; `None` for the
+    /// compatibility layer's contexts (`server`, `client`, `module`), which
+    /// the native runtime does not start.
+    pub fn of_script(context: ScriptContext) -> Option<ContextKind> {
+        match context {
+            ScriptContext::Game => Some(ContextKind::Game),
+            ScriptContext::Tools => Some(ContextKind::Tools),
+            ScriptContext::Server | ScriptContext::Client | ScriptContext::Module => None,
         }
     }
 }

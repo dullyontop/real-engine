@@ -123,13 +123,14 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
 mod catalog {
     #[test]
     fn diagnostics_catalog_is_valid() {
-        // re_script owns two blocks; check each against its own range.
+        // re_script owns two blocks; check each against its own range. Of the
+        // compatibility block it keeps RE9001 only (docs/M2_PLAN.md).
         let (script, compat): (Vec<_>, Vec<_>) = super::DIAGNOSTICS
             .iter()
             .copied()
             .partition(|d| d.code.number() < 9000);
         let mut problems = re_core::validate_catalog(&script, 3000..=3079);
-        problems.extend(re_core::validate_catalog(&compat, 9000..=9999));
+        problems.extend(re_core::validate_catalog(&compat, 9001..=9001));
         assert!(problems.is_empty(), "{problems:#?}");
     }
 }

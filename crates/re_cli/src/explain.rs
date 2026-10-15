@@ -28,6 +28,7 @@ pub fn catalog() -> Vec<&'static DiagInfo> {
         re_script::DIAGNOSTICS,
         re_proc::DIAGNOSTICS,
         re_geom::DIAGNOSTICS,
+        re_compat::DIAGNOSTICS,
         #[cfg(feature = "tooling")]
         re_script_check::DIAGNOSTICS,
         #[cfg(feature = "tooling")]

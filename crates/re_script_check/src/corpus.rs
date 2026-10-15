@@ -239,7 +239,7 @@ pub fn run(dirs: &[PathBuf], options: &CorpusOptions) -> CorpusReport {
             .count();
         t.warnings = t.diagnostics.len() - t.errors;
     }
-    report.scan.gap = GapReport::new(&usage, &Coverage::native());
+    report.scan.gap = GapReport::new(&usage, &Coverage::compat());
     report.scan.by_member = usage.by_member;
     report.scan.unknown_receivers = usage.unknown_receivers;
     report.scan.dynamic_requires = usage.dynamic_requires;

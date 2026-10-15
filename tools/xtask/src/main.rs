@@ -5,12 +5,14 @@
 //! cargo xtask dupes            duplicate crate versions against deny.toml's skip-list
 //! cargo xtask explain          every RE#### code has an explain page, in range, one crate
 //! cargo xtask schemas [--check]  regenerate (or check) the JSON Schemas in schemas/
-//! cargo xtask check            all of the above, with `schemas --check`
+//! cargo xtask coverage [--check] regenerate (or check) crates/re_compat/coverage.json
+//! cargo xtask check            all of the above, with `--check`
 //! ```
 //!
 //! The alias lives in `.cargo/config.toml`. xtask links no engine crate: it reads
 //! `cargo metadata` and `cargo tree` output and the source tree.
 
+mod coverage;
 mod dupes;
 mod explain;
 mod graph;
@@ -30,7 +32,10 @@ commands:
   explain            check that every RE#### code has an explain page, lies in its
                      crate's range and is used by one crate only
   schemas [--check]  regenerate schemas/ (or fail if the committed files differ)
-  check              run check-graph, dupes, explain and schemas --check
+  coverage [--check] regenerate crates/re_compat/coverage.json (or fail if the
+                     committed file differs)
+  check              run check-graph, dupes, explain, schemas --check and
+                     coverage --check
 ";
 
 fn main() -> ExitCode {
@@ -47,6 +52,8 @@ fn main() -> ExitCode {
         ["explain"] => explain::run(&root),
         ["schemas"] => schemas::run(&root, false),
         ["schemas", "--check"] => schemas::run(&root, true),
+        ["coverage"] => coverage::run(&root, false),
+        ["coverage", "--check"] => coverage::run(&root, true),
         ["check"] => check_all(&root),
         ["help" | "--help" | "-h"] => {
             print!("{USAGE}");
@@ -68,11 +75,12 @@ fn main() -> ExitCode {
 
 fn check_all(root: &Path) -> Result<()> {
     type Step = (&'static str, fn(&Path) -> Result<()>);
-    let steps: [Step; 4] = [
+    let steps: [Step; 5] = [
         ("check-graph", graph::run),
         ("dupes", dupes::run),
         ("explain", explain::run),
         ("schemas --check", |root| schemas::run(root, true)),
+        ("coverage --check", |root| coverage::run(root, true)),
     ];
     let mut failed = Vec::new();
     for (name, step) in steps {

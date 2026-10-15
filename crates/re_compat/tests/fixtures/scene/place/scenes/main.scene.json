@@ -1,0 +1,176 @@
+{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    {
+      "id": "game",
+      "name": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "DataModel"
+        },
+        "Compat_Instance": {
+          "Archivable": true,
+          "Secret": ""
+        }
+      }
+    },
+    {
+      "id": "Workspace",
+      "name": "Workspace",
+      "parent": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "Workspace"
+        },
+        "Compat_Instance": {
+          "Archivable": true,
+          "Secret": ""
+        },
+        "ServiceTag": {}
+      }
+    },
+    {
+      "id": "tower",
+      "name": "Tower",
+      "parent": "Workspace",
+      "components": {
+        "ClassMarker": {
+          "class": "Model"
+        },
+        "Compat_Instance": {
+          "Archivable": true,
+          "Secret": ""
+        }
+      }
+    },
+    {
+      "id": "tower-base",
+      "name": "Base",
+      "parent": "tower",
+      "components": {
+        "ClassMarker": {
+          "class": "TestBlock"
+        },
+        "Compat_Instance": {
+          "Archivable": true,
+          "Secret": ""
+        },
+        "Compat_TestBlock": {
+          "Count": 4,
+          "Mode": "Server",
+          "Locked": false
+        },
+        "Transform": {
+          "translation": [0.0, 0.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    },
+    {
+      "id": "ServerScriptService",
+      "name": "ServerScriptService",
+      "parent": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "ServerScriptService"
+        },
+        "Compat_Instance": {
+          "Archivable": true,
+          "Secret": ""
+        },
+        "ServiceTag": {}
+      }
+    },
+    {
+      "id": "greeter",
+      "name": "Greeter",
+      "parent": "ServerScriptService",
+      "components": {
+        "ClassMarker": {
+          "class": "Script"
+        },
+        "Compat_BaseScript": {
+          "RunContext": "Legacy"
+        },
+        "Compat_Instance": {
+          "Archivable": true,
+          "Secret": ""
+        },
+        "ScriptRef": {
+          "path": "scripts/server/greeter.luau",
+          "context": "Server"
+        }
+      }
+    },
+    {
+      "id": "ReplicatedStorage",
+      "name": "ReplicatedStorage",
+      "parent": "game",
+      "components": {
+        "ClassMarker": {
+          "class": "ReplicatedStorage"
+        },
+        "Compat_Instance": {
+          "Archivable": true,
+          "Secret": ""
+        },
+        "ServiceTag": {}
+      }
+    },
+    {
+      "id": "shared",
+      "name": "Shared",
+      "parent": "ReplicatedStorage",
+      "components": {
+        "ClassMarker": {
+          "class": "Folder"
+        },
+        "Compat_Instance": {
+          "Archivable": true,
+          "Secret": ""
+        }
+      }
+    },
+    {
+      "id": "strings",
+      "name": "Strings",
+      "parent": "shared",
+      "components": {
+        "ClassMarker": {
+          "class": "ModuleScript"
+        },
+        "Compat_Instance": {
+          "Archivable": true,
+          "Secret": ""
+        },
+        "ScriptRef": {
+          "path": "scripts/shared/strings.luau",
+          "context": "Module"
+        }
+      }
+    },
+    {
+      "id": "hud",
+      "name": "Hud",
+      "parent": "ReplicatedStorage",
+      "components": {
+        "ClassMarker": {
+          "class": "Script"
+        },
+        "Compat_BaseScript": {
+          "RunContext": "Client"
+        },
+        "Compat_Instance": {
+          "Archivable": true,
+          "Secret": ""
+        },
+        "ScriptRef": {
+          "path": "scripts/client/hud.luau",
+          "context": "Client"
+        }
+      }
+    }
+  ]
+}

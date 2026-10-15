@@ -3,11 +3,15 @@
 //!
 //! [`Coverage::native`] is the M1 coverage table: the Luau builtins plus the
 //! engine-native API, read from the definitions `re_script` generates from its
-//! bindings, so the table cannot drift from what the VM has. M2 adds the
-//! compatibility table.
+//! bindings, so the table cannot drift from what the VM has.
+//! [`Coverage::compat`] adds the compatibility layer's table,
+//! `crates/re_compat/coverage.json`: its `implemented` rows count as covered,
+//! its `partial` and `stub-error` rows are reported apart, and its `missing`
+//! rows stay gaps.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use re_compat::{CoverageFile, Status};
 use serde::{Deserialize, Serialize};
 
 use crate::scan::ApiUsage;
@@ -64,6 +68,14 @@ pub struct Coverage {
     pub members: BTreeSet<String>,
     /// Receivers all of whose members are covered.
     pub whole: BTreeSet<String>,
+    /// Names (globals, or `receiver.member`) that exist with a documented gap.
+    pub partial: BTreeSet<String>,
+    /// Names that exist and raise a clear error when used.
+    pub stub_error: BTreeSet<String>,
+    /// True once a compatibility table was added: the report then also checks
+    /// enum items (`Enum.KeyCode.Space`), `Instance.new(<Class>)` and
+    /// `GetService(<Service>)`.
+    pub compat: bool,
 }
 
 impl Coverage {
@@ -75,6 +87,40 @@ impl Coverage {
         c.globals.extend(BUILTIN_LIBS.iter().map(|s| s.to_string()));
         c.whole.extend(BUILTIN_LIBS.iter().map(|s| s.to_string()));
         c
+    }
+
+    /// The M2 table: [`Coverage::native`] plus the compatibility layer's
+    /// `coverage.json`.
+    pub fn compat() -> Coverage {
+        let mut c = Coverage::native();
+        let table = CoverageFile::parse(re_compat::COVERAGE_JSON)
+            .expect("re_compat's committed coverage.json parses (checked by its tests)");
+        c.add_compat(&table);
+        c
+    }
+
+    /// Adds the rows of a compatibility coverage table, keyed as
+    /// [`CoverageFile::keys`] keys them.
+    pub fn add_compat(&mut self, table: &CoverageFile) {
+        self.compat = true;
+        for (key, status) in table.keys() {
+            let global = !key.contains('.');
+            match status {
+                Status::Implemented if global => {
+                    self.globals.insert(key);
+                }
+                Status::Implemented => {
+                    self.members.insert(key);
+                }
+                Status::Partial => {
+                    self.partial.insert(key);
+                }
+                Status::StubError => {
+                    self.stub_error.insert(key);
+                }
+                Status::Missing => {}
+            }
+        }
     }
 
     /// Reads `declare name: { member: type, ... }` and `declare function name`
@@ -133,24 +179,59 @@ pub struct GapReport {
     /// Names used that are not covered, with how often (globals by name, members
     /// as `receiver.member`).
     pub missing: BTreeMap<String, usize>,
+    /// Names used that exist with a documented gap, with how often.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub partial: BTreeMap<String, usize>,
+    /// Names used that exist and raise a clear error, with how often.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stub_error: BTreeMap<String, usize>,
 }
 
 impl GapReport {
     /// Compares `usage` with `coverage`.
     pub fn new(usage: &ApiUsage, coverage: &Coverage) -> GapReport {
         let mut r = GapReport::default();
-        for (g, n) in &usage.globals {
-            if coverage.globals.contains(g) {
-                r.covered += 1;
-            } else {
-                r.missing.insert(g.clone(), *n);
-            }
+        let globals = usage
+            .globals
+            .iter()
+            .map(|(g, n)| (g, *n, coverage.globals.contains(g)));
+        let members = usage
+            .by_member
+            .iter()
+            .map(|(m, n)| (m, *n, coverage.covers_member(m)));
+        // Calls the compatibility table keys by argument.
+        let mut extra: Vec<(String, usize)> = Vec::new();
+        if coverage.compat {
+            extra.extend(usage.enums.iter().map(|(k, n)| (format!("Enum.{k}"), *n)));
+            extra.extend(
+                usage
+                    .instance_new
+                    .iter()
+                    .map(|(k, n)| (format!("Instance.new({k})"), *n)),
+            );
+            extra.extend(
+                usage
+                    .services
+                    .iter()
+                    .map(|(k, n)| (format!("GetService({k})"), *n)),
+            );
         }
-        for (m, n) in &usage.by_member {
-            if coverage.covers_member(m) {
+        let extra = extra.iter().map(|(k, n)| {
+            (
+                k,
+                *n,
+                coverage.members.contains(k) || coverage.globals.contains(k),
+            )
+        });
+        for (name, n, covered) in globals.chain(members).chain(extra) {
+            if covered {
                 r.covered += 1;
+            } else if coverage.partial.contains(name) {
+                r.partial.insert(name.clone(), n);
+            } else if coverage.stub_error.contains(name) {
+                r.stub_error.insert(name.clone(), n);
             } else {
-                r.missing.insert(m.clone(), *n);
+                r.missing.insert(name.clone(), n);
             }
         }
         r
@@ -203,5 +284,51 @@ mod tests {
         assert!(g.missing.contains_key("world.Spawn"));
         assert!(!g.missing.contains_key("world.query"));
         assert!(!g.missing.contains_key("math.floor"));
+    }
+
+    #[test]
+    fn compat_table_rows_count_by_status() {
+        let table = CoverageFile::parse(
+            r#"{
+              "format": "real-engine/compat-coverage", "version": 1, "totals": {},
+              "classes": [
+                {"name": "Instance", "status": "partial", "members": [
+                  {"name": "Name", "kind": "property", "status": "implemented"},
+                  {"name": "Destroy", "kind": "method", "status": "missing"}]},
+                {"name": "Players", "superclass": "Instance", "service": true, "status": "partial",
+                 "members": [{"name": "LocalPlayer", "kind": "property", "status": "partial", "note": "n"}]},
+                {"name": "DataModel", "superclass": "Instance", "status": "partial", "members": [
+                  {"name": "GetService", "kind": "method", "status": "implemented"}]}],
+              "enums": [{"name": "KeyCode", "status": "implemented", "items": ["A"]}],
+              "libraries": [
+                {"name": "game", "class": "DataModel", "status": "implemented", "members": []},
+                {"name": "DataStoreService", "status": "stub-error", "members": []}]
+            }"#,
+        )
+        .unwrap();
+        let mut c = Coverage::native();
+        c.add_compat(&table);
+        let u = scan_source(
+            "local P = game:GetService('Players')\nprint(P.LocalPlayer, P.Name)\nP:Destroy()\nlocal _ = Enum.KeyCode.A\nlocal _ = DataStoreService",
+            "t.luau",
+        )
+        .unwrap();
+        let g = GapReport::new(&u, &c);
+        assert!(!g.missing.contains_key("game"), "{g:?}");
+        assert!(!g.missing.contains_key("game.GetService"), "{g:?}");
+        assert!(!g.missing.contains_key("Players.Name"), "inherited: {g:?}");
+        assert!(g.partial.contains_key("Players.LocalPlayer"), "{g:?}");
+        assert!(g.missing.contains_key("Players.Destroy"), "{g:?}");
+        assert!(g.stub_error.contains_key("DataStoreService"), "{g:?}");
+        assert!(!g.missing.contains_key("Enum"), "{g:?}");
+        assert!(!g.missing.contains_key("Enum.KeyCode"), "{g:?}");
+        assert!(!g.missing.contains_key("Enum.KeyCode.A"), "{g:?}");
+        assert!(g.partial.contains_key("GetService(Players)"), "{g:?}");
+    }
+
+    #[test]
+    fn committed_compat_table_loads() {
+        let c = Coverage::compat();
+        assert!(c.globals.contains("print"));
     }
 }

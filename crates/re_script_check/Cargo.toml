@@ -12,6 +12,7 @@ publish.workspace = true
 [dependencies]
 re_core.workspace = true
 re_script.workspace = true
+re_compat.workspace = true
 full_moon.workspace = true
 serde.workspace = true
 serde_json.workspace = true

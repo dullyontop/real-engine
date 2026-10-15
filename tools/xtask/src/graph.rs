@@ -150,6 +150,21 @@ pub fn rules() -> Vec<Rule> {
             why: "re_script reaches subsystems only through HostServices, and never full_moon",
         },
         Rule {
+            krate: "re_compat",
+            check: Check::Reaches(&[
+                "re_render",
+                "re_physics",
+                "re_audio",
+                "re_input",
+                "re_assets",
+                "re_anim",
+                "full_moon",
+                "tokio",
+            ]),
+            why: "re_compat reaches subsystems only through HostServices, and never full_moon \
+                  or tokio",
+        },
+        Rule {
             krate: "re_script_check",
             check: Check::Reaches(&["re_app", "tokio"]),
             why: "re_script_check must not depend on re_app or tokio",

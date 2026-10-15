@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LibraryFile",
+  "description": "A library file: `libraries/<area>.json`. Libraries are the globals that\nare not classes: datatype tables (`Vector3`), function libraries (`task`)\nand global functions (`typeof`), plus globals that name an instance\n(`game`, `workspace`, `script`) through `class`.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "An optional `$schema` reference, ignored.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "format": {
+      "description": "Always [`LIBRARY_FORMAT`].",
+      "type": "string"
+    },
+    "version": {
+      "description": "Always [`DATA_VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "libraries": {
+      "description": "The globals.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LibraryDoc"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "libraries"
+  ],
+  "$defs": {
+    "LibraryDoc": {
+      "description": "One global.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The global's name (`Vector3`, `task`, `typeof`, `game`).",
+          "type": "string"
+        },
+        "class": {
+          "description": "For a global that is an instance: its class, whose members (with the\ninherited ones) are the global's members.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "members": {
+          "description": "The table's members (`Vector3.new`, `Vector3.zero`, `task.wait`):\nfunctions, constants and fields. Empty for a function or an instance\nglobal.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LibraryMemberDoc"
+          }
+        },
+        "value_members": {
+          "description": "For a datatype: the members of its values (`v.Magnitude`, `v:Dot(w)`),\nproperties and methods.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LibraryMemberDoc"
+          }
+        },
+        "record": {
+          "description": "For a datatype stored in component fields: its stored form, a record\ntype of this name registered when the class registry is built, so a\nclass property of this type can use `own` storage. Record fields take\nscalar types only (as for `own` properties, without `Instance`).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RecordFieldDoc"
+          }
+        },
+        "deprecated": {
+          "description": "Set when the global is deprecated: what to use instead (`RE9101`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "How far the global itself is implemented.",
+          "$ref": "#/$defs/Status"
+        },
+        "note": {
+          "description": "The gap, for `partial`.",
+          "type": "string"
+        },
+        "doc": {
+          "description": "What it is, in our words.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status"
+      ]
+    },
+    "LibraryMemberDoc": {
+      "description": "One member of a library table, or of a datatype's values.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The name (`new`).",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What kind of member it is; `function` when left out.",
+          "$ref": "#/$defs/LibraryMemberKind"
+        },
+        "params": {
+          "description": "The parameters of a function or method (after the value itself, for a\nmethod).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ParamDoc"
+          }
+        },
+        "returns": {
+          "description": "The result types of a function or method.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "type": {
+          "description": "The type of a constant or property.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "yields": {
+          "description": "True if the call can yield the calling coroutine.",
+          "type": "boolean"
+        },
+        "deprecated": {
+          "description": "Set when the member is deprecated: what to use instead (`RE9101`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "How far it is implemented.",
+          "$ref": "#/$defs/Status"
+        },
+        "note": {
+          "description": "The gap, for `partial`.",
+          "type": "string"
+        },
+        "doc": {
+          "description": "What it does, in our words.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status"
+      ]
+    },
+    "LibraryMemberKind": {
+      "description": "What kind of member a library member is.",
+      "oneOf": [
+        {
+          "description": "Called with `.` (`Vector3.new(...)`, `task.wait()`).",
+          "type": "string",
+          "const": "function"
+        },
+        {
+          "description": "A fixed value (`Vector3.zero`).",
+          "type": "string",
+          "const": "constant"
+        },
+        {
+          "description": "A value read (and maybe written) with `.`: a library field, or on a\ndatatype's values a field such as `Magnitude`.",
+          "type": "string",
+          "const": "property"
+        },
+        {
+          "description": "On a datatype's values: called with `:` (`v:Dot(w)`).",
+          "type": "string",
+          "const": "method"
+        }
+      ]
+    },
+    "ParamDoc": {
+      "description": "A parameter of a method or event.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The name.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The type, as for a property, plus `any`, `table`, `function` and `...`.",
+          "type": "string"
+        },
+        "optional": {
+          "description": "True if it may be left out.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "Status": {
+      "description": "How far a class, member, enum or library is implemented.",
+      "oneOf": [
+        {
+          "description": "Behaviour matches for the cases our tests cover.",
+          "type": "string",
+          "const": "implemented"
+        },
+        {
+          "description": "Exists with a documented gap (see the row's `note`).",
+          "type": "string",
+          "const": "partial"
+        },
+        {
+          "description": "Raises `RE9001` or `RE9002` with the member's name.",
+          "type": "string",
+          "const": "stub-error"
+        },
+        {
+          "description": "Declared, not built yet.",
+          "type": "string",
+          "const": "missing"
+        }
+      ]
+    },
+    "RecordFieldDoc": {
+      "description": "One field of a datatype's stored form.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The field's name.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Its type (`number`, `Vector3`, `quat`, `Enum.<Name>`, ...).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ]
+    }
+  }
+}

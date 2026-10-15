@@ -1,0 +1,18 @@
+{
+  "$schema": "../../../schemas/compat-enums.schema.json",
+  "format": "real-engine/compat-enums",
+  "version": 1,
+  "enums": [
+    {
+      "name": "RunContext",
+      "items": [
+        { "name": "Legacy", "value": 0 },
+        { "name": "Server", "value": 1 },
+        { "name": "Client", "value": 2 },
+        { "name": "Plugin", "value": 3 }
+      ],
+      "status": "missing",
+      "doc": "Where a script runs. The scene conventions read it to choose a script's context; scripts cannot reach Enum.RunContext until the enum tables exist."
+    }
+  ]
+}

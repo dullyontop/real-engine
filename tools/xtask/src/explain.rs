@@ -28,8 +28,9 @@ pub fn ranges(krate: &str) -> &'static [(u16, u16)] {
         "re_reflect" => &[(1000, 1199)],
         "re_scene" => &[(1200, 1999)],
         "re_command" => &[(2000, 2999)],
-        // re_script also owns the compatibility block in M1.
-        "re_script" => &[(3000, 3999), (9000, 9999)],
+        // re_script keeps RE9001 ("unsupported API member"), which every
+        // layer raises (docs/M2_PLAN.md).
+        "re_script" => &[(3000, 3999), (9001, 9001)],
         "re_script_check" => &[(3000, 3999)],
         "re_proc" => &[(4000, 4499)],
         "re_geom" => &[(4500, 4599)],
@@ -42,7 +43,8 @@ pub fn ranges(krate: &str) -> &'static [(u16, u16)] {
         "re_agent" => &[(8000, 8099)],
         "re_mcp" => &[(8500, 8599)],
         "re_editor" => &[(8800, 8899)],
-        "re_compat" => &[(9000, 9999)],
+        "re_compat" => &[(9002, 9799)],
+        "re_import" => &[(9800, 9899)],
         _ => &[],
     }
 }

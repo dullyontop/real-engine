@@ -569,12 +569,14 @@ fn fire_dt(lua: &Lua, signal: Signal, dt: f64) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Every entity with a `ScriptRef`, in stable-id order.
+/// Every entity with a `ScriptRef` in a native context, in stable-id order.
 fn attached_scripts(world: &mut World) -> Vec<(Entity, String, ContextKind)> {
     let mut found: Vec<(Option<String>, Entity, String, ContextKind)> = Vec::new();
     let mut q = world.ecs.query::<(Entity, &ScriptRef)>();
     for (e, s) in q.iter(&world.ecs) {
-        found.push((None, e, s.path.clone(), s.context.into()));
+        if let Some(kind) = ContextKind::of_script(s.context) {
+            found.push((None, e, s.path.clone(), kind));
+        }
     }
     for f in &mut found {
         f.0 = world.id_of(f.1).map(str::to_string);

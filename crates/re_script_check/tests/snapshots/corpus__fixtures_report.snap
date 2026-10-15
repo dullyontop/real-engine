@@ -90,8 +90,12 @@ expression: snapshot
       "missing": {
         "Enum": 1,
         "Enum.KeyCode": 1,
+        "Enum.KeyCode.Space": 1,
+        "GetService(Players)": 1,
+        "GetService(RunService)": 1,
         "Instance": 1,
         "Instance.new": 1,
+        "Instance.new(Part)": 1,
         "Players.PlayerAdded": 1,
         "RunService.Heartbeat": 1,
         "Vector3": 1,

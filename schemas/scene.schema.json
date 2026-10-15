@@ -556,7 +556,10 @@
         "context": {
           "enum": [
             "Game",
-            "Tools"
+            "Tools",
+            "Server",
+            "Client",
+            "Module"
           ],
           "default": "Game",
           "description": "The context (VM) the script runs in."

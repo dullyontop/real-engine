@@ -42,6 +42,11 @@ pub struct AppConfig {
     /// `[verify]`.
     #[serde(default)]
     pub verify: VerifyConfig,
+    /// `[compat]`: present in a project in the Roblox-style compat layout
+    /// (docs/M2_PLAN.md, WP9). Kept as written; `re_compat::CompatConfig`
+    /// reads and checks it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compat: Option<toml::Table>,
     /// Runtime option: run without a window. Headless runs use a fixed frame
     /// time of one simulation step.
     #[serde(skip)]
@@ -62,6 +67,7 @@ impl Default for AppConfig {
             scripts: ScriptsConfig::default(),
             input: re_input::InputConfig::default(),
             verify: VerifyConfig::default(),
+            compat: None,
             headless: true,
             persist_edits: false,
         }
@@ -377,6 +383,23 @@ pub(crate) fn line_col(text: &str, offset: usize) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compat_section_is_kept_as_written() {
+        let c =
+            AppConfig::parse("[project]\nname = \"p\"\n\n[compat]\napi = \"roblox\"\n").unwrap();
+        let compat = c.compat.unwrap();
+        assert_eq!(compat.get("api").and_then(|v| v.as_str()), Some("roblox"));
+        assert!(
+            AppConfig::parse("[project]\nname = \"p\"\n")
+                .unwrap()
+                .compat
+                .is_none()
+        );
+        // The compat layer's fixture project loads as a project.
+        let fixture = include_str!("../../re_compat/tests/fixtures/scene/place/real.toml");
+        assert!(AppConfig::parse(fixture).unwrap().compat.is_some());
+    }
 
     #[test]
     fn minimal_file_takes_defaults() {

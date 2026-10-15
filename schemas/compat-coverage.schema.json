@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CoverageFile",
+  "description": "`coverage.json`: every class, member, enum and library with its status,\nwritten by `cargo xtask coverage` from the data files and never edited by\nhand.",
+  "type": "object",
+  "properties": {
+    "format": {
+      "description": "Always [`COVERAGE_FORMAT`].",
+      "type": "string"
+    },
+    "version": {
+      "description": "Always [`DATA_VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "totals": {
+      "description": "Counts by status over every row.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0
+      }
+    },
+    "classes": {
+      "description": "Classes by name.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CoverageClass"
+      }
+    },
+    "enums": {
+      "description": "Enum types by name.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CoverageEnum"
+      }
+    },
+    "libraries": {
+      "description": "Libraries by name.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CoverageLibrary"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "totals",
+    "classes",
+    "enums",
+    "libraries"
+  ],
+  "$defs": {
+    "CoverageClass": {
+      "description": "A class in the coverage table (its own members only; the superclass gives\nthe rest).",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The class name.",
+          "type": "string"
+        },
+        "superclass": {
+          "description": "The superclass.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "creatable": {
+          "description": "Creatable with `Instance.new`.",
+          "type": "boolean"
+        },
+        "service": {
+          "description": "A service.",
+          "type": "boolean"
+        },
+        "status": {
+          "description": "The class's own status.",
+          "$ref": "#/$defs/Status"
+        },
+        "members": {
+          "description": "Members declared on this class, by name.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CoverageMember"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status",
+        "members"
+      ]
+    },
+    "Status": {
+      "description": "How far a class, member, enum or library is implemented.",
+      "oneOf": [
+        {
+          "description": "Behaviour matches for the cases our tests cover.",
+          "type": "string",
+          "const": "implemented"
+        },
+        {
+          "description": "Exists with a documented gap (see the row's `note`).",
+          "type": "string",
+          "const": "partial"
+        },
+        {
+          "description": "Raises `RE9001` or `RE9002` with the member's name.",
+          "type": "string",
+          "const": "stub-error"
+        },
+        {
+          "description": "Declared, not built yet.",
+          "type": "string",
+          "const": "missing"
+        }
+      ]
+    },
+    "CoverageMember": {
+      "description": "A member in the coverage table.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The name.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`property`, `method` or `event` for a class member; `function`,\n`constant`, `property` or `method` for a library member.",
+          "type": "string"
+        },
+        "status": {
+          "description": "The status.",
+          "$ref": "#/$defs/Status"
+        },
+        "note": {
+          "description": "The gap, for `partial`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "kind",
+        "status"
+      ]
+    },
+    "CoverageEnum": {
+      "description": "An enum type in the coverage table.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The name.",
+          "type": "string"
+        },
+        "status": {
+          "description": "The status.",
+          "$ref": "#/$defs/Status"
+        },
+        "note": {
+          "description": "The gap, for `partial`.",
+          "type": "string"
+        },
+        "items": {
+          "description": "The item names, in value order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status",
+        "items"
+      ]
+    },
+    "CoverageLibrary": {
+      "description": "A library in the coverage table.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The global's name.",
+          "type": "string"
+        },
+        "class": {
+          "description": "The class, for an instance global.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "The status.",
+          "$ref": "#/$defs/Status"
+        },
+        "note": {
+          "description": "The gap, for `partial`.",
+          "type": "string"
+        },
+        "members": {
+          "description": "The table's members, by name.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CoverageMember"
+          }
+        },
+        "value_members": {
+          "description": "The members of a datatype's values, by name.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CoverageMember"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status",
+        "members"
+      ]
+    }
+  }
+}
