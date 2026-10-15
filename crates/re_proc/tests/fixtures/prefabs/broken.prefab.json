@@ -1,0 +1,1 @@
+{ "format": "real-engine/prefab", "version": 1, "entities": [ { "id": "x", "components": { "NoSuchComponent": {} } } ] }

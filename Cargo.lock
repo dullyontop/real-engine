@@ -3336,6 +3336,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "re_geom"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "glam 0.34.1",
+ "re_core",
+ "re_types",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "re_input"
 version = "0.1.0"
 dependencies = [
@@ -3364,6 +3376,28 @@ dependencies = [
  "re_core",
  "re_types",
  "tracing",
+]
+
+[[package]]
+name = "re_proc"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "glam 0.34.1",
+ "indexmap",
+ "postcard",
+ "re_command",
+ "re_core",
+ "re_geom",
+ "re_noise",
+ "re_reflect",
+ "re_scene",
+ "re_types",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
