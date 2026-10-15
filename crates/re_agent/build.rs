@@ -38,7 +38,10 @@ fn main() {
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join("/");
-        let abs = path.canonicalize().expect("a collected file exists");
+        // A file that vanished since it was listed is left out, not an error.
+        let Ok(abs) = path.canonicalize() else {
+            continue;
+        };
         code.push_str(&format!(
             "    ({rel:?}, include_str!({:?})),\n",
             abs.display().to_string()
