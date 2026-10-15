@@ -666,11 +666,31 @@ fn humanoids(lua: &Lua) -> Result<Vec<Entity>> {
     })
 }
 
+/// Removes the controllers no live Humanoid owns any more (its character
+/// was destroyed, left the place or lost its root part).
+fn drop_orphans(w: &mut World, classes: &ClassRegistry, live: &[Entity]) {
+    let owned: BTreeSet<Entity> = live
+        .iter()
+        .filter_map(|h| w.ecs.get::<HumanoidRt>(*h).and_then(|rt| rt.root))
+        .filter(|r| !tree::is_destroyed(w, *r))
+        .collect();
+    let orphans: Vec<Entity> = w
+        .ecs
+        .get_resource::<body::Controllers>()
+        .map(|c| c.0.difference(&owned).copied().collect())
+        .unwrap_or_default();
+    for root in orphans {
+        body::remove(w, classes, root);
+    }
+}
+
 /// Before the physics step: health and death, the walk direction, jumps and
 /// the move requests.
 pub fn pre_simulation(lua: &Lua, dt: f64) -> Result<()> {
     let classes = state(lua)?.setup.classes.clone();
-    for e in humanoids(lua)? {
+    let all = humanoids(lua)?;
+    with_world(lua, |w| drop_orphans(w, &classes, &all))?;
+    for e in all {
         seat::update(lua, &classes, e, dt as f32)?;
         let mut evs = Vec::new();
         with_world(lua, |w| pre_one(w, &classes, e, dt as f32, &mut evs))?;
@@ -690,8 +710,52 @@ pub fn post_simulation(lua: &Lua, dt: f64) -> Result<()> {
         with_world(lua, |w| post_one(w, &classes, e, dt as f32, &mut evs))?;
         fire(lua, e, evs)?;
     }
+    fall_out(lua, &classes, &all)?;
     touch::dispatch(lua, &classes, &all)?;
     signal::events::after_write(lua)
+}
+
+/// Destroys the parts of the characters whose root part fell below
+/// `Workspace.FallenPartsDestroyHeight` (the part simulation does this for
+/// its own parts); the Humanoid dies.
+fn fall_out(lua: &Lua, classes: &ClassRegistry, all: &[Entity]) -> Result<()> {
+    let game = state(lua)?.game;
+    let parts = with_world(lua, |w| {
+        let Some(ws) = crate::services::core::find_service(w, game, "Workspace") else {
+            return Vec::new();
+        };
+        let height = match classes.get_property(w, ws, "FallenPartsDestroyHeight") {
+            Ok(Value::Float(h)) => h as f32,
+            _ => -500.0,
+        };
+        let mut out = Vec::new();
+        for &h in all {
+            let (Some(root), Some(rig)) = (root_part(w, classes, h), tree::parent(w, h)) else {
+                continue;
+            };
+            let below = cframe_prop(w, classes, root, "CFrame").is_some_and(|cf| cf.p[1] < height);
+            if !below {
+                continue;
+            }
+            if let Some(r) = w.ecs.get::<HumanoidRt>(h).and_then(|rt| rt.root) {
+                body::remove(w, classes, r);
+                rt(w, classes, h).root = None;
+            }
+            set_own(w, HUM, h, "Health", Value::Float(0.0));
+            out.extend(
+                tree::descendants(w, rig)
+                    .into_iter()
+                    .filter(|d| tree::is_a(w, classes, *d, "BasePart")),
+            );
+        }
+        out
+    })?;
+    for p in parts {
+        if with_world(lua, |w| tree::alive(w, p) && !tree::is_destroyed(w, p))? {
+            crate::instance::destroy(lua, p)?;
+        }
+    }
+    Ok(())
 }
 
 /// Runs health bookkeeping for one Humanoid now (after `TakeDamage`).

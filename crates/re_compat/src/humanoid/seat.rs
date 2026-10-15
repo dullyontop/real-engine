@@ -52,7 +52,7 @@ fn seat_bool(w: &World, classes: &ClassRegistry, seat: Entity, p: &str) -> bool 
 fn occupant(w: &World, classes: &ClassRegistry, seat: Entity) -> Option<Entity> {
     let c = seat_class(w, classes, seat)?;
     match get_own(w, c, seat, "Occupant") {
-        Some(Value::Entity(Some(h))) if tree::alive(w, h) => Some(h),
+        Some(Value::Entity(Some(h))) if tree::alive(w, h) && !tree::is_destroyed(w, h) => Some(h),
         _ => None,
     }
 }

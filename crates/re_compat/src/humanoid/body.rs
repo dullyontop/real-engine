@@ -12,7 +12,7 @@
 //! asks for is kept here ([`Walks`]) and sent before every substep
 //! ([`before_substep`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use glam::{Quat, Vec3};
 use re_scene::ecs as bevy_ecs;
@@ -30,6 +30,19 @@ use crate::physics::{CharacterDriven, CharacterLoose, SUBSTEPS, group_bits, with
 /// substep.
 #[derive(bevy_ecs::resource::Resource, Default, Debug)]
 pub struct Walks(pub BTreeMap<EntityId, Vec3>);
+
+/// The root parts that have a character controller now.
+#[derive(bevy_ecs::resource::Resource, Default, Debug)]
+pub struct Controllers(pub BTreeSet<Entity>);
+
+fn forget(w: &mut World, root: Entity) {
+    if let Some(mut walks) = w.ecs.get_resource_mut::<Walks>() {
+        walks.0.remove(&entity_id(root));
+    }
+    if let Some(mut c) = w.ecs.get_resource_mut::<Controllers>() {
+        c.0.remove(&root);
+    }
+}
 
 /// True when the world has a part simulation for characters to move in.
 pub fn available(w: &mut World) -> bool {
@@ -101,8 +114,14 @@ pub fn add(
             rot,
         },
     );
-    if added && let Some(model) = tree::parent(w, root) {
-        mark_parts(w, classes, model, true);
+    if added {
+        w.ecs
+            .get_resource_or_insert_with(Controllers::default)
+            .0
+            .insert(root);
+        if let Some(model) = tree::parent(w, root) {
+            mark_parts(w, classes, model, true);
+        }
     }
     added
 }
@@ -116,10 +135,8 @@ pub fn remove(w: &mut World, classes: &ClassRegistry, root: Entity) {
             id: entity_id(root),
         },
     );
-    if let Some(mut walks) = w.ecs.get_resource_mut::<Walks>() {
-        walks.0.remove(&entity_id(root));
-    }
-    if tree::alive(w, root) {
+    forget(w, root);
+    if tree::alive(w, root) && !tree::is_destroyed(w, root) {
         match tree::parent(w, root) {
             Some(model) => mark_parts(w, classes, model, false),
             None => {
@@ -138,9 +155,7 @@ pub fn release(w: &mut World, root: Entity) {
             id: entity_id(root),
         },
     );
-    if let Some(mut walks) = w.ecs.get_resource_mut::<Walks>() {
-        walks.0.remove(&entity_id(root));
-    }
+    forget(w, root);
 }
 
 /// Hands a dead character's parts to the part simulation as ordinary parts,

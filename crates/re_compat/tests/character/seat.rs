@@ -208,3 +208,42 @@ fn a_walking_character_touches_parts() {
     p.frames(60);
     assert_eq!(p.out(), ["picked up by Dummy", "left HumanoidRootPart"]);
 }
+
+fn controllers(p: &mut Place) -> usize {
+    re_compat::physics::with_physics(&mut p.world, |ph| ph.character_count()).unwrap()
+}
+
+#[test]
+fn a_destroyed_character_leaves_no_controller() {
+    let mut p = settled("R15");
+    p.character("R6", "Ghost", 6.0, 0.0);
+    p.frames(2);
+    assert_eq!(controllers(&mut p), 2);
+    p.run("workspace.Ghost:Destroy()");
+    p.frames(2);
+    assert_eq!(controllers(&mut p), 1);
+    // A character whose root part is destroyed loses its controller too.
+    p.run("workspace.Dummy.HumanoidRootPart:Destroy()");
+    p.frames(2);
+    assert_eq!(controllers(&mut p), 0);
+}
+
+#[test]
+fn a_character_that_falls_into_the_void_dies() {
+    let mut p = settled("R15");
+    p.run(
+        "local h = workspace.Dummy.Humanoid
+         h.Died:Connect(function() print('died') end)
+         workspace.Dummy:PivotTo(CFrame.new(0, -600, 0))",
+    );
+    p.frames(3);
+    p.run(
+        "local n = 0
+         for _, d in workspace.Dummy:GetDescendants() do
+             if d:IsA('BasePart') then n += 1 end
+         end
+         print(n, workspace.Dummy.Humanoid.Health)",
+    );
+    assert_eq!(p.out(), ["died", "0 0"]);
+    assert_eq!(controllers(&mut p), 0);
+}

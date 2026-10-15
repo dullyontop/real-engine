@@ -44,11 +44,6 @@ fn two_with_spawns() -> Two {
     two_with(CompatSetup::new(b).unwrap())
 }
 
-/// Two worlds with the standard classes, so the default character is a rig.
-fn two_with_parts() -> Two {
-    two_with(CompatSetup::standard().unwrap())
-}
-
 fn two_with(setup: Arc<CompatSetup>) -> Two {
     let mut world = World::new();
     create_place(
@@ -1384,7 +1379,7 @@ mod net {
 
     #[test]
     fn the_default_character_is_an_r15_rig() {
-        let mut t = two_with_parts();
+        let mut t = two();
         t.join(&PlayerSpec::numbered(1));
         t.frames(2);
         let check = r#"
