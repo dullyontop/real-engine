@@ -3610,6 +3610,7 @@ dependencies = [
  "glam 0.34.1",
  "indexmap 2.14.2",
  "mlua",
+ "re_app",
  "re_command",
  "re_core",
  "re_import",

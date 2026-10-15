@@ -28,5 +28,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-# The sample runner (tests/samples.rs) imports each sample (WP16).
+# The sample runner (tests/samples.rs) imports each sample and boots and
+# plays it through the runtime (WP16).
 re_import.workspace = true
+re_app.workspace = true

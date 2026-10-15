@@ -15,7 +15,8 @@
 //!   was written to it, else the instance's first child of that class), and `prelude` gives Luau run in `server` and `client`
 //!   before the scripts start (to make stand-in instances such as the local
 //!   player). `cpu_budget_ms` (default 10 000, Roblox's script timeout)
-//!   replaces the per-resume budget.
+//!   replaces the per-resume budget. `two_worlds: true` runs the server and
+//!   the client as two worlds with the `[compat] players` joined.
 //! * `runtime.graph`: after `runtime.boot`, every `require` the boot ran
 //!   resolved (no `RE3004`), and nothing it required sits under
 //!   `never_under`.
@@ -85,6 +86,13 @@ fn setup(ctx: &Ctx, stubs: Option<&str>) -> Result<Arc<CompatSetup>, String> {
         let known = re_compat::ClassRegistry::builtin().map_err(|e| e.to_string())?;
         data.classes
             .retain(|c| c.extend || known.class(&c.name).is_err());
+        // Nor is a member an extension adds that the class has by now.
+        for c in data.classes.iter_mut().filter(|c| c.extend) {
+            let has = |m: &str| known.member(&c.name, m).is_ok();
+            c.properties.retain(|p| !has(&p.name));
+            c.methods.retain(|m| !has(&m.name));
+            c.events.retain(|e| !has(&e.name));
+        }
         for c in &data.classes {
             for p in &c.properties {
                 if !matches!(p.storage, re_compat::data::StorageDoc::Builtin) {
@@ -200,6 +208,7 @@ fn boot(ctx: &mut Ctx, args: &J) -> Result<(), String> {
     // trees.
     let opts = HarnessOptions {
         cpu_budget_ms: Some(args["cpu_budget_ms"].as_u64().unwrap_or(10_000)),
+        two_worlds: args["two_worlds"].as_bool().unwrap_or(false),
         ..HarnessOptions::default()
     };
     let mut h = Harness::open_with(&ctx.project(), &setup, opts).map_err(|d| d.render_human())?;
