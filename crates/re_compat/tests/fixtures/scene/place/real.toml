@@ -1,0 +1,6 @@
+[project]
+name = "compat-fixture"
+entry_scene = "scenes/main.scene.json"
+
+[compat]
+api = "roblox"

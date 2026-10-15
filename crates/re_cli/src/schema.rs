@@ -42,6 +42,8 @@ pub fn all() -> Vec<(&'static str, Json)> {
             to_json(schemars::schema_for!(re_app::VerifyReport)),
         ),
     ];
+    // The compatibility layer's data formats (class, enum, library, coverage).
+    out.extend(re_compat::data::schemas());
     out.sort_by_key(|(name, _)| *name);
     out
 }

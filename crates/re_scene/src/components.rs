@@ -197,8 +197,12 @@ component! {
 }
 
 field_enum! {
-    /// The script context a [`ScriptRef`] runs in.
-    pub enum ScriptContext { Game, Tools }
+    /// The script context a [`ScriptRef`] runs in. `Game` and `Tools` are the
+    /// native contexts. `Server`, `Client` and `Module` are the compatibility
+    /// layer's (ADR-0012): a `Script` runs in `Server`, a `LocalScript` in
+    /// `Client`, and a `Module` script runs only when required. The native
+    /// runtime starts `Game` and `Tools` scripts only.
+    pub enum ScriptContext { Game, Tools, Server, Client, Module }
 }
 
 component! {

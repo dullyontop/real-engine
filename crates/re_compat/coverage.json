@@ -1,0 +1,105 @@
+{
+  "format": "real-engine/compat-coverage",
+  "version": 1,
+  "totals": {
+    "missing": 14
+  },
+  "classes": [
+    {
+      "name": "BaseScript",
+      "superclass": "LuaSourceContainer",
+      "status": "missing",
+      "members": [
+        {
+          "name": "RunContext",
+          "kind": "property",
+          "status": "missing"
+        }
+      ]
+    },
+    {
+      "name": "Configuration",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "missing",
+      "members": []
+    },
+    {
+      "name": "DataModel",
+      "superclass": "ServiceProvider",
+      "status": "missing",
+      "members": []
+    },
+    {
+      "name": "Folder",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "missing",
+      "members": []
+    },
+    {
+      "name": "Instance",
+      "status": "missing",
+      "members": []
+    },
+    {
+      "name": "LocalScript",
+      "superclass": "Script",
+      "creatable": true,
+      "status": "missing",
+      "members": []
+    },
+    {
+      "name": "LuaSourceContainer",
+      "superclass": "Instance",
+      "status": "missing",
+      "members": []
+    },
+    {
+      "name": "Model",
+      "superclass": "PVInstance",
+      "creatable": true,
+      "status": "missing",
+      "members": []
+    },
+    {
+      "name": "ModuleScript",
+      "superclass": "LuaSourceContainer",
+      "creatable": true,
+      "status": "missing",
+      "members": []
+    },
+    {
+      "name": "PVInstance",
+      "superclass": "Instance",
+      "status": "missing",
+      "members": []
+    },
+    {
+      "name": "Script",
+      "superclass": "BaseScript",
+      "creatable": true,
+      "status": "missing",
+      "members": []
+    },
+    {
+      "name": "ServiceProvider",
+      "superclass": "Instance",
+      "status": "missing",
+      "members": []
+    }
+  ],
+  "enums": [
+    {
+      "name": "RunContext",
+      "status": "missing",
+      "items": [
+        "Legacy",
+        "Server",
+        "Client",
+        "Plugin"
+      ]
+    }
+  ],
+  "libraries": []
+}

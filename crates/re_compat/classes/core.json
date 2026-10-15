@@ -1,0 +1,94 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "Instance",
+      "status": "missing",
+      "doc": "The root of the class tree. Every object scripts reach through the data model is an Instance: an entity with a ClassMarker. Its members are declared by the data model work package (classes/instance.json)."
+    },
+    {
+      "name": "ServiceProvider",
+      "superclass": "Instance",
+      "status": "missing",
+      "doc": "An instance that owns services and finds them by class name."
+    },
+    {
+      "name": "DataModel",
+      "superclass": "ServiceProvider",
+      "status": "missing",
+      "doc": "The root of a place, reached as the global `game`. In a scene it is the root entity with id \"game\"; services are its children."
+    },
+    {
+      "name": "PVInstance",
+      "superclass": "Instance",
+      "status": "missing",
+      "doc": "An instance with a position and orientation in the world, directly or through its parts."
+    },
+    {
+      "name": "Model",
+      "superclass": "PVInstance",
+      "creatable": true,
+      "status": "missing",
+      "doc": "Groups parts and other instances into one object that can be moved, cloned and named as a unit."
+    },
+    {
+      "name": "Folder",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "missing",
+      "doc": "A plain container for organising instances. It has no behaviour of its own."
+    },
+    {
+      "name": "Configuration",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "missing",
+      "doc": "A container for value objects that tune a model or tool, by convention."
+    },
+    {
+      "name": "LuaSourceContainer",
+      "superclass": "Instance",
+      "status": "missing",
+      "doc": "An instance that holds Luau source. The source itself lives in a file under scripts/, named by the entity's ScriptRef."
+    },
+    {
+      "name": "BaseScript",
+      "superclass": "LuaSourceContainer",
+      "status": "missing",
+      "doc": "A script that starts on its own when the place runs, in the context its class and run context choose.",
+      "properties": [
+        {
+          "name": "RunContext",
+          "type": "Enum.RunContext",
+          "storage": { "kind": "own" },
+          "default": "Legacy",
+          "status": "missing",
+          "doc": "Where the script runs. Legacy follows the class and the script's place in the tree; Server and Client run it in that context wherever it is."
+        }
+      ]
+    },
+    {
+      "name": "Script",
+      "superclass": "BaseScript",
+      "creatable": true,
+      "status": "missing",
+      "doc": "A script that runs in the server context (or the client context when its run context is Client). Its ScriptRef has context \"server\" or \"client\"."
+    },
+    {
+      "name": "LocalScript",
+      "superclass": "Script",
+      "creatable": true,
+      "status": "missing",
+      "doc": "A script that runs in the client context for the local player. Its ScriptRef has context \"client\"."
+    },
+    {
+      "name": "ModuleScript",
+      "superclass": "LuaSourceContainer",
+      "creatable": true,
+      "status": "missing",
+      "doc": "A module: it runs only when a script requires it, once per context, and its result is cached. Its ScriptRef has context \"module\"."
+    }
+  ]
+}

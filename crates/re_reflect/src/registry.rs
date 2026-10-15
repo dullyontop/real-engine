@@ -43,14 +43,21 @@ pub enum ComponentOrigin {
     Native,
     /// Declared at run time with [`Registry::register_script`].
     Script,
+    /// Declared at run time by the host from its own data with
+    /// [`Registry::register_host`] (the compatibility layer's per-class
+    /// components). Unlike script components, scene files do not record their
+    /// schemas: the host registers them before loading, and a file names their
+    /// fields like a native component's, so a missing field takes its default.
+    Host,
 }
 
 impl ComponentOrigin {
-    /// `"native"` or `"script"`.
+    /// `"native"`, `"script"` or `"host"`.
     pub fn as_str(self) -> &'static str {
         match self {
             ComponentOrigin::Native => "native",
             ComponentOrigin::Script => "script",
+            ComponentOrigin::Host => "host",
         }
     }
 }
@@ -378,7 +385,26 @@ impl Registry {
     pub fn register_script(
         &mut self,
         world: &mut World,
+        schema: ComponentSchema,
+    ) -> Result<ComponentKey, ReflectError> {
+        self.register_dynamic(world, schema, ComponentOrigin::Script)
+    }
+
+    /// Declares a host component type at run time, checked like
+    /// [`Registry::register_script`]; its origin is [`ComponentOrigin::Host`].
+    pub fn register_host(
+        &mut self,
+        world: &mut World,
+        schema: ComponentSchema,
+    ) -> Result<ComponentKey, ReflectError> {
+        self.register_dynamic(world, schema, ComponentOrigin::Host)
+    }
+
+    fn register_dynamic(
+        &mut self,
+        world: &mut World,
         mut schema: ComponentSchema,
+        origin: ComponentOrigin,
     ) -> Result<ComponentKey, ReflectError> {
         if self.by_name.contains_key(&schema.name) {
             return Err(ReflectError::DuplicateComponent(schema.name));
@@ -422,7 +448,7 @@ impl Registry {
                 )));
             }
         }
-        schema.origin = ComponentOrigin::Script;
+        schema.origin = origin;
         let id = ScriptOps::register(&schema.name, world);
         Ok(self.push(schema, id, Box::new(ScriptOps { id })))
     }

@@ -201,7 +201,22 @@ impl VerifyStage for ScanStage {
                 ),
             }
         }
-        let gap = GapReport::new(&usage, &Coverage::native());
+        // A compat project's scripts are checked against the compatibility
+        // table as well as the native API.
+        let compat = std::fs::read_to_string(ctx.project.join("real.toml"))
+            .ok()
+            .and_then(|t| {
+                re_compat::CompatConfig::from_project_toml(&t)
+                    .ok()
+                    .flatten()
+            })
+            .is_some();
+        let coverage = if compat {
+            Coverage::compat()
+        } else {
+            Coverage::native()
+        };
+        let gap = GapReport::new(&usage, &coverage);
         diags.extend(gap_warnings(&gap));
         StageReport::new(
             "scan",

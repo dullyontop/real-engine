@@ -3563,6 +3563,7 @@ dependencies = [
  "re_assets",
  "re_audio",
  "re_command",
+ "re_compat",
  "re_core",
  "re_editor",
  "re_geom",
@@ -3595,6 +3596,27 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "re_compat"
+version = "0.1.0"
+dependencies = [
+ "glam 0.34.1",
+ "indexmap 2.14.2",
+ "mlua",
+ "re_command",
+ "re_core",
+ "re_reflect",
+ "re_scene",
+ "re_script",
+ "re_types",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]
@@ -3782,6 +3804,7 @@ version = "0.1.0"
 dependencies = [
  "full_moon",
  "insta",
+ "re_compat",
  "re_core",
  "re_script",
  "serde",
