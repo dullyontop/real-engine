@@ -280,6 +280,8 @@ cargo test --locked -p re_compat net
 
 ## WP13: Physics for parts
 
+**Status:** done. Its one PR, "physics for parts", merged in #65. ADR-0031 is Accepted with the `bigmap` numbers (250,000 parts load in 3.9 s, with a mean step of 4.6 ms and a peak RSS of 1282 MB). Maps up to 10 km wide run around a floating origin, and a part that still cannot fit is `RE5006`.
+
 **Goal.** Parts, assemblies, constraints, collision groups and spatial queries on Jolt, with Roblox-style units and behaviour.
 
 **Owned paths:**
@@ -441,7 +443,7 @@ cargo test --locked -p re_audio
 
 ## WP16: Import, runtime integration and the plaza example
 
-**Status:** PR "importer" merged in #46, with the sample runner; PRs "boot" and "plaza" are next.
+**Status:** PR "importer" merged in #46, with the sample runner, and PR "boot" in #53 (the compat frame loop in `re_app`, the `real verify` boot stage with `RE0526`, the `play.run` steps with `RE0527`, `roblox.d.luau` from `real check --types`, and the template's `cpu_budget_ms = 10000`). PR "plaza" is next. Compat scripts do not hot-reload yet: a changed script takes effect at the next `world.restart`.
 
 **Goal.** Bring Roblox-style projects in with `real import`, run them through `real run` and `real verify`, and prove the layer in CI with `examples/plaza`.
 
@@ -501,7 +503,7 @@ xvfb-run -a -s "-screen 0 1280x720x24" real run --project examples/plaza --frame
 
 ## WP17: The M2 AI track
 
-**Status:** merged in #48. `project.import` and the new `play.run` steps (which need WP16 "boot") are still to come.
+**Status:** done. PRs merged in #48 (output schemas, resources, Luau tools, verify-diff), #52 (the editor serves the same agent tools as `real mcp`) and #68 (`project.import`, and `roblox.d.luau` as an MCP resource). The new `play.run` steps came with WP16 "boot" (#53).
 
 **Goal.** The M2 row of the ROADMAP AI track: Luau-defined tools, MCP resources, structured output schemas and a verify-diff loop, plus MCP access to the new compat features.
 
@@ -533,7 +535,7 @@ No new crate dependency is expected. `re_import` uses full_moon, which is alread
 
 The ADRs this plan adds or changes:
 - ADR-0032 amendment (WP9): the list, map and record field types.
-- ADR-0031 (WP13): from Provisional to Accepted, with measured numbers, or revised.
+- ADR-0031 (WP13): Accepted with measured numbers (#65).
 - ADR-0033: the private sample runner and its expectation kit.
 - ADR-0034: class and enum data, which are facts and not copied prose.
 - ADR-0023 amendment (WP16): `verify-plaza` becomes a required job.
