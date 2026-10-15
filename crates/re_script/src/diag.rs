@@ -64,8 +64,26 @@ impl ScriptError {
     pub fn from_mlua(context: &str, err: &mlua::Error) -> ScriptError {
         let (kind, raw, traceback) = flatten(err);
         let raw = strip_runtime_prefixes(&raw);
-        let (mut chunk, mut line, message) = split_location(&raw);
+        let (mut chunk, mut line, mut message) = split_location(&raw);
+        // An error rethrown by `coroutine.wrap` (or another `error(msg, level)`
+        // that adds a position) carries an inner location; it is the more precise.
+        for _ in 0..4 {
+            match split_location(&message) {
+                (Some(c), Some(l), inner) if line.is_some() => {
+                    chunk = Some(c);
+                    line = Some(l);
+                    message = inner;
+                }
+                _ => break,
+            }
+        }
         let (code, message) = split_code(&message);
+        // mlua's own require errors ("error requiring module ...") carry no code.
+        let code = code.or_else(|| {
+            message
+                .starts_with("error requiring module")
+                .then_some(codes::REQUIRE)
+        });
         let kind = if message.contains(TIMEOUT_MESSAGE) {
             ErrorKind::Timeout
         } else {
