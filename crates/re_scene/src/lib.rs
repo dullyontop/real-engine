@@ -9,6 +9,9 @@
 //! * [`hierarchy`]: helpers over bevy's `ChildOf` / `Children`, cycle checks
 //!   and transform propagation;
 //! * [`components`]: the built-in components of ARCHITECTURE §4;
+//! * [`attributes`]: [`Attributes`] and the [`AttributeChanged`] events;
+//! * [`tags`]: [`Tags`], the hook-maintained [`TagIndex`] and the
+//!   [`TagChanged`] events;
 //! * [`scene`]: [`SceneDoc`] load and save, JSON text, `migrate`;
 //! * [`prefab`]: [`PrefabFile`] and its instantiation into a fragment;
 //! * [`procedural`]: procedural sources, generated entities, overrides,
@@ -39,6 +42,7 @@
 
 #![warn(missing_docs)]
 
+pub mod attributes;
 pub mod codes;
 pub mod components;
 pub mod error;
@@ -48,6 +52,7 @@ pub mod ids;
 pub mod prefab;
 pub mod procedural;
 pub mod scene;
+pub mod tags;
 pub mod world;
 
 /// bevy_ecs 0.20.0, re-exported for typed access from crates that must not
@@ -57,6 +62,7 @@ pub use bevy_ecs as ecs;
 /// `re_types::EntityId` carries its `to_bits()`.
 pub use bevy_ecs::entity::Entity;
 
+pub use attributes::{AttributeChanged, AttributeFeed, Attributes};
 pub use components::{
     AnimPlayer, AudioSource, BodyKind, Camera, CharacterController, Collider, ColliderShape,
     GlobalTransform, HudAnchor, HudText, Light, LightKind, MaterialRef, MeshRef, Name, RigidBody,
@@ -71,6 +77,7 @@ pub use procedural::{
     Suppressions,
 };
 pub use scene::{EntityDoc, GeneratedDoc, SaveOptions, SceneDoc, Snapshot};
+pub use tags::{TagChanged, TagFeed, TagIndex, Tags};
 pub use world::World;
 
 /// Converts a runtime entity to the contract-layer id (`Entity::to_bits`).

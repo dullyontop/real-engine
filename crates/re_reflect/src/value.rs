@@ -1,8 +1,13 @@
 //! Dynamic values: the one currency that scripts, the editor, scene files and
 //! agents use to read and write component fields (ADR-0032).
 //!
-//! The set of field types is deliberately closed and flat (no nested structs).
-//! It maps one-to-one onto Luau values, JSON values and Roblox-style typed
+//! The set of field types is deliberately closed. Besides the scalars there
+//! are three container types (ADR-0032 amendment): a list of one scalar or
+//! record type, a map from strings to dynamically typed values, and a record
+//! (a registered, fixed tuple of scalars; see [`crate::record`]). Containers
+//! nest only that far: a list holds scalars or records, a map holds scalars,
+//! records or such lists, and no container holds an entity reference. The
+//! types map one-to-one onto Luau values, JSON values and Roblox-style typed
 //! properties, which keeps every consumer simple.
 //!
 //! Coercion rules ([`FieldType::coerce`]):
@@ -11,9 +16,14 @@
 //! * an `f64` is rounded to `f32` for an `f32` field, with a range check;
 //! * non-finite floats are rejected;
 //! * quaternions are normalised (and must be finite and non-zero);
-//! * enum names are checked against the variants.
+//! * enum names are checked against the variants;
+//! * list items and record fields are coerced to their types, and map values
+//!   by the dynamic rules ([`coerce_dynamic`]): integers become floats.
+//!
+//! [`Value::diff`] reports what changed between two values: the indices of a
+//! list, the keys of a map or the fields of a record.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 use bevy_ecs::entity::Entity;
@@ -21,6 +31,7 @@ use glam::{Quat, Vec3};
 use re_core::{Code, Diagnostic};
 
 use crate::codes;
+use crate::record::RecordId;
 
 /// Linear RGBA colour.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -71,6 +82,14 @@ pub enum FieldType {
     Entity,
     /// One of a fixed set of named variants (unit enums only).
     Enum(&'static [&'static str]),
+    /// A list of values of one scalar or record type, stored in
+    /// [`Value::List`].
+    List(Box<FieldType>),
+    /// A map from strings to dynamically typed values (scalars, records, or
+    /// lists of those; no entity references), stored in [`Value::Map`].
+    Map,
+    /// A registered record type, stored in [`Value::Record`].
+    Record(RecordId),
 }
 
 impl FieldType {
@@ -88,12 +107,62 @@ impl FieldType {
             FieldType::String => "string",
             FieldType::Entity => "entity",
             FieldType::Enum(_) => "enum",
+            FieldType::List(_) => "list",
+            FieldType::Map => "map",
+            FieldType::Record(_) => "record",
+        }
+    }
+
+    /// True for the types a record field or list item may have without being
+    /// a record: everything but `entity` and the containers.
+    pub fn is_scalar(&self) -> bool {
+        !matches!(
+            self,
+            FieldType::Entity | FieldType::List(_) | FieldType::Map | FieldType::Record(_)
+        )
+    }
+
+    /// Checks the nesting rules: a list's items are a scalar or a record type.
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            FieldType::List(item)
+                if !(item.is_scalar() || matches!(**item, FieldType::Record(_))) =>
+            {
+                Err(format!(
+                    "a list holds scalars or records, not {}",
+                    item.describe()
+                ))
+            }
+            FieldType::Enum([]) => Err("an enum needs at least one variant".into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// The zero value of the type: `false`, `0`, the zero vector, the identity
+    /// quaternion, white, the empty string, null, the first variant, an empty
+    /// container, or a record of its fields' zero values. Used when a schema
+    /// gives no default.
+    pub fn default_value(&self) -> Value {
+        match self {
+            FieldType::Bool => Value::Bool(false),
+            FieldType::I32 | FieldType::I64 => Value::Int(0),
+            FieldType::F32 | FieldType::F64 => Value::Float(0.0),
+            FieldType::Vec3 => Value::Vec3(Vec3::ZERO),
+            FieldType::Quat => Value::Quat(Quat::IDENTITY),
+            FieldType::Color => Value::Color(Color::WHITE),
+            FieldType::String => Value::Str(String::new()),
+            FieldType::Entity => Value::Entity(None),
+            FieldType::Enum(v) => Value::Enum(v.first().copied().unwrap_or_default().to_string()),
+            FieldType::List(_) => Value::List(Vec::new()),
+            FieldType::Map => Value::Map(BTreeMap::new()),
+            FieldType::Record(id) => Value::Record(*id, id.schema().default_values()),
         }
     }
 
     /// The type named `kind` (the inverse of [`FieldType::name`]); `variants` is
-    /// used only for `"enum"`. Returns `None` for an unknown kind or an enum
-    /// without variants.
+    /// used only for `"enum"`. Returns `None` for an unknown kind, an enum
+    /// without variants, and `"list"` and `"record"`, which need more than a
+    /// name ([`FieldTypeDoc::to_field_type`](crate::FieldTypeDoc::to_field_type)).
     pub fn from_name(kind: &str, variants: &[String]) -> Option<FieldType> {
         Some(match kind {
             "bool" => FieldType::Bool,
@@ -107,6 +176,7 @@ impl FieldType {
             "string" => FieldType::String,
             "entity" => FieldType::Entity,
             "enum" if !variants.is_empty() => FieldType::Enum(intern_variants(variants)),
+            "map" => FieldType::Map,
             _ => return None,
         })
     }
@@ -184,6 +254,47 @@ impl FieldType {
             }
             (FieldType::String, v @ Value::Str(_)) => v,
             (FieldType::Entity, v @ Value::Entity(_)) => v,
+            (FieldType::List(item), Value::List(items)) => Value::List(
+                items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, v)| item.coerce(v).map_err(|e| at(format!("[{i}]"), e)))
+                    .collect::<Result<_, _>>()?,
+            ),
+            (FieldType::Map, Value::Map(map)) => Value::Map(
+                map.into_iter()
+                    .map(|(k, v)| {
+                        let v = coerce_dynamic(v, false).map_err(|e| at(format!("[{k:?}]"), e))?;
+                        Ok((k, v))
+                    })
+                    .collect::<Result<_, ValueError>>()?,
+            ),
+            (FieldType::Record(id), Value::Record(found, values)) => {
+                let schema = id.schema();
+                if found != *id {
+                    return Err(ValueError::TypeMismatch {
+                        expected: self.describe(),
+                        found: format!("record {}", found.name()),
+                    });
+                }
+                if values.len() != schema.fields.len() {
+                    return Err(ValueError::Invalid(format!(
+                        "record {} has {} fields, got {} values",
+                        schema.name,
+                        schema.fields.len(),
+                        values.len()
+                    )));
+                }
+                Value::Record(
+                    *id,
+                    schema
+                        .fields
+                        .iter()
+                        .zip(values)
+                        .map(|(f, v)| f.ty.coerce(v).map_err(|e| at(format!(".{}", f.name), e)))
+                        .collect::<Result<_, _>>()?,
+                )
+            }
             (FieldType::Enum(variants), Value::Enum(name))
             | (FieldType::Enum(variants), Value::Str(name)) => {
                 if !variants.contains(&name.as_str()) {
@@ -198,12 +309,71 @@ impl FieldType {
         })
     }
 
-    fn describe(&self) -> String {
+    /// A description for messages: the name, the variants of an enum, the
+    /// item type of a list or the name of a record (`"list of f32"`).
+    pub fn describe(&self) -> String {
         match self {
             FieldType::Enum(v) => format!("one of {}", v.join(" | ")),
+            FieldType::List(item) => format!("list of {}", item.describe()),
+            FieldType::Record(id) => format!("record {}", id.name()),
             other => other.name().to_string(),
         }
     }
+}
+
+/// Prefixes an error with where in a container it happened (`[2]`, `["k"]`,
+/// `.x`), joining nested locations into one path.
+pub(crate) fn at(path: String, e: ValueError) -> ValueError {
+    match e {
+        ValueError::At { path: inner, error } => ValueError::At {
+            path: path + &inner,
+            error,
+        },
+        e => ValueError::At {
+            path,
+            error: Box::new(e),
+        },
+    }
+}
+
+/// Coerces a value stored in a map (or in a list inside a map), where no
+/// field type says what it should be:
+/// * integers become floats (Luau numbers are doubles, so a map written from a
+///   script and one read from a file compare equal);
+/// * floats must be finite, vectors and colours finite, quaternions are
+///   normalised, records are coerced to their schema;
+/// * a list's items follow these rules but may not be lists themselves;
+/// * maps and entity references are refused.
+pub fn coerce_dynamic(value: Value, in_list: bool) -> Result<Value, ValueError> {
+    Ok(match value {
+        v @ (Value::Bool(_) | Value::Str(_) | Value::Enum(_)) => v,
+        Value::Int(i) => Value::Float(i as f64),
+        Value::Float(f) => FieldType::F64.coerce(Value::Float(f))?,
+        v @ Value::Vec3(_) => FieldType::Vec3.coerce(v)?,
+        v @ Value::Quat(_) => FieldType::Quat.coerce(v)?,
+        v @ Value::Color(_) => FieldType::Color.coerce(v)?,
+        Value::Record(id, values) => FieldType::Record(id).coerce(Value::Record(id, values))?,
+        Value::List(items) if !in_list => Value::List(
+            items
+                .into_iter()
+                .enumerate()
+                .map(|(i, v)| coerce_dynamic(v, true).map_err(|e| at(format!("[{i}]"), e)))
+                .collect::<Result<_, _>>()?,
+        ),
+        Value::List(_) => {
+            return Err(ValueError::Invalid(
+                "a list inside a map cannot hold another list".into(),
+            ));
+        }
+        Value::Map(_) => {
+            return Err(ValueError::Invalid("a map cannot hold another map".into()));
+        }
+        Value::Entity(_) => {
+            return Err(ValueError::Invalid(
+                "a map cannot hold an entity reference".into(),
+            ));
+        }
+    })
 }
 
 /// Interns a list of enum variant names, so that a script-defined enum field
@@ -248,6 +418,25 @@ pub enum Value {
     Entity(Option<Entity>),
     /// An enum field, by variant name.
     Enum(String),
+    /// A `list` field.
+    List(Vec<Value>),
+    /// A `map` field, ordered by key.
+    Map(BTreeMap<String, Value>),
+    /// A `record` field: the record type and one value per record field.
+    Record(RecordId, Vec<Value>),
+}
+
+/// What changed between two values ([`Value::diff`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ValueChange {
+    /// The value changed as a whole (a scalar, or a different kind or record type).
+    Whole,
+    /// List indices whose item changed, was added or was removed, ascending.
+    Indices(Vec<usize>),
+    /// Map keys whose value changed, was added or was removed, sorted.
+    Keys(Vec<String>),
+    /// Record field indices whose value changed, ascending.
+    Fields(Vec<usize>),
 }
 
 impl Value {
@@ -263,7 +452,40 @@ impl Value {
             Value::Str(_) => "string".into(),
             Value::Entity(_) => "entity".into(),
             Value::Enum(v) => format!("enum variant {v:?}"),
+            Value::List(items) => format!("list of {}", items.len()),
+            Value::Map(_) => "map".into(),
+            Value::Record(id, _) => format!("record {}", id.name()),
         }
+    }
+
+    /// What changed from `self` to `new`, or `None` if they are equal. Lists
+    /// report indices, maps keys and records fields; anything else changes
+    /// as a whole.
+    pub fn diff(&self, new: &Value) -> Option<ValueChange> {
+        if self == new {
+            return None;
+        }
+        Some(match (self, new) {
+            (Value::List(a), Value::List(b)) => ValueChange::Indices(
+                (0..a.len().max(b.len()))
+                    .filter(|&i| a.get(i) != b.get(i))
+                    .collect(),
+            ),
+            (Value::Map(a), Value::Map(b)) => {
+                let mut keys: Vec<String> = a
+                    .iter()
+                    .filter(|(k, v)| b.get(*k) != Some(v))
+                    .map(|(k, _)| k.clone())
+                    .chain(b.keys().filter(|k| !a.contains_key(*k)).cloned())
+                    .collect();
+                keys.sort();
+                ValueChange::Keys(keys)
+            }
+            (Value::Record(ia, a), Value::Record(ib, b)) if ia == ib && a.len() == b.len() => {
+                ValueChange::Fields((0..a.len()).filter(|&i| a[i] != b[i]).collect())
+            }
+            _ => ValueChange::Whole,
+        })
     }
 }
 
@@ -304,6 +526,15 @@ pub enum ValueError {
     /// The value is the right kind but not valid.
     #[error("{0}")]
     Invalid(String),
+    /// An error inside a container value, at `path` (`[2]`, `["key"]`, `.x`,
+    /// or a chain of them).
+    #[error("at {path}: {error}")]
+    At {
+        /// Where in the container.
+        path: String,
+        /// What is wrong there.
+        error: Box<ValueError>,
+    },
 }
 
 impl ValueError {
@@ -316,6 +547,7 @@ impl ValueError {
             ValueError::NotFinite(_) => codes::NON_FINITE,
             ValueError::UnknownVariant { .. } => codes::UNKNOWN_VARIANT,
             ValueError::Invalid(_) => codes::INVALID_VALUE,
+            ValueError::At { error, .. } => error.code(),
         }
     }
 
@@ -369,6 +601,30 @@ simple_field!(Quat, FieldType::Quat, Quat, |s| *s, |v| *v);
 simple_field!(Color, FieldType::Color, Color, |s| *s, |v| *v);
 simple_field!(String, FieldType::String, Str, |s| s.clone(), |v| v.clone());
 simple_field!(Option<Entity>, FieldType::Entity, Entity, |s| *s, |v| *v);
+simple_field!(
+    BTreeMap<String, Value>,
+    FieldType::Map,
+    Map,
+    |s| s.clone(),
+    |v| v.clone()
+);
+
+/// A list field. The item type must be a scalar or record type
+/// ([`FieldType::validate`]); registration checks it.
+impl<T: FieldValue> FieldValue for Vec<T> {
+    fn field_type() -> FieldType {
+        FieldType::List(Box::new(T::field_type()))
+    }
+    fn to_value(&self) -> Value {
+        Value::List(self.iter().map(FieldValue::to_value).collect())
+    }
+    fn from_value(value: &Value) -> Option<Self> {
+        match value {
+            Value::List(items) => items.iter().map(T::from_value).collect(),
+            _ => None,
+        }
+    }
+}
 
 /// Declares a unit-only enum usable as a component field.
 ///

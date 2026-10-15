@@ -13,7 +13,8 @@ use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 
 use bevy_ecs::component::{
-    Component, ComponentCloneBehavior, ComponentDescriptor, ComponentId, Mutable, StorageType,
+    Component, ComponentCloneBehavior, ComponentDescriptor, ComponentId, Immutable, Mutable,
+    StorageType,
 };
 use bevy_ecs::entity::Entity;
 use bevy_ecs::ptr::OwningPtr;
@@ -100,8 +101,65 @@ impl ComponentSchema {
     }
 }
 
+/// How the registry writes a field of a native component: in place for a
+/// mutable component, or by re-inserting a changed copy for an immutable one
+/// (so its `on_insert` and `on_discard` hooks see every change, which is what
+/// keeps hook-maintained indexes such as `re_scene`'s tag index exact).
+/// Implemented for bevy's [`Mutable`] and [`Immutable`] only.
+pub trait WriteMode: bevy_ecs::component::ComponentMutability {
+    /// Writes field `index` of `T` on `entity` unless it already equals
+    /// `value`. Returns false if the entity lacks the component.
+    fn write_field<T: Reflect + Component<Mutability = Self>>(
+        world: &mut World,
+        entity: Entity,
+        index: usize,
+        value: &Value,
+    ) -> bool;
+}
+
+impl WriteMode for Mutable {
+    fn write_field<T: Reflect + Component<Mutability = Self>>(
+        world: &mut World,
+        entity: Entity,
+        index: usize,
+        value: &Value,
+    ) -> bool {
+        let Some(mut c) = world.get_mut::<T>(entity) else {
+            return false;
+        };
+        // Read through `Deref` first so an equal write does not trip change detection.
+        if c.get_field(index) != *value {
+            c.set_field(index, value);
+        }
+        true
+    }
+}
+
+impl WriteMode for Immutable {
+    fn write_field<T: Reflect + Component<Mutability = Self>>(
+        world: &mut World,
+        entity: Entity,
+        index: usize,
+        value: &Value,
+    ) -> bool {
+        let Some(c) = world.get::<T>(entity) else {
+            return false;
+        };
+        if c.get_field(index) != *value {
+            let mut copy = c.clone();
+            copy.set_field(index, value);
+            world.entity_mut(entity).insert(copy);
+        }
+        true
+    }
+}
+
 /// Implemented by [`component!`](crate::component) for native components.
-pub trait Reflect: Component<Mutability = Mutable> + Clone + Default {
+///
+/// Most components are mutable. An immutable component (bevy's
+/// `#[component(immutable)]`) implements this trait by hand and is written by
+/// replacement ([`WriteMode`]).
+pub trait Reflect: Component<Mutability: WriteMode> + Clone + Default {
     /// The component's name in the registry and in files.
     const NAME: &'static str;
     /// The component's schema.
@@ -149,14 +207,7 @@ impl<T: Reflect> ComponentOps for NativeOps<T> {
         Some((0..n).map(|i| c.get_field(i)).collect())
     }
     fn set_field(&self, world: &mut World, entity: Entity, index: usize, value: &Value) -> bool {
-        let Some(mut c) = world.get_mut::<T>(entity) else {
-            return false;
-        };
-        // Read through `Deref` first so an equal write does not trip change detection.
-        if c.get_field(index) != *value {
-            c.set_field(index, value);
-        }
-        true
+        <T::Mutability as WriteMode>::write_field::<T>(world, entity, index, value)
     }
     fn insert(&self, world: &mut World, entity: Entity, values: Vec<Value>) {
         let mut c = T::default();
@@ -296,11 +347,17 @@ impl Registry {
     ///
     /// # Panics
     ///
-    /// Panics if another component with the same name is already registered
-    /// (a programming error at start-up).
+    /// Panics if another component with the same name is already registered,
+    /// or if a field type breaks the nesting rules ([`FieldType::validate`])
+    /// (programming errors at start-up).
     pub fn register<T: Reflect>(&mut self, world: &mut World) -> ComponentKey {
         let schema = T::schema();
         debug_assert_eq!(schema.name, T::NAME);
+        for f in &schema.fields {
+            if let Err(e) = f.ty.validate() {
+                panic!("{}.{}: {e}", schema.name, f.name);
+            }
+        }
         let id = world.register_component::<T>();
         if let Some(&i) = self.by_name.get(&schema.name) {
             assert_eq!(
@@ -336,6 +393,12 @@ impl Registry {
                 return Err(ReflectError::InvalidSchema(format!(
                     "field name {:?} must be an identifier",
                     f.name
+                )));
+            }
+            if let Err(e) = f.ty.validate() {
+                return Err(ReflectError::InvalidSchema(format!(
+                    "{}.{}: {e}",
+                    schema.name, f.name
                 )));
             }
             if !seen.insert(f.name.clone()) {

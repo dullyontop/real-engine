@@ -67,50 +67,7 @@ impl World {
             for key in keys {
                 w.str(&self.registry.schema(key).name);
                 for v in self.registry.get_all(&self.ecs, e, key).unwrap_or_default() {
-                    match v {
-                        Value::Bool(b) => {
-                            w.tag(1);
-                            w.tag(u8::from(b));
-                        }
-                        Value::Int(i) => {
-                            w.tag(2);
-                            w.u64(i as u64);
-                        }
-                        Value::Float(f) => {
-                            w.tag(3);
-                            w.u64(f.to_bits());
-                        }
-                        Value::Vec3(v) => {
-                            w.tag(4);
-                            w.f32s(&v.to_array());
-                        }
-                        Value::Quat(q) => {
-                            w.tag(5);
-                            w.f32s(&q.to_array());
-                        }
-                        Value::Color(c) => {
-                            w.tag(6);
-                            w.f32s(&[c.r, c.g, c.b, c.a]);
-                        }
-                        Value::Str(s) => {
-                            w.tag(7);
-                            w.str(&s);
-                        }
-                        Value::Entity(t) => {
-                            w.tag(8);
-                            match t.and_then(|t| self.id_of(t)) {
-                                Some(id) => {
-                                    w.tag(1);
-                                    w.str(id);
-                                }
-                                None => w.tag(0),
-                            }
-                        }
-                        Value::Enum(s) => {
-                            w.tag(9);
-                            w.str(&s);
-                        }
-                    }
+                    self.hash_value(&mut w, &v);
                 }
             }
             match self.ecs.get::<Overrides>(e) {
@@ -127,5 +84,74 @@ impl World {
             w.str(id);
         }
         w.0.finalize()
+    }
+
+    fn hash_value(&self, w: &mut Writer, v: &Value) {
+        match v {
+            Value::Bool(b) => {
+                w.tag(1);
+                w.tag(u8::from(*b));
+            }
+            Value::Int(i) => {
+                w.tag(2);
+                w.u64(*i as u64);
+            }
+            Value::Float(f) => {
+                w.tag(3);
+                w.u64(f.to_bits());
+            }
+            Value::Vec3(v) => {
+                w.tag(4);
+                w.f32s(&v.to_array());
+            }
+            Value::Quat(q) => {
+                w.tag(5);
+                w.f32s(&q.to_array());
+            }
+            Value::Color(c) => {
+                w.tag(6);
+                w.f32s(&[c.r, c.g, c.b, c.a]);
+            }
+            Value::Str(s) => {
+                w.tag(7);
+                w.str(s);
+            }
+            Value::Entity(t) => {
+                w.tag(8);
+                match t.and_then(|t| self.id_of(t)) {
+                    Some(id) => {
+                        w.tag(1);
+                        w.str(id);
+                    }
+                    None => w.tag(0),
+                }
+            }
+            Value::Enum(s) => {
+                w.tag(9);
+                w.str(s);
+            }
+            Value::List(items) => {
+                w.tag(10);
+                w.u64(items.len() as u64);
+                for item in items {
+                    self.hash_value(w, item);
+                }
+            }
+            Value::Map(map) => {
+                w.tag(11);
+                w.u64(map.len() as u64);
+                for (k, v) in map {
+                    w.str(k);
+                    self.hash_value(w, v);
+                }
+            }
+            Value::Record(id, values) => {
+                w.tag(12);
+                w.str(id.name());
+                for v in values {
+                    self.hash_value(w, v);
+                }
+            }
+        }
     }
 }

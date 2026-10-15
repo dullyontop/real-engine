@@ -518,6 +518,81 @@ fn script_components_round_trip_f32() {
 }
 
 #[test]
+fn container_fields_map_to_luau_tables() {
+    use re_reflect::{FieldType, RecordField, RecordSchema, Value};
+    let dim = RecordSchema::new(
+        "LuauDim",
+        vec![
+            RecordField::new("scale", FieldType::F32),
+            RecordField::new("offset", FieldType::I32),
+        ],
+    )
+    .register()
+    .unwrap();
+    let mut rig = Rig::new();
+    let r = rig
+        .exec(
+            r#"
+            world.define_component("Inventory", {
+                items = { type = "list", item = "string" },
+                stats = "map",
+                size = { type = "record", record = "LuauDim" },
+                sizes = { type = "list", item = { type = "record", record = "LuauDim" } },
+            })
+            local bag = world.spawn({ id = "bag", components = { Inventory = {
+                items = { "rope", "lamp" },
+                stats = { hp = 10, at = vector.create(1, 2, 3) },
+            } } })
+            local fresh = bag:get("Inventory", "size")
+            bag:set("Inventory", "size", { scale = 0.5, offset = 3 })
+            local size = bag:get("Inventory", "size")
+            local stats = bag:get("Inventory", "stats")
+            stats.copy = size -- a record inside a map keeps its type
+            bag:set("Inventory", "stats", stats)
+            bag:set("Inventory", "sizes", { size, { 2, 4 } })
+            local writable = pcall(function() size.scale = 1 end)
+            bag:set("Inventory", "items", {})
+            return {
+                table.isfrozen(fresh), fresh.scale, size.scale, size.offset, writable,
+                #bag:get("Inventory", "items"), bag:get("Inventory", "stats").copy.offset,
+                bag:get("Inventory", "sizes")[2].offset,
+            }
+            "#,
+        )
+        .unwrap();
+    assert_eq!(r, json!([true, 0, 0.5, 3, false, 0, 3, 4]));
+    let rec = |s: f64, o: i64| Value::Record(dim, vec![Value::Float(s), Value::Int(o)]);
+    let Value::Map(stats) = rig.world.get("bag", "Inventory", "stats").unwrap() else {
+        panic!()
+    };
+    assert_eq!(stats["hp"], Value::Float(10.0));
+    assert_eq!(stats["at"], Value::Vec3(glam::Vec3::new(1.0, 2.0, 3.0)));
+    assert_eq!(stats["copy"], rec(0.5, 3));
+    assert_eq!(
+        rig.world.get("bag", "Inventory", "sizes").unwrap(),
+        Value::List(vec![rec(0.5, 3), rec(2.0, 4)])
+    );
+    for (bad, msg) in [
+        ("{ 1, x = 2 }", "cannot mix"),
+        ("{ [1] = 'a', [3] = 'b' }", "no holes"),
+        ("{ { 'a' } }", "expected string, got array"),
+    ] {
+        let d = rig.exec_err(&format!(
+            "world.query('Inventory')[1]:set('Inventory', 'items', {bad})"
+        ));
+        assert!(d.message.contains(msg), "{bad}: {}", d.message);
+    }
+    let d = rig.exec_err(
+        "world.query('Inventory')[1]:set('Inventory', 'size', { scale = 1, offest = 2 })",
+    );
+    assert!(d.message.contains("no field \"offest\""), "{}", d.message);
+    let d = rig.exec_err(
+        "world.query('Inventory')[1]:set('Inventory', 'stats', { me = world.query('Inventory')[1] })",
+    );
+    assert!(d.message.contains("entity reference"), "{}", d.message);
+}
+
+#[test]
 fn task_wait_resumes_in_post_simulation() {
     let mut rig = Rig::new();
     rig.exec(
