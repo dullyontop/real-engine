@@ -243,7 +243,7 @@ impl Registry {
         });
         let script_components = json!({
             "type": "array",
-            "description": "Schemas of the script-defined components used in this file.",
+            "description": "Schemas of the script-defined components the saving world had registered.",
             "items": {
                 "type": "object",
                 "required": ["name", "fields"],

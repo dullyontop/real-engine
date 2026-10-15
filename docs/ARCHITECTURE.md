@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** partly implemented (M1 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) and the editor (`re_editor`). the runtime and CLI (`re_app`, `re_cli`) and the `examples/island` demo, which `real verify` checks in CI. M1 still needs WP7's MCP end-to-end test before its definition of done is checked. Still design: `re_compat` (M2). Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** partly implemented (M1 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. Every M1 work package has merged; the definition of done is being checked. Still design: `re_compat` (M2). Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -572,7 +572,7 @@ Rules (verified by the core spike's round-trip tests, ADR-0016):
 - components are sorted by name, fields are in declaration order, and lists of scalars are written on one line;
 - floats are written in shortest round-trip form, and parsed exactly (including the f32 double-rounding fix of ADR-0032);
 - unknown keys are errors that name the entity index, id, component and field;
-- generated entities are not written; the schemas of script-defined components used in the file are declared in a top-level `script_components` list, so the file loads before any script runs;
+- generated entities are not written; the schemas of the script-defined components the saving world had registered (including those only generated entities use) are declared in a top-level `script_components` list, so the file loads before any script runs. A declaration stays until it is removed from the file while no world that loaded it saves again;
 - a file always ends with a newline, and save → load → save is byte-identical;
 - the `version` field is migrated forwards by `re_scene::migrate`, one function per version.
 

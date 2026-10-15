@@ -8,7 +8,7 @@ Real Engine is an open-source 3D game engine written in Rust. It is built around
 
 ## Status
 
-**M1 nearly done.** All nine M1 work packages have merged, and `examples/island` is a playable demo: walk, push crates, collect items, win and restart, and regenerate the island with a new seed during play. CI runs `real verify` on it headless and a windowed smoke run under Xvfb. What is left for M1 is the MCP end-to-end test (which found a scene-save bug now being fixed), then checking the [definition of done](docs/M1_PLAN.md#definition-of-done-for-m1). M2, the Roblox-style compatibility layer (`re_compat`), has not started.
+**M1 nearly done.** All nine M1 work packages have merged, and `examples/island` is a playable demo: walk, push crates, collect items, win and restart, and regenerate the island with a new seed during play. CI runs `real verify` on it headless and a windowed smoke run under Xvfb. The MCP end-to-end test has merged too, so what is left for M1 is checking the [definition of done](docs/M1_PLAN.md#definition-of-done-for-m1). M2, the Roblox-style compatibility layer (`re_compat`), is planned in [M2_PLAN.md](docs/M2_PLAN.md) and has not started.
 
 The workspace holds:
 
