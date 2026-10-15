@@ -45,7 +45,7 @@ jobs:
     env:
       # Each test process records the compat members its scripts reach
       # (re_compat's class layer); the last step checks the union.
-      REAL_COMPAT_MEMBER_TRACE: ${{ runner.temp }}/member-trace
+      REAL_COMPAT_MEMBER_TRACE: ${{ github.workspace }}/target/member-trace
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
