@@ -13,34 +13,71 @@
         {
           "name": "Create",
           "params": [
-            { "name": "instance", "type": "Instance" },
-            { "name": "tweenInfo", "type": "TweenInfo" },
-            { "name": "propertyTable", "type": "table" }
+            {
+              "name": "instance",
+              "type": "Instance"
+            },
+            {
+              "name": "tweenInfo",
+              "type": "TweenInfo"
+            },
+            {
+              "name": "propertyTable",
+              "type": "table"
+            }
           ],
-          "returns": ["Tween"],
+          "returns": [
+            "Tween"
+          ],
           "status": "implemented",
           "doc": "A new tween that animates the named properties of the instance to the given goal values. Numbers, booleans, Vector3, Vector2, CFrame, Color3, UDim, UDim2, Rect and NumberRange properties can be tweened; any other type raises RE9352."
         },
         {
           "name": "GetValue",
           "params": [
-            { "name": "alpha", "type": "number" },
-            { "name": "easingStyle", "type": "Enum.EasingStyle" },
-            { "name": "easingDirection", "type": "Enum.EasingDirection" }
+            {
+              "name": "alpha",
+              "type": "number"
+            },
+            {
+              "name": "easingStyle",
+              "type": "Enum.EasingStyle"
+            },
+            {
+              "name": "easingDirection",
+              "type": "Enum.EasingDirection"
+            }
           ],
-          "returns": ["number"],
+          "returns": [
+            "number"
+          ],
           "status": "implemented",
           "doc": "The eased value of alpha (clamped to 0..1) for this style and direction."
         },
         {
           "name": "SmoothDamp",
           "params": [
-            { "name": "current", "type": "any" },
-            { "name": "target", "type": "any" },
-            { "name": "velocity", "type": "any" },
-            { "name": "smoothTime", "type": "number" }
+            {
+              "name": "current",
+              "type": "any"
+            },
+            {
+              "name": "target",
+              "type": "any"
+            },
+            {
+              "name": "velocity",
+              "type": "any"
+            },
+            {
+              "name": "smoothTime",
+              "type": "number"
+            }
           ],
-          "returns": ["any", "any"],
+          "returns": [
+            "any",
+            "any"
+          ],
           "status": "stub-error",
           "doc": "Not available: raises RE9001."
         }
@@ -55,7 +92,9 @@
         {
           "name": "PlaybackState",
           "type": "Enum.PlaybackState",
-          "storage": { "kind": "own" },
+          "storage": {
+            "kind": "own"
+          },
           "default": "Begin",
           "read_only": true,
           "status": "implemented",
@@ -82,7 +121,12 @@
       "events": [
         {
           "name": "Completed",
-          "params": [{ "name": "playbackState", "type": "Enum.PlaybackState" }],
+          "params": [
+            {
+              "name": "playbackState",
+              "type": "Enum.PlaybackState"
+            }
+          ],
           "status": "implemented",
           "doc": "Fires when the tween finishes (Completed) or is cancelled (Cancelled)."
         }
@@ -97,7 +141,9 @@
         {
           "name": "Instance",
           "type": "Instance",
-          "storage": { "kind": "own" },
+          "storage": {
+            "kind": "own"
+          },
           "read_only": true,
           "status": "implemented",
           "doc": "The instance whose properties the tween animates."
@@ -105,10 +151,2208 @@
         {
           "name": "TweenInfo",
           "type": "TweenInfo",
-          "storage": { "kind": "builtin" },
+          "storage": {
+            "kind": "builtin"
+          },
           "read_only": true,
           "status": "stub-error",
           "doc": "Not readable here: keep the TweenInfo you passed to Create. Raises RE9001."
+        }
+      ]
+    },
+    {
+      "name": "GuiBase2d",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "What every 2D UI object has: its laid-out position and size in pixels.",
+      "properties": [
+        {
+          "name": "AbsolutePosition",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The top-left corner in screen pixels, written by the layout each frame."
+        },
+        {
+          "name": "AbsoluteSize",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The size in screen pixels, written by the layout each frame."
+        },
+        {
+          "name": "AbsoluteRotation",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The rotation in degrees including the ancestors', written by the layout each frame."
+        }
+      ]
+    },
+    {
+      "name": "LayerCollector",
+      "superclass": "GuiBase2d",
+      "status": "implemented",
+      "doc": "A root of 2D UI: its descendants are drawn while it is enabled.",
+      "properties": [
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, nothing under it is drawn and it takes no input."
+        },
+        {
+          "name": "ResetOnSpawn",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When true, the copy in PlayerGui is replaced each time the character spawns."
+        },
+        {
+          "name": "ZIndexBehavior",
+          "type": "Enum.ZIndexBehavior",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Sibling",
+          "status": "implemented",
+          "doc": "Sibling: children draw above their parent and ZIndex orders siblings. Global: ZIndex orders every element under the root."
+        }
+      ]
+    },
+    {
+      "name": "ScreenGui",
+      "superclass": "LayerCollector",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "UI drawn over the 3D view, filling the screen.",
+      "properties": [
+        {
+          "name": "DisplayOrder",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Drawing order among screen UIs: higher draws on top."
+        },
+        {
+          "name": "IgnoreGuiInset",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, the UI also covers the top bar inset; otherwise it starts below it."
+        }
+      ]
+    },
+    {
+      "name": "BillboardGui",
+      "superclass": "LayerCollector",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "UI drawn at a 3D position, facing the camera.",
+      "properties": [
+        {
+          "name": "Adornee",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "default": null,
+          "status": "implemented",
+          "doc": "The part or attachment it is drawn at; when empty, its parent is used."
+        },
+        {
+          "name": "Size",
+          "type": "UDim2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The size: the scale parts are studs (so it shrinks with distance) and the offset parts are pixels."
+        },
+        {
+          "name": "SizeOffset",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "A shift of the drawn rectangle as a fraction of its size."
+        },
+        {
+          "name": "StudsOffset",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "An offset in studs along the camera's right, up and back axes."
+        },
+        {
+          "name": "StudsOffsetWorldSpace",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "An offset in studs in world space."
+        },
+        {
+          "name": "ExtentsOffset",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "partial",
+          "note": "Stored only: not applied.",
+          "doc": "Stored only."
+        },
+        {
+          "name": "MaxDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1e+30,
+          "status": "implemented",
+          "doc": "Studs from the camera beyond which it is not drawn."
+        },
+        {
+          "name": "AlwaysOnTop",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Billboards always draw over the 3D view: there is no depth test against parts.",
+          "doc": "When true, it draws over the 3D view."
+        },
+        {
+          "name": "LightInfluence",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored only: billboards draw unlit.",
+          "doc": "How much scene lighting darkens it."
+        },
+        {
+          "name": "Brightness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "Stored only."
+        },
+        {
+          "name": "ClipsDescendants",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, descendants are cut at its rectangle."
+        },
+        {
+          "name": "Active",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, it takes mouse input like a ScreenGui's elements."
+        }
+      ]
+    },
+    {
+      "name": "SurfaceGui",
+      "superclass": "LayerCollector",
+      "creatable": true,
+      "status": "stub-error",
+      "note": "Not drawn: SurfaceGui is a non-goal in M2.",
+      "doc": "UI drawn on a part's face."
+    },
+    {
+      "name": "GuiObject",
+      "superclass": "GuiBase2d",
+      "status": "implemented",
+      "doc": "What every drawn 2D element has: position, size, background and visibility.",
+      "properties": [
+        {
+          "name": "Position",
+          "type": "UDim2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "Where the element sits in its parent: a fraction of the parent's size plus pixels, for the point named by AnchorPoint."
+        },
+        {
+          "name": "Size",
+          "type": "UDim2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The element's size: a fraction of the parent's size plus pixels."
+        },
+        {
+          "name": "AnchorPoint",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The point of the element that Position places, as a fraction of its size: (0, 0) is the top left, (0.5, 0.5) the centre."
+        },
+        {
+          "name": "Rotation",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Clockwise rotation in degrees about the element's centre; descendants turn with it. Layout and AbsolutePosition ignore it."
+        },
+        {
+          "name": "ZIndex",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "Drawing order among siblings (or among all elements with ZIndexBehavior Global): higher draws on top."
+        },
+        {
+          "name": "LayoutOrder",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Order under a list or grid layout whose SortOrder is LayoutOrder; ties keep child order."
+        },
+        {
+          "name": "Visible",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, the element and its descendants are not drawn and take no input."
+        },
+        {
+          "name": "ClipsDescendants",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, descendants are cut at the element's rectangle. Not applied while the element or an ancestor is rotated."
+        },
+        {
+          "name": "AutomaticSize",
+          "type": "Enum.AutomaticSize",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "None",
+          "status": "implemented",
+          "doc": "Grows the element on X, Y or both to fit its children and text; Size is the minimum."
+        },
+        {
+          "name": "BackgroundColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.639216,
+            0.635294,
+            0.647059
+          ],
+          "status": "implemented",
+          "doc": "The background fill colour."
+        },
+        {
+          "name": "BackgroundTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How see-through the background is; 1 draws none."
+        },
+        {
+          "name": "BorderColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.105882,
+            0.164706,
+            0.207843
+          ],
+          "status": "implemented",
+          "doc": "The colour of the border."
+        },
+        {
+          "name": "BorderSizePixel",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "The border's width in pixels, drawn outside the rectangle; 0 draws none."
+        },
+        {
+          "name": "BorderMode",
+          "type": "Enum.BorderMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Outline",
+          "status": "partial",
+          "note": "Always drawn as Outline.",
+          "doc": "Where the border sits."
+        },
+        {
+          "name": "Active",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, the element sinks mouse input so elements behind it do not get it."
+        },
+        {
+          "name": "Interactable",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, the element and its descendants take no input."
+        },
+        {
+          "name": "Selectable",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "Whether gamepad selection can land on the element (buttons are selectable by default)."
+        },
+        {
+          "name": "SelectionOrder",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored only: selection moves by position.",
+          "doc": "Stored only."
+        }
+      ],
+      "events": [
+        {
+          "name": "MouseEnter",
+          "params": [
+            {
+              "name": "x",
+              "type": "int"
+            },
+            {
+              "name": "y",
+              "type": "int"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when the mouse moves onto the element, with its screen position."
+        },
+        {
+          "name": "MouseLeave",
+          "params": [
+            {
+              "name": "x",
+              "type": "int"
+            },
+            {
+              "name": "y",
+              "type": "int"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when the mouse moves off the element."
+        },
+        {
+          "name": "MouseMoved",
+          "params": [
+            {
+              "name": "x",
+              "type": "int"
+            },
+            {
+              "name": "y",
+              "type": "int"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when the mouse moves over the element."
+        }
+      ]
+    },
+    {
+      "name": "Frame",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A rectangle that holds other elements."
+    },
+    {
+      "name": "TextLabel",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A rectangle with text.",
+      "properties": [
+        {
+          "name": "Text",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Label",
+          "status": "implemented",
+          "doc": "The text shown."
+        },
+        {
+          "name": "TextColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.105882,
+            0.164706,
+            0.207843
+          ],
+          "status": "implemented",
+          "doc": "The colour of the text."
+        },
+        {
+          "name": "TextTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How see-through the text is, from 0 (opaque) to 1 (invisible)."
+        },
+        {
+          "name": "TextSize",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 14,
+          "status": "implemented",
+          "doc": "The text height in pixels."
+        },
+        {
+          "name": "TextScaled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, the text is sized to the largest that fits the element (up to 100 pixels), wrapping as needed; TextSize is ignored."
+        },
+        {
+          "name": "TextWrapped",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, lines break at the element's width."
+        },
+        {
+          "name": "TextTruncate",
+          "type": "Enum.TextTruncate",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "None",
+          "status": "implemented",
+          "doc": "AtEnd cuts text that does not fit and ends it with an ellipsis."
+        },
+        {
+          "name": "TextXAlignment",
+          "type": "Enum.TextXAlignment",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Center",
+          "status": "implemented",
+          "doc": "Horizontal placement of the text: Left, Center or Right."
+        },
+        {
+          "name": "TextYAlignment",
+          "type": "Enum.TextYAlignment",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Center",
+          "status": "implemented",
+          "doc": "Vertical placement of the text: Top, Center or Bottom."
+        },
+        {
+          "name": "Font",
+          "type": "Enum.Font",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The legacy font name; setting it sets FontFace to that font's family and weight. Fonts are drawn with bundled open-licence substitutes."
+        },
+        {
+          "name": "FontFace",
+          "type": "Font",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            "rbxasset://fonts/families/SourceSansPro.json",
+            "Regular",
+            "Normal"
+          ],
+          "status": "implemented",
+          "doc": "The font family, weight and style. Families map to bundled open-licence substitutes; an unknown family uses the default one."
+        },
+        {
+          "name": "LineHeight",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "Line spacing as a multiple of the font's line height."
+        },
+        {
+          "name": "RichText",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Only the bold and font colour tags; other tags are drawn as text.",
+          "doc": "When true, <b>\u2026</b> makes text bold and <font color=\"#rrggbb\">\u2026</font> (or rgb(r,g,b)) colours it."
+        },
+        {
+          "name": "TextStrokeColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The colour of the outline drawn around the text."
+        },
+        {
+          "name": "TextStrokeTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "How see-through the text outline is; 1 draws none."
+        },
+        {
+          "name": "TextBounds",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The size in pixels of the laid-out text, written each frame."
+        },
+        {
+          "name": "TextFits",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "False when the text does not fit the element, written each frame."
+        }
+      ]
+    },
+    {
+      "name": "GuiButton",
+      "superclass": "GuiObject",
+      "status": "implemented",
+      "doc": "What every button has: click events and the hover look.",
+      "properties": [
+        {
+          "name": "AutoButtonColor",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When true, the background darkens while the mouse is over the button or pressing it."
+        },
+        {
+          "name": "Modal",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored only: the mouse is never locked.",
+          "doc": "Stored only."
+        },
+        {
+          "name": "Selected",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "A flag scripts may use; it does not change the look."
+        },
+        {
+          "name": "Selectable",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether gamepad selection can land on the button."
+        }
+      ],
+      "events": [
+        {
+          "name": "Activated",
+          "params": [
+            {
+              "name": "inputObject",
+              "type": "InputObject"
+            },
+            {
+              "name": "clickCount",
+              "type": "int"
+            }
+          ],
+          "status": "partial",
+          "note": "inputObject is nil; clickCount is 1.",
+          "doc": "Fires when the button is clicked, or activated while it is GuiService.SelectedObject."
+        },
+        {
+          "name": "MouseButton1Click",
+          "params": [],
+          "status": "implemented",
+          "doc": "Fires when the left button is pressed and released over the button."
+        },
+        {
+          "name": "MouseButton1Down",
+          "params": [
+            {
+              "name": "x",
+              "type": "int"
+            },
+            {
+              "name": "y",
+              "type": "int"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when the left button is pressed over the button."
+        },
+        {
+          "name": "MouseButton1Up",
+          "params": [
+            {
+              "name": "x",
+              "type": "int"
+            },
+            {
+              "name": "y",
+              "type": "int"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when the left button is released over the button."
+        },
+        {
+          "name": "MouseButton2Click",
+          "params": [],
+          "status": "implemented",
+          "doc": "Fires when the right button is pressed and released over the button."
+        },
+        {
+          "name": "MouseButton2Down",
+          "params": [
+            {
+              "name": "x",
+              "type": "int"
+            },
+            {
+              "name": "y",
+              "type": "int"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when the right button is pressed over the button."
+        },
+        {
+          "name": "MouseButton2Up",
+          "params": [
+            {
+              "name": "x",
+              "type": "int"
+            },
+            {
+              "name": "y",
+              "type": "int"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when the right button is released over the button."
+        }
+      ]
+    },
+    {
+      "name": "TextButton",
+      "superclass": "GuiButton",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A button with text.",
+      "properties": [
+        {
+          "name": "Text",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Button",
+          "status": "implemented",
+          "doc": "The text shown."
+        },
+        {
+          "name": "TextColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.105882,
+            0.164706,
+            0.207843
+          ],
+          "status": "implemented",
+          "doc": "The colour of the text."
+        },
+        {
+          "name": "TextTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How see-through the text is, from 0 (opaque) to 1 (invisible)."
+        },
+        {
+          "name": "TextSize",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 14,
+          "status": "implemented",
+          "doc": "The text height in pixels."
+        },
+        {
+          "name": "TextScaled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, the text is sized to the largest that fits the element (up to 100 pixels), wrapping as needed; TextSize is ignored."
+        },
+        {
+          "name": "TextWrapped",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, lines break at the element's width."
+        },
+        {
+          "name": "TextTruncate",
+          "type": "Enum.TextTruncate",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "None",
+          "status": "implemented",
+          "doc": "AtEnd cuts text that does not fit and ends it with an ellipsis."
+        },
+        {
+          "name": "TextXAlignment",
+          "type": "Enum.TextXAlignment",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Center",
+          "status": "implemented",
+          "doc": "Horizontal placement of the text: Left, Center or Right."
+        },
+        {
+          "name": "TextYAlignment",
+          "type": "Enum.TextYAlignment",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Center",
+          "status": "implemented",
+          "doc": "Vertical placement of the text: Top, Center or Bottom."
+        },
+        {
+          "name": "Font",
+          "type": "Enum.Font",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The legacy font name; setting it sets FontFace to that font's family and weight. Fonts are drawn with bundled open-licence substitutes."
+        },
+        {
+          "name": "FontFace",
+          "type": "Font",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            "rbxasset://fonts/families/SourceSansPro.json",
+            "Regular",
+            "Normal"
+          ],
+          "status": "implemented",
+          "doc": "The font family, weight and style. Families map to bundled open-licence substitutes; an unknown family uses the default one."
+        },
+        {
+          "name": "LineHeight",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "Line spacing as a multiple of the font's line height."
+        },
+        {
+          "name": "RichText",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Only the bold and font colour tags; other tags are drawn as text.",
+          "doc": "When true, <b>\u2026</b> makes text bold and <font color=\"#rrggbb\">\u2026</font> (or rgb(r,g,b)) colours it."
+        },
+        {
+          "name": "TextStrokeColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The colour of the outline drawn around the text."
+        },
+        {
+          "name": "TextStrokeTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "How see-through the text outline is; 1 draws none."
+        },
+        {
+          "name": "TextBounds",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The size in pixels of the laid-out text, written each frame."
+        },
+        {
+          "name": "TextFits",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "False when the text does not fit the element, written each frame."
+        }
+      ]
+    },
+    {
+      "name": "ImageLabel",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A rectangle with an image.",
+      "properties": [
+        {
+          "name": "Image",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Images are not loaded yet: a placeholder in ImageColor3 is drawn for a non-empty id.",
+          "doc": "The image's asset id."
+        },
+        {
+          "name": "ImageColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1,
+            1,
+            1
+          ],
+          "status": "implemented",
+          "doc": "A tint multiplied into the image."
+        },
+        {
+          "name": "ImageTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How see-through the image is."
+        },
+        {
+          "name": "ScaleType",
+          "type": "Enum.ScaleType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Stretch",
+          "status": "partial",
+          "note": "Stored only: the placeholder fills the element.",
+          "doc": "How the image fills the element."
+        }
+      ]
+    },
+    {
+      "name": "ImageButton",
+      "superclass": "GuiButton",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A button with an image.",
+      "properties": [
+        {
+          "name": "Image",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Images are not loaded yet: a placeholder in ImageColor3 is drawn for a non-empty id.",
+          "doc": "The image's asset id."
+        },
+        {
+          "name": "ImageColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1,
+            1,
+            1
+          ],
+          "status": "implemented",
+          "doc": "A tint multiplied into the image."
+        },
+        {
+          "name": "ImageTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How see-through the image is."
+        },
+        {
+          "name": "ScaleType",
+          "type": "Enum.ScaleType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Stretch",
+          "status": "partial",
+          "note": "Stored only: the placeholder fills the element.",
+          "doc": "How the image fills the element."
+        }
+      ]
+    },
+    {
+      "name": "TextBox",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A rectangle with editable text.",
+      "properties": [
+        {
+          "name": "Text",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "TextBox",
+          "status": "implemented",
+          "doc": "The text shown."
+        },
+        {
+          "name": "TextColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.105882,
+            0.164706,
+            0.207843
+          ],
+          "status": "implemented",
+          "doc": "The colour of the text."
+        },
+        {
+          "name": "TextTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How see-through the text is, from 0 (opaque) to 1 (invisible)."
+        },
+        {
+          "name": "TextSize",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 14,
+          "status": "implemented",
+          "doc": "The text height in pixels."
+        },
+        {
+          "name": "TextScaled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, the text is sized to the largest that fits the element (up to 100 pixels), wrapping as needed; TextSize is ignored."
+        },
+        {
+          "name": "TextWrapped",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, lines break at the element's width."
+        },
+        {
+          "name": "TextTruncate",
+          "type": "Enum.TextTruncate",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "None",
+          "status": "implemented",
+          "doc": "AtEnd cuts text that does not fit and ends it with an ellipsis."
+        },
+        {
+          "name": "TextXAlignment",
+          "type": "Enum.TextXAlignment",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Center",
+          "status": "implemented",
+          "doc": "Horizontal placement of the text: Left, Center or Right."
+        },
+        {
+          "name": "TextYAlignment",
+          "type": "Enum.TextYAlignment",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Center",
+          "status": "implemented",
+          "doc": "Vertical placement of the text: Top, Center or Bottom."
+        },
+        {
+          "name": "Font",
+          "type": "Enum.Font",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The legacy font name; setting it sets FontFace to that font's family and weight. Fonts are drawn with bundled open-licence substitutes."
+        },
+        {
+          "name": "FontFace",
+          "type": "Font",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            "rbxasset://fonts/families/SourceSansPro.json",
+            "Regular",
+            "Normal"
+          ],
+          "status": "implemented",
+          "doc": "The font family, weight and style. Families map to bundled open-licence substitutes; an unknown family uses the default one."
+        },
+        {
+          "name": "LineHeight",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "Line spacing as a multiple of the font's line height."
+        },
+        {
+          "name": "RichText",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Only the bold and font colour tags; other tags are drawn as text.",
+          "doc": "When true, <b>\u2026</b> makes text bold and <font color=\"#rrggbb\">\u2026</font> (or rgb(r,g,b)) colours it."
+        },
+        {
+          "name": "TextStrokeColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The colour of the outline drawn around the text."
+        },
+        {
+          "name": "TextStrokeTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "How see-through the text outline is; 1 draws none."
+        },
+        {
+          "name": "TextBounds",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The size in pixels of the laid-out text, written each frame."
+        },
+        {
+          "name": "TextFits",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "False when the text does not fit the element, written each frame."
+        },
+        {
+          "name": "PlaceholderText",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "implemented",
+          "doc": "Text shown while the box is empty."
+        },
+        {
+          "name": "PlaceholderColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.698039,
+            0.698039,
+            0.698039
+          ],
+          "status": "implemented",
+          "doc": "The colour of the placeholder text."
+        },
+        {
+          "name": "ClearTextOnFocus",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When true, the text is cleared when the box gains focus."
+        },
+        {
+          "name": "MultiLine",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, Enter adds a line instead of ending the edit."
+        },
+        {
+          "name": "TextEditable",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, the box cannot be edited."
+        },
+        {
+          "name": "CursorPosition",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": -1,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "Where the cursor is (1 is before the first character), -1 when not focused."
+        }
+      ],
+      "methods": [
+        {
+          "name": "CaptureFocus",
+          "status": "implemented",
+          "doc": "Gives the box keyboard focus."
+        },
+        {
+          "name": "ReleaseFocus",
+          "params": [
+            {
+              "name": "submitted",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Takes the focus away, firing FocusLost with submitted (false by default)."
+        },
+        {
+          "name": "IsFocused",
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True while the box has keyboard focus."
+        }
+      ],
+      "events": [
+        {
+          "name": "Focused",
+          "params": [],
+          "status": "implemented",
+          "doc": "Fires when the box gains focus."
+        },
+        {
+          "name": "FocusLost",
+          "params": [
+            {
+              "name": "enterPressed",
+              "type": "bool"
+            },
+            {
+              "name": "inputThatCausedFocusLoss",
+              "type": "InputObject"
+            }
+          ],
+          "status": "partial",
+          "note": "inputThatCausedFocusLoss is nil.",
+          "doc": "Fires when the box loses focus, with whether Enter ended the edit."
+        }
+      ]
+    },
+    {
+      "name": "ScrollingFrame",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A frame whose children sit on a canvas that scrolls.",
+      "properties": [
+        {
+          "name": "CanvasSize",
+          "type": "UDim2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            2,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The canvas size: a fraction of the frame's size plus pixels."
+        },
+        {
+          "name": "CanvasPosition",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The canvas point shown at the frame's top-left corner, in pixels; kept inside the canvas."
+        },
+        {
+          "name": "AutomaticCanvasSize",
+          "type": "Enum.AutomaticSize",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "None",
+          "status": "implemented",
+          "doc": "Grows the canvas on X, Y or both to fit the children."
+        },
+        {
+          "name": "ScrollingDirection",
+          "type": "Enum.ScrollingDirection",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "XY",
+          "status": "implemented",
+          "doc": "The axes the mouse wheel and drags scroll."
+        },
+        {
+          "name": "ScrollingEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, input does not scroll the canvas."
+        },
+        {
+          "name": "ScrollBarThickness",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 12,
+          "status": "implemented",
+          "doc": "The scroll bar's width in pixels."
+        },
+        {
+          "name": "ScrollBarImageColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1,
+            1,
+            1
+          ],
+          "status": "implemented",
+          "doc": "The scroll bar's colour."
+        },
+        {
+          "name": "ScrollBarImageTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How see-through the scroll bar is."
+        },
+        {
+          "name": "AbsoluteCanvasSize",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The canvas size in pixels, written each frame."
+        },
+        {
+          "name": "AbsoluteWindowSize",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The visible area in pixels, written each frame."
+        },
+        {
+          "name": "ClipsDescendants",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Scrolling frames clip their canvas."
+        }
+      ]
+    },
+    {
+      "name": "ViewportFrame",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "stub-error",
+      "note": "Not drawn: ViewportFrame is a non-goal in M2.",
+      "doc": "A frame that draws 3D objects."
+    },
+    {
+      "name": "UIBase",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "What every UI modifier has."
+    },
+    {
+      "name": "UIComponent",
+      "superclass": "UIBase",
+      "status": "implemented",
+      "doc": "A modifier of its parent element."
+    },
+    {
+      "name": "UIConstraint",
+      "superclass": "UIComponent",
+      "status": "implemented",
+      "doc": "A limit on its parent's size."
+    },
+    {
+      "name": "UILayout",
+      "superclass": "UIComponent",
+      "status": "implemented",
+      "doc": "Places its siblings, replacing their Position."
+    },
+    {
+      "name": "UIGridStyleLayout",
+      "superclass": "UILayout",
+      "status": "implemented",
+      "doc": "What list and grid layouts share.",
+      "properties": [
+        {
+          "name": "HorizontalAlignment",
+          "type": "Enum.HorizontalAlignment",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Left",
+          "status": "implemented",
+          "doc": "Where the elements sit horizontally in the parent."
+        },
+        {
+          "name": "VerticalAlignment",
+          "type": "Enum.VerticalAlignment",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Top",
+          "status": "implemented",
+          "doc": "Where the elements sit vertically in the parent."
+        },
+        {
+          "name": "SortOrder",
+          "type": "Enum.SortOrder",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "LayoutOrder",
+          "status": "implemented",
+          "doc": "The order elements are placed in: LayoutOrder or Name (ties keep child order)."
+        },
+        {
+          "name": "AbsoluteContentSize",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The size in pixels of the placed elements, written each frame."
+        }
+      ]
+    },
+    {
+      "name": "UIListLayout",
+      "superclass": "UIGridStyleLayout",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Places its siblings one after another.",
+      "properties": [
+        {
+          "name": "FillDirection",
+          "type": "Enum.FillDirection",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Vertical",
+          "status": "implemented",
+          "doc": "The axis elements are placed along."
+        },
+        {
+          "name": "Padding",
+          "type": "UDim",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The gap between elements: a fraction of the parent's size along the fill axis plus pixels."
+        },
+        {
+          "name": "Wraps",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored only: lists do not wrap.",
+          "doc": "Stored only."
+        }
+      ]
+    },
+    {
+      "name": "UIGridLayout",
+      "superclass": "UIGridStyleLayout",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Places its siblings in a grid of equal cells.",
+      "properties": [
+        {
+          "name": "FillDirection",
+          "type": "Enum.FillDirection",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Horizontal",
+          "status": "implemented",
+          "doc": "The axis cells fill first."
+        },
+        {
+          "name": "CellSize",
+          "type": "UDim2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            100,
+            0,
+            100
+          ],
+          "status": "implemented",
+          "doc": "The size of each cell: a fraction of the parent's size plus pixels."
+        },
+        {
+          "name": "CellPadding",
+          "type": "UDim2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            5,
+            0,
+            5
+          ],
+          "status": "implemented",
+          "doc": "The gap between cells."
+        },
+        {
+          "name": "FillDirectionMaxCells",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The most cells along the fill direction; 0 fits as many as the parent holds."
+        },
+        {
+          "name": "StartCorner",
+          "type": "Enum.StartCorner",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "TopLeft",
+          "status": "implemented",
+          "doc": "The corner the first cell is in."
+        },
+        {
+          "name": "AbsoluteCellSize",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The cell size in pixels, written each frame."
+        },
+        {
+          "name": "AbsoluteCellCount",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "Columns and rows, written each frame."
+        }
+      ]
+    },
+    {
+      "name": "UIPadding",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Insets the area its parent's children are placed in.",
+      "properties": [
+        {
+          "name": "PaddingTop",
+          "type": "UDim",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "Space at the top: a fraction of the parent's height plus pixels."
+        },
+        {
+          "name": "PaddingBottom",
+          "type": "UDim",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "Space at the bottom."
+        },
+        {
+          "name": "PaddingLeft",
+          "type": "UDim",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "Space at the left: a fraction of the parent's width plus pixels."
+        },
+        {
+          "name": "PaddingRight",
+          "type": "UDim",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "Space at the right."
+        }
+      ]
+    },
+    {
+      "name": "UISizeConstraint",
+      "superclass": "UIConstraint",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Keeps its parent's size between a minimum and a maximum in pixels.",
+      "properties": [
+        {
+          "name": "MinSize",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The smallest size in pixels."
+        },
+        {
+          "name": "MaxSize",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1e+30,
+            1e+30
+          ],
+          "status": "implemented",
+          "doc": "The largest size in pixels."
+        }
+      ]
+    },
+    {
+      "name": "UIAspectRatioConstraint",
+      "superclass": "UIConstraint",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Keeps its parent's width to height ratio.",
+      "properties": [
+        {
+          "name": "AspectRatio",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "Width divided by height."
+        },
+        {
+          "name": "AspectType",
+          "type": "Enum.AspectType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "FitWithinMaxSize",
+          "status": "implemented",
+          "doc": "FitWithinMaxSize shrinks the element to fit the size it would have; ScaleWithParentSize keeps the dominant axis and sets the other."
+        },
+        {
+          "name": "DominantAxis",
+          "type": "Enum.DominantAxis",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Width",
+          "status": "implemented",
+          "doc": "The axis kept by ScaleWithParentSize."
+        }
+      ]
+    },
+    {
+      "name": "UIScale",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Scales its parent and its descendants.",
+      "properties": [
+        {
+          "name": "Scale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "The factor, about the parent's anchor point."
+        }
+      ]
+    },
+    {
+      "name": "UICorner",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Rounds its parent's corners.",
+      "properties": [
+        {
+          "name": "CornerRadius",
+          "type": "UDim",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            8
+          ],
+          "status": "implemented",
+          "doc": "The radius: a fraction of the shorter side plus pixels."
+        }
+      ]
+    },
+    {
+      "name": "UIStroke",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Outlines its parent: its border, or its text for text elements.",
+      "properties": [
+        {
+          "name": "Color",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The outline colour."
+        },
+        {
+          "name": "Thickness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "The outline width in pixels."
+        },
+        {
+          "name": "Transparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How see-through the outline is."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, no outline is drawn."
+        },
+        {
+          "name": "ApplyStrokeMode",
+          "type": "Enum.ApplyStrokeMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Contextual",
+          "status": "implemented",
+          "doc": "Contextual outlines the text of text elements and the border of others; Border always outlines the border."
+        },
+        {
+          "name": "LineJoinMode",
+          "type": "Enum.LineJoinMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Round",
+          "status": "partial",
+          "note": "Corners are always mitred.",
+          "doc": "How corners join."
+        }
+      ]
+    },
+    {
+      "name": "UIGradient",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "partial",
+      "note": "Applied to backgrounds only, not to text or images.",
+      "doc": "Blends colours and transparency across its parent's background.",
+      "properties": [
+        {
+          "name": "Color",
+          "type": "ColorSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              [
+                1,
+                1,
+                1
+              ]
+            ],
+            [
+              1,
+              [
+                1,
+                1,
+                1
+              ]
+            ]
+          ],
+          "status": "implemented",
+          "doc": "The colours across the element, multiplied into its background."
+        },
+        {
+          "name": "Transparency",
+          "type": "NumberSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          "status": "implemented",
+          "doc": "Transparency across the element, combined with the background's."
+        },
+        {
+          "name": "Offset",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "Shifts the gradient, as a fraction of the element's size."
+        },
+        {
+          "name": "Rotation",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Turns the gradient clockwise, in degrees."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, the gradient is not applied."
         }
       ]
     }

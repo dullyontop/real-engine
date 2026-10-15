@@ -229,7 +229,7 @@ impl ClassRegistry {
                 entity,
                 &own_component_name(&class.name),
                 &p.name,
-                value,
+                saturate(value),
             ),
             Storage::Builtin => match self.accessor(&class.name, &p.name) {
                 Some(a) => match &a.set {
@@ -281,6 +281,23 @@ fn read_field(
             }
             .into()
         })
+}
+
+/// `value` with every infinite number held to the largest finite `f32`, so
+/// the common `math.huge` (a `MaxSize`, a `MaxDistance`) is stored as the
+/// largest number an own field keeps rather than refused; NaN still is.
+fn saturate(value: Value) -> Value {
+    const MAX: f64 = f32::MAX as f64;
+    match value {
+        Value::Float(f) if f.is_infinite() => Value::Float(MAX.copysign(f)),
+        Value::Vec3(v) => Value::Vec3(v.clamp(
+            glam::Vec3::splat(-f32::MAX),
+            glam::Vec3::splat(f32::MAX),
+        )),
+        Value::Record(id, fields) => Value::Record(id, fields.into_iter().map(saturate).collect()),
+        Value::List(items) => Value::List(items.into_iter().map(saturate).collect()),
+        other => other,
+    }
 }
 
 fn write_field(

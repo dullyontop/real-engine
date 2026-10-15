@@ -543,6 +543,15 @@ pub(crate) fn field_type(
         "int" => FieldType::I64,
         "Vector3" => FieldType::Vec3,
         "Color3" => FieldType::Color,
+        "NumberSequence" | "ColorSequence" => {
+            let keypoint = format!("{ty}Keypoint");
+            let Some(id) = RecordId::by_name(&keypoint) else {
+                return Err(bad(format!(
+                    "{what}: type {ty} needs the {keypoint} record, which no library declares"
+                )));
+            };
+            FieldType::List(Box::new(FieldType::Record(id)))
+        }
         _ if entity && allow_entity => FieldType::Entity,
         _ => {
             if let Some(name) = ty.strip_prefix("Enum.") {

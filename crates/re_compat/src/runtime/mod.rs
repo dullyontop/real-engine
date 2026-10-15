@@ -91,6 +91,7 @@ impl Bindings {
         crate::datatypes::register(&mut b);
         crate::tween::register(&mut b);
         crate::sound::register(&mut b);
+        crate::gui::register(&mut b);
         Ok(b)
     }
 
