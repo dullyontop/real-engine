@@ -1782,6 +1782,86 @@
           "doc": "A particle's size in studs over its life."
         },
         {
+          "name": "Squash",
+          "type": "NumberSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          "status": "partial",
+          "note": "Stored; particles are drawn unsquashed.",
+          "doc": "Stretches a particle over its life: positive is taller and thinner, negative wider and shorter."
+        },
+        {
+          "name": "FlipbookLayout",
+          "type": "Enum.ParticleFlipbookLayout",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "None",
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture.",
+          "doc": "How the texture is split into flipbook frames."
+        },
+        {
+          "name": "FlipbookMode",
+          "type": "Enum.ParticleFlipbookMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Loop",
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture.",
+          "doc": "How the flipbook frames play."
+        },
+        {
+          "name": "FlipbookFramerate",
+          "type": "NumberRange",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Min": 1,
+            "Max": 1
+          },
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture.",
+          "doc": "Flipbook frames per second."
+        },
+        {
+          "name": "FlipbookStartRandom",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture.",
+          "doc": "When true each particle starts on a random flipbook frame."
+        },
+        {
+          "name": "WindAffectsDrag",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored; there is no wind.",
+          "doc": "When true, Drag pulls particles towards the workspace's wind."
+        },
+        {
           "name": "Rotation",
           "type": "NumberRange",
           "storage": {

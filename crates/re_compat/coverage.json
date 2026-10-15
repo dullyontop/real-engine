@@ -3,7 +3,7 @@
   "version": 1,
   "totals": {
     "implemented": 1749,
-    "partial": 201,
+    "partial": 207,
     "stub-error": 53,
     "missing": 3
   },
@@ -3268,6 +3268,30 @@
           "status": "implemented"
         },
         {
+          "name": "FlipbookFramerate",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture."
+        },
+        {
+          "name": "FlipbookLayout",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture."
+        },
+        {
+          "name": "FlipbookMode",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture."
+        },
+        {
+          "name": "FlipbookStartRandom",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are drawn without their texture."
+        },
+        {
           "name": "Lifetime",
           "kind": "property",
           "status": "implemented"
@@ -3347,6 +3371,12 @@
           "status": "implemented"
         },
         {
+          "name": "Squash",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are drawn unsquashed."
+        },
+        {
           "name": "Texture",
           "kind": "property",
           "status": "partial",
@@ -3367,6 +3397,12 @@
           "kind": "property",
           "status": "partial",
           "note": "Stored; not used."
+        },
+        {
+          "name": "WindAffectsDrag",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; there is no wind."
         },
         {
           "name": "ZOffset",
