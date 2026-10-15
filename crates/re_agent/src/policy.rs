@@ -19,13 +19,18 @@
 //!
 //! * the command's tier must not exceed `max_tier` (`RE8001`); a dry run
 //!   needs only `read`;
-//! * a file path in the arguments of a mutating call must be relative,
+//! * a file path in the arguments of a mutating call (`path`, `dest`, any
+//!   `*_path`, each string of `paths`; see [`is_path_arg`]) must be relative,
 //!   stay inside the project, avoid `.real/` and `.git/`, match an `allow`
-//!   glob and no `deny` glob (`RE8002`);
+//!   glob and no `deny` glob (`RE8002`). Commands that write files name their
+//!   path arguments this way, and write through
+//!   [`crate::commands::write_file`], which also refuses symbolic links;
 //! * budgets (`RE8008`): `frames` caps the `frames` argument of `play.run`
-//!   and `graph.generate`; `entities_per_transaction` caps the number of
-//!   operations in a `scene.apply`. `milliseconds` and `memory_mb` are passed
-//!   to the budgeted commands through [`Policy::budgets`] by their host.
+//!   and `graph.generate` (a `frames` that is not a whole number is refused);
+//!   `entities_per_transaction` caps the number of operations in a
+//!   `scene.apply`. An omitted `frames` takes the command's own default,
+//!   which its host caps with [`Policy::budgets`], as it does `milliseconds`
+//!   and `memory_mb`.
 //!
 //! With no policy file, the maximum tier is `read`. `real agent init` writes
 //! [`Policy::init_default`], which grants `edit` within the default scopes;
@@ -65,6 +70,40 @@ pub const FRAME_BUDGETED: &[&str] = &["play.run", "graph.generate"];
 
 /// Argument names that hold a project file path.
 pub const PATH_ARGS: &[&str] = &["path", "dest"];
+
+/// `s` as a TOML basic string, quoted and escaped.
+pub(crate) fn toml_string(s: &str) -> String {
+    toml::Value::String(s.to_string()).to_string()
+}
+
+/// Whether a top-level argument names a project path that the scopes check:
+/// [`PATH_ARGS`], or any key ending in `_path` (a `paths` array has each of
+/// its strings checked).
+pub fn is_path_arg(key: &str) -> bool {
+    PATH_ARGS.contains(&key) || key.ends_with("_path")
+}
+
+/// `rel` (a [`normalize`]d path) inside `project`, refused if any part of it
+/// that exists is a symbolic link, so that a link in a project can't lead a
+/// write into `.real/`, `.git/` or out of the project.
+pub fn no_links(project: &Path, rel: &str) -> Result<std::path::PathBuf, &'static str> {
+    let mut path = project.to_path_buf();
+    let mut exists = true;
+    for part in rel.split('/') {
+        path.push(part);
+        if !exists {
+            continue;
+        }
+        match std::fs::symlink_metadata(&path) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Err("the path goes through a symbolic link");
+            }
+            Ok(_) => {}
+            Err(_) => exists = false,
+        }
+    }
+    Ok(path)
+}
 
 /// Glob allow and deny lists for file-writing commands.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,7 +218,7 @@ impl Policy {
     /// The policy as the TOML `real agent init` writes, with comments.
     pub fn to_toml(&self) -> String {
         let list = |v: &[String]| {
-            let items: Vec<String> = v.iter().map(|s| format!("{s:?}")).collect();
+            let items: Vec<String> = v.iter().map(|s| toml_string(s)).collect();
             format!("[{}]", items.join(", "))
         };
         format!(
@@ -315,13 +354,25 @@ impl PolicyCheck for Policy {
             }));
         }
         if FRAME_BUDGETED.contains(&name)
-            && let Some(frames) = args.get("frames").and_then(Json::as_u64)
-            && frames > self.budgets.frames
+            && let Some(frames) = args.get("frames")
         {
-            return Err(budget_error(
-                name,
-                format!("{frames} frames asked, {} allowed", self.budgets.frames),
-            ));
+            // A number that isn't a whole count is refused here rather than
+            // left to the handler, so the budget can't be slipped.
+            match frames.as_u64() {
+                Some(n) if n <= self.budgets.frames => {}
+                Some(n) => {
+                    return Err(budget_error(
+                        name,
+                        format!("{n} frames asked, {} allowed", self.budgets.frames),
+                    ));
+                }
+                None => {
+                    return Err(budget_error(
+                        name,
+                        format!("`frames` must be a whole number, got {frames}"),
+                    ));
+                }
+            }
         }
         if let Some(ops) = args.get("ops").and_then(Json::as_array)
             && ops.len() as u64 > self.budgets.entities_per_transaction
@@ -335,10 +386,22 @@ impl PolicyCheck for Policy {
                 ),
             ));
         }
-        if !dry_run && spec.tier > Tier::Read {
-            for key in PATH_ARGS {
-                if let Some(path) = args.get(*key).and_then(Json::as_str) {
+        if !dry_run
+            && spec.tier > Tier::Read
+            && let Some(obj) = args.as_object()
+        {
+            for (key, value) in obj {
+                if is_path_arg(key)
+                    && let Some(path) = value.as_str()
+                {
                     self.check_path(name, path)?;
+                }
+                if key == "paths"
+                    && let Some(paths) = value.as_array()
+                {
+                    for path in paths.iter().filter_map(Json::as_str) {
+                        self.check_path(name, path)?;
+                    }
                 }
             }
         }

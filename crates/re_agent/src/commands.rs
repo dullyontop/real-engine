@@ -119,11 +119,24 @@ pub fn project_path(command: &str, path: &str) -> Result<String, Diagnostic> {
         .at(Location::command(command.to_string()))
     };
     let normal = normalize(path).map_err(refuse)?;
-    let first = normal.split('/').next().unwrap_or("");
-    if crate::policy::PROTECTED_DIRS.contains(&first) {
+    let first = normal.split('/').next().unwrap_or("").to_ascii_lowercase();
+    if crate::policy::PROTECTED_DIRS.contains(&first.as_str()) {
         return Err(refuse("`.real/` and `.git/` are not writable by commands"));
     }
     Ok(normal)
+}
+
+/// The file `rel` (from [`project_path`]) in `agent`'s project, refused
+/// (`RE8002`) if it goes through a symbolic link.
+fn file_path(agent: &Agent, command: &str, rel: &str) -> Result<PathBuf, Diagnostic> {
+    crate::policy::no_links(&agent.project, rel).map_err(|why| {
+        Diagnostic::error(
+            codes::OUTSIDE_SCOPE,
+            format!("{command} may not write {rel:?}: {why}"),
+        )
+        .at(Location::command(command.to_string()))
+        .with_hint("commands only write real files inside the project; replace the link with a file or directory")
+    })
 }
 
 fn file_error(command: &str, path: &str, message: String) -> Diagnostic {
@@ -203,7 +216,7 @@ fn script_write<C: EditTarget>(
     for d in diagnostics {
         call.push_diagnostic(d);
     }
-    let existed = agent.project.join(&rel).is_file();
+    let existed = file_path(agent, "script.write", &rel)?.is_file();
     if call.dry_run() {
         return Ok(json!({ "would_write": rel, "bytes": args.source.len(), "replaces": existed }));
     }
@@ -224,8 +237,8 @@ fn file_delete<C: EditTarget>(
     call: &mut Call,
 ) -> Result<Json, Diagnostic> {
     let rel = project_path("file.delete", &args.path)?;
-    let path = agent.project.join(&rel);
-    match std::fs::metadata(&path) {
+    let path = file_path(agent, "file.delete", &rel)?;
+    match std::fs::symlink_metadata(&path) {
         Ok(m) if m.is_file() => {}
         Ok(_) => {
             return Err(file_error(
@@ -260,8 +273,8 @@ pub fn write_file(
     rel: &str,
     bytes: &[u8],
 ) -> Result<(), Diagnostic> {
+    let path = file_path(agent, command, rel)?;
     agent.with_session(world, |s| s.touch(rel))?;
-    let path = agent.project.join(rel);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| {
             file_error(

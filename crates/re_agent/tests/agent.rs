@@ -178,6 +178,76 @@ fn policy_checks_path_arguments_of_mutating_calls() {
     // `dest` is a path argument too.
     let out = p.check(&edit, &json!({ "dest": "elsewhere/x.png" }), false);
     assert_eq!(out.unwrap_err().code.to_string(), "RE8002");
+    // So are `*_path` keys and every string of `paths`.
+    let out = p.check(&edit, &json!({ "source_path": ".real/x" }), false);
+    assert_eq!(out.unwrap_err().code.to_string(), "RE8002");
+    let out = p.check(
+        &edit,
+        &json!({ "paths": ["scripts/a.luau", "../b"] }),
+        false,
+    );
+    assert_eq!(out.unwrap_err().code.to_string(), "RE8002");
+}
+
+#[cfg(unix)]
+#[test]
+fn file_commands_refuse_symbolic_links() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path();
+    let agent = Agent::new(project);
+    let reg = registry(&agent);
+    let mut s = state();
+    agent.start_session(&s.world).unwrap();
+    let policy = Policy::init_default();
+    std::fs::create_dir_all(project.join(".real")).unwrap();
+    std::fs::write(
+        project.join(".real/agent-policy.toml"),
+        "max_tier = \"edit\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(project.join("scripts")).unwrap();
+    // A link to the policy, and a linked directory leading out of the project.
+    std::os::unix::fs::symlink(
+        "../.real/agent-policy.toml",
+        project.join("scripts/cfg.luau"),
+    )
+    .unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), project.join("scripts/out")).unwrap();
+
+    let write = |s: &mut EditState, path: &str| {
+        reg.dispatch(
+            s,
+            "script.write",
+            json!({ "path": path, "source": "max_tier = \"destructive\"\n" }),
+            false,
+            &policy,
+        )
+    };
+    let out = write(&mut s, "scripts/cfg.luau");
+    assert_eq!(code(&out), "RE8002", "{:?}", out.diagnostics);
+    let out = write(&mut s, "scripts/out/x.luau");
+    assert_eq!(code(&out), "RE8002", "{:?}", out.diagnostics);
+    assert_eq!(
+        std::fs::read_to_string(project.join(".real/agent-policy.toml")).unwrap(),
+        "max_tier = \"edit\"\n"
+    );
+    assert!(!outside.path().join("x.luau").exists());
+
+    let mut all = Policy::init_default();
+    all.max_tier = re_command::Tier::Destructive;
+    let out = reg.dispatch(
+        &mut s,
+        "file.delete",
+        json!({ "path": "scripts/cfg.luau" }),
+        false,
+        &all,
+    );
+    assert_eq!(code(&out), "RE8002", "{:?}", out.diagnostics);
+    assert!(project.join(".real/agent-policy.toml").exists());
+    // Protected directories are refused whatever their case.
+    let out = write(&mut s, ".REAL/x.luau");
+    assert_eq!(code(&out), "RE8002", "{:?}", out.diagnostics);
 }
 
 #[test]
@@ -202,6 +272,13 @@ fn budgets() {
         .check(&spec("graph.generate"), &json!({ "frames": 10_000 }), true)
         .unwrap_err();
     assert_eq!(err.code.to_string(), "RE8008");
+    // A frame count that isn't a whole number can't slip past the budget.
+    for frames in [json!(1e9), json!(-1), json!("600")] {
+        let err = p
+            .check(&spec("play.run"), &json!({ "frames": frames }), false)
+            .unwrap_err();
+        assert_eq!(err.code.to_string(), "RE8008");
+    }
 
     let dir = tempfile::tempdir().unwrap();
     let agent = Agent::new(dir.path());

@@ -11,6 +11,7 @@ use re_command::{
     CommandOutcome, CommandSpec, EngineHandle, EngineReceiver, EngineRequest, Origin, PolicyCheck,
     channel,
 };
+use re_core::{Diagnostic, Location};
 use serde_json::Value as Json;
 
 /// A handle that checks every call against `policy` before passing it to
@@ -45,24 +46,45 @@ fn run(receiver: EngineReceiver, inner: EngineHandle, policy: &dyn PolicyCheck) 
                 origin,
                 reply,
             } => {
-                if specs.is_none() {
-                    specs = inner.list_specs().ok();
+                let known = |specs: &Option<Vec<CommandSpec>>| {
+                    specs
+                        .as_deref()
+                        .is_some_and(|all| all.iter().any(|s| s.name == name))
+                };
+                if !known(&specs) {
+                    // A new or unlisted command: refresh once before refusing.
+                    match inner.list_specs() {
+                        Ok(list) => specs = Some(list),
+                        Err(d) => {
+                            let _ = reply.send(CommandOutcome::error(d));
+                            continue;
+                        }
+                    }
                 }
-                let spec = specs
+                let Some(spec) = specs
                     .as_deref()
-                    .and_then(|all| all.iter().find(|s| s.name == name));
-                if let Some(spec) = spec {
-                    let dry = dry_run || args.get("dry_run").and_then(Json::as_bool) == Some(true);
-                    let mut checked = args.clone();
-                    if let Some(obj) = checked.as_object_mut() {
-                        obj.remove("dry_run");
-                    }
-                    if let Err(d) = policy.check(spec, &checked, dry) {
-                        let _ = reply.send(CommandOutcome::error(d));
-                        continue;
-                    }
+                    .and_then(|all| all.iter().find(|s| s.name == name))
+                else {
+                    // Nothing the policy can check goes through.
+                    let _ = reply.send(CommandOutcome::error(
+                        Diagnostic::error(
+                            re_command::codes::UNKNOWN_COMMAND,
+                            format!("unknown command {name:?}"),
+                        )
+                        .at(Location::command(name.clone()))
+                        .with_hint("`describe` lists the commands"),
+                    ));
+                    continue;
+                };
+                let dry = dry_run || args.get("dry_run").and_then(Json::as_bool) == Some(true);
+                let mut checked = args.clone();
+                if let Some(obj) = checked.as_object_mut() {
+                    obj.remove("dry_run");
                 }
-                // Unknown commands go through: the engine answers RE2004.
+                if let Err(d) = policy.check(spec, &checked, dry) {
+                    let _ = reply.send(CommandOutcome::error(d));
+                    continue;
+                }
                 let outcome = inner.with_origin(origin).call(&name, args, dry_run);
                 let _ = reply.send(outcome);
             }

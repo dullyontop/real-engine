@@ -227,6 +227,18 @@ impl Session {
         self.dir.join("checkpoints").join(format!("{id}.json"))
     }
 
+    /// A project file, refused if its path goes through a symbolic link.
+    fn file(&self, rel: &str) -> Result<PathBuf, Diagnostic> {
+        crate::policy::no_links(&self.project, rel).map_err(|why| {
+            Diagnostic::error(
+                codes::OUTSIDE_SCOPE,
+                format!("cannot restore {rel:?}: {why}"),
+            )
+            .at(Location::file(rel.to_string()))
+            .with_hint("replace the link with a file or directory")
+        })
+    }
+
     fn blob_path(&self, hash: &str) -> PathBuf {
         self.dir.join("files").join(hash)
     }
@@ -237,7 +249,7 @@ impl Session {
 
     /// The current state of a project file, storing its contents.
     fn capture(&self, rel: &str) -> Result<FileState, Diagnostic> {
-        let path = self.project.join(rel);
+        let path = self.file(rel)?;
         match std::fs::read(&path) {
             Ok(bytes) => {
                 let hash = blake3::hash(&bytes).to_hex().to_string();
@@ -245,7 +257,10 @@ impl Session {
                 if !blob.exists() {
                     let dir = blob.parent().expect("blob has a parent");
                     std::fs::create_dir_all(dir).map_err(|e| io_error(dir, "create", e))?;
-                    std::fs::write(&blob, &bytes).map_err(|e| io_error(&blob, "write", e))?;
+                    // Write then rename: a blob that exists is always whole.
+                    let tmp = dir.join(format!("{hash}.{}.tmp", std::process::id()));
+                    std::fs::write(&tmp, &bytes).map_err(|e| io_error(&tmp, "write", e))?;
+                    std::fs::rename(&tmp, &blob).map_err(|e| io_error(&blob, "write", e))?;
                 }
                 Ok(FileState::Present { hash })
             }
@@ -394,17 +409,36 @@ impl Session {
 
     /// Writes (or deletes) each file to its state.
     pub fn apply_files(&self, changes: &[(String, FileState)]) -> Result<(), Diagnostic> {
+        // Read and check every stored file first, so a missing or damaged
+        // blob changes nothing.
+        let mut staged = Vec::new();
         for (rel, state) in changes {
-            let path = self.project.join(rel);
-            match state {
-                FileState::Absent => match std::fs::remove_file(&path) {
+            let path = self.file(rel)?;
+            let bytes = match state {
+                FileState::Absent => None,
+                FileState::Present { hash } => {
+                    let blob = self.blob_path(hash);
+                    let bytes = std::fs::read(&blob).map_err(|e| io_error(&blob, "read", e))?;
+                    if blake3::hash(&bytes).to_hex().as_str() != hash {
+                        return Err(io_error(
+                            &blob,
+                            "use",
+                            std::io::Error::other("its contents do not match its hash"),
+                        ));
+                    }
+                    Some(bytes)
+                }
+            };
+            staged.push((path, bytes));
+        }
+        for (path, bytes) in staged {
+            match bytes {
+                None => match std::fs::remove_file(&path) {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                     Err(e) => return Err(io_error(&path, "remove", e)),
                 },
-                FileState::Present { hash } => {
-                    let blob = self.blob_path(hash);
-                    let bytes = std::fs::read(&blob).map_err(|e| io_error(&blob, "read", e))?;
+                Some(bytes) => {
                     if let Some(dir) = path.parent() {
                         std::fs::create_dir_all(dir).map_err(|e| io_error(dir, "create", e))?;
                     }

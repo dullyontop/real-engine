@@ -130,9 +130,11 @@ pub fn client_configs(program: &str) -> Vec<ClientConfig> {
 /// The Codex snippet (`[mcp_servers.real-engine]` in `~/.codex/config.toml`,
 /// or `.codex/config.toml` in a trusted project).
 pub fn codex_snippet(program: &str, project: &Path) -> String {
+    use crate::policy::toml_string;
     format!(
-        "[mcp_servers.{SERVER_NAME}]\ncommand = {program:?}\nargs = [\"mcp\", \"--project\", {:?}]\n",
-        project.display().to_string()
+        "[mcp_servers.{SERVER_NAME}]\ncommand = {}\nargs = [\"mcp\", \"--project\", {}]\n",
+        toml_string(program),
+        toml_string(&project.display().to_string())
     )
 }
 
@@ -195,7 +197,7 @@ pub fn agents_md(specs: &[CommandSpec]) -> String {
     out.push_str(GENERATED_MARKER);
     out.push_str("\n\n");
     out.push_str(GUIDE.trim_end());
-    out.push_str("\n\n## Commands\n\nEach is an MCP tool of the same name. Arguments marked `?` are optional; `command.describe` gives the full schema.\n");
+    out.push_str("\n\n## Commands\n\nThe MCP tool of each is its name with `_` for `.` (`entity.spawn` is `entity_spawn`). Arguments marked `?` are optional; `command.describe` gives the full schema.\n");
     for tier in [Tier::Read, Tier::Edit, Tier::Destructive] {
         let mut of_tier: Vec<&CommandSpec> = specs.iter().filter(|s| s.tier == tier).collect();
         if of_tier.is_empty() {
