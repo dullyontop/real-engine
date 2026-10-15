@@ -115,8 +115,21 @@ attributes and tags.
 inside the project into it. It only reports what would change until you pass
 `write: true`; the write is one undoable step. It removes instances an earlier
 import made that the input no longer declares, which needs `destructive`;
-pass `keep_stale: true` to keep them. `play.run` plays the place with steps
-(`add_player`, `say`, `invoke`, `dump_tree`) to check it.
+pass `keep_stale: true` to keep them.
+
+`play.run` takes `steps`, run in order after its first `frames`, and returns
+one result per step:
+
+- `{"frames": 30}` plays more frames;
+- `"add_player"` joins the next player and returns its name and id;
+- `{"say": {"text": "/shop"}}` chats as player 1 (or `"player": 2`);
+- `{"invoke": {"path": "ServerStorage.Hooks.Score", "args": [1]}}` calls a
+  `BindableFunction` (a project's own test hook) and returns its results;
+- `{"dump_tree": {"path": "Workspace", "depth": 2}}` returns the tree as
+  `scene.dump_tree` does.
+
+All but `frames` and `dump_tree` need a `[compat]` project. A failed step is
+`RE0527`, and the report's `output` holds what scripts printed.
 
 ## What you may do
 

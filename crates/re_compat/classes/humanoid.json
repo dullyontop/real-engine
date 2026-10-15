@@ -136,9 +136,8 @@
             "kind": "own"
           },
           "read_only": true,
-          "status": "partial",
-          "doc": "The seat it sits in, or nil.",
-          "note": "Seats are not supported yet; always nil."
+          "status": "implemented",
+          "doc": "The seat it sits in, or nil."
         },
         {
           "name": "PlatformStand",
@@ -228,9 +227,8 @@
             "kind": "own"
           },
           "default": 89.0,
-          "status": "partial",
-          "doc": "The steepest slope it can walk up, in degrees.",
-          "note": "Stored; the character controller uses its own slope limit."
+          "status": "implemented",
+          "doc": "The steepest slope it can walk up, in degrees."
         },
         {
           "name": "CameraOffset",
@@ -1116,6 +1114,175 @@
           "status": "partial",
           "doc": "Comma-separated ids of waist accessories; stored, not applied.",
           "note": "Stored, not applied."
+        }
+      ]
+    },
+    {
+      "name": "Seat",
+      "superclass": "Part",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A part a character sits in when it touches it. A SeatWeld joins the seat to the character until it jumps or stops sitting.",
+      "properties": [
+        {
+          "name": "Disabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, characters do not sit in it, and one sitting stands up."
+        },
+        {
+          "name": "Occupant",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The Humanoid sitting in it, or nil."
+        }
+      ],
+      "methods": [
+        {
+          "name": "Sit",
+          "params": [
+            {
+              "name": "humanoid",
+              "type": "Humanoid"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sits the Humanoid in the seat now, standing it up from any other seat first."
+        }
+      ]
+    },
+    {
+      "name": "VehicleSeat",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "partial",
+      "note": "Throttle and Steer follow the occupant; the seat does not drive the vehicle itself, so MaxSpeed, Torque and TurnSpeed are stored only and scripts move the vehicle.",
+      "doc": "A seat that turns the walk input of its occupant into Throttle and Steer, for scripts that drive a vehicle.",
+      "properties": [
+        {
+          "name": "Disabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, characters do not sit in it, and one sitting stands up."
+        },
+        {
+          "name": "Occupant",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The Humanoid sitting in it, or nil."
+        },
+        {
+          "name": "Throttle",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "1 while the occupant walks forward, -1 backward, else 0."
+        },
+        {
+          "name": "Steer",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "1 while the occupant walks right, -1 left, else 0."
+        },
+        {
+          "name": "ThrottleFloat",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "status": "implemented",
+          "doc": "How far forward (positive) or backward the occupant walks, from -1 to 1."
+        },
+        {
+          "name": "SteerFloat",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "status": "implemented",
+          "doc": "How far right (positive) or left the occupant walks, from -1 to 1."
+        },
+        {
+          "name": "MaxSpeed",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 25.0,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "The top speed the vehicle is meant to reach, in studs per second."
+        },
+        {
+          "name": "Torque",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 10.0,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "How hard the vehicle is meant to accelerate."
+        },
+        {
+          "name": "TurnSpeed",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "partial",
+          "note": "Stored only.",
+          "doc": "How fast the vehicle is meant to turn."
+        },
+        {
+          "name": "HeadsUpDisplay",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "partial",
+          "note": "Stored; no speed display is drawn.",
+          "doc": "Whether a speed display is shown to the occupant."
+        }
+      ],
+      "methods": [
+        {
+          "name": "Sit",
+          "params": [
+            {
+              "name": "humanoid",
+              "type": "Humanoid"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sits the Humanoid in the seat now, standing it up from any other seat first."
         }
       ]
     },

@@ -4,18 +4,13 @@
 
 use std::sync::Arc;
 
-use re_compat::data::ClassFile;
-use re_compat::humanoid::body::CharacterPhysics;
 use re_compat::scene::create_place;
-use re_compat::{Bindings, CompatSetup, CompatVm, SignalBehavior};
-use re_core::TaskPool;
-use re_physics::{Physics, PhysicsConfig};
+use re_compat::{CompatSetup, CompatVm, SignalBehavior};
 use re_scene::{Entity, World};
 use re_script::host::{NoServices, WorldHost};
 use re_script::{ContextKind, RuntimeConfig};
 use re_types::glam::Vec3;
 use re_types::input::{MouseLock, RawInputFrame};
-use re_types::physics::{BodyDesc, BodyKind, PhysicsCmd, ShapeDesc};
 use re_types::{
     ActionFrame, CharacterState, EntityId, GroupMask, HostResult, HostServices, RayHit,
 };
@@ -83,51 +78,17 @@ pub fn place(kind: ContextKind) -> Place {
     build(kind, false)
 }
 
-/// Stand-in members and classes the built-in data does not declare yet.
-const PARTS: &str = include_str!("../fixtures/character/parts.json");
-
-/// A place with part classes and a physics world for characters: a floor
-/// whose top is at y = 0, and gravity of 196.2 studs/s².
+/// A place with an anchored floor whose top is at y = 0 (the default
+/// gravity is 196.2 studs/s²).
 pub fn character_place(kind: ContextKind) -> Place {
     build(kind, true)
 }
 
 fn build(kind: ContextKind, characters: bool) -> Place {
-    let setup: Arc<CompatSetup> = if characters {
-        let mut b = Bindings::standard().unwrap();
-        b.classes(|c| {
-            c.classes(
-                "tests/fixtures/character/parts.json",
-                ClassFile::parse("parts.json", PARTS).unwrap(),
-            )
-        });
-        CompatSetup::new(b).unwrap()
-    } else {
-        CompatSetup::standard().unwrap()
-    };
+    let setup: Arc<CompatSetup> = CompatSetup::standard().unwrap();
     let mut world = World::new();
     // Fixed instance ids, so two runs hash the same (replays).
     world.ecs.insert_resource(re_scene::IdGen::seeded(7));
-    if characters {
-        let config = PhysicsConfig {
-            gravity: Vec3::new(0.0, -196.2, 0.0),
-            ..PhysicsConfig::default()
-        };
-        let mut physics = Physics::new(config, TaskPool::global()).unwrap();
-        let mut cmds = vec![PhysicsCmd::AddBody {
-            id: EntityId(u64::MAX - 1),
-            desc: BodyDesc {
-                kind: BodyKind::Static,
-                shape: ShapeDesc::Box {
-                    half_extents: Vec3::new(500.0, 1.0, 500.0),
-                },
-                pos: Vec3::new(0.0, -1.0, 0.0),
-                ..BodyDesc::default()
-            },
-        }];
-        physics.apply(&mut cmds);
-        world.ecs.insert_resource(CharacterPhysics(physics));
-    }
     let game = create_place(
         &mut world,
         &setup.classes,
@@ -143,14 +104,25 @@ fn build(kind: ContextKind, characters: bool) -> Place {
         SignalBehavior::Deferred,
     )
     .unwrap();
-    Place {
+    let mut p = Place {
         setup,
         game,
         world,
         services: Services::default(),
         vm,
         _dir: dir,
+    };
+    if characters {
+        p.run(
+            "local floor = Instance.new('Part')
+             floor.Name = 'Floor'
+             floor.Anchored = true
+             floor.Size = Vector3.new(1000, 2, 1000)
+             floor.CFrame = CFrame.new(0, -1, 0)
+             floor.Parent = workspace",
+        );
     }
+    p
 }
 
 impl Place {
@@ -183,33 +155,37 @@ impl Place {
         assert!(d.is_empty(), "{d:#?}");
     }
 
-    /// One frame of a character place: the Animator, the Humanoids before
-    /// physics, the physics step, the Humanoids after it, then the script
-    /// scheduler.
+    /// One frame of `dt` seconds, as a host runs it: the render step, then
+    /// one fixed step (Animators, Humanoids, part and character physics,
+    /// media, then the script scheduler).
     pub fn frame(&mut self, dt: f64) {
         self.begin_frame();
         self.finish_frame(dt);
     }
 
-    /// The start of a frame, before render-step bindings run.
+    /// The render step of a frame (where the pose rule takes its
+    /// reference, and the client reads input).
     pub fn begin_frame(&mut self) {
-        self.with(re_compat::anim::begin_frame);
+        let mut host = WorldHost {
+            world: &mut self.world,
+            services: &mut self.services,
+        };
+        let d = self.vm.pre_render(&mut host, 1.0 / 60.0);
+        assert!(d.is_empty(), "{d:#?}");
     }
 
-    /// The rest of a frame after [`Place::begin_frame`].
+    /// The fixed step of a frame after [`Place::begin_frame`].
     pub fn finish_frame(&mut self, dt: f64) {
-        self.with(|lua| {
-            re_compat::anim::step(lua, dt)?;
-            re_compat::humanoid::pre_simulation(lua, dt)
-        });
-        self.world
-            .ecs
-            .resource_mut::<CharacterPhysics>()
-            .0
-            .step(dt as f32)
-            .unwrap();
-        self.with(|lua| re_compat::humanoid::post_simulation(lua, dt));
-        self.step(dt);
+        let mut host = WorldHost {
+            world: &mut self.world,
+            services: &mut self.services,
+        };
+        let mut d = self.vm.pre_animation(&mut host, dt);
+        d.extend(self.vm.pre_simulation(&mut host, dt));
+        d.extend(self.vm.physics(&mut host, dt));
+        d.extend(self.vm.media(&mut host, dt));
+        d.extend(self.vm.post_simulation(&mut host, dt));
+        assert!(d.is_empty(), "{d:#?}");
     }
 
     /// Runs `frames` frames of 1/60 s.

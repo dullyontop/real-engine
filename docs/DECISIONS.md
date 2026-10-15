@@ -787,19 +787,27 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0031: Static cells for large static worlds (M2)
 
-**Status:** Provisional. This is a design note for M2.
+**Status:** Accepted. Evidence: WP13's `bigmap` benchmark (`crates/re_compat/examples/bigmap.rs`), merged in #65.
 
 **Context.** Roblox-style projects can contain very large static maps made of many individual parts. One entity, draw item and physics body per part would not scale.
 
-**Decision (planned).**
-- In M2, static geometry that is not scripted is grouped into spatial cells. Each cell has:
-  - one merged mesh per material;
-  - one static compound physics body;
-  - a sparse index back to the source instances, so that scripts touching one part split it out of the cell.
-- M1 keeps the seam: `DrawItem` and `PhysicsCmd::AddBody` both accept merged geometry.
-- The target map size is set by the owner at the start of M2, together with the performance budgets.
+**Decision.**
+- Anchored geometry that no script has touched is grouped into spatial cells (`re_compat::physics::StaticCells`). Each cell has:
+  - one merged mesh per material (drawn by WP15's 3D rendering);
+  - one static compound physics body (an assembly of `re_physics::parts`);
+  - a sparse index back to the source instances, so that a script touching one part splits it out of the cell.
+- `DrawItem` and `PhysicsCmd::AddBody` both accept merged geometry (the seam M1 kept).
+- Jolt limits positions to ±5 km per axis (`re_physics::WORLD_LIMIT`). A map that is off-centre but no wider than 10 km is simulated around a **floating origin**: the compat layer moves the simulation origin to the middle of the parts on a 64-stud grid (`Physics::set_origin`, which rebases every assembly through oxijolt and keeps world poses and velocities). A part that still cannot fit is reported with `RE5006` instead of being dropped without a word.
+- Budgets for M2, for a 250,000-part map: load within 30 s, a mean step within 8 ms, and a peak resident set within 4096 MB.
 
-**Consequences.** M2 must measure this before it is accepted.
+**Measured** (`bigmap --parts 250000 --frames 600`, in the reference container):
+
+| Run | Cells | Load | Step mean | Step p95 | Step max | Peak RSS |
+|---|---|---|---|---|---|---|
+| static map | 2,416 | 3.877 s | 4.576 ms | 6.717 ms | 11.258 ms | 1282 MB |
+| a part touched every 10 frames (60 split out) | 2,416 | 3.834 s | 4.868 ms | 7.000 ms | 18.968 ms | 1282 MB |
+
+**Consequences.** Static maps cost a few thousand bodies instead of one per part, and splitting a touched part out costs one cell rebuild. A map wider than 10 km needs a different scheme (several simulation regions), which is not planned for M2.
 
 ## ADR-0032: Component reflection: our own registry with a closed set of field types; no bevy_reflect
 
@@ -845,7 +853,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - The runner is public and generic: `crates/re_compat/tests/samples.rs`. It reads expectation files from the directory in `REAL_SAMPLE_KIT`, and prints `skipped: REAL_SAMPLE_KIT not set` and passes when the variable is unset.
 - An expectation file names its input (path and sha256 prefix), the `real import` options, any stand-in content to add (a ground plane, generated content for missing parts of the sample), the boot expectations (frames, exact script output, allowed warnings), and a list of `play.run` drivers, each with assertions on `dump_tree` output, attributes and logged values.
 - The kit (expectation files, drivers and stand-ins) lives in the private research folder with the samples. It is never committed.
-- PR descriptions report pass and fail counts from the kit only, with no sample names, output or paths.
+- A PR description says only whether its private checks pass, with no counts, sample names, output or paths; counts and details go in the private research folder. (Amended during M2: counts were allowed at first, but even counts describe the samples.)
 
 **Alternatives.** Manual runs, which are not repeatable. Committing redacted samples, which is still sample content.
 

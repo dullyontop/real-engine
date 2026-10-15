@@ -100,7 +100,7 @@ The engine never calls a model itself. Every capability an agent uses is also us
 
 ## M3 and later
 
-These are not ordered yet. Each one needs an ADR before it starts.
+These are grouped into work packages in the draft [M3_PLAN.md](M3_PLAN.md). Each one needs an ADR before it starts.
 
 | Item | Why later | Seam already in place |
 |---|---|---|
