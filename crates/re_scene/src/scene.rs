@@ -6,9 +6,9 @@
 //! depth-first with siblings in `Children` order; components sorted by name;
 //! fields in declaration order. Lists of scalars are written on one line.
 //! Generated entities are not written: their source's generator settings and
-//! overrides are. The schemas of script-defined components used in the file
-//! are declared in a top-level `script_components` list, so the file loads
-//! before any script runs. Save → load → save is byte-identical.
+//! overrides are. The schemas of every script-defined component the world has
+//! registered (including those only generated entities use) are declared in a
+//! top-level `script_components` list, so the file loads before any script runs. Save → load → save is byte-identical.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -216,20 +216,20 @@ impl World {
             .collect();
         roots.sort();
         let mut entities = Vec::new();
-        let mut used: BTreeMap<String, ComponentKey> = BTreeMap::new();
         for (_, root) in roots {
-            for doc in self.subtree_docs(root, opts) {
-                for name in doc.components.keys() {
-                    if let Some(k) = self.registry.try_key(name)
-                        && self.registry.schema(k).origin == ComponentOrigin::Script
-                    {
-                        used.insert(name.clone(), k);
-                    }
-                }
-                entities.push(doc);
-            }
+            entities.extend(self.subtree_docs(root, opts));
         }
-        let script_components = used
+        // Every script component the world knows (declared by the loaded scene
+        // or registered since), not only those authored entities use: generated
+        // entities (a prefab's) may use one, and the saved file must still load
+        // before any script runs.
+        let declared: BTreeMap<String, ComponentKey> = self
+            .registry
+            .keys()
+            .filter(|k| self.registry.schema(*k).origin == ComponentOrigin::Script)
+            .map(|k| (self.registry.schema(k).name.clone(), k))
+            .collect();
+        let script_components = declared
             .values()
             .map(|k| ComponentSchemaDoc::from(self.registry.schema(*k)))
             .collect();
