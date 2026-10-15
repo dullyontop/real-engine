@@ -7,6 +7,9 @@
 //! * [`corpus::run`]: the corpus suite over directories of scripts, with
 //!   compile (tier 1, [`re_script::compile_check`]), scan and optional types, as
 //!   a [`corpus::CorpusReport`].
+//! * [`roblox::definitions`]: `roblox.d.luau`, the compat API's Luau types,
+//!   generated from `re_compat`'s tables for `real check --types` in a compat
+//!   project.
 //!
 //! `scan`, `types::run` and `corpus::run` are **frozen** at WP3's exit; `re_cli`
 //! (`real check`, `real verify`) calls them. This is a tooling crate: it links
@@ -19,6 +22,7 @@
 pub mod codes;
 pub mod corpus;
 pub mod gap;
+pub mod roblox;
 pub mod scan;
 pub mod types;
 

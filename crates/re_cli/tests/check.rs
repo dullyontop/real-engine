@@ -157,3 +157,31 @@ fn check_corpus_needs_directories() {
     let o = real(&["check", "--scripts-dir", "corpus"], dir.path());
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
 }
+
+#[test]
+fn check_types_in_a_compat_project_writes_the_roblox_definitions() {
+    let dir = tempfile::tempdir().unwrap();
+    let o = real(&["new", "game", "--template", "roblox"], dir.path());
+    assert!(o.status.success(), "{}", text(&o));
+    let game = dir.path().join("game");
+    std::fs::write(
+        game.join("scripts/Hello.server.luau"),
+        "print(game:GetService(\"Workspace\").Name)\n",
+    )
+    .unwrap();
+    real(
+        &["check", "--types", "--checker", "no-such-luau-lsp"],
+        &game,
+    );
+    let defs = std::fs::read_to_string(game.join(".real/types/roblox.d.luau")).unwrap();
+    assert!(defs.contains("declare game: DataModel"), "{defs}");
+
+    // A native project gets no compat definitions.
+    let native = project(&[("scripts/ok.luau", "print(\"hi\")\n")]);
+    let native = native.path().join("game");
+    real(
+        &["check", "--types", "--checker", "no-such-luau-lsp"],
+        &native,
+    );
+    assert!(!native.join(".real/types/roblox.d.luau").exists());
+}
