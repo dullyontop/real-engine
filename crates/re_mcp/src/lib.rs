@@ -64,7 +64,7 @@ impl McpOptions {
 pub const DEFAULT_INSTRUCTIONS: &str = "Real Engine project tools. Call `describe` first to see components, generators and commands. \
 Every tool that changes the project accepts `dry_run: true` to preview its changes; dry runs are allowed at any tier. \
 Use `scene_apply` for multi-step edits (one atomic, undoable transaction), `verify` and `screenshot` to check your work, \
-and `undo` or `checkpoint_restore` to go back. Refused calls (RE8001 tier, RE8002 path, RE8008 budget) changed nothing; \
+and `undo` or `checkpoint_restore` to go back. Wait for a call's result before a call that depends on it. Refused calls (RE8001 tier, RE8002 path, RE8008 budget) changed nothing; \
 the project's .real/agent-policy.toml decides what agents may do. AGENTS.md in the project explains the operation JSON.";
 
 /// Serves MCP over stdin and stdout until the client closes stdin. Runs its

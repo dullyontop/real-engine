@@ -14,7 +14,7 @@ re_core.workspace = true
 re_command.workspace = true
 re_agent.workspace = true
 rmcp.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

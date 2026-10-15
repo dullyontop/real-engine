@@ -154,13 +154,15 @@ pub fn error_json(outcome: &CommandOutcome) -> Json {
 }
 
 /// Paths of PNG files named by string values at the top level of `data`.
+/// Only relative paths that stay inside the project count, so a result can
+/// never make the server read a file from elsewhere.
 fn png_paths(data: &Json) -> Vec<String> {
     data.as_object()
         .into_iter()
         .flat_map(|m| m.values())
         .filter_map(Json::as_str)
         .filter(|s| s.to_ascii_lowercase().ends_with(".png"))
-        .map(str::to_string)
+        .filter_map(|s| re_agent::policy::normalize(s).ok())
         .collect()
 }
 
@@ -220,6 +222,10 @@ pub struct RealEngineServer {
     options: Arc<McpOptions>,
     /// The specs last listed (refreshed by `tools/list`, and on a miss).
     specs: Arc<Mutex<Option<Vec<CommandSpec>>>>,
+    /// Calls reach the engine one at a time. Requests are handled on separate
+    /// tasks, so calls sent together may still run in either order; clients
+    /// wait for a result before a call that depends on it.
+    order: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl RealEngineServer {
@@ -229,6 +235,7 @@ impl RealEngineServer {
             handle,
             options: Arc::new(options),
             specs: Arc::new(Mutex::new(None)),
+            order: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -285,6 +292,7 @@ impl ServerHandler for RealEngineServer {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
+        let _turn = self.order.lock().await;
         let Some(command) = self.command_for(&request.name).await? else {
             return Err(McpError::invalid_params(
                 Cow::Owned(format!("tool not found: {}", request.name)),

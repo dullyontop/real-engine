@@ -79,7 +79,7 @@ fn cmd_init(project: &Path, options: InitOptions) -> ExitCode {
         Err(d) => return fail(&d),
     };
     // The Codex and Zed snippets name the project by its full path.
-    let root = std::fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    let root = std::path::absolute(project).unwrap_or_else(|_| project.to_path_buf());
     let report = match init(&root, app.commands().specs(), &options) {
         Ok(r) => r,
         Err(d) => return fail(&d),
@@ -94,7 +94,8 @@ fn cmd_init(project: &Path, options: InitOptions) -> ExitCode {
         println!("\n{client} ({place}):\n{snippet}");
     }
     println!(
-        "Agents may now edit within .real/agent-policy.toml's scopes; commit it to keep that choice."
+        "Agents may now edit within .real/agent-policy.toml's scopes; commit it to keep that choice. \
+         Restart MCP clients that are already running so `real mcp` reads the new policy."
     );
     ExitCode::SUCCESS
 }

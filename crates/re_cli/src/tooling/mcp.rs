@@ -59,8 +59,7 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Ok(Writer::Remote(handle)) => {
             eprintln!("real mcp: the editor has the project open; serving through it");
             let handle = guard::guarded(handle, Arc::new(policy), origin);
-            re_mcp::serve_stdio(handle, options)?;
-            return Ok(ExitCode::SUCCESS);
+            return Ok(finish(re_mcp::serve_stdio(handle, options)));
         }
         Err(d) => return Ok(fail(&d)),
     };
@@ -88,8 +87,20 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
     app.serve(receiver, &policy);
     drop(lock);
     match server.join() {
-        Ok(result) => result?,
+        Ok(result) => Ok(finish(result)),
         Err(_) => anyhow::bail!("the MCP server thread panicked"),
     }
-    Ok(ExitCode::SUCCESS)
+}
+
+/// The exit code of a finished server: a client that closes the connection
+/// (even before initializing) is a normal end.
+fn finish(result: anyhow::Result<()>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) if format!("{e:#}").contains("connection closed") => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("real mcp: {e:#}");
+            ExitCode::from(1)
+        }
+    }
 }
