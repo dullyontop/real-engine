@@ -7,13 +7,15 @@
 //! cargo xtask schemas [--check]  regenerate (or check) the JSON Schemas in schemas/
 //! cargo xtask coverage [--check] regenerate (or check) crates/re_compat/coverage.json
 //! cargo xtask members DIR      every implemented compat member is called from a fixture
-//! cargo xtask check            all of the above except members, with `--check`
+//! cargo xtask check            all of the above except members and d2, with `--check`
+//! cargo xtask d2 ...           cross-machine determinism runs and comparison (ADR-0036)
 //! ```
 //!
 //! The alias lives in `.cargo/config.toml`. xtask links no engine crate: it reads
 //! `cargo metadata` and `cargo tree` output and the source tree.
 
 mod coverage;
+mod d2;
 mod dupes;
 mod explain;
 mod graph;
@@ -41,6 +43,11 @@ commands:
                      REAL_COMPAT_MEMBER_TRACE=DIR
   check              run check-graph, dupes, explain, schemas --check and
                      coverage --check
+  d2 --project P [--project P]... [--replay R]... [--checkpoints K] [--json] [--out FILE]
+                     run each replay with `real run --headless` and report the
+                     state hash every K frames (default 60) on this platform
+  d2 compare REPORT... [--require linux-x86_64,windows-x86_64]
+                     compare d2 reports; fail when required platforms differ
 ";
 
 fn main() -> ExitCode {
@@ -61,6 +68,7 @@ fn main() -> ExitCode {
         ["coverage", "--check"] => coverage::run(&root, true),
         ["members", dir] => members::run(&root, Path::new(dir)),
         ["check"] => check_all(&root),
+        ["d2", rest @ ..] => d2::run(&root, rest),
         ["help" | "--help" | "-h"] => {
             print!("{USAGE}");
             return ExitCode::SUCCESS;

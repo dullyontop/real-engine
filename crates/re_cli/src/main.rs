@@ -154,6 +154,10 @@ struct RunArgs {
     /// Print the run report as JSON.
     #[arg(long)]
     json: bool,
+    /// With --headless: record the state hash every K frames and after the
+    /// last one, as `checkpoints` in the JSON report (`cargo xtask d2`, ADR-0036).
+    #[arg(long, value_name = "K", requires = "headless")]
+    checkpoints: Option<std::num::NonZeroU64>,
 }
 
 fn print_diagnostics(diagnostics: &[Diagnostic]) {
@@ -196,12 +200,28 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         None => None,
     };
     let (frames, mut diagnostics, mut report) = if args.headless {
-        match app.run_headless(args.frames, replay) {
-            Ok(r) => (
-                r.frames,
-                r.diagnostics.clone(),
-                serde_json::to_value(&r).unwrap_or_default(),
-            ),
+        let every = args.checkpoints.map(std::num::NonZeroU64::get);
+        let mut checkpoints = Vec::new();
+        let run = app.run_headless_observed(args.frames, replay, |app| {
+            if let Some(k) = every
+                && app.frame_count().is_multiple_of(k)
+            {
+                checkpoints.push(checkpoint(app));
+            }
+        });
+        match run {
+            Ok(r) => {
+                let mut json = serde_json::to_value(&r).unwrap_or_default();
+                if every.is_some() {
+                    if checkpoints.last().map(|c| c["frame"].as_u64())
+                        != Some(Some(app.frame_count()))
+                    {
+                        checkpoints.push(checkpoint(&app));
+                    }
+                    json["checkpoints"] = serde_json::Value::Array(checkpoints);
+                }
+                (r.frames, r.diagnostics.clone(), json)
+            }
             Err(d) => return fail(d),
         }
     } else {
@@ -278,6 +298,14 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         );
     }
     ExitCode::SUCCESS
+}
+
+/// One `checkpoints` entry: the frames run so far and the world's state hash.
+fn checkpoint(app: &App) -> serde_json::Value {
+    serde_json::json!({
+        "frame": app.frame_count(),
+        "state_hash": app.world().state_hash().to_hex().to_string(),
+    })
 }
 
 fn cmd_describe(project: &Path, json: bool, luau_defs: bool) -> ExitCode {
