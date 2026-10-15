@@ -154,14 +154,16 @@ pub fn rules() -> Vec<Rule> {
             krate: "re_compat",
             check: Check::Reaches(&[
                 "re_render",
+                "re_physics",
                 "re_audio",
                 "re_input",
                 "re_assets",
+                "re_anim",
                 "full_moon",
                 "tokio",
             ]),
-            why: "re_compat uses re_anim and re_physics directly but reaches render, audio, input \
-                  and assets only through HostServices, and never full_moon or tokio",
+            why: "re_compat reaches subsystems only through HostServices, and never full_moon \
+                  or tokio",
         },
         Rule {
             krate: "re_script_check",

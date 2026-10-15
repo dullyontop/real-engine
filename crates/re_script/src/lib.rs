@@ -39,7 +39,7 @@ pub mod sched {
     pub use crate::scheduler::{
         DeferCondition, Owner, SettleHook, WakeMode, YieldToken, advance, cancel_park,
         current_owner, defer, is_parked, now, park, parked_labels, resume_due_now as resume_due,
-        set_settle_hook, settle, sleeping_count, spawn, wake, yielding,
+        set_settle_hook, settle, sleeping_count, spawn, wake, wake_error, yielding,
     };
 }
 

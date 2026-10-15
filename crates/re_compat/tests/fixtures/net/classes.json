@@ -1,0 +1,60 @@
+{
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "SpawnLocation",
+      "superclass": "PVInstance",
+      "creatable": true,
+      "status": "partial",
+      "note": "Test class: a spawn with no part behind it.",
+      "properties": [
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented"
+        },
+        {
+          "name": "Neutral",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented"
+        },
+        {
+          "name": "Duration",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 10,
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Humanoid",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "Test class: only Health.",
+      "properties": [
+        {
+          "name": "Health",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 100,
+          "status": "implemented"
+        }
+      ]
+    }
+  ]
+}

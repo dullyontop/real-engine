@@ -276,6 +276,14 @@ pub struct CompatConfig {
     /// When signal handlers run: `deferred` (the default) or `immediate`.
     #[serde(default)]
     pub signal_behavior: crate::signal::SignalBehavior,
+    /// How many players join when the game starts (`players = 2`); the first
+    /// is the client's local player. One unless set.
+    #[serde(default = "one_player")]
+    pub players: u32,
+}
+
+fn one_player() -> u32 {
+    1
 }
 
 impl CompatConfig {
@@ -287,13 +295,18 @@ impl CompatConfig {
             .map_err(|e: toml::de::Error| CompatError::Scene(format!("real.toml: {e}")))?;
         match doc.get("compat") {
             None => Ok(None),
-            Some(v) => v
-                .clone()
-                .try_into()
-                .map(Some)
-                .map_err(|e: toml::de::Error| {
+            Some(v) => {
+                let c: CompatConfig = v.clone().try_into().map_err(|e: toml::de::Error| {
                     CompatError::Scene(format!("real.toml [compat]: {e}"))
-                }),
+                })?;
+                if c.players == 0 {
+                    return Err(CompatError::Runtime {
+                        code: crate::codes::PLAYER_STEP,
+                        message: "real.toml [compat]: players must be at least 1".into(),
+                    });
+                }
+                Ok(Some(c))
+            }
         }
     }
 
@@ -308,6 +321,9 @@ impl CompatConfig {
                 "signal_behavior = \"{}\"\n",
                 self.signal_behavior.as_str()
             ));
+        }
+        if self.players != 1 {
+            out.push_str(&format!("players = {}\n", self.players));
         }
         out
     }

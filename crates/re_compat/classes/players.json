@@ -1,0 +1,578 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "Players",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "The service holding one Player per connected player. In one process the players are simulated: the harness adds them, and the first one is the client's LocalPlayer.",
+      "properties": [
+        {
+          "name": "LocalPlayer",
+          "type": "Instance<Player>",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The player this client runs for; nil on the server. Set in the client world when the local player arrives."
+        },
+        {
+          "name": "CharacterAutoLoads",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When true, a character is loaded for each player as they join."
+        },
+        {
+          "name": "RespawnTime",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 5.0,
+          "status": "implemented",
+          "doc": "Seconds between a character's death and the next one; the character work reads it."
+        },
+        {
+          "name": "MaxPlayers",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 8,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The most players a server takes."
+        }
+      ],
+      "methods": [
+        {
+          "name": "GetPlayers",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The players, in join order."
+        },
+        {
+          "name": "GetPlayerFromCharacter",
+          "params": [
+            {
+              "name": "character",
+              "type": "Instance"
+            }
+          ],
+          "returns": [
+            "Instance<Player>"
+          ],
+          "status": "implemented",
+          "doc": "The player whose Character is the given model, or nil."
+        },
+        {
+          "name": "GetPlayerByUserId",
+          "params": [
+            {
+              "name": "userId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Instance<Player>"
+          ],
+          "status": "implemented",
+          "doc": "The player with this UserId, or nil."
+        },
+        {
+          "name": "GetUserIdFromNameAsync",
+          "params": [
+            {
+              "name": "userName",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetNameFromUserIdAsync",
+          "params": [
+            {
+              "name": "userId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "string"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetUserThumbnailAsync",
+          "params": [
+            {
+              "name": "userId",
+              "type": "number"
+            },
+            {
+              "name": "thumbnailType",
+              "type": "Enum.ThumbnailType"
+            },
+            {
+              "name": "thumbnailSize",
+              "type": "Enum.ThumbnailSize"
+            }
+          ],
+          "returns": [
+            "string",
+            "bool"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetFriendsAsync",
+          "params": [
+            {
+              "name": "userId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ],
+      "events": [
+        {
+          "name": "PlayerAdded",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires with each player that joins, after the Player is in the tree."
+        },
+        {
+          "name": "PlayerRemoving",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires with each player that is leaving, while the Player can still be read."
+        },
+        {
+          "name": "PlayerMembershipChanged",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "partial",
+          "note": "Never fires: there are no memberships offline.",
+          "doc": "Fires when a player's membership changes; offline it never does."
+        }
+      ]
+    },
+    {
+      "name": "Player",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "One connected player, under Players. Simulated in one process.",
+      "properties": [
+        {
+          "name": "UserId",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The player's account number. Simulated players have -1, -2 and so on, as in a local test server."
+        },
+        {
+          "name": "DisplayName",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The name shown above the player's character."
+        },
+        {
+          "name": "Character",
+          "type": "Instance<Model>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The player's current character model, or nil."
+        },
+        {
+          "name": "CharacterAppearanceId",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The account whose look the character takes."
+        },
+        {
+          "name": "Neutral",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "True when the player belongs to no team."
+        },
+        {
+          "name": "RespawnLocation",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The SpawnLocation the player spawns at, when set."
+        },
+        {
+          "name": "AccountAge",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "Days since the account was made; 0 for simulated players."
+        },
+        {
+          "name": "MembershipType",
+          "type": "Enum.MembershipType",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The account's membership; None for simulated players."
+        },
+        {
+          "name": "AutoJumpEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the character jumps over obstacles by itself on touch devices."
+        },
+        {
+          "name": "CanLoadCharacterAppearance",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether characters take the account's look."
+        },
+        {
+          "name": "CameraMaxZoomDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 400.0,
+          "status": "implemented",
+          "doc": "The farthest the default camera zooms out."
+        },
+        {
+          "name": "CameraMinZoomDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.5,
+          "status": "implemented",
+          "doc": "The nearest the default camera zooms in."
+        },
+        {
+          "name": "CameraMode",
+          "type": "Enum.CameraMode",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "Whether the default camera is free or locked in first person."
+        },
+        {
+          "name": "HealthDisplayDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 100.0,
+          "status": "implemented",
+          "doc": "How far away the player sees other characters' health."
+        },
+        {
+          "name": "NameDisplayDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 100.0,
+          "status": "implemented",
+          "doc": "How far away the player sees other characters' names."
+        },
+        {
+          "name": "LocaleId",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "en-us",
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The player's language and region."
+        }
+      ],
+      "methods": [
+        {
+          "name": "LoadCharacterAsync",
+          "yields": true,
+          "status": "implemented",
+          "doc": "Removes the current character, if any, and spawns a new one at a SpawnLocation. Server only."
+        },
+        {
+          "name": "LoadCharacter",
+          "yields": true,
+          "deprecated": "LoadCharacterAsync",
+          "status": "implemented",
+          "doc": "Like LoadCharacterAsync."
+        },
+        {
+          "name": "Kick",
+          "params": [
+            {
+              "name": "message",
+              "type": "string",
+              "optional": true
+            }
+          ],
+          "status": "implemented",
+          "doc": "Removes the player from the server, with an optional message written to the output."
+        },
+        {
+          "name": "Move",
+          "params": [
+            {
+              "name": "walkDirection",
+              "type": "Vector3"
+            },
+            {
+              "name": "relativeToCamera",
+              "type": "bool",
+              "optional": true
+            }
+          ],
+          "status": "partial",
+          "note": "Needs a Humanoid with a Move implementation (the character work); without one it raises RE9001.",
+          "doc": "Makes the character walk in a direction, through its Humanoid."
+        },
+        {
+          "name": "GetNetworkPing",
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The round-trip time to the player's client in seconds: 0 in one process."
+        },
+        {
+          "name": "HasAppearanceLoaded",
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True once the character's look has loaded; simulated players load at once."
+        },
+        {
+          "name": "IsInGroup",
+          "params": [
+            {
+              "name": "groupId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetRankInGroup",
+          "params": [
+            {
+              "name": "groupId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "GetRoleInGroup",
+          "params": [
+            {
+              "name": "groupId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "string"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        },
+        {
+          "name": "IsFriendsWith",
+          "params": [
+            {
+              "name": "userId",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "yields": true,
+          "status": "stub-error",
+          "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ],
+      "events": [
+        {
+          "name": "CharacterAdded",
+          "params": [
+            {
+              "name": "character",
+              "type": "Instance<Model>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when a new character is placed in the world, with the model."
+        },
+        {
+          "name": "CharacterRemoving",
+          "params": [
+            {
+              "name": "character",
+              "type": "Instance<Model>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires just before the character is removed, with the model."
+        },
+        {
+          "name": "CharacterAppearanceLoaded",
+          "params": [
+            {
+              "name": "character",
+              "type": "Instance<Model>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires after CharacterAdded once the character's look is applied."
+        },
+        {
+          "name": "Chatted",
+          "params": [
+            {
+              "name": "message",
+              "type": "string"
+            },
+            {
+              "name": "recipient",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires with each chat message the player sends."
+        }
+      ]
+    },
+    {
+      "name": "Backpack",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "Holds a player's tools. Filled from StarterPack each time the character spawns."
+    },
+    {
+      "name": "PlayerGui",
+      "superclass": "BasePlayerGui",
+      "status": "implemented",
+      "doc": "Holds a player's screen interfaces on their client. Filled from StarterGui when the character spawns."
+    },
+    {
+      "name": "PlayerScripts",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "Holds the scripts copied from StarterPlayerScripts when the player joins. It exists only on the player's client."
+    },
+    {
+      "name": "StarterPack",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "Tools copied into each player's Backpack when their character spawns."
+    },
+    {
+      "name": "ForceField",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Protects the character it is in from damage. LoadCharacter adds one for the spawn's Duration.",
+      "properties": [
+        {
+          "name": "Visible",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the field is drawn."
+        }
+      ]
+    }
+  ]
+}
