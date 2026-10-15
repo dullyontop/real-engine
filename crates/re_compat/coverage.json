@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1454,
-    "partial": 119,
+    "implemented": 1453,
+    "partial": 120,
     "stub-error": 51,
     "missing": 3
   },
@@ -445,7 +445,8 @@
         {
           "name": "AssemblyAngularVelocity",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "On a client, a part the server simulates reads zero: the client does not simulate it."
         },
         {
           "name": "AssemblyCenterOfMass",
@@ -455,13 +456,13 @@
         {
           "name": "AssemblyLinearVelocity",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "On a client, a part the server simulates reads zero: the client does not simulate it."
         },
         {
           "name": "AssemblyMass",
           "kind": "property",
-          "status": "partial",
-          "note": "An anchored assembly reads 0 rather than the sum of its parts' masses."
+          "status": "implemented"
         },
         {
           "name": "AssemblyRootPart",
@@ -2302,7 +2303,7 @@
           "name": "WorldPivot",
           "kind": "property",
           "status": "partial",
-          "note": "Without a primary part the pivot is the bounding-box centre; a pivot set by a script is not stored."
+          "note": "With a primary part, setting it moves that part (PivotOffset is not built). Without one, the pivot set is kept while the place runs, not saved; until set it is the bounding-box centre."
         }
       ]
     },

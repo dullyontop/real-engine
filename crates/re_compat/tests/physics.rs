@@ -360,6 +360,16 @@ mod physics_parts {
     }
 
     #[test]
+    fn every_member_without_its_own_test_is_called_from_the_fixture() {
+        let mut p = place();
+        let src = include_str!("fixtures/physics/members.luau");
+        p.run(&format!("(function() {src} end)().setup()"));
+        p.frames(120);
+        p.run(&format!("(function() {src} end)().check()"));
+        assert_eq!(p.out(), ["members ok"]);
+    }
+
+    #[test]
     fn welded_parts_move_as_one_and_split_when_the_weld_goes() {
         let mut p = place();
         p.run(
@@ -530,6 +540,114 @@ mod physics_parts {
         // It stays where it is, and is not reported again until it changes.
         assert!(physics::step(&mut p.world, DT).is_empty());
         assert_eq!(p.num("workspace.Far.Position.Y"), 100.0);
+    }
+
+    #[test]
+    fn an_anchored_map_part_outside_the_world_limits_is_reported() {
+        let mut p = place();
+        p.run(
+            r#"
+            for i, x in {-4900, 12000} do
+                local a = Instance.new("Part")
+                a.Name = "P" .. i
+                a.Anchored = true
+                a.Position = Vector3.new(x, 0, 0)
+                a.Parent = workspace
+            end
+            "#,
+        );
+        let d = physics::step(&mut p.world, DT);
+        assert!(d.iter().any(|d| d.code.to_string() == "RE5006"), "{d:?}");
+    }
+
+    #[test]
+    fn a_character_stands_where_its_joints_put_it_and_is_found_by_queries() {
+        let mut p = place();
+        p.run(
+            r#"
+            local m = Instance.new("Model")
+            m.Name = "Dummy"
+            local root = Instance.new("Part")
+            root.Name = "HumanoidRootPart"
+            root.Size = Vector3.new(2, 2, 1)
+            root.Position = Vector3.new(0, 10, 0)
+            root.Parent = m
+            local arm = Instance.new("Part")
+            arm.Name = "Arm"
+            arm.Size = Vector3.new(1, 2, 1)
+            arm.Position = Vector3.new(1.5, 10, 0)
+            arm.Parent = m
+            local j = Instance.new("Motor6D")
+            j.Name = "Shoulder"
+            j.Part0 = root
+            j.Part1 = arm
+            j.C0 = CFrame.new(1.5, 0, 0)
+            j.Parent = root
+            Instance.new("Humanoid").Parent = m
+            m.Parent = workspace
+            "#,
+        );
+        p.frames(60);
+        assert_eq!(p.num("workspace.Dummy.HumanoidRootPart.Position.Y"), 10.0);
+        assert_eq!(p.num("workspace.Dummy.Arm.Position.Y"), 10.0);
+        assert_eq!(
+            p.eval(
+                "workspace:Raycast(Vector3.new(1.5, 50, 0), Vector3.new(0, -100, 0)).Instance.Name"
+            ),
+            "Arm"
+        );
+        // An animated joint moves the arm with it.
+        p.run("workspace.Dummy.HumanoidRootPart.Shoulder.Transform = CFrame.new(0, 1, 0)");
+        p.frames(2);
+        assert!((p.num("workspace.Dummy.Arm.Position.Y") - 11.0).abs() < 1e-4);
+        // Without its Humanoid the model is ordinary parts again, and falls.
+        p.run("workspace.Dummy.Humanoid:Destroy()");
+        p.frames(30);
+        assert!(p.num("workspace.Dummy.HumanoidRootPart.Position.Y") < 9.0);
+    }
+
+    #[test]
+    fn an_animated_joint_keeps_the_assembly_and_its_touches() {
+        let mut p = place();
+        p.run(
+            r#"
+            local base = Instance.new("Part")
+            base.Name = "Base"
+            base.Anchored = true
+            base.Size = Vector3.new(50, 1, 50)
+            base.Parent = workspace
+            local a = Instance.new("Part")
+            a.Name = "A"
+            a.Size = Vector3.new(4, 2, 4)
+            a.Position = Vector3.new(0, 1.5, 0)
+            a.Parent = workspace
+            local b = Instance.new("Part")
+            b.Name = "B"
+            b.Size = Vector3.new(1, 1, 1)
+            b.Position = Vector3.new(0, 3, 0)
+            b.Parent = workspace
+            local j = Instance.new("Motor6D")
+            j.Name = "Neck"
+            j.Part0 = a
+            j.Part1 = b
+            j.C0 = CFrame.new(0, 1.5, 0)
+            j.Parent = a
+            a.TouchEnded:Connect(function(o) print("ended " .. o.Name) end)
+            "#,
+        );
+        p.frames(30);
+        p.out();
+        let t0 = p.eval("workspace.A.AssemblyLinearVelocity.Magnitude < 0.5");
+        assert_eq!(t0, "true");
+        for i in 0..30 {
+            p.run(&format!(
+                "workspace.A.Neck.Transform = CFrame.Angles(0, {}, 0)",
+                f32::from(i as u8) * 0.1
+            ));
+            p.frame();
+        }
+        assert!(p.out().is_empty(), "the touch with Base ended");
+        assert_eq!(p.eval("#workspace.A:GetTouchingParts()"), "1");
     }
 
     #[test]

@@ -162,6 +162,8 @@ fn assembly_mass(w: &World, e: Entity) -> f32 {
         let members = s.assembly_members(e);
         match s.assembly_key(e).and_then(|k| s.physics.assembly(k)) {
             Some(i) if i.kind == BodyKind::Dynamic => i.mass,
+            // Not simulated yet (made this frame): the part's own mass.
+            _ if !s.parts.contains_key(&e) => part_mass(),
             // Anchored: the members' masses (massless ones count for nothing).
             _ => members
                 .iter()

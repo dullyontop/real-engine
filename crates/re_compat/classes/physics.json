@@ -48,8 +48,8 @@
             "kind": "builtin"
           },
           "status": "partial",
-          "note": "Without a primary part the pivot is the bounding-box centre; a pivot set by a script is not stored.",
-          "doc": "The model's pivot in the world: the primary part's frame, or the centre of the model's bounding box when it has none. Setting it without a primary part moves only the pivot."
+          "note": "With a primary part, setting it moves that part (PivotOffset is not built). Without one, the pivot set is kept while the place runs, not saved; until set it is the bounding-box centre.",
+          "doc": "The model's pivot in the world: the primary part's frame, or the centre of the model's bounding box when it has none."
         }
       ],
       "methods": [
@@ -317,8 +317,9 @@
           "storage": {
             "kind": "builtin"
           },
-          "status": "implemented",
-          "doc": "The velocity of the assembly's centre of mass, in studs per second. Setting it changes the whole assembly's velocity."
+          "status": "partial",
+          "doc": "The velocity of the assembly's centre of mass, in studs per second. Setting it changes the whole assembly's velocity.",
+          "note": "On a client, a part the server simulates reads zero: the client does not simulate it."
         },
         {
           "name": "AssemblyAngularVelocity",
@@ -326,8 +327,9 @@
           "storage": {
             "kind": "builtin"
           },
-          "status": "implemented",
-          "doc": "The assembly's angular velocity in radians per second."
+          "status": "partial",
+          "doc": "The assembly's angular velocity in radians per second.",
+          "note": "On a client, a part the server simulates reads zero: the client does not simulate it."
         },
         {
           "name": "AssemblyMass",
@@ -336,9 +338,8 @@
             "kind": "builtin"
           },
           "read_only": true,
-          "status": "partial",
-          "note": "An anchored assembly reads 0 rather than the sum of its parts' masses.",
-          "doc": "The total mass of the parts in the assembly (0 for an anchored assembly)."
+          "status": "implemented",
+          "doc": "The total mass of the parts in the assembly, massless parts aside."
         },
         {
           "name": "AssemblyCenterOfMass",

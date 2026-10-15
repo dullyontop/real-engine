@@ -77,7 +77,9 @@ const MAX_SPIN: f32 = 46.0;
 pub const MAX_GROUPS: usize = 32;
 
 /// Marks a part that something else moves (a character controller): the
-/// simulation leaves it, and every part welded to it, out.
+/// simulation leaves it out. The other parts of a character (a model with a
+/// `Humanoid`) are never free bodies: they stand where their joints put them,
+/// see [`character_model`].
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct CharacterDriven;
 
@@ -172,6 +174,27 @@ fn replicated(w: &World, e: Entity) -> bool {
         .is_some_and(|r| r.server_of(e).is_some())
 }
 
+/// The character model `e` belongs to: the nearest `Model` above it, when
+/// that model has a `Humanoid` child. Until a character controller moves
+/// them, a character's parts collide and are found by queries but are not
+/// simulated, so a rig does not fall apart or topple.
+pub(crate) fn character_model(w: &World, e: Entity) -> Option<Entity> {
+    let mut cur = e;
+    for _ in 0..16 {
+        cur = w.ecs.get::<ChildOf>(cur)?.parent();
+        if class_of(w, cur) == Some("Model") {
+            return has_humanoid(w, cur).then_some(cur);
+        }
+    }
+    None
+}
+
+fn has_humanoid(w: &World, model: Entity) -> bool {
+    re_scene::hierarchy::children(&w.ecs, model)
+        .iter()
+        .any(|c| class_of(w, *c) == Some("Humanoid"))
+}
+
 impl PartSnap {
     pub(crate) fn read(w: &World, l: &Layout, e: Entity) -> PartSnap {
         let class = w
@@ -188,8 +211,11 @@ impl PartSnap {
         PartSnap {
             geom: l.geom(w, e, class),
             // A part the server replicates to this client moves where the
-            // server says: here it only stands in the way.
-            anchored: l.anchored.bool(w, e, false) || replicated(w, e),
+            // server says: here it only stands in the way. So does a
+            // character's part.
+            anchored: l.anchored.bool(w, e, false)
+                || replicated(w, e)
+                || character_model(w, e).is_some(),
             can_collide: l.can_collide.bool(w, e, true),
             can_query: l.can_query.bool(w, e, true),
             can_touch: l.can_touch.bool(w, e, true),
@@ -372,6 +398,11 @@ pub(crate) struct Sim {
     /// What the simulation refused since the last step (a part outside the
     /// world limits, say): reported by `step`.
     pub(crate) refused: Vec<Diagnostic>,
+    /// The model each tracked `Humanoid` is in.
+    humanoids: HashMap<Entity, Entity>,
+    /// Assemblies whose joints only changed their offsets (an animated
+    /// `Motor6D`): their parts are re-placed without rebuilding the body.
+    reposed: HashSet<EntityId>,
     /// Parts whose assembly must be rebuilt at the next sync.
     dirty: HashSet<Entity>,
     /// Parts a script moved since the last sync.
@@ -526,6 +557,8 @@ impl Sim {
             touching: HashMap::new(),
             fallen: Vec::new(),
             refused: Vec::new(),
+            humanoids: HashMap::new(),
+            reposed: HashSet::new(),
             dirty: HashSet::new(),
             moved: HashSet::new(),
             moved_asm: Vec::new(),
@@ -695,6 +728,20 @@ impl Sim {
             } else if self.parts.contains_key(&e) {
                 self.untrack_part(e);
             }
+            // A Humanoid makes its model a character, and its leaving
+            // makes it a model again.
+            let model = (in_ws && class == Some("Humanoid"))
+                .then(|| w.ecs.get::<ChildOf>(e).map(|c| c.parent()))
+                .flatten();
+            let old = match model {
+                Some(m) => self.humanoids.insert(e, m),
+                None => self.humanoids.remove(&e),
+            };
+            if old != model {
+                for m in [old, model].into_iter().flatten() {
+                    self.resnap_under(w, m);
+                }
+            }
             // Rigid joints.
             match class.and_then(rigid_kind) {
                 Some(kind) if in_ws => {
@@ -774,6 +821,17 @@ impl Sim {
     fn set_rigid(&mut self, e: Entity, rec: RigidRec) {
         match self.rigid.get(&e) {
             Some(old) if *old == rec => {}
+            Some(old)
+                if old.kind == rec.kind
+                    && old.part0 == rec.part0
+                    && old.part1 == rec.part1
+                    && old.enabled == rec.enabled
+                    && let Some(key) = self.joined_in(rec.part0, rec.part1) =>
+            {
+                // Only the offset changed: re-place the parts in place.
+                self.reposed.insert(key);
+                self.rigid.insert(e, rec);
+            }
             Some(old) => {
                 let old = old.clone();
                 self.touch_joint_parts(&old);
@@ -787,10 +845,36 @@ impl Sim {
         }
     }
 
+    /// The assembly (not a cell) both parts are members of.
+    fn joined_in(&self, a: Option<Entity>, b: Option<Entity>) -> Option<EntityId> {
+        let ka = self.parts.get(&a?)?.asm?;
+        let kb = self.parts.get(&b?)?.asm?;
+        (ka == kb && self.assemblies.get(&ka)?.cell.is_none()).then_some(ka)
+    }
+
     fn touch_joint_parts(&mut self, r: &RigidRec) {
         for p in [r.part0, r.part1].into_iter().flatten() {
             if self.parts.contains_key(&p) {
                 self.dirty.insert(p);
+            }
+        }
+    }
+
+    /// Re-reads the tracked parts under `root`; those that changed are
+    /// rebuilt.
+    fn resnap_under(&mut self, w: &World, root: Entity) {
+        if w.ecs.get_entity(root).is_err() {
+            return;
+        }
+        let mut stack = vec![root];
+        while let Some(e) = stack.pop() {
+            stack.extend_from_slice(re_scene::hierarchy::children(&w.ecs, e));
+            if let Some(rec) = self.parts.get_mut(&e) {
+                let snap = PartSnap::read(w, &self.layout, e);
+                if rec.snap != snap {
+                    rec.snap = snap;
+                    self.dirty.insert(e);
+                }
             }
         }
     }
@@ -890,8 +974,124 @@ impl Sim {
         }
     }
 
+    /// Rigid adjacency among tracked parts: for each part, its neighbours
+    /// and the joints to them.
+    fn adjacency(&self) -> HashMap<Entity, Vec<(Entity, Entity)>> {
+        let mut adj: HashMap<Entity, Vec<(Entity, Entity)>> = HashMap::new();
+        for (&j, r) in &self.rigid {
+            let (Some(a), Some(b)) = (r.part0, r.part1) else {
+                continue;
+            };
+            if !r.enabled || a == b || !self.parts.contains_key(&a) || !self.parts.contains_key(&b)
+            {
+                continue;
+            }
+            adj.entry(a).or_default().push((b, j));
+            adj.entry(b).or_default().push((a, j));
+        }
+        adj
+    }
+
+    /// Re-places the parts of the assemblies whose joint offsets changed,
+    /// keeping their bodies (and so their touches).
+    fn repose(&mut self, w: &mut World) {
+        if self.reposed.is_empty() {
+            return;
+        }
+        let keys: Vec<EntityId> = std::mem::take(&mut self.reposed).into_iter().collect();
+        let adj = self.adjacency();
+        for key in keys {
+            let Some(asm) = self.assemblies.get(&key).cloned() else {
+                continue;
+            };
+            if asm.cell.is_some() || asm.members.iter().any(|m| self.dirty.contains(m)) {
+                // Rebuilt whole anyway.
+                continue;
+            }
+            let root_pose = self
+                .physics
+                .assembly(key)
+                .map(|i| i.pose)
+                .or_else(|| world_pose(w, asm.root))
+                .unwrap_or(Pose::IDENTITY);
+            let placed = self.place_from(w, asm.root, root_pose, &adj);
+            if asm.members.iter().any(|m| !placed.contains_key(m)) {
+                // The joints no longer reach every member.
+                self.dirty.extend(asm.members.iter().copied());
+                continue;
+            }
+            let inv_root = root_pose.inverse();
+            let mut descs = Vec::with_capacity(asm.members.len());
+            let mut moved = Vec::new();
+            for &e in &asm.members {
+                let local = inv_root.mul(&placed[&e]);
+                let local = Pose::new(local.pos, local.rot.normalize());
+                descs.push(self.part_desc(e, local, e == asm.root));
+                if let Some(p) = self.parts.get_mut(&e) {
+                    p.local = local;
+                }
+                if e != asm.root {
+                    moved.push((e, placed[&e]));
+                }
+            }
+            if let Err(d) = self.physics.set_assembly_parts(key, &descs) {
+                self.refused.push(d);
+                self.dirty.extend(asm.members.iter().copied());
+                continue;
+            }
+            write_world_poses(w, &moved);
+        }
+    }
+
+    /// Places every part reachable from `root` (at `root_pose`) through the
+    /// rigid joints.
+    fn place_from(
+        &self,
+        w: &World,
+        root: Entity,
+        root_pose: Pose,
+        adj: &HashMap<Entity, Vec<(Entity, Entity)>>,
+    ) -> HashMap<Entity, Pose> {
+        let mut placed: HashMap<Entity, Pose> = HashMap::new();
+        placed.insert(root, root_pose);
+        let mut queue = vec![root];
+        let mut i = 0;
+        while i < queue.len() {
+            let e = queue[i];
+            i += 1;
+            let pe = placed[&e];
+            for &(n, j) in adj.get(&e).map(Vec::as_slice).unwrap_or(&[]) {
+                if placed.contains_key(&n) {
+                    continue;
+                }
+                let r = &self.rigid[&j];
+                let pn = match r.kind {
+                    RigidKind::Joint => {
+                        if r.part0 == Some(e) {
+                            pe.mul(&r.offset)
+                        } else {
+                            pe.mul(&r.offset.inverse())
+                        }
+                    }
+                    RigidKind::WeldConstraint => {
+                        // Keep the offset the two parts have now.
+                        let (we, wn) = (
+                            world_pose(w, e).unwrap_or(pe),
+                            world_pose(w, n).unwrap_or(Pose::IDENTITY),
+                        );
+                        pe.mul(&we.inverse().mul(&wn))
+                    }
+                };
+                placed.insert(n, pn);
+                queue.push(n);
+            }
+        }
+        placed
+    }
+
     /// Rebuilds the assemblies of the dirty parts.
     fn rebuild(&mut self, w: &mut World) {
+        self.repose(w);
         if self.dirty.is_empty() {
             return;
         }
@@ -914,19 +1114,7 @@ impl Sim {
                 }
             }
         }
-        // Rigid adjacency among tracked parts.
-        let mut adj: HashMap<Entity, Vec<(Entity, Entity)>> = HashMap::new();
-        for (&j, r) in &self.rigid {
-            let (Some(a), Some(b)) = (r.part0, r.part1) else {
-                continue;
-            };
-            if !r.enabled || a == b || !self.parts.contains_key(&a) || !self.parts.contains_key(&b)
-            {
-                continue;
-            }
-            adj.entry(a).or_default().push((b, j));
-            adj.entry(b).or_default().push((a, j));
-        }
+        let adj = self.adjacency();
         // Grow the work set to whole components (a new weld can reach parts
         // that were not dirty).
         let mut stack: Vec<Entity> = work.iter().copied().collect();
@@ -1027,40 +1215,7 @@ impl Sim {
         let root = self.choose_root(comp);
         let root_pose = world_pose(w, root).unwrap_or(Pose::IDENTITY);
         // Place every part from the root through the joints.
-        let mut placed: HashMap<Entity, Pose> = HashMap::new();
-        placed.insert(root, root_pose);
-        let mut queue = vec![root];
-        let mut i = 0;
-        while i < queue.len() {
-            let e = queue[i];
-            i += 1;
-            let pe = placed[&e];
-            for &(n, j) in adj.get(&e).map(Vec::as_slice).unwrap_or(&[]) {
-                if placed.contains_key(&n) {
-                    continue;
-                }
-                let r = &self.rigid[&j];
-                let pn = match r.kind {
-                    RigidKind::Joint => {
-                        if r.part0 == Some(e) {
-                            pe.mul(&r.offset)
-                        } else {
-                            pe.mul(&r.offset.inverse())
-                        }
-                    }
-                    RigidKind::WeldConstraint => {
-                        // Keep the offset the two parts have now.
-                        let (we, wn) = (
-                            world_pose(w, e).unwrap_or(pe),
-                            world_pose(w, n).unwrap_or(Pose::IDENTITY),
-                        );
-                        pe.mul(&we.inverse().mul(&wn))
-                    }
-                };
-                placed.insert(n, pn);
-                queue.push(n);
-            }
-        }
+        let placed = self.place_from(w, root, root_pose, adj);
         let anchored = comp.iter().any(|e| self.parts[e].snap.anchored);
         let kind = if anchored {
             BodyKind::Static
@@ -1211,23 +1366,23 @@ impl Sim {
             .iter()
             .map(|e| self.part_desc(*e, self.parts[e].local, false))
             .collect();
-        let ok = if self.assemblies.contains_key(&key) {
-            self.physics.set_assembly_parts(key, &descs).is_ok()
+        let done = if self.assemblies.contains_key(&key) {
+            self.physics.set_assembly_parts(key, &descs)
         } else {
-            self.physics
-                .add_assembly(
-                    key,
-                    &AssemblyDesc {
-                        kind: BodyKind::Static,
-                        pose: Pose::new(origin, Quat::IDENTITY),
-                        linear: Vec3::ZERO,
-                        angular: Vec3::ZERO,
-                        parts: descs,
-                    },
-                )
-                .is_ok()
+            self.physics.add_assembly(
+                key,
+                &AssemblyDesc {
+                    kind: BodyKind::Static,
+                    pose: Pose::new(origin, Quat::IDENTITY),
+                    linear: Vec3::ZERO,
+                    angular: Vec3::ZERO,
+                    parts: descs,
+                },
+            )
         };
-        if !ok {
+        if let Err(d) = done {
+            // The cell's parts stay where they are, unsimulated: reported.
+            self.refused.push(d);
             return;
         }
         for e in &members {

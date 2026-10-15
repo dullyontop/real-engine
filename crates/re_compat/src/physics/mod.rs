@@ -148,19 +148,55 @@ pub fn dispatch(lua: &Lua) -> mlua::Result<()> {
         })
         .unwrap_or_default()
     })?;
+    // Every event goes out even when a handler fails; the first failure is
+    // returned after.
+    let mut first: Option<mlua::Error> = None;
+    let mut keep = |r: mlua::Result<()>| {
+        if let Err(e) = r
+            && first.is_none()
+        {
+            first = Some(e);
+        }
+    };
+    let alive = |e: Entity| -> mlua::Result<bool> {
+        with_world(lua, |w| {
+            w.ecs.get_entity(e).is_ok() && w.ecs.get::<crate::class::ClassMarker>(e).is_some()
+        })
+    };
     for t in touches {
         let event = if t.began { "Touched" } else { "TouchEnded" };
+        // A part an earlier handler destroyed touches nothing.
+        if !(alive(t.a)? && alive(t.b)?) {
+            continue;
+        }
         let (a, b) = (
             crate::instance::push(lua, t.a)?,
             crate::instance::push(lua, t.b)?,
         );
-        crate::signal::fire(lua, t.a, event, mlua::MultiValue::from_vec(vec![b]))?;
-        crate::signal::fire(lua, t.b, event, mlua::MultiValue::from_vec(vec![a]))?;
+        keep(crate::signal::fire(
+            lua,
+            t.a,
+            event,
+            mlua::MultiValue::from_vec(vec![b]),
+        ));
+        if alive(t.b)? {
+            keep(crate::signal::fire(
+                lua,
+                t.b,
+                event,
+                mlua::MultiValue::from_vec(vec![a]),
+            ));
+        }
     }
     for e in fallen {
-        crate::instance::destroy(lua, e)?;
+        if alive(e)? {
+            keep(crate::instance::destroy(lua, e));
+        }
     }
-    Ok(())
+    match first {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 /// Runs `f` on the world's `re_physics` world (made on first use), for the
