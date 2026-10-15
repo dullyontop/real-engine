@@ -31,9 +31,21 @@ local function setCoins(player, value)
 	remotes.CoinsChanged:FireClient(player, value)
 end
 
+-- A bought boost lasts across respawns.
+local function applySpeed(player)
+	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = player:GetAttribute("Speed")
+	end
+end
+
 Players.PlayerAdded:Connect(function(player)
 	player:SetAttribute("Coins", 0)
 	player:SetAttribute("Speed", 16)
+	player.CharacterAdded:Connect(function(character)
+		character:WaitForChild("Humanoid")
+		applySpeed(player)
+	end)
 end)
 
 Coins.spawn(plaza.coins, function(player)
@@ -56,11 +68,11 @@ local items = {
 	speed = {
 		price = Shared.SPEED_PRICE,
 		apply = function(player)
-			player:SetAttribute("Speed", 24)
-			local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-			if humanoid then
-				humanoid.WalkSpeed = 24
+			if player:GetAttribute("Speed") >= 24 then
+				return false
 			end
+			player:SetAttribute("Speed", 24)
+			applySpeed(player)
 			return true
 		end,
 	},
@@ -76,14 +88,15 @@ local function buy(player, item)
 	end
 	local coins = coinsOf(player)
 	if coins < entry.price then
-		remotes.ShopResult:FireClient(player, item, false)
+		remotes.ShopResult:FireClient(player, item, false, "poor")
 		return false, "not enough coins"
 	end
 	if not entry.apply(player) then
+		remotes.ShopResult:FireClient(player, item, false, "owned")
 		return false, "already bought"
 	end
 	setCoins(player, coins - entry.price)
-	remotes.ShopResult:FireClient(player, item, true)
+	remotes.ShopResult:FireClient(player, item, true, "bought")
 	return true, coins - entry.price
 end
 

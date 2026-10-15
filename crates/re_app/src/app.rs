@@ -344,7 +344,11 @@ impl App {
                 .apply_motion_state(&self.physics.motion_state());
         }
         // Lend the GPU side and the loaded media, so nothing is loaded twice.
+        // Font atlas changes not drawn yet go with it, older first.
         std::mem::swap(&mut copy.media, &mut self.media);
+        if let Some(pending) = self.compat_view.take_textures() {
+            copy.compat_view.set_ui(pending);
+        }
         copy.graphics = self.graphics.take();
         if let Some(g) = &mut copy.graphics {
             g.set_keep_derived(true);
@@ -361,6 +365,9 @@ impl App {
         std::mem::swap(&mut copy.media, &mut self.media);
         if let Some(g) = &mut copy.graphics {
             copy.compat_view.release_all(g.renderer_mut());
+        }
+        if let Some(pending) = copy.compat_view.take_textures() {
+            self.compat_view.set_ui(pending);
         }
         self.graphics = copy.graphics.take();
         if let Some(g) = &mut self.graphics {
@@ -554,10 +561,7 @@ impl App {
         self.hud = hud::collect(&mut self.world);
         let size = [self.config.render.width, self.config.render.height];
         let image = if self.compat.is_some() {
-            // Two UI passes: egui lays text out with the fonts of the last.
-            self.compat_render(size, 1.0, 2);
-            let gfx = self.graphics.as_mut().expect("ensured");
-            gfx.capture_compat(size, &mut self.compat_view, &self.hud)?
+            self.capture_compat(size)?
         } else {
             gfx.capture(size, &self.snapshot, &self.hud)?
         };
@@ -1054,7 +1058,7 @@ impl App {
         self.snapshot = render::build(shown, &inputs);
         self.hud = hud::collect(shown);
         if self.compat.is_some() && self.graphics.is_some() {
-            self.compat_render(self.view_size, self.view_ppp, 1);
+            self.compat_render(self.view_size, self.view_ppp, 1, true);
         }
         audio::build(&mut self.world, &mut self.audio_sync, &mut self.audio_cmds);
         self.perf.add(Phase::Sync, t.elapsed());
@@ -1351,7 +1355,13 @@ impl App {
     /// Builds the local player's view for drawing: the client's 3D frame
     /// and `passes` egui passes of its UI (the `PlayerGui`) and the HUD, for
     /// a target of `size_px` physical pixels at `pixels_per_point`.
-    fn compat_render(&mut self, size_px: [u32; 2], pixels_per_point: f32, passes: u32) {
+    fn compat_render(
+        &mut self,
+        size_px: [u32; 2],
+        pixels_per_point: f32,
+        passes: u32,
+        build: bool,
+    ) {
         let Some(gfx) = &self.graphics else {
             return;
         };
@@ -1375,19 +1385,28 @@ impl App {
         let time = self.clock.tick() as f64 * f64::from(self.clock.dt_secs());
         let raw = hud::raw_input(size_px, pixels_per_point, time);
         let hud_lines = self.hud.clone();
+        let last_camera = self.compat_view.frame().map(|f| f.gui_camera);
         let mut built = None;
         let mut ui = Vec::new();
         self.compat_call(ContextKind::Client, |vm, h| {
             vm.run(h, |lua| {
-                let frame = re_compat::render::build(lua, &input)?;
+                // Building advances effects and the camera's viewport, so it
+                // happens once a frame unless the size changes.
+                let camera = if build {
+                    let frame = re_compat::render::build(lua, &input)?;
+                    let camera = frame.gui_camera;
+                    built = Some(frame);
+                    Some(camera)
+                } else {
+                    last_camera
+                };
                 let gui = re_compat::gui::GuiFrame {
                     viewport: input.viewport / pixels_per_point,
                     top_inset: 0.0,
                     roots,
-                    camera: Some(frame.gui_camera),
+                    camera,
                     input: re_compat::gui::GuiInput::default(),
                 };
-                built = Some(frame);
                 for _ in 0..passes {
                     let mut failed = None;
                     let out = ctx.run_ui(raw.clone(), |ui| {
@@ -1416,6 +1435,38 @@ impl App {
         }
     }
 
+    /// Draws a compat game's view offscreen at `size`. This frame's view is
+    /// reused when it was built at that size; otherwise one is built for the
+    /// capture and the window's own is put back afterwards.
+    fn capture_compat(&mut self, size: [u32; 2]) -> Result<Image, Diagnostic> {
+        let same = size == self.view_size && self.compat_view.has_frame();
+        let again = if same && self.view_ppp == 1.0 {
+            self.compat_view.ui_again()
+        } else {
+            None
+        };
+        let window = if same {
+            None
+        } else {
+            self.compat_view.frame().cloned()
+        };
+        if again.is_none() {
+            // Two UI passes: egui lays text out with the fonts of the last.
+            self.compat_render(size, 1.0, 2, !same);
+        }
+        let gfx = self.graphics.as_mut().expect("checked by the callers");
+        let image = gfx.capture_compat(size, &mut self.compat_view, &self.hud);
+        if let Some(ui) = again {
+            self.compat_view.set_ui(ui);
+        } else if self.compat_view.has_frame() && (window.is_some() || same) {
+            if let Some(f) = window {
+                self.compat_view.restore_frame(f);
+            }
+            self.compat_render(self.view_size, self.view_ppp, 1, false);
+        }
+        image
+    }
+
     fn take_frame_screenshots(&mut self, f: u64) {
         let due: Vec<ScreenshotRequest> = self
             .screenshots
@@ -1427,14 +1478,10 @@ impl App {
             return;
         }
         let size = [self.config.render.width, self.config.render.height];
-        let compat = self.compat.is_some();
-        if compat {
-            self.compat_render(size, 1.0, 2);
-        }
-        let gfx = self.graphics.as_mut().expect("checked");
-        let captured = if compat {
-            gfx.capture_compat(size, &mut self.compat_view, &self.hud)
+        let captured = if self.compat.is_some() {
+            self.capture_compat(size)
         } else {
+            let gfx = self.graphics.as_mut().expect("checked");
             gfx.capture(size, &self.snapshot, &self.hud)
         };
         let image = match captured {

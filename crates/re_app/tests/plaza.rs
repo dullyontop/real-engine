@@ -57,6 +57,9 @@ fn the_shop_takes_coins_and_the_door_slides_up() {
         { "frames": 120 },
         hook("DoorHeight", json!([])),
         hook("Coins", json!(["Player1"])),
+        hook("Give", json!(["Player1", 10])),
+        hook("Buy", json!(["Player1", "speed"])),
+        hook("Buy", json!(["Player1", "speed"])),
     ]));
     assert_eq!(r[0], json!([5]));
     assert_eq!(r[1], json!([false, "not enough coins"]));
@@ -67,6 +70,8 @@ fn the_shop_takes_coins_and_the_door_slides_up() {
     let height = r[7][0].as_f64().unwrap();
     assert!((height - 14.0).abs() < 1e-3, "{height}");
     assert_eq!(r[8], json!([1]));
+    assert_eq!(r[10], json!([true, 6]));
+    assert_eq!(r[11], json!([false, "already bought"]));
 }
 
 #[test]
@@ -102,4 +107,24 @@ fn a_play_copy_draws_with_the_lent_renderer_and_gives_it_back() {
     let (_, _, image) = app.play_copy(30, None, &[], true).unwrap();
     assert!(image.unwrap().stats([0; 4]).distinct_colors > 50);
     assert_eq!(app.screenshot(None).unwrap().rgba, live.rgba);
+}
+
+#[test]
+fn text_a_play_copy_laid_out_first_still_reaches_the_window() {
+    // The copy runs the egui context's first pass and draws nothing, so the
+    // font atlas it made must go to the live view.
+    let mut app = open();
+    app.ensure_graphics().unwrap();
+    let steps = serde_json::from_value::<Vec<re_app::play::PlayStep>>(json!([
+        hook("Buy", json!(["Player1", "door"])),
+        { "frames": 5 },
+    ]))
+    .unwrap();
+    app.play_copy(30, None, &steps, false).unwrap();
+    app.run_headless(Some(30), None).unwrap();
+    let after_copy = app.screenshot(None).unwrap();
+
+    let mut fresh = open();
+    fresh.run_headless(Some(30), None).unwrap();
+    assert_eq!(after_copy.rgba, fresh.screenshot(None).unwrap().rgba);
 }

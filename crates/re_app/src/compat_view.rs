@@ -90,6 +90,46 @@ impl CompatView {
         self.ui.take()
     }
 
+    /// A copy of the UI pass not drawn yet, without its texture changes: it
+    /// draws the same pass again after those were applied.
+    pub fn ui_again(&self) -> Option<egui::FullOutput> {
+        self.ui.as_ref().map(|o| {
+            let mut again = o.clone();
+            again.textures_delta.clear();
+            again
+        })
+    }
+
+    /// Takes the texture changes not drawn yet (the font atlas) as a pass
+    /// with nothing to paint, leaving the pass itself. egui reports each change once, so they must
+    /// reach the renderer whatever happens to the pass.
+    pub fn take_textures(&mut self) -> Option<egui::FullOutput> {
+        let o = self.ui.as_mut()?;
+        if o.textures_delta.is_empty() {
+            return None;
+        }
+        Some(egui::FullOutput {
+            textures_delta: std::mem::take(&mut o.textures_delta),
+            pixels_per_point: o.pixels_per_point,
+            ..Default::default()
+        })
+    }
+
+    /// True once a frame was built.
+    pub fn has_frame(&self) -> bool {
+        self.frame.is_some()
+    }
+
+    /// The last frame built.
+    pub fn frame(&self) -> Option<&RenderFrame> {
+        self.frame.as_ref()
+    }
+
+    /// Draws `frame` again (its resources were taken when it was built).
+    pub fn restore_frame(&mut self, frame: RenderFrame) {
+        self.frame = Some(frame);
+    }
+
     /// Frees what was released, uploads what is missing and returns the
     /// frame to draw: the snapshot, the extras and the exposure. `None`
     /// before the first frame.
@@ -179,7 +219,18 @@ impl CompatView {
             }
         }
         self.frame = None;
-        self.ui = None;
+        // The texture changes are kept: the egui context outlives the view.
+        let kept = self.take_textures();
+        self.ui = kept;
+    }
+}
+
+impl Drop for CompatView {
+    fn drop(&mut self) {
+        // Nothing is left to draw them on: the GPU side goes too.
+        if let Some(o) = &mut self.ui {
+            o.textures_delta.clear();
+        }
     }
 }
 

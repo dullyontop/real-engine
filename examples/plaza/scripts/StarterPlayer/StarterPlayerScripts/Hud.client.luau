@@ -47,8 +47,17 @@ remotes.CoinsChanged.OnClientEvent:Connect(function(value)
 	counter.Text = "Coins: " .. value
 end)
 
-remotes.ShopResult.OnClientEvent:Connect(function(item, ok)
-	notice.Text = if ok then "Bought " .. item .. "!" else "Not enough coins for " .. item
+-- Each notice clears after two seconds unless a newer one replaced it.
+local shown = 0
+remotes.ShopResult.OnClientEvent:Connect(function(item, ok, why)
+	notice.Text = if ok
+		then "Bought " .. item .. "!"
+		elseif why == "owned" then "You already have " .. item
+		else "Not enough coins for " .. item
+	shown += 1
+	local mine = shown
 	task.wait(2)
-	notice.Text = ""
+	if shown == mine then
+		notice.Text = ""
+	end
 end)
