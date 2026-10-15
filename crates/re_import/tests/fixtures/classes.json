@@ -3,7 +3,6 @@
   "version": 1,
   "classes": [
     { "name": "ChangeHistoryService", "superclass": "Instance", "service": true, "status": "missing" },
-    { "name": "RunService", "superclass": "Instance", "service": true, "status": "missing" },
     {
       "name": "TestLamp",
       "superclass": "PVInstance",

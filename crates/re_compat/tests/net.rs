@@ -573,7 +573,7 @@ mod net {
             print(pcall(bf.Invoke, bf, 1))
             bf.OnInvoke = function(a) task.wait() return a + 1 end
             print(bf:Invoke(41))
-            print(pcall(function() return bf.OnInvoke end))
+            print(type(bf.OnInvoke))
             bf.OnInvoke = function() error("bad") end
             print(pcall(bf.Invoke, bf))
             "#,
@@ -588,10 +588,7 @@ mod net {
             "{s:?}"
         );
         assert_eq!(s[3], "42");
-        assert!(
-            s[4].starts_with("false\t") && s[4].contains("callback"),
-            "{s:?}"
-        );
+        assert_eq!(s[4], "function");
         assert!(s[5].starts_with("false\t") && s[5].contains("bad"), "{s:?}");
     }
 
@@ -1260,5 +1257,112 @@ mod net {
             s[0].starts_with("false\t") && s[0].contains("client"),
             "{s:?}"
         );
+    }
+
+    #[test]
+    fn the_harness_runs_a_two_world_play_test() {
+        use re_compat::scene::spawn_instance;
+        use re_compat::services::core::ensure_service;
+        use re_compat::testing::{Harness, HarnessOptions, Side};
+        use re_scene::{SaveOptions, ScriptRef};
+
+        let setup = CompatSetup::standard().unwrap();
+        let r = &setup.classes;
+        let dir = tempfile::tempdir().unwrap();
+        let mut w = World::new();
+        let game = create_place(
+            &mut w,
+            r,
+            &["Workspace", "ServerScriptService", "ReplicatedStorage"],
+        )
+        .unwrap();
+        let sp = ensure_service(&mut w, r, game, "StarterPlayer").unwrap();
+        // StarterPlayer comes with its two script folders.
+        let sps =
+            re_compat::instance::tree::find_child(&w, sp, "StarterPlayerScripts", false).unwrap();
+        let scs = re_compat::instance::tree::find_child(&w, sp, "StarterCharacterScripts", false)
+            .unwrap();
+        let rs = w.entity("ReplicatedStorage").unwrap();
+        spawn_instance(&mut w, r, "RemoteEvent", None, "Hello", Some(rs)).unwrap();
+        let script = |w: &mut World, class: &str, name: &str, parent: Entity, src: &str| {
+            let e = spawn_instance(w, r, class, None, name, Some(parent)).unwrap();
+            let path = format!("scripts/{name}.luau");
+            std::fs::create_dir_all(dir.path().join("scripts")).unwrap();
+            std::fs::write(dir.path().join(&path), src).unwrap();
+            w.ecs.entity_mut(e).insert(ScriptRef {
+                path,
+                context: re_compat::script_context(class, None).unwrap(),
+            });
+        };
+        let sss = w.entity("ServerScriptService").unwrap();
+        script(
+            &mut w,
+            "Script",
+            "Server",
+            sss,
+            r#"
+            local Players = game:GetService("Players")
+            Players.PlayerAdded:Connect(function(p) print("joined " .. p.Name) end)
+            game.ReplicatedStorage.Hello.OnServerEvent:Connect(function(p, msg)
+                print(p.Name .. " says " .. msg)
+            end)
+            "#,
+        );
+        script(
+            &mut w,
+            "LocalScript",
+            "Client",
+            sps,
+            r#"
+            local me = game:GetService("Players").LocalPlayer
+            print("local " .. me.Name)
+            game.ReplicatedStorage.Hello:FireServer("hi")
+            "#,
+        );
+        script(
+            &mut w,
+            "LocalScript",
+            "Char",
+            scs,
+            r#"print("character " .. script.Parent.Name)"#,
+        );
+        std::fs::create_dir_all(dir.path().join("scenes")).unwrap();
+        std::fs::write(
+            dir.path().join("scenes/main.scene.json"),
+            re_scene::scene::to_json(&w.save(SaveOptions::default())),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("real.toml"),
+            "[project]\nname = \"t\"\nentry_scene = \"scenes/main.scene.json\"\n\n[compat]\napi = \"roblox\"\nplayers = 2\n",
+        )
+        .unwrap();
+        let mut h = Harness::open_with(
+            dir.path(),
+            &setup,
+            HarnessOptions {
+                two_worlds: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        h.start();
+        h.step(10);
+        assert!(h.uncaught().is_empty(), "{:#?}", h.uncaught());
+        let text = |h: &mut Harness, side| -> Vec<String> {
+            h.take_output(side).into_iter().map(|l| l.text).collect()
+        };
+        let s = text(&mut h, Side::Server);
+        let c = text(&mut h, Side::Client);
+        assert_eq!(
+            s,
+            ["joined Player1", "joined Player2", "Player1 says hi"],
+            "{c:?}"
+        );
+        assert_eq!(c, ["local Player1", "character Player1"], "{s:?}");
+        // A one-world harness has no players.
+        let mut one = Harness::open_with(dir.path(), &setup, HarnessOptions::default()).unwrap();
+        let (r, _) = one.add_player(&PlayerSpec::numbered(1));
+        assert!(r.unwrap_err().message.contains("two_worlds"));
     }
 }

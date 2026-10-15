@@ -61,11 +61,16 @@ fn fixtures() {
     ));
 
     // Tier 2: the Roblox-style surface that is not built yet shows up as
-    // gaps; what the data model covers (`game`, `workspace`, `Instance.new`)
-    // and the native API do not.
+    // gaps; what the data model and runtime cover (`game`, `workspace`,
+    // `Instance.new`, `RunService`) and the native API do not.
     let gap = &report.scan.gap.missing;
-    assert!(gap.contains_key("RunService.Heartbeat"), "{gap:?}");
-    for name in ["game", "Instance", "workspace", "Players.PlayerAdded"] {
+    for name in [
+        "game",
+        "Instance",
+        "workspace",
+        "RunService.Heartbeat",
+        "Players.PlayerAdded",
+    ] {
         assert!(!gap.contains_key(name), "{name} is covered: {gap:?}");
     }
     assert!(!gap.contains_key("world.query") && !gap.contains_key("vector.create"));

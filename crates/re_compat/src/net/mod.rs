@@ -16,12 +16,13 @@
 //! A frame of a two-world run is:
 //!
 //! ```text
-//! pump(server VM)    remotes from the client; queued character loads
+//! pump(server VM)    remotes from the client; queued character loads;
+//!                    scripts that became startable
 //! server phases      PreRender .. PostSimulation (scripts, physics)
 //! replicate          owned components client → server, then server → client
 //! pump(client VM)    player and character events (removals included),
 //!                    PlayerScripts and PlayerGui, removals, remotes from
-//!                    the server, prompts
+//!                    the server, prompts; scripts that became startable
 //! client phases      PreRender .. PostSimulation, then render from the client
 //! ```
 //!
@@ -317,7 +318,20 @@ impl CompatWorlds {
 /// not one of two worlds has nothing to pump. Returns the diagnostics of the
 /// errors raised meanwhile (handlers included).
 pub fn pump(vm: &CompatVm, host: &mut dyn ScriptHost) -> Vec<Diagnostic> {
-    vm.run(host, pump_lua)
+    let mut out = vm.run(host, pump_lua);
+    // Scripts that became startable since the last pump (copied to a player
+    // or a character, cloned into the tree) start now, each on its own.
+    let mut new = Vec::new();
+    out.extend(vm.run(host, |lua| {
+        if link(lua)?.is_some() {
+            new = crate::runtime::scripts::unstarted(lua)?;
+        }
+        Ok(())
+    }));
+    for e in new {
+        out.extend(vm.start_script(host, e));
+    }
+    out
 }
 
 fn pump_lua(lua: &Lua) -> Result<()> {

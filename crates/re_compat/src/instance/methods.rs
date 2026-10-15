@@ -246,6 +246,10 @@ pub fn destroy(lua: &Lua, e: Entity) -> Result<()> {
         )?;
     }
     signal::disconnect_entities(lua, &sub)?;
+    for x in &sub {
+        crate::runtime::scripts::stop(lua, *x)?;
+        super::drop_callbacks(lua, *x)?;
+    }
     let detached = with_world(lua, |w| {
         if tree::is_destroyed(w, e) {
             return false; // a Destroying handler destroyed it already
@@ -430,7 +434,16 @@ fn wait_for_child(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
 fn instance_new(lua: &Lua, (class, parent): (String, LuaValue)) -> Result<LuaValue> {
     let st = state(lua)?;
     let classes = &st.setup.classes;
-    let def = classes.class(&class).map_err(compat_error)?;
+    let def = match classes.class(&class) {
+        Ok(d) => d,
+        Err(e) => {
+            return Err(crate::runtime::unsupported(
+                lua,
+                format!("Instance.new({class})"),
+                e,
+            ));
+        }
+    };
     if !def.creatable || def.service {
         return Err(lua_error(
             BAD_ARGUMENT,
@@ -441,8 +454,9 @@ fn instance_new(lua: &Lua, (class, parent): (String, LuaValue)) -> Result<LuaVal
         def.status,
         crate::Status::Implemented | crate::Status::Partial
     ) {
-        return Err(lua_error(
-            UNSUPPORTED_MEMBER,
+        return Err(crate::runtime::unsupported(
+            lua,
+            format!("Instance.new({class})"),
             format!(
                 "unsupported API member: class {class} is not implemented yet ({})",
                 def.status.as_str()

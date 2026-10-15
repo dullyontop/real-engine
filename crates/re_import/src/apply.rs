@@ -74,10 +74,7 @@ pub fn project_toml(name: &str) -> String {
         "[project]\nname = {name:?}\nentry_scene = \"{ENTRY_SCENE}\"\n\n[sim]\nfixed_hz = 60\n\n{}",
         CompatConfig {
             api: CompatApi::Roblox,
-            signal_behavior: Default::default(),
-            players: 1,
-            assets: Default::default(),
-            effect_budget: None,
+            ..Default::default()
         }
         .to_toml()
     )

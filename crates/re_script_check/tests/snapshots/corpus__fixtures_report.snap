@@ -86,12 +86,9 @@ expression: snapshot
       "Vector3.new": 1
     },
     "gap": {
-      "covered": 31,
+      "covered": 34,
       "missing": {
-        "GetService(RunService)": 1,
-        "Instance.new(Part)": 1,
-        "RunService.Heartbeat": 1,
-        "script.Parent": 1
+        "Instance.new(Part)": 1
       }
     },
     "parse_failed": [

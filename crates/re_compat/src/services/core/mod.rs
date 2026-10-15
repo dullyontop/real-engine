@@ -1,5 +1,5 @@
 //! The core services: `game:GetService` and `FindService`, the `game` and
-//! `workspace` globals, and `CollectionService`.
+//! `workspace` globals, `CollectionService` and `RunService`.
 //!
 //! A service is the one instance of a service class under `game`, with a
 //! `ServiceTag`, named and identified by its class name. `GetService` makes a
@@ -7,17 +7,18 @@
 //! a declared service class raises `RE9001`. Making `StarterPlayer` also makes
 //! its `StarterPlayerScripts` and `StarterCharacterScripts`.
 
+pub(crate) mod run_service;
+
 use std::sync::Arc;
 
 use mlua::{Lua, MultiValue, Result, Value as LuaValue};
 use re_scene::{Entity, World, hierarchy};
-use re_script::codes::UNSUPPORTED_MEMBER;
 
 use crate::class::{ClassMarker, ClassRegistry};
 use crate::error::CompatError;
 use crate::instance::methods_api::{args, ret};
 use crate::instance::{arg_instance, attributes, push, push_list, tree};
-use crate::runtime::{Bindings, compat_error, lua_error, state, with_world};
+use crate::runtime::{Bindings, compat_error, state, with_world};
 use crate::scene::{ServiceTag, spawn_instance};
 use crate::signal::{self, events};
 
@@ -94,8 +95,9 @@ fn get_service(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
     let st = state(lua)?;
     let classes = &st.setup.classes;
     if !classes.try_class(&name).is_some_and(|c| c.service) {
-        return Err(lua_error(
-            UNSUPPORTED_MEMBER,
+        return Err(crate::runtime::unsupported(
+            lua,
+            format!("GetService({name})"),
             format!("unsupported API member: '{name}' is not a valid Service name"),
         ));
     }
@@ -224,6 +226,7 @@ pub fn register(b: &mut Bindings) {
     for (name, f) in cs {
         b.method("CollectionService", name, Arc::new(*f));
     }
+    run_service::register(b);
     b.global("game", Arc::new(|lua, env| push(lua, env.game)));
     b.global("workspace", Arc::new(|lua, env| push(lua, env.workspace)));
     b.global("Game", Arc::new(|lua, env| push(lua, env.game)));

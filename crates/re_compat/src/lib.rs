@@ -39,6 +39,7 @@ pub mod services;
 pub mod signal;
 pub mod sound;
 pub mod tween;
+pub use runtime::testing;
 
 pub use class::{
     Accessor, ClassDef, ClassMarker, ClassRegistry, ClassRegistryBuilder, Converter, EventDef,

@@ -116,6 +116,24 @@ pub fn character_of(w: &World, player: Entity) -> Option<Entity> {
     }
 }
 
+/// The `LocalPlayer` of a client world (`None` on the server).
+pub fn local_player_in(w: &World) -> Option<Entity> {
+    let g = w.entity(crate::GAME_ID).ok()?;
+    let s = find_service(w, g, "Players")?;
+    match get_own(w, "Players", s, "LocalPlayer") {
+        Some(Value::Entity(p)) => p,
+        _ => None,
+    }
+}
+
+/// The player whose character `model` is, if any.
+pub fn player_of_character(w: &World, model: Entity) -> Option<Entity> {
+    let g = w.entity(crate::GAME_ID).ok()?;
+    players_in(w, g)
+        .into_iter()
+        .find(|p| character_of(w, *p) == Some(model))
+}
+
 fn user_id(w: &World, player: Entity) -> i64 {
     match get_own(w, "Player", player, "UserId") {
         Some(Value::Int(i)) => i,

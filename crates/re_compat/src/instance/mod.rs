@@ -11,10 +11,6 @@
 //! * Methods are plain functions taking the instance first, so
 //!   `inst.FindFirstChild(inst, "x")` and `pcall(game.GetService, game, n)`
 //!   work; reading the same method twice gives the same function.
-//! * A property of type `function` is a callback (`OnInvoke`,
-//!   `OnServerInvoke`): scripts set it and cannot read it, as in Roblox. The
-//!   function is kept per VM ([`callback`]), since a Luau function cannot
-//!   live in the world.
 //! * A `stub-error` method with a registered implementation runs it when
 //!   called (the offline services raise `RE9002` from the call, so `pcall`
 //!   catches it); without one, reading it raises `RE9001`.
@@ -43,8 +39,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use mlua::{
-    AnyUserData, Function, LightUserData, Lua, MetaMethod, MultiValue, RegistryKey, Result, Table,
-    UserData, UserDataFields, UserDataMethods, Value as LuaValue,
+    AnyUserData, Function, LightUserData, Lua, MetaMethod, MultiValue, Result, Table, UserData,
+    UserDataFields, UserDataMethods, Value as LuaValue,
 };
 use re_reflect::Value;
 use re_scene::{Entity, World};
@@ -322,13 +318,19 @@ fn not_member(
     let hint = suggestion
         .map(|s| format!(" (did you mean {s:?}?)"))
         .unwrap_or_default();
-    lua_error(
-        UNSUPPORTED_MEMBER,
+    crate::runtime::unsupported(
+        lua,
+        format!("{class}.{key}"),
         format!("{key} is not a valid member of {class} \"{path}\"{hint}"),
     )
 }
 
 fn index(lua: &Lua, this: &InstanceRef, key: &str) -> Result<LuaValue> {
+    if state(lua)?.loading.get() {
+        return Err(mlua::Error::runtime(
+            "instances are not read while a chunk loads",
+        ));
+    }
     let (alive, class) = class_of(lua, this)?;
     let Some(class) = class else {
         return match key {
@@ -337,10 +339,12 @@ fn index(lua: &Lua, this: &InstanceRef, key: &str) -> Result<LuaValue> {
         };
     };
     match resolve(lua, &class, key)? {
-        Resolved::Prop(ty) if &*ty == CALLBACK_TYPE => Err(lua_error(
-            UNSUPPORTED_MEMBER,
-            format!("{key} is a callback member of {class}; you can only set the callback value"),
-        )),
+        Resolved::Prop(ty) if &*ty == CALLBACK_TYPE => {
+            if !alive {
+                return Err(stale(this, key));
+            }
+            callback(lua, this.entity, key).map(|f| f.map_or(LuaValue::Nil, LuaValue::Function))
+        }
         Resolved::Prop(ty) => {
             if !alive {
                 let tomb = this
@@ -362,7 +366,11 @@ fn index(lua: &Lua, this: &InstanceRef, key: &str) -> Result<LuaValue> {
         }
         Resolved::Method(f) => Ok(LuaValue::Function(f)),
         Resolved::Event => signal::push(lua, this.entity, key),
-        Resolved::Unsupported(msg) => Err(lua_error(UNSUPPORTED_MEMBER, msg)),
+        Resolved::Unsupported(msg) => Err(crate::runtime::unsupported(
+            lua,
+            format!("{class}.{key}"),
+            msg,
+        )),
         Resolved::None(suggestion) => {
             if !alive {
                 return Err(stale(this, key));
@@ -410,7 +418,11 @@ fn newindex(lua: &Lua, this: &InstanceRef, key: &str, value: LuaValue) -> Result
             member: key.to_string(),
             kind: "method or event",
         })),
-        Resolved::Unsupported(msg) => Err(lua_error(UNSUPPORTED_MEMBER, msg)),
+        Resolved::Unsupported(msg) => Err(crate::runtime::unsupported(
+            lua,
+            format!("{class}.{key}"),
+            msg,
+        )),
         Resolved::None(suggestion) => Err(not_member(lua, this.entity, &class, key, suggestion)),
     }
 }
@@ -461,49 +473,86 @@ impl UserData for InstanceRef {
     }
 }
 
-/// The data-file type of a callback property.
+/// The declared type of a callback property (`RemoteFunction.OnServerInvoke`,
+/// `BindableFunction.OnInvoke`): a function the engine calls, kept in the VM
+/// rather than in the world. Such a property is declared with `builtin`
+/// storage; its accessor is never used.
 pub const CALLBACK_TYPE: &str = "function";
 
-/// The callbacks set on instances in this VM, by instance and property.
-#[derive(Default)]
-struct Callbacks(HashMap<(Entity, String), RegistryKey>);
+/// Registry key of the callback table: entity bits → { property → function }.
+const CALLBACKS: &str = "re_compat.callbacks";
 
-fn set_callback(lua: &Lua, e: Entity, key: &str, value: LuaValue) -> Result<()> {
+/// The function set on callback property `name` of `e`, if any.
+pub fn callback(lua: &Lua, e: Entity, name: &str) -> Result<Option<Function>> {
+    let all: Table = lua.named_registry_value(CALLBACKS)?;
+    match all.raw_get::<Option<Table>>(e.to_bits())? {
+        Some(t) => t.raw_get(name),
+        None => Ok(None),
+    }
+}
+
+fn set_callback(lua: &Lua, e: Entity, name: &str, value: LuaValue) -> Result<()> {
     let f = match value {
         LuaValue::Function(f) => Some(f),
         LuaValue::Nil => None,
         other => {
             return Err(lua_error(
                 BAD_ARGUMENT,
-                format!("{key} must be a function or nil, got {}", type_name(&other)),
+                format!(
+                    "{name} must be a function or nil, got a {}",
+                    type_name(&other)
+                ),
             ));
         }
     };
-    let new = f.map(|f| lua.create_registry_value(f)).transpose()?;
-    let old = {
-        let mut cbs = lua
-            .app_data_mut::<Callbacks>()
-            .ok_or_else(|| mlua::Error::runtime("this VM has no callback table"))?;
-        match new {
-            Some(k) => cbs.0.insert((e, key.to_string()), k),
-            None => cbs.0.remove(&(e, key.to_string())),
+    let all: Table = lua.named_registry_value(CALLBACKS)?;
+    let t = match all.raw_get::<Option<Table>>(e.to_bits())? {
+        Some(t) => t,
+        None => {
+            let t = lua.create_table()?;
+            all.raw_set(e.to_bits(), &t)?;
+            t
         }
     };
-    if let Some(k) = old {
-        lua.remove_registry_value(k)?;
+    // The script that set it; destroying that script clears it.
+    let owner = match &f {
+        Some(_) => re_script::sched::current_owner(lua)?.map(|o| o.to_string()),
+        None => None,
+    };
+    t.raw_set(format!("{OWNER_KEY}{name}"), owner)?;
+    t.raw_set(name, f)
+}
+
+/// The prefix of the key that records which script set a callback.
+const OWNER_KEY: &str = "\0owner ";
+
+/// Clears the callbacks a stopped script set.
+pub(crate) fn drop_owner_callbacks(lua: &Lua, owner: re_script::sched::Owner) -> Result<()> {
+    let owner = owner.to_string();
+    let all: Table = lua.named_registry_value(CALLBACKS)?;
+    let mut gone = Vec::new();
+    for pair in all.pairs::<LuaValue, Table>() {
+        let (_, t) = pair?;
+        for pair in t.pairs::<String, LuaValue>() {
+            let (k, v) = pair?;
+            if let (Some(name), LuaValue::String(o)) = (k.strip_prefix(OWNER_KEY), &v)
+                && o.to_str().is_ok_and(|o| *o == *owner)
+            {
+                gone.push((t.clone(), k.clone(), name.to_string()));
+            }
+        }
+    }
+    for (t, k, name) in gone {
+        t.raw_set(k, LuaValue::Nil)?;
+        t.raw_set(name, LuaValue::Nil)?;
     }
     Ok(())
 }
 
-/// The function a script set as callback `name` of instance `e` in this VM.
-pub fn callback(lua: &Lua, e: Entity, name: &str) -> Result<Option<Function>> {
-    let cbs = lua
-        .app_data_ref::<Callbacks>()
-        .ok_or_else(|| mlua::Error::runtime("this VM has no callback table"))?;
-    cbs.0
-        .get(&(e, name.to_string()))
-        .map(|k| lua.registry_value(k))
-        .transpose()
+/// Drops the callbacks of a destroyed instance.
+pub(crate) fn drop_callbacks(lua: &Lua, e: Entity) -> Result<()> {
+    let all: Table = lua.named_registry_value(CALLBACKS)?;
+    all.raw_set(e.to_bits(), LuaValue::Nil)
 }
 
 /// Installs the handle table and the member cache into a new VM.
@@ -513,8 +562,8 @@ pub(crate) fn install(lua: &Lua) -> Result<()> {
     mt.raw_set("__mode", "v")?;
     cache.set_metatable(Some(mt))?;
     lua.set_named_registry_value(HANDLES, cache)?;
+    lua.set_named_registry_value(CALLBACKS, lua.create_table()?)?;
     lua.set_app_data(MemberCache::default());
-    lua.set_app_data(Callbacks::default());
     Ok(())
 }
 
