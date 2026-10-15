@@ -3,7 +3,7 @@
   "version": 1,
   "totals": {
     "implemented": 1750,
-    "partial": 215,
+    "partial": 217,
     "stub-error": 53,
     "missing": 3
   },
@@ -4215,6 +4215,12 @@
       "status": "implemented",
       "members": [
         {
+          "name": "ClipToDeviceSafeArea",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the window has no unsafe area to clip."
+        },
+        {
           "name": "DisplayOrder",
           "kind": "property",
           "status": "implemented"
@@ -4223,6 +4229,12 @@
           "name": "IgnoreGuiInset",
           "kind": "property",
           "status": "implemented"
+        },
+        {
+          "name": "ScreenInsets",
+          "kind": "property",
+          "status": "partial",
+          "note": "None draws under the top bar like IgnoreGuiInset; the other insets all start below the top bar (no device notches or side insets)."
         }
       ]
     },

@@ -299,7 +299,9 @@ fn roots(s: &Scope, frame: &GuiFrame, boards_in_world: &[Entity]) -> Vec<Root> {
                 continue;
             }
             let p = s.props(e);
-            let origin = if p.bool("IgnoreGuiInset", false) {
+            let origin = if p.bool("IgnoreGuiInset", false)
+                || p.item("ScreenInsets", "CoreUISafeInsets") == "None"
+            {
                 Vec2::ZERO
             } else {
                 inset
