@@ -526,6 +526,8 @@ fn event_def(e: &EventDoc) -> EventDef {
 ///   `Color3` (color);
 /// * `Instance` or `Instance<Class>` (entity), where `allow_entity`;
 /// * `Enum.<Name>` (an enum of the item names of a declared enum type);
+/// * `NumberSequence` and `ColorSequence` (a list of their keypoint
+///   records);
 /// * a record type declared by a library's `record` (or otherwise registered);
 /// * a reflection type name (`f32`, `quat`, ...), for record fields that need
 ///   one.

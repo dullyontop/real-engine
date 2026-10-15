@@ -290,10 +290,9 @@ fn saturate(value: Value) -> Value {
     const MAX: f64 = f32::MAX as f64;
     match value {
         Value::Float(f) if f.is_infinite() => Value::Float(MAX.copysign(f)),
-        Value::Vec3(v) => Value::Vec3(v.clamp(
-            glam::Vec3::splat(-f32::MAX),
-            glam::Vec3::splat(f32::MAX),
-        )),
+        Value::Vec3(v) => {
+            Value::Vec3(v.clamp(glam::Vec3::splat(-f32::MAX), glam::Vec3::splat(f32::MAX)))
+        }
         Value::Record(id, fields) => Value::Record(id, fields.into_iter().map(saturate).collect()),
         Value::List(items) => Value::List(items.into_iter().map(saturate).collect()),
         other => other,

@@ -191,10 +191,18 @@ fn read_font_face(w: &World, class: &str, e: Entity) -> Option<(String, String, 
     }
 }
 
+/// The builtin-property accessors of the UI classes, by `(class, property)`.
+pub fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
+    ["TextLabel", "TextButton", "TextBox"]
+        .into_iter()
+        .map(|class| (class, "Font", font_accessor(class)))
+        .collect()
+}
+
 /// Registers the `Font` accessors and the `TextBox` methods.
 pub fn register(b: &mut Bindings) {
-    for class in ["TextLabel", "TextButton", "TextBox"] {
-        b.accessor(class, "Font", font_accessor(class));
+    for (class, prop, a) in accessors() {
+        b.accessor(class, prop, a);
     }
     b.method(
         "TextBox",
