@@ -79,363 +79,368 @@ impl Place {
     }
 }
 
-#[test]
-fn properties_read_write_and_unknown_members_raise_re9001() {
-    let mut p = place(SignalBehavior::Deferred);
-    p.run(
-        r#"
-        local f = Instance.new("Folder")
-        assert(f.Name == "Folder" and f.ClassName == "Folder" and f.Parent == nil)
-        f.Name = "Stuff"
-        f.Parent = workspace
-        assert(workspace.Stuff == f)
-        assert(f.Parent == workspace and f.Archivable == true)
-        assert(typeof(f) == "Instance", typeof(f))
-        assert(tostring(f) == "Stuff")
-        local ok, err = pcall(function() return f.Nmae end)
-        assert(not ok)
-        print(err)
-        local ok2, err2 = pcall(function() f.ClassName = "Model" end)
-        assert(not ok2)
-        local ok3, err3 = pcall(function() return workspace.Missing end)
-        print(err3)
-        "#,
-    );
-    let out = p.out();
-    assert!(
-        out[0].contains("[RE9001]")
-            && out[0].contains("Nmae is not a valid member of Folder \"Workspace.Stuff\""),
-        "{out:?}"
-    );
-    assert!(
-        out[1].contains("[RE9001]")
-            && out[1].contains("Missing is not a valid member of Workspace \"Workspace\""),
-        "{out:?}"
-    );
-}
+// Grouped so `cargo test -p re_compat model` selects them.
+mod model {
+    use super::*;
 
-#[test]
-fn tree_methods_find_and_list_instances() {
-    let mut p = place(SignalBehavior::Deferred);
-    p.run(
-        r#"
-        local a = Instance.new("Folder", workspace); a.Name = "A"
-        local b = Instance.new("Model", a); b.Name = "B"
-        local c = Instance.new("Configuration", b); c.Name = "C"
-        local d = Instance.new("Folder", a); d.Name = "D"
-        assert(a:FindFirstChild("C") == nil)
-        assert(a:FindFirstChild("C", true) == c)
-        assert(a:FindFirstDescendant("C") == c)
-        assert(a:FindFirstChildOfClass("Model") == b)
-        assert(a:FindFirstChildWhichIsA("PVInstance") == b)
-        assert(c:FindFirstAncestor("A") == a)
-        assert(c:FindFirstAncestorOfClass("Folder") == a)
-        assert(c:FindFirstAncestorWhichIsA("PVInstance") == b)
-        local kids = a:GetChildren()
-        assert(#kids == 2 and kids[1] == b and kids[2] == d)
-        local all = a:GetDescendants()
-        assert(#all == 3 and all[1] == b and all[2] == c and all[3] == d)
-        assert(c:GetFullName() == "Workspace.A.B.C", c:GetFullName())
-        assert(c:IsA("Instance") and c:IsA("Configuration") and not c:IsA("Folder"))
-        assert(c:IsDescendantOf(a) and a:IsAncestorOf(c) and not a:IsDescendantOf(c))
-        assert(#a:children() == 2)
-        local ok, err = pcall(Instance.new, "Workspace")
-        assert(not ok); print(err)
-        local ok2, err2 = pcall(Instance.new, "Nope")
-        assert(not ok2); print(err2)
-        local ok3, err3 = pcall(function() a.Parent = c end)
-        assert(not ok3); print(err3)
-        "#,
-    );
-    let out = p.out();
-    assert!(out[0].contains("[RE3006]"), "{out:?}");
-    assert!(out[1].contains("[RE9001]"), "{out:?}");
-    assert!(out[2].contains("[RE9008]"), "{out:?}");
-}
+    #[test]
+    fn properties_read_write_and_unknown_members_raise_re9001() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local f = Instance.new("Folder")
+            assert(f.Name == "Folder" and f.ClassName == "Folder" and f.Parent == nil)
+            f.Name = "Stuff"
+            f.Parent = workspace
+            assert(workspace.Stuff == f)
+            assert(f.Parent == workspace and f.Archivable == true)
+            assert(typeof(f) == "Instance", typeof(f))
+            assert(tostring(f) == "Stuff")
+            local ok, err = pcall(function() return f.Nmae end)
+            assert(not ok)
+            print(err)
+            local ok2, err2 = pcall(function() f.ClassName = "Model" end)
+            assert(not ok2)
+            local ok3, err3 = pcall(function() return workspace.Missing end)
+            print(err3)
+            "#,
+        );
+        let out = p.out();
+        assert!(
+            out[0].contains("[RE9001]")
+                && out[0].contains("Nmae is not a valid member of Folder \"Workspace.Stuff\""),
+            "{out:?}"
+        );
+        assert!(
+            out[1].contains("[RE9001]")
+                && out[1].contains("Missing is not a valid member of Workspace \"Workspace\""),
+            "{out:?}"
+        );
+    }
 
-#[test]
-fn get_service_finds_or_makes_services() {
-    let mut p = place(SignalBehavior::Deferred);
-    p.run(
-        r#"
-        assert(game:GetService("Workspace") == workspace)
-        assert(game.Workspace == workspace and Workspace == workspace and Game == game)
-        assert(game:GetService("ReplicatedStorage") == game.ReplicatedStorage)
-        assert(game:FindService("ServerStorage") == nil)
-        local ss = game:GetService("ServerStorage")
-        assert(ss.Parent == game and ss.ClassName == "ServerStorage")
-        assert(game:GetService("ServerStorage") == ss)
-        assert(game:FindService("ServerStorage") == ss)
-        local sp = game:GetService("StarterPlayer")
-        assert(sp:FindFirstChild("StarterPlayerScripts") and sp:FindFirstChild("StarterCharacterScripts"))
-        local cs = game:GetService("CollectionService")
-        assert(game.CollectionService == cs)
-        local ok, err = pcall(function() return game:GetService("Folder") end)
-        assert(not ok); print(err)
-        "#,
-    );
-    let out = p.out();
-    assert!(out[0].contains("[RE9001]"), "{out:?}");
-}
+    #[test]
+    fn tree_methods_find_and_list_instances() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local a = Instance.new("Folder", workspace); a.Name = "A"
+            local b = Instance.new("Model", a); b.Name = "B"
+            local c = Instance.new("Configuration", b); c.Name = "C"
+            local d = Instance.new("Folder", a); d.Name = "D"
+            assert(a:FindFirstChild("C") == nil)
+            assert(a:FindFirstChild("C", true) == c)
+            assert(a:FindFirstDescendant("C") == c)
+            assert(a:FindFirstChildOfClass("Model") == b)
+            assert(a:FindFirstChildWhichIsA("PVInstance") == b)
+            assert(c:FindFirstAncestor("A") == a)
+            assert(c:FindFirstAncestorOfClass("Folder") == a)
+            assert(c:FindFirstAncestorWhichIsA("PVInstance") == b)
+            local kids = a:GetChildren()
+            assert(#kids == 2 and kids[1] == b and kids[2] == d)
+            local all = a:GetDescendants()
+            assert(#all == 3 and all[1] == b and all[2] == c and all[3] == d)
+            assert(c:GetFullName() == "Workspace.A.B.C", c:GetFullName())
+            assert(c:IsA("Instance") and c:IsA("Configuration") and not c:IsA("Folder"))
+            assert(c:IsDescendantOf(a) and a:IsAncestorOf(c) and not a:IsDescendantOf(c))
+            assert(#a:children() == 2)
+            local ok, err = pcall(Instance.new, "Workspace")
+            assert(not ok); print(err)
+            local ok2, err2 = pcall(Instance.new, "Nope")
+            assert(not ok2); print(err2)
+            local ok3, err3 = pcall(function() a.Parent = c end)
+            assert(not ok3); print(err3)
+            "#,
+        );
+        let out = p.out();
+        assert!(out[0].contains("[RE3006]"), "{out:?}");
+        assert!(out[1].contains("[RE9001]"), "{out:?}");
+        assert!(out[2].contains("[RE9008]"), "{out:?}");
+    }
 
-#[test]
-fn deferred_signals_run_after_the_writing_code() {
-    let mut p = place(SignalBehavior::Deferred);
-    p.run(
-        r#"
-        local f = Instance.new("Folder", workspace)
-        f.ChildAdded:Connect(function(c) print("added " .. c.Name) end)
-        local x = Instance.new("Folder"); x.Name = "X"
-        x.Parent = f
-        print("after write")
-        "#,
-    );
-    assert_eq!(p.out(), ["after write", "added X"]);
-}
+    #[test]
+    fn get_service_finds_or_makes_services() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            assert(game:GetService("Workspace") == workspace)
+            assert(game.Workspace == workspace and Workspace == workspace and Game == game)
+            assert(game:GetService("ReplicatedStorage") == game.ReplicatedStorage)
+            assert(game:FindService("ServerStorage") == nil)
+            local ss = game:GetService("ServerStorage")
+            assert(ss.Parent == game and ss.ClassName == "ServerStorage")
+            assert(game:GetService("ServerStorage") == ss)
+            assert(game:FindService("ServerStorage") == ss)
+            local sp = game:GetService("StarterPlayer")
+            assert(sp:FindFirstChild("StarterPlayerScripts") and sp:FindFirstChild("StarterCharacterScripts"))
+            local cs = game:GetService("CollectionService")
+            assert(game.CollectionService == cs)
+            local ok, err = pcall(function() return game:GetService("Folder") end)
+            assert(not ok); print(err)
+            "#,
+        );
+        let out = p.out();
+        assert!(out[0].contains("[RE9001]"), "{out:?}");
+    }
 
-#[test]
-fn immediate_signals_run_inside_the_write() {
-    let mut p = place(SignalBehavior::Immediate);
-    p.run(
-        r#"
-        local f = Instance.new("Folder", workspace)
-        f.ChildAdded:Connect(function(c) print("added " .. c.Name) end)
-        local x = Instance.new("Folder"); x.Name = "X"
-        x.Parent = f
-        print("after write")
-        "#,
-    );
-    assert_eq!(p.out(), ["added X", "after write"]);
-}
-
-#[test]
-fn disconnect_while_firing_stops_later_handlers() {
-    for behavior in [SignalBehavior::Deferred, SignalBehavior::Immediate] {
-        let mut p = place(behavior);
+    #[test]
+    fn deferred_signals_run_after_the_writing_code() {
+        let mut p = place(SignalBehavior::Deferred);
         p.run(
             r#"
             local f = Instance.new("Folder", workspace)
-            local second
-            f.ChildAdded:Connect(function()
-                print("first")
-                second:Disconnect()
-            end)
-            second = f.ChildAdded:Connect(function() print("second") end)
-            local once = 0
-            f.ChildAdded:Once(function() once += 1 end)
-            Instance.new("Folder", f)
-            Instance.new("Folder", f)
+            f.ChildAdded:Connect(function(c) print("added " .. c.Name) end)
+            local x = Instance.new("Folder"); x.Name = "X"
+            x.Parent = f
+            print("after write")
+            "#,
+        );
+        assert_eq!(p.out(), ["after write", "added X"]);
+    }
+
+    #[test]
+    fn immediate_signals_run_inside_the_write() {
+        let mut p = place(SignalBehavior::Immediate);
+        p.run(
+            r#"
+            local f = Instance.new("Folder", workspace)
+            f.ChildAdded:Connect(function(c) print("added " .. c.Name) end)
+            local x = Instance.new("Folder"); x.Name = "X"
+            x.Parent = f
+            print("after write")
+            "#,
+        );
+        assert_eq!(p.out(), ["added X", "after write"]);
+    }
+
+    #[test]
+    fn disconnect_while_firing_stops_later_handlers() {
+        for behavior in [SignalBehavior::Deferred, SignalBehavior::Immediate] {
+            let mut p = place(behavior);
+            p.run(
+                r#"
+                local f = Instance.new("Folder", workspace)
+                local second
+                f.ChildAdded:Connect(function()
+                    print("first")
+                    second:Disconnect()
+                end)
+                second = f.ChildAdded:Connect(function() print("second") end)
+                local once = 0
+                f.ChildAdded:Once(function() once += 1 end)
+                Instance.new("Folder", f)
+                Instance.new("Folder", f)
+                task.wait()
+                print("once " .. once, second.Connected)
+                "#,
+            );
+            p.step(1.0 / 60.0);
+            assert_eq!(p.out(), ["first", "first", "once 1\tfalse"], "{behavior:?}");
+        }
+    }
+
+    #[test]
+    fn wait_resumes_across_steps() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local f = Instance.new("Folder", workspace); f.Name = "F"
+            local child = f.ChildAdded:Wait()
+            print("got " .. child.Name)
+            "#,
+        );
+        assert_eq!(p.vm.parked().len(), 1);
+        p.step(1.0);
+        assert!(p.out().is_empty());
+        p.run(
+            r#"
+            local c = Instance.new("Folder"); c.Name = "Late"
+            c.Parent = workspace.F
+            "#,
+        );
+        assert_eq!(p.out(), ["got Late"]);
+        assert!(p.vm.parked().is_empty());
+    }
+
+    #[test]
+    fn wait_for_child_warns_once_after_five_seconds() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local x = workspace:WaitForChild("Late")
+            print("found " .. x.Name)
+            "#,
+        );
+        p.step(4.9);
+        assert!(p.out().is_empty());
+        p.step(0.2);
+        assert_eq!(
+            p.out(),
+            ["W Infinite yield possible on 'Workspace:WaitForChild(\"Late\")'"]
+        );
+        p.step(10.0);
+        assert!(p.out().is_empty());
+        p.run(r#"local f = Instance.new("Folder"); f.Name = "Late"; f.Parent = workspace"#);
+        assert_eq!(p.out(), ["found Late"]);
+    }
+
+    #[test]
+    fn wait_for_child_returns_at_once_times_out_and_sees_same_frame_children() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local here = Instance.new("Folder", workspace); here.Name = "Here"
+            assert(workspace:WaitForChild("Here") == here)
+            print("timeout", workspace:WaitForChild("Never", 2))
+            "#,
+        );
+        p.run(
+            r#"
+            print("soon", workspace:WaitForChild("Soon").Name)
+            "#,
+        );
+        p.run(r#"local f = Instance.new("Folder"); f.Name = "Soon"; f.Parent = workspace"#);
+        assert_eq!(p.out(), ["soon\tSoon"]);
+        p.step(1.0);
+        assert!(p.out().is_empty());
+        p.step(1.5);
+        assert_eq!(p.out(), ["timeout\tnil"]);
+    }
+
+    #[test]
+    fn attributes_and_property_signals() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local f = Instance.new("Folder", workspace)
+            f:SetAttribute("Speed", 10)
+            f:SetAttribute("Label", "fast")
+            assert(f:GetAttribute("Speed") == 10 and f:GetAttribute("Nope") == nil)
+            local all = f:GetAttributes()
+            assert(all.Speed == 10 and all.Label == "fast")
+            f.AttributeChanged:Connect(function(n) print("attr " .. n) end)
+            f:GetAttributeChangedSignal("Speed"):Connect(function() print("speed " .. f:GetAttribute("Speed")) end)
+            f.Changed:Connect(function(n) print("changed " .. n) end)
+            f:GetPropertyChangedSignal("Name"):Connect(function() print("name " .. f.Name) end)
+            f:SetAttribute("Speed", 20)
+            f.Name = "Renamed"
+            local ok, err = pcall(function() f:SetAttribute("RBX_bad", 1) end)
+            assert(not ok); print(err)
+            local ok2, err2 = pcall(function() f:SetAttribute("Fn", function() end) end)
+            assert(not ok2); print(err2)
+            "#,
+        );
+        let out = p.out();
+        assert!(out[0].contains("[RE9007]"), "{out:?}");
+        assert!(out[1].contains("[RE9007]"), "{out:?}");
+        let rest: Vec<&str> = out[2..].iter().map(String::as_str).collect();
+        assert_eq!(
+            rest,
+            ["attr Speed", "speed 20", "changed Name", "name Renamed"]
+        );
+    }
+
+    #[test]
+    fn tree_signals_fire_for_descendants_and_ancestry() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local root = Instance.new("Folder", workspace); root.Name = "Root"
+            local mid = Instance.new("Folder", root); mid.Name = "Mid"
+            root.DescendantAdded:Connect(function(d) print("desc+ " .. d.Name) end)
+            root.DescendantRemoving:Connect(function(d) print("desc- " .. d.Name) end)
+            mid.ChildRemoved:Connect(function(c) print("child- " .. c.Name) end)
+            local box = Instance.new("Model"); box.Name = "Box"
+            local inner = Instance.new("Folder", box); inner.Name = "Inner"
+            inner.AncestryChanged:Connect(function(c, p) print("anc " .. c.Name .. " " .. tostring(p)) end)
+            box.Parent = mid
             task.wait()
-            print("once " .. once, second.Connected)
+            box.Parent = nil
             "#,
         );
         p.step(1.0 / 60.0);
-        assert_eq!(p.out(), ["first", "first", "once 1\tfalse"], "{behavior:?}");
+        assert_eq!(
+            p.out(),
+            [
+                "desc+ Box",
+                "desc+ Inner",
+                "anc Box Mid",
+                "child- Box",
+                "desc- Box",
+                "desc- Inner",
+                "anc Box nil",
+            ]
+        );
     }
-}
 
-#[test]
-fn wait_resumes_across_steps() {
-    let mut p = place(SignalBehavior::Deferred);
-    p.run(
-        r#"
-        local f = Instance.new("Folder", workspace); f.Name = "F"
-        local child = f.ChildAdded:Wait()
-        print("got " .. child.Name)
-        "#,
-    );
-    assert_eq!(p.vm.parked().len(), 1);
-    p.step(1.0);
-    assert!(p.out().is_empty());
-    p.run(
-        r#"
-        local c = Instance.new("Folder"); c.Name = "Late"
-        c.Parent = workspace.F
-        "#,
-    );
-    assert_eq!(p.out(), ["got Late"]);
-    assert!(p.vm.parked().is_empty());
-}
+    #[test]
+    fn clone_and_destroy_keep_tags_and_attributes_exact() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local cs = game:GetService("CollectionService")
+            cs:GetInstanceAddedSignal("Coin"):Connect(function(i) print("coin+ " .. i.Name) end)
+            cs:GetInstanceRemovedSignal("Coin"):Connect(function(i) print("coin- " .. i.Name) end)
+            local m = Instance.new("Model", workspace); m.Name = "M"
+            m:SetAttribute("Value", 5)
+            m:AddTag("Coin")
+            local part = Instance.new("Folder", m); part.Name = "Part"
+            part:AddTag("Coin"); part:AddTag("Shiny")
+            local secret = Instance.new("Folder", m); secret.Name = "Secret"
+            secret.Archivable = false
+            task.wait()
+            local copy = m:Clone()
+            assert(copy.Parent == nil and copy ~= m)
+            assert(copy:GetAttribute("Value") == 5 and copy:HasTag("Coin"))
+            assert(copy:FindFirstChild("Secret") == nil)
+            local cp = copy:FindFirstChild("Part")
+            assert(cp:HasTag("Shiny") and #cp:GetTags() == 2)
+            copy.Name = "Copy"; cp.Name = "CopyPart"
+            copy.Parent = workspace
+            task.wait()
+            print("tagged " .. #cs:GetTagged("Coin"))
+            m.Destroying:Connect(function() print("destroying " .. m.Name) end)
+            workspace.ChildRemoved:Connect(function(c) print("removed " .. c.Name .. " " .. c.ClassName) end)
+            m:Destroy()
+            print("parent", m.Parent, m.Name)
+            local ok, err = pcall(function() m.Parent = workspace end)
+            assert(not ok); print(err)
+            task.wait()
+            print("tagged " .. #cs:GetTagged("Coin"))
+            assert(cs:HasTag(copy, "Coin") and not cs:HasTag(m, "Coin"))
+            "#,
+        );
+        for _ in 0..3 {
+            p.step(1.0 / 60.0);
+        }
+        let out = p.out();
+        assert_eq!(
+            out[..5],
+            [
+                "coin+ M",
+                "coin+ Part",
+                "coin+ Copy",
+                "coin+ CopyPart",
+                "tagged 4"
+            ],
+            "{out:?}"
+        );
+        assert_eq!(out[5], "parent\tnil\tM", "{out:?}");
+        assert!(out[6].contains("[RE9008]"), "{out:?}");
+        let mut rest: Vec<&str> = out[7..].iter().map(String::as_str).collect();
+        let tail = rest.split_off(rest.len() - 1);
+        assert_eq!(tail, ["tagged 2"], "{out:?}");
+        assert_eq!(rest[0], "destroying M", "{out:?}");
+        let mut events = rest[1..].to_vec();
+        events.sort_unstable();
+        assert_eq!(
+            events,
+            ["coin- M", "coin- Part", "removed M Model"],
+            "{out:?}"
+        );
 
-#[test]
-fn wait_for_child_warns_once_after_five_seconds() {
-    let mut p = place(SignalBehavior::Deferred);
-    p.run(
-        r#"
-        local x = workspace:WaitForChild("Late")
-        print("found " .. x.Name)
-        "#,
-    );
-    p.step(4.9);
-    assert!(p.out().is_empty());
-    p.step(0.2);
-    assert_eq!(
-        p.out(),
-        ["W Infinite yield possible on 'Workspace:WaitForChild(\"Late\")'"]
-    );
-    p.step(10.0);
-    assert!(p.out().is_empty());
-    p.run(r#"local f = Instance.new("Folder"); f.Name = "Late"; f.Parent = workspace"#);
-    assert_eq!(p.out(), ["found Late"]);
-}
-
-#[test]
-fn wait_for_child_returns_at_once_times_out_and_sees_same_frame_children() {
-    let mut p = place(SignalBehavior::Deferred);
-    p.run(
-        r#"
-        local here = Instance.new("Folder", workspace); here.Name = "Here"
-        assert(workspace:WaitForChild("Here") == here)
-        print("timeout", workspace:WaitForChild("Never", 2))
-        "#,
-    );
-    p.run(
-        r#"
-        print("soon", workspace:WaitForChild("Soon").Name)
-        "#,
-    );
-    p.run(r#"local f = Instance.new("Folder"); f.Name = "Soon"; f.Parent = workspace"#);
-    assert_eq!(p.out(), ["soon\tSoon"]);
-    p.step(1.0);
-    assert!(p.out().is_empty());
-    p.step(1.5);
-    assert_eq!(p.out(), ["timeout\tnil"]);
-}
-
-#[test]
-fn attributes_and_property_signals() {
-    let mut p = place(SignalBehavior::Deferred);
-    p.run(
-        r#"
-        local f = Instance.new("Folder", workspace)
-        f:SetAttribute("Speed", 10)
-        f:SetAttribute("Label", "fast")
-        assert(f:GetAttribute("Speed") == 10 and f:GetAttribute("Nope") == nil)
-        local all = f:GetAttributes()
-        assert(all.Speed == 10 and all.Label == "fast")
-        f.AttributeChanged:Connect(function(n) print("attr " .. n) end)
-        f:GetAttributeChangedSignal("Speed"):Connect(function() print("speed " .. f:GetAttribute("Speed")) end)
-        f.Changed:Connect(function(n) print("changed " .. n) end)
-        f:GetPropertyChangedSignal("Name"):Connect(function() print("name " .. f.Name) end)
-        f:SetAttribute("Speed", 20)
-        f.Name = "Renamed"
-        local ok, err = pcall(function() f:SetAttribute("RBX_bad", 1) end)
-        assert(not ok); print(err)
-        local ok2, err2 = pcall(function() f:SetAttribute("Fn", function() end) end)
-        assert(not ok2); print(err2)
-        "#,
-    );
-    let out = p.out();
-    assert!(out[0].contains("[RE9007]"), "{out:?}");
-    assert!(out[1].contains("[RE9007]"), "{out:?}");
-    let rest: Vec<&str> = out[2..].iter().map(String::as_str).collect();
-    assert_eq!(
-        rest,
-        ["attr Speed", "speed 20", "changed Name", "name Renamed"]
-    );
-}
-
-#[test]
-fn tree_signals_fire_for_descendants_and_ancestry() {
-    let mut p = place(SignalBehavior::Deferred);
-    p.run(
-        r#"
-        local root = Instance.new("Folder", workspace); root.Name = "Root"
-        local mid = Instance.new("Folder", root); mid.Name = "Mid"
-        root.DescendantAdded:Connect(function(d) print("desc+ " .. d.Name) end)
-        root.DescendantRemoving:Connect(function(d) print("desc- " .. d.Name) end)
-        mid.ChildRemoved:Connect(function(c) print("child- " .. c.Name) end)
-        local box = Instance.new("Model"); box.Name = "Box"
-        local inner = Instance.new("Folder", box); inner.Name = "Inner"
-        inner.AncestryChanged:Connect(function(c, p) print("anc " .. c.Name .. " " .. tostring(p)) end)
-        box.Parent = mid
-        task.wait()
-        box.Parent = nil
-        "#,
-    );
-    p.step(1.0 / 60.0);
-    assert_eq!(
-        p.out(),
-        [
-            "desc+ Box",
-            "desc+ Inner",
-            "anc Box Mid",
-            "child- Box",
-            "desc- Box",
-            "desc- Inner",
-            "anc Box nil",
-        ]
-    );
-}
-
-#[test]
-fn clone_and_destroy_keep_tags_and_attributes_exact() {
-    let mut p = place(SignalBehavior::Deferred);
-    p.run(
-        r#"
-        local cs = game:GetService("CollectionService")
-        cs:GetInstanceAddedSignal("Coin"):Connect(function(i) print("coin+ " .. i.Name) end)
-        cs:GetInstanceRemovedSignal("Coin"):Connect(function(i) print("coin- " .. i.Name) end)
-        local m = Instance.new("Model", workspace); m.Name = "M"
-        m:SetAttribute("Value", 5)
-        m:AddTag("Coin")
-        local part = Instance.new("Folder", m); part.Name = "Part"
-        part:AddTag("Coin"); part:AddTag("Shiny")
-        local secret = Instance.new("Folder", m); secret.Name = "Secret"
-        secret.Archivable = false
-        task.wait()
-        local copy = m:Clone()
-        assert(copy.Parent == nil and copy ~= m)
-        assert(copy:GetAttribute("Value") == 5 and copy:HasTag("Coin"))
-        assert(copy:FindFirstChild("Secret") == nil)
-        local cp = copy:FindFirstChild("Part")
-        assert(cp:HasTag("Shiny") and #cp:GetTags() == 2)
-        copy.Name = "Copy"; cp.Name = "CopyPart"
-        copy.Parent = workspace
-        task.wait()
-        print("tagged " .. #cs:GetTagged("Coin"))
-        m.Destroying:Connect(function() print("destroying " .. m.Name) end)
-        workspace.ChildRemoved:Connect(function(c) print("removed " .. c.Name .. " " .. c.ClassName) end)
-        m:Destroy()
-        print("parent", m.Parent, m.Name)
-        local ok, err = pcall(function() m.Parent = workspace end)
-        assert(not ok); print(err)
-        task.wait()
-        print("tagged " .. #cs:GetTagged("Coin"))
-        assert(cs:HasTag(copy, "Coin") and not cs:HasTag(m, "Coin"))
-        "#,
-    );
-    for _ in 0..3 {
-        p.step(1.0 / 60.0);
+        // The world's tag index agrees with what scripts saw.
+        let index = p.world.ecs.resource::<TagIndex>();
+        assert_eq!(index.tagged("Coin").count(), 2);
+        assert_eq!(index.tagged("Shiny").count(), 1);
     }
-    let out = p.out();
-    assert_eq!(
-        out[..5],
-        [
-            "coin+ M",
-            "coin+ Part",
-            "coin+ Copy",
-            "coin+ CopyPart",
-            "tagged 4"
-        ],
-        "{out:?}"
-    );
-    assert_eq!(out[5], "parent\tnil\tM", "{out:?}");
-    assert!(out[6].contains("[RE9008]"), "{out:?}");
-    let mut rest: Vec<&str> = out[7..].iter().map(String::as_str).collect();
-    let tail = rest.split_off(rest.len() - 1);
-    assert_eq!(tail, ["tagged 2"], "{out:?}");
-    assert_eq!(rest[0], "destroying M", "{out:?}");
-    let mut events = rest[1..].to_vec();
-    events.sort_unstable();
-    assert_eq!(
-        events,
-        ["coin- M", "coin- Part", "removed M Model"],
-        "{out:?}"
-    );
-
-    // The world's tag index agrees with what scripts saw.
-    let index = p.world.ecs.resource::<TagIndex>();
-    assert_eq!(index.tagged("Coin").count(), 2);
-    assert_eq!(index.tagged("Shiny").count(), 1);
 }
