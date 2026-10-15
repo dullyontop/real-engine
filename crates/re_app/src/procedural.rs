@@ -187,10 +187,13 @@ pub fn refresh_graphs(
     if now == *known {
         return Vec::new();
     }
+    // A source still being filled in (no graph and no builder yet, as the
+    // inspector adds it) waits quietly.
     let stale = |(id, graph, builder): &(String, String, String)| {
-        known
-            .get(id)
-            .is_none_or(|(g, b)| g != graph || b != builder)
+        !(graph.is_empty() && builder.is_empty())
+            && known
+                .get(id)
+                .is_none_or(|(g, b)| g != graph || b != builder)
     };
     let diags = load_where(world, project, stale);
     *known = now;
