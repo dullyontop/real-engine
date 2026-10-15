@@ -830,6 +830,8 @@ Required tests:
 
 ## WP6: Runtime integration, CLI, verify and the demo
 
+**Status:** done. The demo merged in #31; the `verify-demo` and `xvfb-smoke` CI jobs run it.
+
 **Goal.** `re_app` (the frame loop of ADR-0009, the sync glue between the World and the subsystems, the headless runner, `real verify`, the runtime commands), `re_cli` (the `real` binary) and the `examples/island` demo that meets the M1 definition of done.
 
 **Owned paths:** `crates/re_app/`, `crates/re_cli/` except `crates/re_cli/src/tooling/{mcp,agent,editor}.rs` (which WP6 only creates as stubs, then hands over), `crates/re_cli/tests/mcp_e2e.rs` (WP7) and `crates/re_cli/tests/editor_proxy.rs` (WP8), and `examples/island/` (WP7 and WP8 may also add their crates' lines to `crates/re_cli/Cargo.toml`; see the ownership rule)
