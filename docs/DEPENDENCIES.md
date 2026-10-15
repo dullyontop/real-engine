@@ -93,6 +93,15 @@ Used only inside `re_geom::polygon`, never in its public types (ADR-0043). Pinne
 
 `libm` 0.2.16 and `num-traits` 0.2.19, which these pull, are already in the lockfile.
 
+### Block-compressed textures (M3)
+
+ADR-0047. Checked against crates.io on 2026-10-15; `cargo deny check` passes with no exception.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| block_compression | 0.10.1 | MIT | 1.80 | BC7/BC5 encoder at import (`re_assets`, feature `texture-encode`, turned on by `tooling`; tooling only, forbidden in the runtime build by `check-graph`); dev-dependency of `re_render` for decoder cross-checks | `default-features = false`, `bc15`, `bc7` | WP20 phase-0 bench (encode, decode, GPU round trip on lavapipe and llvmpipe GL) | Verified (probe); lands with WP20 PR "textures" |
+| bcdec_rs | 0.2.0 | MIT | ≤ 1.95 | BC decoder for adapters without `TEXTURE_COMPRESSION_BC` (runtime, `re_render`) | defaults (no dependencies) | WP20 bench (bit-identical to the GPU round trip on both backends) | Verified (probe); lands with WP20 PR "textures" |
+
 ### Package archive (M3, runtime)
 
 Used by `re_app::package` to read and write `game.rpak` (ADR-0037). With `default-features = false` it builds the bundled libzstd with `cc` (no pkg-config, no system library) and drops the legacy decoders and the dictionary builder. Checked against crates.io on 2026-10-15.

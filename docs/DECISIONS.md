@@ -1086,6 +1086,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - **Shipping source and compiling at load.** Kept as `scripts = "source"`. Bytecode is the default because it loads about 6× faster and needs no compile step at boot.
 
 **Consequences.**
+- With ADR-0047's BC7 textures, the helmet's processed textures are 12.5 MB under zstd (3.9× the source JPEGs, against 7.2× for RGBA8); textures are always stored processed, because encoding them at first launch would cost about 18 s per 100 MB of texels.
 - WP23 streams cells through `ProjectFiles`, so streamed content works the same packaged and unpackaged. The index stays cheap to 100,000 entries (17 ms to decode); a world with more files would need an index loaded in pages, which is not planned.
 - WP24's bake format can become a `Processed` form in the archive, so a game can ship baked generator output; until then the per-node cache is rebuilt in the per-user cache on first run.
 - WP27's persistence (ADR-0048) writes through `writable(Data)` instead of joining `.real/data` itself.
@@ -1099,6 +1100,105 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - Windows `.exe` icons, installers, code signing, notarisation, universal macOS binaries, patching and the web stay out of M3.
 
 **Evidence.** `research/m3/wp19/measurements.md`: the compression table (four codecs, three models and the content text), the importer and cache-hit timings, Luau bytecode size, determinism and load time, the index timings, the runtime binary's size, `ldd` and glibc symbols, the license-file scan of the runtime crates, and the API facts checked in mlua 0.12.2, mlua-sys 0.13.0, luau0-src 0.22.0+luau740, wgpu-types 30.0.1 and zstd 0.14.2.
+
+## ADR-0038: HDR post chain, cascaded sun shadows, shader hot reload, and no render thread yet
+
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP20). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: WP20's phase-0 measurements (research bundle `m3/wp20/measurements.md`, with the scratch tests that produced them).
+
+**Context.** M3's WP20 adds HDR rendering with tone mapping and bloom, cascaded shadows for the sun, shader hot reload, and a render thread only if PerfReport shows render submission is the bottleneck (M3_PLAN, WP20). WP27 draws the compat `BloomEffect`, `BlurEffect` and `SunRaysEffect` through this chain, and WP28's valley uses it. What exists today:
+- `re_render` draws the forward pass straight into the caller's target (ADR-0010). Shading is linear; lights, ambient and emissive are multiplied by `RendererSettings::exposure`; colour correction (`SceneExtras::grading`) is applied per fragment in the forward and effect shaders; the target's format does the sRGB encoding (or the shader does, for `Rgba8Unorm`-style targets). Values above 1 are clipped by the target.
+- One 2048² sun shadow map is fitted each frame to the smaller of the scene's and the view frustum's bounding sphere within `shadow_distance` (60 units). There is no culling: every item is drawn in the view and every caster in the shadow pass.
+- Shaders are built-in strings joined by a small `#include` preprocessor (`RE6030`).
+- PerfReport's `render` phase does not include `Renderer::render`: the windowed driver draws after `App::frame` returns, so submission is not measured today.
+
+Measured (lavapipe and llvmpipe GL, wgpu 30.0.1; measurements §1–§3):
+- **Submission on the 250,000-part map** (ADR-0031's bigmap through the compat view, 1280×720, 4× MSAA): without culling, 23,347 items give 20,298 view draws plus 23,347 shadow draws, and `Renderer::render` takes **166.9 ms** of CPU a frame (p95 206 ms). With prototype culling (view frustum; casters within the shadow distance) it takes **38.6 ms** (p50 30, p95 86), about 5,500 draws mid-path. `CommandEncoder::finish` is the largest part (3–5 µs per draw). The same frames spend **1,297 ms** in `re_compat::render::build`, so submission is **2.9%** of the frame's CPU time. The plaza is not in the repository yet.
+- `Rgba16Float` is renderable, blendable, filterable and 4× multisampled on both backends; `Rg11b10Ufloat` is not renderable on GL. A `Depth32Float` 2D array with one layer per cascade, rendered through single-layer views and sampled with `textureSampleCompareLevel(…, layer, ref)`, gives correct results on both. On GL, an MSAA colour texture that also has `TEXTURE_BINDING` or `COPY_SRC` usage resolves to zeros; with `RENDER_ATTACHMENT` only, it resolves correctly. GL cannot `textureLoad` a depth texture.
+- A full-screen pass at 1280×720 costs about 11 ms on the software rasterisers; a 6-level bloom plus tone map about 46 ms.
+
+**Decision.**
+
+*Post chain (PR "post").*
+- The scene pass (sky, forward, sprites, ribbons, debug lines) renders into an `Rgba16Float` target, multisampled when MSAA is on and resolved into a single-sample `Rgba16Float` texture. MSAA textures carry `RENDER_ATTACHMENT` usage only (the GL finding). `Rgba16Float` is used on every backend, so there is one path and one set of goldens; `Rg11b10Ufloat` is not used.
+- The chain, in order: **sun rays** (screen-space radial blur of sky pixels from the sun's projected position, added), **bloom** (a soft-knee threshold, then a downsample chain with the 13-tap filter of Jimenez 2014 and an additive 3×3 tent upsample, mixed in by `intensity`), **blur** (separable Gaussian at half resolution), **colour grading** (today's brightness, contrast, saturation and tint, in scene-linear values), **tone mapping**, then the output encoding into the caller's target (by format, or by the shader for gamma-storing formats as today). Highlights and egui are drawn after the chain onto the final target, in display colours, as authored.
+- A step whose setting is off costs nothing: no pass is recorded. The resolve and the final pass always run, which costs about 11 ms at 720p on the software rasterisers and a fraction of a millisecond on a hardware GPU; one path is worth that.
+- **Tone mapping operators:** `None` (clamp; today's look), `PbrNeutral` (Khronos PBR Neutral: it removes the 4% Fresnel lift and compresses only above about 0.76, so authored base colours come out close to their values), `Aces` (the Hill fit of ACES RRT+ODT) and `AgX` (the Blender/Troy Sobotka curve, base look). **`None` is the snapshot default**, so existing scenes, goldens and compat places look as they do today. The `real new` templates and the valley set `PbrNeutral`, which is our recommended operator for new projects.
+- **Exposure** keeps today's meaning (it scales lights, ambient and emissive in the shaders, so a 100,000-lux sun works at exposure 1e-5); it moves from `RendererSettings` into the snapshot. Automatic exposure is not in M3.
+- **Settings join `RenderSnapshot`** in `re_types::render` (maintainer-reviewed contract change, frozen at WP20 PR "post", consumed by WP27 and WP28). Every new field has a serde default, so old snapshots and callers are unchanged:
+  ```rust
+  pub struct RenderSnapshot { /* existing fields */ pub post: PostSettings, pub shadows: SunShadows }
+  pub struct PostSettings {
+      pub exposure: f32,                  // 1.0
+      pub tone_mapping: ToneMapping,      // None | PbrNeutral | Aces | AgX; default None
+      pub bloom: Bloom,                   // intensity 0.0 (off), threshold 0.0, knee 0.5, radius 0.05
+      pub blur_radius: f32,               // 0.0 (off); fraction of the target's height
+      pub sun_rays: SunRays,              // intensity 0.0 (off), spread 0.5
+      pub grading: Option<ColorGrading>,  // None; brightness, contrast, saturation, tint
+  }
+  ```
+  `Bloom::radius` and `blur_radius` are fractions of the target's height, so a setting looks the same at any resolution (the compat layer divides `Size` in pixels by the viewport height). The bloom chain stops at the level whose texel covers `radius`, at most 8 levels. `SceneExtras::grading` and `RendererSettings::exposure` are removed from `re_render`'s API in the same PR; `re_compat` (WP27) and `re_app` (maintainer) move to the snapshot fields.
+- New shader files `post.wgsl` and `tonemap.wgsl`; the grade moves out of `fx.wgsl`. With every scene pass writing linear values into the HDR target, the `*_gamma` fragment variants of the scene shaders go away; the vertex inputs and the instance layout (locations 0–11) do not change, so WP21's skinned variants stay in step.
+- **Depth of field is not in M3.** Compat `DepthOfFieldEffect` stays `partial` (ADR-0048).
+
+*Render-target textures and world quads (PR "post", for WP27's `SurfaceGui`, ADR-0048).*
+- `Capture` gains `TEXTURE_BINDING` usage, and `Renderer::capture_texture(&Capture) -> TextureHandle` returns a texture handle that samples it (released with `release_texture`; the capture must outlive the handle). WP27 paints a GUI into a pooled capture with `paint_ui` and draws it with this handle.
+- `RenderSnapshot` gains `quads: Vec<WorldQuad>` (default empty), part of the contract frozen at PR "post":
+  ```rust
+  pub struct WorldQuad {
+      pub entity: EntityId,
+      pub world: Mat4,             // the quad spans −0.5..0.5 in its local X and Y, facing +Z
+      pub size: Vec2,
+      pub texture: TextureHandle,  // premultiplied RGBA, as egui paints it
+      pub depth: QuadDepth,        // Tested { bias: f32 } (in world units towards the camera) | OnTop
+      pub light_influence: f32,    // 0 = unlit, 1 = lit by the scene's lights like a matte surface
+      pub brightness: f32,         // multiplies the unlit part
+  }
+  ```
+  Depth-tested quads are drawn in the HDR scene pass with the blended items, sorted back to front with them, and go through the post chain. `OnTop` quads are drawn after the chain onto the final target with no depth test, in display colours, like highlights.
+- `ViewportFrame` needs nothing new: it is a second `render` into a `Capture`, shown through `register_ui_texture`.
+
+*Codes reserved for other WPs.* `RE6040` for WP21: "the adapter lacks `VERTEX_STORAGE`; skinned items are drawn in bind pose" (ADR-0039).
+
+*Cascaded sun shadows (PR "shadows").*
+- **Up to four cascades** in one `Depth32Float` 2D array texture, one layer per cascade, each `RendererSettings::shadow_map_size` square (2048 by default, 64 MB for four). Only the sun (the one directional light with `shadows`) is shadowed, as today.
+- **Splits:** the practical split scheme (Zhang et al. 2006), a blend of logarithmic and uniform splits between the camera's near plane and `shadows.distance`, weighted by `split_lambda`. Defaults: 4 cascades, distance 150 units, `split_lambda` 0.75, transition band `blend` 0.1 of each cascade's depth. `RendererSettings::shadow_distance` moves into the snapshot.
+  ```rust
+  pub struct SunShadows { pub cascades: u8 /* 1..=4, default 4 */, pub distance: f32 /* 150.0 */, pub split_lambda: f32 /* 0.75 */, pub blend: f32 /* 0.1 */ }
+  ```
+- **Stability:** each cascade is fitted to the bounding sphere of its slice of the view frustum, so its size does not change when the camera turns; the sphere's radius depends only on the field of view, aspect and split distances. The light-space centre is snapped to whole shadow-map texels, so the map does not shimmer when the camera moves. The depth range of each cascade is extended towards the sun to the bounds of the casters that project into it, so casters outside the slice still cast.
+- **Sampling:** the forward shader picks the cascade by view depth, blends into the next cascade across the `blend` band, and filters with the current 3×3 hardware-compare kernel. The normal-offset bias scales with each cascade's texel size.
+- **Culling arrives with cascades:** items are culled against the view frustum, and casters against each cascade's light-space box extended towards the sun, before batching, using each mesh's bounds transformed by the item's matrix. The prototype cut submission on the bigmap from 166.9 ms to 38.6 ms. Skinned items (WP21) are culled by a world-space bound that `SkinnedDrawItem` carries, because bind-pose bounds do not contain an animated pose.
+- The shadow pass draws each cascade with its own light matrix, selected by a dynamic uniform offset; `shadow.wgsl`'s vertex inputs are unchanged.
+- Goldens with shadows change (sharper near shadows); PR "shadows" re-blesses them with before and after images. A stability test draws a static scene from cameras along a path and requires the sun visibility at fixed world points to stay identical while the points stay in one cascade.
+
+*Shader hot reload (PR "hot reload").*
+- `Renderer::set_shader_source(name, Option<String>)` overrides (or restores) one of the built-in files of `shader::SOURCES`, or adds a new includable file. `Renderer::reload_shaders()` rebuilds every pipeline whose root file includes a changed file, directly or through includes.
+- A rebuild **keeps the last good pipeline** on any failure. Errors are reported with file and line: the preprocessor records which file and line each output line came from, naga (`wgpu::naga`) parses and validates the joined source first, and `ParseError::location` / `WithSpan::location` map back through that record. New codes in `re_render`'s range: **`RE6031` shader compile error** (file, line, column, naga's message) and **`RE6032` pipeline rejected by the device** (caught with `Device::push_error_scope(ErrorFilter::Validation)` around module and pipeline creation, so no error reaches the uncaptured handler).
+- **What is watched** (in `re_app`, a maintainer-reviewed change, because `re_render` does not depend on `re_assets`; ADR-0006): the project's `shaders/*.wgsl`, always in a development run; and the engine's own shader directory when `RE_ENGINE_SHADERS` names it (engine developers point it at `crates/re_render/src/shaders`). The existing `AssetWatcher` delivers the changes; a packaged or `--release`-style run loads the project's `shaders/` once at boot and does not watch.
+- A project file with the same name as an engine file replaces it. This is a development tool for the engine's own shaders, not a stable API: engine shader files can change in any release, and `real verify` warns (`RE6033`) when a project replaces an engine file, naming the file.
+
+*Render thread.*
+- **Metric:** a new PerfReport field, `render_submit` (mean, p95, max), the CPU wall time of `Renderer::render`/`render_with` and `paint_ui` for a frame (preparation, encoding, `finish` and `submit`), excluding waits for the GPU (presentation and readback). `re_app` records it in the windowed driver and in captures (maintainer change, in PR "post"'s description).
+- **Threshold:** a render thread is built when, after culling, on the reference container at 1280×720, `render_submit` has a mean of **at least 4 ms** and is **at least 25% of the frame's CPU time** (the frame phases plus `render_submit`), on the bigmap (250,000 parts) or the plaza. Below 4 ms (a quarter of a 60 Hz frame) the extra frame of latency and the cross-thread resource lifetimes do not pay; below a 25% share another phase is the bottleneck, and overlapping submission cannot bring the frame into budget.
+- **Today's numbers and decision: no render thread.** On the bigmap, submission after culling is 38.6 ms but 2.9% of the frame; the bottleneck is the compat view build (1,297 ms a frame, `re_compat::render::build` walking every part; reported to WP27), then the software GPU. WP20 measures again on the bigmap and the plaza after PR "shadows" (culling) and after the plaza lands, and records the numbers in this ADR. If either crosses the threshold, a PR moves `Renderer::render` to a dedicated thread over the `RenderSnapshot: Send` seam (ADR-0007), with uploads and releases sent on the same channel in order. WP28 measures the valley and reopens the decision only if it crosses the threshold.
+
+**Alternatives.**
+- **`Rg11b10Ufloat` as the HDR format** (half the memory). Not renderable on GL, so goldens would need two chains; rejected for one path.
+- **Tone mapping by default** (`PbrNeutral` or `AgX` in the snapshot default). Every existing golden and compat place would change look. Rejected: projects opt in, and templates opt in for them.
+- **A fast path that skips the HDR target when the chain is off.** Saves one full-screen pass (~11 ms on software, negligible on hardware) at the cost of a second set of pipelines and goldens. Rejected.
+- **Bloom with a hard threshold and Gaussian blur.** Flickers on small bright details; the downsample/upsample chain is stable and cheaper.
+- **Fitting cascades tightly to the slice** (better texel density, unstable under rotation). Rejected for the stability requirement. **Variance or moment shadow maps:** light bleeding and more memory; PCF is enough for M3.
+- **Shader hot reload by restarting the renderer.** Loses every GPU resource; rejected.
+- **A render thread now.** Submission is not the bottleneck on any scene that exists, so it would add latency and complexity for no frame-time gain (ADR-0007).
+
+**Consequences.**
+- `RenderSnapshot` gains `post`, `shadows` and `quads`, frozen at WP20 PR "post" (WP27 maps the compat effects onto them; WP28 sets them for the valley). Their serde defaults keep old scene files and agents' snapshots valid.
+- `re_render`'s public API loses `SceneExtras::grading`, `RendererSettings::exposure` and `RendererSettings::shadow_distance`; `shadow_map_size` becomes per cascade. `re_compat` and `re_app` move in the same PRs (their owners review).
+- GPU memory grows by the HDR targets (at 1920×1080 with 4× MSAA: 66 MB multisampled plus 16.6 MB resolved, plus about 6 MB of bloom levels) and the cascade array (64 MB at 2048²).
+- Goldens for tone mapping, bloom, cascades (both backends) are added; goldens with shadows are re-blessed once in PR "shadows".
+- `RE6031`–`RE6033` are added with explain pages.
+- A packaged game reads the project's `shaders/` through `ProjectFiles` once at boot (ADR-0037) and never watches; `RE6033` is a `real verify` warning, so it never blocks a packaged run.
+- PerfReport gains `render_submit`, which makes later render-thread decisions measurable in CI and by agents.
 
 ## ADR-0039: Skins from glTF, GPU skinning, and animation graphs as data
 
@@ -1114,7 +1214,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 *Skins in the contract layer (`re_types`, frozen at PR "skins").*
 - `re_types::anim` gains `SkinData`: the skin's name, its joints in an order where every parent comes before its children (`JointDesc { name, parent: Option<u16>, rest: Trs }`), one inverse bind matrix per joint, and per-joint bind-space bounds of the vertices that joint influences (for skinned bounds and picking). At most 65,535 joints per skin, the range of a `u16` joint index; glTF sets no lower limit, so neither do we.
 - `re_types::mesh` gains `SkinWeights { joints: Vec<[u16; 4]>, weights: Vec<[u16; 4]> }`, one entry per vertex of the `MeshData` it goes with. Weights are unorm16 and sum to 65,535. `MeshData` and `Vertex` do not change, so static meshes pay nothing and the 14 existing `MeshData { .. }` literals keep compiling.
-- `re_types::render` gains `SkinnedDrawItem { entity, mesh, material, world, flags, palette: u32, joints: u32, bounds: Aabb }` and two `RenderSnapshot` fields with serde defaults: `skinned: Vec<SkinnedDrawItem>` and `joint_palette: Vec<Mat4>`. `palette` is the item's first matrix in `joint_palette`, so one buffer holds every character's palette and `DrawItem` stays `Copy` and unchanged. A palette matrix is `joint_model * inverse_bind` in the mesh's model space; `world` places the mesh as for a static item. The snapshot literals in `re_render`, `re_app`, `re_compat` and the `re_types` tests that do not end in `..Default::default()` get it in the "skins" PR; WP20's "post" PR adds fields to the same struct, so whichever lands first converts them.
+- `re_types::render` gains `SkinnedDrawItem { entity, mesh, material, world, flags, palette: u32, joints: u32, bounds: Aabb }` (`bounds` is world-space) and two `RenderSnapshot` fields with serde defaults: `skinned: Vec<SkinnedDrawItem>` and `joint_palette: Vec<Mat4>`. `palette` is the item's first matrix in `joint_palette`, so one buffer holds every character's palette and `DrawItem` stays `Copy` and unchanged. A palette matrix is `joint_model * inverse_bind` in the mesh's model space; `world` places the mesh as for a static item. The snapshot literals in `re_render`, `re_app`, `re_compat` and the `re_types` tests that do not end in `..Default::default()` get it in the "skins" PR; WP20's "post" PR adds fields to the same struct, so whichever lands first converts them.
 
 *glTF import (`re_assets`, maintainer-reviewed).*
 - The importer reads every skin into `SkinData`, and `JOINTS_0`/`WEIGHTS_0` (plus `JOINTS_1`/`WEIGHTS_1` when present) into `SkinWeights`. More than four influences keep the four largest. Weights are renormalised to sum to one before quantising, and the rounding remainder goes to the largest weight. A vertex with all-zero weights binds to the skin's first joint.
@@ -1128,8 +1228,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - A vertex-shader path with four weights per vertex (linear blend skinning). Skinned meshes upload with `Renderer::upload_skinned_mesh(&MeshData, &SkinWeights) -> Result<MeshHandle, Diagnostic>`, which adds a second vertex buffer of 16 bytes per vertex: joints `Uint16x4` at location 12 and weights `Unorm16x4` at location 13. A skinned instance stream adds the palette base as `Uint32` at location 14. That is 15 attributes, within the 16 GL allows; the probe ran this exact layout on Vulkan and GL.
 - The frame's `joint_palette` is uploaded once per frame into one read-only storage buffer, bound in the vertex stage of the skinned pipelines. The shader skins the position with the weighted sum of four palette matrices, and the normal with its upper 3×3. Joints with non-uniform scale therefore shade slightly wrong, which is the usual trade-off of linear blend skinning.
 - Every pipeline that draws meshes gets a skinned variant: forward (opaque and blended), shadow, and the selection mask. They share the existing shaders through `#include` and a skinned entry point, so lighting and materials stay one code path.
-- When the adapter lacks `VERTEX_STORAGE`, the renderer warns once with a new `re_render` code. It then draws skinned items in their bind pose (palette set to identity). It does not fake animation. No M3 target lacks the flag.
-- Skinned bounds are the union of each joint's bind-space bounds moved by its palette matrix, computed in `re_anim`. They are conservative, and nothing culls on them yet.
+- When the adapter lacks `VERTEX_STORAGE`, the renderer warns once with `RE6040` (allocated by WP20; the "skins" PR adds the constant and its explain page). Skinned pipelines use only the linear fragment entry points, after WP20's "post" removes the gamma variants (ADR-0038). It then draws skinned items in their bind pose (palette set to identity). It does not fake animation. No M3 target lacks the flag.
+- `SkinnedDrawItem.bounds` is a world-space `Aabb`: the union of each joint's bind-space vertex bounds moved by its posed joint matrix and the item's `world`, computed in `re_anim`. It is conservative, and WP20's frustum culling (PR "shadows", ADR-0038) culls skinned items with it.
 
 *Pose evaluation and the animation graph (`re_anim`, `re_types::anim`, frozen at PR "graphs").*
 - `re_anim` gains `Skeleton` (from `SkinData`), `Pose` (local translation, rotation and scale per joint, indexed, not named), and `BoundClip`: a `ClipData` resolved once against a skeleton into per-joint channel indices, with a cached key cursor per channel. The existing name-based `Sampler` and the keyframe `Mixer` stay for entity rigs and the compat layer.
@@ -2024,6 +2124,50 @@ What was checked for this ADR (2026-10-15, on `main` at 69ed909):
 - The `reference` driver keeps every built-in task solvable in CI without any model; scores for real agents are produced by whoever runs them, on their own account.
 - The HTTP transport adds 15 crates to tooling builds only. Each `rmcp` upgrade must recheck the HTTP header rules, since the prototype found rmcp enforcing `Mcp-Method`/`Mcp-Name` for 2026-07-28.
 - Shared files outside WP26's paths, changed through maintainer-reviewed PRs: `Cargo.toml` and `Cargo.lock` (feature and two crates), `docs/DEPENDENCIES.md`, `crates/re_cli/src/new.rs` and `main.rs` (`--template` path, `--set`, `--list-templates`), `crates/re_cli/tests/mcp_e2e.rs` (both transports), `docs/ARCHITECTURE.md` §6 and AGENTS generation for the three new commands.
+
+## ADR-0047: Block-compressed textures with block_compression 0.10.1, encoded at import
+
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP20). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: WP20's phase-0 measurements (research bundle `m3/wp20/measurements.md` §2 and §4, and the encoder bench they summarise). Agreed with WP19 for ADR-0037 (see Consequences).
+
+**Context.** Textures are imported by `re_assets` as RGBA8 (`re_types::render::TextureData`, `TextureFormat::{Rgba8Srgb, Rgba8Unorm}`), cached in `.real/cache` with postcard, and uploaded by `Renderer::upload_texture`, which builds the mip chain on the CPU. A 2048² texture is 16 MB in the cache and 21 MB on the GPU with mips. M3 asks for BC7 or BC1/BC3 on desktop through the asset cache, picked per adapter feature, with an uncompressed fallback, and for the encoder crate to be chosen after checking crates.io (M3_PLAN, WP20 PR "textures").
+
+What was checked (measurements §4):
+- wgpu exposes BC1–BC7 as one feature, `TEXTURE_COMPRESSION_BC`. lavapipe and llvmpipe GL both have it (wgpu-hal 30.0.1 `vulkan/adapter.rs:745-748`; on desktop GL it needs the S3TC, RGTC and BPTC extensions, `gles/adapter.rs:535-561`). BC7 blocks uploaded as `Bc7RgbaUnorm(Srgb)` and read back were bit-identical to the CPU decode on both. An adapter that has BC1/BC3 also has BC7, so BC1/BC3 buy nothing on desktop, and they scored 30.4 dB against BC7's 43 dB on the test image.
+- Candidates, all from crates.io sources and metadata:
+
+| Crate | Version | License | BC7 | Build | Result |
+|---|---|---|---|---|---|
+| block_compression | 0.10.1 (2026-10-11) | MIT | yes, plus BC1–BC5, BC6H; CPU encoder and decoder | pure Rust; with `default-features = false` its only dependency is bytemuck (ours) | 2048² BC7 `very_fast`: 15.9 s on 1 thread, 5.9 s on 4; 42.95 dB |
+| intel_tex_2 | 0.5.0 | MIT/Apache-2.0 | yes | links 32 MB of prebuilt static libraries shipped in the crate for each target; they cannot be rebuilt from the published crate (its `ispc` feature needs the omitted `vendor/` sources and the ISPC compiler) | 4–6× faster than block_compression, 0.1–0.2 dB better |
+| ctt-bc7f | 0.6.0 | (MIT OR Apache-2.0 OR Zlib) AND Apache-2.0 | yes | C++17 via cc | about 6 dB worse |
+| dds | 0.2.0 | MIT OR Apache-2.0 | yes | pure Rust | pulls glam 0.25.0; fails our bans (ADR-0028) |
+| texpresso | 2.0.2 | MIT | **no** (BC1–BC5) | pure Rust | — |
+| ktx2 0.5.0, ddsfile 0.6.0 | | Apache-2.0, MIT | readers only | | not needed (below) |
+
+`cargo deny check` with our `deny.toml` passes for block_compression with no exception; it builds on Rust 1.95.0; `cargo xtask dupes` stays clean.
+
+**Decision.**
+- **Encoder: `block_compression = { version = "=0.10.1", default-features = false, features = ["bc15", "bc7"] }`**, in `re_assets` only, behind a new `re_assets` feature `texture-encode` that `re_cli`'s `tooling` feature turns on. The runtime-only binary (`--no-default-features`) does not link it, and `cargo xtask check-graph` adds `block_compression` to its forbidden list for that build (ADR-0027). Its `wgpu` feature (a GPU encoder) stays off; it would resolve to our wgpu 30.0.1 if a later ADR wants it.
+- **Decoder: `bcdec_rs = "=0.2.0"`** (MIT, safe Rust, no dependencies, decode only) in `re_render`, for the fallback below. The bench's GPU round trip was bit-identical to it on both backends. Tests cross-check it against block_compression's own decoder (a dev-dependency of `re_render`).
+- **Formats.** `re_types::render::TextureFormat` gains `Bc7Srgb` (base colour and emissive), `Bc7Unorm` (metallic-roughness and other linear RGBA data) and `Bc5Unorm` (tangent-space normal maps; the forward shader reconstructs Z from X and Y for every normal map, compressed or not). `TextureData` gains `levels: Vec<Vec<u8>>` (mip levels 1..n, default empty): compressed textures carry their encoded mip chain, because the renderer cannot build mips from blocks. RGBA8 data is unchanged and still gets its mips at upload. These are maintainer-reviewed `re_types` changes with defaults.
+- **Where encoding happens.** With `texture-encode` on, the texture importer in `re_assets` encodes each level (box-filtered as `mip_chain` does today, then encoded) into the cached blob. Levels smaller than 4×4 are padded by edge replication. A texture whose width or height is not a multiple of 4 stays RGBA8, because BC textures need block-aligned base sizes. Strips of block rows are encoded on the `re_core` pool; the output is identical for any thread count. Without the feature (a packaged game importing a texture stored as source), the importer keeps RGBA8, and `real build`'s report lists such textures as uncompressed. This is a maintainer-reviewed `re_assets` PR by WP20, as WP21's skin import is.
+- **Settings.** `real.toml [assets] texture_compression = "bc"` (default) or `"none"`, and `texture_quality = "fast"` (default, the `very_fast` presets) or `"high"` (the `basic` presets, about 1 dB better and 3–4× slower). The encoder's crate version and the preset are folded into `TEXTURE_IMPORTER_VERSION`, and the format and preset into the settings bytes of the cache key, so the cache and the archive (`Processed { importer, version }`, refused on mismatch with `RE0602`, ADR-0037) both see a change. `re_assets` declares `pub const TEXTURE_REPEAT_AT_LOAD: bool = false` beside it, the static mark ADR-0037's `assets = "auto"` reads.
+- **Upload.** `Gpu` requests `TEXTURE_COMPRESSION_BC` when the adapter has it. `upload_texture` uploads BC data as-is when the device has the feature; without it, it decodes every level to RGBA8 on the CPU with `bcdec_rs` (one-time, at upload) and logs the fallback once. `RE6015` covers malformed BC data (wrong level count or byte length).
+- **No KTX2 or DDS reader in M3.** The cache stores our own postcard blob. Importing pre-compressed artist textures would use `ktx2` 0.5.0 or `ddsfile` 0.6.0 under a later ADR.
+- ASTC and ETC2 are not used (desktop targets only, as the plan says).
+
+**Alternatives.**
+- **intel_tex_2.** The fastest and marginally best, but the shipped prebuilt archives cannot be rebuilt or audited from the published crate, which is against the spirit of DEPENDENCIES policy 1. It stays the documented alternative if import time becomes the problem; swapping is local to the importer.
+- **BC1/BC3.** Half or the same size as BC7 but 12 dB worse here, and no adapter has them without BC7.
+- **GPU encoding (block_compression's `wgpu` feature).** Faster on real GPUs, but import must work headless on any adapter and give the same bytes everywhere (the cache key); the CPU path does.
+- **Encoding at load or in packaged games.** At 5.9 s per 2048² texture on 4 threads, a game with a hundred textures would take minutes on first boot.
+
+**Consequences.**
+- Cached and packaged textures shrink 4× against RGBA8 (BC7 is one byte per texel; mips add a third), and GPU memory shrinks the same.
+- Import gets slower: about 6 s per 2048² texture on 4 cores at the default quality. The cache makes it a one-time cost per change.
+- **ADR-0037 (packaging):** the texture importer marks itself too slow to repeat at load, so `assets = "auto"` always stores its output processed; the encoder never runs in a packaged game's load path. The runtime-only binary links only `bcdec_rs`. Agreed with WP19's thread; ADR-0037's decision needs no change. Measured on the five 2048² textures of Khronos' DamagedHelmet, the model ADR-0037 measured (measurements §5): source JPEGs 3.21 MB; RGBA8 with mips 111.8 MB, 23.1 MB under zstd 19 (7.2×); **BC7 `very_fast` with mips 27.96 MB, 12.48 MB under zstd 19 (3.9×)**, since zstd takes only 10–25% off BC7 blocks. So BC7 still exceeds `auto`'s 2× rule against the source, and the "slow importer, always processed" mark is what keeps it encoded; converting at first launch instead would cost about 17–18 s per 100 MB of texels at `very_fast` (the helmet's 3.2 MB of JPEG decode to 112 MB). Proposed addition to ADR-0037's Consequences, next to the 5× figure: "With ADR-0047's BC7 textures, the helmet's processed textures are 12.5 MB under zstd (3.9× the source JPEGs, against 7.2× for RGBA8); textures are always stored processed, because encoding them at first launch would cost about 18 s per 100 MB of texels."
+- A cold cache now pays the encoder on first import (about 6 s per 2048² texture on 4 cores), including CI's `verify-demo` and `verify-plaza`; their projects' textures are small, and a later CI cache of `.real/cache` is the remedy if that changes.
+- New `DEPENDENCIES.md` rows (the "Rendering" table): `block_compression` 0.10.1, MIT, MSRV 1.80, "BC7/BC5 encoder at import (`re_assets`, feature `texture-encode`; tooling only); dev-dependency of `re_render` for decoder cross-checks", features `bc15`, `bc7` (default features off), verified by the WP20 phase-0 bench (encode, decode, GPU round trip on lavapipe and llvmpipe GL, cargo-deny), Provisional until PR "textures" merges; `block_compression` is listed as tooling-only; and `bcdec_rs` 0.2.0, MIT, BC decoder for the no-BC fallback (runtime, `re_render`).
 
 ## ADR-0048: Compat follow-ups: local data services, surfaces and viewports, script reload, skins and effects, and our own place-file reader
 
