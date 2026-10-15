@@ -1,6 +1,9 @@
 -- Builds the plaza: the ground, a spinner, a door and the shop stand.
 local World = {}
 
+-- Where the spinner turns.
+World.SPINNER = CFrame.new(-18, 1.5, -6)
+
 local function part(props)
 	local p = Instance.new("Part")
 	p.Anchored = true
@@ -23,10 +26,18 @@ function World.build(root)
 		Parent = map,
 	})
 
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "Spawn"
+	spawn.Anchored = true
+	spawn.Size = Vector3.new(6, 1, 6)
+	spawn.CFrame = CFrame.new(0, 0.5, 14)
+	spawn.Color = Color3.fromRGB(200, 200, 210)
+	spawn.Parent = map
+
 	local spinner = part({
 		Name = "Spinner",
 		Size = Vector3.new(16, 1, 1),
-		CFrame = CFrame.new(0, 1.5, 0),
+		CFrame = World.SPINNER,
 		Color = Color3.fromRGB(230, 120, 40),
 		CanCollide = false,
 		Parent = map,

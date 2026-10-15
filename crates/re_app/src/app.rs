@@ -143,6 +143,11 @@ pub struct App {
     compat_config: Option<re_compat::CompatConfig>,
     compat: Option<crate::compat::CompatPlay>,
     compat_failed: bool,
+    /// A compat game's 3D view and UI on the renderer.
+    compat_view: crate::compat_view::CompatView,
+    /// The size (physical pixels) and scale of the last window draw.
+    view_size: [u32; 2],
+    view_ppp: f32,
     script_output: Vec<String>,
     /// Script errors already reported (a failing `on_step` fails every step).
     script_errors: std::collections::HashSet<String>,
@@ -263,6 +268,9 @@ impl App {
             compat_config,
             compat: None,
             compat_failed: false,
+            compat_view: Default::default(),
+            view_size: [config.render.width, config.render.height],
+            view_ppp: 1.0,
             script_output: Vec::new(),
             script_errors: Default::default(),
             audio: headless_audio(project),
@@ -351,6 +359,9 @@ impl App {
             _ => None,
         };
         std::mem::swap(&mut copy.media, &mut self.media);
+        if let Some(g) = &mut copy.graphics {
+            copy.compat_view.release_all(g.renderer_mut());
+        }
         self.graphics = copy.graphics.take();
         if let Some(g) = &mut self.graphics {
             g.set_keep_derived(false);
@@ -542,7 +553,15 @@ impl App {
         self.snapshot = render::build(&mut self.world, &inputs);
         self.hud = hud::collect(&mut self.world);
         let size = [self.config.render.width, self.config.render.height];
-        let image = gfx.capture(size, &self.snapshot, &self.hud)?;
+        let image = if self.compat.is_some() {
+            // Two UI passes: egui lays text out with the fonts of the last.
+            self.compat_render(size, 1.0, 2);
+            let gfx = self.graphics.as_mut().expect("ensured");
+            gfx.capture_compat(size, &mut self.compat_view, &self.hud)?
+        } else {
+            gfx.capture(size, &self.snapshot, &self.hud)?
+        };
+        let gfx = self.graphics.as_mut().expect("ensured");
         self.diagnostics.extend(gfx.take_errors());
         if let Some(path) = path {
             gfx::save_png(&image, &self.project.join(path))?;
@@ -568,6 +587,17 @@ impl App {
                 "the app has no GPU side to draw with",
             )
         })?;
+        if self.compat.is_some() {
+            self.view_size = size_px;
+            self.view_ppp = pixels_per_point;
+            return gfx.draw_compat(
+                target,
+                size_px,
+                pixels_per_point,
+                &mut self.compat_view,
+                &self.hud,
+            );
+        }
         gfx.draw(target, size_px, pixels_per_point, &self.snapshot, &self.hud)
     }
 
@@ -1023,6 +1053,9 @@ impl App {
         };
         self.snapshot = render::build(shown, &inputs);
         self.hud = hud::collect(shown);
+        if self.compat.is_some() && self.graphics.is_some() {
+            self.compat_render(self.view_size, self.view_ppp, 1);
+        }
         audio::build(&mut self.world, &mut self.audio_sync, &mut self.audio_cmds);
         self.perf.add(Phase::Sync, t.elapsed());
 
@@ -1315,6 +1348,74 @@ impl App {
     /// Takes this frame's requested screenshots when the app has a GPU side:
     /// script requests are written to their path, replay checks are kept for
     /// [`App::take_captures`].
+    /// Builds the local player's view for drawing: the client's 3D frame
+    /// and `passes` egui passes of its UI (the `PlayerGui`) and the HUD, for
+    /// a target of `size_px` physical pixels at `pixels_per_point`.
+    fn compat_render(&mut self, size_px: [u32; 2], pixels_per_point: f32, passes: u32) {
+        let Some(gfx) = &self.graphics else {
+            return;
+        };
+        let ctx = gfx.egui().clone();
+        if !self.compat_view.fonts {
+            re_compat::gui::install_fonts(&ctx);
+            self.compat_view.fonts = true;
+        }
+        let Some(c) = &self.compat else {
+            return;
+        };
+        let roots: Vec<_> = re_compat::players::local_player_in(&c.client)
+            .and_then(|p| re_compat::instance::tree::find_child(&c.client, p, "PlayerGui", false))
+            .into_iter()
+            .collect();
+        let input = re_compat::render::RenderInput {
+            viewport: glam::Vec2::new(size_px[0] as f32, size_px[1] as f32),
+            top_inset: 0.0,
+            dt: self.clock.dt_secs(),
+        };
+        let time = self.clock.tick() as f64 * f64::from(self.clock.dt_secs());
+        let raw = hud::raw_input(size_px, pixels_per_point, time);
+        let hud_lines = self.hud.clone();
+        let mut built = None;
+        let mut ui = Vec::new();
+        self.compat_call(ContextKind::Client, |vm, h| {
+            vm.run(h, |lua| {
+                let frame = re_compat::render::build(lua, &input)?;
+                let gui = re_compat::gui::GuiFrame {
+                    viewport: input.viewport / pixels_per_point,
+                    top_inset: 0.0,
+                    roots,
+                    camera: Some(frame.gui_camera),
+                    input: re_compat::gui::GuiInput::default(),
+                };
+                built = Some(frame);
+                for _ in 0..passes {
+                    let mut failed = None;
+                    let out = ctx.run_ui(raw.clone(), |ui| {
+                        match re_compat::gui::step(lua, ui.ctx(), &gui) {
+                            Ok(o) => {
+                                re_compat::gui::paint(ui.ctx(), o.shapes);
+                                hud::draw(ui.ctx(), &hud_lines);
+                            }
+                            Err(e) => failed = Some(e),
+                        }
+                    });
+                    if let Some(e) = failed {
+                        return Err(e);
+                    }
+                    ui.push(out);
+                }
+                Ok(())
+            })
+        });
+        if let Some(mut frame) = built {
+            self.diagnostics.append(&mut frame.diagnostics);
+            self.compat_view.take(frame);
+        }
+        for out in ui {
+            self.compat_view.set_ui(out);
+        }
+    }
+
     fn take_frame_screenshots(&mut self, f: u64) {
         let due: Vec<ScreenshotRequest> = self
             .screenshots
@@ -1326,8 +1427,17 @@ impl App {
             return;
         }
         let size = [self.config.render.width, self.config.render.height];
+        let compat = self.compat.is_some();
+        if compat {
+            self.compat_render(size, 1.0, 2);
+        }
         let gfx = self.graphics.as_mut().expect("checked");
-        let image = match gfx.capture(size, &self.snapshot, &self.hud) {
+        let captured = if compat {
+            gfx.capture_compat(size, &mut self.compat_view, &self.hud)
+        } else {
+            gfx.capture(size, &self.snapshot, &self.hud)
+        };
+        let image = match captured {
             Ok(i) => i,
             Err(d) => {
                 self.diagnostics.push(d);
@@ -1851,6 +1961,11 @@ impl App {
                 // The compat contexts start again on the next frame.
                 self.compat = None;
                 self.compat_failed = false;
+                // The new client VM numbers its meshes from the start.
+                match &mut self.graphics {
+                    Some(g) => self.compat_view.release_all(g.renderer_mut()),
+                    None => self.compat_view = Default::default(),
+                }
                 if self.compat_config.is_some() {
                     // A cursor the old scripts held or hid is let go.
                     self.mouse_behavior = Some((re_types::input::MouseLock::Free, true));

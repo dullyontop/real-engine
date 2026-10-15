@@ -68,3 +68,38 @@ fn the_shop_takes_coins_and_the_door_slides_up() {
     assert!((height - 14.0).abs() < 1e-3, "{height}");
     assert_eq!(r[8], json!([1]));
 }
+
+#[test]
+fn a_screenshot_draws_the_parts_and_the_coin_counter() {
+    let mut app = open();
+    app.run_headless(Some(90), None).unwrap();
+    let image = app.screenshot(None).unwrap();
+    assert!(image.stats([0; 4]).distinct_colors > 50);
+    // The counter's dark panel (top left) over the sky; the green ground
+    // below the horizon.
+    let [r, g, b, _] = image.pixel(24, 24);
+    assert!(r < 140 && g < 140 && b < 160, "panel {r} {g} {b}");
+    let [r, g, b, _] = image.pixel(40, 600);
+    assert!(g > r && g > b, "ground {r} {g} {b}");
+}
+
+#[test]
+fn a_restart_draws_the_plaza_again() {
+    let mut app = open();
+    app.run_headless(Some(30), None).unwrap();
+    let first = app.screenshot(None).unwrap();
+    app.restart();
+    app.run_headless(Some(30), None).unwrap();
+    let second = app.screenshot(None).unwrap();
+    assert_eq!(first.rgba, second.rgba);
+}
+
+#[test]
+fn a_play_copy_draws_with_the_lent_renderer_and_gives_it_back() {
+    let mut app = open();
+    app.run_headless(Some(30), None).unwrap();
+    let live = app.screenshot(None).unwrap();
+    let (_, _, image) = app.play_copy(30, None, &[], true).unwrap();
+    assert!(image.unwrap().stats([0; 4]).distinct_colors > 50);
+    assert_eq!(app.screenshot(None).unwrap().rgba, live.rgba);
+}

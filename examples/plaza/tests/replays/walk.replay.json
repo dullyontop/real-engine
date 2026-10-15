@@ -3,16 +3,62 @@
   "seed": 7,
   "frames": 900,
   "raw": [
-    { "frame": 60, "key": "KeyW", "down": true },
-    { "frame": 240, "key": "KeyD", "down": true },
-    { "frame": 300, "key": "Space", "down": true },
-    { "frame": 306, "key": "Space", "down": false },
-    { "frame": 360, "key": "KeyD", "down": false },
-    { "frame": 480, "key": "KeyW", "down": false },
-    { "frame": 500, "key": "KeyA", "down": true },
-    { "frame": 620, "key": "KeyA", "down": false },
-    { "frame": 640, "key": "KeyE", "down": true },
-    { "frame": 700, "key": "KeyE", "down": false },
-    { "mouse_move": [40.0, 0.0], "frame": 720 }
+    {
+      "frame": 60,
+      "key": "KeyW",
+      "down": true
+    },
+    {
+      "frame": 240,
+      "key": "KeyD",
+      "down": true
+    },
+    {
+      "frame": 300,
+      "key": "Space",
+      "down": true
+    },
+    {
+      "frame": 306,
+      "key": "Space",
+      "down": false
+    },
+    {
+      "frame": 360,
+      "key": "KeyD",
+      "down": false
+    },
+    {
+      "frame": 480,
+      "key": "KeyW",
+      "down": false
+    },
+    {
+      "frame": 500,
+      "key": "KeyA",
+      "down": true
+    },
+    {
+      "frame": 620,
+      "key": "KeyA",
+      "down": false
+    },
+    {
+      "frame": 640,
+      "key": "KeyE",
+      "down": true
+    },
+    {
+      "frame": 700,
+      "key": "KeyE",
+      "down": false
+    },
+    {
+      "mouse_move": [
+        40.0,
+        0.0
+      ],
+      "frame": 720
+    }
   ]
 }

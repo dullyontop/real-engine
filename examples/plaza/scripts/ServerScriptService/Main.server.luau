@@ -95,7 +95,7 @@ end)
 local angle = 0
 RunService.Heartbeat:Connect(function(dt)
 	angle = (angle + dt * math.pi / 2) % (math.pi * 2)
-	plaza.spinner.CFrame = CFrame.new(0, 1.5, 0) * CFrame.Angles(0, angle, 0)
+	plaza.spinner.CFrame = World.SPINNER * CFrame.Angles(0, angle, 0)
 end)
 
 -- Test hooks, for `play.run`'s `invoke` step.
@@ -126,6 +126,11 @@ hook("Buy", function(name, item)
 end)
 hook("CoinParts", function()
 	return Coins.count()
+end)
+hook("Position", function(name)
+	local character = player(name).Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	return if root then { root.Position.X, root.Position.Y, root.Position.Z } else (if character then "no root" else "no character")
 end)
 hook("DoorHeight", function()
 	return plaza.door.Position.Y
