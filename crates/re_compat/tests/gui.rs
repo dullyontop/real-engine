@@ -863,3 +863,57 @@ fn sequence_properties_store_lists_of_keypoints() {
         assert!(err.contains("SeqTarget.C"), "{bad}: {err}");
     }
 }
+
+#[test]
+fn root_scale_grid_aspect_and_focus_order() {
+    let mut u = ui();
+    u.run(
+        r#"
+        local sg = Instance.new("ScreenGui")
+        sg.Parent = S.pg
+        local sc = Instance.new("UIScale")
+        sc.Scale = 2
+        sc.Parent = sg
+        local f = Instance.new("Frame")
+        f.Size = UDim2.fromOffset(50, 40)
+        f.Parent = sg
+        local g = Instance.new("Frame")
+        g.Size = UDim2.fromOffset(300, 300)
+        g.Position = UDim2.fromOffset(0, 100)
+        g.Parent = sg
+        local grid = Instance.new("UIGridLayout")
+        grid.CellSize = UDim2.fromOffset(100, 100)
+        grid.Parent = g
+        local ar = Instance.new("UIAspectRatioConstraint")
+        ar.AspectRatio = 2
+        ar.Parent = grid
+        local cell = Instance.new("Frame")
+        cell.Parent = g
+        local a = Instance.new("TextBox")
+        a.Size = UDim2.fromOffset(10, 10)
+        a.Position = UDim2.fromOffset(0, 50)
+        a.Parent = sg
+        local b = a:Clone()
+        b.Position = UDim2.fromOffset(20, 50)
+        b.Parent = sg
+        S.f, S.cell, S.a, S.b = f, cell, a, b
+        "#,
+    );
+    u.frame();
+    // The ScreenGui's UIScale doubles everything under it.
+    assert_eq!(u.v2("S.f.AbsoluteSize"), "100,80");
+    // The grid's constraint makes each cell 2:1 within 100 x 100 (scaled).
+    assert_eq!(u.v2("S.cell.AbsoluteSize"), "200,100");
+    // A box's ReleaseFocus after another box asked for focus leaves it be.
+    u.run("S.a:CaptureFocus(); S.b:CaptureFocus(); S.a:ReleaseFocus()");
+    u.frame();
+    assert_eq!(
+        u.eval("print(S.a:IsFocused(), S.b:IsFocused())"),
+        ["false\ttrue"]
+    );
+    // A focused box that stops being drawn loses focus.
+    u.run("S.b.Visible = false");
+    let out = u.frame();
+    assert!(out.text_focus.is_none());
+    assert_eq!(u.eval("print(S.b:IsFocused())"), ["false"]);
+}

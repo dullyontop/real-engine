@@ -12,11 +12,9 @@ use egui::{Pos2, Rect};
 use glam::{Affine2, Vec2};
 
 use super::layout::{Item, Kind};
-use super::props::{Props, Rgba};
+use super::props::{Props, Rgba, Scope};
 use super::text;
-use crate::ClassRegistry;
-use crate::instance::tree;
-use re_scene::{Entity, World};
+use re_scene::Entity;
 
 /// What the input pass found that changes the look.
 #[derive(Clone, Copy, Debug, Default)]
@@ -28,20 +26,13 @@ pub(crate) struct Looks {
 }
 
 pub(crate) struct Painter<'a> {
-    pub w: &'a World,
-    pub classes: &'a ClassRegistry,
+    pub s: &'a Scope<'a>,
     pub screen: Rect,
     pub shapes: Vec<ClippedShape>,
 }
 
 fn pos(p: Vec2) -> Pos2 {
     Pos2::new(p.x, p.y)
-}
-
-fn child_of(w: &World, classes: &ClassRegistry, e: Entity, class: &str) -> Option<Entity> {
-    tree::children(w, e)
-        .into_iter()
-        .find(|&c| tree::is_a(w, classes, c, class))
 }
 
 /// The value of a sequence at `t` (keypoints sorted by time).
@@ -124,29 +115,23 @@ impl<'a> Painter<'a> {
     }
 
     fn props(&self, e: Entity) -> Props<'a> {
-        Props {
-            w: self.w,
-            classes: self.classes,
-            e,
-        }
+        self.s.props(e)
     }
 
     /// Paints one element.
     pub fn item(&mut self, it: &Item, looks: &Looks) {
-        let w = self.w;
-        let classes = self.classes;
+        let sc = self.s;
+        let decor = sc.decor(it.e);
         let p = self.props(it.e);
-        let corner = child_of(w, classes, it.e, "UICorner")
+        let corner = decor
+            .corner
             .map(|c| self.props(c).udim("CornerRadius"))
             .map_or(0.0, |u| {
                 (u.scale * it.size.x.min(it.size.y) + u.offset * it.scale).max(0.0)
             });
         let stroke_of = |mode: &str| {
-            tree::children(w, it.e).into_iter().find_map(|c| {
-                if !tree::is_a(w, classes, c, "UIStroke") {
-                    return None;
-                }
-                let s = Props { w, classes, e: c };
+            decor.strokes.iter().find_map(|&c| {
+                let s = sc.props(c);
                 if !s.bool("Enabled", true) {
                     return None;
                 }
@@ -169,7 +154,7 @@ impl<'a> Painter<'a> {
         let mut bg = p
             .color("BackgroundColor3", Rgba::WHITE)
             .with_transparency(p.f32("BackgroundTransparency", 0.0));
-        let is_button = tree::is_a(w, classes, it.e, "GuiButton");
+        let is_button = sc.is_a(it.e, "GuiButton");
         if is_button && p.bool("AutoButtonColor", true) {
             let k = if looks.pressed == Some(it.e) {
                 0.7
@@ -183,7 +168,8 @@ impl<'a> Painter<'a> {
         let angle = it.angle.to_radians();
         let center = it.rot.transform_point2(it.min + it.size * 0.5);
         let rect = Rect::from_center_size(pos(center), egui::vec2(it.size.x, it.size.y));
-        let gradient = child_of(w, classes, it.e, "UIGradient")
+        let gradient = decor
+            .gradient
             .filter(|&g| self.props(g).bool("Enabled", true));
         if bg.0[3] > 0.0 {
             match gradient {
@@ -335,7 +321,7 @@ impl<'a> Painter<'a> {
     }
 
     fn scroll_bar(&mut self, it: &Item, p: &Props, angle: f32) {
-        let canvas = p.vec2("AbsoluteCanvasSize", it.size);
+        let canvas = it.canvas.unwrap_or(it.size);
         let window = it.size;
         let at = p.vec2("CanvasPosition", Vec2::ZERO) * it.scale;
         let t = p.f32("ScrollBarThickness", 12.0) * it.scale;

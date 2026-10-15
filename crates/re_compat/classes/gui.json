@@ -368,7 +368,7 @@
           "storage": {
             "kind": "own"
           },
-          "default": 1e+30,
+          "default": 3.4028234663852886e+38,
           "status": "implemented",
           "doc": "Studs from the camera beyond which it is not drawn."
         },
@@ -1596,8 +1596,8 @@
             "kind": "own"
           },
           "default": -1,
-          "read_only": true,
-          "status": "implemented",
+          "status": "partial",
+          "note": "Typing always moves the cursor to the end, and the caret is drawn there; a script's write is kept until the next keystroke.",
           "doc": "Where the cursor is (1 is before the first character), -1 when not focused."
         }
       ],
@@ -2103,8 +2103,8 @@
             "kind": "own"
           },
           "default": [
-            1e+30,
-            1e+30
+            3.4028234663852886e+38,
+            3.4028234663852886e+38
           ],
           "status": "implemented",
           "doc": "The largest size in pixels."

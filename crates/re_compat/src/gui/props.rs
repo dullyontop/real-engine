@@ -1,12 +1,17 @@
 //! Typed reads and change-only writes of UI properties.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use glam::Vec2;
-use re_reflect::{RecordId, Value};
+use re_reflect::{ComponentKey, RecordId, Value};
 use re_scene::{Entity, World};
 
 use crate::ClassRegistry;
+use crate::class::{ClassMarker, Storage, own_component_name};
+use crate::data::Status;
 use crate::instance::tree;
-use crate::tween::set_own;
 
 /// A `UDim`: a fraction of a length plus pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -58,12 +63,216 @@ impl Rgba {
     }
 }
 
+/// A fast hasher for the per-frame caches (the keys are small numbers and
+/// short names; nothing here faces untrusted input that could collide them
+/// on purpose to any effect but a slower frame).
+#[derive(Default, Clone, Copy)]
+pub(crate) struct Fx(u64);
+
+impl std::hash::Hasher for Fx {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut b = [0u8; 8];
+            b[..chunk.len()].copy_from_slice(chunk);
+            self.write_u64(u64::from_le_bytes(b));
+        }
+    }
+
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+
+    fn write_usize(&mut self, n: usize) {
+        self.write_u64(n as u64);
+    }
+
+    fn write_u32(&mut self, n: u32) {
+        self.write_u64(n as u64);
+    }
+
+    fn write_u8(&mut self, n: u8) {
+        self.write_u64(n as u64);
+    }
+}
+
+pub(crate) type FxMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<Fx>>;
+
+/// Where an own field lives: its component and its index in it.
+pub(crate) type FieldAt = (ComponentKey, usize);
+
+/// One frame's view of the world, with the lookups the UI repeats for every
+/// element (where a class keeps a property, what it inherits from) cached.
+pub(crate) struct Scope<'a> {
+    pub w: &'a World,
+    pub classes: &'a ClassRegistry,
+    /// Class names to small numbers, so the caches below key on a number.
+    ids: RefCell<FxMap<String, usize>>,
+    ents: RefCell<FxMap<Entity, usize>>,
+    fields: RefCell<FxMap<(usize, usize), Option<FieldAt>>>,
+    isa: RefCell<FxMap<(usize, usize), bool>>,
+    decor: RefCell<FxMap<Entity, Rc<Decor>>>,
+}
+
+/// An element's children as the UI sees them: its `GuiObject` children in
+/// child order, and the first of each modifier.
+#[derive(Debug, Default)]
+pub(crate) struct Decor {
+    pub kids: Vec<Entity>,
+    pub layout: Option<Entity>,
+    pub padding: Option<Entity>,
+    pub scale: Option<Entity>,
+    pub size: Option<Entity>,
+    pub aspect: Option<Entity>,
+    pub corner: Option<Entity>,
+    pub gradient: Option<Entity>,
+    pub strokes: Vec<Entity>,
+}
+
+impl<'a> Scope<'a> {
+    pub fn new(w: &'a World, classes: &'a ClassRegistry) -> Scope<'a> {
+        Scope {
+            w,
+            classes,
+            ids: RefCell::default(),
+            ents: RefCell::default(),
+            fields: RefCell::default(),
+            isa: RefCell::default(),
+            decor: RefCell::default(),
+        }
+    }
+
+    /// The UI children of `e`, gathered once a frame.
+    pub fn decor(&self, e: Entity) -> Rc<Decor> {
+        if let Some(d) = self.decor.borrow().get(&e) {
+            return d.clone();
+        }
+        let mut d = Decor::default();
+        for c in tree::children(self.w, e) {
+            let first = |slot: &mut Option<Entity>| {
+                if slot.is_none() {
+                    *slot = Some(c);
+                }
+            };
+            if self.is_a(c, "GuiObject") {
+                d.kids.push(c);
+            } else if self.is_a(c, "UILayout") {
+                first(&mut d.layout);
+            } else if self.is_a(c, "UIPadding") {
+                first(&mut d.padding);
+            } else if self.is_a(c, "UIScale") {
+                first(&mut d.scale);
+            } else if self.is_a(c, "UISizeConstraint") {
+                first(&mut d.size);
+            } else if self.is_a(c, "UIAspectRatioConstraint") {
+                first(&mut d.aspect);
+            } else if self.is_a(c, "UICorner") {
+                first(&mut d.corner);
+            } else if self.is_a(c, "UIGradient") {
+                first(&mut d.gradient);
+            } else if self.is_a(c, "UIStroke") {
+                d.strokes.push(c);
+            }
+        }
+        let d = Rc::new(d);
+        self.decor.borrow_mut().insert(e, d.clone());
+        d
+    }
+
+    pub fn props(&'a self, e: Entity) -> Props<'a> {
+        let c = self.class_of(e);
+        Props { s: self, e, c }
+    }
+
+    /// The class of `e`, as a number and a name.
+    fn class_of(&self, e: Entity) -> Option<(usize, &'a str)> {
+        let c = self.class(e)?;
+        if let Some(&i) = self.ents.borrow().get(&e) {
+            return Some((i, c));
+        }
+        let i = self.class_id(c);
+        self.ents.borrow_mut().insert(e, i);
+        Some((i, c))
+    }
+
+    fn class(&self, e: Entity) -> Option<&'a str> {
+        self.w.ecs.get::<ClassMarker>(e).map(|m| m.class.as_str())
+    }
+
+    fn class_id(&self, class: &str) -> usize {
+        if let Some(&i) = self.ids.borrow().get(class) {
+            return i;
+        }
+        let mut ids = self.ids.borrow_mut();
+        let i = ids.len();
+        ids.insert(class.to_string(), i);
+        i
+    }
+
+    /// True if `e` is an instance of `class` or a subclass.
+    pub fn is_a(&self, e: Entity, class: &'static str) -> bool {
+        let Some((i, c)) = self.class_of(e) else {
+            return false;
+        };
+        let key = (i, class.as_ptr() as usize);
+        self.isa_with(key, c, class)
+    }
+
+    fn isa_with(&self, key: (usize, usize), c: &str, class: &'static str) -> bool {
+        if let Some(&b) = self.isa.borrow().get(&key) {
+            return b;
+        }
+        let b = self.classes.is_a(c, class);
+        self.isa.borrow_mut().insert(key, b);
+        b
+    }
+
+    /// Where `class` keeps own property `name`: its component and field,
+    /// `None` when it is not an implemented own property.
+    fn field(&self, cid: usize, class: &str, name: &'static str) -> Option<FieldAt> {
+        let key = (cid, name.as_ptr() as usize);
+        if let Some(&f) = self.fields.borrow().get(&key) {
+            return f;
+        }
+        let f = self.classes.ancestry(class).into_iter().find_map(|d| {
+            let p = d.properties.iter().find(|p| p.name == name)?;
+            if !matches!(p.storage, Storage::Own { .. })
+                || !matches!(p.status, Status::Implemented | Status::Partial)
+            {
+                return None;
+            }
+            let k = self.w.registry.try_key(&own_component_name(&d.name))?;
+            let i = self.w.registry.schema(k).field_index(name).ok()?;
+            Some((k, i))
+        });
+        self.fields.borrow_mut().insert(key, f);
+        f
+    }
+
+    /// Property `name` of `e`, whose class is `c` (number and name).
+    fn get(&self, e: Entity, c: (usize, &str), name: &'static str) -> Option<Value> {
+        match self.field(c.0, c.1, name) {
+            Some((k, i)) => self.w.registry.get_field(&self.w.ecs, e, k, i),
+            None => self.classes.get_property(self.w, e, name).ok(),
+        }
+    }
+
+    /// Where a write of own property `name` of `e` goes.
+    pub fn target(&self, e: Entity, name: &'static str) -> Option<FieldAt> {
+        let (i, c) = self.class_of(e)?;
+        self.field(i, c, name)
+    }
+}
+
 /// Reads of one instance's properties, with fallbacks for values of the
 /// wrong form (which the class layer does not let scripts write).
 pub(crate) struct Props<'a> {
-    pub w: &'a World,
-    pub classes: &'a ClassRegistry,
+    pub s: &'a Scope<'a>,
     pub e: Entity,
+    c: Option<(usize, &'a str)>,
 }
 
 fn num(v: &Value) -> Option<f64> {
@@ -82,18 +291,18 @@ fn fields(v: &Value, record: &str) -> Option<Vec<f64>> {
 }
 
 impl Props<'_> {
-    pub fn get(&self, name: &str) -> Option<Value> {
-        self.classes.get_property(self.w, self.e, name).ok()
+    pub fn get(&self, name: &'static str) -> Option<Value> {
+        self.s.get(self.e, self.c?, name)
     }
 
-    pub fn f32(&self, name: &str, or: f32) -> f32 {
+    pub fn f32(&self, name: &'static str, or: f32) -> f32 {
         self.get(name)
             .as_ref()
             .and_then(num)
             .map_or(or, |x| x as f32)
     }
 
-    pub fn int(&self, name: &str, or: i64) -> i64 {
+    pub fn int(&self, name: &'static str, or: i64) -> i64 {
         match self.get(name) {
             Some(Value::Int(i)) => i,
             Some(Value::Float(f)) => f as i64,
@@ -101,48 +310,48 @@ impl Props<'_> {
         }
     }
 
-    pub fn bool(&self, name: &str, or: bool) -> bool {
+    pub fn bool(&self, name: &'static str, or: bool) -> bool {
         match self.get(name) {
             Some(Value::Bool(b)) => b,
             _ => or,
         }
     }
 
-    pub fn string(&self, name: &str) -> String {
+    pub fn string(&self, name: &'static str) -> String {
         match self.get(name) {
             Some(Value::Str(s)) => s,
             _ => String::new(),
         }
     }
 
-    pub fn item(&self, name: &str, or: &str) -> String {
+    pub fn item(&self, name: &'static str, or: &str) -> String {
         match self.get(name) {
             Some(Value::Enum(s)) => s,
             _ => or.to_string(),
         }
     }
 
-    pub fn entity(&self, name: &str) -> Option<Entity> {
+    pub fn entity(&self, name: &'static str) -> Option<Entity> {
         match self.get(name) {
             Some(Value::Entity(e)) => e,
             _ => None,
         }
     }
 
-    pub fn vec2(&self, name: &str, or: Vec2) -> Vec2 {
+    pub fn vec2(&self, name: &'static str, or: Vec2) -> Vec2 {
         self.get(name)
             .and_then(|v| fields(&v, "Vector2"))
             .map_or(or, |f| Vec2::new(f[0] as f32, f[1] as f32))
     }
 
-    pub fn vec3(&self, name: &str) -> glam::Vec3 {
+    pub fn vec3(&self, name: &'static str) -> glam::Vec3 {
         match self.get(name) {
             Some(Value::Vec3(v)) => v,
             _ => glam::Vec3::ZERO,
         }
     }
 
-    pub fn udim(&self, name: &str) -> UDim {
+    pub fn udim(&self, name: &'static str) -> UDim {
         self.get(name)
             .and_then(|v| fields(&v, "UDim"))
             .map_or(UDim::default(), |f| UDim {
@@ -151,7 +360,7 @@ impl Props<'_> {
             })
     }
 
-    pub fn udim2(&self, name: &str) -> UDim2 {
+    pub fn udim2(&self, name: &'static str) -> UDim2 {
         self.get(name)
             .and_then(|v| fields(&v, "UDim2"))
             .map_or(UDim2::default(), |f| UDim2 {
@@ -166,7 +375,7 @@ impl Props<'_> {
             })
     }
 
-    pub fn color(&self, name: &str, or: Rgba) -> Rgba {
+    pub fn color(&self, name: &'static str, or: Rgba) -> Rgba {
         match self.get(name) {
             Some(Value::Color(c)) => Rgba([c.r, c.g, c.b, 1.0]),
             _ => or,
@@ -175,7 +384,7 @@ impl Props<'_> {
 
     /// A `NumberSequence` or `ColorSequence` as `(time, value)` keypoints,
     /// the value being the number, or the colour's channels.
-    pub fn sequence(&self, name: &str) -> Vec<(f32, [f32; 3])> {
+    pub fn sequence(&self, name: &'static str) -> Vec<(f32, [f32; 3])> {
         let Some(Value::List(ks)) = self.get(name) else {
             return Vec::new();
         };
@@ -220,26 +429,11 @@ pub(crate) fn vec2_value(v: Vec2) -> Value {
     Value::Record(id, vec![Value::Float(v.x as f64), Value::Float(v.y as f64)])
 }
 
-/// Writes own property `name` (read-only ones included) when its value
-/// changed, so Changed fires only for real changes. Returns whether it wrote.
-pub(crate) fn write(
-    w: &mut World,
-    classes: &ClassRegistry,
-    e: Entity,
-    name: &str,
-    v: Value,
-) -> bool {
-    if classes.get_property(w, e, name).ok().as_ref() == Some(&v) {
-        return false;
+/// Writes a resolved own field; an equal value changes nothing (the
+/// registry does not mark it changed), so Changed fires only for real
+/// changes.
+pub(crate) fn write(w: &mut World, e: Entity, at: (ComponentKey, usize), v: Value) {
+    if tree::alive(w, e) {
+        let _ = w.registry.set_field(&mut w.ecs, e, at.0, at.1, v);
     }
-    let Some(class) = tree::class(w, e).and_then(|c| {
-        classes
-            .ancestry(c)
-            .into_iter()
-            .find(|d| d.properties.iter().any(|p| p.name == name))
-            .map(|d| d.name.clone())
-    }) else {
-        return false;
-    };
-    set_own(w, e, &class, name, v).is_ok()
 }

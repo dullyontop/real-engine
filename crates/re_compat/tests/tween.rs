@@ -300,21 +300,22 @@ fn a_newer_tween_of_a_property_cancels_the_older() {
     p.run("assert(math.abs(workspace.TweenTarget.N + 5) < 1e-9)");
 }
 
-/// An infinite number written to an own field is held to the largest
-/// finite one; NaN is still refused, in numbers and in vectors.
+/// An infinite number written to an own field is stored (as the largest
+/// finite one) and reads back as infinity; NaN is still refused, in numbers
+/// and in vectors.
 #[test]
 fn own_fields_hold_infinity_and_refuse_nan() {
     let mut p = place();
     p.run(
         "S.t = Instance.new('TweenTarget', workspace) \
          S.t.N = math.huge S.t.V = Vector3.new(-math.huge, 1, 1) \
-         assert(S.t.N > 1e38 and S.t.V.X < -1e38 and S.t.V.Y == 1)",
+         assert(S.t.N == math.huge and S.t.V.X == -math.huge and S.t.V.Y == 1)",
     );
     let e = p.fails("S.t.V = Vector3.new(0/0, 1, 1)");
     assert!(e.contains("finite"), "{e}");
     let e = p.fails("S.t.N = 0/0");
     assert!(e.contains("finite"), "{e}");
-    p.run("assert(S.t.V.Y == 1 and S.t.N > 1e38)");
+    p.run("assert(S.t.V.Y == 1 and S.t.N == math.huge)");
 }
 
 #[test]

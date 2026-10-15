@@ -19,9 +19,8 @@ use glam::{Affine2, Quat, Vec2, Vec3};
 use re_reflect::Value;
 use re_scene::{Entity, GlobalTransform, World};
 
-use super::props::{Props, Rgba, UDim2, vec2_value};
+use super::props::{Props, Rgba, Scope, UDim2, vec2_value};
 use super::text::{self, Laid, TextStyle};
-use crate::ClassRegistry;
 use crate::instance::tree;
 
 /// The camera billboards are placed by.
@@ -89,6 +88,8 @@ pub(crate) struct Item {
     /// pixels).
     pub pad: [f32; 4],
     pub text: Option<(TextStyle, Laid, Vec2)>,
+    /// A scrolling frame's canvas size in screen pixels.
+    pub canvas: Option<Vec2>,
     /// Drawing order.
     pub key: (i64, u64),
     /// Whether it takes input.
@@ -121,8 +122,9 @@ pub(crate) struct Root {
     pub e: Entity,
     /// The screen point of the root's top-left corner.
     pub origin: Vec2,
-    /// The screen point that `AbsolutePosition` 0 is: below the top bar
-    /// inset for screen UI, the corner of a billboard.
+    /// The screen point that `AbsolutePosition` 0 is: the corner of GUI
+    /// space, below the top bar, for screen UI and billboards alike (so a
+    /// billboard's elements report where they are on the screen).
     pub abs_origin: Vec2,
     pub size: Vec2,
     pub global_z: bool,
@@ -133,8 +135,8 @@ pub(crate) struct Root {
 }
 
 pub(crate) struct Layout<'a> {
+    pub s: &'a Scope<'a>,
     pub w: &'a World,
-    pub classes: &'a ClassRegistry,
     pub ctx: &'a egui::Context,
     pub items: Vec<Item>,
     /// `(entity, property, value)` to write.
@@ -143,26 +145,15 @@ pub(crate) struct Layout<'a> {
 }
 
 fn props<'a>(l: &Layout<'a>, e: Entity) -> Props<'a> {
-    Props {
-        w: l.w,
-        classes: l.classes,
-        e,
-    }
+    l.s.props(e)
 }
 
-fn is_a(l: &Layout, e: Entity, class: &str) -> bool {
-    tree::is_a(l.w, l.classes, e, class)
-}
-
-/// The first child of `e` that is a `class`.
-fn child_of(l: &Layout, e: Entity, class: &str) -> Option<Entity> {
-    tree::children(l.w, e)
-        .into_iter()
-        .find(|&c| is_a(l, c, class))
+fn is_a(l: &Layout, e: Entity, class: &'static str) -> bool {
+    l.s.is_a(e, class)
 }
 
 fn padding(l: &Layout, e: Entity, size: Vec2) -> [f32; 4] {
-    match child_of(l, e, "UIPadding") {
+    match l.s.decor(e).padding {
         Some(p) => {
             let p = props(l, p);
             [
@@ -174,6 +165,28 @@ fn padding(l: &Layout, e: Entity, size: Vec2) -> [f32; 4] {
         }
         None => [0.0; 4],
     }
+}
+
+/// `size` fitted to the `UIAspectRatioConstraint` `c`.
+fn aspect(l: &Layout, c: Entity, mut size: Vec2) -> Vec2 {
+    let p = props(l, c);
+    let ar = p.f32("AspectRatio", 1.0);
+    if ar.is_finite() && ar > 0.0 {
+        match p.item("AspectType", "FitWithinMaxSize").as_str() {
+            "ScaleWithParentSize" => {
+                if p.item("DominantAxis", "Width") == "Height" {
+                    size.x = size.y * ar;
+                } else {
+                    size.y = size.x / ar;
+                }
+            }
+            _ => {
+                let w = size.x.min(size.y * ar);
+                size = Vec2::new(w, w / ar);
+            }
+        }
+    }
+    size
 }
 
 fn axes(item: &str) -> (bool, bool) {
@@ -209,15 +222,25 @@ struct Kid {
 }
 
 impl<'a> Layout<'a> {
-    pub fn new(w: &'a World, classes: &'a ClassRegistry, ctx: &'a egui::Context) -> Self {
+    pub fn new(s: &'a Scope<'a>, ctx: &'a egui::Context) -> Self {
         Layout {
-            w,
-            classes,
+            s,
+            w: s.w,
             ctx,
             items: Vec::new(),
             writes: Vec::new(),
             seq: 0,
         }
+    }
+
+    /// The factor of a `UIScale` under `e`, 1 without one.
+    fn ui_scale(&self, e: Entity) -> f32 {
+        self.s
+            .decor(e)
+            .scale
+            .map(|u| props(self, u).f32("Scale", 1.0))
+            .filter(|s| s.is_finite() && *s >= 0.0)
+            .unwrap_or(1.0)
     }
 
     fn write(&mut self, e: Entity, name: &'static str, v: Value) {
@@ -233,8 +256,9 @@ impl<'a> Layout<'a> {
         self.children(
             r.e,
             content,
+            // A UIScale under the root scales everything about its corner.
             Sc {
-                k: 1.0,
+                k: self.ui_scale(r.e),
                 o: r.origin,
             },
             Affine2::IDENTITY,
@@ -247,33 +271,16 @@ impl<'a> Layout<'a> {
     }
 
     /// The size of a child before `AutomaticSize`, after its constraints.
-    fn constrained(&self, e: Entity, mut size: Vec2) -> Vec2 {
-        for c in tree::children(self.w, e) {
-            if is_a(self, c, "UIAspectRatioConstraint") {
-                let p = props(self, c);
-                let ar = p.f32("AspectRatio", 1.0);
-                if ar.is_finite() && ar > 0.0 {
-                    match p.item("AspectType", "FitWithinMaxSize").as_str() {
-                        "ScaleWithParentSize" => {
-                            if p.item("DominantAxis", "Width") == "Height" {
-                                size.x = size.y * ar;
-                            } else {
-                                size.y = size.x / ar;
-                            }
-                        }
-                        _ => {
-                            let w = size.x.min(size.y * ar);
-                            size = Vec2::new(w, w / ar);
-                        }
-                    }
-                }
-            }
-        }
+    fn constrained(&self, e: Entity, size: Vec2) -> Vec2 {
+        let size = match self.s.decor(e).aspect {
+            Some(c) => aspect(self, c, size),
+            None => size,
+        };
         self.size_limits(e, size)
     }
 
     fn size_limits(&self, e: Entity, size: Vec2) -> Vec2 {
-        match child_of(self, e, "UISizeConstraint") {
+        match self.s.decor(e).size {
             Some(c) => {
                 let p = props(self, c);
                 let min = p.vec2("MinSize", Vec2::ZERO);
@@ -281,6 +288,16 @@ impl<'a> Layout<'a> {
                 size.max(min).min(max.max(min))
             }
             None => size,
+        }
+    }
+
+    /// A grid's cell size in `area`, fitted to a constraint parented to the
+    /// layout.
+    fn cell_size(&self, grid: Entity, area: Vec2) -> Vec2 {
+        let cell = props(self, grid).udim2("CellSize").of(area);
+        match self.s.decor(grid).aspect {
+            Some(c) => aspect(self, c, cell),
+            None => cell,
         }
     }
 
@@ -333,13 +350,13 @@ impl<'a> Layout<'a> {
         let by_name = p.item("SortOrder", "LayoutOrder") == "Name";
         let mut order: Vec<usize> = (0..kids.len()).filter(|&i| kids[i].visible).collect();
         if by_name {
-            order.sort_by_key(|&i| tree::name(self.w, kids[i].e));
+            order.sort_by_cached_key(|&i| tree::name(self.w, kids[i].e));
         } else {
-            order.sort_by_key(|&i| props(self, kids[i].e).int("LayoutOrder", 0));
+            order.sort_by_cached_key(|&i| props(self, kids[i].e).int("LayoutOrder", 0));
         }
         let mut at = vec![None; kids.len()];
         if is_a(self, layout, "UIGridLayout") {
-            let cell = p.udim2("CellSize").of(content);
+            let cell = self.cell_size(layout, content);
             let pad = p.udim2("CellPadding").of(content);
             let main_len = if horizontal { content.x } else { content.y };
             let (cm, pm) = if horizontal {
@@ -442,14 +459,9 @@ impl<'a> Layout<'a> {
     ) -> Vec2 {
         let (origin, area) = content;
         let mut kids: Vec<Kid> = Vec::new();
-        let mut layout = None;
-        for c in tree::children(self.w, parent) {
-            if layout.is_none() && is_a(self, c, "UILayout") {
-                layout = Some(c);
-            }
-            if !is_a(self, c, "GuiObject") {
-                continue;
-            }
+        let decor = self.s.decor(parent);
+        let layout = decor.layout;
+        for &c in &decor.kids {
             let p = props(self, c);
             let base = p.udim2("Size").of(area);
             kids.push(Kid {
@@ -461,7 +473,7 @@ impl<'a> Layout<'a> {
         // Grid cells replace sizes before constraints and AutomaticSize.
         let grid = layout.filter(|&l| is_a(self, l, "UIGridLayout"));
         if let Some(g) = grid {
-            let cell = props(self, g).udim2("CellSize").of(area);
+            let cell = self.cell_size(g, area);
             for k in &mut kids {
                 k.size = cell;
             }
@@ -494,7 +506,7 @@ impl<'a> Layout<'a> {
         // Drawing order among siblings.
         let mut idx: Vec<usize> = (0..kids.len()).collect();
         if !root.global_z {
-            idx.sort_by_key(|&i| props(self, kids[i].e).int("ZIndex", 1));
+            idx.sort_by_cached_key(|&i| props(self, kids[i].e).int("ZIndex", 1));
         }
         for i in idx {
             let k = &kids[i];
@@ -512,10 +524,7 @@ impl<'a> Layout<'a> {
                 continue;
             }
             // UIScale scales the element about its anchor point.
-            let s = child_of(self, k.e, "UIScale")
-                .map(|u| props(self, u).f32("Scale", 1.0))
-                .filter(|s| s.is_finite() && *s >= 0.0)
-                .unwrap_or(1.0);
+            let s = self.ui_scale(k.e);
             let sc_k = sc.scaled_about(s, pos + anchor * size);
             let min = sc_k.map(pos);
             let ssize = size * sc_k.k;
@@ -567,6 +576,7 @@ impl<'a> Layout<'a> {
             self.seq += 1;
             let z = if root.global_z { p.int("ZIndex", 1) } else { 0 };
             let interactable = visible && root.input && p.bool("Interactable", true);
+            let slot = visible.then_some(self.items.len());
             if visible {
                 self.items.push(Item {
                     e: k.e,
@@ -579,6 +589,7 @@ impl<'a> Layout<'a> {
                     scale: sc_k.k,
                     pad: spad,
                     text,
+                    canvas: None,
                     key: (z, self.seq),
                     interactable,
                 });
@@ -606,6 +617,9 @@ impl<'a> Layout<'a> {
                     self.write(k.e, "CanvasPosition", vec2_value(clamped));
                 }
                 self.write(k.e, "AbsoluteCanvasSize", vec2_value(canvas * sc_k.k));
+                if let Some(i) = slot {
+                    self.items[i].canvas = Some(canvas * sc_k.k);
+                }
                 self.write(k.e, "AbsoluteWindowSize", vec2_value(ssize));
                 let corigin = pos - clamped + Vec2::new(pad[0], pad[1]);
                 let carea = (canvas - Vec2::new(pad[0] + pad[2], pad[1] + pad[3])).max(Vec2::ZERO);
@@ -670,8 +684,9 @@ impl<'a> Layout<'a> {
 }
 
 /// The world position a billboard is drawn at, before its offsets.
-pub(crate) fn adornee_position(w: &World, classes: &ClassRegistry, bb: Entity) -> Option<Vec3> {
-    let p = Props { w, classes, e: bb };
+pub(crate) fn adornee_position(s: &Scope, bb: Entity) -> Option<Vec3> {
+    let w = s.w;
+    let p = s.props(bb);
     let at = p.entity("Adornee").or_else(|| tree::parent(w, bb))?;
     let pos = |e: Entity| {
         w.ecs
@@ -686,14 +701,13 @@ pub(crate) fn adornee_position(w: &World, classes: &ClassRegistry, bb: Entity) -
 
 /// A billboard's screen rectangle and depth.
 pub(crate) fn billboard_rect(
-    w: &World,
-    classes: &ClassRegistry,
+    s: &Scope,
     bb: Entity,
     cam: &GuiCamera,
     viewport: Vec2,
 ) -> Option<(Vec2, Vec2, f32)> {
-    let p = Props { w, classes, e: bb };
-    let base = adornee_position(w, classes, bb)?;
+    let p = s.props(bb);
+    let base = adornee_position(s, bb)?;
     let local = p.vec3("StudsOffset");
     let at = base + p.vec3("StudsOffsetWorldSpace") + cam.rotation * local;
     let (center, depth) = cam.project(at, viewport)?;

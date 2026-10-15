@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1183,
-    "partial": 37,
+    "implemented": 1182,
+    "partial": 38,
     "stub-error": 4,
     "missing": 3
   },
@@ -1163,7 +1163,8 @@
         {
           "name": "CursorPosition",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Typing always moves the cursor to the end, and the caret is drawn there; a script's write is kept until the next keystroke."
         },
         {
           "name": "FocusLost",

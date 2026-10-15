@@ -126,11 +126,11 @@ pub(crate) fn egui_family(family: &str, weight: &str) -> egui::FontFamily {
     egui::FontFamily::Name(Arc::from(format!("re.{sub}.{best}")))
 }
 
-/// Adds the substitutes to `ctx`'s fonts, keeping its own. They are usable
-/// from the next pass on, so call it before the first frame that draws UI.
-pub fn install(ctx: &egui::Context) {
+/// Adds the substitutes to `defs`: one family per substitute and weight,
+/// each falling back to `defs`' proportional fonts for missing glyphs. A
+/// host with fonts of its own adds them to its definitions with this.
+pub fn add_to(defs: &mut egui::FontDefinitions) {
     let t = table();
-    let mut defs = egui::FontDefinitions::default();
     let fallback = defs
         .families
         .get(&egui::FontFamily::Proportional)
@@ -152,6 +152,14 @@ pub fn install(ctx: &egui::Context) {
                 .insert(egui::FontFamily::Name(Arc::from(name)), chain);
         }
     }
+}
+
+/// Gives `ctx` egui's default fonts plus the substitutes. This replaces the
+/// context's fonts; a host with its own uses [`add_to`] on its definitions
+/// instead. The fonts are usable from the next pass on.
+pub fn install(ctx: &egui::Context) {
+    let mut defs = egui::FontDefinitions::default();
+    add_to(&mut defs);
     ctx.set_fonts(defs);
 }
 

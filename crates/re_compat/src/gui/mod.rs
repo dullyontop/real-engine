@@ -27,16 +27,23 @@ pub use layout::GuiCamera;
 use crate::class::Accessor;
 use crate::instance::tree;
 use crate::runtime::{Bindings, state, with_world};
-use crate::{ClassRegistry, CompatError, signal};
+use crate::{CompatError, signal};
 use layout::{Item, Kind, Layout, Root};
 use paint::{Looks, Painter};
-use props::{Props, vec2_value};
+use props::{Scope, vec2_value};
 
-/// Adds the bundled substitute fonts to `ctx` (ADR-0035). Call it once
-/// before the first frame that draws UI: text laid out before the fonts
-/// are in falls back to egui's own.
+/// Gives `ctx` egui's default fonts plus the bundled substitutes
+/// (ADR-0035), replacing its fonts. Call it once before the first frame that
+/// draws UI: text laid out before the fonts are in uses egui's own. A host
+/// with fonts of its own uses [`add_fonts`] instead.
 pub fn install_fonts(ctx: &egui::Context) {
     fonts::install(ctx);
+}
+
+/// Adds the bundled substitutes to a host's font definitions, keeping its
+/// fonts; pass the result to `egui::Context::set_fonts`.
+pub fn add_fonts(defs: &mut egui::FontDefinitions) {
+    fonts::add_to(defs);
 }
 
 /// Paints the shapes of a [`step`] on a background layer of `ctx`, under
@@ -117,7 +124,14 @@ struct Hub {
     /// Focus changes asked for by `CaptureFocus` and `ReleaseFocus` since the
     /// last frame: `Some(e)` to focus `e`, `None` to release.
     requests: Vec<Option<Entity>>,
+    /// The read-only values written last frame, so an unchanged one is not
+    /// written again.
+    written: props::FxMap<(Entity, usize), Value>,
 }
+
+/// The properties the step writes that scripts can write too; they are
+/// always written, the others only when they differ from last frame.
+const SCRIPT_WRITABLE: &[&str] = &["CanvasPosition", "Text", "CursorPosition"];
 
 fn hub_mut<R>(lua: &Lua, f: impl FnOnce(&mut Hub) -> R) -> R {
     if lua.app_data_ref::<Hub>().is_none() {
@@ -217,7 +231,10 @@ pub fn register(b: &mut Bindings) {
         "ReleaseFocus",
         Arc::new(|lua, e, _| {
             hub_mut(lua, |h| {
-                if h.focused == Some(e) || h.requests.last() == Some(&Some(e)) {
+                // Only the box that will have the focus once the pending
+                // requests apply can release it.
+                let will_have = h.requests.last().copied().unwrap_or(h.focused);
+                if will_have == Some(e) {
                     h.requests.push(None);
                 }
             });
@@ -237,98 +254,112 @@ pub fn register(b: &mut Bindings) {
     );
 }
 
-fn is_a(w: &World, classes: &ClassRegistry, e: Entity, class: &str) -> bool {
-    tree::is_a(w, classes, e, class)
+/// Every `BillboardGui` in the world, found through its own component so
+/// the step need not walk the containers (a container can be `Workspace`).
+fn billboards(w: &mut World) -> Vec<Entity> {
+    let Some(key) = w
+        .registry
+        .try_key(&crate::class::own_component_name("BillboardGui"))
+    else {
+        return Vec::new();
+    };
+    let id = w.registry.component_id(key);
+    let mut q = re_scene::ecs::query::QueryBuilder::<Entity>::new(&mut w.ecs)
+        .with_id(id)
+        .build();
+    q.iter(&w.ecs).collect()
 }
 
-/// The roots to draw, back to front.
-fn roots(w: &World, classes: &ClassRegistry, frame: &GuiFrame) -> Vec<Root> {
+/// The roots to draw, back to front: the enabled `ScreenGui` children of the
+/// containers (or a container that is one), and the enabled `BillboardGui`s
+/// inside them.
+fn roots(s: &Scope, frame: &GuiFrame, boards_in_world: &[Entity]) -> Vec<Root> {
+    let w = s.w;
     let mut screens: Vec<(i64, usize, Root)> = Vec::new();
     let mut boards: Vec<(f32, usize, Root)> = Vec::new();
     let viewport = egui::Rect::from_min_size(
         egui::Pos2::ZERO,
         egui::vec2(frame.viewport.x, frame.viewport.y),
     );
-    let enabled = |e: Entity| Props { w, classes, e }.bool("Enabled", true);
-    let global = |e: Entity| Props { w, classes, e }.item("ZIndexBehavior", "Sibling") == "Global";
+    let enabled = |e: Entity| s.props(e).bool("Enabled", true);
+    let global = |e: Entity| s.props(e).item("ZIndexBehavior", "Sibling") == "Global";
     let inset = Vec2::new(0.0, frame.top_inset);
-    let mut seen = Vec::new();
-    for &c in &frame.roots {
-        if !tree::alive(w, c) {
-            continue;
-        }
+    let mut seen = std::collections::HashSet::new();
+    let containers: Vec<Entity> = frame
+        .roots
+        .iter()
+        .copied()
+        .filter(|&c| tree::alive(w, c))
+        .collect();
+    for &c in &containers {
         let mut found = vec![c];
-        found.extend(tree::descendants(w, c));
+        found.extend(tree::children(w, c));
         for e in found {
-            if seen.contains(&e) {
+            if !s.is_a(e, "ScreenGui") || !enabled(e) || !seen.insert(e) {
                 continue;
             }
-            seen.push(e);
-            if is_a(w, classes, e, "ScreenGui") && enabled(e) {
-                // A ScreenGui inside another draws only as the outer's child
-                // would: not at all (as in the original, it must be a child of
-                // the container).
-                if e != c && tree::parent(w, e) != Some(c) {
-                    continue;
-                }
-                let p = Props { w, classes, e };
-                let origin = if p.bool("IgnoreGuiInset", false) {
-                    Vec2::ZERO
-                } else {
-                    inset
-                };
-                let n = screens.len();
-                screens.push((
-                    p.int("DisplayOrder", 0),
-                    n,
-                    Root {
-                        e,
-                        origin,
-                        abs_origin: inset,
-                        size: (frame.viewport - origin).max(Vec2::ZERO),
-                        global_z: global(e),
-                        clip: Some(viewport),
-                        input: true,
-                    },
-                ));
-            } else if is_a(w, classes, e, "BillboardGui") && enabled(e) {
-                // Inside a disabled ScreenGui it is not drawn.
-                let hidden = tree::ancestors(w, e)
-                    .into_iter()
-                    .any(|a| is_a(w, classes, a, "LayerCollector") && !enabled(a));
-                let Some(cam) = frame.camera.as_ref() else {
-                    continue;
-                };
-                if hidden {
-                    continue;
-                }
-                let Some((min, size, depth)) =
-                    layout::billboard_rect(w, classes, e, cam, frame.viewport)
-                else {
-                    continue;
-                };
-                let p = Props { w, classes, e };
-                let clip = if p.bool("ClipsDescendants", false) {
-                    egui::Rect::from_min_size(egui::pos2(min.x, min.y), egui::vec2(size.x, size.y))
-                        .intersect(viewport)
-                } else {
-                    viewport
-                };
-                let n = boards.len();
-                boards.push((
-                    depth,
-                    n,
-                    Root {
-                        e,
-                        origin: min,
-                        abs_origin: inset,
-                        size,
-                        global_z: global(e),
-                        clip: Some(clip),
-                        input: p.bool("Active", false),
-                    },
-                ));
+            let p = s.props(e);
+            let origin = if p.bool("IgnoreGuiInset", false) {
+                Vec2::ZERO
+            } else {
+                inset
+            };
+            let n = screens.len();
+            screens.push((
+                p.int("DisplayOrder", 0),
+                n,
+                Root {
+                    e,
+                    origin,
+                    abs_origin: inset,
+                    size: (frame.viewport - origin).max(Vec2::ZERO),
+                    global_z: global(e),
+                    clip: Some(viewport),
+                    input: true,
+                },
+            ));
+        }
+    }
+    if let Some(cam) = frame.camera.as_ref() {
+        for &e in boards_in_world {
+            if !tree::alive(w, e) || !enabled(e) || !seen.insert(e) {
+                continue;
             }
+            let ancestors = tree::ancestors(w, e);
+            if !containers.iter().any(|c| ancestors.contains(c)) {
+                continue;
+            }
+            // Inside a disabled ScreenGui it is not drawn.
+            if ancestors
+                .iter()
+                .any(|&a| s.is_a(a, "LayerCollector") && !enabled(a))
+            {
+                continue;
+            }
+            let Some((min, size, depth)) = layout::billboard_rect(s, e, cam, frame.viewport) else {
+                continue;
+            };
+            let p = s.props(e);
+            let clip = if p.bool("ClipsDescendants", false) {
+                egui::Rect::from_min_size(egui::pos2(min.x, min.y), egui::vec2(size.x, size.y))
+                    .intersect(viewport)
+            } else {
+                viewport
+            };
+            let n = boards.len();
+            boards.push((
+                depth,
+                n,
+                Root {
+                    e,
+                    origin: min,
+                    abs_origin: inset,
+                    size,
+                    global_z: global(e),
+                    clip: Some(clip),
+                    input: p.bool("Active", false),
+                },
+            ));
         }
     }
     // Billboards, far to near, under the screen UI.
@@ -351,24 +382,19 @@ fn contains(it: &Item, p: Vec2) -> bool {
 }
 
 /// Takes input: a button, a text box or an `Active` element.
-fn takes_input(w: &World, classes: &ClassRegistry, it: &Item) -> bool {
+fn takes_input(s: &Scope, it: &Item) -> bool {
     it.interactable
         && (it.kind == Kind::TextBox
-            || is_a(w, classes, it.e, "GuiButton")
-            || Props {
-                w,
-                classes,
-                e: it.e,
-            }
-            .bool("Active", false))
+            || s.is_a(it.e, "GuiButton")
+            || s.props(it.e).bool("Active", false))
 }
 
-/// The `GuiService` and its `SelectedObject`, when the service exists.
-fn gui_service(w: &World, classes: &ClassRegistry, game: Entity) -> Option<Entity> {
-    tree::children(w, game)
+/// The `GuiService`, when it exists and has `SelectedObject`.
+fn gui_service(s: &Scope, game: Entity) -> Option<Entity> {
+    tree::children(s.w, game)
         .into_iter()
-        .find(|&c| tree::class(w, c) == Some("GuiService"))
-        .filter(|&s| classes.get_property(w, s, "SelectedObject").is_ok())
+        .find(|&c| tree::class(s.w, c) == Some("GuiService"))
+        .filter(|&g| s.classes.get_property(s.w, g, "SelectedObject").is_ok())
 }
 
 /// Lays out, paints and takes the input of one UI frame. Call it from the
@@ -389,6 +415,7 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
                 held2: h.held2,
                 focused: h.focused,
                 requests: Vec::new(),
+                written: std::mem::take(&mut h.written),
             },
         )
     });
@@ -396,318 +423,328 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
     let mut events: Vec<(Entity, &'static str, Vec<Arg>)> = Vec::new();
     let out = with_world(lua, |w| {
         let classes = &*classes;
-        let mut lay = Layout::new(w, classes, ctx);
-        let roots = roots(w, classes, frame);
-        let mut items: Vec<Item> = Vec::new();
-        for r in &roots {
-            lay.root(r);
-            let mut mine = std::mem::take(&mut lay.items);
-            mine.sort_by_key(|it| it.key);
-            items.extend(mine);
-        }
-        let mut writes = std::mem::take(&mut lay.writes);
-        drop(lay);
+        let boards_in_world = billboards(w);
+        let mut resolved = Vec::new();
+        let mut selection = None;
+        let out = {
+            let scope = Scope::new(w, classes);
+            let s = &scope;
+            let w: &World = w;
+            let mut lay = Layout::new(s, ctx);
+            let roots = roots(s, frame, &boards_in_world);
+            let mut items: Vec<Item> = Vec::new();
+            for r in &roots {
+                lay.root(r);
+                let mut mine = std::mem::take(&mut lay.items);
+                mine.sort_by_key(|it| it.key);
+                items.extend(mine);
+            }
+            let mut writes = std::mem::take(&mut lay.writes);
+            drop(lay);
 
-        // Hover: every element under the pointer; the topmost takes input.
-        let under: Vec<usize> = match input.pointer {
-            Some(p) => (0..items.len())
-                .rev()
-                .filter(|&i| items[i].interactable && contains(&items[i], p))
-                .collect(),
-            None => Vec::new(),
-        };
-        let target = under
-            .iter()
-            .copied()
-            .find(|&i| takes_input(w, classes, &items[i]));
-        let pxy = |p: Option<Vec2>| {
-            let p = p.unwrap_or_default() - Vec2::new(0.0, frame.top_inset);
-            vec![Arg::Int(p.x.round() as i64), Arg::Int(p.y.round() as i64)]
-        };
-        let now: Vec<Entity> = under.iter().map(|&i| items[i].e).collect();
-        for &e in &hub.hovered {
-            if !now.contains(&e) && tree::alive(w, e) {
-                events.push((e, "MouseLeave", pxy(input.pointer)));
-            }
-        }
-        for &e in &now {
-            if hub.hovered.contains(&e) {
-                events.push((e, "MouseMoved", pxy(input.pointer)));
-            } else {
-                events.push((e, "MouseEnter", pxy(input.pointer)));
-            }
-        }
-        // MouseMoved only when the pointer moved is the original's rule; the
-        // host's pointer is per frame, so it fires each frame it is over.
-        hub.hovered = now;
-        let target_e = target.map(|i| items[i].e);
-        let is_button = |e: Entity| is_a(w, classes, e, "GuiButton");
-
-        // Buttons.
-        let down1 = input.button1 && !hub.held1;
-        let up1 = !input.button1 && hub.held1;
-        let down2 = input.button2 && !hub.held2;
-        let up2 = !input.button2 && hub.held2;
-        if down1 {
-            hub.pressed1 = target_e;
-            if let Some(e) = target_e
-                && is_button(e)
-            {
-                events.push((e, "MouseButton1Down", pxy(input.pointer)));
-            }
-        }
-        if up1 {
-            if let Some(e) = target_e
-                && is_button(e)
-            {
-                events.push((e, "MouseButton1Up", pxy(input.pointer)));
-                if hub.pressed1 == Some(e) {
-                    events.push((e, "MouseButton1Click", Vec::new()));
-                    events.push((e, "Activated", vec![Arg::Nil, Arg::Int(1)]));
-                }
-            }
-            hub.pressed1 = None;
-        }
-        if down2 {
-            hub.pressed2 = target_e;
-            if let Some(e) = target_e
-                && is_button(e)
-            {
-                events.push((e, "MouseButton2Down", pxy(input.pointer)));
-            }
-        }
-        if up2 {
-            if let Some(e) = target_e
-                && is_button(e)
-            {
-                events.push((e, "MouseButton2Up", pxy(input.pointer)));
-                if hub.pressed2 == Some(e) {
-                    events.push((e, "MouseButton2Click", Vec::new()));
-                }
-            }
-            hub.pressed2 = None;
-        }
-        hub.held1 = input.button1;
-        hub.held2 = input.button2;
-
-        // Text boxes: focus by click or CaptureFocus, typing, Enter.
-        let focus_to = |hub: &mut Hub,
-                        events: &mut Vec<(Entity, &'static str, Vec<Arg>)>,
-                        writes: &mut Vec<(Entity, &'static str, Value)>,
-                        next: Option<Entity>,
-                        enter: bool| {
-            if hub.focused == next {
-                return;
-            }
-            if let Some(old) = hub.focused.take()
-                && tree::alive(w, old)
-            {
-                writes.push((old, "CursorPosition", Value::Int(-1)));
-                events.push((old, "FocusLost", vec![Arg::Bool(enter), Arg::Nil]));
-            }
-            if let Some(e) = next {
-                let p = Props { w, classes, e };
-                let mut text = p.string("Text");
-                if p.bool("ClearTextOnFocus", true) && p.bool("TextEditable", true) {
-                    text.clear();
-                    writes.push((e, "Text", Value::Str(String::new())));
-                }
-                writes.push((
-                    e,
-                    "CursorPosition",
-                    Value::Int(text.chars().count() as i64 + 1),
-                ));
-                events.push((e, "Focused", Vec::new()));
-                hub.focused = Some(e);
-            }
-        };
-        for r in requests {
-            let r = r.filter(|&e| tree::alive(w, e));
-            focus_to(&mut hub, &mut events, &mut writes, r, false);
-        }
-        if down1 {
-            let next = target_e.filter(|&e| is_a(w, classes, e, "TextBox"));
-            focus_to(&mut hub, &mut events, &mut writes, next, false);
-        }
-        if let Some(e) = hub.focused {
-            if !tree::alive(w, e) || tree::is_destroyed(w, e) {
-                hub.focused = None;
-            } else {
-                let p = Props { w, classes, e };
-                let editable = p.bool("TextEditable", true);
-                let multi = p.bool("MultiLine", false);
-                let mut text = writes
-                    .iter()
+            // Hover: every element under the pointer; the topmost takes input.
+            let under: Vec<usize> = match input.pointer {
+                Some(p) => (0..items.len())
                     .rev()
-                    .find(|(x, n, _)| *x == e && *n == "Text")
-                    .and_then(|(_, _, v)| match v {
-                        Value::Str(s) => Some(s.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| p.string("Text"));
-                let before = text.clone();
-                if editable {
-                    for _ in 0..input.backspace {
-                        text.pop();
-                    }
-                    text.extend(input.text.chars().filter(|c| !c.is_control()));
-                    if input.enter && multi {
-                        text.push('\n');
+                    .filter(|&i| items[i].interactable && contains(&items[i], p))
+                    .collect(),
+                None => Vec::new(),
+            };
+            let target = under.iter().copied().find(|&i| takes_input(s, &items[i]));
+            let pxy = |p: Option<Vec2>| {
+                let p = p.unwrap_or_default() - Vec2::new(0.0, frame.top_inset);
+                vec![Arg::Int(p.x.round() as i64), Arg::Int(p.y.round() as i64)]
+            };
+            let now: Vec<Entity> = under.iter().map(|&i| items[i].e).collect();
+            for &e in &hub.hovered {
+                if !now.contains(&e) && tree::alive(w, e) {
+                    events.push((e, "MouseLeave", pxy(input.pointer)));
+                }
+            }
+            for &e in &now {
+                if hub.hovered.contains(&e) {
+                    events.push((e, "MouseMoved", pxy(input.pointer)));
+                } else {
+                    events.push((e, "MouseEnter", pxy(input.pointer)));
+                }
+            }
+            // MouseMoved only when the pointer moved is the original's rule; the
+            // host's pointer is per frame, so it fires each frame it is over.
+            hub.hovered = now;
+            let target_e = target.map(|i| items[i].e);
+            let is_button = |e: Entity| s.is_a(e, "GuiButton");
+
+            // Buttons.
+            let down1 = input.button1 && !hub.held1;
+            let up1 = !input.button1 && hub.held1;
+            let down2 = input.button2 && !hub.held2;
+            let up2 = !input.button2 && hub.held2;
+            if down1 {
+                hub.pressed1 = target_e;
+                if let Some(e) = target_e
+                    && is_button(e)
+                {
+                    events.push((e, "MouseButton1Down", pxy(input.pointer)));
+                }
+            }
+            if up1 {
+                if let Some(e) = target_e
+                    && is_button(e)
+                {
+                    events.push((e, "MouseButton1Up", pxy(input.pointer)));
+                    if hub.pressed1 == Some(e) {
+                        events.push((e, "MouseButton1Click", Vec::new()));
+                        events.push((e, "Activated", vec![Arg::Nil, Arg::Int(1)]));
                     }
                 }
-                if text != before {
-                    writes.push((e, "Text", Value::Str(text.clone())));
+                hub.pressed1 = None;
+            }
+            if down2 {
+                hub.pressed2 = target_e;
+                if let Some(e) = target_e
+                    && is_button(e)
+                {
+                    events.push((e, "MouseButton2Down", pxy(input.pointer)));
+                }
+            }
+            if up2 {
+                if let Some(e) = target_e
+                    && is_button(e)
+                {
+                    events.push((e, "MouseButton2Up", pxy(input.pointer)));
+                    if hub.pressed2 == Some(e) {
+                        events.push((e, "MouseButton2Click", Vec::new()));
+                    }
+                }
+                hub.pressed2 = None;
+            }
+            hub.held1 = input.button1;
+            hub.held2 = input.button2;
+
+            // Text boxes: focus by click or CaptureFocus, typing, Enter.
+            let focus_to = |hub: &mut Hub,
+                            events: &mut Vec<(Entity, &'static str, Vec<Arg>)>,
+                            writes: &mut Vec<(Entity, &'static str, Value)>,
+                            next: Option<Entity>,
+                            enter: bool| {
+                if hub.focused == next {
+                    return;
+                }
+                if let Some(old) = hub.focused.take()
+                    && tree::alive(w, old)
+                {
+                    writes.push((old, "CursorPosition", Value::Int(-1)));
+                    events.push((old, "FocusLost", vec![Arg::Bool(enter), Arg::Nil]));
+                }
+                if let Some(e) = next {
+                    let p = s.props(e);
+                    let mut text = p.string("Text");
+                    if p.bool("ClearTextOnFocus", true) && p.bool("TextEditable", true) {
+                        text.clear();
+                        writes.push((e, "Text", Value::Str(String::new())));
+                    }
                     writes.push((
                         e,
                         "CursorPosition",
                         Value::Int(text.chars().count() as i64 + 1),
                     ));
+                    events.push((e, "Focused", Vec::new()));
+                    hub.focused = Some(e);
                 }
-                if input.enter && !multi {
-                    focus_to(&mut hub, &mut events, &mut writes, None, true);
+            };
+            for r in requests {
+                let r = r.filter(|&e| tree::alive(w, e));
+                focus_to(&mut hub, &mut events, &mut writes, r, false);
+            }
+            if down1 {
+                let next = target_e.filter(|&e| s.is_a(e, "TextBox"));
+                focus_to(&mut hub, &mut events, &mut writes, next, false);
+            }
+            // A box that is gone or no longer drawn loses the focus.
+            if let Some(e) = hub.focused
+                && (!tree::alive(w, e)
+                    || tree::is_destroyed(w, e)
+                    || !items.iter().any(|it| it.e == e))
+            {
+                if tree::alive(w, e) && !tree::is_destroyed(w, e) {
+                    focus_to(&mut hub, &mut events, &mut writes, None, false);
+                } else {
+                    hub.focused = None;
                 }
             }
-        }
-
-        // The wheel scrolls the topmost scrolling frame under the pointer.
-        if input.scroll != Vec2::ZERO
-            && let Some(&i) = under.iter().find(|&&i| {
-                items[i].kind == Kind::Scrolling
-                    && Props {
-                        w,
-                        classes,
-                        e: items[i].e,
-                    }
-                    .bool("ScrollingEnabled", true)
-            })
-        {
-            let it = &items[i];
-            let p = Props {
-                w,
-                classes,
-                e: it.e,
-            };
-            let dir = p.item("ScrollingDirection", "XY");
-            let (ax, ay) = match dir.as_str() {
-                "X" => (true, false),
-                "Y" => (false, true),
-                _ => (true, true),
-            };
-            let at = written_vec2(&writes, it.e, "CanvasPosition")
-                .unwrap_or_else(|| p.vec2("CanvasPosition", Vec2::ZERO));
-            let canvas = written_vec2(&writes, it.e, "AbsoluteCanvasSize").unwrap_or(it.size)
-                / it.scale.max(1e-6);
-            let max = (canvas - it.size / it.scale.max(1e-6)).max(Vec2::ZERO);
-            let mut d = -input.scroll / it.scale.max(1e-6);
-            if !ax {
-                d.x = 0.0;
-            }
-            if !ay {
-                d.y = 0.0;
-            }
-            // A vertical wheel scrolls sideways in a frame that only scrolls
-            // sideways.
-            if ax && !ay && input.scroll.x == 0.0 {
-                d.x = -input.scroll.y / it.scale.max(1e-6);
-            }
-            let next = (at + d).clamp(Vec2::ZERO, max);
-            writes.push((it.e, "CanvasPosition", vec2_value(next)));
-        }
-
-        // Gamepad selection.
-        let service = gui_service(w, classes, game);
-        let mut selected =
-            service.and_then(|s| match classes.get_property(w, s, "SelectedObject") {
-                Ok(Value::Entity(e)) => e.filter(|&e| tree::alive(w, e)),
-                _ => None,
-            });
-        if let Some(dir) = input.select_move
-            && dir.length_squared() > 0.0
-            && let Some(s) = service
-        {
-            let selectable: Vec<&Item> = items
-                .iter()
-                .filter(|it| {
-                    it.interactable
-                        && Props {
-                            w,
-                            classes,
-                            e: it.e,
+            if let Some(e) = hub.focused {
+                {
+                    let p = s.props(e);
+                    let editable = p.bool("TextEditable", true);
+                    let multi = p.bool("MultiLine", false);
+                    let mut text = writes
+                        .iter()
+                        .rev()
+                        .find(|(x, n, _)| *x == e && *n == "Text")
+                        .and_then(|(_, _, v)| match v {
+                            Value::Str(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| p.string("Text"));
+                    let before = text.clone();
+                    if editable {
+                        for _ in 0..input.backspace {
+                            text.pop();
                         }
-                        .bool("Selectable", false)
+                        text.extend(input.text.chars().filter(|c| !c.is_control()));
+                        if input.enter && multi {
+                            text.push('\n');
+                        }
+                    }
+                    if text != before {
+                        writes.push((e, "Text", Value::Str(text.clone())));
+                        writes.push((
+                            e,
+                            "CursorPosition",
+                            Value::Int(text.chars().count() as i64 + 1),
+                        ));
+                    }
+                    if input.enter && !multi {
+                        focus_to(&mut hub, &mut events, &mut writes, None, true);
+                    }
+                }
+            }
+
+            // The wheel scrolls the topmost scrolling frame under the pointer.
+            if input.scroll != Vec2::ZERO
+                && let Some(&i) = under.iter().find(|&&i| {
+                    items[i].kind == Kind::Scrolling
+                        && s.props(items[i].e).bool("ScrollingEnabled", true)
                 })
-                .collect();
-            let from = selected
-                .and_then(|e| items.iter().find(|it| it.e == e))
-                .map(|it| it.rot.transform_point2(it.min + it.size * 0.5));
-            let next = match from {
-                Some(c) => selectable
+            {
+                let it = &items[i];
+                let p = s.props(it.e);
+                let dir = p.item("ScrollingDirection", "XY");
+                let (ax, ay) = match dir.as_str() {
+                    "X" => (true, false),
+                    "Y" => (false, true),
+                    _ => (true, true),
+                };
+                let at = written_vec2(&writes, it.e, "CanvasPosition")
+                    .unwrap_or_else(|| p.vec2("CanvasPosition", Vec2::ZERO));
+                let canvas = it.canvas.unwrap_or(it.size) / it.scale.max(1e-6);
+                let max = (canvas - it.size / it.scale.max(1e-6)).max(Vec2::ZERO);
+                let mut d = -input.scroll / it.scale.max(1e-6);
+                if !ax {
+                    d.x = 0.0;
+                }
+                if !ay {
+                    d.y = 0.0;
+                }
+                // A vertical wheel scrolls sideways in a frame that only scrolls
+                // sideways.
+                if ax && !ay && input.scroll.x == 0.0 {
+                    d.x = -input.scroll.y / it.scale.max(1e-6);
+                }
+                let next = (at + d).clamp(Vec2::ZERO, max);
+                writes.push((it.e, "CanvasPosition", vec2_value(next)));
+            }
+
+            // Gamepad selection.
+            let service = gui_service(s, game);
+            let mut selected =
+                service.and_then(|s| match classes.get_property(w, s, "SelectedObject") {
+                    Ok(Value::Entity(e)) => e.filter(|&e| tree::alive(w, e)),
+                    _ => None,
+                });
+            if let Some(dir) = input.select_move
+                && dir.length_squared() > 0.0
+                && let Some(g) = service
+            {
+                let selectable: Vec<&Item> = items
                     .iter()
-                    .filter(|it| it.e != selected.unwrap_or(Entity::PLACEHOLDER))
-                    .map(|it| (it.e, it.rot.transform_point2(it.min + it.size * 0.5) - c))
-                    .filter(|(_, d)| d.dot(dir) > 0.0)
-                    .min_by(|a, b| {
-                        let score = |d: Vec2| {
-                            let along = d.dot(dir.normalize());
-                            let side = (d - dir.normalize() * along).length();
-                            along + side * 2.0
-                        };
-                        score(a.1).total_cmp(&score(b.1))
-                    })
-                    .map(|x| x.0),
-                None => selectable.first().map(|it| it.e),
+                    .filter(|it| it.interactable && s.props(it.e).bool("Selectable", false))
+                    .collect();
+                let from = selected
+                    .and_then(|e| items.iter().find(|it| it.e == e))
+                    .map(|it| it.rot.transform_point2(it.min + it.size * 0.5));
+                let next = match from {
+                    Some(c) => selectable
+                        .iter()
+                        .filter(|it| it.e != selected.unwrap_or(Entity::PLACEHOLDER))
+                        .map(|it| (it.e, it.rot.transform_point2(it.min + it.size * 0.5) - c))
+                        .filter(|(_, d)| d.dot(dir) > 0.0)
+                        .min_by(|a, b| {
+                            let score = |d: Vec2| {
+                                let along = d.dot(dir.normalize());
+                                let side = (d - dir.normalize() * along).length();
+                                along + side * 2.0
+                            };
+                            score(a.1).total_cmp(&score(b.1))
+                        })
+                        .map(|x| x.0),
+                    None => selectable.first().map(|it| it.e),
+                };
+                if let Some(n) = next {
+                    selected = Some(n);
+                    selection = Some((g, n));
+                }
+            }
+            if input.select_activate
+                && let Some(e) = selected
+                && is_button(e)
+                && items.iter().any(|it| it.e == e && it.interactable)
+            {
+                events.push((e, "MouseButton1Click", Vec::new()));
+                events.push((e, "Activated", vec![Arg::Nil, Arg::Int(1)]));
+            }
+            // Paint.
+            let looks = Looks {
+                hovered: target_e,
+                pressed: hub.pressed1.filter(|_| input.button1),
+                selected,
+                focused: hub.focused,
             };
-            if let Some(n) = next {
-                selected = Some(n);
-                writes.push((s, "SelectedObject", Value::Entity(Some(n))));
+            let mut painter = Painter {
+                s,
+                screen: egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(frame.viewport.x, frame.viewport.y),
+                ),
+                shapes: Vec::new(),
+            };
+            for it in &items {
+                painter.item(it, &looks);
             }
-        }
-        if input.select_activate
-            && let Some(e) = selected
-            && is_button(e)
-        {
-            events.push((e, "MouseButton1Click", Vec::new()));
-            events.push((e, "Activated", vec![Arg::Nil, Arg::Int(1)]));
-        }
-
-        // Paint.
-        let looks = Looks {
-            hovered: target_e,
-            pressed: hub.pressed1.filter(|_| input.button1),
-            selected,
-            focused: hub.focused,
-        };
-        let mut painter = Painter {
-            w,
-            classes,
-            screen: egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(frame.viewport.x, frame.viewport.y),
-            ),
-            shapes: Vec::new(),
-        };
-        for it in &items {
-            painter.item(it, &looks);
-        }
-        let shapes = std::mem::take(&mut painter.shapes);
-        let out = GuiOutput {
-            shapes,
-            drawn: items.len(),
-            hovered: under.first().map(|&i| items[i].e),
-            sinks_pointer: target.is_some(),
-            text_focus: hub.focused,
-        };
-
-        // Write back, only what changed.
-        for (e, name, v) in writes {
-            if !tree::alive(w, e) {
-                continue;
+            let shapes = std::mem::take(&mut painter.shapes);
+            let out = GuiOutput {
+                shapes,
+                drawn: items.len(),
+                hovered: under.first().map(|&i| items[i].e),
+                sinks_pointer: target.is_some(),
+                text_focus: hub.focused,
+            };
+            // Where each write goes, while the scope can say.
+            let mut written = props::FxMap::default();
+            for (e, name, v) in writes {
+                if SCRIPT_WRITABLE.contains(&name) {
+                    if let Some(at) = s.target(e, name) {
+                        resolved.push((e, at, v));
+                    }
+                    continue;
+                }
+                let key = (e, name.as_ptr() as usize);
+                if hub.written.get(&key) != Some(&v)
+                    && let Some(at) = s.target(e, name)
+                {
+                    resolved.push((e, at, v.clone()));
+                }
+                written.insert(key, v);
             }
-            if name == "SelectedObject" {
-                let _ = classes.set_property(w, e, name, v);
-            } else {
-                props::write(w, classes, e, name, v);
-            }
+            hub.written = written;
+            out
+        };
+        // Write back; an equal value changes nothing.
+        for (e, at, v) in resolved {
+            props::write(w, e, at, v);
+        }
+        if let Some((g, n)) = selection {
+            let _ = classes.set_property(w, g, "SelectedObject", Value::Entity(Some(n)));
         }
         out
     })?;
