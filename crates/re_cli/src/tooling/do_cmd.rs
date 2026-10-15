@@ -5,7 +5,9 @@
 //! command goes through the editor's socket and the editor applies it.
 //! Otherwise `real do` takes the project lock for the command's duration
 //! (so a second headless writer gets `RE8003`), opens the project, applies the
-//! command and saves the scene when it changed.
+//! command and, unless it was a dry run, saves the scene when it changed. Since
+//! the save is the only lasting effect of a local `real do`, a failed save
+//! (`RE0518`) fails the command.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -33,11 +35,11 @@ pub struct DoArgs {
 }
 
 /// How `real do` reached the project.
-fn via(writer: &Writer) -> &'static str {
-    match writer {
+fn via(writer: &Writer) -> Option<&'static str> {
+    Some(match writer {
         Writer::Local(_) => "local",
         Writer::Remote(_) => "editor",
-    }
+    })
 }
 
 fn open(project: &Path) -> Result<App, Diagnostic> {
@@ -59,22 +61,29 @@ fn open(project: &Path) -> Result<App, Diagnostic> {
 /// Never; problems are diagnostics and the exit code (1 when the command
 /// failed, 2 when `--args` is not a JSON object).
 pub fn run(args: DoArgs, project: &Path) -> anyhow::Result<ExitCode> {
+    let usage = |message: String| {
+        let outcome = CommandOutcome::error(Diagnostic::error(
+            re_command::codes::INVALID_ARGUMENTS,
+            message,
+        ));
+        print(&outcome, args.json, None);
+        Ok(ExitCode::from(2))
+    };
     let parsed: serde_json::Value = match serde_json::from_str(&args.args) {
         Ok(v @ serde_json::Value::Object(_)) => v,
         Ok(_) => {
-            eprintln!("error: --args must be a JSON object, such as '{{\"id\": \"crate_1\"}}'");
-            return Ok(ExitCode::from(2));
+            return usage("--args must be a JSON object, such as '{\"id\": \"crate_1\"}'".into());
         }
-        Err(e) => {
-            eprintln!("error: --args is not valid JSON: {e}");
-            return Ok(ExitCode::from(2));
-        }
+        Err(e) => return usage(format!("--args is not valid JSON: {e}")),
     };
     let writer = match re_agent::open_writer(project, Holder::headless("real do")) {
         Ok(w) => w,
-        Err(d) => return Ok(crate::fail(d)),
+        Err(d) => {
+            print(&CommandOutcome::error(d), args.json, None);
+            return Ok(ExitCode::from(1));
+        }
     };
-    let outcome = match &writer {
+    let mut outcome = match &writer {
         Writer::Remote(handle) => handle.call(&args.command, parsed, args.dry_run),
         Writer::Local(_lock) => match open(project) {
             // The lock (`_lock`) is held until `writer` drops, after the save.
@@ -84,6 +93,14 @@ pub fn run(args: DoArgs, project: &Path) -> anyhow::Result<ExitCode> {
             Err(d) => CommandOutcome::error(d),
         },
     };
+    if matches!(writer, Writer::Local(_))
+        && outcome
+            .diagnostics
+            .iter()
+            .any(|d| d.code == re_app::codes::SCENE_SAVE_FAILED)
+    {
+        outcome.ok = false;
+    }
     print(&outcome, args.json, via(&writer));
     drop(writer);
     Ok(if outcome.ok {
@@ -93,7 +110,8 @@ pub fn run(args: DoArgs, project: &Path) -> anyhow::Result<ExitCode> {
     })
 }
 
-fn print(outcome: &CommandOutcome, json: bool, via: &str) {
+/// Prints the outcome; `via` is `None` when the project was never reached.
+fn print(outcome: &CommandOutcome, json: bool, via: Option<&str>) {
     if json {
         let mut value = serde_json::to_value(outcome).unwrap_or_default();
         value["via"] = serde_json::json!(via);
@@ -115,7 +133,7 @@ fn print(outcome: &CommandOutcome, json: bool, via: &str) {
             "ok: {} change{}{}",
             outcome.changes.len(),
             if outcome.changes.len() == 1 { "" } else { "s" },
-            if via == "editor" {
+            if via == Some("editor") {
                 " (applied by the editor)"
             } else {
                 ""
