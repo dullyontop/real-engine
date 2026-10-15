@@ -84,16 +84,16 @@ These are tools, like cmake. The crates.io-only rule covers code dependencies. C
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
 | bevy_ecs | 0.20.0 (released 2026-10-08; pin `=0.20.0`) | MIT OR Apache-2.0 | 1.95.0 | Entity storage, hierarchy (`ChildOf` / `Children`), hooks, change ticks and runtime-defined components, used standalone inside the model crates (`re_reflect`, `re_scene`, `re_command`) behind our own API (ADR-0005) | `default-features = false`, `std`, `multi_threaded`. Not `bevy_reflect` (ADR-0032), `async_executor`, `backtrace`, `debug` or `serialize`. | core spike: a 2,600-line prototype with 15 passing tests and a 100k-entity benchmark; five-crate comparison | Verified |
-| rayon | 1.12.0 | MIT OR Apache-2.0 | 1.80 | The one worker pool. Shared with Jolt through `oxijolt::JobSystem`. | default | WP0: `re_core::TaskPool` (`crates/re_core/tests/task.rs`: named `re-worker-N` threads, `spawn`, `scope`, the global pool). The rayon `JobSystem` adapter for Jolt is still unbuilt (a doctest in oxijolt's `src/job_system.rs`; WP2) | Verified (pool); Provisional (Jolt adapter) |
+| rayon | 1.12.0 | MIT OR Apache-2.0 | 1.80 | The one worker pool. Shared with Jolt through `oxijolt::JobSystem`. | default | WP0: `re_core::TaskPool` (`crates/re_core/tests/task.rs`: named `re-worker-N` threads, `spawn`, `scope`, the global pool). WP2: the rayon adapter for Jolt, `re_physics::jobs` (`crates/re_physics/tests/job_threads.rs`: only `re-worker-N` threads and the caller run Jolt jobs) | Verified |
 | serde | 1.0.229 | MIT OR Apache-2.0 | 1.56 | Serialization traits | `derive` | AI spike | Verified |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | 1.71 | Scene, prefab, graph and material files; command and log JSON; CLI JSON output | `preserve_order`, `float_roundtrip` | AI spike (default features); core spike (`float_roundtrip`: exact float parsing, byte-identical scene round trips); WP0 (`preserve_order`: graph parameters keep file order, test `graph` in `crates/re_types/tests/roundtrip.rs`) | Verified |
 | schemars | 1.2.3 | MIT | 1.74 | JSON Schema for MCP tool inputs and the statically typed file formats (materials, graphs, verify report, agent policy). Scene and prefab schemas come from the component registry instead (ADR-0016). | `derive` | AI spike (MCP tool schemas); WP0 `re_types` optional `schemars` feature (`GraphDoc`, `ReplayDoc`; `crates/re_types/tests/schema.rs`); WP5 `re_assets` optional `schemars` feature (`MaterialFile` and `AlphaModeName`, for `material.schema.json`; `crates/re_assets/tests/schema.rs`) | Verified |
 | toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 | 1.85 | `real.toml`, `.real/agent-policy.toml` | default | WP0: `cargo xtask dupes` reads `deny.toml` with it (test `reads_every_skip_form` in `tools/xtask/src/dupes.rs`) | Verified |
-| postcard | 1.1.3 | MIT OR Apache-2.0 | none | Binary cache blobs (processed meshes, EvalReport cache). Replaces bincode. | `use-std` | crates.io, lockfile resolve | Provisional (not yet built) |
+| postcard | 1.1.3 | MIT OR Apache-2.0 | none | Binary cache blobs (processed meshes, EvalReport cache). Replaces bincode. | `use-std` | WP4 and WP5: `re_proc`'s node cache and `re_assets`' processed cache round-trip through it (their crate tests) | Verified |
 | blake3 | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception | none | Asset cache keys, ProcGraph node keys, `state_hash` | default | platform spike (`assets.rs` cache key) | Verified |
-| uuid | 1.28.0 | Apache-2.0 OR MIT | 1.89 | Asset ids (`.meta.json`). Entity ids are short strings made by `re_scene::IdGen`, not uuids. | `v4`, `serde` | crates.io, lockfile resolve | Provisional (not yet built) |
+| uuid | 1.28.0 | Apache-2.0 OR MIT | 1.89 | Asset ids (`.meta.json`). Entity ids are short strings made by `re_scene::IdGen`, not uuids. | `v4`, `serde` | WP5: `re_assets` sidecar ids (`.meta.json`, its import tests) | Verified |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | 1.85 | Ordered maps in documents, commands and the registry (deterministic file output) | `serde` | core spike | Verified |
-| thiserror | 2.0.21 | MIT OR Apache-2.0 | 1.77 | Library error types | default | crates.io, lockfile resolve | Provisional (not yet built) |
+| thiserror | 2.0.21 | MIT OR Apache-2.0 | 1.77 | Library error types | default | WP0, WP4, WP5: `re_reflect`, `re_scene`, `re_command`, `re_geom`, `re_proc`, `re_assets` | Verified |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | 1.68 | Binaries only (`real`, tools) | default | WP0: `tools/xtask` (`cargo xtask check` and its unit tests) | Verified |
 
 ### Assets, input, audio, platform
@@ -115,7 +115,7 @@ These are tools, like cmake. The crates.io-only rule covers code dependencies. C
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| clap | 4.6.7 | MIT OR Apache-2.0 | 1.85 | `real` CLI | `derive` | crates.io, lockfile resolve | Provisional (not yet built) |
+| clap | 4.6.7 | MIT OR Apache-2.0 | 1.85 | `real` CLI | `derive` | WP6: `re_cli` (`crates/re_cli/tests/cli.rs`, including usage errors exiting 2) | Verified |
 | rmcp | 3.5.1 | Apache-2.0 | 1.88 | MCP server (stdio) | `server`, `transport-io`, `macros` | AI spike: 12 stdio tests over two protocol revisions; driven end to end by Claude Code | Verified |
 | tokio | 1.53.3 | MIT | 1.71 | Async runtime for `re_mcp` **only** | `macros`, `rt-multi-thread`, `io-std` | AI spike | Verified |
 
@@ -123,7 +123,7 @@ These are tools, like cmake. The crates.io-only rule covers code dependencies. C
 
 | Crate | Version | License | MSRV | Role | Status |
 |---|---|---|---|---|---|
-| insta | 1.49.0 | Apache-2.0 | 1.66 | Snapshot tests for JSON output, diagnostics and command specs (`json` feature) | Provisional (not yet built) |
+| insta | 1.49.0 | Apache-2.0 | 1.66 | Snapshot tests for JSON output, diagnostics and command specs (`json` feature) | Verified (WP3, WP7: snapshot tests in `re_script`, `re_script_check` and `re_agent`) |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | 1.63 | Temporary project directories in tests | Verified (WP0: the `tools/xtask` explain tests build fixture workspaces in temp dirs) |
 
 ## Known duplicate versions

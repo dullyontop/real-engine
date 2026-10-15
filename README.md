@@ -50,7 +50,9 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 | [docs/M2_PLAN.md](docs/M2_PLAN.md) | The second milestone, the Roblox-style compatibility layer, as work packages WP9–WP17 in the same shape |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records, plus open questions for the project owner |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Every dependency with its version, license, MSRV and verification status; system packages |
+| [docs/research/core.md](docs/research/core.md) | Findings from the entity-core spike (bevy_ecs, the component registry, scene files) |
 | [docs/research/rendering.md](docs/research/rendering.md) | Findings from the rendering spike |
+| [docs/research/scripting.md](docs/research/scripting.md) | Findings from the scripting spike (Luau through mlua, the scheduler, type checking) |
 
 ## Building the workspace
 
@@ -60,13 +62,14 @@ You need the current stable Rust toolchain (`rust-toolchain.toml` selects it; th
 export CARGO_BUILD_JOBS=2
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --locked --exclude re_render
-cargo test --locked -p re_render -- --test-threads=1   # needs lavapipe, see below
+cargo test --workspace --locked --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
+cargo test --locked -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1   # GPU crates; needs lavapipe, see below
 cargo xtask check        # crate-graph rules, duplicate versions, explain pages, schema drift
+cargo run --locked --release -p re_cli -- verify --project examples/island --json   # the demo's headless gate
 cargo deny check         # needs cargo-deny 0.20.2: cargo install cargo-deny --version 0.20.2 --locked
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same checks, plus a build with Rust 1.95.0 and builds on Windows and macOS (ADR-0023).
+CI (`.github/workflows/ci.yml`) runs the same checks, the demo's `real verify` (with assertions on its JSON) and a windowed smoke run under Xvfb, plus a build with Rust 1.95.0 and builds on Windows and macOS (ADR-0023). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
 
 ## Running the renderer tests
 
@@ -100,7 +103,7 @@ CI runs the GPU crates' tests separately from the rest of the workspace, with `-
 
 ## Contributing
 
-- Read [ARCHITECTURE.md](docs/ARCHITECTURE.md), then pick a work package in [M1_PLAN.md](docs/M1_PLAN.md). Each package lists the paths it owns, so parallel work does not collide. Some packages port code from the maintainers' private research spikes, which are not in this repository; ask the maintainer for access.
+- Read [ARCHITECTURE.md](docs/ARCHITECTURE.md), then pick a work package in [M2_PLAN.md](docs/M2_PLAN.md) (M1's packages, in [M1_PLAN.md](docs/M1_PLAN.md), are all merged). Each package lists the paths it owns, so parallel work does not collide. Some packages port code from the maintainers' private research spikes, which are not in this repository; ask the maintainer for access.
 - Dependencies come from crates.io only. Adding one needs an entry in [DECISIONS.md](docs/DECISIONS.md) and a row in [DEPENDENCIES.md](docs/DEPENDENCIES.md).
 - Tests must pass headless: software Vulkan, no audio device, and a virtual display only for the windowed smoke test.
 - Do not commit third-party game projects or their scripts. The script validation suite reads them from paths you provide (`REAL_SCENE_SCRIPTS`, or one or more `--scripts-dir`), and skips when none is given.

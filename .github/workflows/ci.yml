@@ -2,8 +2,8 @@
 #
 # Required for merge: fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke
 # (all on Ubuntu). build-windows and build-macos are reported only.
-# Jobs for crates that do not exist yet skip their steps, so CI is green from the
-# first PR. Action majors verified with `git ls-remote` on 2026-10-14:
+# The GPU test step still skips crates that do not exist, a leftover from the
+# first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
 
 name: CI
@@ -92,33 +92,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Is the demo project present?
-        id: guard
-        run: echo "present=$([ -f examples/island/real.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-      - if: steps.guard.outputs.present == 'true'
-        uses: ./.github/actions/linux-setup
+      - uses: ./.github/actions/linux-setup
       - name: Install luau-lsp 1.70.1
-        if: steps.guard.outputs.present == 'true'
         run: |
           curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
           echo "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567  /tmp/luau-lsp.zip" | sha256sum -c -
           sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
-      - if: steps.guard.outputs.present == 'true'
-        run: cargo run --locked --release -p re_cli -- verify --project examples/island --json
+      - name: real verify on the demo
+        run: |
+          mkdir -p out
+          cargo run --locked --release -p re_cli -- verify --project examples/island --json > out/verify.json
+      - name: Check the verify report (M1_PLAN, definition of done item 2)
+        # verify exits 0 when a stage is skipped, so the report itself is checked:
+        # every stage ran and passed, at least two replays (each run twice with the
+        # same state_hash, one of them regenerating the island), at least three
+        # goldens that match, and a PerfReport.
+        run: |
+          jq -e '
+            .ok == true
+            and ([.stages[].name] | contains(["schema", "compile", "scan", "boot", "replays", "goldens", "perf"]))
+            and all(.stages[]; .ok and ((.data | type) != "object" or (.data | has("skipped") | not)))
+            and ([.stages[] | select(.name == "replays") | .data.runs[]] as $r
+                 | ($r | length) >= 2 and all($r[]; .deterministic) and any($r[]; (.regenerations | length) > 0))
+            and ([.stages[] | select(.name == "goldens") | .data.checks[]] as $g
+                 | ($g | length) >= 3 and all($g[]; .matches))
+            and (.perf | type == "object")
+          ' out/verify.json
+          jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
+          jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic), regenerations=\(.regenerations | length)"' out/verify.json
+          jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
 
   xvfb-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Is the demo project present?
-        id: guard
-        run: echo "present=$([ -f examples/island/real.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-      - if: steps.guard.outputs.present == 'true'
-        uses: ./.github/actions/linux-setup
-      - if: steps.guard.outputs.present == 'true'
-        run: cargo build --locked --release -p re_cli
-      - if: steps.guard.outputs.present == 'true'
-        run: xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/island --frames 300 --exit-after
+      - uses: ./.github/actions/linux-setup
+      - run: cargo build --locked --release -p re_cli
+      - name: Windowed run under Xvfb (must print RUN OK)
+        run: |
+          mkdir -p out
+          xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/island --frames 300 --exit-after | tee out/run.log
+          grep -qx 'RUN OK' out/run.log
 
   build-windows:
     runs-on: windows-latest
@@ -129,6 +143,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --locked
       - name: Test (pure-Rust crates)
+        # Runs even when the workspace build failed, so WP0's scope is always reported.
+        if: success() || failure()
         shell: bash
         run: |
           pkgs=""
@@ -146,6 +162,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --locked
       - name: Test (pure-Rust crates)
+        # Runs even when the workspace build failed, so WP0's scope is always reported.
+        if: success() || failure()
         shell: bash
         run: |
           pkgs=""
