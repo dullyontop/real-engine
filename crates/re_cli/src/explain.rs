@@ -21,6 +21,15 @@ pub fn catalog() -> Vec<&'static DiagInfo> {
         crate::DIAGNOSTICS,
         re_input::DIAGNOSTICS,
         re_physics::DIAGNOSTICS,
+        re_render::DIAGNOSTICS,
+        re_assets::DIAGNOSTICS,
+        re_audio::DIAGNOSTICS,
+        re_anim::DIAGNOSTICS,
+        re_script::DIAGNOSTICS,
+        #[cfg(feature = "tooling")]
+        re_script_check::DIAGNOSTICS,
+        #[cfg(feature = "tooling")]
+        re_editor::DIAGNOSTICS,
     ];
     let mut all: Vec<&'static DiagInfo> = lists.iter().flat_map(|l| l.iter()).collect();
     all.sort_by_key(|d| d.code);

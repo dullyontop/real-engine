@@ -18,9 +18,8 @@ path = "src/main.rs"
 # ownership rule).
 [features]
 default = ["tooling"]
-tooling = ["dep:re_agent", "dep:re_mcp"]
+tooling = ["dep:re_editor", "dep:re_script_check", "dep:re_agent", "dep:re_mcp"]
 
-# Workspace crates without a `[workspace.dependencies]` entry yet are named by path.
 [dependencies]
 re_core.workspace = true
 re_types = { workspace = true, features = ["schemars"] }
@@ -30,11 +29,18 @@ re_command.workspace = true
 re_app.workspace = true
 re_input.workspace = true
 re_physics.workspace = true
+re_render.workspace = true
+re_assets = { workspace = true, features = ["schemars"] }
+re_audio.workspace = true
+re_anim.workspace = true
+re_script.workspace = true
+re_script_check = { workspace = true, optional = true }
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 anyhow.workspace = true
+re_editor = { workspace = true, optional = true }
 re_agent = { workspace = true, optional = true }
 re_mcp = { workspace = true, optional = true }
 

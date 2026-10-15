@@ -3,6 +3,7 @@
 //! physics, applies the results back. Sync uses typed bevy queries through
 //! `re_scene::World::ecs`, never by-name access.
 
+pub mod anim;
 pub mod audio;
 pub mod physics;
 pub mod render;

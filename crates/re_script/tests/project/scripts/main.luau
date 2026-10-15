@@ -1,0 +1,6 @@
+local util = require("./lib/util")
+local util2 = require("@game/lib/util")
+local util3 = require("@shared/util")
+local inv = require("@game/lib/inventory")
+assert(util == util2 and util2 == util3, "same module instance")
+print("double", util.double(21), inv.make("sword").name)

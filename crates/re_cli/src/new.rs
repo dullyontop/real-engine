@@ -16,19 +16,30 @@ const STARTER_SCENE: &str = r#"{
   "entities": [
     { "id": "box", "name": "Box", "components": {
         "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] },
+        "MaterialRef": { "asset": "materials/box.material.json" },
+        "MeshRef": { "asset": "builtin:cube" },
         "RigidBody": { "kind": "Dynamic", "mass": 10.0 },
-        "Transform": { "translation": [0.0, 4.0, 0.0] } } },
+        "Transform": { "translation": [0.0, 4.0, 0.0], "rotation": [0.2, 0.3, 0.1, 0.93] } } },
     { "id": "camera", "name": "Camera", "components": {
         "Camera": { "active": true },
         "Transform": { "translation": [0.0, 5.0, 12.0], "rotation": [-0.19509032, 0.0, 0.0, 0.98078528] } } },
     { "id": "ground", "name": "Ground", "components": {
-        "Collider": { "shape": "Box", "half_extents": [20.0, 0.5, 20.0] },
-        "Transform": { "translation": [0.0, -0.5, 0.0] } } },
+        "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] },
+        "MaterialRef": { "asset": "materials/ground.material.json" },
+        "MeshRef": { "asset": "builtin:cube" },
+        "Transform": { "translation": [0.0, -0.5, 0.0], "scale": [40.0, 1.0, 40.0] } } },
     { "id": "sun", "name": "Sun", "components": {
-        "Light": { "kind": "Directional", "intensity": 3.0, "shadows": true },
+        "Light": { "kind": "Directional", "intensity": 1.0, "shadows": true },
         "Transform": { "rotation": [-0.5, 0.3, 0.1, 0.8] } } }
   ]
 }"#;
+
+fn material(base_color: [f32; 4], roughness: f32) -> String {
+    let [r, g, b, a] = base_color;
+    format!(
+        "{{\n  \"$schema\": \"../schemas/material.schema.json\",\n  \"base_color\": [{r:?}, {g:?}, {b:?}, {a:?}],\n  \"roughness\": {roughness:?}\n}}\n"
+    )
+}
 
 const FOLDERS: &[&str] = &[
     "scenes",
@@ -90,6 +101,14 @@ pub fn create(dir: &Path, name: Option<&str>) -> Result<Vec<String>, Diagnostic>
             "{\n  \"languageMode\": \"strict\",\n  \"aliases\": {\n    \"shared\": \"scripts/shared\"\n  }\n}\n".to_string(),
         ),
         (".gitignore", ".real/*\n!.real/agent-policy.toml\nout/\n".to_string()),
+        (
+            "materials/box.material.json",
+            material([0.9, 0.45, 0.15, 1.0], 0.6),
+        ),
+        (
+            "materials/ground.material.json",
+            material([0.35, 0.5, 0.3, 1.0], 0.9),
+        ),
     ];
     let mut written = Vec::new();
     for (path, text) in files {
@@ -125,6 +144,10 @@ mod tests {
             other => panic!("{other:?}"),
         };
         assert!(y < 3.9 && y > 0.3, "box at y = {y}");
+        for m in ["box", "ground"] {
+            let path = format!("materials/{m}.material.json");
+            re_assets::load_material_in(&project, &path).unwrap();
+        }
     }
 
     #[test]

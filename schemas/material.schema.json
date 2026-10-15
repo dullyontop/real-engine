@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MaterialFile",
+  "description": "The JSON form of a material file.\n\nWith the `schemars` feature it derives `JsonSchema`, from which `real schema`\nwrites `schemas/material.schema.json`.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "An optional JSON Schema reference, ignored.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "base_color": {
+      "description": "Linear RGBA base colour.",
+      "type": "array",
+      "items": {
+        "type": "number",
+        "format": "float"
+      },
+      "minItems": 4,
+      "maxItems": 4,
+      "default": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "base_color_texture": {
+      "description": "Base colour texture path.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "metallic": {
+      "description": "Metalness in `[0, 1]`.",
+      "type": "number",
+      "format": "float",
+      "default": 0.0
+    },
+    "roughness": {
+      "description": "Perceptual roughness in `[0, 1]`.",
+      "type": "number",
+      "format": "float",
+      "default": 0.5
+    },
+    "metallic_roughness_texture": {
+      "description": "Metallic (blue) and roughness (green) texture path.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "normal_texture": {
+      "description": "Tangent-space normal map path.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "emissive": {
+      "description": "Linear RGB emissive colour.",
+      "type": "array",
+      "items": {
+        "type": "number",
+        "format": "float"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "default": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "emissive_strength": {
+      "description": "Multiplier for `emissive`.",
+      "type": "number",
+      "format": "float",
+      "default": 1.0
+    },
+    "alpha_mode": {
+      "description": "`opaque`, `mask` or `blend`.",
+      "$ref": "#/$defs/AlphaModeName",
+      "default": "opaque"
+    },
+    "alpha_cutoff": {
+      "description": "The alpha threshold of `mask` (0.5 when left out).",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "float",
+      "default": null
+    },
+    "double_sided": {
+      "description": "Draw back faces too.",
+      "type": "boolean",
+      "default": false
+    },
+    "unlit": {
+      "description": "Skip lighting.",
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "AlphaModeName": {
+      "description": "The alpha mode names of a material file.",
+      "oneOf": [
+        {
+          "description": "Alpha is ignored.",
+          "type": "string",
+          "const": "opaque"
+        },
+        {
+          "description": "Alpha below `alpha_cutoff` is discarded.",
+          "type": "string",
+          "const": "mask"
+        },
+        {
+          "description": "Alpha blending.",
+          "type": "string",
+          "const": "blend"
+        }
+      ]
+    }
+  }
+}

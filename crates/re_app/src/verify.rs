@@ -126,6 +126,9 @@ pub struct VerifyOptions {
     pub boot_frames: u64,
     /// Frames at the start of the boot run that are not measured.
     pub warmup_frames: u64,
+    /// Write missing or differing golden images from this run instead of
+    /// failing (`real verify --update-goldens`); the stage reports what it wrote.
+    pub update_goldens: bool,
 }
 
 impl Default for VerifyOptions {
@@ -133,6 +136,7 @@ impl Default for VerifyOptions {
         VerifyOptions {
             boot_frames: 120,
             warmup_frames: 10,
+            update_goldens: false,
         }
     }
 }
@@ -182,6 +186,25 @@ fn read(project: &Path, file: &str) -> Result<String, Diagnostic> {
 }
 
 /// Stage 1: every content file parses and loads.
+/// Every `scripts/**/*.luau` compiles (validation tier 1).
+fn stage_compile(project: &Path) -> StageReport {
+    let scripts = content_files(project, "scripts", ".luau");
+    let mut diags = Vec::new();
+    for file in &scripts {
+        match std::fs::read_to_string(project.join(file)) {
+            Ok(source) => diags.extend(re_script::compile_check(&source, file)),
+            Err(e) => diags.push(
+                Diagnostic::error(
+                    re_script::codes::SCRIPT_READ,
+                    format!("cannot read {file}: {e}"),
+                )
+                .at(Location::file(file)),
+            ),
+        }
+    }
+    StageReport::new("compile", diags, json!({ "scripts": scripts.len() }))
+}
+
 fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
     let mut diags = Vec::new();
     let mut counts = serde_json::Map::new();
@@ -320,10 +343,7 @@ fn stage_replays(project: &Path, config: &AppConfig) -> StageReport {
     let mut diags = Vec::new();
     let mut runs = Vec::new();
     for file in &files {
-        let doc = match read(project, file).and_then(|text| {
-            serde_json::from_str::<re_types::ReplayDoc>(&text)
-                .map_err(|e| invalid(file, format!("{file} is not a valid replay: {e}"), None))
-        }) {
+        let doc = match read_replay(project, file) {
             Ok(d) => d,
             Err(d) => {
                 diags.push(d);
@@ -371,6 +391,188 @@ fn stage_replays(project: &Path, config: &AppConfig) -> StageReport {
     StageReport::new("replays", diags, json!({ "runs": runs }))
 }
 
+fn read_replay(project: &Path, file: &str) -> Result<re_types::ReplayDoc, Diagnostic> {
+    read(project, file).and_then(|text| {
+        serde_json::from_str::<re_types::ReplayDoc>(&text)
+            .map_err(|e| invalid(file, format!("{file} is not a valid replay: {e}"), None))
+    })
+}
+
+/// Stage 6: every replay screenshot check against its golden image, in the
+/// golden set of the backend this run draws with (`{backend}` in the path).
+fn stage_goldens(project: &Path, config: &AppConfig, options: &VerifyOptions) -> StageReport {
+    let mut checked = Vec::new();
+    for file in content_files(project, "tests/replays", ".replay.json") {
+        // Unreadable replays are already reported by the schema stage.
+        if let Ok(doc) = read_replay(project, &file)
+            && doc.checks.iter().any(|c| c.screenshot.is_some())
+        {
+            checked.push((file, doc));
+        }
+    }
+    if checked.is_empty() {
+        return StageReport::skipped("goldens", "no replay has a screenshot check");
+    }
+    let tolerance = re_render::imgdiff::Tolerance {
+        max_channel_delta: config
+            .verify
+            .golden_mean_tolerance
+            .clamp(0.0, 255.0)
+            .round() as u8,
+        outlier_fraction: f64::from(config.verify.golden_max_outliers.clamp(0.0, 1.0)),
+    };
+    let mut diags = Vec::new();
+    let mut results = Vec::new();
+    let mut backend = "none";
+    for (file, doc) in checked {
+        let mut app = match App::open(project, headless_config(config)) {
+            Ok(a) => a,
+            Err(d) => {
+                diags.push(d);
+                continue;
+            }
+        };
+        if let Err(d) = app.ensure_graphics() {
+            diags.push(d);
+            break;
+        }
+        backend = app.graphics().map_or("none", |g| g.backend());
+        let wanted: Vec<(u64, String)> = doc
+            .checks
+            .iter()
+            .filter_map(|c| c.screenshot.clone().map(|s| (c.frame, s)))
+            .collect();
+        match app.run_headless(None, Some(doc)) {
+            Ok(run) => diags.extend(run.diagnostics.into_iter().filter(Diagnostic::is_error)),
+            Err(d) => {
+                diags.push(d);
+                continue;
+            }
+        }
+        let captures = app.take_captures();
+        for (frame, golden) in &wanted {
+            let taken = captures
+                .iter()
+                .any(|(r, _)| r.frame == *frame && r.golden.as_ref() == Some(golden));
+            if !taken {
+                diags.push(
+                    Diagnostic::error(
+                        codes::SCREENSHOT_FAILED,
+                        format!("{file}: the screenshot check at frame {frame} was not taken"),
+                    )
+                    .at(Location::file(file.clone()))
+                    .with_hint(
+                        "a check's frame must be below the replay's `frames` (frames count from 0)",
+                    ),
+                );
+            }
+        }
+        for (request, image) in captures {
+            let Some(golden) = request.golden else {
+                continue;
+            };
+            let golden = match crate::commands::project_path(
+                &golden.replace("{backend}", backend),
+                "the golden image",
+                codes::CONTENT_INVALID,
+            ) {
+                Ok(g) => g,
+                Err(d) => {
+                    diags.push(d.at(Location::file(file.clone())));
+                    continue;
+                }
+            };
+            let out = project.join(".real/out/goldens").join(&golden);
+            let path = project.join(&golden);
+            let at = Location::file(golden.clone());
+            let mut result = json!({ "replay": file, "frame": request.frame, "golden": golden });
+            let expected = path.is_file().then(|| re_render::Image::load_png(&path));
+            match expected {
+                None | Some(Err(_)) if options.update_goldens => {
+                    match crate::gfx::save_png(&image, &path) {
+                        Ok(()) => result["written"] = json!(true),
+                        Err(d) => diags.push(d),
+                    }
+                }
+                None => {
+                    let _ = crate::gfx::save_png(&image, &out);
+                    diags.push(
+                        Diagnostic::error(
+                            codes::GOLDEN_MISSING,
+                            format!("{file}: there is no golden image {golden} for frame {}", request.frame),
+                        )
+                        .at(at)
+                        .with_hint(format!(
+                            "this run's image is in .real/out/goldens/{golden}; review it and copy it there, or run `real verify --update-goldens`"
+                        )),
+                    );
+                    result["missing"] = json!(true);
+                }
+                Some(Err(e)) => diags.push(invalid(
+                    &golden,
+                    format!("{golden} cannot be read"),
+                    Some(e),
+                )),
+                Some(Ok(expected)) => {
+                    match re_render::imgdiff::compare(&expected, &image, tolerance) {
+                        Ok(diff) => {
+                            result["summary"] = json!(diff.summary());
+                            result["matches"] = json!(diff.matches());
+                            if !diff.matches() {
+                                if options.update_goldens {
+                                    match crate::gfx::save_png(&image, &path) {
+                                        Ok(()) => result["written"] = json!(true),
+                                        Err(d) => diags.push(d),
+                                    }
+                                    results.push(result);
+                                    continue;
+                                }
+                                let _ = crate::gfx::save_png(&image, &out);
+                                if let Ok(d) =
+                                    re_render::imgdiff::diff_image(&expected, &image, tolerance)
+                                {
+                                    let _ =
+                                        crate::gfx::save_png(&d, &out.with_extension("diff.png"));
+                                }
+                                diags.push(
+                                    Diagnostic::error(
+                                        codes::GOLDEN_MISMATCH,
+                                        format!("{file}: frame {} differs from {golden}: {}", request.frame, diff.summary()),
+                                    )
+                                    .at(at)
+                                    .with_hint("this run's image and a diff picture are in .real/out/goldens/; if the change is intended, run `real verify --update-goldens`".to_string()),
+                                );
+                            }
+                        }
+                        Err(d) => diags.push(
+                            Diagnostic::error(
+                                codes::GOLDEN_MISMATCH,
+                                format!(
+                                    "{file}: frame {} cannot be compared with {golden}",
+                                    request.frame
+                                ),
+                            )
+                            .at(at)
+                            .with_related(d),
+                        ),
+                    }
+                }
+            }
+            results.push(result);
+        }
+        diags.extend(
+            app.take_diagnostics()
+                .into_iter()
+                .filter(Diagnostic::is_error),
+        );
+    }
+    StageReport::new(
+        "goldens",
+        diags,
+        json!({ "backend": backend, "checks": results }),
+    )
+}
+
 /// Stage 7: the perf budget.
 fn stage_perf(perf: &PerfReport, config: &AppConfig) -> StageReport {
     let mut diags = Vec::new();
@@ -414,10 +616,7 @@ pub fn run_project(
     let ctx = VerifyContext { project, config };
     let mut stages = Vec::new();
     stages.push(timed(|| stage_schema(project, config)));
-    stages.push(StageReport::skipped(
-        "compile",
-        "script compilation joins verify when scripting is integrated into the runtime",
-    ));
+    stages.push(timed(|| stage_compile(project)));
     for stage in extra {
         stages.push(timed(|| stage.run(&ctx)));
     }
@@ -468,10 +667,7 @@ pub fn run_project(
 
     if booted {
         stages.push(timed(|| stage_replays(project, config)));
-        stages.push(StageReport::skipped(
-            "goldens",
-            "golden screenshots need the renderer, which joins verify when it is integrated into the runtime",
-        ));
+        stages.push(timed(|| stage_goldens(project, config, options)));
     } else {
         stages.push(StageReport::skipped("replays", "the project did not boot"));
         stages.push(StageReport::skipped("goldens", "the project did not boot"));

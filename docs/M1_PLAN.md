@@ -65,7 +65,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | `Physics` (`new`, `config`, `apply`, `step`, `poses_into`, `velocity`, `pose`, `is_awake`, `character`, `events`, `take_diagnostics`, `body_count`, `character_count`, `jobs_queued`, `save_state` / `restore_state`, `motion_state` / `apply_motion_state`, queries `raycast` / `shape_cast` / `overlap_sphere`), `PhysicsConfig`, `LayerTable`, `QueryFilter`, `PhysicsSnapshot`, `MotionState`, `DIAGNOSTICS`, `codes` | `crates/re_physics/src/` | WP2 | WP2 exit | WP6 |
 | `ProcGraph`, `NodeRegistry`, `Evaluator`, `EvalReport`, `GraphStore`, `register_generator`, `register_commands` | `crates/re_proc/src/` | WP4 | WP4 exit | WP6 |
 | `AssetServer`, `load_material`, `AssetWatcher`, `RawInput`, `ActionMap`, `InputConfig`, `Replay`, `Audio`, `Sampler`, `Tween` | WP5 crates | WP5 | WP5 exit | WP6 |
-| `App::open`, `App::serve(EngineReceiver)`, `AppConfig`, `verify::{run, VerifyStage}` | `crates/re_app/src/` | WP6 | WP6 milestone "app" | WP7, WP8 |
+| `App::open`, `App::serve(EngineReceiver, &dyn PolicyCheck)`, `AppConfig`, `verify::{run, VerifyStage}` | `crates/re_app/src/` | WP6 | WP6 milestone "app" | WP7, WP8 |
 | `ScriptRuntime` (construction with a `HostServices`, the `game` and `tools` contexts, the per-phase entry point, `reload`), with signatures in rustdoc | `crates/re_script/src/` | WP3 | WP3 exit | WP6 |
 | `ReplayRecorder` | `crates/re_input/src/` | WP5 | WP5 exit | WP6 |
 | Tooling stubs: `McpArgs`, `AgentArgs`, `EditorArgs` and `run(args, project) -> anyhow::Result<ExitCode>` | `crates/re_cli/src/tooling/{mcp,agent,editor}.rs` | WP6 | WP6 milestone "app" | WP7, WP8 (fill them in) |
@@ -270,7 +270,7 @@ All paths are in the private research folder `/mnt/project-files/real-engine/res
      | Component | Fields (type = default) | Reviewed by |
      |---|---|---|
      | `Transform` (requires `GlobalTransform`) | `translation: vec3 = 0`, `rotation: quat = identity`, `scale: vec3 = 1` | all |
-     | `MeshRef` | `asset: string = ""` (an asset path, or `derived:<hash>`) | WP6 |
+     | `MeshRef` | `asset: string = ""` (an asset path, `builtin:cube`, `builtin:sphere`, `builtin:plane`, `builtin:capsule`, or `derived:<hash>`) | WP6 |
      | `MaterialRef` | `asset: string = ""` (a `materials/*.material.json` path) | WP6 |
      | `Visible` | `visible: bool = true` | WP6 |
      | `Camera` | `fov_y_deg: f32 = 60`, `near: f32 = 0.1`, `far: f32 = 1000`, `active: bool = false` | WP6 |
@@ -707,7 +707,7 @@ Required tests:
    - `EvalReport`.
    - **The `graph` generator** (`register_generator(&mut Generators)`): its parameter component is `GraphSource`; it reads the graph document from the `GraphStore` resource (a map from source id to `GraphDoc`, filled by `re_app` from the `graph` file or the builder script; `GraphStore` derives `Clone` so a world copy can carry it) through `GenContext::resource`, applies the source's `GraphSource.params` overrides on top of the document's node parameters (an override naming an unknown node or parameter is `RE4011`, and the node keeps its document value), folds the document's canonical hash into the fingerprint through `fingerprint_extra` (the overrides are already in the fingerprint, because `GraphSource` is the parameter component), evaluates it with the source's `Procedural.seed`, and returns a `SceneFragment` whose StableKeys are `<node_id>/<local_key>`.
    - Commands (`register_commands`): `graph.set_param` (edit: `{ source, node, param, value }`; validates the value against the node kind's parameter schema, then issues one ordinary `set_field` `Op` on the source's `GraphSource.params`, so it is undoable with the frozen `Op` set, is saved in the scene file, and works the same for builder graphs and graph files; it never rewrites the builder script or the `graphs/*.graph.json` file, and the regeneration follows in EndFrame as for any parameter change), `graph.regenerate` (edit: `{ source, seed? }`; sets `Procedural.seed` and calls `World::regenerate_changed`, returning the `RegenReport` and the orphan warning `RE4010`), `graph.generate` (read: runs on `World::fork()`, with the `GraphStore` cloned into the copy, and returns a report; budgeted) and `graph.report` (read).
-   - Codes RE4000–4999.
+   - Codes RE4000–4499 (`re_proc`) and RE4500–4599 (`re_geom`).
 3. **`crates/re_proc/examples/island.graph.json`** (WP4 owns it): a committed graph file for `eval_island`, built from the M1 node set and shaped like the demo island. `re_proc` cannot run Luau, so the example never reads WP6's builder script; WP6 may later check that the builder's output and this file evaluate alike, but nothing depends on it.
 
 **Interfaces this WP freezes:** `ProcGraph`, `NodeRegistry`, `Evaluator`, `EvalReport`, `GraphStore`, `register_generator`, `register_commands` (at WP4 exit; consumed by WP6).
@@ -860,13 +860,13 @@ Required tests:
 
 Everything WP6 builds before the CLI and the demo (the milestone PR plus those integration PRs):
 - `re_app::App::open(project, AppConfig)`, `AppConfig` from `real.toml`, and the phase loop of ADR-0009. `App` implements `re_command::EditTarget`.
-- `App::serve(EngineReceiver)`: a headless loop on the current thread that answers `EngineRequest`s between frames.
+- `App::serve(EngineReceiver, &dyn PolicyCheck)`: a headless loop on the current thread that answers `EngineRequest`s, checking each against the policy it is given. It is edit mode: nothing simulates, so the scene being edited is the scene on disk (running the game is `play.run` or `real run`).
 - `sync::physics::{push, pull}` (`RigidBody`, `Collider`, `CharacterController` → `PhysicsCmd`; poses → `Transform`), `sync::render::build` (`Transform`/`GlobalTransform`, `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light` → `RenderSnapshot`), `sync::audio::build` and `GlobalTransform` interpolation. Sync uses typed bevy queries through `re_scene::World::ecs`, not by-name access. The component-to-`BodyDesc` / `CharacterDesc` mapping rules are the notes under WP0's built-in component table. Queries apply a character's `groups` to its inner body, so `HostServices::raycast` with a mask that excludes the player's groups skips the player.
 - `World::propagate()` runs in the Sync phase; `World::regenerate_changed()` runs in EndFrame after commands.
 - `run_windowed` and `run_headless(frames, replay)`.
 - `HostServices` implementation. A game script's `destroy()` of a generated entity calls `World::despawn_runtime`, which suppresses its key.
 - Commands registered by `re_app`:
-  - `play.run`: step a copy of the World for N frames, then return a report and a screenshot (`read` tier, budgeted). The copy is `World::fork()` with `GraphStore` cloned in; physics is a fresh `Physics` built from the copy by `sync::physics::push` (same body order), then `apply_motion_state` with the live world's `motion_state()`, so poses, velocities, sleep and characters' ground state carry over. Contacts start fresh, so the copy's first step reports `Begin` for touching bodies, and the copy continues close to the live world but not bit-identically; scripts run in fresh VMs on the copy, starting from their entry points (in-VM Luau state is not copied in M1, and the report says so); audio uses the capture backend. Nothing from the copy reaches the live world;
+  - `play.run`: step a copy of the World for N frames (at most 3600), then return a report and a screenshot (`read` tier, budgeted). The copy is `World::fork()` with `GraphStore` cloned in; physics is a fresh `Physics` built from the copy by `sync::physics::push` (same body order), then `apply_motion_state` with the live world's `motion_state()`, so poses, velocities, sleep and characters' ground state carry over. Contacts start fresh, so the copy's first step reports `Begin` for touching bodies, and the copy continues close to the live world but not bit-identically; scripts run in fresh VMs on the copy, starting from their entry points (in-VM Luau state is not copied in M1, and the report says so); audio uses the capture backend. Nothing from the copy reaches the live world;
   - `screenshot`: capture the current view (`read`);
   - `verify`: run `verify::run` and return its report (`read`);
   - `asset.import`: import a file into `assets/` with a `.meta.json` (`edit`).
@@ -876,7 +876,7 @@ Everything WP6 builds before the CLI and the demo (the milestone PR plus those i
 - Script hot reload: `AssetWatcher` changes under `scripts/` go to `ScriptRuntime::reload`.
 - PerfReport, giving per-phase mean, p95 and max, plus counts and the renderer's `stats()`.
 - `verify::run(&App, &VerifyOptions, extra: &[&dyn VerifyStage])`, with the stages of ADR-0022. Stage 3 (the static scan) is passed in by `re_cli` when it is built with `tooling`; without it the stage reports "skipped".
-- Codes RE0500–0999.
+- Codes RE0500–0899 (`re_app`) and RE0900–0999 (`re_cli`).
 
 **CLI and demo:**
 - `re_cli` builds the `real` binary. Global option: `--project DIR` (default: the current directory). Subcommands:

@@ -19,10 +19,19 @@ use re_types::{
 };
 use serde::Serialize;
 
+use re_assets::AssetWatcher;
+use re_audio::Audio;
+use re_render::Image;
+use re_script::{ContextKind, RuntimeConfig, ScriptRuntime};
+
 use crate::codes;
 use crate::config::AppConfig;
-use crate::host::{Host, Pending};
+use crate::gfx::{self, Graphics};
+use crate::host::{Host, Pending, PlayHost};
+use crate::hud::{self, HudLine};
+use crate::media::Media;
 use crate::perf::{PerfCounts, PerfRecorder, PerfReport};
+use crate::sync::anim::{self, AnimSync};
 use crate::sync::audio::{self, AudioSync};
 use crate::sync::physics::{self, PhysicsSync, ShapeLibrary};
 use crate::sync::render::{self, RenderAssets, RenderInputs};
@@ -56,6 +65,9 @@ pub struct RunReport {
     pub perf: PerfReport,
     /// Screenshots asked for during the run.
     pub screenshots: Vec<ScreenshotRequest>,
+    /// What scripts printed (`print` and `warn`), one line each.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub output: Vec<String>,
 }
 
 impl RunReport {
@@ -94,14 +106,30 @@ pub struct App {
     poses: Vec<BodyPose>,
     contacts: Vec<ContactEvent>,
 
+    media: Media,
+    graphics: Option<Graphics>,
     render_assets: RenderAssets,
     snapshot: RenderSnapshot,
+    hud: Vec<HudLine>,
+    watcher: Option<AssetWatcher>,
+    changed_scripts: Vec<String>,
 
+    anim_sync: AnimSync,
+
+    scripts: Option<ScriptRuntime>,
+    scripts_failed: bool,
+    script_output: Vec<String>,
+    /// Script errors already reported (a failing `on_step` fails every step).
+    script_errors: std::collections::HashSet<String>,
+
+    audio: Audio,
     audio_sync: AudioSync,
     audio_cmds: Vec<AudioCmd>,
+    last_audio_cmds: Vec<AudioCmd>,
 
     pending: Pending,
     screenshots: Vec<ScreenshotRequest>,
+    captures: Vec<(ScreenshotRequest, Image)>,
     perf: PerfRecorder,
     diagnostics: Vec<Diagnostic>,
     verify_stages: Vec<Arc<dyn VerifyStage + Send + Sync>>,
@@ -151,16 +179,28 @@ impl App {
             d
         })?;
         let world = load_world(project, &config)?;
-        let physics = Physics::new(physics_config(&config), TaskPool::global())?;
         let mut commands = CommandRegistry::new();
         re_command::register_builtin_commands(&mut commands);
         crate::commands::register(&mut commands);
+        let mut app = App::with_world(project, config, world, action_map, Arc::new(commands))?;
+        app.edit_frame();
+        Ok(app)
+    }
+
+    fn with_world(
+        project: &Path,
+        config: AppConfig,
+        world: World,
+        action_map: ActionMap<String>,
+        commands: Arc<CommandRegistry<App>>,
+    ) -> Result<App, Diagnostic> {
+        let physics = Physics::new(physics_config(&config), TaskPool::global())?;
         let clock = FixedClock::new(config.sim.fixed_hz, config.sim.max_steps_per_frame);
-        let mut app = App {
+        Ok(App {
             project: project.to_path_buf(),
             world,
             history: History::default(),
-            commands: Arc::new(commands),
+            commands,
             clock,
             frame: 0,
             alpha: 0.0,
@@ -174,19 +214,91 @@ impl App {
             physics_cmds: Vec::new(),
             poses: Vec::new(),
             contacts: Vec::new(),
+            media: Media::new(project),
+            graphics: None,
             render_assets: RenderAssets::default(),
             snapshot: RenderSnapshot::default(),
+            hud: Vec::new(),
+            watcher: None,
+            changed_scripts: Vec::new(),
+            anim_sync: AnimSync::new(),
+            scripts: None,
+            scripts_failed: false,
+            script_output: Vec::new(),
+            script_errors: Default::default(),
+            audio: headless_audio(project),
             audio_sync: AudioSync::new(),
             audio_cmds: Vec::new(),
+            last_audio_cmds: Vec::new(),
             pending: Pending::default(),
             screenshots: Vec::new(),
+            captures: Vec::new(),
             perf: PerfRecorder::new(),
             diagnostics: Vec::new(),
             verify_stages: Vec::new(),
             config,
+        })
+    }
+
+    /// Plays a copy of the World for `frames` frames (ADR-0021's `play.run`).
+    /// Scripts run in fresh VMs and start again from their entry points, on top
+    /// of the copied World state (in-VM state cannot be copied).
+    ///
+    /// The copy is [`World::fork`] with a fresh physics world built from it and
+    /// given the live bodies' motion ([`Physics::motion_state`]), so it carries on
+    /// from the live state; contacts start fresh. Audio goes to a silent mixer.
+    /// With `screenshot`, the last frame is captured (the live app's GPU side is
+    /// lent to the copy). Nothing from the copy reaches the live World.
+    ///
+    /// # Errors
+    ///
+    /// The replay's error, and `RE0516` when a screenshot cannot be taken.
+    pub fn play_copy(
+        &mut self,
+        frames: u64,
+        replay: Option<ReplayDoc>,
+        screenshot: bool,
+    ) -> Result<(RunReport, Option<Image>), Diagnostic> {
+        let world = self.world.fork();
+        let mut copy = App::with_world(
+            &self.project,
+            self.config.clone(),
+            world,
+            self.action_map.clone(),
+            Arc::clone(&self.commands),
+        )?;
+        copy.alpha = self.alpha;
+        load_collider_sources(&mut copy.world, &mut copy.shapes, &mut self.media);
+        physics::push(
+            &mut copy.world,
+            &mut copy.physics_sync,
+            &copy.shapes,
+            &mut copy.physics_cmds,
+            &mut copy.diagnostics,
+        );
+        copy.physics.apply(&mut copy.physics_cmds);
+        copy.physics
+            .apply_motion_state(&self.physics.motion_state());
+        // Lend the GPU side and the loaded media, so nothing is loaded twice.
+        std::mem::swap(&mut copy.media, &mut self.media);
+        copy.graphics = self.graphics.take();
+        if let Some(g) = &mut copy.graphics {
+            g.set_keep_derived(true);
+        }
+        copy.render_assets = std::mem::take(&mut self.render_assets);
+        let run = copy.run_headless(Some(frames), replay);
+        let image = match (&run, screenshot) {
+            (Ok(_), true) => Some(copy.screenshot(None)),
+            _ => None,
         };
-        app.edit_frame();
-        Ok(app)
+        std::mem::swap(&mut copy.media, &mut self.media);
+        self.graphics = copy.graphics.take();
+        if let Some(g) = &mut self.graphics {
+            g.set_keep_derived(false);
+        }
+        self.render_assets = std::mem::take(&mut copy.render_assets);
+        let run = run?;
+        Ok((run, image.transpose()?))
     }
 
     /// Opens the project at `project` with its `real.toml` and the given runtime
@@ -274,7 +386,159 @@ impl App {
 
     /// The audio commands of the last frame.
     pub fn audio_commands(&self) -> &[AudioCmd] {
-        &self.audio_cmds
+        &self.last_audio_cmds
+    }
+
+    /// The audio output (headless until a windowed driver sets a device).
+    pub fn audio_mut(&mut self) -> &mut Audio {
+        &mut self.audio
+    }
+
+    /// Replaces the audio output (the windowed runner opens the device).
+    pub fn set_audio(&mut self, mut audio: Audio) {
+        audio.set_asset_root(&self.project);
+        self.audio = audio;
+        self.audio_sync = AudioSync::new();
+    }
+
+    /// Meshes, materials and clips by asset string.
+    pub fn media_mut(&mut self) -> &mut Media {
+        &mut self.media
+    }
+
+    /// The GPU side, when there is one.
+    pub fn graphics(&self) -> Option<&Graphics> {
+        self.graphics.as_ref()
+    }
+
+    /// The GPU side, mutably.
+    pub fn graphics_mut(&mut self) -> Option<&mut Graphics> {
+        self.graphics.as_mut()
+    }
+
+    /// Gives the app a GPU side (the windowed runner's, for its surface).
+    pub fn set_graphics(&mut self, graphics: Graphics) {
+        self.render_assets = RenderAssets::default();
+        self.graphics = Some(graphics);
+    }
+
+    /// Takes the GPU side away (meshes are uploaded again by the next owner).
+    pub fn take_graphics(&mut self) -> Option<Graphics> {
+        self.render_assets = RenderAssets::default();
+        self.graphics.take()
+    }
+
+    /// The GPU side, opening a headless device on first use
+    /// (`real.toml [render] backends`, or `RE_BACKENDS`).
+    ///
+    /// # Errors
+    ///
+    /// `RE0516` when no GPU device can be opened.
+    pub fn ensure_graphics(&mut self) -> Result<&mut Graphics, Diagnostic> {
+        if self.graphics.is_none() {
+            let fail = |d: Diagnostic| {
+                Diagnostic::error(
+                    codes::SCREENSHOT_FAILED,
+                    "no GPU device to draw frames with",
+                )
+                .with_hint("install a Vulkan or GL driver (lavapipe and llvmpipe work), or set RE_BACKENDS")
+                .with_related(d)
+            };
+            let backends = gfx::backends(&self.config.render.backends).map_err(fail)?;
+            let graphics = Graphics::headless(backends).map_err(fail)?;
+            self.set_graphics(graphics);
+        }
+        Ok(self.graphics.as_mut().expect("set above"))
+    }
+
+    /// Draws the current frame (the last Sync's snapshot and HUD) offscreen at
+    /// the configured size and returns it; with `path`, also writes it as a PNG
+    /// (relative paths are under the project).
+    ///
+    /// # Errors
+    ///
+    /// `RE0516` when no GPU device can be opened or the file cannot be written,
+    /// and the renderer's errors.
+    pub fn screenshot(&mut self, path: Option<&Path>) -> Result<Image, Diagnostic> {
+        self.ensure_graphics()?;
+        let gfx = self.graphics.as_mut().expect("ensured");
+        gfx.sync_assets(
+            &mut self.world,
+            &mut self.media,
+            &mut self.render_assets,
+            &mut self.diagnostics,
+        );
+        let inputs = RenderInputs {
+            assets: &self.render_assets,
+            physics: &self.physics_sync,
+            alpha: self.alpha,
+            clear: self.config.render.clear,
+        };
+        self.snapshot = render::build(&mut self.world, &inputs);
+        self.hud = hud::collect(&mut self.world);
+        let size = [self.config.render.width, self.config.render.height];
+        let image = gfx.capture(size, &self.snapshot, &self.hud)?;
+        self.diagnostics.extend(gfx.take_errors());
+        if let Some(path) = path {
+            gfx::save_png(&image, &self.project.join(path))?;
+        }
+        Ok(image)
+    }
+
+    /// Draws the last frame (snapshot and HUD) into `target`, `size_px`
+    /// physical pixels at `pixels_per_point`, with the app's GPU side.
+    ///
+    /// # Errors
+    ///
+    /// `RE0516` when the app has no GPU side, and the renderer's errors.
+    pub fn draw_into(
+        &mut self,
+        target: &re_render::wgpu::TextureView,
+        size_px: [u32; 2],
+        pixels_per_point: f32,
+    ) -> Result<(), Diagnostic> {
+        let gfx = self.graphics.as_mut().ok_or_else(|| {
+            Diagnostic::error(
+                codes::SCREENSHOT_FAILED,
+                "the app has no GPU side to draw with",
+            )
+        })?;
+        gfx.draw(target, size_px, pixels_per_point, &self.snapshot, &self.hud)
+    }
+
+    /// The HUD lines of the last frame.
+    pub fn hud_lines(&self) -> &[HudLine] {
+        &self.hud
+    }
+
+    /// Images taken for replay checks since the last call, with their requests.
+    pub fn take_captures(&mut self) -> Vec<(ScreenshotRequest, Image)> {
+        std::mem::take(&mut self.captures)
+    }
+
+    /// Watches the project's files: changed meshes, materials and textures are
+    /// re-imported and uploaded again between frames, and changed scripts are
+    /// collected for [`App::take_changed_scripts`].
+    ///
+    /// # Errors
+    ///
+    /// The watcher's error.
+    pub fn enable_hot_reload(&mut self) -> Result<(), Diagnostic> {
+        self.watcher = Some(AssetWatcher::new(
+            &self.project,
+            AssetWatcher::DEFAULT_DEBOUNCE,
+        )?);
+        Ok(())
+    }
+
+    /// Scripts under `scripts/` that changed on disk since the last call.
+    pub fn take_changed_scripts(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.changed_scripts)
+    }
+
+    /// Animation playback state.
+    pub fn anim_sync(&self) -> &AnimSync {
+        &self.anim_sync
     }
 
     /// The contact events of the last frame's physics steps.
@@ -448,11 +712,39 @@ impl App {
     }
 
     /// The work an edit needs outside the simulation: regenerate procedural
-    /// sources whose inputs changed, then propagate transforms.
+    /// sources whose inputs changed, then propagate transforms. With a GPU side
+    /// (an editor's), also upload new assets and rebuild the snapshot and HUD,
+    /// so [`App::draw_into`] draws the World as it is.
     pub fn edit_frame(&mut self) {
         let report = self.world.regenerate_changed();
         self.diagnostics.extend(report.diagnostics.iter().cloned());
         self.world.propagate();
+        if self.graphics.is_some() {
+            // An editor's view: the World as it is, with its assets on the GPU.
+            self.upload_assets();
+            let inputs = RenderInputs {
+                assets: &self.render_assets,
+                physics: &self.physics_sync,
+                alpha: self.alpha,
+                clear: self.config.render.clear,
+            };
+            self.snapshot = render::build(&mut self.world, &inputs);
+            self.hud = hud::collect(&mut self.world);
+        }
+    }
+
+    /// Uploads the meshes and materials the World names that are not on the GPU
+    /// yet (with the app's [`Graphics`]; nothing without one), recording their
+    /// handles in the app's `RenderAssets`. `frame` and `edit_frame` call it.
+    pub fn upload_assets(&mut self) {
+        if let Some(gfx) = &mut self.graphics {
+            gfx.sync_assets(
+                &mut self.world,
+                &mut self.media,
+                &mut self.render_assets,
+                &mut self.diagnostics,
+            );
+        }
     }
 
     // ---- playing --------------------------------------------------------
@@ -510,6 +802,7 @@ impl App {
             diagnostics,
             perf: self.perf_report(),
             screenshots: std::mem::take(&mut self.screenshots),
+            output: std::mem::take(&mut self.script_output),
         })
     }
 
@@ -543,6 +836,7 @@ impl App {
             None => self.actions = self.action_map.frame(&self.raw, f),
         }
         self.raw.end_frame();
+        self.poll_files();
         for cmd in replay_cmds {
             let outcome = self.dispatch(
                 &cmd.name,
@@ -565,8 +859,10 @@ impl App {
         }
         self.perf.add(Phase::Input, t.elapsed());
 
-        // PreRender: variable-step script callbacks run here once scripting is
-        // integrated.
+        // PreRender: variable-step script callbacks.
+        let t = Instant::now();
+        self.run_scripts(Phase::PreRender, frame_time.as_secs_f64());
+        self.perf.add(Phase::PreRender, t.elapsed());
 
         // Fixed steps.
         let steps = self.clock.advance(frame_time);
@@ -579,6 +875,7 @@ impl App {
         // Sync.
         let t = Instant::now();
         self.world.propagate();
+        self.upload_assets();
         let inputs = RenderInputs {
             assets: &self.render_assets,
             physics: &self.physics_sync,
@@ -586,11 +883,19 @@ impl App {
             clear: self.config.render.clear,
         };
         self.snapshot = render::build(&mut self.world, &inputs);
+        self.hud = hud::collect(&mut self.world);
         audio::build(&mut self.world, &mut self.audio_sync, &mut self.audio_cmds);
         self.perf.add(Phase::Sync, t.elapsed());
 
-        // Render: drawing is done by the windowed or headless driver that owns
-        // the renderer, from `snapshot()`.
+        // Render: the windowed driver draws `snapshot()` and the HUD after
+        // `frame` returns; here the audio commands reach the mixer.
+        let t = Instant::now();
+        self.diagnostics.extend(self.audio.apply(&self.audio_cmds));
+        self.last_audio_cmds = std::mem::take(&mut self.audio_cmds);
+        if let Some(gfx) = &self.graphics {
+            self.diagnostics.extend(gfx.take_errors());
+        }
+        self.perf.add(Phase::Render, t.elapsed());
 
         // EndFrame.
         let t = Instant::now();
@@ -602,12 +907,27 @@ impl App {
     }
 
     fn fixed_step(&mut self) {
-        // PreAnimation and PreSimulation: animation sampling and fixed-update
-        // script callbacks run here once they are integrated.
+        // PreAnimation.
+        let t = Instant::now();
+        anim::step(
+            &mut self.world,
+            &mut self.anim_sync,
+            &mut self.media,
+            self.clock.dt_secs(),
+            &mut self.diagnostics,
+        );
+        self.perf.add(Phase::PreAnimation, t.elapsed());
+
+        // PreSimulation: fixed-update script callbacks; what they queue reaches
+        // this step's physics.
+        let t = Instant::now();
+        self.run_scripts(Phase::PreSimulation, self.clock.dt_secs().into());
+        self.perf.add(Phase::PreSimulation, t.elapsed());
 
         // Physics.
         let t = Instant::now();
         self.physics_sync.begin_step();
+        self.load_collider_sources();
         physics::push(
             &mut self.world,
             &mut self.physics_sync,
@@ -626,9 +946,14 @@ impl App {
         self.diagnostics.extend(self.physics.take_diagnostics());
         self.perf.add(Phase::Physics, t.elapsed());
 
-        // PostSimulation.
+        // PostSimulation: poses back into the World, then contact callbacks
+        // and post-physics script updates.
         let t = Instant::now();
         physics::pull(&mut self.world, &mut self.physics_sync, &self.poses);
+        if let Some(scripts) = &mut self.scripts {
+            scripts.push_contacts(self.physics.events());
+        }
+        self.run_scripts(Phase::PostSimulation, self.clock.dt_secs().into());
         self.perf.add(Phase::PostSimulation, t.elapsed());
     }
 
@@ -674,8 +999,201 @@ impl App {
                 path: Some(path),
             });
         }
+        self.take_frame_screenshots(f);
         if pending.restart {
             self.restart();
+        }
+    }
+
+    /// Takes this frame's requested screenshots when the app has a GPU side:
+    /// script requests are written to their path, replay checks are kept for
+    /// [`App::take_captures`].
+    fn take_frame_screenshots(&mut self, f: u64) {
+        let due: Vec<ScreenshotRequest> = self
+            .screenshots
+            .iter()
+            .filter(|r| r.frame == f)
+            .cloned()
+            .collect();
+        if due.is_empty() || self.graphics.is_none() {
+            return;
+        }
+        let size = [self.config.render.width, self.config.render.height];
+        let gfx = self.graphics.as_mut().expect("checked");
+        let image = match gfx.capture(size, &self.snapshot, &self.hud) {
+            Ok(i) => i,
+            Err(d) => {
+                self.diagnostics.push(d);
+                return;
+            }
+        };
+        for request in due {
+            match &request.path {
+                Some(path) => {
+                    if let Err(d) = gfx::save_png(&image, &self.project.join(path)) {
+                        self.diagnostics.push(d);
+                    }
+                }
+                None => self.captures.push((request, image.clone())),
+            }
+        }
+    }
+
+    fn load_collider_sources(&mut self) {
+        load_collider_sources(&mut self.world, &mut self.shapes, &mut self.media);
+    }
+
+    fn poll_files(&mut self) {
+        let Some(watcher) = &self.watcher else {
+            return;
+        };
+        let changes = watcher.poll();
+        if !changes.is_empty() {
+            self.apply_file_changes(&changes);
+        }
+    }
+
+    /// Applies file changes (from a watcher, or made by a command): re-imports
+    /// what changed, uploads it again and forgets collider shapes built from
+    /// it. Returns the problems re-imports reported (the last good version of
+    /// each stays loaded); they are also in the app's diagnostics.
+    pub fn apply_file_changes(&mut self, changes: &[re_assets::AssetChange]) -> Vec<Diagnostic> {
+        let (report, stale) = self.media.apply_changes(changes);
+        let problems = report.problems.clone();
+        for key in &stale {
+            self.shapes.remove(key);
+        }
+        self.diagnostics.extend(report.problems);
+        for path in report.scripts {
+            self.reload_script(&path);
+            self.changed_scripts.push(path);
+        }
+        if let Some(gfx) = &mut self.graphics {
+            gfx.invalidate(&mut self.render_assets, &stale, &mut self.diagnostics);
+        }
+        self.anim_sync.invalidate(&stale);
+        problems
+    }
+
+    /// The script runtime, created on first use (so editing never starts a VM).
+    fn script_runtime(&mut self) -> Option<&mut ScriptRuntime> {
+        if self.scripts.is_none() {
+            if self.scripts_failed {
+                return None;
+            }
+            let config = RuntimeConfig::new(&self.project).with_limits(
+                self.config.scripts.cpu_budget_ms.max(0.0).ceil() as u64,
+                self.config.scripts.memory_limit_mb as usize,
+            );
+            match ScriptRuntime::new(config) {
+                Ok(r) => self.scripts = Some(r),
+                Err(e) => {
+                    // Reported once; the game runs on without scripts.
+                    self.scripts_failed = true;
+                    self.diagnostics.push(e.to_diagnostic());
+                    return None;
+                }
+            }
+        }
+        self.scripts.as_mut()
+    }
+
+    /// The script runtime, once the game has run a frame.
+    pub fn scripts(&self) -> Option<&ScriptRuntime> {
+        self.scripts.as_ref()
+    }
+
+    /// Calls `f` with the script runtime (created on first use) and a host over
+    /// the running game, then collects what the scripts printed. `None` when the
+    /// runtime could not be created.
+    fn with_scripts<R>(
+        &mut self,
+        f: impl FnOnce(&mut ScriptRuntime, &mut PlayHost<'_>) -> R,
+    ) -> Option<R> {
+        self.script_runtime()?;
+        let scripts = self.scripts.as_mut().expect("created above");
+        let mut host = PlayHost {
+            world: &mut self.world,
+            services: Host {
+                physics: &self.physics,
+                links: &self.physics_sync,
+                actions: &self.actions,
+                physics_cmds: &mut self.physics_cmds,
+                audio_cmds: &mut self.audio_cmds,
+                pending: &mut self.pending,
+            },
+        };
+        let out = f(scripts, &mut host);
+        self.collect_script_output();
+        Some(out)
+    }
+
+    fn run_scripts(&mut self, phase: Phase, dt: f64) {
+        if let Some(diags) = self.with_scripts(|s, host| s.run_phase(host, phase, dt)) {
+            self.report_script_errors(diags);
+        }
+    }
+
+    /// Reports script diagnostics, one per code and place until the scripts
+    /// restart or reload (a failing callback fails every step, possibly with a
+    /// different message each time); repeats only go to the log.
+    fn report_script_errors(&mut self, diags: Vec<Diagnostic>) {
+        for d in diags {
+            let key = format!("{}|{:?}", d.code, d.location);
+            if self.script_errors.insert(key) {
+                self.diagnostics.push(d);
+            } else {
+                tracing::debug!(target: "script", "repeated: {}", d.message);
+            }
+        }
+    }
+
+    fn collect_script_output(&mut self) {
+        let Some(scripts) = &mut self.scripts else {
+            return;
+        };
+        for line in scripts.take_output() {
+            let text = format!("[{}] {}", line.context.name(), line.text);
+            if line.warn {
+                tracing::warn!(target: "script", "{text}");
+            } else {
+                tracing::info!(target: "script", "{text}");
+            }
+            self.script_output.push(text);
+        }
+    }
+
+    /// Reloads a changed script (hot reload): modules are patched or replaced,
+    /// entry scripts restart.
+    pub fn reload_script(&mut self, path: &str) {
+        if self.scripts.is_none() {
+            // Nothing runs yet; the new version is what starts.
+            return;
+        }
+        self.script_errors.clear();
+        if let Some(report) = self.with_scripts(|s, host| s.reload(host, path)) {
+            self.report_script_errors(report.diagnostics);
+        }
+    }
+
+    /// Runs a Luau snippet to completion in the game or tools context, against
+    /// the running game (no `task.wait`), and returns its first result as JSON.
+    ///
+    /// # Errors
+    ///
+    /// The script's diagnostics.
+    pub fn exec_script(
+        &mut self,
+        kind: ContextKind,
+        name: &str,
+        source: &str,
+    ) -> Result<serde_json::Value, Vec<Diagnostic>> {
+        match self.with_scripts(|s, host| s.exec(host, kind, name, source)) {
+            Some(out) => out,
+            None => Err(vec![Diagnostic::error(
+                re_script::codes::SERVICE_UNAVAILABLE,
+                "the script runtime could not be started (see the earlier error)",
+            )]),
         }
     }
 
@@ -695,12 +1213,48 @@ impl App {
                 self.physics_cmds.clear();
                 self.audio_cmds.push(AudioCmd::StopAll);
                 self.audio_sync = AudioSync::new();
+                self.anim_sync = AnimSync::new();
+                self.script_errors.clear();
+                if let Some(scripts) = &mut self.scripts
+                    && let Err(e) = scripts.reset()
+                {
+                    self.diagnostics.push(e.to_diagnostic());
+                }
                 self.clock.reset();
                 self.edit_frame();
             }
             Err(d) => self.diagnostics.push(d),
         }
     }
+}
+
+/// Puts the meshes that `Convex` and `Mesh` colliders name (asset paths and
+/// built-ins) into the shape library, loading each once.
+fn load_collider_sources(world: &mut World, shapes: &mut ShapeLibrary, media: &mut Media) {
+    use re_scene::{Collider, ColliderShape};
+    let wanted: Vec<String> = world
+        .ecs
+        .query::<&Collider>()
+        .iter(&world.ecs)
+        .filter(|c| matches!(c.shape, ColliderShape::Convex | ColliderShape::Mesh))
+        .map(|c| c.source.clone())
+        .filter(|s| !s.is_empty() && !s.starts_with(crate::media::DERIVED))
+        .collect();
+    for source in wanted {
+        if shapes.mesh(&source).is_some() {
+            continue;
+        }
+        // A source that cannot be loaded stays missing; push reports it.
+        if let Ok(loaded) = media.mesh(&source) {
+            shapes.insert_mesh(source, loaded.mesh);
+        }
+    }
+}
+
+fn headless_audio(project: &Path) -> Audio {
+    let mut audio = Audio::headless();
+    audio.set_asset_root(project);
+    audio
 }
 
 /// A fresh World with the entry scene loaded and its procedural sources run.

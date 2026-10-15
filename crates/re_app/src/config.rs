@@ -220,11 +220,11 @@ pub struct VerifyConfig {
     /// `[verify.perf]`: budgets that give warnings in M1 (ADR-0022).
     #[serde(default)]
     pub perf: PerfBudget,
-    /// Per-channel tolerance for golden screenshots (0–255), applied to the
-    /// mean absolute difference.
+    /// Per-channel tolerance for golden screenshots, in levels (0–255): a pixel
+    /// that differs by more than this in some channel is an outlier.
     #[serde(default = "default_golden_tolerance")]
     pub golden_mean_tolerance: f32,
-    /// The largest share of pixels (0–1) that may differ by more than 32 levels.
+    /// The largest share of outlier pixels (0–1) a matching image may have.
     #[serde(default = "default_golden_outliers")]
     pub golden_max_outliers: f32,
 }
