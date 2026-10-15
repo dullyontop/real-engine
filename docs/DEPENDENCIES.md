@@ -80,6 +80,18 @@ Used only by `re_import`, a tooling crate, so none of them ships in a packaged g
 | quick-xml | 0.41.0 | MIT | 1.79 | `.rbxlx`/`.rbxmx` reader | defaults | WP27 probe; already in the lockfile through `wayland-scanner`, so no new duplicate | Verified (probe); lands with WP27 PR "place files" |
 | base64 | 0.23.1 | MIT OR Apache-2.0 | 1.71 | binary and shared strings in XML place files | defaults | WP27 probe; already in the lockfile through `rmcp` | Verified (probe); lands with WP27 PR "place files" |
 
+### Polygon booleans and roads (M3, runtime)
+
+Used only inside `re_geom::polygon`, never in its public types (ADR-0043). Pinned exactly; an upgrade that moves any `re_geom` golden needs node version bumps (ADR-0043, section 1). Checked against crates.io on 2026-10-15. MSRVs are confirmed by the `msrv` job when the PR lands.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| i_overlay | 9.1.0 | MIT OR Apache-2.0 | 1.88 | integer-core polygon booleans, offsets and strokes on a fixed 1 mm grid | `default-features = false` | WP24 `overlay-probe` (road strokes, union and intersection, 5,000-square union; identical hashes across runs) | Verified (probe); lands with WP24 PR "booleans and roads" |
+| i_float, i_shape, i_key_sort, i_tree | 5.0.0, 5.0.0, 0.12.0, 0.20.0 | MIT | ≤ 1.88 | i_overlay's own building blocks (same author) | defaults | WP24 probe (resolved with i_overlay) | Verified (probe); transitive |
+| earcut | 0.4.11 | MIT OR Apache-2.0 | ≤ 1.95 | triangulating road unions, junction caps and shapes | defaults | WP24 probe (240-point road union, area matches) | Verified (probe); lands with WP24 PR "booleans and roads" |
+
+`libm` 0.2.16 and `num-traits` 0.2.19, which these pull, are already in the lockfile.
+
 ### MCP over HTTP (M3, tooling only)
 
 Used only by `re_mcp`, a tooling crate, so the runtime-only binary does not link them (ADR-0046, ADR-0027). rmcp 3.5.1 gains its `transport-streamable-http-server` feature and tokio gains `net`. With them the lockfile gains 13 transitive crates, all under the license allow-list and none a new duplicate: http 1.5.0, http-body 1.1.0, http-body-util 0.1.5, httparse 1.10.1, httpdate 1.0.3, tower-service 0.3.3, sse-stream 0.2.6, tokio-stream 0.1.19, async-trait 0.1.92, rand 0.10.3, rand_core 0.10.1, chacha20 0.10.2 and socket2 0.6.5.

@@ -1308,6 +1308,183 @@ effects = [{ bus = "sfx", effect = 0, cutoff_hz = 600.0 }]   # sets only the fie
 - Delay time cannot be tweened.
 - Audio output is not part of `state_hash` or D2. Cross-platform checks use the tolerance above.
 
+## ADR-0043: Procedural workflow: generator versions, bake, structural overrides, Luau generators, polygon booleans and roads
+
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP24). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: two probes in `research/m3/wp24/` (sources and output): `luau-node-bench` (mlua 0.12.2, Luau 0.740, the workspace's pins) and `overlay-probe` (i_overlay 9.1.0 and earcut 0.4.11). Measured on one core of the reference container (Intel Xeon @ 2.80 GHz).
+
+**Context.** The M3 plan (WP24) asks for five things on top of ADR-0015 and ADR-0017: a version per generator and node kind in the cache key with an explicit `real migrate-graph`; bake to authored entities as one undoable transaction with a record of where they came from; structural overrides (move, replace, insert) kept across re-runs; generators and ProcGraph nodes written in Luau in a `generator` context with a CPU budget and no world access; and polygon booleans with a road node, re-checking `i_overlay`. Facts found in the code at `69ed909`:
+
+- **Node versions are recorded but not honoured.** `NodeDoc.version` is in every graph file, and `ProcGraph::validate` accepts any recorded version from 1 up to the kind's current one (`graph.rs`). But the cache key hashes `def.version`, the engine's current version, not the recorded one (`eval.rs`, `node_key`), and evaluation always runs the current code. The day a kind goes to version 2, every old graph silently gets version 2's output. All 16 kinds are at version 1, so nothing has diverged yet.
+- **Builder scripts always record version 1** (`re_script/src/api/proc.rs`), and a builder has no way to ask for another.
+- **Generators have no version.** `Procedural` is `{ generator, seed }`; `GeneratorInfo` has no version; the fingerprint covers the generator name, seed, parameter component and the graph document's hash.
+- **Overrides** are field values and deletions only. `re_command` refuses `reparent`, `rename`, `add_component` and `remove_component` on a generated entity (`op.rs`), and `SetOverride` is the one op that edits the list, with an `index` so its inverse restores the list exactly.
+- **A source that loses `Procedural` keeps its output.** `World::regenerate_changed` visits only entities that carry `Procedural` (`world.rs`), so the generated entities of a source whose `Procedural` was removed stay in the world but are never saved.
+- **Derived assets exist only in memory.** Meshes and heightfields made by nodes are named `derived:<hex>` and live in the `GraphStore` and the disk cache. The asset server loads only `.gltf`, `.glb`, `.png`, `.jpg`/`.jpeg` and `.material.json`, and heightfield colliders resolve only from the store (`re_app/src/procedural.rs`). An entity that names a `derived:` asset cannot outlive its generator.
+- **Luau facts** (mlua 0.12.2, Luau 0.740):
+  - VMs are not `Send` (the `send` feature is off, ADR-0011), and the evaluator runs nodes on the `TaskPool`.
+  - The CPU budget is a wall-clock deadline checked every 1,024 safepoints (`budget.rs`). Wall-clock limits are not deterministic: the same node could pass on a fast machine and fail on a slow one.
+  - Luau numbers are f64; graph values are f32. `vector` components are f32.
+  - Under `sandbox(true)` the environment is "safe", and `FASTCALL` then runs the built-in `math.sin` and friends directly, even if the `math` table entry was replaced (`lvmexecute.cpp`). Replacing a maths function therefore only works if the compiler is told not to treat it as a builtin; mlua's `Compiler::set_disabled_builtins` passes Luau's `disabledBuiltins` option for that.
+  - `^` calls the C library's `pow`, except for the constant exponents 2, 0.5 and 3, which the VM computes exactly (`LOP_POWK`).
+- **i_overlay re-check.** M1 found it too new. On 2026-10-15:
+  - 9.1.0 (2026-10-14) is the newest release, MIT OR Apache-2.0, MSRV 1.88, about 9.8 million downloads; geo 0.33.1 uses it (pinned to 4.5) for its booleans.
+  - Without features it pulls `i_float` 5.0.0, `i_shape` 5.0.0, `i_key_sort` 0.12.0 and `i_tree` 0.20.0 (all MIT, same author) and `libm` 0.2, which is already in our lockfile at 0.2.16. The `allow_multithreading` feature would add rayon; `glam` is optional.
+  - The core is integer arithmetic. The float API maps coordinates onto a grid (adaptive, or fixed with `*_fixed_scale`), runs the integer solver and maps back. Strokes and outlines also use integer construction by default (`MathMode::Integer`), which its README recommends "for cross-platform deterministic construction". The only trigonometry outside tests is its own integer `Angle`.
+  - It has been churning: majors 5.0.0 (April 2026), 6 (May), 7 (June), 8 (August) and 9 (September).
+  - It contains `unsafe` code (84 occurrences across `i_overlay` and `i_float`).
+- **No triangulator in the workspace.** `re_geom` makes meshes from primitives and heightfields only. earcut 0.4.11 (2026-07-26, MIT OR Apache-2.0, about 1.1 million recent downloads) depends only on `num-traits`, already in the lockfile at 0.2.19. Its arithmetic is f64 with `sqrt` only in its 3D helper, and it uses `unsafe` for node access.
+
+**Measured** (`research/m3/wp24/`, best of 7 runs, one core):
+
+| Work | Luau | Rust | Notes |
+|---|---|---|---|
+| New VM: `ALL_SAFE` libraries, sandbox, memory limit, raw interrupt | 112 µs | | per evaluation, if each gets a fresh VM |
+| Element-wise map of a 256×256 field, through `buffer` | 4.2 ms (64 ns/sample) | 0.23 ms | 19× slower; output bit-identical to a Rust version computing in f64 |
+| 5-tap blur of a 256×256 field, through `buffer` | 10.3 ms (157 ns/sample) | 0.18 ms | 58× slower; bit-identical as above |
+| The same map, through Luau tables (marshalling included) | 15.2 ms (232 ns/sample) | | 3.6× the `buffer` path |
+| Rotate 10,000 points, through `buffer` | 1.4 ms (140 ns/point) | | |
+| Build 2,000 entity tables in Luau and read them back in Rust | 3.0 ms (1.5 µs/entity) | | a generator's fragment |
+| Raw counting interrupt on vs off | +1 to +5% | | |
+| Safepoints of the blur, three runs | 65,794 each time | | the count is deterministic |
+| Safepoint rate | 6.1–6.4 million/s | | calibrates the budget below |
+| i_overlay: stroke two 41-point roads 8 m wide, then union and intersect | | 0.31–0.35 ms | 1 mm grid, integer stroke |
+| i_overlay: union of 5,000 random squares over 2 km | | 9.5–10.9 ms | 1 mm grid; 4,346 shapes |
+| earcut: triangulate the probe's road union (240 points) | | 238 triangles | area matches the polygon |
+
+A Rust version computing in f32 is not bit-identical to the Luau one (Luau rounds only once, at the end); the Rust f32 times were 0.19 ms (map) and 0.11 ms (blur). Two runs of the overlay probe gave identical output hashes. A 16 km square at a 1 mm grid works; a 4,000 km triangle returns `ScaleTooLarge` rather than wrong output.
+
+**Decision.**
+
+*1. Node and generator versions (PR "versioning"; frozen contract).*
+- **A node evaluates at its recorded version.** `NodeCtx::version()` gives the recorded version to the node's function, and the cache key hashes the recorded version instead of `def.version`. Rust kinds keep old behaviour behind `ctx.version()` (or by keeping the old function); there is still one `NodeDef` per kind.
+- **`NodeSpec`** gains `oldest: u32`, the oldest version the engine still evaluates (1 for every M3 kind). A recorded version of 0 or above `version` stays `RE4012`. A recorded version below `oldest` is a new error, `RE4018` ("retired node version"), whose hint names the last engine release that evaluates it. A version is retired only in a release whose notes say so; none is retired in M3.
+- **Parameter shapes migrate in memory.** A `NodeDef` lists `Migration { from, note, changes_output, params: fn(&mut Map) -> Result<(), String> }` steps, one per version step. Before checking and evaluating, the evaluator runs the steps from the recorded version up to the current shape, so `check` and `eval` see one shape. The key hashes the migrated parameters and the recorded version. A failed step is `RE4020`.
+- **The rule that makes this real.** Any change that alters a kind's output for some valid input bumps its version and keeps the old output for the old version. `re_proc/tests/versions.rs` keeps one golden output hash per (kind, version) on fixed inputs. A changed golden fails CI, and goldens are only ever added. A shared change (in `re_noise`, `re_geom` or a dependency upgrade such as i_overlay) that moves a golden therefore needs version bumps for the kinds it moves.
+- **Keys stay the same today.** For a graph whose nodes are all at version 1, the key bytes are unchanged (`def.version` and the recorded version are both 1), so existing disk caches stay warm and "a versioned graph from before the PR loads unchanged" holds by construction. A test pins a key computed on `main` before the PR.
+- **Builders.** `g:node(kind, ...)` keeps recording version 1. `g:node("terrain.heightfield@2", ...)` asks for a version. Absent means 1, never "the current one", because a builder runs on every load and must keep meaning the same thing. Graph files and the `graph.*` commands write the current version for new nodes. `real check` warns with `RE4019` when a graph or builder uses a version older than the current one, naming `real migrate-graph`.
+- **Generator versions** (maintainer-reviewed change in `re_scene`):
+  - `GeneratorInfo` gains `version: u32` (current) and `oldest: u32`.
+  - `Procedural` gains `version: i64 = 1`. Files written before M3 have no field and mean 1, which is what they were generated with.
+  - `GenContext::version()` returns the recorded version, and the fingerprint includes it.
+  - The `graph` generator is version 1. That version covers how it assembles the fragment: keys `<node id>/<local key>`, the sink order, and `<node>/mesh` entities for mesh sinks.
+- **Version stamp.** `re_proc::version_stamp(graph, registry) -> blake3::Hash` hashes the generator name and version and, for each node in document order, its id, kind, recorded version and implementation hash. The implementation hash is all zeros for Rust kinds (their goldens guard them) and the hash of the generator scripts for Luau kinds (section 4). `EvalReport` carries it as `stamp`, and the `graph` generator's `fingerprint_extra` folds it in, so editing a Luau node's script regenerates the sources that use it. WP23's `StreamCell` keys cells by it.
+- **Frozen at "versioning":** `NodeSpec.version`/`oldest`, `Migration`, `NodeCtx::version()`, the key's inputs, `version_stamp`, `Procedural.version`/`GeneratorInfo.version`, and the bake format (section 2). WP23 registers its erosion node against this `NodeSpec`.
+- **Room for streaming (WP23, ADR-0042).** "versioning" also carries, so `NodeSpec` freezes once: `NodeSpec.streaming` (pointwise, region-tiled with an apron, cell-local, or not streamable; default not streamable) and an optional `Domain { origin: [i64; 2], n, spacing }` on `NodeCtx` that, when set, is part of the node key next to the version. WP23 fills in the semantics and the per-kind values for the existing kinds in its own PRs.
+
+*`real migrate-graph`.*
+- `real migrate-graph [--project DIR] [--dry-run] [--json]` upgrades every node of every graph file the project uses (and every `*.graph.json` under `graphs/`) to its kind's current version, through the migration steps. It writes files atomically in ADR-0016's stable form, and raises sources' `Procedural.version` when their generator has migrations (none in M3).
+- It evaluates each source before and after and reports, per node, `{ id, kind, from, to, notes, params_before, params_after, output_changed }`. Per source it gives `{ fragment_hash_before, fragment_hash_after, keys_added, keys_removed, overrides_orphaned }`, so the report says what changes in the world, including overrides that would lose their target.
+- Builder scripts are not rewritten. The report lists `{ script, node, kind, from, to }` and the `@N` to write.
+- It is all or nothing: any failed step (`RE4020`) writes nothing and exits non-zero.
+- The logic is `re_proc::migrate` (WP24). The subcommand is a small `re_cli` PR the maintainer reviews. A read-only command `graph.migration_report` returns the same report to agents and the editor.
+
+*2. Bake (PR "bake"; its format is frozen at "versioning").*
+- **`proc.bake { source, keys?, keep_source? }`** is an edit command in `re_proc`. It makes one transaction of existing ops, so undo is the ops' exact inverses:
+  1. A `Spawn` per output entity, in output order (parents first). The entity's current state is copied, overrides included. Its id is `<source id>.<key with "/" replaced by ".">` (authored ids may not contain `/`), with `~2`, `~3` and so on after a clash. It keeps its name and its parent: a mapped baked parent, or the source itself. Entity-reference fields that point at other generated entities of the source are remapped to their baked ids.
+  2. Each spawned entity gets a **`Baked`** component (defined in `re_proc`, registered by `re_app`). Its fields are `source` (the source's id), `key`, `generator`, `generator_version`, `stamp` (the version stamp, hex), `seed` and `inputs` (hex of the fingerprint inputs: parameters and graph document). That is the provenance record. It is saved like any component, so `describe`, queries and agents can find everything baked from a source.
+  3. **Full bake** (the default): `SetOverride` removals for every override (their inverses restore the list by index), then `RemoveComponent` of `GraphSource` and `Procedural`. The source stays in place as an ordinary authored entity, keeping its transform and authored children, with the baked entities under it.
+  4. **Partial bake** (`keys` given, or `keep_source: true`): deletion overrides for the baked keys instead, so the source keeps generating everything else.
+- **One `re_scene` rule (maintainer-reviewed):** when a source loses `Procedural`, the next regeneration despawns its generated output and drops its `GeneratedFingerprint`. Undoing the bake re-adds `Procedural`, the missing fingerprint forces a regeneration, and D1 gives the same output with the same ids. This rule also fixes the stray-output case in the context.
+- **Derived assets become files.** They are written before the ops are applied, content-addressed under `assets/baked/<source id>/`:
+  - Meshes become `<16 hex>.glb`: glTF binary with POSITION, NORMAL, TEXCOORD_0, COLOR_0 and u32 indices, so they load through the existing importer and open in other tools. The writer is about 150 lines over serde_json in `re_proc`, with no new dependency. A test round-trips every vertex field bit for bit through `re_assets::import_gltf`.
+  - Heightfields become `<16 hex>.heightfield`: the magic `REHF`, a u32 format version 1, a u32 `n`, an f32 `cell`, then `n²` f32 little-endian samples in Jolt's layout. `re_app` resolves a `Collider.source` path ending in `.heightfield` (a small shared PR).
+  - Undo does not delete these files. They are content-addressed and harmless, and `real check` reports unreferenced ones under `assets/baked/` as a warning.
+- Bake is refused during play (`RE4021`). Acceptance: bake, then undo, gives a byte-identical saved scene and the same `state_hash` (generated entities included) as before the bake.
+
+*3. Structural overrides (PR "overrides").*
+- **Moving in space is already a field override** (`Transform`), and stays one. The new overrides change structure. They are stored with the others, in the source's `overrides` list:
+  - `{"target": "trees/12", "moved": {"parent": "rocks/3", "index": 0}}`: re-parents a generated entity under another entity of the same source's output (`null` means the source itself).
+  - `{"target": "trees/12", "replaced": {"prefab": "prefabs/rock.prefab.json"}}` or `{"target": ..., "replaced": {"components": {...}}}`: keeps the key and id (so references and later field overrides still find it) and the generated `Transform` unless the replacement sets one. The rest of its components come from the replacement. Its generated descendants are not spawned unless `"keep_children": true`. Prefab children get keys `<target>/~<prefab entity id>`.
+  - `{"insert": "lamp1", "parent": "road/7", "index": 2, "name": "Lamp", "components": {...}}` (or `"prefab": ...`): adds an authored entity to the output with key `+lamp1` and id `<source>/+lamp1`.
+- **Where they apply.** A pure function `apply_structure(fragment, overrides)` runs in `re_scene`'s `regenerate` after the generator returns and before deletions and field overrides. Inserts are added, replacements applied, moves re-parented, and the result put back into parents-before-children order. Deletion and field overrides then apply by key as today, to inserted and replaced entities too.
+- **Failures.** A move that would make a cycle, or whose new parent is missing, leaves the entity at its generated parent with warning `RE1209`. Overrides whose target or parent key is gone are orphans, kept and reported (`RE4010`), never dropped. Generators may not emit keys starting with `+` or `~` (`RE1207`).
+- **Ops.** `re_command`'s `SetOverride` gains `moved`, `replaced` and `insert` (one structural kind per op), with the same index-exact inverse. `re_proc` adds `proc.move`, `proc.replace`, `proc.insert` and `proc.clear_structure`, which emit these ops and regenerate in the same transaction. `reparent` and `spawn` under a generated entity stay refused, with a hint naming `proc.move` and `proc.insert`. WP25's canvas and outliner map a hierarchy drag of a generated entity to `proc.move`.
+- This amends ADR-0017's "structural edits ... are refused". `apply_structure`, the `OverrideDoc` variants and the `SetOverride` fields live in maintainer crates. WP24 writes them in maintainer-reviewed PRs, as WP23 does for its `re_scene` hooks.
+
+*4. Luau generators and Luau nodes (PR "luau").*
+- **One mechanism.** A Luau node is a ProcGraph node kind whose `eval` is Luau. A "Luau generator" is a Luau node whose output is a fragment, run by a source through a one-node graph, so caching, versions, parameters (`graph.set_param`), overrides and bake work unchanged. There is no second generator kind. `proc.create_source { kind, params }` writes such a source.
+- **Declaration.** Each file under `scripts/generators/` returns `proc.node{ kind, version, oldest?, doc, inputs, output, params, uses_seed, migrate?, eval }`.
+  - `kind` must start with `project.`, so a future engine kind can never collide with a project's. A collision or a malformed declaration is `RE4100`.
+  - `params` uses a small schema DSL (`proc.param.number{default, min, max}`, `integer`, `bool`, `string`, `enum`, `vec3`) that becomes the kind's JSON Schema for `describe`.
+  - `migrate(from, params)` is the Luau form of the migration steps, and `ctx.version` is the recorded version.
+  - `re_app` declares the scripts at project load and on hot reload, and registers them in the `GraphStore`'s `NodeRegistry` (a small shared PR).
+- **The `generator` context** (new module `re_script::generator`):
+  - It has the safe standard libraries without `os`, and `math.random` is removed.
+  - `ctx` gives the node's seed and a deterministic generator over it (re_noise's `Pcg32`), the recorded version, the field size and cell, and `ctx:log(text)`, which goes into the `EvalReport` (capped).
+  - `require` reaches only modules under `scripts/generators/`.
+  - There is no `world`, entity, command, task, time or file access. Output depends only on parameters, inputs, seed and the scripts.
+- **A fresh VM for every evaluation**, created on the worker thread that runs the node from bytecode compiled once (112 µs measured). No state survives between evaluations, so a script cannot make output depend on evaluation order or thread. Nothing but bytecode (`Arc<[u8]>`) crosses threads.
+- **A deterministic budget.** The interrupt counts safepoints. The default is 20,000,000 per evaluation, about 3 s at the measured rate, set in `real.toml` as `[proc] luau_budget`. Going over is `RE4101`, the same on every machine. The memory limit is `[proc] luau_memory_mb` (default 256). A wall-clock backstop of 60 s reports `RE4102`, marked as machine-dependent, for a VM stuck in a long builtin. A `pcall` cannot swallow either; the probe confirms this for the counting interrupt.
+- **Data at the boundary.**
+  - Fields cross as `buffer`s of f32 (`samples[z*n+x]`); points as a `buffer` of records plus a tags array; meshes as `buffer`s; fragments as tables.
+  - Buffers are 3.6× faster than tables on the measured map.
+  - Outputs are checked: non-finite numbers, wrong lengths, and bad keys or component names are `RE4103`, naming the node and script.
+  - Luau computes in f64. A Rust twin of a Luau node therefore computes in f64 and rounds at the output; the plan's acceptance test ("a Luau node and the same node in Rust give identical output") uses twins written that way, which the probe shows are bit-identical.
+- **Maths across machines (D2).**
+  - Generator scripts compile with `disabled_builtins` for the transcendental `math` functions (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `exp`, `log`, `log10`, `pow`, `sinh`, `cosh`, `tanh`). The context's `math` table supplies portable versions of them: the ones ADR-0036 picks for simulated paths, or `re_geom::math` until it lands.
+  - `^` with an exponent other than the constants 2, 0.5 and 3 still calls the C `pow`. That is the one known D2 gap. The static scan should warn on it in generator scripts; see the open questions.
+- **Cost guidance** (documented, from the measurements): Luau nodes suit points, fragments and fields up to about 512² (17 to 40 ms for a map or a stencil). Large terrain stays in Rust nodes. The "luau" PR measures again through the real context before merging.
+- **Dependency edge.** `re_script` gains a dependency on `re_proc` (for `NodeDef`, `NodeCtx` and the value types). `re_proc` still reaches no mlua. ARCHITECTURE §2 and `check-graph` get the new edge (maintainer).
+
+*5. Polygon booleans and roads (PR "booleans and roads").*
+- **Dependencies:** `i_overlay = "=9.1.0"` with default features off, and `earcut = "=0.4.11"`, both used by `re_geom` only, and nowhere in its public types. A new `re_geom::polygon` module wraps them:
+  - `Shapes` (polygons with holes, f64 metres in the source's XZ plane) with `boolean(a, b, op)`, `union_all`, `offset`, `stroke(path, style)` and `triangulate(&Shapes, height) -> MeshData`.
+  - Every call uses i_overlay's fixed-scale API at a 1 mm grid (scale 1000) on its i32 engine, with integer stroke and outline construction. Results are therefore exact integers mapped back to floats, and the same on every platform.
+  - Coordinates beyond about ±1,000 km are refused (`ScaleTooLarge`), which becomes `RE4503`. Invalid input is `RE4504`, and a triangulation failure `RE4505`.
+- **Churn is contained.** The version is pinned exactly and wrapped in one module. `re_geom`'s goldens hash the outputs, so an upgrade that changes any output is seen, and the node kinds it changes get a version bump under section 1.
+- **Roads** (`re_geom::road`, all in f64 with polynomial trigonometry and no fused multiply-add, following `re_geom`'s rules):
+  - The centreline is a centripetal Catmull-Rom spline through the control points, sampled at a fixed arc spacing.
+  - The surface is a ribbon with width and bank per control point (interpolated). Its UVs run across the road (u, 0 to 1) and along it (v, in metres).
+  - Junctions: where centrelines cross, or end within `snap` of each other, each road is cut back by `junction_radius` (a polygon difference with the junction disc). The junction surface is the union of the road ends' footprints within the radius, triangulated flat at the mean height of those ends. Bank fades to 0 over `bank_fade` before a junction.
+- **New port types and nodes (all version 1):**
+  - Port types: `shapes` and `path`. They are added after the existing variants, so stored cache entries stay readable and the cache format version does not change.
+  - Nodes: `path.spline` → path; `road.mesh` (variadic paths) → mesh; `road.footprint` → shapes; `shape.polygon`, `shape.boolean`, `shape.offset` → shapes; `shape.mesh` → mesh; `field.from_shapes` (a mask with falloff) → field; `points.mask` (keep inside or outside) → points; `terrain.conform` (field + paths → the field flattened under the roads with a blend width).
+  - `terrain.conform` works on fields, so it lives in `re_proc`; WP23's terrain module consumes the field. The valley's roads (WP28) use these nodes.
+
+*6. Diagnostics* (WP24's range `RE4000`–`RE4299`): `RE4018` retired node version, `RE4019` older node version in use (warning), `RE4020` migration step failed, `RE4021` bake refused or failed, `RE4100`–`RE4103` the generator context (declaration, budget, wall-clock backstop, invalid output). In `re_geom`'s range: `RE4503`–`RE4505` (out of range, invalid polygon or path, triangulation). `re_scene` keeps `RE1207` and `RE1209` for the generator and override failures it reports.
+
+*7. Changes in other owners' paths*, each a small PR the owner reviews:
+- `re_scene`:
+  - `Procedural.version`, `GeneratorInfo.version`/`oldest` and `GenContext::version()` ("versioning");
+  - the losing-`Procedural` rule ("bake");
+  - the structural `OverrideDoc` variants, `apply_structure` and the reserved key prefixes ("overrides").
+- `re_command`: `SetOverride`'s structural fields and the new refusal hints ("overrides").
+- `re_app`: registering `Baked`, resolving `.heightfield` colliders, and declaring and hot-reloading Luau nodes.
+- `re_cli`: `real migrate-graph`.
+- `tools/xtask` (`check-graph`): the `re_script` → `re_proc` edge.
+- Docs: ARCHITECTURE §2, §5 and §7; DEPENDENCIES rows for i_overlay, its four `i_*` crates and earcut; ADR-0015's "Luau never runs inside node evaluation in M1" and ADR-0017's "not in M1" list, which point here.
+- Schemas are regenerated (`cargo xtask schemas`).
+
+*8. Order.* The five PRs land in the plan's order. "versioning" carries everything frozen, including the `Baked` type, the id rule, the baked-asset paths and the `.heightfield` layout, so WP23 and WP25 can build on it before "bake" merges. WP23 waits only for "versioning".
+
+**Alternatives.**
+- **One `NodeDef` per (kind, version).** This is cleaner in principle, but it duplicates ports, schemas and docs per version, and most bumps change one branch. Rejected for one def with `ctx.version()`, with goldens as the guard.
+- **Migrate on load (always run the newest version).** This contradicts the plan ("an old project opens with its recorded versions") and moves people's worlds without asking.
+- **Builders default to the current version.** A builder runs on every load, so its output would shift on engine upgrades with nothing recorded. Rejected for "absent means 1" plus the `RE4019` warning.
+- **Bake by despawning the source and re-spawning it.** Every reference to the source and its authored children would be cleared by `despawn` and need rebuilding, and the source's `Entity` would change. Rejected for removing two components plus one `re_scene` rule.
+- **A new `Bake` op in `re_command`'s closed set.** This means more maintainer surface for what existing ops already express exactly.
+- **Bake keeps `derived:` names** (or a private bake pack). The baked content could not be edited elsewhere and would depend on WP24's store at run time. Rejected for `.glb` files plus one small heightfield format.
+- **Structural overrides inside the `graph` generator,** stored in a component of `re_proc`'s own. That would keep the work in WP24's paths, but it splits overrides into two lists and leaves other generators (prefab instancing, tests, compat) without them. Rejected for one list applied in `re_scene`.
+- **A VM per worker thread, reused.** It saves about 112 µs per evaluation, but module-level state would then leak between evaluations and make output depend on scheduling.
+- **A wall-clock budget for generators.** It is not deterministic; it stays only as the backstop.
+- **geo 0.33.1 for booleans.** It pins i_overlay 4.5, and adds rstar, robust, geographiclib-rs and others we do not need.
+- **clipper2 0.6.0** binds the C++ Clipper2 and needs a C++ build. **clipper2-rust 1.2.0** is BSL-1.0 and young (about 125,000 downloads). Neither has i_overlay's integer-construction stroke.
+- **Our own boolean solver.** Robust polygon booleans are a project of their own.
+- **i_triangle 0.50.1** (same author, 0.x, about 87,000 downloads) instead of earcut, or our own ear clipper. earcut is the widely used port of a well-known algorithm, and junction caps and fills do not need Delaunay quality.
+
+**Consequences.**
+- Version bumps become routine and safe: an engine upgrade never changes a world until `real migrate-graph` is run, and the report says what will change.
+- Goldens per (kind, version) grow with every bump. They are small (one hash per entry).
+- Bake output is ordinary content: scenes, `.glb` files and `.heightfield` files. It survives the engine dropping a node version.
+- Structural overrides give users and agents "change one generated thing" without leaving the generator, and keep working across re-runs. Orphans stay visible.
+- Luau nodes are 20–60× slower than Rust per sample on field work. They are for project-specific logic, not bulk terrain.
+- Two new direct dependencies (five crates in all, plus `libm` and `num-traits`, which are already present), all MIT or Apache-2.0, used only by `re_geom`. Both contain `unsafe`; our crates keep `forbid(unsafe_code)`.
+
+**Answers to the draft's open questions** (maintainer):
+1. `^` with a non-constant exponent in generator scripts is a warning from the static scan in M3. The maintainer, who owns `re_script_check` in M3, revisits it as a load-time error only if ADR-0036 makes D2 binding for generator output.
+2. Bake's undo does not delete the asset files it wrote; `real check` reports unreferenced files under `assets/baked/`.
+3. Luau node kinds start with `project.`; a shared library of nodes uses `project.<library>.<name>`.
+
 ## ADR-0046: The M3 AI track: templates and recipes as data, an evaluation harness that never calls a model, and MCP over streamable HTTP on localhost
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP26). The code waits for M2's definition of done (M3_PLAN, "How M3 starts").

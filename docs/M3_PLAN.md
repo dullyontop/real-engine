@@ -55,6 +55,7 @@ The M1 and M2 ownership rules carry over, with these changes:
 - `re_app` and `re_cli` are shared. WP19 owns `re_app/src/package.rs` and `re_cli/src/build/`; every other change to them, such as WP24's `real migrate-graph` and WP26's new `real new` templates, goes through a small PR that the maintainer reviews, as M2 did for `re_compat`'s shared files.
 - **Planned edits across owners.** Each is a small PR in the owner's paths, reviewed by the owner:
   - WP21's GPU skinning path in `re_render` (WP20 reviews);
+  - WP24's generator versions, the losing-`Procedural` rule and structural overrides in `re_scene` and `re_command` (the maintainer reviews; ADR-0043, section 7);
   - WP23's streaming hooks in `re_scene` (the maintainer reviews), its per-chunk heightfield calls in `re_physics` (WP22 reviews), and its erosion node registered through WP24's `NodeRegistry` (WP24 reviews);
   - WP27's skinned `MeshPart`s on WP21's `re_anim` API and its post effects on WP20's settings, through those WPs' public APIs only.
 
