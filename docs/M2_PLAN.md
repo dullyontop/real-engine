@@ -329,7 +329,7 @@ cargo run --release --locked -p re_compat --example bigmap -- --parts 250000 --f
 
 ## WP14: Characters, animation and input
 
-**Status:** merged in #62 (`RE9200`–`RE9202`, `[compat.animations]`, the raw input contract) and #66 (frame phases, `Players:CreateHumanoidModelFromDescription`, and `RE9203`, the offline-default warning `GetHumanoidDescriptionFromUserId` gives instead of `RE9101`). WP16 "boot" implements `raw_input` and `set_mouse_behavior` in `re_app`'s host.
+**Status:** done. Merged in #62 (`RE9200`–`RE9202`, `[compat.animations]`, the raw input contract) and #66 (frame phases, `Players:CreateHumanoidModelFromDescription`, and `RE9203`, the offline-default warning `GetHumanoidDescriptionFromUserId` gives instead of `RE9101`). WP16 "boot" implements `raw_input` and `set_mouse_behavior` in `re_app`'s host. Characters on the shared physics world, seats and touches merged in #72.
 
 **Goal.** Humanoid characters that walk, jump, sit, take damage and die, driven by the default player scripts or by game scripts; rigs and animation; and the input services.
 
@@ -381,7 +381,7 @@ cargo test --locked -p re_compat character
 
 ## WP15: Rendering, UI, tweens and sound
 
-**Status:** PR "tweens and sound" merged in #55 (`RE9350`–`RE9352`, `[compat] assets` and `effect_budget`) PR "UI" in #61 (layout, text, painting, input, billboards and the fonts of ADR-0035), and PR "render" in #69 (parts, materials, lighting, camera, particles, beams, trails and highlights). Post effects other than `ColorCorrectionEffect` (`Bloom`, `Blur`, `SunRays`) are stored but not drawn, and marked `partial`. The host calls `re_compat::render::build` once a frame after `post_simulation`; wiring it into `re_app` comes with WP16 "plaza". WP15 is done.
+**Status:** PR "tweens and sound" merged in #55 (`RE9350`–`RE9352`, `[compat] assets` and `effect_budget`) PR "UI" in #61 (layout, text, painting, input, billboards and the fonts of ADR-0035), and PR "render" in #69 (parts, materials, lighting, camera, particles, beams, trails and highlights). Post effects other than `ColorCorrectionEffect` (`Bloom`, `Blur`, `SunRays`) are stored but not drawn, and marked `partial`. The host calls `re_compat::render::build` once a frame after `post_simulation`; WP16 "plaza" wired it into `re_app` (#73). WP15 is done.
 
 **Goal.** Draw what Roblox-style projects build (parts with materials, lights, effects, billboards and screen UI) and play their tweens and sounds.
 
@@ -443,7 +443,7 @@ cargo test --locked -p re_audio
 
 ## WP16: Import, runtime integration and the plaza example
 
-**Status:** PR "importer" merged in #46, with the sample runner, and PR "boot" in #53 (the compat frame loop in `re_app`, the `real verify` boot stage with `RE0526`, the `play.run` steps with `RE0527`, `roblox.d.luau` from `real check --types`, and the template's `cpu_budget_ms = 10000`). PR "plaza" is next. Compat scripts do not hot-reload yet: a changed script takes effect at the next `world.restart`.
+**Status:** PR "importer" merged in #46, with the sample runner, and PR "boot" in #53 (the compat frame loop in `re_app`, the `real verify` boot stage with `RE0526`, the `play.run` steps with `RE0527`, `roblox.d.luau` from `real check --types`, and the template's `cpu_budget_ms = 10000`). PR "plaza" merged in #73: `examples/plaza`, drawing a compat game through `re_app::compat_view`, and the required `verify-plaza` job. WP16 is done. Compat scripts do not hot-reload yet: a changed script takes effect at the next `world.restart`.
 
 **Goal.** Bring Roblox-style projects in with `real import`, run them through `real run` and `real verify`, and prove the layer in CI with `examples/plaza`.
 
@@ -586,4 +586,4 @@ M2 is done when **all** of these are true on a clean checkout in the reference c
 6. The 250,000-part synthetic static map meets the budgets in "Defaults this plan picks", and ADR-0031 records the numbers.
 7. The MCP end-to-end tests of M1 and WP17 pass.
 8. `real check --types` with `roblox.d.luau` runs over the samples and reports its counts. It is advisory and does not gate.
-9. No document describes an unimplemented feature as done, and `coverage.json` matches the code. A test calls every `implemented` member at least once from a fixture.
+9. No document describes an unimplemented feature as done, and `coverage.json` matches the code. A test calls every `implemented` member at least once from a fixture: the `test` job records the members each test's scripts reach and `cargo xtask members` checks the union against `coverage.json`.
