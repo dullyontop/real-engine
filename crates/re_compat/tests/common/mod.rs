@@ -54,10 +54,10 @@ pub fn test_builder() -> ClassRegistryBuilder {
     )
 }
 
-/// Registers the `Instance` accessors (`Name`, `Parent`, `ClassName`).
+/// Registers every builtin-property accessor of the layer.
 pub fn instance_accessors(mut b: ClassRegistryBuilder) -> ClassRegistryBuilder {
-    for (prop, a) in re_compat::instance::accessors() {
-        b = b.accessor("Instance", prop, a);
+    for (class, prop, a) in re_compat::runtime::accessors() {
+        b = b.accessor(class, prop, a);
     }
     b
 }

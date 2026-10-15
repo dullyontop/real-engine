@@ -2,10 +2,10 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 967,
-    "partial": 11,
+    "implemented": 1006,
+    "partial": 18,
     "stub-error": 2,
-    "missing": 9
+    "missing": 3
   },
   "classes": [
     {
@@ -17,12 +17,12 @@
     {
       "name": "BaseScript",
       "superclass": "LuaSourceContainer",
-      "status": "missing",
+      "status": "partial",
       "members": [
         {
           "name": "RunContext",
           "kind": "property",
-          "status": "missing"
+          "status": "implemented"
         }
       ]
     },
@@ -85,7 +85,43 @@
       "name": "DataModel",
       "superclass": "ServiceProvider",
       "status": "partial",
-      "members": []
+      "members": [
+        {
+          "name": "BindToClose",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "CreatorId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GameId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "JobId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlaceId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PrivateServerId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PrivateServerOwnerId",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "Folder",
@@ -341,13 +377,13 @@
       "name": "LocalScript",
       "superclass": "Script",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
       "members": []
     },
     {
       "name": "LuaSourceContainer",
       "superclass": "Instance",
-      "status": "missing",
+      "status": "partial",
       "members": []
     },
     {
@@ -361,7 +397,7 @@
       "name": "ModuleScript",
       "superclass": "LuaSourceContainer",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
       "members": []
     },
     {
@@ -378,10 +414,88 @@
       "members": []
     },
     {
+      "name": "RunService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "BindToRenderStep",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Heartbeat",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "IsClient",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsEdit",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsRunning",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsServer",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsStudio",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PostSimulation",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PreAnimation",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PreRender",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PreSimulation",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "RenderStepped",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Stepped",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "UnbindFromRenderStep",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Script",
       "superclass": "BaseScript",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
       "members": []
     },
     {
@@ -9426,13 +9540,108 @@
       "members": []
     },
     {
+      "name": "debug",
+      "status": "partial",
+      "note": "profilebegin and profileend keep the label stack, but the profiler does not record script labels yet.",
+      "members": [
+        {
+          "name": "info",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "profilebegin",
+          "kind": "function",
+          "status": "partial",
+          "note": "The label is kept but not recorded by the profiler yet."
+        },
+        {
+          "name": "profileend",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "traceback",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "delay",
+      "status": "implemented",
+      "members": []
+    },
+    {
       "name": "game",
       "class": "DataModel",
       "status": "implemented",
       "members": []
     },
     {
+      "name": "require",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "script",
+      "class": "LuaSourceContainer",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "spawn",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "task",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "cancel",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "defer",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "delay",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "desynchronize",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "spawn",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "synchronize",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "wait",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "typeof",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "wait",
       "status": "implemented",
       "members": []
     },

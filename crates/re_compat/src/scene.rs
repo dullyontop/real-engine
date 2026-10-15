@@ -262,15 +262,17 @@ pub fn validate(world: &mut World, classes: &ClassRegistry) -> Vec<Diagnostic> {
 }
 
 /// The API a compat project's scripts are written against.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CompatApi {
     /// The Roblox-style API.
+    #[default]
     Roblox,
 }
 
-/// The `[compat]` section of `real.toml`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// The `[compat]` section of `real.toml`. Build one with `..Default::default()`
+/// so later fields need no change.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompatConfig {
     /// The API the project's scripts use.
@@ -278,6 +280,15 @@ pub struct CompatConfig {
     /// When signal handlers run: `deferred` (the default) or `immediate`.
     #[serde(default)]
     pub signal_behavior: crate::signal::SignalBehavior,
+    /// What `game` and `RunService` report about the session
+    /// (`[compat.game]`); Studio-like by default.
+    #[serde(default, skip_serializing_if = "GameInfo::is_default")]
+    pub game: GameInfo,
+    /// Seeds `Random.new()` called without a seed (the client context uses
+    /// `seed + 1`), so runs repeat. TOML integers are signed, so a seed
+    /// written to `real.toml` must be at most `i64::MAX`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub seed: u64,
     /// Asset substitutes: an asset id (`"rbxassetid://123"` or `"123"`, both
     /// stored as [`asset_key`] gives them) to a project-relative file path.
     /// Sounds, images and textures resolve through it; an id that is not
@@ -288,6 +299,53 @@ pub struct CompatConfig {
     /// [`DEFAULT_EFFECT_BUDGET`]); the excess is `RE9351`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_budget: Option<u32>,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// The `[compat.game]` section: the values scripts read from `game`
+/// (`PlaceId`, `JobId`, ...) and `RunService:IsStudio()`. The defaults are
+/// those of an unpublished place in a Studio play test.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct GameInfo {
+    /// `game.PlaceId`.
+    pub place_id: i64,
+    /// `game.GameId`.
+    pub game_id: i64,
+    /// `game.CreatorId`.
+    pub creator_id: i64,
+    /// `game.JobId`.
+    pub job_id: String,
+    /// `game.PrivateServerId`.
+    pub private_server_id: String,
+    /// `game.PrivateServerOwnerId`.
+    pub private_server_owner_id: i64,
+    /// `RunService:IsStudio()`.
+    pub studio: bool,
+}
+
+impl Default for GameInfo {
+    fn default() -> Self {
+        GameInfo {
+            place_id: 0,
+            game_id: 0,
+            creator_id: 0,
+            job_id: String::new(),
+            private_server_id: String::new(),
+            private_server_owner_id: 0,
+            studio: true,
+        }
+    }
+}
+
+impl GameInfo {
+    /// True for the Studio-like defaults, which `real.toml` leaves out.
+    pub fn is_default(&self) -> bool {
+        *self == GameInfo::default()
+    }
 }
 
 /// The effect budget when `[compat] effect_budget` is absent.
@@ -381,8 +439,18 @@ impl CompatConfig {
                 self.signal_behavior.as_str()
             ));
         }
+        if self.seed != 0 {
+            out.push_str(&format!("seed = {}\n", self.seed));
+        }
         if let Some(b) = self.effect_budget {
             out.push_str(&format!("effect_budget = {b}\n"));
+        }
+        // Tables last: plain `key = value` lines go above this point, or they
+        // would land inside `[compat.game]`.
+        if self.game != GameInfo::default() {
+            let g = toml::to_string(&self.game).expect("plain values serialize");
+            out.push_str("\n[compat.game]\n");
+            out.push_str(&g);
         }
         if !self.assets.is_empty() {
             out.push_str("\n[compat.assets]\n");
