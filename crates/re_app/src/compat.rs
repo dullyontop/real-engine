@@ -363,14 +363,11 @@ pub fn install_default_scripts(
             Some(container),
         )
         .map_err(|e| fail(format!("cannot add the default {}: {e}", script.name)))?;
-        world
-            .ecs
-            .entity_mut(e)
-            .insert(re_scene::ScriptRef {
-                path: rel,
-                context: re_compat::script_context(script.class, None)
-                    .unwrap_or(re_scene::ScriptContext::Server),
-            });
+        world.ecs.entity_mut(e).insert(re_scene::ScriptRef {
+            path: rel,
+            context: re_compat::script_context(script.class, None)
+                .unwrap_or(re_scene::ScriptContext::Server),
+        });
     }
     Ok(())
 }

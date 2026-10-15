@@ -32,7 +32,11 @@ pub fn step(name: &str) -> Option<super::Step> {
 
 fn strings(v: &J) -> Vec<String> {
     v.as_array()
-        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| s.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -107,7 +111,11 @@ fn boot(ctx: &mut Ctx, args: &J) -> Result<(), String> {
         &allow,
     );
     if !errors.is_empty() {
-        return Err(format!("{} error(s) in the boot:\n{}", errors.len(), errors.join("\n")));
+        return Err(format!(
+            "{} error(s) in the boot:\n{}",
+            errors.len(),
+            errors.join("\n")
+        ));
     }
     let output = strings(&boot.data["output"]);
     check_output(
@@ -153,25 +161,35 @@ fn play(ctx: &mut Ctx, args: &J) -> Result<(), String> {
         &allow,
     );
     if !errors.is_empty() {
-        return Err(format!("{} error(s) in the play:\n{}", errors.len(), errors.join("\n")));
+        return Err(format!(
+            "{} error(s) in the play:\n{}",
+            errors.len(),
+            errors.join("\n")
+        ));
     }
     check_output(&report.output, &strings(&args["output"]), false)?;
     for (i, e) in args["expect"].as_array().into_iter().flatten().enumerate() {
         let step = e["step"].as_u64().ok_or(format!("expect[{i}]: no step"))? as usize;
-        let result = results.get(step).ok_or(format!("expect[{i}]: no step {step}"))?;
+        let result = results
+            .get(step)
+            .ok_or(format!("expect[{i}]: no step {step}"))?;
         let pointer = e["pointer"].as_str().unwrap_or("");
-        let got = result
-            .pointer(pointer)
-            .ok_or(format!("expect[{i}]: step {step} has no {pointer}: {result}"))?;
+        let got = result.pointer(pointer).ok_or(format!(
+            "expect[{i}]: step {step} has no {pointer}: {result}"
+        ))?;
         if let Some(want) = e.get("equals")
             && got != want
         {
-            return Err(format!("expect[{i}]: step {step} {pointer} is {got}, not {want}"));
+            return Err(format!(
+                "expect[{i}]: step {step} {pointer} is {got}, not {want}"
+            ));
         }
         if let Some(text) = e["contains"].as_str() {
             let hay = got.as_str().map_or_else(|| got.to_string(), str::to_string);
             if !hay.contains(text) {
-                return Err(format!("expect[{i}]: step {step} {pointer} lacks {text:?}: {hay}"));
+                return Err(format!(
+                    "expect[{i}]: step {step} {pointer} lacks {text:?}: {hay}"
+                ));
             }
         }
     }
