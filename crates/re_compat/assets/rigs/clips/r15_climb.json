@@ -1,0 +1,315 @@
+{
+ "format": "real-engine/compat-clip",
+ "version": 1,
+ "name": "r15_climb",
+ "doc": "R15 climb: arms reach up in turn while the legs step.",
+ "looped": true,
+ "priority": "Core",
+ "keyframes": [
+  {
+   "time": 0.0,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      2.4,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      2.4,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.25,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      2.9,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      1.9,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      0.5,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      -0.5,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.5,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      2.4,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      2.4,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.75,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      1.9,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      2.9,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      -0.5,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      0.5,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 1.0,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      2.4,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      2.4,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -0.0,
+      0,
+      0
+     ]
+    }
+   }
+  }
+ ]
+}

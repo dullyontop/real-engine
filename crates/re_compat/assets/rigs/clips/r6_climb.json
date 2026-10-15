@@ -1,0 +1,210 @@
+{
+ "format": "real-engine/compat-clip",
+ "version": 1,
+ "name": "r6_climb",
+ "doc": "R6 climb: arms reach up in turn while the legs step.",
+ "looped": true,
+ "priority": "Core",
+ "keyframes": [
+  {
+   "time": 0.0,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      2.3562
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -2.3562
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.25,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      2.8562
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -1.8562
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0.5
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0.5
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.5,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      2.3562
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -2.3562
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.75,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      1.8562
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -2.8562
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      -0.5
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      -0.5
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 1.0,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      2.3562
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -2.3562
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  }
+ ]
+}

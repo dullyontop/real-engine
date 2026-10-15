@@ -385,7 +385,8 @@ pub enum PhysicsCmd {
         /// The impulse.
         impulse: Vec3,
     },
-    /// Set a body's velocities.
+    /// Set a body's velocities. On a character, sets its linear velocity for the
+    /// next step (angular is ignored); an upward speed makes it jump.
     SetVelocity {
         /// The entity.
         id: EntityId,

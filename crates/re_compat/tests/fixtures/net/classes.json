@@ -37,24 +37,6 @@
           "status": "implemented"
         }
       ]
-    },
-    {
-      "name": "Humanoid",
-      "superclass": "Instance",
-      "creatable": true,
-      "status": "partial",
-      "note": "Test class: only Health.",
-      "properties": [
-        {
-          "name": "Health",
-          "type": "number",
-          "storage": {
-            "kind": "own"
-          },
-          "default": 100,
-          "status": "implemented"
-        }
-      ]
     }
   ]
 }

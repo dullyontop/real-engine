@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** partly implemented (M1 done, M2 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. In progress: `re_compat` (M2), with its class layer, data formats, scene conventions (WP9), datatypes and enums (WP10) and the data model (WP11's first PR) merged, and `re_import` (WP16's importer). Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** partly implemented (M1 done, M2 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. In progress: `re_compat` (M2), with its class layer, data formats, scene conventions (WP9), datatypes and enums (WP10), the data model and script runtime (WP11), and tweens and sound (WP15's first PR) merged, and `re_import` (WP16's importer). Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -309,11 +309,15 @@ The class layer as built (WP9):
 - Unknown and unimplemented members raise `RE9001` with a "did you mean" suggestion. A write to a read-only property raises `RE9005`, and a deprecated member gives an `RE9101` warning with its replacement.
 - Every instance carries a `ClassMarker { class }`. The root entity has the stable id `game` and class `DataModel`. Each service is a child of `game` whose stable id and name are its class name, with a `ServiceTag`. A script instance's `ScriptRef.context` is `Server`, `Client` or `Module`, from its class and `RunContext`; the native runtime starts only `Game` and `Tools` scripts. A compat project says `[compat] api = "roblox"` in `real.toml`, and convention breaks are reported as `RE9004`.
 
-The runtime as built so far (WP10, WP11 "data model"):
+The runtime as built so far (WP10, WP11, WP15 "tweens and sound"):
 - A compat VM is a `re_script::Context` of kind `Server` or `Client`, with the native sandbox (no `loadstring`, `getfenv` or `setfenv`), created and driven by `re_compat::CompatVm`, one per world. `ScriptRuntime` stays native-only. Each area registers its accessors, methods, globals and value conversions in `Bindings`, and `CompatSetup` refuses to start if a member marked `implemented` has no implementation.
 - Yielding host calls (`WaitForChild`, `Signal:Wait`) park the calling coroutine and are woken from a later phase (`re_script`'s park and wake protocol, with timeouts). A settle hook runs at the end of each resumption cycle.
 - Instance handles (`InstanceRef`) compare by identity. A destroyed handle becomes a tombstone. `Destroy` fires `Destroying`, locks `Parent`, keeps the subtree readable until the resumption cycle settles, then despawns it. `Clone` honours `Archivable` and remaps references inside the copy.
 - Signals are deferred by default: handlers run in the phase after the event. `[compat] signal_behavior = "immediate"` in `real.toml` switches. Child and descendant events come from observers on `ChildOf`, attribute and tag events from the `re_scene` feeds, and `Changed` from per-field diffs gated by change ticks.
+- Scripts start from the tree by the rules of M2_PLAN WP11: a `Script` runs in `server` under `Workspace` or `ServerScriptService`, a `LocalScript` runs in `client` under a player's containers or character, and `RunContext` `Server` or `Client` overrides the place, except under storage and the templates. Each started script owns its threads, so destroying it stops them. `require(module)` runs a `ModuleScript` once per context in the requiring thread and caches the result; a cycle is `RE3004` with the chain, and a module that raised raises again on every later `require`.
+- `RunService` (`Heartbeat`, `Stepped`, `RenderStepped` in the client, `IsServer`, `IsClient`, `IsStudio`), `task` (`spawn`, `defer`, `delay`, `wait`, `cancel`) and the deprecated `wait`, `delay` and `spawn` run on the virtual clock. `game`'s session fields (`PlaceId`, `JobId`, ...) come from `[compat.game]`, and `Random.new()` without a seed uses `[compat] seed` (the client context uses `seed + 1`), so runs repeat.
+- `re_compat::testing::Harness` is the public headless harness: `open` or `open_with` loads a project's entry scene into a `server` and a `client` world, `start` starts their scripts, `step(n)` runs frames on the virtual clock, and `close` ends the run. `uncaught`, `stuck`, `required`, `unsupported` and `take_output` report what happened. Until WP12 adds players, the client world drops the server-only containers and starts the template client scripts in place.
+- Tweens and sound (WP15): `TweenService:Create` animates properties along an easing curve and refuses a property that cannot be tweened (`RE9352`). `Sound` keeps each sound's clock in the layer, so `TimePosition`, `IsPlaying`, `Ended` and `DidLoop` behave the same with and without an audio device. Each frame the layer queues `re_types::AudioCmd`s, and the frame driver takes them with `sound::take_commands` and hands them to `re_audio`, so `re_compat` does not depend on `re_audio`. `SoundId` resolves through `[compat] assets`; an unknown id is silent and warns once with `RE9350`.
 - Datatypes: `Vector3` is Luau's native vector with a frozen type metatable, so its methods stay fast calls. `CFrame` stores an f32 position and rotation matrix and looks along −Z. The other datatypes are Rust userdata. `Enum` tables are built from `enums/*.json`, with one object per item per VM, so `==`, `rawequal` and table keys work. `Random` is our own seeded generator, so its numbers differ from Roblox's (marked `partial`).
 
 Coverage is a data file, `crates/re_compat/coverage.json`, listing each class and member with its status (`implemented`, `partial`, `stub-error` or `missing`). The static scan (§7) compares real scripts against this file. M2 also ships a compatibility definitions file, so the type checker knows the Roblox-style globals.
@@ -568,6 +572,30 @@ golden_max_outliers = 0.01     # the largest share of outlier pixels (0–1) a m
 [verify.perf]                  # warnings only in M1
 frame_ms_p95 = 33.0
 ```
+
+A compat project adds a `[compat]` section. Every key but `api` is optional, and the importer writes only the ones that differ from the default:
+
+```toml
+[compat]
+api = "roblox"
+signal_behavior = "deferred"   # or "immediate"
+seed = 0                       # seeds Random.new() without a seed; i64 range
+effect_budget = 20000          # particles plus beam and trail segments per frame
+
+[compat.game]                  # what game and RunService report; Studio-like defaults
+place_id = 0
+game_id = 0
+creator_id = 0
+job_id = ""
+private_server_id = ""
+private_server_owner_id = 0
+studio = true
+
+[compat.assets]                # asset id to a project file; "rbxassetid://N" and "N" are one id
+"rbxassetid://123" = "assets/sfx/hit.wav"
+```
+
+Asset paths are relative to the project and may not contain `..`. An id that is not in the table, or whose file is missing, is `RE9350` when it is used.
 
 Input bindings name winit `KeyCode` variants (`key:KeyW`), mouse buttons (`mouse:Left`) and gilrs buttons (`pad:South`). An axis lists its sources in priority order; `composite` is up, down, left and right. An unknown name is a diagnostic, not a silent no-op.
 
