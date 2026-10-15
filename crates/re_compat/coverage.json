@@ -2,7 +2,7 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1006,
+    "implemented": 1007,
     "partial": 18,
     "stub-error": 2,
     "missing": 3
@@ -8789,6 +8789,11 @@
     },
     {
       "name": "Enum",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "EnumItem",
       "status": "implemented",
       "members": []
     },

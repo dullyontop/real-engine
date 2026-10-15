@@ -433,11 +433,18 @@ mod datatypes {
             );
             if let LuaValue::UserData(ud) = &back {
                 let untyped = datatypes::userdata_to_value(&lua, ud).unwrap();
-                let expect = match &stored {
-                    Value::Enum(s) => Value::Enum(format!("{}.{s}", &ty["Enum.".len()..])),
-                    other => other.clone(),
-                };
-                assert_eq!(untyped, Some(expect), "{ty}: untyped conversion");
+                match (&stored, untyped) {
+                    // An untyped enum item is an EnumItem record that reads
+                    // back as the same item.
+                    (Value::Enum(_), Some(rec @ Value::Record(id, _))) => {
+                        assert_eq!(id.name(), "EnumItem");
+                        let item = datatypes::to_lua(&lua, "EnumItem", rec).unwrap();
+                        assert!(eq.call::<bool>((back.clone(), item)).unwrap(), "{ty}");
+                    }
+                    (other, untyped) => {
+                        assert_eq!(untyped.as_ref(), Some(other), "{ty}: untyped conversion")
+                    }
+                }
             }
             let again = datatypes::from_lua(&lua, ty, back).unwrap();
             assert_eq!(stored, again, "{ty}");

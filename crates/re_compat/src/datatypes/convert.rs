@@ -250,6 +250,17 @@ pub fn to_lua(lua: &Lua, ty: &str, v: Value) -> Result<LuaValue> {
                 },
             )?
         }
+        ("EnumItem", _) => {
+            let fs = fields(ty, &v)?;
+            let text = |k| match get(&fs, k) {
+                Some(Value::Str(s)) => s.as_str(),
+                _ => "",
+            };
+            match EnumItem::lookup(text("EnumType"), text("Name")) {
+                Some(item) => item.to_lua(lua)?,
+                None => return Err(bad_stored(ty, &v)),
+            }
+        }
         ("Font", _) => {
             let fs = fields(ty, &v)?;
             let family = match get(&fs, "Family") {
@@ -444,14 +455,17 @@ pub fn datatype_of(ud: &AnyUserData) -> Option<&'static str> {
 /// `Ok(None)` for userdata that is not one (an instance, a signal).
 pub fn userdata_to_value(lua: &Lua, ud: &AnyUserData) -> Result<Option<Value>> {
     if ud.is::<EnumItem>() {
-        // Untyped values (attributes) keep the enum type with the item:
-        // `Material.Plastic`.
+        // Untyped values (attributes) keep the enum type with the item, as an
+        // `EnumItem` record.
         let item = *ud.borrow::<EnumItem>()?;
-        return Ok(Some(Value::Enum(format!(
-            "{}.{}",
-            item.enum_name(),
-            item.name()
-        ))));
+        return record(
+            "EnumItem",
+            &[
+                ("EnumType", Value::Str(item.enum_name().to_string())),
+                ("Name", Value::Str(item.name().to_string())),
+            ],
+        )
+        .map(Some);
     }
     match datatype_of(ud) {
         Some(ty) => from_lua(lua, ty, LuaValue::UserData(ud.clone())).map(Some),

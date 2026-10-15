@@ -165,12 +165,7 @@ impl ValueCodec {
             Value::Bool(b) => LuaValue::Boolean(b),
             Value::Int(i) => LuaValue::Number(i as f64),
             Value::Float(f) => LuaValue::Number(f),
-            // An untyped enum value names its type: `Material.Plastic`.
-            Value::Enum(s) => match (&self.enum_to_lua, s.split_once('.')) {
-                (Some(hook), Some((ty, item))) => hook(lua, ty, item)?,
-                _ => LuaValue::String(lua.create_string(&s)?),
-            },
-            Value::Str(s) => LuaValue::String(lua.create_string(&s)?),
+            Value::Str(s) | Value::Enum(s) => LuaValue::String(lua.create_string(&s)?),
             Value::Vec3(v) => LuaValue::Vector(mlua::Vector::new(v.x, v.y, v.z)),
             Value::Entity(None) => LuaValue::Nil,
             // A list of keypoints of one kind is a NumberSequence or a

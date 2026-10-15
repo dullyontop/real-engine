@@ -42,6 +42,7 @@ use re_script::codes;
 /// The datatypes whose stored form [`to_lua`] turns into their Luau form.
 const STORED_TYPES: &[&str] = &[
     "CFrame",
+    "EnumItem",
     "Color3",
     "ColorSequence",
     "ColorSequenceKeypoint",

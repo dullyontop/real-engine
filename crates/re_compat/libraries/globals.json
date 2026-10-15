@@ -12,6 +12,21 @@
       "name": "Enum",
       "status": "implemented",
       "doc": "The enum tables. Enum.<Type> is an Enum, Enum.<Type>.<Item> an EnumItem with Name, Value and EnumType. Every item is a single object per VM, so items compare with == and work as table keys. Enum.<Type>:GetEnumItems(), :FromName(name) and :FromValue(number) are supported; Enum:GetEnums() lists the types."
+    },
+    {
+      "name": "EnumItem",
+      "status": "implemented",
+      "doc": "An item of an Enum, such as Enum.Material.Plastic. Stored in attributes as its enum type and item name.",
+      "record": [
+        {
+          "name": "EnumType",
+          "type": "string"
+        },
+        {
+          "name": "Name",
+          "type": "string"
+        }
+      ]
     }
   ]
 }
