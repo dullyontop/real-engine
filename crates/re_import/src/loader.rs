@@ -606,8 +606,7 @@ impl Reader {
             else {
                 continue;
             };
-            let entries: Option<Vec<Entry>> =
-                items.iter().map(script_entry).collect();
+            let entries: Option<Vec<Entry>> = items.iter().map(script_entry).collect();
             let Some(entries) = entries.filter(|e| !e.is_empty()) else {
                 continue;
             };
