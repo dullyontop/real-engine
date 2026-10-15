@@ -89,7 +89,7 @@ impl ScriptError {
         } else {
             kind
         };
-        if line.is_none()
+        if (line.is_none() || chunk.as_deref().is_some_and(is_internal_chunk))
             && let Some((c, l)) = first_luau_frame(&traceback)
         {
             chunk = Some(c);
@@ -125,7 +125,7 @@ impl ScriptError {
             && let Ok(s) = tb.call::<String>(thread)
         {
             let s = s.trim_end().to_string();
-            if e.line.is_none()
+            if (e.line.is_none() || e.chunk.as_deref().is_some_and(is_internal_chunk))
                 && let Some((c, l)) = first_luau_frame(&s)
             {
                 e.chunk = Some(c);
@@ -274,7 +274,14 @@ fn split_code(message: &str) -> (Option<Code>, String) {
     (None, message.to_string())
 }
 
-/// The chunk and line of the first Luau frame in a traceback, skipping `[C]` frames:
+/// Chunks that are engine or mlua plumbing rather than user code: mlua's
+/// `__mlua_index`/`__mlua_require` helpers and the `task.wait` stub.
+pub(crate) fn is_internal_chunk(chunk: &str) -> bool {
+    chunk.starts_with("__mlua") || chunk == "task"
+}
+
+/// The chunk and line of the first user Luau frame in a traceback, skipping `[C]`
+/// frames and [internal chunks](is_internal_chunk):
 /// `\tscripts/a.luau:2: in function 'f'` gives `("scripts/a.luau", 2)`.
 pub(crate) fn first_luau_frame(traceback: &str) -> Option<(String, u32)> {
     traceback.lines().find_map(|l| {
@@ -283,7 +290,7 @@ pub(crate) fn first_luau_frame(traceback: &str) -> Option<(String, u32)> {
             return None;
         }
         let (chunk, line, _) = find_location(l)?;
-        (!chunk.is_empty()).then(|| (chunk.to_string(), line))
+        (!chunk.is_empty() && !is_internal_chunk(chunk)).then(|| (chunk.to_string(), line))
     })
 }
 

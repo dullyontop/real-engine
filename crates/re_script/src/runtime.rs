@@ -16,7 +16,6 @@
 //!
 //! Deferred threads (`task.defer`) run at the end of each phase's work.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -30,7 +29,7 @@ use crate::api::{self, json};
 use crate::diag::ScriptError;
 use crate::host::{self, ScriptHost};
 use crate::modules::{self, Loaded, Reload};
-use crate::scheduler::{self, Signal};
+use crate::scheduler::{self, Owner, Signal};
 use crate::vm::{self, ContextKind, OutputLine};
 use crate::{ErrorKind, codes};
 
@@ -157,11 +156,21 @@ pub struct ScriptRuntime {
     config: RuntimeConfig,
     game: Context,
     tools: Context,
-    /// Entities whose `ScriptRef` was started, with what was started.
-    attached: BTreeMap<Entity, (String, ContextKind)>,
-    /// Scripts started with [`ScriptRuntime::run_script`] without an entity.
-    direct: BTreeSet<(ContextKind, String)>,
+    /// Entry scripts started: `ScriptRef`s and [`ScriptRuntime::run_script`] runs.
+    entries: Vec<Entry>,
+    next_owner: Owner,
     contacts: Vec<ContactEvent>,
+}
+
+/// One entry-script run. Its owner id tags every thread and callback it starts.
+#[derive(Clone, Debug, PartialEq)]
+struct Entry {
+    kind: ContextKind,
+    path: String,
+    entity: Option<Entity>,
+    /// Started by a `ScriptRef` (rather than `run_script`).
+    attached: bool,
+    owner: Owner,
 }
 
 impl ScriptRuntime {
@@ -171,8 +180,8 @@ impl ScriptRuntime {
             game: Context::new(&config, ContextKind::Game)?,
             tools: Context::new(&config, ContextKind::Tools)?,
             config,
-            attached: BTreeMap::new(),
-            direct: BTreeSet::new(),
+            entries: Vec::new(),
+            next_owner: 1,
             contacts: Vec::new(),
         })
     }
@@ -195,8 +204,7 @@ impl ScriptRuntime {
     pub fn reset(&mut self) -> Result<(), ScriptError> {
         self.game = Context::new(&self.config, ContextKind::Game)?;
         self.tools = Context::new(&self.config, ContextKind::Tools)?;
-        self.attached.clear();
-        self.direct.clear();
+        self.entries.clear();
         self.contacts.clear();
         Ok(())
     }
@@ -299,24 +307,50 @@ impl ScriptRuntime {
     }
 
     /// Starts the script of every entity whose `ScriptRef` has not been started
-    /// yet (in stable-id order), and forgets entities that are gone. `run_phase`
-    /// calls it in `PreRender` and `PreSimulation`.
+    /// yet (in stable-id order). The script of an entity that is gone, or whose
+    /// `ScriptRef` now names another script or context, is stopped: its callbacks
+    /// are disconnected and its waiting threads dropped. `run_phase` calls this
+    /// in `PreRender` and `PreSimulation`.
     pub fn start_attached(&mut self, host: &mut dyn ScriptHost) -> Vec<Diagnostic> {
         let wanted = attached_scripts(host.world());
-        self.attached
-            .retain(|e, _| wanted.iter().any(|(w, ..)| w == e));
+        let (keep, stale): (Vec<Entry>, Vec<Entry>) = std::mem::take(&mut self.entries)
+            .into_iter()
+            .partition(|en| {
+                !en.attached
+                    || wanted
+                        .iter()
+                        .any(|(e, p, k)| Some(*e) == en.entity && *p == en.path && *k == en.kind)
+            });
+        self.entries = keep;
+        for en in stale {
+            let _ = scheduler::drop_owner(&self.context(en.kind).lua, en.owner);
+        }
         let mut diags = Vec::new();
         for (e, path, kind) in wanted {
-            if self.attached.get(&e) == Some(&(path.clone(), kind)) {
+            if path.is_empty()
+                || self
+                    .entries
+                    .iter()
+                    .any(|en| en.attached && en.entity == Some(e))
+            {
                 continue;
             }
-            self.attached.insert(e, (path.clone(), kind));
-            if path.is_empty() {
-                continue;
-            }
-            diags.extend(self.start(host, &path, kind, Some(e)));
+            let owner = self.new_owner();
+            self.entries.push(Entry {
+                kind,
+                path: path.clone(),
+                entity: Some(e),
+                attached: true,
+                owner,
+            });
+            diags.extend(self.start(host, &path, kind, Some(e), owner));
         }
         diags
+    }
+
+    fn new_owner(&mut self) -> Owner {
+        self.next_owner += 1;
+        self.next_owner
     }
 
     /// Runs the script file at `path` (project-relative, under `scripts/`) as a
@@ -329,10 +363,15 @@ impl ScriptRuntime {
         kind: ContextKind,
         entity: Option<Entity>,
     ) -> Vec<Diagnostic> {
-        if entity.is_none() {
-            self.direct.insert((kind, path.to_string()));
-        }
-        self.start(host, path, kind, entity)
+        let owner = self.new_owner();
+        self.entries.push(Entry {
+            kind,
+            path: path.to_string(),
+            entity,
+            attached: false,
+            owner,
+        });
+        self.start(host, path, kind, entity, owner)
     }
 
     fn start(
@@ -341,6 +380,7 @@ impl ScriptRuntime {
         path: &str,
         kind: ContextKind,
         entity: Option<Entity>,
+        owner: Owner,
     ) -> Vec<Diagnostic> {
         let source = match read_script(&self.config.project_root, path) {
             Ok(s) => s,
@@ -355,7 +395,7 @@ impl ScriptRuntime {
                 .set_compiler(crate::compile::compiler())
                 .set_environment(env)
                 .into_function()?;
-            scheduler::start(lua, f, MultiValue::new(), path.to_string())?;
+            scheduler::start_owned(lua, f, MultiValue::new(), path.to_string(), Some(owner))?;
             Ok(())
         })
     }
@@ -442,8 +482,13 @@ impl ScriptRuntime {
     ///   `local M = ... or {}` is patched in place, any other is replaced for later
     ///   `require` calls;
     /// * an entry script (a `ScriptRef`'s, or one started with
-    ///   [`run_script`](Self::run_script)) has the callbacks it connected
-    ///   disconnected and is run again.
+    ///   [`run_script`](Self::run_script)) is stopped (every callback it connected
+    ///   and every thread it started, directly or through modules, threads and
+    ///   callbacks) and run again.
+    ///
+    /// Callbacks a reloaded module connects when it runs again belong to no entry
+    /// script; callbacks it connected when first required belong to the script
+    /// that required it.
     ///
     /// A file that does not compile changes nothing and is reported.
     pub fn reload(&mut self, host: &mut dyn ScriptHost, path: &str) -> ReloadReport {
@@ -475,28 +520,20 @@ impl ScriptRuntime {
                 report.modules.push((kind, o));
             }
         }
-        let mut entries: Vec<(ContextKind, Option<Entity>)> = self
-            .attached
-            .iter()
-            .filter(|(_, (p, _))| p == path)
-            .map(|(e, (_, k))| (*k, Some(*e)))
+        let restart: Vec<usize> = (0..self.entries.len())
+            .filter(|&i| self.entries[i].path == path)
             .collect();
-        entries.extend(
-            self.direct
-                .iter()
-                .filter(|(_, p)| p == path)
-                .map(|(k, _)| (*k, None)),
-        );
-        for kind in ContextKind::ALL {
-            if entries.iter().any(|(k, _)| *k == kind) {
-                let _ = scheduler::disconnect_owned(&self.context(kind).lua, path);
-            }
-        }
-        for (kind, entity) in entries {
+        for i in restart {
+            let old = self.entries[i].owner;
+            let kind = self.entries[i].kind;
+            let _ = scheduler::drop_owner(&self.context(kind).lua, old);
+            let owner = self.new_owner();
+            self.entries[i].owner = owner;
+            let entity = self.entries[i].entity;
             report.restarted += 1;
             report
                 .diagnostics
-                .extend(self.start(host, path, kind, entity));
+                .extend(self.start(host, path, kind, entity, owner));
         }
         report
     }

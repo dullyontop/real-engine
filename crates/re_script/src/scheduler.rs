@@ -7,17 +7,24 @@
 //!   Rust cannot yield a Luau thread synchronously through mlua (`yield_with` is
 //!   async-only), which is why the yield lives in Luau.
 //! * Waiting threads sit in a binary heap keyed by (wake time, sequence number),
-//!   so equal wake times resume in the order they went to sleep.
+//!   so equal wake times resume in the order they went to sleep. A thread that
+//!   goes to sleep while the due threads are being resumed waits for the next
+//!   pass, so `while true do task.wait() end` cannot spin within one step.
 //! * `task.spawn` resumes a new thread at once; `task.defer` queues it to run at
 //!   the end of the current resumption cycle; `task.delay` queues it on the heap.
 //! * Signals (frame and step callbacks, input actions, contacts) start one thread
 //!   per connection per firing, in connection order, so a callback may wait.
 //! * Each resume gets its own CPU budget ([`crate::budget`]); a nested resume
 //!   (`task.spawn` from a running thread) shares its caller's.
+//! * Every thread and connection has an owner: the entry-script run that
+//!   (directly, or through threads and callbacks it started) created it. The
+//!   runtime stops an owner's threads and callbacks with [`drop_owner`] when its
+//!   script is reloaded or its entity goes away.
 //!
-//! `task.wait` inside a coroutine made with `coroutine.create`/`wrap` would yield
-//! to that coroutine instead of the scheduler. M1 refuses it with `RE3005`
-//! (ADR-0011); `task.spawn` is the supported way to run concurrent code.
+//! `task.wait` only yields from the thread the scheduler is resuming. Inside a
+//! coroutine made with `coroutine.create`/`wrap` it would yield to that coroutine
+//! instead, so M1 refuses it with `RE3005` (ADR-0011); `task.spawn` is the
+//! supported way to run concurrent code.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashSet, VecDeque};
@@ -36,11 +43,17 @@ use crate::codes;
 use crate::diag::ScriptError;
 
 const WAIT_SENTINEL: &str = "re_script.wait_sentinel";
-const SCHED_THREADS: &str = "re_script.sched_threads";
 
 /// The most deferred threads one drain runs before it gives up (a `task.defer`
 /// that keeps deferring itself would otherwise never end).
 pub(crate) const MAX_DEFERS_PER_DRAIN: usize = 10_000;
+
+/// Simulation times closer than this are equal: `now` is a sum of fixed steps,
+/// so six steps of 1/60 s add up to slightly less than 0.1.
+const TIME_EPSILON: f64 = 1e-6;
+
+/// Who created a thread or connection: an entry-script run of the runtime.
+pub(crate) type Owner = u64;
 
 /// What a connection listens to.
 #[derive(Clone, Debug, PartialEq)]
@@ -81,8 +94,7 @@ impl Signal {
 struct Connection {
     signal: Signal,
     func: RegistryKey,
-    /// The script that connected it (for reloads of that script).
-    owner: Option<String>,
+    owner: Option<Owner>,
 }
 
 struct Task {
@@ -91,6 +103,11 @@ struct Task {
     args: Option<MultiValue>,
     slept_at: f64,
     label: String,
+    owner: Option<Owner>,
+}
+
+fn ptr(t: &Thread) -> usize {
+    t.to_pointer() as usize
 }
 
 /// Per-context scheduler state (stored as the VM's app data).
@@ -105,9 +122,15 @@ pub(crate) struct Scheduler {
     deferred: VecDeque<Task>,
     connections: BTreeMap<u64, Connection>,
     next_connection: u64,
+    /// Running threads that were cancelled; they stop when they next yield.
     cancelled: HashSet<usize>,
     errors: Vec<ScriptError>,
     depth: u32,
+    /// The threads being resumed, innermost last, with their owners.
+    running: Vec<(usize, Option<Owner>)>,
+    /// The owner of code that runs outside any scheduler thread (set by the
+    /// runtime around module reloads and `exec`).
+    pub(crate) ambient_owner: Option<Owner>,
 }
 
 /// A wake time with a total order (never NaN: delays are sanitised).
@@ -146,6 +169,8 @@ impl Scheduler {
             cancelled: HashSet::new(),
             errors: Vec::new(),
             depth: 0,
+            running: Vec::new(),
+            ambient_owner: None,
         }
     }
 
@@ -161,6 +186,14 @@ impl Scheduler {
         self.sleeping.insert(self.seq, task);
     }
 
+    /// The owner of the code running now.
+    fn current_owner(&self) -> Option<Owner> {
+        match self.running.last() {
+            Some((_, owner)) => *owner,
+            None => self.ambient_owner,
+        }
+    }
+
     /// Threads waiting in the heap.
     pub(crate) fn sleeping(&self) -> usize {
         self.sleeping.len()
@@ -173,6 +206,15 @@ impl Scheduler {
 
     pub(crate) fn take_errors(&mut self) -> Vec<ScriptError> {
         std::mem::take(&mut self.errors)
+    }
+
+    /// Removes a waiting or deferred thread; false when it is in neither. Its
+    /// heap entry stays behind and is skipped.
+    fn unschedule(&mut self, p: usize) -> bool {
+        let before = self.sleeping.len() + self.deferred.len();
+        self.sleeping.retain(|_, t| ptr(&t.thread) != p);
+        self.deferred.retain(|t| ptr(&t.thread) != p);
+        self.sleeping.len() + self.deferred.len() != before
     }
 }
 
@@ -195,12 +237,10 @@ pub(crate) fn call_budgeted<R>(lua: &Lua, f: impl FnOnce() -> Result<R>) -> Resu
         s.depth += 1;
         (s.depth == 1, s.budget)
     })?;
-    if outer {
-        budget::arm(Instant::now() + budget);
-    }
+    let saved = outer.then(|| budget::arm(Instant::now() + budget));
     let result = f();
-    if outer {
-        budget::disarm();
+    if let Some(saved) = saved {
+        budget::restore(saved);
     }
     sched(lua, |s| s.depth -= 1)?;
     if matches!(result, Err(mlua::Error::MemoryError(_))) {
@@ -209,22 +249,12 @@ pub(crate) fn call_budgeted<R>(lua: &Lua, f: impl FnOnce() -> Result<R>) -> Resu
     result
 }
 
-/// Creates a scheduler thread for `f` (marked so that `task.wait` accepts it).
-pub(crate) fn new_thread(lua: &Lua, f: Function) -> Result<Thread> {
-    let thread = lua.create_thread(f)?;
-    // A new thread may reuse the address of a cancelled one.
-    sched(lua, |s| s.cancelled.remove(&(thread.to_pointer() as usize)))?;
-    let marks: Table = lua.named_registry_value(SCHED_THREADS)?;
-    marks.raw_set(&thread, true)?;
-    Ok(thread)
-}
-
 /// Resumes one task now under the CPU budget and files the outcome: sleeping
 /// again, finished, or an error.
 fn resume(lua: &Lua, task: Task, now: f64) -> Result<()> {
-    let ptr = task.thread.to_pointer() as usize;
-    if sched(lua, |s| s.cancelled.remove(&ptr))? {
-        return Ok(());
+    let p = ptr(&task.thread);
+    if task.thread.status() != ThreadStatus::Resumable {
+        return Ok(()); // already finished (resumed by hand with coroutine.resume)
     }
     let args = task
         .args
@@ -232,16 +262,22 @@ fn resume(lua: &Lua, task: Task, now: f64) -> Result<()> {
         .unwrap_or_else(|| MultiValue::from_iter([Value::Number(now - task.slept_at)]));
     let (outer, budget) = sched(lua, |s| {
         s.depth += 1;
+        s.running.push((p, task.owner));
         (s.depth == 1, s.budget)
     })?;
-    if outer {
-        budget::arm(Instant::now() + budget);
-    }
+    let saved = outer.then(|| budget::arm(Instant::now() + budget));
     let result = task.thread.resume::<MultiValue>(args);
-    if outer {
-        budget::disarm();
+    if let Some(saved) = saved {
+        budget::restore(saved);
     }
-    sched(lua, |s| s.depth -= 1)?;
+    let cancelled = sched(lua, |s| {
+        s.depth -= 1;
+        s.running.pop();
+        s.cancelled.remove(&p)
+    })?;
+    if cancelled {
+        return Ok(());
+    }
     match result {
         Ok(yielded) if task.thread.status() == ThreadStatus::Resumable => {
             let sentinel: Table = lua.named_registry_value(WAIT_SENTINEL)?;
@@ -269,22 +305,27 @@ fn resume(lua: &Lua, task: Task, now: f64) -> Result<()> {
         }
         Ok(_) => {}
         Err(err) => {
-            if !sched(lua, |s| s.cancelled.contains(&ptr))? {
-                let e = ScriptError::from_thread(lua, &task.thread, &task.label, &err);
-                if matches!(err, mlua::Error::MemoryError(_)) {
-                    let _ = lua.gc_collect();
-                }
-                sched(lua, |s| s.errors.push(e))?;
+            let e = ScriptError::from_thread(lua, &task.thread, &task.label, &err);
+            if matches!(err, mlua::Error::MemoryError(_)) {
+                let _ = lua.gc_collect();
             }
+            sched(lua, |s| s.errors.push(e))?;
         }
     }
     Ok(())
 }
 
-/// Starts `f` as a new thread now (from Rust, outside any running thread).
-pub(crate) fn start(lua: &Lua, f: Function, args: MultiValue, label: String) -> Result<Thread> {
-    let thread = new_thread(lua, f)?;
-    let now = sched(lua, |s| s.now)?;
+/// Starts `f` as a new thread now. It belongs to `owner` when given (an entry
+/// script started by the runtime), else to the code running now.
+pub(crate) fn start_owned(
+    lua: &Lua,
+    f: Function,
+    args: MultiValue,
+    label: String,
+    owner: Option<Owner>,
+) -> Result<Thread> {
+    let thread = lua.create_thread(f)?;
+    let (now, owner) = sched(lua, |s| (s.now, owner.or_else(|| s.current_owner())))?;
     resume(
         lua,
         Task {
@@ -292,10 +333,16 @@ pub(crate) fn start(lua: &Lua, f: Function, args: MultiValue, label: String) -> 
             args: Some(args),
             slept_at: now,
             label,
+            owner,
         },
         now,
     )?;
     Ok(thread)
+}
+
+/// Starts `f` as a new thread now, owned by the code running now.
+pub(crate) fn start(lua: &Lua, f: Function, args: MultiValue, label: String) -> Result<Thread> {
+    start_owned(lua, f, args, label, None)
 }
 
 /// Runs deferred threads until none are left (deferred threads may defer more).
@@ -331,64 +378,83 @@ pub(crate) fn drain_deferred(lua: &Lua) -> Result<()> {
     }
 }
 
-/// Resumes every waiting thread whose wake time has come and that went to sleep
-/// before this step.
+/// Resumes every waiting thread whose wake time has come. Threads that go to
+/// sleep during this pass wait for the next one.
 pub(crate) fn resume_due(lua: &Lua) -> Result<usize> {
-    let now = sched(lua, |s| s.now)?;
+    let (now, last_seq) = sched(lua, |s| (s.now, s.seq))?;
+    let mut later = Vec::new();
     let mut n = 0;
     loop {
         let next = sched(lua, |s| {
-            let Reverse((wake, seq)) = s.heap.peek().copied()?;
-            if wake.0 > now {
-                return None;
+            while let Some(Reverse((wake, seq))) = s.heap.peek().copied() {
+                if wake.0 > now + TIME_EPSILON {
+                    return None;
+                }
+                s.heap.pop();
+                if seq > last_seq {
+                    later.push(Reverse((wake, seq)));
+                } else if let Some(task) = s.sleeping.remove(&seq) {
+                    return Some(task);
+                }
+                // else: a cancelled thread's leftover entry.
             }
-            let task = s.sleeping.get(&seq)?;
-            if task.slept_at >= now && wake.0 >= now {
-                // Went to sleep during this very step with no delay left to wait:
-                // it resumes on the next step, not in a loop now.
-                return None;
-            }
-            s.heap.pop();
-            s.sleeping.remove(&seq)
+            None
         })?;
         let Some(task) = next else { break };
         n += 1;
         resume(lua, task, now)?;
     }
+    sched(lua, |s| s.heap.extend(later))?;
     Ok(n)
 }
 
-/// Fires `signal`-matching connections with `args`, each in its own thread, in
-/// connection order.
+/// Fires `signal`-matching connections with `args`, each in its own thread
+/// owned by the connection's owner, in connection order.
 pub(crate) fn fire(
     lua: &Lua,
     matches: impl Fn(&Signal) -> bool,
     args: MultiValue,
 ) -> Result<usize> {
-    let funcs: Vec<(Function, String)> = {
+    let funcs: Vec<(Function, String, Option<Owner>)> = {
         let s = lua
             .app_data_ref::<Scheduler>()
             .ok_or_else(|| mlua::Error::runtime("this VM has no scheduler"))?;
         let mut out = Vec::new();
         for c in s.connections.values().filter(|c| matches(&c.signal)) {
-            out.push((lua.registry_value::<Function>(&c.func)?, c.signal.label()));
+            out.push((
+                lua.registry_value::<Function>(&c.func)?,
+                c.signal.label(),
+                c.owner,
+            ));
         }
         out
     };
     let n = funcs.len();
-    for (f, label) in funcs {
-        start(lua, f, args.clone(), label)?;
+    for (f, label, owner) in funcs {
+        let thread = lua.create_thread(f)?;
+        let now = sched(lua, |s| s.now)?;
+        resume(
+            lua,
+            Task {
+                thread,
+                args: Some(args.clone()),
+                slept_at: now,
+                label,
+                owner,
+            },
+            now,
+        )?;
     }
     Ok(n)
 }
 
-/// Connects `f` to `signal`.
+/// Connects `f` to `signal`, owned by the code running now.
 pub(crate) fn connect(lua: &Lua, signal: Signal, f: Function) -> Result<ConnectionRef> {
-    let owner = caller_script(lua);
     let key = lua.create_registry_value(f)?;
     let id = sched(lua, |s| {
         let id = s.next_connection;
         s.next_connection += 1;
+        let owner = s.current_owner();
         s.connections.insert(
             id,
             Connection {
@@ -402,20 +468,35 @@ pub(crate) fn connect(lua: &Lua, signal: Signal, f: Function) -> Result<Connecti
     Ok(ConnectionRef(id))
 }
 
-/// Disconnects every callback that the script at `path` connected; returns how many.
-pub(crate) fn disconnect_owned(lua: &Lua, path: &str) -> Result<usize> {
-    let removed = sched(lua, |s| {
+/// Stops everything `owner` started: disconnects its callbacks and drops its
+/// waiting and deferred threads (a running one stops when it next yields).
+/// Returns how many callbacks and threads went.
+pub(crate) fn drop_owner(lua: &Lua, owner: Owner) -> Result<usize> {
+    let (removed, threads) = sched(lua, |s| {
         let ids: Vec<u64> = s
             .connections
             .iter()
-            .filter(|(_, c)| c.owner.as_deref() == Some(path))
+            .filter(|(_, c)| c.owner == Some(owner))
             .map(|(id, _)| *id)
             .collect();
-        ids.into_iter()
+        let removed: Vec<Connection> = ids
+            .into_iter()
             .filter_map(|id| s.connections.remove(&id))
-            .collect::<Vec<_>>()
+            .collect();
+        let before = s.sleeping.len() + s.deferred.len();
+        s.sleeping.retain(|_, t| t.owner != Some(owner));
+        s.deferred.retain(|t| t.owner != Some(owner));
+        let threads = before - s.sleeping.len() - s.deferred.len();
+        let running: Vec<usize> = s
+            .running
+            .iter()
+            .filter(|(_, o)| *o == Some(owner))
+            .map(|(p, _)| *p)
+            .collect();
+        s.cancelled.extend(running);
+        (removed, threads)
     })?;
-    let n = removed.len();
+    let n = removed.len() + threads;
     for c in removed {
         lua.remove_registry_value(c.func)?;
     }
@@ -465,11 +546,6 @@ pub(crate) fn init(lua: &Lua, budget: Duration) -> Result<()> {
     let sentinel = lua.create_table()?;
     sentinel.set_readonly(true);
     lua.set_named_registry_value(WAIT_SENTINEL, &sentinel)?;
-    let marks = lua.create_table()?;
-    let mt = lua.create_table()?;
-    mt.raw_set("__mode", "k")?;
-    marks.set_metatable(Some(mt))?;
-    lua.set_named_registry_value(SCHED_THREADS, marks)?;
     lua.set_app_data(Scheduler::new(budget));
     Ok(())
 }
@@ -484,20 +560,36 @@ fn task_arg(v: Value, what: &str) -> Result<Function> {
     }
 }
 
+/// A new thread for `f`, owned by the code running now, not yet run.
+fn queued(lua: &Lua, f: Function, args: MultiValue, label: &str) -> Result<Task> {
+    let thread = lua.create_thread(f)?;
+    sched(lua, |s| Task {
+        thread,
+        args: Some(args),
+        slept_at: s.now,
+        label: label.into(),
+        owner: s.current_owner(),
+    })
+}
+
 /// The `task` library.
 pub(crate) fn task_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
     let sentinel: Table = lua.named_registry_value(WAIT_SENTINEL)?;
-    let marks: Table = lua.named_registry_value(SCHED_THREADS)?;
+    let is_current = lua.create_function(|lua, t: Thread| {
+        sched(lua, |s| {
+            s.running.last().is_some_and(|(p, _)| *p == ptr(&t))
+        })
+    })?;
     let wait: Function = lua
         .load(format!(
             r#"
-            local SENTINEL, MARKS = ...
+            local SENTINEL, IS_CURRENT = ...
             local yield, isyieldable, running = coroutine.yield, coroutine.isyieldable, coroutine.running
             return function(seconds)
                 if not isyieldable() then
                     error("[{yield_code}] task.wait can only be called from a script thread, not from a callback the engine calls directly", 2)
                 end
-                if not MARKS[running()] then
+                if not IS_CURRENT(running()) then
                     error("[{yield_code}] task.wait inside a coroutine made with coroutine.create or coroutine.wrap is not supported in M1; use task.spawn", 2)
                 end
                 return yield(SENTINEL, seconds or 0)
@@ -506,7 +598,7 @@ pub(crate) fn task_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
             yield_code = codes::YIELD
         ))
         .set_name("=task")
-        .call((sentinel, marks))?;
+        .call((sentinel, is_current))?;
     lib.value(
         "wait",
         "(seconds: number?) -> number",
@@ -530,15 +622,9 @@ pub(crate) fn task_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         "Runs `f` in a new script thread at the end of the current cycle.",
         |lua, (f, args): (Value, MultiValue)| {
             let f = task_arg(f, "task.defer")?;
-            let thread = new_thread(lua, f)?;
-            sched(lua, |s| {
-                s.deferred.push_back(Task {
-                    thread: thread.clone(),
-                    args: Some(args),
-                    slept_at: s.now,
-                    label: "task.defer".into(),
-                })
-            })?;
+            let task = queued(lua, f, args, "task.defer")?;
+            let thread = task.thread.clone();
+            sched(lua, |s| s.deferred.push_back(task))?;
             Ok(thread)
         },
     )?;
@@ -549,19 +635,9 @@ pub(crate) fn task_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         "Runs `f` in a new script thread after `seconds` of simulation time.",
         |lua, (secs, f, args): (f64, Value, MultiValue)| {
             let f = task_arg(f, "task.delay")?;
-            let thread = new_thread(lua, f)?;
-            sched(lua, |s| {
-                let slept_at = s.now - 1e-9;
-                s.sleep(
-                    Task {
-                        thread: thread.clone(),
-                        args: Some(args),
-                        slept_at,
-                        label: "task.delay".into(),
-                    },
-                    secs,
-                )
-            })?;
+            let task = queued(lua, f, args, "task.delay")?;
+            let thread = task.thread.clone();
+            sched(lua, |s| s.sleep(task, secs))?;
             Ok(thread)
         },
     )?;
@@ -571,8 +647,13 @@ pub(crate) fn task_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         "(t: thread) -> ()",
         "Cancels a thread made by task.spawn, task.defer or task.delay, or one waiting in task.wait.",
         |lua, t: Thread| {
+            let p = ptr(&t);
             sched(lua, |s| {
-                s.cancelled.insert(t.to_pointer() as usize);
+                if !s.unschedule(p) && s.running.iter().any(|(r, _)| *r == p) {
+                    // A running thread (itself, or one that spawned the caller)
+                    // stops when it next yields.
+                    s.cancelled.insert(p);
+                }
             })?;
             Ok(())
         },

@@ -12,6 +12,10 @@
 //! safepoint raises until [`arm`] or [`disarm`] resets it. A `pcall` inside a
 //! runaway loop therefore cannot swallow the timeout: the loop's own back edge
 //! raises outside the `pcall`.
+//!
+//! The clock is read only every [`CHECK_EVERY`] safepoints, so one long builtin
+//! call (`table.sort` on a huge table) can overrun the budget before it is
+//! noticed; the next safepoint after it stops the script.
 
 use std::cell::Cell;
 use std::os::raw::c_int;
@@ -62,16 +66,29 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     }
 }
 
-/// Starts a budget on the current thread: scripts running after this are stopped
-/// once `deadline` passes.
-pub(crate) fn arm(deadline: Instant) {
-    DEADLINE.with(|d| d.set(Some(deadline)));
-    TRIPPED.with(|t| t.set(false));
-    COUNTER.with(|c| c.set(0));
+/// The budget state [`arm`] replaced, for [`restore`].
+#[must_use = "restore the previous budget when the budgeted call returns"]
+pub(crate) struct Saved {
+    deadline: Option<Instant>,
+    tripped: bool,
 }
 
-/// Removes the budget (Rust-side work such as loading never trips it).
-pub(crate) fn disarm() {
-    DEADLINE.with(|d| d.set(None));
-    TRIPPED.with(|t| t.set(false));
+/// Starts a budget on the current thread: scripts running after this are stopped
+/// once `deadline` passes. Returns the previous state, which [`restore`] puts
+/// back, so a budgeted call nested in another (two contexts, or two runtimes, on
+/// one thread) leaves the outer budget as it was.
+pub(crate) fn arm(deadline: Instant) -> Saved {
+    let saved = Saved {
+        deadline: DEADLINE.with(|d| d.replace(Some(deadline))),
+        tripped: TRIPPED.with(|t| t.replace(false)),
+    };
+    COUNTER.with(|c| c.set(0));
+    saved
+}
+
+/// Puts back the budget [`arm`] replaced (normally none: Rust-side work such as
+/// loading never trips it).
+pub(crate) fn restore(saved: Saved) {
+    DEADLINE.with(|d| d.set(saved.deadline));
+    TRIPPED.with(|t| t.set(saved.tripped));
 }

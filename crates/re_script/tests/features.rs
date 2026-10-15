@@ -463,13 +463,29 @@ fn vector_metatable_is_frozen() {
 #[test]
 fn handles_are_released_after_despawn() {
     let mut rig = Rig::new();
-    rig.exec("for i = 1, 50 do world.spawn({ id = `e{i}` }) end")
-        .unwrap();
-    rig.exec("local keep = {} for _, e in world.query() do table.insert(keep, e) end")
-        .ok();
-    rig.exec("for i = 1, 50 do world.get(`e{i}`):destroy() end")
-        .unwrap();
-    assert_eq!(rig.rt.context(ContextKind::Game).live_handles(), 0);
+    // A callback holds 50 handles; on the first step it destroys their entities
+    // and lets go of them.
+    rig.exec(
+        r#"
+        local held = {}
+        for i = 1, 50 do table.insert(held, world.spawn({ id = `e{i}` })) end
+        local c
+        c = time.on_step(function()
+            for _, e in held do e:destroy() end
+            held = nil
+            c:disconnect()
+        end)
+        "#,
+    )
+    .unwrap();
+    let game = ContextKind::Game;
+    assert!(
+        rig.rt.context(game).live_handles() >= 50,
+        "held handles stay alive"
+    );
+    assert!(rig.step(STEP).is_empty());
+    assert!(rig.world.ids().get("e1").is_none(), "despawned");
+    assert_eq!(rig.rt.context(game).live_handles(), 0);
 }
 
 #[test]
@@ -612,4 +628,155 @@ fn builder_scripts_return_a_graph() {
         )
         .unwrap_err();
     assert_eq!(errs[0].code, codes::GRAPH_BUILDER);
+}
+
+#[test]
+fn errors_in_engine_plumbing_point_at_the_users_line() {
+    let mut rig = Rig::new();
+    let d = rig.exec_err("local e = world.spawn()\nlocal _ = e.zzz");
+    assert_eq!(d.code, codes::UNSUPPORTED_MEMBER);
+    assert_eq!((file_of(&d), line_of(&d)), (Some("probe"), Some(2)));
+    let errs = rig.run("scripts/escape.luau");
+    assert_eq!(errs[0].code, codes::REQUIRE);
+    assert_eq!(
+        (file_of(&errs[0]), line_of(&errs[0])),
+        (Some("scripts/escape.luau"), Some(1))
+    );
+}
+
+fn temp_project(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for (path, text) in files {
+        let p = dir.path().join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    dir
+}
+
+fn reload(rig: &mut Rig, path: &str) -> re_script::ReloadReport {
+    let Rig {
+        rt,
+        world,
+        services,
+    } = rig;
+    rt.reload(&mut re_script::WorldHost { world, services }, path)
+}
+
+#[test]
+fn reloading_an_entry_script_stops_its_threads_and_module_callbacks() {
+    let dir = temp_project(&[
+        (
+            "scripts/helper.luau",
+            "return { every_step = function(f) return time.on_step(f) end }",
+        ),
+        (
+            "scripts/main.luau",
+            "local h = require('./helper')\nh.every_step(function() print('cb v1') end)\ntask.spawn(function() while true do print('loop v1') task.wait(0.1) end end)",
+        ),
+    ]);
+    let mut rig = Rig::at(dir.path());
+    assert!(rig.run("scripts/main.luau").is_empty());
+    rig.output();
+    std::fs::write(
+        dir.path().join("scripts/main.luau"),
+        "local h = require('./helper')\nh.every_step(function() print('cb v2') end)\ntask.spawn(function() while true do print('loop v2') task.wait(0.1) end end)",
+    )
+    .unwrap();
+    let r = reload(&mut rig, "scripts/main.luau");
+    assert_eq!(r.restarted, 1);
+    rig.run_for(0.5, STEP);
+    let out = rig.output();
+    assert!(out.iter().all(|l| l.ends_with("v2")), "{out:?}");
+    let game = rig.rt.context(ContextKind::Game);
+    assert_eq!(game.connections(), 1);
+    assert_eq!(game.sleeping_threads(), 1);
+}
+
+#[test]
+fn a_despawned_or_repointed_script_entity_stops_its_script() {
+    let dir = temp_project(&[
+        (
+            "scripts/a.luau",
+            "time.on_step(function() print('a', script.entity.alive) end)",
+        ),
+        ("scripts/b.luau", "time.on_step(function() print('b') end)"),
+    ]);
+    let mut rig = Rig::at(dir.path());
+    let script = |path: &str| ScriptRef {
+        path: path.into(),
+        context: ScriptContext::Game,
+    };
+    let e = rig
+        .world
+        .ecs
+        .spawn((StableId("x".into()), script("scripts/a.luau")))
+        .id();
+    assert!(rig.step(STEP).is_empty());
+    assert_eq!(rig.output(), ["a\ttrue"]);
+    rig.world.ecs.entity_mut(e).insert(script("scripts/b.luau"));
+    assert!(rig.step(STEP).is_empty());
+    assert_eq!(rig.output(), ["b"]);
+    rig.world.ecs.despawn(e);
+    assert!(rig.step(STEP).is_empty());
+    assert!(rig.output().is_empty());
+    assert_eq!(rig.rt.context(ContextKind::Game).connections(), 0);
+}
+
+#[test]
+fn waits_are_exact_at_60_hz_and_wait_in_on_step_resumes_the_same_step() {
+    let mut rig = Rig::new();
+    rig.exec(
+        r#"
+        task.spawn(function() print(string.format("%.4f", task.wait(0.1))) end)
+        local c
+        c = time.on_step(function()
+            c:disconnect()
+            task.wait()
+            print("after step wait")
+        end)
+        "#,
+    )
+    .unwrap();
+    assert!(rig.phase(Phase::PreSimulation, STEP).is_empty());
+    assert!(rig.output().is_empty());
+    assert!(rig.phase(Phase::PostSimulation, STEP).is_empty());
+    assert_eq!(rig.output(), ["after step wait"]);
+    rig.run_for(5.0 * STEP, STEP);
+    assert_eq!(rig.output(), ["0.1000"], "six steps of 1/60 s");
+}
+
+#[test]
+fn resuming_a_scheduler_thread_by_hand_cannot_leak_the_wait() {
+    let mut rig = Rig::new();
+    rig.exec(
+        r#"
+        local t = task.spawn(function()
+            task.wait(1)
+            print("woke", pcall(task.wait, 1))
+        end)
+        print(coroutine.resume(t))
+        "#,
+    )
+    .unwrap();
+    let out = rig.output();
+    println!("{out:?}");
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert!(out[0].starts_with("woke\tfalse"), "{out:?}");
+    assert!(out[1].starts_with("true"), "{out:?}");
+    rig.run_for(2.0, 0.5);
+    assert!(rig.output().is_empty());
+}
+
+#[test]
+fn cancel_removes_waiting_threads_at_once() {
+    let mut rig = Rig::new();
+    rig.exec("local t = task.delay(1e6, print) task.cancel(t) local u = task.spawn(task.wait, 1e6) task.cancel(u)")
+        .unwrap();
+    assert_eq!(rig.rt.context(ContextKind::Game).sleeping_threads(), 0);
+    rig.exec("task.spawn(function() task.cancel(coroutine.running()) task.wait(0.1) print('not reached') end)")
+        .unwrap();
+    rig.run_for(0.5, 0.1);
+    assert!(rig.output().is_empty());
+    assert_eq!(rig.rt.context(ContextKind::Game).sleeping_threads(), 0);
 }
