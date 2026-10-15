@@ -697,6 +697,30 @@ mod model {
     }
 
     #[test]
+    fn the_stock_animate_script_reads_class_name_and_model_scale() {
+        let mut p = Project::new();
+        let sss = p.service("ServerScriptService");
+        p.script(
+            "Script",
+            "Main",
+            sss,
+            None,
+            r#"
+            local m = Instance.new("Model")
+            local gone = Instance.new("Part")
+            gone:Destroy()
+            task.wait(2/60)
+            print(script.className, m.className, m:GetScale(), gone.className)
+            "#,
+        );
+        let (mut h, _dir) = p.open();
+        h.start();
+        h.step(4);
+        no_errors(&h);
+        assert_eq!(out(&mut h, Side::Server), ["Script\tModel\t1\tPart"]);
+    }
+
+    #[test]
     fn destroying_a_script_stops_its_threads() {
         let mut p = Project::new();
         let sss = p.service("ServerScriptService");

@@ -411,7 +411,9 @@ fn index(lua: &Lua, this: &InstanceRef, key: &str) -> Result<LuaValue> {
                     .expect("a dead handle with a class has a tombstone");
                 return match key {
                     "Name" => Ok(LuaValue::String(lua.create_string(&tomb.name)?)),
-                    "ClassName" => Ok(LuaValue::String(lua.create_string(&tomb.class)?)),
+                    "ClassName" | "className" => {
+                        Ok(LuaValue::String(lua.create_string(&tomb.class)?))
+                    }
                     "Parent" => Ok(LuaValue::Nil),
                     _ => {
                         let kept = this
@@ -683,6 +685,7 @@ pub fn accessors() -> Vec<(&'static str, Accessor)> {
     vec![
         ("Name", name),
         ("Parent", parent),
-        ("ClassName", class_name),
+        ("ClassName", class_name.clone()),
+        ("className", class_name),
     ]
 }

@@ -36,6 +36,16 @@
           "doc": "The instance's class."
         },
         {
+          "name": "className",
+          "type": "string",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "deprecated": "ClassName",
+          "status": "implemented"
+        },
+        {
           "name": "Archivable",
           "type": "bool",
           "storage": {
@@ -528,6 +538,21 @@
           "name": "Destroying",
           "status": "implemented",
           "doc": "Fires when Destroy is called, before the instance leaves the tree."
+        }
+      ]
+    },
+    {
+      "name": "Model",
+      "extend": true,
+      "methods": [
+        {
+          "name": "GetScale",
+          "returns": [
+            "number"
+          ],
+          "status": "partial",
+          "note": "Always 1: there is no ScaleTo yet, so a model keeps its authored scale.",
+          "doc": "The model's scale factor relative to its authored size."
         }
       ]
     }
