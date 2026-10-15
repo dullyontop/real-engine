@@ -1,0 +1,132 @@
+{
+ "format": "real-engine/compat-clip",
+ "version": 1,
+ "name": "r15_sit",
+ "doc": "R15 sit: thighs forward, shins down.",
+ "looped": true,
+ "priority": "Core",
+ "keyframes": [
+  {
+   "time": 0,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      0.5,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      0.5,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      1.5708,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      1.5708,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -1.5708,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -1.5708,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 1.0,
+   "poses": {
+    "RightUpperArm": {
+     "angles": [
+      0.5,
+      0,
+      0
+     ]
+    },
+    "LeftUpperArm": {
+     "angles": [
+      0.5,
+      0,
+      0
+     ]
+    },
+    "RightLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "LeftLowerArm": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    },
+    "RightUpperLeg": {
+     "angles": [
+      1.5708,
+      0,
+      0
+     ]
+    },
+    "LeftUpperLeg": {
+     "angles": [
+      1.5708,
+      0,
+      0
+     ]
+    },
+    "RightLowerLeg": {
+     "angles": [
+      -1.5708,
+      0,
+      0
+     ]
+    },
+    "LeftLowerLeg": {
+     "angles": [
+      -1.5708,
+      0,
+      0
+     ]
+    }
+   }
+  }
+ ]
+}

@@ -280,6 +280,12 @@ pub struct CompatConfig {
     /// When signal handlers run: `deferred` (the default) or `immediate`.
     #[serde(default)]
     pub signal_behavior: crate::signal::SignalBehavior,
+    /// Animation id substitutes (`[compat.animations]`): an asset id
+    /// (`"1234"` or `"rbxassetid://1234"`) to `builtin:<clip>` or the dotted
+    /// path of a `KeyframeSequence` in the place. Keys are kept as asset
+    /// numbers once loaded.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub animations: BTreeMap<String, String>,
     /// What `game` and `RunService` report about the session
     /// (`[compat.game]`); Studio-like by default.
     #[serde(default, skip_serializing_if = "GameInfo::is_default")]
@@ -416,6 +422,7 @@ impl CompatConfig {
             }
         }
         self.assets = assets;
+        self.animations = normalize_animations(&self.animations)?;
         if self.effect_budget == Some(0) {
             return Err(bad("effect_budget must be at least 1".into()));
         }
@@ -462,6 +469,58 @@ impl CompatConfig {
                 ));
             }
         }
+        if !self.animations.is_empty() {
+            out.push_str("\n[compat.animations]\n");
+            for (id, to) in &self.animations {
+                out.push_str(&format!(
+                    "{} = {}\n",
+                    toml::Value::String(id.clone()),
+                    toml::Value::String(to.clone())
+                ));
+            }
+        }
         out
     }
+}
+
+/// Checks `[compat.animations]` and keys it by asset number: `"1234"` and
+/// `"rbxassetid://1234"` are the same id, so naming both is refused, as is a
+/// key with no asset number or a value that is neither `builtin:<clip>` nor a
+/// dotted path.
+fn normalize_animations(
+    table: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, CompatError> {
+    let bad = |message: String| CompatError::Runtime {
+        code: codes::BAD_ANIMATION_MAP,
+        message: format!("real.toml [compat.animations]: {message}"),
+    };
+    let mut out = BTreeMap::new();
+    for (k, v) in table {
+        let digits = asset_key(k);
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(bad(format!(
+                "key {k:?} is not an asset id (\"1234\" or \"rbxassetid://1234\")"
+            )));
+        }
+        let ok = match v.strip_prefix("builtin:") {
+            Some(name) => crate::anim::clips::builtin_names().any(|n| n == name),
+            None => v.split('.').all(|seg| {
+                !seg.is_empty()
+                    && seg
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == ' ')
+            }),
+        };
+        if !ok {
+            return Err(bad(format!(
+                "{k:?} = {v:?}: expected \"builtin:<clip>\" naming a built-in clip, or a dotted path such as \"game.ReplicatedStorage.Wave\""
+            )));
+        }
+        let n = digits.trim_start_matches('0');
+        let n = if n.is_empty() { "0" } else { n };
+        if out.insert(n.to_string(), v.clone()).is_some() {
+            return Err(bad(format!("asset id {n} is listed twice")));
+        }
+    }
+    Ok(out)
 }

@@ -1,20 +1,28 @@
 //! Replays: recorded input that drives a run frame by frame.
 //!
-//! A replay stores action changes, not device events, so it does not depend on
-//! keyboard layouts or connected devices. [`ReplayRecorder`] turns a run's
-//! [`ActionFrame`]s into a [`ReplayDoc`]; [`Replay`] plays it back, giving the
-//! same frames.
+//! A replay stores action changes, so it does not depend on keyboard layouts or
+//! connected devices. [`ReplayRecorder`] turns a run's [`ActionFrame`]s into a
+//! [`ReplayDoc`]; [`Replay`] plays it back, giving the same frames.
+//!
+//! Layers that read keys rather than actions (the compatibility layer's input
+//! services) also need raw device changes. Those go in the document's `raw`
+//! list ([`RawReplayInput`]): keys and mouse buttons going down or up, mouse
+//! motion, the cursor position and the wheel. [`Replay::raw_frame`] gives them
+//! back as a [`RawInputFrame`] per frame, and [`ReplayRecorder::record_raw`]
+//! records them.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use glam::Vec2;
 use re_core::{Diagnostic, Location};
-use re_types::input::{ActionFrame, ButtonState};
-use re_types::replay::{ReplayCheck, ReplayCommand, ReplayDoc, ReplayInput};
+use re_types::input::{ActionFrame, ButtonState, InputKind, InputPhase, RawInputFrame};
+use re_types::replay::{RawReplayInput, ReplayCheck, ReplayCommand, ReplayDoc, ReplayInput};
 
 use crate::codes;
+use crate::keycodes;
 use crate::map::ActionLayout;
+use crate::raw::{Button, RawInput};
 
 /// Plays a [`ReplayDoc`] back as one [`ActionFrame`] per frame.
 #[derive(Debug, Clone)]
@@ -25,6 +33,9 @@ pub struct Replay {
     frame: u64,
     down: BTreeMap<String, bool>,
     axes: BTreeMap<String, Vec2>,
+    next_raw: usize,
+    raw: RawInput,
+    raw_frame: RawInputFrame,
 }
 
 impl Replay {
@@ -108,6 +119,63 @@ impl Replay {
                 }
             }
         }
+        let mut last_raw = 0;
+        for (i, r) in doc.raw.iter().enumerate() {
+            let entry = format!("raw entry {} (frame {})", i + 1, r.frame);
+            if r.frame < last_raw {
+                problems.push(invalid(format!(
+                    "{entry} comes after an entry for frame {last_raw}; entries must be in frame order"
+                )));
+            }
+            last_raw = last_raw.max(r.frame);
+            if r.frame >= doc.frames {
+                problems.push(invalid(format!(
+                    "{entry} is past the end of the replay ({} frames)",
+                    doc.frames
+                )));
+            }
+            if !r.is_well_formed() {
+                problems.push(invalid(format!(
+                    "{entry} needs exactly one of `key`, `mouse_button`, `pad_button`, \
+                     `mouse_move`, `mouse_position` and `wheel`, with `down` for a button"
+                )));
+                continue;
+            }
+            let unknown = [
+                (
+                    &r.key,
+                    keycodes::key as fn(&str) -> Option<Button>,
+                    "key",
+                    "key:KeyW, key:Space",
+                ),
+                (
+                    &r.mouse_button,
+                    keycodes::mouse_button,
+                    "mouse button",
+                    "Left, Right, Middle",
+                ),
+                (
+                    &r.pad_button,
+                    keycodes::pad_button,
+                    "gamepad button",
+                    "South, Start",
+                ),
+            ];
+            for (name, parse, what, examples) in unknown {
+                if let Some(n) = name
+                    && parse(n).is_none()
+                {
+                    problems.push(
+                        invalid(format!("{entry} names the unknown {what} `{n}`")).with_hint(
+                            format!(
+                                "buttons are named as real.toml binds them, without the \
+                                 device prefix ({examples})"
+                            ),
+                        ),
+                    );
+                }
+            }
+        }
         for (what, frames) in [
             (
                 "command",
@@ -135,6 +203,9 @@ impl Replay {
             frame: 0,
             down,
             axes,
+            next_raw: 0,
+            raw: RawInput::default(),
+            raw_frame: RawInputFrame::default(),
         })
     }
 
@@ -179,6 +250,12 @@ impl Replay {
             }
             self.next_input += 1;
         }
+        while let Some(r) = self.doc.raw.get(self.next_raw).filter(|r| r.frame == f) {
+            apply_raw(&mut self.raw, r);
+            self.next_raw += 1;
+        }
+        self.raw_frame = self.raw.raw_frame(f);
+        self.raw.end_frame();
         let buttons = self
             .down
             .iter()
@@ -199,6 +276,12 @@ impl Replay {
             buttons,
             axes: self.axes.clone(),
         })
+    }
+
+    /// The raw device state and events of the frame [`Replay::next_frame`]
+    /// last returned (empty before the first frame).
+    pub fn raw_frame(&self) -> &RawInputFrame {
+        &self.raw_frame
     }
 
     /// The commands to dispatch at `frame`, in order.
@@ -292,6 +375,64 @@ impl ReplayRecorder {
         self.doc.commands.sort_by_key(|c| c.frame);
     }
 
+    /// Records the raw key and mouse changes of the frame about to be recorded
+    /// with [`ReplayRecorder::record`] (call this first): every key and mouse
+    /// button that went down or up, the mouse motion, the cursor position when
+    /// it moved, and wheel turns.
+    pub fn record_raw(&mut self, raw: &RawInputFrame) {
+        let frame = self.doc.frames;
+        let row = || RawReplayInput {
+            frame,
+            ..RawReplayInput::default()
+        };
+        let mut moved = false;
+        for e in &raw.events {
+            let down = match e.phase {
+                InputPhase::Began => Some(true),
+                InputPhase::Ended => Some(false),
+                InputPhase::Changed => None,
+            };
+            let button = Some(e.button.clone());
+            match (e.kind, down) {
+                (InputKind::Keyboard, Some(down)) => self.doc.raw.push(RawReplayInput {
+                    key: button,
+                    down: Some(down),
+                    ..row()
+                }),
+                (InputKind::MouseButton, Some(down)) => self.doc.raw.push(RawReplayInput {
+                    mouse_button: button,
+                    down: Some(down),
+                    ..row()
+                }),
+                (InputKind::Gamepad, Some(down)) => self.doc.raw.push(RawReplayInput {
+                    pad_button: button,
+                    down: Some(down),
+                    ..row()
+                }),
+                (InputKind::MouseWheel, None) => self.doc.raw.push(RawReplayInput {
+                    wheel: Some(e.delta.z),
+                    ..row()
+                }),
+                (InputKind::MouseMovement, None) => moved = true,
+                _ => {}
+            }
+        }
+        if moved {
+            // Motion and the final position, once per frame: a replay only
+            // needs what the frame saw, not every intermediate event.
+            if raw.mouse_delta != Vec2::ZERO {
+                self.doc.raw.push(RawReplayInput {
+                    mouse_move: Some(raw.mouse_delta.to_array()),
+                    ..row()
+                });
+            }
+            self.doc.raw.push(RawReplayInput {
+                mouse_position: Some(raw.mouse_position.to_array()),
+                ..row()
+            });
+        }
+    }
+
     /// Adds a screenshot check after `frame`.
     pub fn screenshot(&mut self, frame: u64, golden: impl Into<String>) {
         self.doc.checks.push(ReplayCheck {
@@ -304,6 +445,25 @@ impl ReplayRecorder {
     /// The finished document.
     pub fn finish(self) -> ReplayDoc {
         self.doc
+    }
+}
+
+/// Applies one raw replay row to `raw`.
+fn apply_raw(raw: &mut RawInput, r: &RawReplayInput) {
+    let button = match (&r.key, &r.mouse_button, &r.pad_button) {
+        (Some(k), _, _) => keycodes::key(k),
+        (_, Some(m), _) => keycodes::mouse_button(m),
+        (_, _, Some(p)) => keycodes::pad_button(p),
+        _ => None,
+    };
+    if let (Some(b), Some(down)) = (button, r.down) {
+        raw.set_button(b, down);
+    } else if let Some([dx, dy]) = r.mouse_move {
+        raw.add_mouse_delta(f64::from(dx), f64::from(dy));
+    } else if let Some([x, y]) = r.mouse_position {
+        raw.set_cursor(f64::from(x), f64::from(y));
+    } else if let Some(w) = r.wheel {
+        raw.add_wheel(w);
     }
 }
 

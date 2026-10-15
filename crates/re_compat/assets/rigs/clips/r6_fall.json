@@ -1,0 +1,130 @@
+{
+ "format": "real-engine/compat-clip",
+ "version": 1,
+ "name": "r6_fall",
+ "doc": "R6 fall: arms up with a slight leg flutter.",
+ "looped": true,
+ "priority": "Core",
+ "keyframes": [
+  {
+   "time": 0,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      3.1416
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -3.1416
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.4,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      2.8274
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -2.8274
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0.2
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      -0.2
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.8,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      3.1416
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -3.1416
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0
+     ]
+    },
+    "Head": {
+     "angles": [
+      0.0,
+      0,
+      0
+     ]
+    }
+   }
+  }
+ ]
+}

@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 /// The state of one button action this frame.
@@ -58,4 +58,110 @@ impl ActionFrame {
     pub fn axis(&self, action: &str) -> Vec2 {
         self.axes.get(action).copied().unwrap_or(Vec2::ZERO)
     }
+}
+
+/// Where a raw [`InputEvent`] is in its life.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum InputPhase {
+    /// A key or button went down, or a touch or text input started.
+    Began,
+    /// A held input changed: the mouse moved, the wheel turned, a stick moved.
+    Changed,
+    /// A key or button went up.
+    Ended,
+}
+
+/// The device kind of a raw [`InputEvent`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum InputKind {
+    /// A keyboard key.
+    Keyboard,
+    /// A mouse button.
+    MouseButton,
+    /// The mouse moved.
+    MouseMovement,
+    /// The mouse wheel turned.
+    MouseWheel,
+    /// A gamepad button or stick.
+    Gamepad,
+    /// A touch (no host reports touches yet).
+    Touch,
+}
+
+/// One raw device event of a frame, for layers that need keys rather than
+/// actions (the compatibility layer's input services).
+///
+/// Buttons are named as `real.toml` binds them, without the device prefix:
+/// a winit key code for a key (`KeyW`, `Space`, `ShiftLeft`), a winit mouse
+/// button for a mouse button (`Left`, `Right`, `Middle`) and a gilrs button
+/// for a gamepad (`South`, `Start`). Layers map these names to their own.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InputEvent {
+    /// Began, changed or ended.
+    pub phase: InputPhase,
+    /// The device kind.
+    pub kind: InputKind,
+    /// The key or button; empty for motion and the wheel.
+    pub button: String,
+    /// For mouse events, the cursor in window pixels (`x`, `y`); for a wheel
+    /// event, the turn in notches in `z`. Zero otherwise.
+    pub position: Vec3,
+    /// For mouse movement, the frame's motion (at most one movement event a
+    /// frame); for the wheel, the turn in `z`; zero otherwise.
+    pub delta: Vec3,
+}
+
+/// The raw device state of one frame, next to its [`ActionFrame`]. Button
+/// names are those of [`InputEvent::button`].
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RawInputFrame {
+    /// The frame number.
+    pub frame: u64,
+    /// This frame's events, in the order they happened.
+    pub events: Vec<InputEvent>,
+    /// The keyboard keys held now, sorted.
+    pub keys_down: Vec<String>,
+    /// The mouse buttons held now, sorted.
+    pub mouse_buttons_down: Vec<String>,
+    /// The gamepad buttons held now, sorted.
+    pub pad_buttons_down: Vec<String>,
+    /// The cursor in window pixels.
+    pub mouse_position: Vec2,
+    /// The mouse motion this frame, in pixels.
+    pub mouse_delta: Vec2,
+    /// A keyboard is present.
+    pub keyboard: bool,
+    /// A mouse is present.
+    pub mouse: bool,
+    /// A gamepad is connected.
+    pub gamepad: bool,
+}
+
+impl RawInputFrame {
+    /// True while keyboard key `name` (`KeyW`) is held.
+    pub fn key_down(&self, name: &str) -> bool {
+        self.keys_down.iter().any(|k| k == name)
+    }
+
+    /// True while mouse button `name` (`Left`) is held.
+    pub fn mouse_button_down(&self, name: &str) -> bool {
+        self.mouse_buttons_down.iter().any(|k| k == name)
+    }
+
+    /// True while gamepad button `name` (`South`) is held.
+    pub fn pad_button_down(&self, name: &str) -> bool {
+        self.pad_buttons_down.iter().any(|k| k == name)
+    }
+}
+
+/// How the window treats the cursor, as a game asks for it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MouseLock {
+    /// The cursor moves freely.
+    #[default]
+    Free,
+    /// The cursor is held at the window centre; motion still arrives as deltas.
+    LockCenter,
+    /// The cursor stays where it is; motion still arrives as deltas.
+    LockCurrentPosition,
 }
