@@ -1,16 +1,19 @@
 //! [`HeadlessEditor`]: the editor drawn into an offscreen [`Capture`], for
 //! tests and screenshots.
 
-use re_app::App;
+use re_app::{App, Graphics};
 use re_command::PolicyCheck;
 use re_core::Diagnostic;
-use re_render::{Capture, Gpu, Image, Renderer, UiFrame};
+use re_render::{Capture, Image, Renderer, UiFrame};
 
 use crate::Editor;
 use crate::view::{self, GameView};
 
 /// The editor without a window: the same [`Editor`] and [`GameView`] as
 /// [`run_editor`](crate::run_editor), painted into a [`Capture`].
+///
+/// [`HeadlessEditor::new`] gives the app a GPU device and renderer (its
+/// [`Graphics`]), which the editor then draws with; use it with that app.
 ///
 /// egui lays out a panel in the pass after it first sees it, so the first
 /// frame is a warm-up: read the image from the second frame on.
@@ -21,8 +24,6 @@ pub struct HeadlessEditor {
     pub view: GameView,
     ctx: egui::Context,
     capture: Capture,
-    renderer: Renderer,
-    gpu: Gpu,
     time: f64,
 }
 
@@ -37,31 +38,26 @@ impl std::fmt::Debug for HeadlessEditor {
 }
 
 impl HeadlessEditor {
-    /// A headless editor of `width` × `height` pixels on the backends of
-    /// `RE_BACKENDS` (else the platform's primary API).
+    /// A headless editor of `width` × `height` pixels for `app`, on a GPU
+    /// device of the backends of `RE_BACKENDS` (else the platform's primary
+    /// API) that it hands to `app`.
     ///
     /// # Errors
     ///
     /// `RE6002`/`RE6003` when no GPU device can be created, `RE6006` for an
     /// unknown `RE_BACKENDS`, `RE6005` for an invalid size.
-    pub fn new(width: u32, height: u32) -> Result<HeadlessEditor, Diagnostic> {
-        let gpu = Gpu::headless(re_render::backends_from_env()?)?;
+    pub fn new(app: &mut App, width: u32, height: u32) -> Result<HeadlessEditor, Diagnostic> {
+        let gpu = re_render::Gpu::headless(re_render::backends_from_env()?)?;
         let renderer = Renderer::new(&gpu, Capture::FORMAT);
         let capture = Capture::new(&gpu.device, width, height)?;
+        app.set_graphics(Graphics::from_parts(gpu, renderer));
         Ok(HeadlessEditor {
             editor: Editor::new(),
             view: GameView::new(),
             ctx: egui::Context::default(),
             capture,
-            renderer,
-            gpu,
             time: 0.0,
         })
-    }
-
-    /// The GPU.
-    pub fn gpu(&self) -> &Gpu {
-        &self.gpu
     }
 
     /// The egui context.
@@ -75,7 +71,7 @@ impl HeadlessEditor {
     ///
     /// # Errors
     ///
-    /// A renderer or readback error.
+    /// `RE0516` when `app` has no GPU side, a renderer or readback error.
     pub fn frame(
         &mut self,
         app: &mut App,
@@ -83,8 +79,7 @@ impl HeadlessEditor {
         mut input: egui::RawInput,
     ) -> Result<Image, Diagnostic> {
         let size = [self.capture.width(), self.capture.height()];
-        self.view
-            .sync(&self.gpu, &mut self.renderer, &mut self.editor)?;
+        self.view.sync(app, &mut self.editor)?;
         // The screen in points: the capture's pixels over the scale the input
         // asks for (1 unless it sets `native_pixels_per_point`).
         let ppp = input
@@ -101,16 +96,17 @@ impl HeadlessEditor {
         let editor = &mut self.editor;
         let mut output = self.ctx.run_ui(input, |ui| editor.ui(ui, app, policy));
         let ui = UiFrame::from_output(&self.ctx, &mut output, size);
-        self.view.render(&self.gpu, &mut self.renderer, app)?;
-        view::clear(&self.gpu, self.capture.view());
-        self.renderer
-            .paint_ui(&self.gpu.device, &self.gpu.queue, self.capture.view(), &ui)?;
-        self.capture.read(&self.gpu.device, &self.gpu.queue)
+        self.view.render(app)?;
+        let gfx = app.graphics_mut().ok_or_else(view::no_graphics)?;
+        let (device, queue) = (gfx.gpu().device.clone(), gfx.gpu().queue.clone());
+        view::clear(&device, &queue, self.capture.view());
+        gfx.renderer_mut()
+            .paint_ui(&device, &queue, self.capture.view(), &ui)?;
+        self.capture.read(&device, &queue)
     }
-}
 
-impl Drop for HeadlessEditor {
-    fn drop(&mut self) {
-        self.view.release(&mut self.renderer);
+    /// Forgets the game view's texture in `app`'s renderer.
+    pub fn release(&mut self, app: &mut App) {
+        self.view.release(app);
     }
 }

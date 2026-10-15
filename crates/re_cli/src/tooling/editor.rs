@@ -62,6 +62,8 @@ fn open(project: &Path, config: AppConfig) -> Result<App, Diagnostic> {
     };
     let mut app = App::open(project, config)?;
     crate::explain::register(app.commands_mut());
+    // `verify` run in the editor scans scripts as `real verify` does.
+    app.add_verify_stage(std::sync::Arc::new(super::check::ScanStage));
     Ok(app)
 }
 

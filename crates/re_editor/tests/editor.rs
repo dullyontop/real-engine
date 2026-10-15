@@ -29,7 +29,7 @@ const SCENE: &str = r#"{
   "entities": [
     { "id": "box", "name": "Box", "components": {
         "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] },
-        "MeshRef": { "asset": "assets/cube.glb" },
+        "MeshRef": { "asset": "builtin:cube" },
         "RigidBody": { "kind": "Dynamic", "mass": 10.0 },
         "Transform": { "translation": [0.0, 4.0, 0.0] } } },
     { "id": "camera", "name": "Camera", "components": {
@@ -78,7 +78,7 @@ fn scene_text(dir: &Path) -> String {
 fn panels_render_headless() {
     let dir = project();
     let mut app = open(dir.path(), false);
-    let mut ed = HeadlessEditor::new(1280, 720).expect("a headless GPU");
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
     ed.editor.select(Some("box"));
     ed.editor.set_palette_open(true);
     ed.frame(&mut app, &AllowAll, egui::RawInput::default())
@@ -127,6 +127,43 @@ fn panels_render_headless() {
     assert!(ed.view.size().is_some());
 }
 
+/// The game view draws the World's meshes: a cube spawned in front of the
+/// camera, with a built-in mesh the app uploads to the editor's renderer,
+/// covers the middle of the viewport.
+#[test]
+fn game_view_draws_meshes() {
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    let clear = [0.2f32, 0.4, 0.6].map(re_render::capture::linear_to_srgb_u8);
+    let is_clear = |px: [u8; 4]| (0..3).all(|c| px[c].abs_diff(clear[c]) <= 3);
+    ed.frame(&mut app, &AllowAll, egui::RawInput::default())
+        .unwrap();
+    let image = ed
+        .frame(&mut app, &AllowAll, egui::RawInput::default())
+        .unwrap();
+    let centre = ed.editor.rects().get(Panel::Viewport).unwrap().center();
+    let before = image.pixel(centre.x as u32, centre.y as u32);
+    assert!(is_clear(before), "the empty view is {before:?}");
+
+    let out = ed.editor.run(
+        &mut app,
+        &AllowAll,
+        "entity.spawn",
+        json!({ "id": "near", "components": {
+            "MeshRef": { "asset": "builtin:cube" },
+            "Transform": { "translation": [0.0, 5.0, 9.0] } } }),
+        false,
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    let image = ed
+        .frame(&mut app, &AllowAll, egui::RawInput::default())
+        .unwrap();
+    let after = image.pixel(centre.x as u32, centre.y as u32);
+    assert!(!is_clear(after), "the cube is not drawn: {after:?}");
+    ed.release(&mut app);
+}
+
 fn distinct_colours(image: &re_render::Image, rect: egui::Rect) -> usize {
     let mut seen = std::collections::BTreeSet::new();
     let x0 = rect.left().max(0.0) as u32;
@@ -150,7 +187,7 @@ fn distinct_colours(image: &re_render::Image, rect: egui::Rect) -> usize {
 fn every_component_inspects_without_changes() {
     let dir = project();
     let mut app = open(dir.path(), false);
-    let mut ed = HeadlessEditor::new(1280, 720).expect("a headless GPU");
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
     let names: Vec<String> = app
         .world()
         .registry
@@ -388,7 +425,7 @@ fn typing_into_an_inspector_field_is_one_undo_step() {
     let dir = project();
     let before = scene_text(dir.path());
     let mut app = open(dir.path(), true);
-    let mut ed = HeadlessEditor::new(1280, 720).expect("a headless GPU");
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
     ed.editor.select(Some("crate_1"));
     for _ in 0..2 {
         ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
@@ -463,7 +500,7 @@ fn typing_into_an_inspector_field_is_one_undo_step() {
 fn changing_selection_commits_the_field_being_edited() {
     let dir = project();
     let mut app = open(dir.path(), false);
-    let mut ed = HeadlessEditor::new(1280, 720).expect("a headless GPU");
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
     ed.editor.select(Some("crate_1"));
     for _ in 0..2 {
         ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
