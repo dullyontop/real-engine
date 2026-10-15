@@ -1,0 +1,45 @@
+{
+  "$schema": "../../../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "BasePart",
+      "extend": true,
+      "properties": [
+        {
+          "name": "Color",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.64,
+            0.64,
+            0.64
+          ],
+          "status": "implemented",
+          "doc": "Colour."
+        },
+        {
+          "name": "Transparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "status": "implemented",
+          "doc": "Transparency."
+        }
+      ]
+    },
+    {
+      "name": "ForceField",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "Test stand-in until the part classes land (WP13).",
+      "doc": "Test stand-in for a force field."
+    }
+  ]
+}

@@ -22,12 +22,15 @@
 //! accessors, methods, globals and value conversions in
 //! [`runtime::Bindings`].
 
+pub mod anim;
 pub mod class;
 pub mod codes;
 pub mod data;
 pub mod datatypes;
 pub mod enums;
 pub mod error;
+pub mod humanoid;
+pub mod input;
 pub mod instance;
 pub mod physics;
 pub mod runtime;
@@ -83,6 +86,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::INVALID_PARENT,
         title: "Parent change refused",
         page: include_str!("../explain/RE9008.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_RIG,
+        title: "Character rig could not be built",
+        page: include_str!("../explain/RE9200.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_ANIMATION,
+        title: "Unknown animation id",
+        page: include_str!("../explain/RE9201.md"),
+    },
+    DiagInfo {
+        code: codes::BAD_ANIMATION_MAP,
+        title: "Bad animation substitute table",
+        page: include_str!("../explain/RE9202.md"),
     },
     DiagInfo {
         code: codes::COLLISION_GROUP,

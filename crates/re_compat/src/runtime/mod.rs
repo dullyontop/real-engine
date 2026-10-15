@@ -101,6 +101,9 @@ impl Bindings {
         scripts::register(&mut b);
         session::register(&mut b);
         globals::register(&mut b);
+        crate::input::register(&mut b);
+        crate::anim::register(&mut b);
+        crate::humanoid::register(&mut b);
         Ok(b)
     }
 

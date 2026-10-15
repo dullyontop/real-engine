@@ -15,8 +15,9 @@
 //!   in `seconds` (default 1).
 //! * `physics.script`: runs Luau in a side, in `steps` (each `{ "code",
 //!   "frames", "realtime" }`: the code, then that many frames, paced at the
-//!   wall clock when `realtime`), and compares what it
-//!   printed with `expect`, line by line. For checks that drive a sample's
+//!   wall clock when `realtime`), and compares what the code printed (not
+//!   warnings, nor what the sample printed meanwhile) with `expect`, line by
+//!   line. For checks that drive a sample's
 //!   own modules; the code lives in the kit.
 //! * `physics.queries`: `queries` random `Raycast`, `Blockcast`,
 //!   `GetPartBoundsInBox` and `GetPartBoundsInRadius` calls over `parts`
@@ -89,7 +90,12 @@ fn run(h: &mut Harness, side: Side, code: &str) -> Result<Vec<String>, String> {
     if let Some(d) = d.first() {
         return Err(d.render_human());
     }
-    Ok(h.take_output(side).into_iter().map(|l| l.text).collect())
+    // What the code printed; the sample's own warnings are not its answer.
+    Ok(h.take_output(side)
+        .into_iter()
+        .filter(|l| !l.warn)
+        .map(|l| l.text)
+        .collect())
 }
 
 /// The booted harness, after the step's `setup` Luau ran in its side.
@@ -249,7 +255,6 @@ fn script(ctx: &mut Ctx, args: &J) -> Result<(), String> {
         } else {
             frames(h, n);
         }
-        got.extend(h.take_output(side).into_iter().map(|l| l.text));
     }
     if got == want {
         Ok(())

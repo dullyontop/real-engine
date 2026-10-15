@@ -15,3 +15,14 @@ pub const UNKNOWN_EASING: Code = Code::new("RE7601");
 
 /// A tween's duration is negative or not finite.
 pub const TWEEN_INVALID: Code = Code::new("RE7602");
+
+/// A pose easing style or direction name is not one of
+/// [`PoseStyle`](crate::PoseStyle)'s or [`PoseDirection`](crate::PoseDirection)'s.
+pub const UNKNOWN_POSE_EASING: Code = Code::new("RE7603");
+
+/// A keyframe clip has a negative or non-finite time, or a joint key with a
+/// non-finite or zero rotation, a non-finite translation, or a bad weight.
+pub const KEYFRAME_CLIP_MALFORMED: Code = Code::new("RE7604");
+
+/// An animation priority name is not one of [`Priority`](crate::Priority)'s.
+pub const UNKNOWN_PRIORITY: Code = Code::new("RE7605");

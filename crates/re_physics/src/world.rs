@@ -410,6 +410,24 @@ impl Physics {
                 linear,
                 angular,
             } => {
+                // A character takes the linear part: the next step starts from it
+                // (an upward speed above the ground's makes it leave the ground).
+                if !self.bodies.contains_key(&id)
+                    && let Some(ch) = self.characters.get(&id)
+                {
+                    if !linear.is_finite() {
+                        return Err(character_invalid(
+                            id,
+                            format!("velocity {linear} is not finite"),
+                        ));
+                    }
+                    let cid = ch.id;
+                    return self
+                        .world
+                        .character_mut(cid)
+                        .and_then(|mut c| c.set_linear_velocity(jv(linear)))
+                        .map_err(|e| character_invalid(id, e.to_string()));
+                }
                 let entry = self.bodies.get(&id).ok_or_else(|| unknown(id, "body"))?;
                 if entry.kind == BodyKind::Static {
                     return Err(wrong_kind(id, "a velocity", entry.kind));
