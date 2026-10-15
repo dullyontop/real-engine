@@ -29,6 +29,7 @@ pub mod datatypes;
 pub mod enums;
 pub mod error;
 pub mod instance;
+pub mod physics;
 pub mod runtime;
 pub mod scene;
 pub mod services;
@@ -79,6 +80,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::INVALID_PARENT,
         title: "Parent change refused",
         page: include_str!("../explain/RE9008.md"),
+    },
+    DiagInfo {
+        code: codes::COLLISION_GROUP,
+        title: "Collision group refused",
+        page: include_str!("../explain/RE9250.md"),
+    },
+    DiagInfo {
+        code: codes::PHYSICS_SETUP,
+        title: "Physics setup missing",
+        page: include_str!("../explain/RE9251.md"),
     },
     DiagInfo {
         code: codes::DEPRECATED_MEMBER,

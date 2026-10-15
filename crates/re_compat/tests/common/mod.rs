@@ -59,6 +59,9 @@ pub fn instance_accessors(mut b: ClassRegistryBuilder) -> ClassRegistryBuilder {
     for (prop, a) in re_compat::instance::accessors() {
         b = b.accessor("Instance", prop, a);
     }
+    for (class, prop, a) in re_compat::physics::accessors() {
+        b = b.accessor(class, prop, a);
+    }
     b
 }
 

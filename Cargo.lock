@@ -3611,6 +3611,7 @@ dependencies = [
  "re_command",
  "re_core",
  "re_import",
+ "re_physics",
  "re_reflect",
  "re_scene",
  "re_script",

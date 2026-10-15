@@ -33,3 +33,12 @@ pub const INVALID_PARENT: Code = Code::new("RE9008");
 
 /// A deprecated member was used; it works, and the note names its replacement.
 pub const DEPRECATED_MEMBER: Code = Code::new("RE9101");
+
+/// A collision group operation was refused: the group is not registered, the
+/// name is invalid or taken, all groups are in use, or `Default` was to be
+/// removed or renamed (WP13 holds RE9250–RE9299).
+pub const COLLISION_GROUP: Code = Code::new("RE9250");
+
+/// A physics member needs something the place lacks: a `Model` without a
+/// `PrimaryPart`, a workspace without its `Terrain`.
+pub const PHYSICS_SETUP: Code = Code::new("RE9251");

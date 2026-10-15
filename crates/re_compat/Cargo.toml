@@ -17,6 +17,7 @@ re_reflect.workspace = true
 re_scene.workspace = true
 re_command.workspace = true
 re_script.workspace = true
+re_physics.workspace = true
 mlua.workspace = true
 glam.workspace = true
 indexmap.workspace = true
