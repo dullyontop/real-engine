@@ -83,10 +83,29 @@ impl Media {
         self.derived.insert(name, mesh);
     }
 
+    /// True when the `derived:` mesh `name` was given with
+    /// [`Media::insert_derived_mesh`].
+    pub fn has_derived_mesh(&self, name: &str) -> bool {
+        self.derived.contains_key(name)
+    }
+
     /// Forgets a `derived:` mesh.
     pub fn remove_derived_mesh(&mut self, name: &str) {
         self.derived.remove(name);
         self.meshes.remove(name);
+    }
+
+    /// Forgets the `derived:` meshes `keep` refuses.
+    pub fn retain_derived_meshes(&mut self, mut keep: impl FnMut(&str) -> bool) {
+        let gone: Vec<String> = self
+            .derived
+            .keys()
+            .filter(|name| !keep(name))
+            .cloned()
+            .collect();
+        for name in gone {
+            self.remove_derived_mesh(&name);
+        }
     }
 
     /// The mesh named by a `MeshRef.asset`.

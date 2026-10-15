@@ -22,9 +22,10 @@ pub fn all() -> Vec<(&'static str, Json)> {
     }
     let to_json = |s: schemars::Schema| serde_json::to_value(s).unwrap_or(Json::Null);
     let mut out = vec![
+        // With every M1 node kind's parameters.
         (
             "graph.schema.json",
-            to_json(schemars::schema_for!(re_types::GraphDoc)),
+            re_proc::NodeRegistry::m1().graph_json_schema(),
         ),
         (
             "material.schema.json",

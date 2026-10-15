@@ -9,6 +9,7 @@
 
 mod codes;
 mod explain;
+mod graph;
 mod new;
 mod schema;
 #[cfg(feature = "tooling")]
@@ -95,6 +96,9 @@ enum Command {
         /// The code, such as RE1001.
         code: Option<String>,
     },
+    /// Work with procedural graphs.
+    #[command(subcommand)]
+    Graph(graph::GraphCommand),
     /// Write every JSON Schema the engine defines.
     Schema {
         /// The output directory.
@@ -440,6 +444,7 @@ fn main() -> ExitCode {
         } => cmd_verify(&project, json, update_goldens),
         Command::Explain { code } => cmd_explain(code),
         Command::Schema { out } => cmd_schema(&out),
+        Command::Graph(command) => graph::run(command, &project),
         #[cfg(feature = "tooling")]
         Command::Check(args) => tooling_exit(tooling::check::run(args, &project)),
         #[cfg(feature = "tooling")]

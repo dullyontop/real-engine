@@ -76,6 +76,16 @@ impl ShapeLibrary {
         }
     }
 
+    /// Forgets the sources `keep` refuses.
+    pub fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) {
+        let before = self.len();
+        self.meshes.retain(|source, _| keep(source));
+        self.heightfields.retain(|source, _| keep(source));
+        if self.len() != before {
+            self.generation += 1;
+        }
+    }
+
     /// The mesh named `source`.
     pub fn mesh(&self, source: &str) -> Option<&Arc<MeshData>> {
         self.meshes.get(source)

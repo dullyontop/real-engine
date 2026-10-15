@@ -34,6 +34,8 @@ re_assets = { workspace = true, features = ["schemars"] }
 re_audio.workspace = true
 re_anim.workspace = true
 re_script.workspace = true
+re_proc.workspace = true
+re_geom.workspace = true
 re_script_check = { workspace = true, optional = true }
 clap.workspace = true
 serde.workspace = true

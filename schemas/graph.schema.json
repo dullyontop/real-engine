@@ -58,7 +58,25 @@
         },
         "kind": {
           "description": "The node type, for example `terrain.heightfield`.",
-          "type": "string"
+          "type": "string",
+          "enum": [
+            "terrain.heightfield",
+            "terrain.island_mask",
+            "terrain.mesh",
+            "terrain.water_plane",
+            "field.combine",
+            "field.remap",
+            "scatter.poisson",
+            "scatter.grid_jitter",
+            "points.filter",
+            "points.pick",
+            "points.instance",
+            "mesh.primitive",
+            "mesh.transform",
+            "mesh.merge",
+            "material.assign",
+            "fragment.merge"
+          ]
         },
         "version": {
           "description": "The node type's version (for migrating parameters).",
@@ -78,6 +96,928 @@
         "kind",
         "version",
         "params"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "terrain.heightfield"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "size": {
+                    "description": "Samples per side (2 to 2049). The field is centred on the source.",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 128
+                  },
+                  "cell": {
+                    "description": "Distance between samples, in metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "scale": {
+                    "description": "Noise frequency: noise units per metre (smaller is broader).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.009999999776482582
+                  },
+                  "height": {
+                    "description": "Height of the highest possible point, in metres (heights run from 0 to this).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 30.0
+                  },
+                  "noise": {
+                    "description": "The noise: `fbm`, `ridged` or `warped`.",
+                    "$ref": "#/$defs/terrain.heightfield.NoiseKind"
+                  },
+                  "basis": {
+                    "description": "The base noise: `perlin` or `simplex`.",
+                    "$ref": "#/$defs/terrain.heightfield.BasisKind"
+                  },
+                  "octaves": {
+                    "description": "Number of octaves (1 to 16).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 5
+                  },
+                  "lacunarity": {
+                    "description": "Frequency multiplier per octave.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 2.0
+                  },
+                  "gain": {
+                    "description": "Amplitude multiplier per octave.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.5
+                  },
+                  "warp": {
+                    "description": "Warp strength in noise units (`warped` only).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "offset": {
+                    "description": "Moves the noise pattern, in metres `[x, z]`.",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "default": [
+                      0.0,
+                      0.0
+                    ]
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `terrain.heightfield`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "terrain.island_mask"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "size": {
+                    "description": "Samples per side (2 to 2049). `field.combine` resamples it to the\nother field's size, so it rarely needs changing.",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 128
+                  },
+                  "cell": {
+                    "description": "Distance between samples, in metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "radius": {
+                    "description": "The island's radius as a fraction of the half extent (1 reaches the\nmiddle of each edge).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.8999999761581421
+                  },
+                  "falloff": {
+                    "description": "The fraction of the radius over which the mask falls from 1 to 0.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.6000000238418579
+                  },
+                  "shape": {
+                    "description": "`circle` or `square`.",
+                    "$ref": "#/$defs/terrain.island_mask.MaskShape"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `terrain.island_mask`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "terrain.mesh"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "collider": {
+                    "description": "Also add a heightfield `Collider` built from the same samples.",
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "material": {
+                    "description": "A material file (`materials/grass.material.json`), or empty.",
+                    "type": "string",
+                    "default": ""
+                  },
+                  "name": {
+                    "description": "The entity's name.",
+                    "type": "string",
+                    "default": "Terrain"
+                  }
+                },
+                "description": "Parameters of `terrain.mesh`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "terrain.water_plane"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "level": {
+                    "description": "The water's height, in metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 2.0
+                  },
+                  "size": {
+                    "description": "The side length of the square plane, in metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 512.0
+                  },
+                  "subdivisions": {
+                    "description": "Cells per side of the plane mesh (1 to 1024).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 1
+                  },
+                  "material": {
+                    "description": "A material file, or empty.",
+                    "type": "string",
+                    "default": ""
+                  },
+                  "name": {
+                    "description": "The entity's name.",
+                    "type": "string",
+                    "default": "Water"
+                  }
+                },
+                "description": "Parameters of `terrain.water_plane`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "field.combine"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "op": {
+                    "description": "`add`, `sub`, `mul`, `min`, `max` or `lerp`.",
+                    "$ref": "#/$defs/field.combine.CombineOp"
+                  },
+                  "t": {
+                    "description": "The blend factor of `lerp` (0 gives `a`, 1 gives `b`).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.5
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `field.combine`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "field.remap"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "mode": {
+                    "description": "`clamp`, `linear`, `curve` or `terrace`.",
+                    "$ref": "#/$defs/field.remap.RemapMode"
+                  },
+                  "min": {
+                    "description": "`clamp`: the lower bound.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.0
+                  },
+                  "max": {
+                    "description": "`clamp`: the upper bound.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "in_min": {
+                    "description": "`linear`: the input value mapped to `out_min`.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.0
+                  },
+                  "in_max": {
+                    "description": "`linear`: the input value mapped to `out_max`.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "out_min": {
+                    "description": "`linear`: the output for `in_min`.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.0
+                  },
+                  "out_max": {
+                    "description": "`linear`: the output for `in_max`.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "points": {
+                    "description": "`curve`: at least two `[in, out]` points with increasing `in`.",
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "format": "float"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "default": [
+                      [
+                        0.0,
+                        0.0
+                      ],
+                      [
+                        1.0,
+                        1.0
+                      ]
+                    ]
+                  },
+                  "step": {
+                    "description": "`terrace`: the height of each step.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "smooth": {
+                    "description": "`terrace`: 0 for sharp steps, up to 1 for a smooth ramp.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.0
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `field.remap`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "scatter.poisson"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "radius": {
+                    "description": "The smallest distance between two points, in metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 4.0
+                  },
+                  "attempts": {
+                    "description": "Candidates tried around each point before it is retired (Bridson's `k`).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 30
+                  },
+                  "max_points": {
+                    "description": "Stop after this many points.",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 100000
+                  },
+                  "extent": {
+                    "description": "The side of the square to fill when no field is connected, in metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 64.0
+                  },
+                  "height_min": {
+                    "description": "Drop points below this height (metres).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  },
+                  "height_max": {
+                    "description": "Drop points above this height (metres).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  },
+                  "slope_min": {
+                    "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  },
+                  "slope_max": {
+                    "description": "Drop points steeper than this slope (rise over run).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  }
+                },
+                "description": "Parameters of `scatter.poisson`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "scatter.grid_jitter"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "spacing": {
+                    "description": "Distance between grid cells, in metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 4.0
+                  },
+                  "jitter": {
+                    "description": "How far each point may move from its cell's centre, as a fraction of\nthe spacing (0 is a regular grid, 1 fills the cell).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.5
+                  },
+                  "extent": {
+                    "description": "The side of the square to fill when no field is connected, in metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 64.0
+                  },
+                  "height_min": {
+                    "description": "Drop points below this height (metres).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  },
+                  "height_max": {
+                    "description": "Drop points above this height (metres).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  },
+                  "slope_min": {
+                    "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  },
+                  "slope_max": {
+                    "description": "Drop points steeper than this slope (rise over run).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  }
+                },
+                "description": "Parameters of `scatter.grid_jitter`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "points.filter"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "height_min": {
+                    "description": "Drop points below this height (metres).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  },
+                  "height_max": {
+                    "description": "Drop points above this height (metres).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  },
+                  "slope_min": {
+                    "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  },
+                  "slope_max": {
+                    "description": "Drop points steeper than this slope (rise over run).",
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "format": "float",
+                    "default": null
+                  },
+                  "mask_min": {
+                    "description": "With a `mask` field connected: drop points where the mask is below this.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.5
+                  },
+                  "density": {
+                    "description": "Keep each point with this probability (decided per point id, so the\nsame points survive whatever else changes).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  }
+                },
+                "description": "Parameters of `points.filter`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "points.pick"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "choices": {
+                    "description": "The choices; each point picks one at random by weight.",
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/points.pick.Choice"
+                    }
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `points.pick`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "points.instance"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "prefab": {
+                    "description": "The prefab placed at untagged points (or at every point when\n`prefabs` is empty), relative to the project root.",
+                    "type": "string",
+                    "default": ""
+                  },
+                  "prefabs": {
+                    "description": "A prefab per tag (from `points.pick`); points whose tag has none and\nthat `prefab` does not cover are skipped.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "default": {}
+                  },
+                  "random_yaw": {
+                    "description": "Turn each instance about Y by a random angle.",
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "align_to_normal": {
+                    "description": "Tilt each instance so its +Y follows the surface normal.",
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "scale_min": {
+                    "description": "The smallest random uniform scale.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "scale_max": {
+                    "description": "The largest random uniform scale.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "offset_y": {
+                    "description": "Raise (or sink) each instance by this many metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.0
+                  },
+                  "name": {
+                    "description": "The instance entities' name; the prefab file's name when empty.",
+                    "type": "string",
+                    "default": ""
+                  }
+                },
+                "description": "Parameters of `points.instance`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "mesh.primitive"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "shape": {
+                    "description": "`box`, `sphere`, `cylinder`, `capsule` or `plane`.",
+                    "$ref": "#/$defs/mesh.primitive.PrimitiveShape"
+                  },
+                  "size": {
+                    "description": "`box`: the full size `[x, y, z]`; `plane`: `[x, _, z]`.",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  },
+                  "radius": {
+                    "description": "`sphere`, `cylinder`, `capsule`: the radius.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.5
+                  },
+                  "height": {
+                    "description": "`cylinder`: the full height; `capsule`: the length of the straight part.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "segments": {
+                    "description": "Segments around (3 to 1024).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 24
+                  },
+                  "rings": {
+                    "description": "Rings: pole to pole for a sphere, per end for a capsule.",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 12
+                  },
+                  "subdivisions": {
+                    "description": "`plane`: cells per side.",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 1
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `mesh.primitive`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "mesh.transform"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "translation": {
+                    "description": "Moves the mesh, in metres.",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "rotation": {
+                    "description": "Euler angles in degrees, applied X, then Y, then Z.",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "scale": {
+                    "description": "Scale per axis (applied first).",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  }
+                },
+                "description": "Parameters of `mesh.transform`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "mesh.merge"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "type": "object",
+                "description": "Parameters of `mesh.merge` (none)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "material.assign"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "material": {
+                    "description": "A material file, relative to the project root\n(`materials/stone.material.json`); `re_app` loads it through `re_assets`.",
+                    "type": "string",
+                    "default": ""
+                  }
+                },
+                "description": "Parameters of `material.assign`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "fragment.merge"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "group": {
+                    "description": "When set, a group entity `<node>/group` with this name is created and\nevery entity of the inputs without a parent goes under it.",
+                    "type": "string",
+                    "default": ""
+                  }
+                },
+                "description": "Parameters of `fragment.merge`.",
+                "type": "object"
+              }
+            }
+          }
+        }
       ]
     },
     "EdgeDoc": {
@@ -117,6 +1057,166 @@
       "required": [
         "from",
         "to"
+      ]
+    },
+    "terrain.heightfield.NoiseKind": {
+      "description": "The noise of a [`HeightfieldParams`].",
+      "oneOf": [
+        {
+          "description": "Fractal Brownian motion: rolling hills.",
+          "type": "string",
+          "const": "fbm"
+        },
+        {
+          "description": "Ridged multifractal: sharp crests.",
+          "type": "string",
+          "const": "ridged"
+        },
+        {
+          "description": "Domain-warped fBm: swirled, eroded-looking shapes.",
+          "type": "string",
+          "const": "warped"
+        }
+      ]
+    },
+    "terrain.heightfield.BasisKind": {
+      "description": "The base noise of a [`HeightfieldParams`].",
+      "oneOf": [
+        {
+          "description": "Perlin gradient noise.",
+          "type": "string",
+          "const": "perlin"
+        },
+        {
+          "description": "Simplex gradient noise.",
+          "type": "string",
+          "const": "simplex"
+        }
+      ]
+    },
+    "terrain.island_mask.MaskShape": {
+      "description": "The outline of a [`MaskParams`].",
+      "oneOf": [
+        {
+          "description": "Round island.",
+          "type": "string",
+          "const": "circle"
+        },
+        {
+          "description": "Square island.",
+          "type": "string",
+          "const": "square"
+        }
+      ]
+    },
+    "field.combine.CombineOp": {
+      "description": "How [`CombineParams`] combines two fields.",
+      "oneOf": [
+        {
+          "description": "`a + b`.",
+          "type": "string",
+          "const": "add"
+        },
+        {
+          "description": "`a - b`.",
+          "type": "string",
+          "const": "sub"
+        },
+        {
+          "description": "`a * b` (masking).",
+          "type": "string",
+          "const": "mul"
+        },
+        {
+          "description": "The smaller of `a` and `b`.",
+          "type": "string",
+          "const": "min"
+        },
+        {
+          "description": "The larger of `a` and `b`.",
+          "type": "string",
+          "const": "max"
+        },
+        {
+          "description": "`a + (b - a) * t`.",
+          "type": "string",
+          "const": "lerp"
+        }
+      ]
+    },
+    "field.remap.RemapMode": {
+      "description": "How [`RemapParams`] maps values.",
+      "oneOf": [
+        {
+          "description": "Clamp to `[min, max]`.",
+          "type": "string",
+          "const": "clamp"
+        },
+        {
+          "description": "Map `[in_min, in_max]` linearly onto `[out_min, out_max]` (not clamped).",
+          "type": "string",
+          "const": "linear"
+        },
+        {
+          "description": "A piecewise-linear curve through `points` (`[[in, out], …]`, sorted by\n`in`; flat beyond the ends).",
+          "type": "string",
+          "const": "curve"
+        },
+        {
+          "description": "Steps `step` metres high; `smooth` is the fraction of each step that ramps.",
+          "type": "string",
+          "const": "terrace"
+        }
+      ]
+    },
+    "points.pick.Choice": {
+      "description": "One choice of [`PickParams`].",
+      "type": "object",
+      "properties": {
+        "tag": {
+          "description": "The tag given to the points that pick this choice.",
+          "type": "string"
+        },
+        "weight": {
+          "description": "The relative weight (0 or more).",
+          "type": "number",
+          "format": "float",
+          "default": 1.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "tag"
+      ]
+    },
+    "mesh.primitive.PrimitiveShape": {
+      "description": "The shape of a [`PrimitiveParams`].",
+      "oneOf": [
+        {
+          "description": "A box of `size`.",
+          "type": "string",
+          "const": "box"
+        },
+        {
+          "description": "A sphere of `radius`.",
+          "type": "string",
+          "const": "sphere"
+        },
+        {
+          "description": "A cylinder of `radius` and `height`.",
+          "type": "string",
+          "const": "cylinder"
+        },
+        {
+          "description": "A capsule of `radius` whose straight part is `height` long.",
+          "type": "string",
+          "const": "capsule"
+        },
+        {
+          "description": "A flat plane of `size[0]` by `size[2]`, facing +Y.",
+          "type": "string",
+          "const": "plane"
+        }
       ]
     }
   }

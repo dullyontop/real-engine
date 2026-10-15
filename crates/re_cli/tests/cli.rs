@@ -147,3 +147,32 @@ fn run_headless_writes_a_screenshot() {
     let png = std::fs::read(dir.path().join("out/f30.png")).unwrap();
     assert_eq!(&png[1..4], b"PNG");
 }
+
+#[test]
+fn graph_eval_reports_each_node() {
+    let dir = tempfile::tempdir().unwrap();
+    let graph = serde_json::json!({
+        "format": "real-engine/graph", "version": 1, "name": "flat", "seed": 3,
+        "nodes": [
+            { "id": "h", "kind": "terrain.heightfield", "version": 1, "params": { "size": 9, "cell": 4.0 } },
+            { "id": "ground", "kind": "terrain.mesh", "version": 1, "params": { "collider": true } }
+        ],
+        "edges": [ { "from": ["h", "field"], "to": ["ground", "field"] } ]
+    });
+    std::fs::write(dir.path().join("flat.graph.json"), graph.to_string()).unwrap();
+    let o = real(&["graph", "eval", "flat.graph.json", "--json"], dir.path());
+    assert!(o.status.success(), "{}", text(&o));
+    let report: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(report["seed"], 3);
+    assert_eq!(report["nodes"].as_array().unwrap().len(), 2);
+    assert_eq!(report["entities"], 1);
+
+    std::fs::write(
+        dir.path().join("bad.graph.json"),
+        graph.to_string().replace("terrain.mesh", "terrain.nope"),
+    )
+    .unwrap();
+    let o = real(&["graph", "eval", "bad.graph.json"], dir.path());
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("RE4001"), "{}", text(&o));
+}
