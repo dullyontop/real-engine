@@ -11,15 +11,31 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::Duration;
 
 use serde_json::{Value, json};
 
+/// How long one ordinary call may take.
 const TIMEOUT: Duration = Duration::from_secs(120);
+/// `verify` runs the replays and goldens; `screenshot` may start the GPU.
+const SLOW: Duration = Duration::from_secs(600);
 
 fn island() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/island")
+}
+
+/// Copies the demo, leaving out local state under `.real/` (sessions, the
+/// lock, caches) except the committed agent policy.
+fn copy_project(from: &Path, to: &Path) {
+    copy_dir(from, to);
+    let _ = std::fs::remove_dir_all(to.join(".real"));
+    std::fs::create_dir_all(to.join(".real")).unwrap();
+    std::fs::copy(
+        from.join(".real/agent-policy.toml"),
+        to.join(".real/agent-policy.toml"),
+    )
+    .unwrap();
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -27,12 +43,54 @@ fn copy_dir(from: &Path, to: &Path) {
     for entry in std::fs::read_dir(from).unwrap() {
         let entry = entry.unwrap();
         let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
+        let kind = entry.file_type().unwrap();
+        if entry.file_name() == ".real" {
+            continue;
+        }
+        if kind.is_dir() {
             copy_dir(&entry.path(), &target);
-        } else {
+        } else if kind.is_file() {
             std::fs::copy(entry.path(), target).unwrap();
         }
     }
+}
+
+/// Every file under `dir` (relative, `/`-separated) with its contents.
+fn snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(root: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                walk(root, &entry.path(), out);
+            } else if kind.is_file() {
+                let rel = entry
+                    .path()
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                out.insert(rel, std::fs::read(entry.path()).unwrap());
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+/// The state hash recorded in the only agent session's start checkpoint.
+fn session_start_hash(project: &Path) -> String {
+    let sessions: Vec<_> = std::fs::read_dir(project.join(".real/agent/sessions"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir())
+        .collect();
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    let start: Value =
+        serde_json::from_slice(&std::fs::read(sessions[0].join("checkpoints/start.json")).unwrap())
+            .unwrap();
+    start["state_hash"].as_str().unwrap().to_string()
 }
 
 /// A `real mcp` process and the JSON-RPC lines it writes.
@@ -78,13 +136,27 @@ impl Server {
 
     /// Sends a request and returns its response. Every line on stdout must be
     /// JSON-RPC.
+    #[track_caller]
     fn request(&mut self, id: u64, method: &str, params: Value) -> Value {
+        self.request_within(id, method, params, TIMEOUT)
+    }
+
+    #[track_caller]
+    fn request_within(&mut self, id: u64, method: &str, params: Value, limit: Duration) -> Value {
         self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
         loop {
-            let line = self
-                .lines
-                .recv_timeout(TIMEOUT)
-                .unwrap_or_else(|_| panic!("no response to {method} (id {id})"));
+            let line = match self.lines.recv_timeout(limit) {
+                Ok(line) => line,
+                Err(RecvTimeoutError::Timeout) => {
+                    panic!("no response to {method} (id {id}) within {limit:?}")
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    let status = self.child.wait().ok();
+                    panic!(
+                        "real mcp closed its output before answering {method} (id {id}); exit status {status:?}"
+                    )
+                }
+            };
             let msg: Value = serde_json::from_str(&line)
                 .unwrap_or_else(|e| panic!("stdout carried a non-JSON line ({e}): {line}"));
             assert_eq!(msg["jsonrpc"], "2.0", "{line}");
@@ -95,11 +167,18 @@ impl Server {
     }
 
     /// Calls a tool; protocol errors fail the test.
+    #[track_caller]
     fn call(&mut self, id: u64, tool: &str, arguments: Value) -> Value {
-        let resp = self.request(
+        self.call_within(id, tool, arguments, TIMEOUT)
+    }
+
+    #[track_caller]
+    fn call_within(&mut self, id: u64, tool: &str, arguments: Value, limit: Duration) -> Value {
+        let resp = self.request_within(
             id,
             "tools/call",
             json!({ "name": tool, "arguments": arguments }),
+            limit,
         );
         resp.get("result")
             .cloned()
@@ -128,10 +207,12 @@ impl Drop for Server {
 }
 
 /// The JSON in a tool result's first content block.
+#[track_caller]
 fn body(result: &Value) -> Value {
     serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap()
 }
 
+#[track_caller]
 fn ok(tool: &str, result: &Value) -> Value {
     assert_eq!(result["isError"], false, "{tool} failed: {result}");
     body(result)
@@ -141,7 +222,7 @@ fn ok(tool: &str, result: &Value) -> Value {
 fn an_agent_edits_checks_and_restores_the_island() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("island");
-    copy_dir(&island(), &project);
+    copy_project(&island(), &project);
     let scene_before = std::fs::read(project.join("scenes/main.scene.json")).unwrap();
 
     let mut s = Server::start(&project);
@@ -178,12 +259,10 @@ fn an_agent_edits_checks_and_restores_the_island() {
         assert!(names.contains(&tool), "{tool} is missing: {names:?}");
     }
 
-    // Restoring the start right away changes nothing and reports its hash.
-    let start = ok(
-        "checkpoint_restore",
-        &s.call(3, "checkpoint_restore", json!({})),
-    );
-    let start_hash = start["data"]["state_hash"].as_str().unwrap().to_string();
+    // The session's start checkpoint, written when `real mcp` opened the
+    // project, holds the state the restore must return to.
+    let start_hash = session_start_hash(&project);
+    let files_before = snapshot(&project);
 
     let spawned = ok(
         "entity_spawn",
@@ -207,12 +286,19 @@ fn an_agent_edits_checks_and_restores_the_island() {
             json!({ "source": "island", "node": "gem_spots", "param": "radius", "value": 12.0 }),
         ),
     );
-    ok(
+    let regen = ok(
         "graph_regenerate",
         &s.call(7, "graph_regenerate", json!({ "source": "island" })),
     );
+    let r = &regen["data"]["regen"];
+    let touched = ["spawned", "updated", "despawned"]
+        .iter()
+        .filter_map(|k| r[*k].as_array())
+        .map(Vec::len)
+        .sum::<usize>();
+    assert!(touched > 0, "the regeneration changed nothing: {regen}");
 
-    let shot = s.call(8, "screenshot", json!({}));
+    let shot = s.call_within(8, "screenshot", json!({}), SLOW);
     ok("screenshot", &shot);
     let content = shot["content"].as_array().unwrap();
     let image = content
@@ -222,14 +308,18 @@ fn an_agent_edits_checks_and_restores_the_island() {
     assert_eq!(image["mimeType"], "image/png");
     assert!(image["data"].as_str().unwrap().starts_with("iVBORw0KGgo"));
 
-    // `verify` runs; the edits may make the goldens differ, so only its
-    // report is checked.
-    let verified = s.call(9, "verify", json!({}));
-    let report = body(&verified);
-    assert!(
-        report.get("data").is_some() || report.get("code").is_some(),
-        "{verified}"
-    );
+    // `verify` runs and reports its stages; the edits may make the goldens
+    // differ, so whether it passes is not checked.
+    let report = ok("verify", &s.call_within(9, "verify", json!({}), SLOW));
+    let stages: Vec<&str> = report["data"]["stages"]
+        .as_array()
+        .unwrap_or_else(|| panic!("verify reported no stages: {report}"))
+        .iter()
+        .filter_map(|st| st["name"].as_str().or(st["stage"].as_str()))
+        .collect();
+    for stage in ["schema", "boot"] {
+        assert!(stages.contains(&stage), "{stage} missing from {stages:?}");
+    }
 
     // The policy keeps scripts inside its scopes.
     let refused = s.call(
@@ -257,11 +347,43 @@ fn an_agent_edits_checks_and_restores_the_island() {
         &s.call(12, "checkpoint_restore", json!({})),
     );
     assert_eq!(restored["data"]["state_hash"], start_hash.as_str());
+    // The state saved before the restore differs: the edits were real.
+    let saved = restored["data"]["saved"].as_str().unwrap();
+    let session = std::fs::read_dir(project.join(".real/agent/sessions"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let saved_cp: Value = serde_json::from_slice(
+        &std::fs::read(session.join(format!("checkpoints/{saved}.json"))).unwrap(),
+    )
+    .unwrap();
+    assert_ne!(saved_cp["state_hash"], start_hash.as_str());
     let gone = s.call(13, "entity_get", json!({ "id": "e2e_rock" }));
     assert_eq!(gone["isError"], true, "{gone}");
+    assert_eq!(body(&gone)["code"], "RE1200", "{gone}");
     assert!(!project.join("scripts/game/e2e.luau").exists());
 
     s.finish();
+    // Nothing was written outside `.real/` and the policy's scopes.
+    let scopes = [
+        "scripts/",
+        "scenes/",
+        "graphs/",
+        "prefabs/",
+        "materials/",
+        "assets/",
+    ];
+    for (path, bytes) in snapshot(&project) {
+        if files_before.get(&path) == Some(&bytes) {
+            continue;
+        }
+        assert!(
+            path.starts_with(".real/") || scopes.iter().any(|s| path.starts_with(s)),
+            "real mcp wrote {path}, outside the policy scopes"
+        );
+    }
     // Edits were saved as they were made; after the restore the scene file
     // holds the same entities as before (written in the saver's own form).
     let ids = |bytes: &[u8]| -> Vec<String> {
@@ -301,7 +423,7 @@ fn an_agent_edits_checks_and_restores_the_island() {
 fn a_second_headless_writer_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("island");
-    copy_dir(&island(), &project);
+    copy_project(&island(), &project);
     let mut first = Server::start(&project);
     // Wait until the first server has the project.
     first.request(
@@ -313,12 +435,23 @@ fn a_second_headless_writer_is_refused() {
             "clientInfo": { "name": "mcp_e2e", "version": "0" }
         }),
     );
-    let second = Command::new(env!("CARGO_BIN_EXE_real"))
+    let mut second = Command::new(env!("CARGO_BIN_EXE_real"))
         .args(["mcp", "--project"])
         .arg(&project)
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while second.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = second.kill();
+            panic!("a second real mcp did not exit");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let second = second.wait_with_output().unwrap();
     assert_eq!(second.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&second.stderr).contains("RE8003"),
