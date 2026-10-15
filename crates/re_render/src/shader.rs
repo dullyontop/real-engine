@@ -16,6 +16,11 @@ pub const SOURCES: &[(&str, &str)] = &[
     ("shadow.wgsl", include_str!("shaders/shadow.wgsl")),
     ("lines.wgsl", include_str!("shaders/lines.wgsl")),
     ("ui_blit.wgsl", include_str!("shaders/ui_blit.wgsl")),
+    ("fx.wgsl", include_str!("shaders/fx.wgsl")),
+    ("effects.wgsl", include_str!("shaders/effects.wgsl")),
+    ("sky.wgsl", include_str!("shaders/sky.wgsl")),
+    ("mask.wgsl", include_str!("shaders/mask.wgsl")),
+    ("highlight.wgsl", include_str!("shaders/highlight.wgsl")),
 ];
 
 /// Expands the includes of the file `name` from `sources`.
@@ -149,8 +154,8 @@ mod tests {
     fn built_in_shaders_preprocess_and_validate() {
         for (name, _) in SOURCES {
             let source = preprocess(name, SOURCES).unwrap();
-            if *name == "common.wgsl" {
-                continue; // declarations only
+            if matches!(*name, "common.wgsl" | "fx.wgsl") {
+                continue; // declarations only (fx.wgsl needs the including file's `frame`)
             }
             let module = naga_parse(&source).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert!(module > 0, "{name} has no entry points");

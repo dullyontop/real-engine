@@ -688,10 +688,14 @@ pub(crate) fn adornee_position(s: &Scope, bb: Entity) -> Option<Vec3> {
     let w = s.w;
     let p = s.props(bb);
     let at = p.entity("Adornee").or_else(|| tree::parent(w, bb))?;
+    // The pose scripts and physics wrote this frame, else the propagated
+    // transform.
     let pos = |e: Entity| {
-        w.ecs
-            .get::<GlobalTransform>(e)
-            .map(|g| Vec3::from(g.0.translation))
+        crate::physics::world_pose(w, e).map(|p| p.pos).or_else(|| {
+            w.ecs
+                .get::<GlobalTransform>(e)
+                .map(|g| Vec3::from(g.0.translation))
+        })
     };
     pos(at).or_else(|| {
         // A model: the first descendant with a transform.

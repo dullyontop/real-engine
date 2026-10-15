@@ -27,6 +27,11 @@ pub fn place() -> Place {
 
 /// The test place with handlers run as `behavior` says.
 pub fn place_with(behavior: SignalBehavior) -> Place {
+    place_in(behavior, &["Workspace", "ReplicatedStorage"])
+}
+
+/// The test place with `services` created.
+pub fn place_in(behavior: SignalBehavior, services: &[&str]) -> Place {
     let mut b = Bindings::standard().unwrap();
     b.classes(|c| {
         c.classes(
@@ -36,12 +41,7 @@ pub fn place_with(behavior: SignalBehavior) -> Place {
     });
     let setup: Arc<CompatSetup> = CompatSetup::new(b).unwrap();
     let mut world = World::new();
-    let game = create_place(
-        &mut world,
-        &setup.classes,
-        &["Workspace", "ReplicatedStorage"],
-    )
-    .unwrap();
+    let game = create_place(&mut world, &setup.classes, services).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let vm = CompatVm::new(
         &setup,
@@ -132,6 +132,30 @@ impl Place {
         let d = vm.step(&mut host, 0.0);
         assert!(d.is_empty(), "{d:#?}");
         out.expect("the step ran")
+    }
+
+    /// One physics step of `dt` (static cells, moved parts), then the
+    /// deferred handlers.
+    pub fn physics(&mut self, dt: f64) {
+        let vm = &self.vm;
+        let mut host = WorldHost {
+            world: &mut self.world,
+            services: &mut self.services,
+        };
+        let d = vm.physics(&mut host, dt);
+        assert!(d.is_empty(), "{d:#?}");
+        let d = vm.step(&mut host, 0.0);
+        assert!(d.is_empty(), "{d:#?}");
+    }
+
+    /// One frame of the 3D view.
+    pub fn render(
+        &mut self,
+        input: &re_compat::render::RenderInput,
+    ) -> re_compat::render::RenderFrame {
+        let input = *input;
+        self.lua(|lua| re_compat::render::build(lua, &input))
+            .unwrap_or_else(|e| panic!("{e}"))
     }
 
     pub fn out(&mut self) -> Vec<String> {

@@ -56,6 +56,9 @@ pub const BAD_MATERIAL: Code = Code::new("RE6016");
 /// A frame has more lights than the forward pass draws; the extra lights are ignored.
 pub const TOO_MANY_LIGHTS: Code = Code::new("RE6017");
 
+/// A frame has more highlights than the renderer draws; the later ones are left out.
+pub const TOO_MANY_HIGHLIGHTS: Code = Code::new("RE6018");
+
 /// Reading a texture back to the CPU failed.
 pub const READBACK_FAILED: Code = Code::new("RE6020");
 
