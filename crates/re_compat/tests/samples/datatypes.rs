@@ -3,16 +3,21 @@
 //!
 //! * `pure.eval` (`{"code": luau, "expect": [value, ...], "rel": r?}`): runs
 //!   `code` and compares what it returns with `expect`, in order. A number
-//!   matches within relative tolerance `r` (default 0: exactly equal as
-//!   doubles); `[x, y]` or `[x, y, z]` matches a Vector2, a Vector3 or a
-//!   list of numbers the same way; strings, booleans and `null` match
-//!   exactly.
+//!   matches within `r` times the expected value's magnitude (absolute below
+//!   1; default 0: exactly equal as doubles). `[x, y]` or `[x, y, z]`
+//!   matches a Vector2, a Vector3 or a list the same way; vector components
+//!   are f32, so a decimal expectation for them needs `r` (1e-6 is f32
+//!   precision). Strings, booleans and `null` (nil) match exactly; NaN and
+//!   infinities come back as `"nan"`, `"inf"` and `"-inf"`, and other
+//!   datatypes and enum items as their `tostring`. A returned table must be
+//!   a list.
 //!
 //! The VM has no data model yet, only what pure modules reach: instances are
 //! path stand-ins (`script`, `script.Parent.X`, `game:GetService(name).X`,
 //! and `inst(path)` for a `/`-separated path from the service down), and
 //! `require` of a stand-in runs the ModuleScript at that path in the imported
-//! project, once. Raycasts on a stand-in hit nothing: an empty world.
+//! project, once. Raycasts on a stand-in hit nothing: an empty world. The
+//! stand-ins are tables, so `typeof` gives `"table"` for them.
 
 use std::path::Path;
 
@@ -40,12 +45,14 @@ local function raycast()
     return nil
 end
 local mt = {
-    __type = "Instance",
     __index = function(n, k)
         local path = rawget(n, "__path")
         if k == "Parent" then
+            if path == "" then
+                return nil
+            end
             local p = parent(path)
-            return if p then node(p) else node("")
+            return node(p or "")
         elseif k == "Name" then
             return string.match(path, "[^/]*$")
         elseif k == "GetService" or k == "FindFirstChild" or k == "WaitForChild" then
@@ -180,39 +187,67 @@ fn run(lua: &Lua, modules: Vec<(String, String)>, code: &str) -> mlua::Result<Ve
     globals.set("inst", node)?;
     lua.sandbox(true)?;
     let values: mlua::MultiValue = lua.load(code).set_name("=check").eval()?;
-    values.into_iter().map(|v| to_json(lua, v)).collect()
+    values.into_iter().map(|v| to_json(lua, v, 0)).collect()
 }
 
-fn to_json(lua: &Lua, v: Value) -> mlua::Result<J> {
+fn num(x: f64) -> J {
+    if x.is_finite() {
+        J::from(x)
+    } else if x.is_nan() {
+        J::String("nan".into())
+    } else if x > 0.0 {
+        J::String("inf".into())
+    } else {
+        J::String("-inf".into())
+    }
+}
+
+fn to_json(lua: &Lua, v: Value, depth: u32) -> mlua::Result<J> {
+    if depth > 16 {
+        return Err(mlua::Error::runtime("the value nests too deeply"));
+    }
     Ok(match v {
         Value::Nil => J::Null,
         Value::Boolean(b) => J::Bool(b),
         Value::Integer(i) => J::from(i),
-        Value::Number(n) => J::from(n),
-        Value::Vector(v) => J::from(vec![v.x() as f64, v.y() as f64, v.z() as f64]),
+        Value::Number(n) => num(n),
+        Value::Vector(v) => J::from(vec![
+            num(v.x() as f64),
+            num(v.y() as f64),
+            num(v.z() as f64),
+        ]),
         Value::String(s) => J::String(s.to_string_lossy()),
         Value::UserData(ud) => match re_compat::datatypes::userdata_to_value(lua, &ud)? {
-            Some(re_reflect::Value::Record(_, fields)) if fields.len() == 2 => {
+            Some(re_reflect::Value::Record(id, fields)) if id.name() == "Vector2" => {
                 let f = |v: &re_reflect::Value| match v {
-                    re_reflect::Value::Float(x) => J::from(*x),
+                    re_reflect::Value::Float(x) => num(*x),
+                    re_reflect::Value::Int(x) => J::from(*x),
                     other => J::String(format!("{other:?}")),
                 };
-                J::from(vec![f(&fields[0]), f(&fields[1])])
+                J::Array(fields.iter().map(f).collect())
             }
-            _ => J::String(
-                lua.coerce_string(Value::UserData(ud))?
-                    .map_or_else(|| "userdata".to_string(), |s| s.to_string_lossy()),
-            ),
+            _ => {
+                let tostring: mlua::Function = lua.globals().get("tostring")?;
+                J::String(tostring.call::<String>(Value::UserData(ud))?)
+            }
         },
-        Value::Table(t) => list(lua, t)?,
+        Value::Table(t) => list(lua, t, depth)?,
         other => J::String(other.type_name().to_string()),
     })
 }
 
-fn list(lua: &Lua, t: Table) -> mlua::Result<J> {
+/// A table that is a plain list becomes an array; anything else is an error,
+/// so a dictionary never passes as an empty list.
+fn list(lua: &Lua, t: Table, depth: u32) -> mlua::Result<J> {
+    let n = t.raw_len();
+    if t.pairs::<Value, Value>().count() != n {
+        return Err(mlua::Error::runtime(
+            "a returned table is not a list; return its fields instead",
+        ));
+    }
     let mut out = Vec::new();
     for v in t.sequence_values::<Value>() {
-        out.push(to_json(lua, v?)?);
+        out.push(to_json(lua, v?, depth + 1)?);
     }
     Ok(J::Array(out))
 }
@@ -225,7 +260,9 @@ fn matches(got: &J, want: &J, rel: f64) -> Result<(), String> {
                 g.as_f64().unwrap_or(f64::NAN),
                 w.as_f64().unwrap_or(f64::NAN),
             );
-            if g == w || (g - w).abs() <= rel * w.abs().max(g.abs()) {
+            // Relative to the expected value, and absolute below 1, so an
+            // expected 0 can be met by a rounding residue.
+            if g == w || (g - w).abs() <= rel * w.abs().max(1.0) {
                 Ok(())
             } else {
                 bad()
