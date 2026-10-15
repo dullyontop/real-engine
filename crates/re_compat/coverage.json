@@ -2,10 +2,10 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1077,
-    "partial": 59,
-    "stub-error": 4,
-    "missing": 9
+    "implemented": 1152,
+    "partial": 68,
+    "stub-error": 6,
+    "missing": 3
   },
   "classes": [
     {
@@ -167,12 +167,12 @@
     {
       "name": "BaseScript",
       "superclass": "LuaSourceContainer",
-      "status": "missing",
+      "status": "partial",
       "members": [
         {
           "name": "RunContext",
           "kind": "property",
-          "status": "missing"
+          "status": "implemented"
         }
       ]
     },
@@ -313,7 +313,43 @@
       "name": "DataModel",
       "superclass": "ServiceProvider",
       "status": "partial",
-      "members": []
+      "members": [
+        {
+          "name": "BindToClose",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "CreatorId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GameId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "JobId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlaceId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PrivateServerId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PrivateServerOwnerId",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "Folder",
@@ -1240,13 +1276,13 @@
       "name": "LocalScript",
       "superclass": "Script",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
       "members": []
     },
     {
       "name": "LuaSourceContainer",
       "superclass": "Instance",
-      "status": "missing",
+      "status": "partial",
       "members": []
     },
     {
@@ -1260,7 +1296,7 @@
       "name": "ModuleScript",
       "superclass": "LuaSourceContainer",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
       "members": []
     },
     {
@@ -1305,10 +1341,88 @@
       "members": []
     },
     {
+      "name": "RunService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "BindToRenderStep",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Heartbeat",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "IsClient",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsEdit",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsRunning",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsServer",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsStudio",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PostSimulation",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PreAnimation",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PreRender",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PreSimulation",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "RenderStepped",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Stepped",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "UnbindFromRenderStep",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Script",
       "superclass": "BaseScript",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
       "members": []
     },
     {
@@ -1343,6 +1457,146 @@
       ]
     },
     {
+      "name": "Sound",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "DidLoop",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Ended",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "IsLoaded",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IsPaused",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IsPlaying",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Loaded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Looped",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Pause",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Paused",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Play",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PlayOnRemove",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: removing the sound does not play it."
+        },
+        {
+          "name": "PlaybackLoudness",
+          "kind": "property",
+          "status": "partial",
+          "note": "Always 0: the layer does not meter the mix."
+        },
+        {
+          "name": "PlaybackSpeed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Played",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Playing",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Resume",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Resumed",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "RollOffMaxDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RollOffMinDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RollOffMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SoundId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Stop",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Stopped",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "TimeLength",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TimePosition",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Volume",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "StarterCharacterScripts",
       "superclass": "StarterPlayerScripts",
       "status": "implemented",
@@ -1367,6 +1621,78 @@
       "superclass": "Instance",
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "Tween",
+      "superclass": "TweenBase",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Instance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TweenInfo",
+          "kind": "property",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "TweenBase",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Cancel",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Completed",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Pause",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Play",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PlaybackState",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TweenService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Create",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetValue",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "SmoothDamp",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
     },
     {
       "name": "UserInputService",
@@ -10300,13 +10626,108 @@
       "members": []
     },
     {
+      "name": "debug",
+      "status": "partial",
+      "note": "profilebegin and profileend keep the label stack, but the profiler does not record script labels yet.",
+      "members": [
+        {
+          "name": "info",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "profilebegin",
+          "kind": "function",
+          "status": "partial",
+          "note": "The label is kept but not recorded by the profiler yet."
+        },
+        {
+          "name": "profileend",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "traceback",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "delay",
+      "status": "implemented",
+      "members": []
+    },
+    {
       "name": "game",
       "class": "DataModel",
       "status": "implemented",
       "members": []
     },
     {
+      "name": "require",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "script",
+      "class": "LuaSourceContainer",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "spawn",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "task",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "cancel",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "defer",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "delay",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "desynchronize",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "spawn",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "synchronize",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "wait",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "typeof",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "wait",
       "status": "implemented",
       "members": []
     },

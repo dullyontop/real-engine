@@ -45,3 +45,14 @@ pub const UNKNOWN_ANIMATION: Code = Code::new("RE9201");
 /// `[compat.animations]` in `real.toml` has a key that is not an asset id, a
 /// value that is not a built-in clip or a dotted path, or one id twice.
 pub const BAD_ANIMATION_MAP: Code = Code::new("RE9202");
+
+/// An asset id (a sound, image or texture) is not in the project's
+/// substitute table; it plays or draws nothing (WP15 holds RE9350–RE9399).
+pub const UNKNOWN_ASSET: Code = Code::new("RE9350");
+
+/// More particles, beam segments or trail points than the frame's effect
+/// budget; the excess was not drawn.
+pub const EFFECT_BUDGET: Code = Code::new("RE9351");
+
+/// `TweenService:Create` was given a property whose type cannot be tweened.
+pub const NOT_TWEENABLE: Code = Code::new("RE9352");

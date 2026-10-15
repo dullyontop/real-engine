@@ -262,15 +262,17 @@ pub fn validate(world: &mut World, classes: &ClassRegistry) -> Vec<Diagnostic> {
 }
 
 /// The API a compat project's scripts are written against.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CompatApi {
     /// The Roblox-style API.
+    #[default]
     Roblox,
 }
 
-/// The `[compat]` section of `real.toml`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// The `[compat]` section of `real.toml`. Build one with `..Default::default()`
+/// so later fields need no change.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompatConfig {
     /// The API the project's scripts use.
@@ -284,6 +286,85 @@ pub struct CompatConfig {
     /// numbers once loaded.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub animations: BTreeMap<String, String>,
+    /// What `game` and `RunService` report about the session
+    /// (`[compat.game]`); Studio-like by default.
+    #[serde(default, skip_serializing_if = "GameInfo::is_default")]
+    pub game: GameInfo,
+    /// Seeds `Random.new()` called without a seed (the client context uses
+    /// `seed + 1`), so runs repeat. TOML integers are signed, so a seed
+    /// written to `real.toml` must be at most `i64::MAX`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub seed: u64,
+    /// Asset substitutes: an asset id (`"rbxassetid://123"` or `"123"`, both
+    /// stored as [`asset_key`] gives them) to a project-relative file path.
+    /// Sounds, images and textures resolve through it; an id that is not
+    /// here, or whose file is missing, is `RE9350` when it is used.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub assets: BTreeMap<String, String>,
+    /// Particles plus beam and trail segments drawn per frame (default
+    /// [`DEFAULT_EFFECT_BUDGET`]); the excess is `RE9351`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_budget: Option<u32>,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// The `[compat.game]` section: the values scripts read from `game`
+/// (`PlaceId`, `JobId`, ...) and `RunService:IsStudio()`. The defaults are
+/// those of an unpublished place in a Studio play test.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct GameInfo {
+    /// `game.PlaceId`.
+    pub place_id: i64,
+    /// `game.GameId`.
+    pub game_id: i64,
+    /// `game.CreatorId`.
+    pub creator_id: i64,
+    /// `game.JobId`.
+    pub job_id: String,
+    /// `game.PrivateServerId`.
+    pub private_server_id: String,
+    /// `game.PrivateServerOwnerId`.
+    pub private_server_owner_id: i64,
+    /// `RunService:IsStudio()`.
+    pub studio: bool,
+}
+
+impl Default for GameInfo {
+    fn default() -> Self {
+        GameInfo {
+            place_id: 0,
+            game_id: 0,
+            creator_id: 0,
+            job_id: String::new(),
+            private_server_id: String::new(),
+            private_server_owner_id: 0,
+            studio: true,
+        }
+    }
+}
+
+impl GameInfo {
+    /// True for the Studio-like defaults, which `real.toml` leaves out.
+    pub fn is_default(&self) -> bool {
+        *self == GameInfo::default()
+    }
+}
+
+/// The effect budget when `[compat] effect_budget` is absent.
+pub const DEFAULT_EFFECT_BUDGET: u32 = 20_000;
+
+/// The one key of an asset id in [`CompatConfig::assets`]: `rbxassetid://N`
+/// and the asset URL form become the bare `N`; any other id is kept as given.
+pub fn asset_key(id: &str) -> &str {
+    let id = id.trim();
+    id.strip_prefix("rbxassetid://")
+        .or_else(|| id.strip_prefix("http://www.roblox.com/asset/?id="))
+        .or_else(|| id.strip_prefix("https://www.roblox.com/asset/?id="))
+        .unwrap_or(id)
 }
 
 impl CompatConfig {
@@ -296,14 +377,61 @@ impl CompatConfig {
         match doc.get("compat") {
             None => Ok(None),
             Some(v) => {
-                let mut cfg: CompatConfig =
-                    v.clone().try_into().map_err(|e: toml::de::Error| {
-                        CompatError::Scene(format!("real.toml [compat]: {e}"))
-                    })?;
-                cfg.animations = normalize_animations(&cfg.animations)?;
-                Ok(Some(cfg))
+                let cfg: CompatConfig = v.clone().try_into().map_err(|e: toml::de::Error| {
+                    CompatError::Scene(format!("real.toml [compat]: {e}"))
+                })?;
+                cfg.validated().map(Some)
             }
         }
+    }
+
+    /// The section with its asset keys normalised ([`asset_key`]), refusing
+    /// two keys for one id, a path that is absolute or leaves the project,
+    /// and an effect budget of 0.
+    fn validated(mut self) -> Result<CompatConfig, CompatError> {
+        let bad = |m: String| CompatError::Scene(format!("real.toml [compat]: {m}"));
+        let mut assets = BTreeMap::new();
+        for (id, path) in std::mem::take(&mut self.assets) {
+            let key = asset_key(&id).to_string();
+            if key.is_empty() {
+                return Err(bad(format!("assets: the id {id:?} is empty")));
+            }
+            let p = std::path::Path::new(&path);
+            if path.is_empty()
+                || p.is_absolute()
+                || path.starts_with('/')
+                || path.starts_with('\\')
+                || p.components().any(|c| {
+                    !matches!(
+                        c,
+                        std::path::Component::Normal(_) | std::path::Component::CurDir
+                    )
+                })
+                || path.split(['/', '\\']).any(|part| part == "..")
+            {
+                return Err(bad(format!(
+                    "assets: {id:?} = {path:?} must be a path inside the project, \
+                     relative and without `..`"
+                )));
+            }
+            if assets.insert(key.clone(), path).is_some() {
+                return Err(bad(format!(
+                    "assets: {id:?} and another entry name the same id; \
+                     \"rbxassetid://{key}\" and \"{key}\" are one id, give it once"
+                )));
+            }
+        }
+        self.assets = assets;
+        self.animations = normalize_animations(&self.animations)?;
+        if self.effect_budget == Some(0) {
+            return Err(bad("effect_budget must be at least 1".into()));
+        }
+        Ok(self)
+    }
+
+    /// The effect budget: `effect_budget`, or [`DEFAULT_EFFECT_BUDGET`].
+    pub fn effect_budget(&self) -> u32 {
+        self.effect_budget.unwrap_or(DEFAULT_EFFECT_BUDGET)
     }
 
     /// The section as the importer writes it.
@@ -318,10 +446,37 @@ impl CompatConfig {
                 self.signal_behavior.as_str()
             ));
         }
+        if self.seed != 0 {
+            out.push_str(&format!("seed = {}\n", self.seed));
+        }
+        if let Some(b) = self.effect_budget {
+            out.push_str(&format!("effect_budget = {b}\n"));
+        }
+        // Tables last: plain `key = value` lines go above this point, or they
+        // would land inside `[compat.game]`.
+        if self.game != GameInfo::default() {
+            let g = toml::to_string(&self.game).expect("plain values serialize");
+            out.push_str("\n[compat.game]\n");
+            out.push_str(&g);
+        }
+        if !self.assets.is_empty() {
+            out.push_str("\n[compat.assets]\n");
+            for (id, path) in &self.assets {
+                out.push_str(&format!(
+                    "{} = {}\n",
+                    toml::Value::String(id.clone()),
+                    toml::Value::String(path.clone())
+                ));
+            }
+        }
         if !self.animations.is_empty() {
             out.push_str("\n[compat.animations]\n");
-            for (k, v) in &self.animations {
-                out.push_str(&format!("{k:?} = {v:?}\n"));
+            for (id, to) in &self.animations {
+                out.push_str(&format!(
+                    "{} = {}\n",
+                    toml::Value::String(id.clone()),
+                    toml::Value::String(to.clone())
+                ));
             }
         }
         out
@@ -341,7 +496,7 @@ fn normalize_animations(
     };
     let mut out = BTreeMap::new();
     for (k, v) in table {
-        let digits = k.strip_prefix("rbxassetid://").unwrap_or(k);
+        let digits = asset_key(k);
         if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
             return Err(bad(format!(
                 "key {k:?} is not an asset id (\"1234\" or \"rbxassetid://1234\")"
