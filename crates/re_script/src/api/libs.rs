@@ -414,7 +414,10 @@ pub(crate) fn output_fn(lua: &Lua, warn: bool) -> Result<Function> {
             match v {
                 Value::UserData(_) | Value::Table(_) => {
                     // tostring honours __tostring.
-                    let ts: Function = lua.globals().raw_get("tostring")?;
+                    // From the shared globals: a sandboxed thread's own
+                    // global table is an empty proxy.
+                    let globals: mlua::Table = lua.named_registry_value(crate::vm::GLOBALS_KEY)?;
+                    let ts: Function = globals.raw_get("tostring")?;
                     line.push_str(&ts.call::<String>(v.clone())?);
                 }
                 other => line.push_str(&other.to_string()?),

@@ -1,0 +1,239 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "ServiceProvider",
+      "extend": true,
+      "methods": [
+        {
+          "name": "GetService",
+          "params": [
+            {
+              "name": "className",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "The service of this class, made when the place lacks it. A name that is not a service class raises RE9001."
+        },
+        {
+          "name": "FindService",
+          "params": [
+            {
+              "name": "className",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "The service of this class, or nil when the place lacks it."
+        }
+      ]
+    },
+    {
+      "name": "WorldRoot",
+      "superclass": "Model",
+      "status": "partial",
+      "note": "No physics queries (raycasts, overlaps) yet.",
+      "doc": "A model that holds a simulated 3D world."
+    },
+    {
+      "name": "Workspace",
+      "superclass": "WorldRoot",
+      "service": true,
+      "status": "partial",
+      "note": "Only the tree; physics and rendering properties come with their work packages.",
+      "doc": "The 3D world of the place: what is under it is simulated and drawn. Reached as the global workspace."
+    },
+    {
+      "name": "ReplicatedStorage",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "A container both contexts can read."
+    },
+    {
+      "name": "ServerScriptService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "Holds the scripts that run on the server."
+    },
+    {
+      "name": "ServerStorage",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "A container only the server reads."
+    },
+    {
+      "name": "Lighting",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "note": "Only the tree; lighting properties come with the rendering work.",
+      "doc": "The place's lighting settings and sky."
+    },
+    {
+      "name": "StarterPlayer",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "Settings and scripts given to each player. Holds StarterPlayerScripts and StarterCharacterScripts."
+    },
+    {
+      "name": "StarterPlayerScripts",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "Scripts copied to each player when they join."
+    },
+    {
+      "name": "StarterCharacterScripts",
+      "superclass": "StarterPlayerScripts",
+      "status": "implemented",
+      "doc": "Scripts copied into each character when it spawns."
+    },
+    {
+      "name": "BasePlayerGui",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "The base of the containers for screen interfaces."
+    },
+    {
+      "name": "StarterGui",
+      "superclass": "BasePlayerGui",
+      "service": true,
+      "status": "partial",
+      "note": "Only the tree; screen interface behaviour comes with the UI work.",
+      "doc": "Screen interfaces copied to each player."
+    },
+    {
+      "name": "CollectionService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "Finds instances by tag and tells scripts when a tag is added or removed.",
+      "methods": [
+        {
+          "name": "AddTag",
+          "params": [
+            {
+              "name": "instance",
+              "type": "Instance"
+            },
+            {
+              "name": "tag",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Adds a tag to an instance."
+        },
+        {
+          "name": "RemoveTag",
+          "params": [
+            {
+              "name": "instance",
+              "type": "Instance"
+            },
+            {
+              "name": "tag",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Removes a tag from an instance."
+        },
+        {
+          "name": "HasTag",
+          "params": [
+            {
+              "name": "instance",
+              "type": "Instance"
+            },
+            {
+              "name": "tag",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True if the instance has the tag."
+        },
+        {
+          "name": "GetTags",
+          "params": [
+            {
+              "name": "instance",
+              "type": "Instance"
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The instance's tags."
+        },
+        {
+          "name": "GetTagged",
+          "params": [
+            {
+              "name": "tag",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "Every instance in the data model with the tag."
+        },
+        {
+          "name": "GetAllTags",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "Every tag in use."
+        },
+        {
+          "name": "GetInstanceAddedSignal",
+          "params": [
+            {
+              "name": "tag",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "RBXScriptSignal"
+          ],
+          "status": "implemented",
+          "doc": "A signal that fires with each instance that gets the tag."
+        },
+        {
+          "name": "GetInstanceRemovedSignal",
+          "params": [
+            {
+              "name": "tag",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "RBXScriptSignal"
+          ],
+          "status": "implemented",
+          "doc": "A signal that fires with each instance that loses the tag."
+        }
+      ]
+    }
+  ]
+}

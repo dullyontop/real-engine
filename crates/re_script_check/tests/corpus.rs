@@ -60,16 +60,15 @@ fn fixtures() {
         Some(re_core::Location::File { file, .. }) if file == "tests/fixtures/syntax_error.luau"
     ));
 
-    // Tier 2: the Roblox-style surface shows up as gaps; the native API does not.
+    // Tier 2: the Roblox-style surface that is not built yet shows up as
+    // gaps; what the data model covers (`game`, `workspace`, `Instance.new`)
+    // and the native API do not.
     let gap = &report.scan.gap.missing;
-    for name in [
-        "game",
-        "Instance",
-        "workspace",
-        "Players.PlayerAdded",
-        "RunService.Heartbeat",
-    ] {
+    for name in ["Players.PlayerAdded", "RunService.Heartbeat"] {
         assert!(gap.contains_key(name), "{name} missing from {gap:?}");
+    }
+    for name in ["game", "Instance", "workspace"] {
+        assert!(!gap.contains_key(name), "{name} is covered: {gap:?}");
     }
     assert!(!gap.contains_key("world.query") && !gap.contains_key("vector.create"));
     assert_eq!(report.scan.services["Players"], 1);

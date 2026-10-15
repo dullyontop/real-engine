@@ -1,0 +1,535 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "Instance",
+      "extend": true,
+      "properties": [
+        {
+          "name": "Name",
+          "type": "string",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The instance's name, used to find it under its parent and in its full name."
+        },
+        {
+          "name": "Parent",
+          "type": "Instance",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The instance it sits under, or nil. Setting it moves the instance and its subtree; a cycle, a destroyed instance or a locked parent is refused with RE9008."
+        },
+        {
+          "name": "ClassName",
+          "type": "string",
+          "storage": {
+            "kind": "builtin"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The instance's class."
+        },
+        {
+          "name": "Archivable",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false, Clone leaves the instance and its subtree out."
+        }
+      ],
+      "methods": [
+        {
+          "name": "IsA",
+          "params": [
+            {
+              "name": "className",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True if the instance's class is the named class or inherits from it."
+        },
+        {
+          "name": "isA",
+          "params": [
+            {
+              "name": "className",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "deprecated": "IsA",
+          "status": "implemented"
+        },
+        {
+          "name": "FindFirstChild",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "recursive",
+              "type": "bool",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "The first child with this name, or the first descendant (in tree order) when recursive; nil when none."
+        },
+        {
+          "name": "findFirstChild",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "recursive",
+              "type": "bool",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "deprecated": "FindFirstChild",
+          "status": "implemented"
+        },
+        {
+          "name": "FindFirstChildOfClass",
+          "params": [
+            {
+              "name": "className",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "The first child whose class is exactly the named class."
+        },
+        {
+          "name": "FindFirstChildWhichIsA",
+          "params": [
+            {
+              "name": "className",
+              "type": "string"
+            },
+            {
+              "name": "recursive",
+              "type": "bool",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "The first child (or descendant) whose class is or inherits from the named class."
+        },
+        {
+          "name": "FindFirstAncestor",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "The nearest ancestor with this name."
+        },
+        {
+          "name": "FindFirstAncestorOfClass",
+          "params": [
+            {
+              "name": "className",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "The nearest ancestor whose class is exactly the named class."
+        },
+        {
+          "name": "FindFirstAncestorWhichIsA",
+          "params": [
+            {
+              "name": "className",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "The nearest ancestor whose class is or inherits from the named class."
+        },
+        {
+          "name": "FindFirstDescendant",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "The first descendant with this name, in tree order."
+        },
+        {
+          "name": "GetChildren",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The children, in order."
+        },
+        {
+          "name": "getChildren",
+          "returns": [
+            "table"
+          ],
+          "deprecated": "GetChildren",
+          "status": "implemented"
+        },
+        {
+          "name": "children",
+          "returns": [
+            "table"
+          ],
+          "deprecated": "GetChildren",
+          "status": "implemented"
+        },
+        {
+          "name": "GetDescendants",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "Every descendant, parents before their children."
+        },
+        {
+          "name": "IsDescendantOf",
+          "params": [
+            {
+              "name": "ancestor",
+              "type": "Instance"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True if the given instance is an ancestor."
+        },
+        {
+          "name": "IsAncestorOf",
+          "params": [
+            {
+              "name": "descendant",
+              "type": "Instance"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True if the given instance is a descendant."
+        },
+        {
+          "name": "GetFullName",
+          "returns": [
+            "string"
+          ],
+          "status": "implemented",
+          "doc": "The names from below the data model down to this instance, joined by dots."
+        },
+        {
+          "name": "Destroy",
+          "status": "implemented",
+          "doc": "Fires Destroying, disconnects the connections of the instance and its descendants, takes the instance out of the tree and locks its Parent. The instance stays readable until the current resumption cycle ends, so deferred handlers still see it; after that its handles keep only its name and class. game and services refuse (RE9008)."
+        },
+        {
+          "name": "destroy",
+          "deprecated": "Destroy",
+          "status": "implemented"
+        },
+        {
+          "name": "Remove",
+          "deprecated": "Destroy",
+          "status": "implemented",
+          "doc": "Sets the parent of the instance to nil, keeping it alive."
+        },
+        {
+          "name": "remove",
+          "deprecated": "Destroy",
+          "status": "implemented"
+        },
+        {
+          "name": "ClearAllChildren",
+          "status": "implemented",
+          "doc": "Destroys every child."
+        },
+        {
+          "name": "Clone",
+          "returns": [
+            "Instance"
+          ],
+          "status": "implemented",
+          "doc": "A copy of the instance and its archivable descendants, with no parent; nil when the instance is not archivable. References inside the copy point at the copies."
+        },
+        {
+          "name": "clone",
+          "returns": [
+            "Instance"
+          ],
+          "deprecated": "Clone",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAttribute",
+          "params": [
+            {
+              "name": "attribute",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "any"
+          ],
+          "status": "implemented",
+          "doc": "The attribute's value, or nil."
+        },
+        {
+          "name": "SetAttribute",
+          "params": [
+            {
+              "name": "attribute",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sets an attribute, or removes it with nil. Names and values are checked (RE9007)."
+        },
+        {
+          "name": "GetAttributes",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "Every attribute, as a table by name."
+        },
+        {
+          "name": "GetAttributeChangedSignal",
+          "params": [
+            {
+              "name": "attribute",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "RBXScriptSignal"
+          ],
+          "status": "implemented",
+          "doc": "A signal that fires when this attribute changes."
+        },
+        {
+          "name": "AddTag",
+          "params": [
+            {
+              "name": "tag",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Adds a tag."
+        },
+        {
+          "name": "RemoveTag",
+          "params": [
+            {
+              "name": "tag",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Removes a tag."
+        },
+        {
+          "name": "HasTag",
+          "params": [
+            {
+              "name": "tag",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True if the instance has the tag."
+        },
+        {
+          "name": "GetTags",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The tags, in the order they were added."
+        },
+        {
+          "name": "GetPropertyChangedSignal",
+          "params": [
+            {
+              "name": "property",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "RBXScriptSignal"
+          ],
+          "status": "implemented",
+          "doc": "A signal that fires when this property changes."
+        },
+        {
+          "name": "WaitForChild",
+          "params": [
+            {
+              "name": "childName",
+              "type": "string"
+            },
+            {
+              "name": "timeout",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "The child with this name, waiting for it when it is not there yet. Without a timeout it warns once after five seconds and keeps waiting; with one it returns nil when the time runs out."
+        }
+      ],
+      "events": [
+        {
+          "name": "ChildAdded",
+          "params": [
+            {
+              "name": "child",
+              "type": "Instance"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when an instance is put directly under this one."
+        },
+        {
+          "name": "ChildRemoved",
+          "params": [
+            {
+              "name": "child",
+              "type": "Instance"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires when a child moves away or is destroyed."
+        },
+        {
+          "name": "DescendantAdded",
+          "params": [
+            {
+              "name": "descendant",
+              "type": "Instance"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires for each instance that arrives anywhere below this one."
+        },
+        {
+          "name": "DescendantRemoving",
+          "params": [
+            {
+              "name": "descendant",
+              "type": "Instance"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires for each instance that leaves from below this one."
+        },
+        {
+          "name": "AncestryChanged",
+          "params": [
+            {
+              "name": "child",
+              "type": "Instance"
+            },
+            {
+              "name": "parent",
+              "type": "Instance"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires on an instance and its descendants when it (the child argument) gets a new parent."
+        },
+        {
+          "name": "Changed",
+          "params": [
+            {
+              "name": "property",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires with a property's name when the property changes."
+        },
+        {
+          "name": "AttributeChanged",
+          "params": [
+            {
+              "name": "attribute",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires with an attribute's name when the attribute changes."
+        },
+        {
+          "name": "Destroying",
+          "status": "implemented",
+          "doc": "Fires when Destroy is called, before the instance leaves the tree."
+        }
+      ]
+    }
+  ]
+}

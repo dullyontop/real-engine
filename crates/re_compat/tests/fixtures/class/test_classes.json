@@ -6,16 +6,7 @@
       "name": "Instance",
       "extend": true,
       "properties": [
-        { "name": "ClassName", "type": "string", "storage": { "kind": "builtin" }, "read_only": true, "status": "implemented", "doc": "The class name." },
-        { "name": "Archivable", "type": "bool", "storage": { "kind": "own" }, "default": true, "status": "implemented", "doc": "Whether a clone copies it." },
         { "name": "Secret", "type": "string", "storage": { "kind": "own" }, "status": "missing" }
-      ],
-      "methods": [
-        { "name": "Destroy", "status": "missing" },
-        { "name": "children", "deprecated": "GetChildren", "returns": ["table"], "status": "implemented" }
-      ],
-      "events": [
-        { "name": "ChildAdded", "params": [{ "name": "child", "type": "Instance" }], "status": "missing" }
       ]
     },
     {
@@ -32,24 +23,6 @@
         { "name": "Mode", "type": "Enum.RunContext", "storage": { "kind": "own" }, "default": "Server", "status": "implemented" },
         { "name": "Locked", "type": "bool", "storage": { "kind": "own" }, "read_only": true, "status": "implemented" }
       ]
-    },
-    {
-      "name": "Workspace",
-      "superclass": "Model",
-      "service": true,
-      "status": "missing"
-    },
-    {
-      "name": "ServerScriptService",
-      "superclass": "Instance",
-      "service": true,
-      "status": "missing"
-    },
-    {
-      "name": "ReplicatedStorage",
-      "superclass": "Instance",
-      "service": true,
-      "status": "missing"
     }
   ]
 }

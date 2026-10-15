@@ -74,6 +74,15 @@ pub enum CompatError {
     /// instance of the class asked for (`RE9004`).
     #[error("{0}")]
     Scene(String),
+    /// An error raised by the layer's behaviour, with its own code (a refused
+    /// attribute, a locked parent).
+    #[error("{message}")]
+    Runtime {
+        /// The diagnostic code.
+        code: Code,
+        /// What went wrong.
+        message: String,
+    },
     /// A reflection error (unknown component, value of the wrong type, ...).
     #[error(transparent)]
     Reflect(#[from] ReflectError),
@@ -98,6 +107,7 @@ impl CompatError {
             CompatError::NotAvailableOffline { .. } => codes::NOT_AVAILABLE_OFFLINE,
             CompatError::ReadOnly { .. } => codes::READ_ONLY,
             CompatError::Scene(_) => codes::SCENE_CONVENTION,
+            CompatError::Runtime { code, .. } => *code,
             CompatError::Reflect(e) => e.code(),
         }
     }

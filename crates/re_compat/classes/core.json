@@ -5,19 +5,21 @@
   "classes": [
     {
       "name": "Instance",
-      "status": "missing",
+      "status": "partial",
+      "note": "Members are declared per area; see the rows.",
       "doc": "The root of the class tree. Every object scripts reach through the data model is an Instance: an entity with a ClassMarker. Its members are declared by the data model work package (classes/instance.json)."
     },
     {
       "name": "ServiceProvider",
       "superclass": "Instance",
-      "status": "missing",
+      "status": "implemented",
       "doc": "An instance that owns services and finds them by class name."
     },
     {
       "name": "DataModel",
       "superclass": "ServiceProvider",
-      "status": "missing",
+      "status": "partial",
+      "note": "Only the tree and services; game fields come with the runtime.",
       "doc": "The root of a place, reached as the global `game`. In a scene it is the root entity with id \"game\"; services are its children."
     },
     {
@@ -30,21 +32,22 @@
       "name": "Model",
       "superclass": "PVInstance",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
+      "note": "No pivot or bounding box methods yet.",
       "doc": "Groups parts and other instances into one object that can be moved, cloned and named as a unit."
     },
     {
       "name": "Folder",
       "superclass": "Instance",
       "creatable": true,
-      "status": "missing",
+      "status": "implemented",
       "doc": "A plain container for organising instances. It has no behaviour of its own."
     },
     {
       "name": "Configuration",
       "superclass": "Instance",
       "creatable": true,
-      "status": "missing",
+      "status": "implemented",
       "doc": "A container for value objects that tune a model or tool, by convention."
     },
     {

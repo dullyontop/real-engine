@@ -38,18 +38,35 @@ pub enum ContextKind {
     Game,
     /// Editor and agent tools, ProcGraph builders; also has the `command` library.
     Tools,
+    /// The compatibility layer's server scripts (ADR-0012). Created and driven
+    /// by `re_compat` with [`Context::compat`](crate::Context::compat), never
+    /// by [`ScriptRuntime`](crate::ScriptRuntime).
+    Server,
+    /// The compatibility layer's client scripts, like [`ContextKind::Server`].
+    Client,
 }
 
 impl ContextKind {
-    /// Both contexts, in the order the runtime runs them.
+    /// The native contexts, in the order [`ScriptRuntime`](crate::ScriptRuntime)
+    /// runs them.
     pub const ALL: [ContextKind; 2] = [ContextKind::Game, ContextKind::Tools];
 
-    /// `"game"` or `"tools"` (the value of `script.context`).
+    /// The compatibility layer's contexts.
+    pub const COMPAT: [ContextKind; 2] = [ContextKind::Server, ContextKind::Client];
+
+    /// `"game"`, `"tools"`, `"server"` or `"client"` (the value of `script.context`).
     pub fn name(self) -> &'static str {
         match self {
             ContextKind::Game => "game",
             ContextKind::Tools => "tools",
+            ContextKind::Server => "server",
+            ContextKind::Client => "client",
         }
+    }
+
+    /// True for [`ContextKind::Server`] and [`ContextKind::Client`].
+    pub fn is_compat(self) -> bool {
+        matches!(self, ContextKind::Server | ContextKind::Client)
     }
 }
 
@@ -155,6 +172,71 @@ pub(crate) fn create(
     }
     crate::budget::install(&lua)?;
     Ok(lua)
+}
+
+/// Creates the VM of a compatibility context: the safe standard library, the
+/// sandbox, the memory limit and the CPU budget as for the native contexts,
+/// with `print`, `warn` and `task`, but none of the native engine libraries and
+/// no `require`. `install` adds the layer's globals before the sandbox freezes
+/// them.
+pub(crate) fn create_compat(
+    kind: ContextKind,
+    budget: Duration,
+    memory_limit: usize,
+    install: &dyn Fn(&Lua) -> Result<()>,
+) -> Result<Lua> {
+    let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
+    let globals = lua.globals();
+    for name in ["loadstring", "getfenv", "setfenv"] {
+        globals.raw_set(name, Value::Nil)?;
+    }
+    let debug: Table = globals.get("debug")?;
+    lua.set_named_registry_value(TRACEBACK_FN, debug.get::<Function>("traceback")?)?;
+    lua.set_app_data(HostSlot::default());
+    lua.set_app_data(Output {
+        kind,
+        lines: Vec::new(),
+    });
+    scheduler::init(&lua, budget)?;
+    api::entity::init(&lua)?;
+    let mut task = api::Lib::new(
+        &lua,
+        "task",
+        "Script threads: waiting, spawning and deferring.",
+    )?;
+    scheduler::task_lib(&lua, &mut task)?;
+    let (task, _) = task.finish(&lua)?;
+    globals.raw_set("task", task)?;
+    globals.raw_set("print", api::libs::output_fn(&lua, false)?)?;
+    globals.raw_set("warn", api::libs::output_fn(&lua, true)?)?;
+    install(&lua)?;
+    lua.set_named_registry_value(GLOBALS_KEY, &globals)?;
+    lua.sandbox(true)?;
+    if memory_limit > 0 {
+        lua.set_memory_limit(memory_limit)?;
+    }
+    crate::budget::install(&lua)?;
+    Ok(lua)
+}
+
+/// Writes a line to the context's output (as `print` does, or `warn` when
+/// `warn` is true) and to the log.
+pub fn output(lua: &Lua, warn: bool, text: impl Into<String>) {
+    push_output(lua, warn, text.into());
+}
+
+/// A fresh environment table over the context's frozen globals: writes stay
+/// in it, reads fall through. `script` is set as its `script` global.
+pub fn environment(lua: &Lua, script: Value) -> Result<Table> {
+    let globals: Table = lua.named_registry_value(GLOBALS_KEY)?;
+    let env = lua.create_table()?;
+    env.raw_set("script", script)?;
+    let mt = lua.create_table()?;
+    mt.raw_set("__index", &globals)?;
+    mt.set_readonly(true);
+    env.set_metatable(Some(mt))?;
+    env.set_safeenv(true);
+    Ok(env)
 }
 
 /// A fresh environment for the script or module at `path`: writes stay local,

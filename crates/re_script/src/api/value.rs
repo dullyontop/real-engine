@@ -1,4 +1,6 @@
 //! Conversions between Luau values and component field [`Value`]s (ADR-0032).
+//! The public entry points are [`lua_to_value`], [`lua_to_field`] and
+//! [`value_to_lua`].
 //!
 //! Luau numbers become `Value::Float` (or `Value::Int` when mlua reports an
 //! integer); the registry then coerces them to the field type, so `0.1` written to
@@ -342,4 +344,27 @@ pub(crate) fn fields_from_table(component: &str, t: Table) -> Result<Vec<(String
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
+}
+
+/// Converts a Luau value to a [`Value`] by its own shape, with the rules of a
+/// map item: booleans, numbers, strings, vectors, quaternions, colours,
+/// records (frozen tables whose metatable names the record), and arrays or
+/// string-keyed tables of those. For layers that convert values without a
+/// field type at hand (attributes); errors carry `RE3006`.
+pub fn lua_to_value(v: LuaValue) -> Result<Value> {
+    let raw = RawValue::from_lua(v)?;
+    dynamic_from_lua(raw).map_err(|m| super::error(crate::codes::BAD_ARGUMENT, m))
+}
+
+/// Converts a Luau value to a value for a field of type `ty` (the registry
+/// still coerces it). Errors carry `RE3006`.
+pub fn lua_to_field(v: LuaValue, ty: &FieldType) -> Result<Value> {
+    let raw = RawValue::from_lua(v)?;
+    field_from_lua(raw, ty).map_err(|m| super::error(crate::codes::BAD_ARGUMENT, m))
+}
+
+/// Converts a field [`Value`] to Luau as the native API does (records as
+/// frozen tables, entity references as native handles).
+pub fn value_to_lua(lua: &Lua, v: Value) -> Result<LuaValue> {
+    field_to_lua(lua, v)
 }

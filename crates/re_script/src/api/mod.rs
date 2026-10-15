@@ -23,7 +23,7 @@ pub(crate) mod json;
 pub(crate) mod libs;
 pub mod math;
 pub mod proc;
-pub(crate) mod value;
+pub mod value;
 pub(crate) mod world;
 
 pub use entity::EntityRef;

@@ -28,6 +28,7 @@
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashSet, VecDeque};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use mlua::thread::ThreadStatus;
@@ -44,6 +45,14 @@ use crate::diag::ScriptError;
 
 const WAIT_SENTINEL: &str = "re_script.wait_sentinel";
 
+/// The marker a yielding host call returns, and its wrapper yields, to park the
+/// calling thread ([`park`]).
+const PARK_SENTINEL: &str = "re_script.park_sentinel";
+
+/// How many times one settle pass may run the settle hook (each run may queue
+/// more deferred threads).
+const MAX_SETTLE_ROUNDS: usize = 1_000;
+
 /// The most deferred threads one drain runs before it gives up (a `task.defer`
 /// that keeps deferring itself would otherwise never end).
 pub(crate) const MAX_DEFERS_PER_DRAIN: usize = 10_000;
@@ -53,7 +62,7 @@ pub(crate) const MAX_DEFERS_PER_DRAIN: usize = 10_000;
 const TIME_EPSILON: f64 = 1e-6;
 
 /// Who created a thread or connection: an entry-script run of the runtime.
-pub(crate) type Owner = u64;
+pub type Owner = u64;
 
 /// What a connection listens to.
 #[derive(Clone, Debug, PartialEq)]
@@ -97,8 +106,17 @@ struct Connection {
     owner: Option<Owner>,
 }
 
+/// A check made just before a deferred thread first runs; false drops it.
+pub type DeferCondition = Rc<dyn Fn(&Lua) -> bool>;
+
+/// A hook run after the deferred threads drain; returns true when it queued
+/// more work, so the drain runs again ([`set_settle_hook`]).
+pub type SettleHook = Rc<dyn Fn(&Lua) -> Result<bool>>;
+
 struct Task {
     thread: Thread,
+    /// Checked before the first resume; the thread is dropped when it fails.
+    cond: Option<DeferCondition>,
     /// Arguments of the first resume; `None` for a thread resumed from `task.wait`.
     args: Option<MultiValue>,
     slept_at: f64,
@@ -131,6 +149,37 @@ pub(crate) struct Scheduler {
     /// The owner of code that runs outside any scheduler thread (set by the
     /// runtime around module reloads and `exec`).
     pub(crate) ambient_owner: Option<Owner>,
+    /// Threads parked by a yielding host call, by token.
+    parked: BTreeMap<u64, Parked>,
+    next_token: u64,
+    /// Park timeouts: (deadline, token).
+    deadlines: BinaryHeap<Reverse<(WakeTime, u64)>>,
+    settle: Option<SettleHook>,
+}
+
+/// A parked thread's slot. The slot exists from [`park`] until the thread is
+/// woken, times out or is cancelled; `task` is filled when the thread yields.
+struct Parked {
+    task: Option<Task>,
+    label: String,
+    /// Set by a wake that came before the thread yielded.
+    woken: Option<MultiValue>,
+    /// What the thread gets when its timeout runs out.
+    on_timeout: Option<MultiValue>,
+    owner: Option<Owner>,
+}
+
+/// Identifies one parked thread ([`park`], [`wake`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct YieldToken(pub u64);
+
+/// When a woken thread runs ([`wake`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WakeMode {
+    /// At the end of the current resumption cycle, with the deferred threads.
+    Deferred,
+    /// Now, before `wake` returns (a nested resume, like `task.spawn`).
+    Immediate,
 }
 
 /// A wake time with a total order (never NaN: delays are sanitised).
@@ -171,6 +220,10 @@ impl Scheduler {
             depth: 0,
             running: Vec::new(),
             ambient_owner: None,
+            parked: BTreeMap::new(),
+            next_token: 1,
+            deadlines: BinaryHeap::new(),
+            settle: None,
         }
     }
 
@@ -199,6 +252,11 @@ impl Scheduler {
         self.sleeping.len()
     }
 
+    /// Threads parked by yielding host calls.
+    pub(crate) fn parked(&self) -> usize {
+        self.parked.values().filter(|p| p.task.is_some()).count()
+    }
+
     /// Connected callbacks.
     pub(crate) fn connections(&self) -> usize {
         self.connections.len()
@@ -214,7 +272,10 @@ impl Scheduler {
         let before = self.sleeping.len() + self.deferred.len();
         self.sleeping.retain(|_, t| ptr(&t.thread) != p);
         self.deferred.retain(|t| ptr(&t.thread) != p);
-        self.sleeping.len() + self.deferred.len() != before
+        let parked_before = self.parked.len();
+        self.parked
+            .retain(|_, s| s.task.as_ref().is_none_or(|t| ptr(&t.thread) != p));
+        self.sleeping.len() + self.deferred.len() != before || self.parked.len() != parked_before
     }
 }
 
@@ -256,6 +317,12 @@ fn resume(lua: &Lua, task: Task, now: f64) -> Result<()> {
     if task.thread.status() != ThreadStatus::Resumable {
         return Ok(()); // already finished (resumed by hand with coroutine.resume)
     }
+    let mut task = task;
+    if let Some(cond) = task.cond.take()
+        && !cond(lua)
+    {
+        return Ok(());
+    }
     let args = task
         .args
         .clone()
@@ -281,8 +348,20 @@ fn resume(lua: &Lua, task: Task, now: f64) -> Result<()> {
     match result {
         Ok(yielded) if task.thread.status() == ThreadStatus::Resumable => {
             let sentinel: Table = lua.named_registry_value(WAIT_SENTINEL)?;
+            let park: Table = lua.named_registry_value(PARK_SENTINEL)?;
             let mut it = yielded.into_iter();
-            let delay = match (it.next(), it.next()) {
+            let (first, second) = (it.next(), it.next());
+            if let (Some(Value::Table(t)), Some(token)) = (&first, &second)
+                && *t == park
+            {
+                let token = match token {
+                    Value::Integer(i) => *i as u64,
+                    Value::Number(n) => *n as u64,
+                    _ => 0,
+                };
+                return park_task(lua, task, token);
+            }
+            let delay = match (first, second) {
                 (Some(Value::Table(t)), Some(d)) if t == sentinel => match d {
                     Value::Integer(i) => i as f64,
                     Value::Number(n) => n,
@@ -315,6 +394,32 @@ fn resume(lua: &Lua, task: Task, now: f64) -> Result<()> {
     Ok(())
 }
 
+/// Files a thread that yielded to park under `token`.
+fn park_task(lua: &Lua, task: Task, token: u64) -> Result<()> {
+    let ready = sched(lua, |s| {
+        let Some(slot) = s.parked.get_mut(&token) else {
+            return None; // cancelled before it yielded: the thread is dropped
+        };
+        match slot.woken.take() {
+            Some(args) => {
+                s.parked.remove(&token);
+                Some(Task {
+                    args: Some(args),
+                    ..task
+                })
+            }
+            None => {
+                slot.task = Some(task);
+                None
+            }
+        }
+    })?;
+    if let Some(task) = ready {
+        sched(lua, |s| s.deferred.push_back(task))?;
+    }
+    Ok(())
+}
+
 /// Starts `f` as a new thread now. It belongs to `owner` when given (an entry
 /// script started by the runtime), else to the code running now.
 pub(crate) fn start_owned(
@@ -330,6 +435,7 @@ pub(crate) fn start_owned(
         lua,
         Task {
             thread: thread.clone(),
+            cond: None,
             args: Some(args),
             slept_at: now,
             label,
@@ -405,6 +511,35 @@ pub(crate) fn resume_due(lua: &Lua) -> Result<usize> {
         resume(lua, task, now)?;
     }
     sched(lua, |s| s.heap.extend(later))?;
+    // Parked threads whose timeout ran out.
+    loop {
+        let next = sched(lua, |s| {
+            while let Some(Reverse((wake, token))) = s.deadlines.peek().copied() {
+                if wake.0 > now + TIME_EPSILON {
+                    return None;
+                }
+                s.deadlines.pop();
+                let Some(slot) = s.parked.get_mut(&token) else {
+                    continue; // woken or cancelled already
+                };
+                let args = slot.on_timeout.take().unwrap_or_default();
+                match slot.task.take() {
+                    Some(task) => {
+                        s.parked.remove(&token);
+                        return Some(Task {
+                            args: Some(args),
+                            ..task
+                        });
+                    }
+                    None => slot.woken = Some(args),
+                }
+            }
+            None
+        })?;
+        let Some(task) = next else { break };
+        n += 1;
+        resume(lua, task, now)?;
+    }
     Ok(n)
 }
 
@@ -437,6 +572,7 @@ pub(crate) fn fire(
             lua,
             Task {
                 thread,
+                cond: None,
                 args: Some(args.clone()),
                 slept_at: now,
                 label,
@@ -486,7 +622,9 @@ pub(crate) fn drop_owner(lua: &Lua, owner: Owner) -> Result<usize> {
         let before = s.sleeping.len() + s.deferred.len();
         s.sleeping.retain(|_, t| t.owner != Some(owner));
         s.deferred.retain(|t| t.owner != Some(owner));
-        let threads = before - s.sleeping.len() - s.deferred.len();
+        let parked_before = s.parked.len();
+        s.parked.retain(|_, p| p.owner != Some(owner));
+        let threads = before - s.sleeping.len() - s.deferred.len() + parked_before - s.parked.len();
         let running: Vec<usize> = s
             .running
             .iter()
@@ -546,6 +684,9 @@ pub(crate) fn init(lua: &Lua, budget: Duration) -> Result<()> {
     let sentinel = lua.create_table()?;
     sentinel.set_readonly(true);
     lua.set_named_registry_value(WAIT_SENTINEL, &sentinel)?;
+    let park = lua.create_table()?;
+    park.set_readonly(true);
+    lua.set_named_registry_value(PARK_SENTINEL, &park)?;
     lua.set_app_data(Scheduler::new(budget));
     Ok(())
 }
@@ -565,6 +706,7 @@ fn queued(lua: &Lua, f: Function, args: MultiValue, label: &str) -> Result<Task>
     let thread = lua.create_thread(f)?;
     sched(lua, |s| Task {
         thread,
+        cond: None,
         args: Some(args),
         slept_at: s.now,
         label: label.into(),
@@ -659,4 +801,235 @@ pub(crate) fn task_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         },
     )?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The public scheduler API ([`crate::sched`]), for layers that run their own
+// contexts on this scheduler (the compatibility layer's `server` and `client`).
+// ---------------------------------------------------------------------------
+
+/// The context's simulation time, in seconds.
+pub fn now(lua: &Lua) -> Result<f64> {
+    sched(lua, |s| s.now)
+}
+
+/// Advances the simulation time by `dt` seconds (the runtime does this once per
+/// fixed step; threads become due in [`resume_due`]).
+pub fn advance(lua: &Lua, dt: f64) -> Result<()> {
+    sched(lua, |s| s.now += dt)
+}
+
+/// Resumes every thread whose `task.wait`, `task.delay` or park timeout is due,
+/// in wake-time order; returns how many ran.
+pub fn resume_due_now(lua: &Lua) -> Result<usize> {
+    resume_due(lua)
+}
+
+/// Runs deferred threads, then the settle hook, until neither has more work.
+pub fn settle(lua: &Lua) -> Result<()> {
+    for _ in 0..MAX_SETTLE_ROUNDS {
+        drain_deferred(lua)?;
+        let hook = sched(lua, |s| s.settle.clone())?;
+        let Some(hook) = hook else { return Ok(()) };
+        let more = hook(lua)?;
+        let pending = sched(lua, |s| !s.deferred.is_empty())?;
+        if !more && !pending {
+            return Ok(());
+        }
+    }
+    let e = ScriptError {
+        kind: crate::ErrorKind::Runtime,
+        code: codes::DEFER_LIMIT,
+        context: "settle".into(),
+        chunk: None,
+        line: None,
+        message: format!(
+            "deferred work kept queuing more work for {MAX_SETTLE_ROUNDS} rounds; the rest waits for the next cycle"
+        ),
+        traceback: String::new(),
+    };
+    sched(lua, |s| s.errors.push(e))
+}
+
+/// Sets the hook [`settle`] runs after each drain of the deferred threads (the
+/// compatibility layer dispatches its pending instance events there).
+pub fn set_settle_hook(lua: &Lua, hook: SettleHook) -> Result<()> {
+    sched(lua, |s| s.settle = Some(hook))
+}
+
+/// Runs `f` in a new script thread now, owned by the code running now
+/// (`task.spawn`).
+pub fn spawn(lua: &Lua, f: Function, args: MultiValue, label: &str) -> Result<Thread> {
+    start(lua, f, args, label.to_string())
+}
+
+/// Runs `f` in a new script thread at the end of the current resumption cycle
+/// (`task.defer`). With `cond`, the thread is dropped when `cond` is false at
+/// that point (a signal connection that was disconnected meanwhile).
+pub fn defer(
+    lua: &Lua,
+    f: Function,
+    args: MultiValue,
+    label: &str,
+    cond: Option<DeferCondition>,
+) -> Result<Thread> {
+    let mut task = queued(lua, f, args, label)?;
+    task.cond = cond;
+    let thread = task.thread.clone();
+    sched(lua, |s| s.deferred.push_back(task))?;
+    Ok(thread)
+}
+
+/// Parks the calling thread: called by a host function wrapped with
+/// [`yielding`], which returns the values this gives back. The wrapper then
+/// yields, and the thread waits until [`wake`] (or, with `timeout`, until that
+/// many seconds of simulation time pass, when it gets the timeout values).
+/// `label` names the wait in [`parked_labels`].
+pub fn park(
+    lua: &Lua,
+    label: &str,
+    timeout: Option<(f64, MultiValue)>,
+) -> Result<(MultiValue, YieldToken)> {
+    let marker: Table = lua.named_registry_value(PARK_SENTINEL)?;
+    let token = sched(lua, |s| {
+        let token = s.next_token;
+        s.next_token += 1;
+        let owner = s.current_owner();
+        // An infinite timeout never expires; NaN counts as zero.
+        let on_timeout = match timeout {
+            Some((secs, _)) if secs == f64::INFINITY => None,
+            Some((secs, values)) => {
+                let secs = if secs.is_finite() { secs.max(0.0) } else { 0.0 };
+                s.deadlines.push(Reverse((WakeTime(s.now + secs), token)));
+                Some(values)
+            }
+            None => None,
+        };
+        s.parked.insert(
+            token,
+            Parked {
+                task: None,
+                label: label.to_string(),
+                woken: None,
+                on_timeout,
+                owner,
+            },
+        );
+        token
+    })?;
+    Ok((
+        MultiValue::from_iter([Value::Table(marker), Value::Number(token as f64)]),
+        YieldToken(token),
+    ))
+}
+
+/// Wakes a parked thread with `args` (its host call's results). False when the
+/// token is no longer parked (woken, timed out or cancelled).
+pub fn wake(lua: &Lua, token: YieldToken, args: MultiValue, mode: WakeMode) -> Result<bool> {
+    let task = sched(lua, |s| {
+        let slot = s.parked.get_mut(&token.0)?;
+        match slot.task.take() {
+            Some(task) => {
+                s.parked.remove(&token.0);
+                Some(Some(task))
+            }
+            None => {
+                slot.woken = Some(args.clone());
+                Some(None)
+            }
+        }
+    })?;
+    match task {
+        None => Ok(false),
+        Some(None) => Ok(true),
+        Some(Some(task)) => {
+            let task = Task {
+                args: Some(args),
+                ..task
+            };
+            match mode {
+                WakeMode::Deferred => sched(lua, |s| s.deferred.push_back(task))?,
+                WakeMode::Immediate => {
+                    let now = sched(lua, |s| s.now)?;
+                    resume(lua, task, now)?;
+                }
+            }
+            Ok(true)
+        }
+    }
+}
+
+/// True while `token` is parked (not yet woken, timed out or cancelled).
+pub fn is_parked(lua: &Lua, token: YieldToken) -> Result<bool> {
+    sched(lua, |s| s.parked.contains_key(&token.0))
+}
+
+/// Drops a parked thread without resuming it.
+pub fn cancel_park(lua: &Lua, token: YieldToken) -> Result<()> {
+    sched(lua, |s| {
+        s.parked.remove(&token.0);
+    })
+}
+
+/// The labels of the threads parked now, in park order.
+pub fn parked_labels(lua: &Lua) -> Result<Vec<String>> {
+    sched(lua, |s| {
+        s.parked
+            .values()
+            .filter(|p| p.task.is_some())
+            .map(|p| p.label.clone())
+            .collect()
+    })
+}
+
+/// Threads waiting in `task.wait` or `task.delay`.
+pub fn sleeping_count(lua: &Lua) -> Result<usize> {
+    sched(lua, |s| s.sleeping())
+}
+
+/// Wraps a host function so that it can park its caller: when `f` returns the
+/// values [`park`] gave it, the wrapper yields the calling thread; otherwise it
+/// returns `f`'s results unchanged. Parking from code that is not a scheduler
+/// thread (a callback the engine calls directly, or a coroutine made with
+/// `coroutine.create`) raises `RE3005`; `name` names the call in that error.
+pub fn yielding(lua: &Lua, name: &str, f: Function) -> Result<Function> {
+    let marker: Table = lua.named_registry_value(PARK_SENTINEL)?;
+    let is_current = lua.create_function(|lua, t: Thread| {
+        sched(lua, |s| {
+            s.running.last().is_some_and(|(p, _)| *p == ptr(&t))
+        })
+    })?;
+    let cancel =
+        lua.create_function(|lua, token: f64| cancel_park(lua, YieldToken(token as u64)))?;
+    lua.load(format!(
+        r#"
+        local f, MARK, IS_CURRENT, CANCEL = ...
+        local yield, isyieldable, running, select = coroutine.yield, coroutine.isyieldable, coroutine.running, select
+        local function finish(...)
+            if (...) ~= MARK then
+                return ...
+            end
+            local token = select(2, ...)
+            if not isyieldable() or not IS_CURRENT(running()) then
+                CANCEL(token)
+                error({msg:?}, 3)
+            end
+            return yield(MARK, token)
+        end
+        return function(...)
+            return finish(f(...))
+        end
+        "#,
+        msg = format!(
+            "[{}] {name} cannot yield here: it must run in a script thread, not in a callback the engine calls directly or a coroutine made with coroutine.create or coroutine.wrap",
+            codes::YIELD
+        )
+    ))
+    .set_name(format!("={name}"))
+    .call((f, marker, is_current, cancel))
+}
+
+/// The owner of the code running now (the entry script that started it).
+pub fn current_owner(lua: &Lua) -> Result<Option<Owner>> {
+    sched(lua, |s| s.current_owner())
 }

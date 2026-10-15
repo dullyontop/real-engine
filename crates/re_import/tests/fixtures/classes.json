@@ -2,18 +2,8 @@
   "format": "real-engine/compat-classes",
   "version": 1,
   "classes": [
-    { "name": "Workspace", "superclass": "Model", "service": true, "status": "missing" },
-    { "name": "Lighting", "superclass": "Instance", "service": true, "status": "missing" },
-    { "name": "ReplicatedStorage", "superclass": "Instance", "service": true, "status": "missing" },
-    { "name": "ServerScriptService", "superclass": "Instance", "service": true, "status": "missing" },
-    { "name": "ServerStorage", "superclass": "Instance", "service": true, "status": "missing" },
-    { "name": "StarterGui", "superclass": "Instance", "service": true, "status": "missing" },
-    { "name": "StarterPlayer", "superclass": "Instance", "service": true, "status": "missing" },
-    { "name": "CollectionService", "superclass": "Instance", "service": true, "status": "missing" },
     { "name": "ChangeHistoryService", "superclass": "Instance", "service": true, "status": "missing" },
     { "name": "RunService", "superclass": "Instance", "service": true, "status": "missing" },
-    { "name": "StarterPlayerScripts", "superclass": "Instance", "status": "missing" },
-    { "name": "StarterCharacterScripts", "superclass": "Instance", "status": "missing" },
     {
       "name": "TestLamp",
       "superclass": "PVInstance",
