@@ -109,7 +109,7 @@
       ]
     },
     "RawReplayInput": {
-      "description": "One raw device change in a replay: a key or mouse button going down or\nup, the cursor moving, or the wheel turning. Exactly one of `key`,\n`mouse_button`, `mouse_move`, `mouse_position` and `wheel` is set; `key`\nand `mouse_button` also need `down`.\n\n```json\n{ \"frame\": 30, \"key\": \"W\", \"down\": true }\n{ \"frame\": 31, \"mouse_move\": [12, -4] }\n```",
+      "description": "One raw device change in a replay: a key, mouse button or gamepad button\ngoing down or up, the cursor moving, or the wheel turning. Exactly one of\n`key`, `mouse_button`, `pad_button`, `mouse_move`, `mouse_position` and\n`wheel` is set; the three buttons also need `down`. Buttons are named as\n`real.toml` binds them, without the device prefix (`KeyW`, `Left`,\n`South`).\n\n```json\n{ \"frame\": 30, \"key\": \"KeyW\", \"down\": true }\n{ \"frame\": 31, \"mouse_move\": [12, -4] }\n```",
       "type": "object",
       "properties": {
         "frame": {
@@ -119,24 +119,28 @@
           "minimum": 0
         },
         "key": {
-          "description": "A key or gamepad button name (`W`, `Space`, `ButtonA`).",
+          "description": "A keyboard key (a winit key code: `KeyW`, `Space`).",
           "type": [
             "string",
             "null"
           ]
         },
         "mouse_button": {
-          "description": "A mouse button: 1 left, 2 right, 3 middle.",
+          "description": "A mouse button (`Left`, `Right`, `Middle`).",
           "type": [
-            "integer",
+            "string",
             "null"
-          ],
-          "format": "uint8",
-          "minimum": 0,
-          "maximum": 255
+          ]
+        },
+        "pad_button": {
+          "description": "A gamepad button (a gilrs button: `South`, `Start`).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "down": {
-          "description": "For `key` and `mouse_button`: down or up.",
+          "description": "For a button: down or up.",
           "type": [
             "boolean",
             "null"

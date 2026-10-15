@@ -261,6 +261,31 @@ fn compat_config_reads_and_writes_the_section() {
 }
 
 #[test]
+fn compat_config_animations_round_trip_and_are_checked() {
+    let text = "[compat]\napi = \"roblox\"\n\n[compat.animations]\n\"rbxassetid://0042\" = \"builtin:r15_walk\"\n\"7\" = \"game.ReplicatedStorage.Wave\"\n";
+    let cfg = CompatConfig::from_project_toml(text).unwrap().unwrap();
+    assert_eq!(cfg.animations["42"], "builtin:r15_walk");
+    assert_eq!(cfg.animations["7"], "game.ReplicatedStorage.Wave");
+    let again = CompatConfig::from_project_toml(&cfg.to_toml())
+        .unwrap()
+        .unwrap();
+    assert_eq!(again, cfg);
+    for bad in [
+        "\"42\" = \"builtin:r15_walk\"\n\"rbxassetid://42\" = \"builtin:r6_walk\"",
+        "\"walk\" = \"builtin:r15_walk\"",
+        "\"42\" = \"builtin:nope\"",
+        "\"42\" = \"game..Wave\"",
+        "\"42\" = \"https://example.com/a\"",
+    ] {
+        let err = CompatConfig::from_project_toml(&format!(
+            "[compat]\napi = \"roblox\"\n[compat.animations]\n{bad}\n"
+        ))
+        .unwrap_err();
+        assert_eq!(err.code().to_string(), "RE9202", "{bad}: {err}");
+    }
+}
+
+#[test]
 fn instance_doc_lists_the_class_components() {
     let r = test_registry();
     let d = scene::instance_doc(&r, "Workspace", "Workspace", "Workspace", Some("game")).unwrap();

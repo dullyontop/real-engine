@@ -98,14 +98,15 @@ pub trait HostServices {
 
     /// This frame's raw device state and events, for layers that read keys
     /// rather than actions. `None` when the host has no raw input (the
-    /// default).
+    /// default). Implemented by `re_app`'s host (WP16) from `re_input`.
     fn raw_input(&self) -> Option<&RawInputFrame> {
         None
     }
 
     /// Asks the window to hold or free the cursor and to show or hide it.
     /// The default ignores it: a host without a window has no cursor.
-    fn set_mouse_mode(&mut self, lock: MouseLock, icon_visible: bool) -> HostResult<()> {
+    /// Implemented by `re_app`'s host (WP16).
+    fn set_mouse_behavior(&mut self, lock: MouseLock, icon_visible: bool) -> HostResult<()> {
         let _ = (lock, icon_visible);
         Ok(())
     }

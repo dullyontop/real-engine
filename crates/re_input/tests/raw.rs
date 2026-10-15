@@ -1,7 +1,7 @@
 //! Raw input frames: events in order with their names, held keys, and raw
 //! replay rows played back and recorded.
 
-use re_input::{Button, InputPhase, RawInput, Replay, ReplayRecorder};
+use re_input::{Button, InputKind, InputPhase, RawInput, Replay, ReplayRecorder};
 use re_types::replay::{RawReplayInput, ReplayDoc};
 use winit::event::MouseButton;
 use winit::keyboard::KeyCode;
@@ -19,30 +19,32 @@ fn events_keep_their_order_and_names() {
     raw.set_button(Button::Key(KeyCode::KeyW), true);
     let f = raw.raw_frame(7);
     assert_eq!(f.frame, 7);
-    let kinds: Vec<(&str, &str, InputPhase)> = f
+    let kinds: Vec<(InputKind, &str, InputPhase)> = f
         .events
         .iter()
-        .map(|e| (e.input_type.as_str(), e.key.as_str(), e.phase))
+        .map(|e| (e.kind, e.button.as_str(), e.phase))
         .collect();
     assert_eq!(
         kinds,
         [
-            ("Keyboard", "W", InputPhase::Began),
-            ("MouseMovement", "Unknown", InputPhase::Changed),
-            ("MouseButton1", "Unknown", InputPhase::Began),
-            ("MouseMovement", "Unknown", InputPhase::Changed),
-            ("MouseWheel", "Unknown", InputPhase::Changed),
-            ("Gamepad1", "ButtonA", InputPhase::Began),
+            (InputKind::Keyboard, "KeyW", InputPhase::Began),
+            (InputKind::MouseMovement, "", InputPhase::Changed),
+            (InputKind::MouseButton, "Left", InputPhase::Began),
+            (InputKind::MouseMovement, "", InputPhase::Changed),
+            (InputKind::MouseWheel, "", InputPhase::Changed),
+            (InputKind::Gamepad, "South", InputPhase::Began),
         ]
     );
     assert_eq!(f.events[2].position.x, 10.0);
     assert_eq!(f.events[2].position.y, 20.0);
     assert_eq!(f.events[3].delta.x, 3.0);
     assert_eq!(f.events[4].delta.z, 1.0);
-    assert_eq!(f.keys_down, ["ButtonA", "W"]);
-    assert_eq!(f.mouse_buttons_down, [1]);
+    assert_eq!(f.keys_down, ["KeyW"]);
+    assert_eq!(f.mouse_buttons_down, ["Left"]);
+    assert_eq!(f.pad_buttons_down, ["South"]);
     assert_eq!(f.mouse_delta.to_array(), [3.0, -2.0]);
-    assert!(f.key_down("W") && !f.key_down("S"));
+    assert!(f.key_down("KeyW") && !f.key_down("KeyS"));
+    assert!(f.mouse_button_down("Left") && f.pad_button_down("South"));
     assert!(f.keyboard && f.mouse && !f.gamepad);
 
     raw.end_frame();
@@ -50,7 +52,7 @@ fn events_keep_their_order_and_names() {
     let g = raw.raw_frame(8);
     assert_eq!(g.events.len(), 1);
     assert_eq!(g.events[0].phase, InputPhase::Ended);
-    assert_eq!(g.keys_down, ["ButtonA"]);
+    assert!(g.keys_down.is_empty());
     assert_eq!(g.mouse_position.to_array(), [10.0, 20.0]);
 }
 
@@ -79,7 +81,7 @@ fn raw_rows_play_back_and_record_the_same() {
     let mut doc = ReplayDoc::new(1, 5);
     doc.raw = vec![
         RawReplayInput {
-            key: Some("W".into()),
+            key: Some("KeyW".into()),
             down: Some(true),
             ..row(1)
         },
@@ -92,12 +94,12 @@ fn raw_rows_play_back_and_record_the_same() {
             ..row(2)
         },
         RawReplayInput {
-            mouse_button: Some(2),
+            mouse_button: Some("Right".into()),
             down: Some(true),
             ..row(3)
         },
         RawReplayInput {
-            key: Some("W".into()),
+            key: Some("KeyW".into()),
             down: Some(false),
             ..row(3)
         },
@@ -115,12 +117,12 @@ fn raw_rows_play_back_and_record_the_same() {
         recorder.record(&actions);
     }
     assert!(frames[0].events.is_empty());
-    assert!(frames[1].key_down("W"));
+    assert!(frames[1].key_down("KeyW"));
     assert_eq!(frames[2].mouse_delta.to_array(), [4.0, 1.0]);
     assert_eq!(frames[2].mouse_position.to_array(), [100.0, 50.0]);
-    assert!(!frames[3].key_down("W"));
-    assert_eq!(frames[3].mouse_buttons_down, [2]);
-    assert_eq!(frames[4].events[0].input_type, "MouseWheel");
+    assert!(!frames[3].key_down("KeyW"));
+    assert_eq!(frames[3].mouse_buttons_down, ["Right"]);
+    assert_eq!(frames[4].events[0].kind, InputKind::MouseWheel);
     // Recording what played back gives a document that plays back the same
     // frames.
     let again = recorder.finish();
@@ -147,11 +149,11 @@ fn bad_raw_rows_are_refused() {
             ..row(0)
         },
         RawReplayInput {
-            key: Some("W".into()),
+            key: Some("KeyW".into()),
             ..row(1)
         },
         RawReplayInput {
-            mouse_button: Some(9),
+            mouse_button: Some("Thumb".into()),
             down: Some(true),
             ..row(1)
         },
@@ -175,7 +177,8 @@ fn bad_raw_rows_are_refused() {
         "{text:?}"
     );
     assert!(
-        text.iter().any(|t| t.contains("mouse button 9")),
+        text.iter()
+            .any(|t| t.contains("unknown mouse button `Thumb`")),
         "{text:?}"
     );
     assert!(text.iter().any(|t| t.contains("frame order")), "{text:?}");

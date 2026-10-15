@@ -19,12 +19,12 @@ fn key(frame: u64, name: &str, down: bool) -> RawReplayInput {
 fn recording() -> ReplayDoc {
     let mut doc = ReplayDoc::new(7, 150);
     doc.raw = vec![
-        key(10, "W", true),
+        key(10, "KeyW", true),
         key(40, "Space", true),
         key(42, "Space", false),
-        key(60, "D", true),
-        key(90, "W", false),
-        key(120, "D", false),
+        key(60, "KeyD", true),
+        key(90, "KeyW", false),
+        key(120, "KeyD", false),
     ];
     doc
 }

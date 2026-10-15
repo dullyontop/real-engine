@@ -3,7 +3,8 @@
 //!
 //! Input reaches the layer as the host's raw device frame
 //! ([`re_types::RawInputFrame`], through `HostServices::raw_input`), with keys
-//! named like `KeyCode` items. Once per frame, before the render-step
+//! named as `real.toml` binds them (`KeyW`, `Space`, `South`); [`keymap`]
+//! turns those names into `KeyCode` items. Once per frame, before the render-step
 //! bindings, the client VM runs [`frame`]: for each raw event, in order, it
 //! updates the `InputObject` of that key or device (one object per key or
 //! device, reused, as scripts expect), offers the input to the bound actions
@@ -16,6 +17,7 @@
 //! `UserInputService` events.
 
 mod cas;
+mod keymap;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -26,7 +28,7 @@ use mlua::{Lua, MultiValue, Result, Value as LuaValue};
 use re_reflect::Value;
 use re_scene::{Entity, World};
 use re_script::ContextKind;
-use re_types::input::{InputEvent, InputPhase, MouseLock, RawInputFrame};
+use re_types::input::{InputEvent, InputKind, InputPhase, MouseLock, RawInputFrame};
 
 use crate::class::own_component_name;
 use crate::datatypes::Vector2;
@@ -115,6 +117,46 @@ fn state_name(phase: InputPhase) -> &'static str {
     }
 }
 
+/// A raw event in the layer's terms: a `UserInputType` and a `KeyCode` item.
+pub(crate) struct Event {
+    phase: InputPhase,
+    /// The `UserInputType` item name.
+    input_type: String,
+    /// The `KeyCode` item name (`Unknown` for devices without keys).
+    key: String,
+    position: glam::Vec3,
+    delta: glam::Vec3,
+}
+
+/// The `UserInputType` item of a mouse button name (`Left`).
+fn mouse_type(button: &str) -> &'static str {
+    match button {
+        "Left" => "MouseButton1",
+        "Right" => "MouseButton2",
+        "Middle" => "MouseButton3",
+        _ => "None",
+    }
+}
+
+/// Translates a raw event into the layer's terms.
+fn translate(ev: &InputEvent) -> Event {
+    let (ty, key) = match ev.kind {
+        InputKind::Keyboard => ("Keyboard", keymap::key_code(&ev.button)),
+        InputKind::MouseButton => (mouse_type(&ev.button), None),
+        InputKind::MouseMovement => ("MouseMovement", None),
+        InputKind::MouseWheel => ("MouseWheel", None),
+        InputKind::Gamepad => ("Gamepad1", keymap::pad_code(&ev.button)),
+        InputKind::Touch => ("Touch", None),
+    };
+    Event {
+        phase: ev.phase,
+        input_type: ty.to_string(),
+        key: key.unwrap_or("Unknown").to_string(),
+        position: ev.position,
+        delta: ev.delta,
+    }
+}
+
 /// The `InputObject` for `(input_type, key)`, made on first use.
 fn object(lua: &Lua, st: &Shared, ty: &str, key: &str) -> Result<Entity> {
     let k = (ty.to_string(), key.to_string());
@@ -150,7 +192,7 @@ fn object(lua: &Lua, st: &Shared, ty: &str, key: &str) -> Result<Entity> {
 }
 
 /// Updates the `InputObject` of a raw event and returns it.
-fn object_for_event(lua: &Lua, st: &Shared, ev: &InputEvent) -> Result<Entity> {
+fn object_for_event(lua: &Lua, st: &Shared, ev: &Event) -> Result<Entity> {
     let e = object(lua, st, &ev.input_type, &ev.key)?;
     with_world(lua, |w| {
         set_own(
@@ -206,7 +248,8 @@ pub fn frame(lua: &Lua) -> Result<()> {
             signal::fire(lua, uis, name, MultiValue::from_vec(vec![pad]))?;
         }
     }
-    for ev in &raw.events {
+    for ev in raw.events.iter().map(translate) {
+        let ev = &ev;
         let obj = object_for_event(lua, &st, ev)?;
         cas::dispatch(lua, &st, ev, obj)?;
         let Some(uis) = uis else { continue };
@@ -247,8 +290,8 @@ pub fn frame(lua: &Lua) -> Result<()> {
 }
 
 /// Passes `MouseBehavior` and `MouseIconEnabled` to the host when they
-/// changed. A host without a window (headless) refuses with `RE9001`, which
-/// is ignored: the properties stay recorded.
+/// changed. A host without a window ignores them; the properties stay
+/// recorded.
 fn send_mouse_mode(lua: &Lua, st: &Shared, uis: Entity) -> Result<()> {
     let (behavior, icon) = with_world(lua, |w| {
         (
@@ -267,7 +310,7 @@ fn send_mouse_mode(lua: &Lua, st: &Shared, uis: Entity) -> Result<()> {
     }
     st.borrow_mut().mouse_sent = Some((lock, icon));
     re_script::host::with_host(lua, |h| {
-        let _ = h.services().set_mouse_mode(lock, icon);
+        let _ = h.services().set_mouse_behavior(lock, icon);
         Ok(())
     })
 }
@@ -284,14 +327,24 @@ fn raw(lua: &Lua) -> RawInputFrame {
 fn is_key_down(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
     let v: LuaValue = args(lua, a, "IsKeyDown")?;
     let key = enum_arg(&v, "KeyCode")?;
-    ret(lua, raw(lua).key_down(key.name()))
+    ret(lua, held(&raw(lua), key.name()))
 }
 
-fn mouse_button_number(item: EnumItem) -> Option<u8> {
+/// True while the key or gamepad button of `KeyCode` item `code` is held.
+fn held(raw: &RawInputFrame, code: &str) -> bool {
+    match keymap::raw_of(code) {
+        Some((true, k)) => raw.key_down(k),
+        Some((false, b)) => raw.pad_button_down(b),
+        None => false,
+    }
+}
+
+/// The mouse button name of a `UserInputType` item.
+fn mouse_button_name(item: EnumItem) -> Option<&'static str> {
     match item.name() {
-        "MouseButton1" => Some(1),
-        "MouseButton2" => Some(2),
-        "MouseButton3" => Some(3),
+        "MouseButton1" => Some("Left"),
+        "MouseButton2" => Some("Right"),
+        "MouseButton3" => Some("Middle"),
         _ => None,
     }
 }
@@ -299,7 +352,7 @@ fn mouse_button_number(item: EnumItem) -> Option<u8> {
 fn is_mouse_button_pressed(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
     let v: LuaValue = args(lua, a, "IsMouseButtonPressed")?;
     let item = enum_arg(&v, "UserInputType")?;
-    let down = mouse_button_number(item).is_some_and(|n| raw(lua).mouse_button_down(n));
+    let down = mouse_button_name(item).is_some_and(|n| raw(lua).mouse_button_down(n));
     ret(lua, down)
 }
 
@@ -310,7 +363,9 @@ fn is_gamepad_button_down(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiVa
     let raw = raw(lua);
     ret(
         lua,
-        pad.name() == "Gamepad1" && raw.gamepad && raw.key_down(key.name()),
+        pad.name() == "Gamepad1"
+            && raw.gamepad
+            && keymap::raw_of(key.name()).is_some_and(|(kb, b)| !kb && raw.pad_button_down(b)),
     )
 }
 
@@ -339,12 +394,8 @@ fn get_keys_pressed(lua: &Lua, _: Entity, _: MultiValue) -> Result<MultiValue> {
     let raw = st.borrow().raw.clone();
     let mut out = Vec::new();
     for k in &raw.keys_down {
-        let ty = if k.starts_with("Button") || k.starts_with("DPad") {
-            "Gamepad1"
-        } else {
-            "Keyboard"
-        };
-        out.push(object(lua, &st, ty, k)?);
+        let code = keymap::key_code(k).unwrap_or("Unknown");
+        out.push(object(lua, &st, "Keyboard", code)?);
     }
     ret(lua, crate::instance::push_list(lua, &out)?)
 }
@@ -354,7 +405,7 @@ fn get_mouse_buttons_pressed(lua: &Lua, _: Entity, _: MultiValue) -> Result<Mult
     let raw = st.borrow().raw.clone();
     let mut out = Vec::new();
     for b in &raw.mouse_buttons_down {
-        out.push(object(lua, &st, &format!("MouseButton{b}"), "Unknown")?);
+        out.push(object(lua, &st, mouse_type(b), "Unknown")?);
     }
     ret(lua, crate::instance::push_list(lua, &out)?)
 }
@@ -388,10 +439,10 @@ fn is_modifier_key_down(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValu
     let v: LuaValue = args(lua, a, "IsModifierKeyDown")?;
     let m = enum_arg(&v, "ModifierKey")?;
     let keys: &[&str] = match m.name() {
-        "Shift" => &["LeftShift", "RightShift"],
-        "Ctrl" => &["LeftControl", "RightControl"],
-        "Alt" => &["LeftAlt", "RightAlt"],
-        "Meta" => &["LeftSuper", "RightSuper", "LeftMeta", "RightMeta"],
+        "Shift" => &["ShiftLeft", "ShiftRight"],
+        "Ctrl" => &["ControlLeft", "ControlRight"],
+        "Alt" => &["AltLeft", "AltRight"],
+        "Meta" => &["SuperLeft", "SuperRight", "Meta"],
         _ => &[],
     };
     let raw = raw(lua);

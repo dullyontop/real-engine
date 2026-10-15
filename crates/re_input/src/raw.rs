@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use glam::{Vec2, Vec3};
-use re_types::input::{InputEvent, InputPhase, RawInputFrame};
+use re_types::input::{InputEvent, InputKind, InputPhase, RawInputFrame};
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -102,7 +102,7 @@ impl RawInput {
             gone
         };
         if changed {
-            let (input_type, key) = keycodes::describe(button);
+            let (kind, name) = keycodes::describe(button);
             let position = match button {
                 Button::Mouse(_) => self.cursor_vec(),
                 _ => Vec3::ZERO,
@@ -113,8 +113,8 @@ impl RawInput {
                 } else {
                     InputPhase::Ended
                 },
-                input_type: input_type.to_string(),
-                key: key.to_string(),
+                kind,
+                button: name,
                 position,
                 delta: Vec3::ZERO,
             });
@@ -137,8 +137,8 @@ impl RawInput {
         self.last_cursor = (x, y);
         self.events.push(InputEvent {
             phase: InputPhase::Changed,
-            input_type: "MouseMovement".to_string(),
-            key: keycodes::UNKNOWN.to_string(),
+            kind: InputKind::MouseMovement,
+            button: String::new(),
             position: self.cursor_vec(),
             delta: Vec3::new((x - px) as f32, (y - py) as f32, 0.0),
         });
@@ -153,8 +153,8 @@ impl RawInput {
         self.wheel += notches;
         self.events.push(InputEvent {
             phase: InputPhase::Changed,
-            input_type: "MouseWheel".to_string(),
-            key: keycodes::UNKNOWN.to_string(),
+            kind: InputKind::MouseWheel,
+            button: String::new(),
             position: self.cursor_vec(),
             delta: Vec3::new(0.0, 0.0, notches),
         });
@@ -188,8 +188,8 @@ impl RawInput {
         self.mouse_delta.1 += dy;
         self.events.push(InputEvent {
             phase: InputPhase::Changed,
-            input_type: "MouseMovement".to_string(),
-            key: keycodes::UNKNOWN.to_string(),
+            kind: InputKind::MouseMovement,
+            button: String::new(),
             position: self.cursor_vec(),
             delta: Vec3::new(dx as f32, dy as f32, 0.0),
         });
@@ -289,35 +289,26 @@ impl RawInput {
     }
 
     /// The raw device state and this frame's events, in the order they
-    /// happened, named as [`crate::keycodes`] describes.
+    /// happened, with buttons named as [`crate::keycodes`] describes.
     pub fn raw_frame(&self, frame: u64) -> RawInputFrame {
-        let mut keys_down: Vec<String> = self
-            .down
-            .iter()
-            .filter_map(|b| match b {
-                Button::Key(_) | Button::Pad(_) => Some(keycodes::describe(*b).1),
-                Button::Mouse(_) => None,
-            })
-            .filter(|n| *n != keycodes::UNKNOWN)
-            .map(str::to_string)
-            .collect();
-        keys_down.sort();
-        keys_down.dedup();
-        let mut mouse_buttons_down: Vec<u8> = self
-            .down
-            .iter()
-            .filter_map(|b| match b {
-                Button::Mouse(m) => keycodes::mouse_button_number(*m),
-                _ => None,
-            })
-            .collect();
-        mouse_buttons_down.sort_unstable();
+        let held = |kind: InputKind| -> Vec<String> {
+            let mut v: Vec<String> = self
+                .down
+                .iter()
+                .map(|b| keycodes::describe(*b))
+                .filter(|(k, _)| *k == kind)
+                .map(|(_, n)| n)
+                .collect();
+            v.sort();
+            v
+        };
         let (x, y) = self.cursor.unwrap_or(self.last_cursor);
         RawInputFrame {
             frame,
             events: self.events.clone(),
-            keys_down,
-            mouse_buttons_down,
+            keys_down: held(InputKind::Keyboard),
+            mouse_buttons_down: held(InputKind::MouseButton),
+            pad_buttons_down: held(InputKind::Gamepad),
             mouse_position: Vec2::new(x as f32, y as f32),
             mouse_delta: Vec2::new(self.mouse_delta.0 as f32, self.mouse_delta.1 as f32),
             keyboard: self.keyboard,

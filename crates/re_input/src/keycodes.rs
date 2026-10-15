@@ -1,251 +1,68 @@
-//! Key names for raw input events ([`re_types::RawInputFrame`]).
+//! Button names for raw input events ([`re_types::RawInputFrame`]).
 //!
-//! Raw events name keys and gamepad buttons the way the compatibility layer's
-//! `KeyCode` enum does (`W`, `Space`, `LeftShift`, `ButtonA`), so the layer can
-//! hand them to scripts without another table. The device kinds are named
-//! like its `UserInputType` items (`Keyboard`, `MouseButton1`, `Gamepad1`).
-//! A physical key with no such name is reported as `Unknown`.
+//! Raw events name buttons as `real.toml` binds them, without the device
+//! prefix ([`crate::names`]): a winit key code for a key (`KeyW`), a winit
+//! mouse button for a mouse button (`Left`, or `Other4`) and a gilrs button
+//! for a gamepad (`South`).
 
-use winit::event::MouseButton;
-use winit::keyboard::KeyCode;
+use re_types::input::InputKind;
 
+use crate::names::{button_name, parse_button};
 use crate::raw::Button;
 
-/// The name of an event with no key.
-pub const UNKNOWN: &str = "Unknown";
-
-/// Every keyboard key that has a name, with that name. Keys are physical, so
-/// on an AZERTY keyboard the key labelled Z is still `W`.
-pub const KEYS: &[(KeyCode, &str)] = &[
-    (KeyCode::Backspace, "Backspace"),
-    (KeyCode::Tab, "Tab"),
-    (KeyCode::Enter, "Return"),
-    (KeyCode::Pause, "Pause"),
-    (KeyCode::Escape, "Escape"),
-    (KeyCode::Space, "Space"),
-    (KeyCode::Quote, "Quote"),
-    (KeyCode::Comma, "Comma"),
-    (KeyCode::Minus, "Minus"),
-    (KeyCode::Period, "Period"),
-    (KeyCode::Slash, "Slash"),
-    (KeyCode::Digit0, "Zero"),
-    (KeyCode::Digit1, "One"),
-    (KeyCode::Digit2, "Two"),
-    (KeyCode::Digit3, "Three"),
-    (KeyCode::Digit4, "Four"),
-    (KeyCode::Digit5, "Five"),
-    (KeyCode::Digit6, "Six"),
-    (KeyCode::Digit7, "Seven"),
-    (KeyCode::Digit8, "Eight"),
-    (KeyCode::Digit9, "Nine"),
-    (KeyCode::Semicolon, "Semicolon"),
-    (KeyCode::Equal, "Equals"),
-    (KeyCode::BracketLeft, "LeftBracket"),
-    (KeyCode::Backslash, "BackSlash"),
-    (KeyCode::BracketRight, "RightBracket"),
-    (KeyCode::Backquote, "Backquote"),
-    (KeyCode::KeyA, "A"),
-    (KeyCode::KeyB, "B"),
-    (KeyCode::KeyC, "C"),
-    (KeyCode::KeyD, "D"),
-    (KeyCode::KeyE, "E"),
-    (KeyCode::KeyF, "F"),
-    (KeyCode::KeyG, "G"),
-    (KeyCode::KeyH, "H"),
-    (KeyCode::KeyI, "I"),
-    (KeyCode::KeyJ, "J"),
-    (KeyCode::KeyK, "K"),
-    (KeyCode::KeyL, "L"),
-    (KeyCode::KeyM, "M"),
-    (KeyCode::KeyN, "N"),
-    (KeyCode::KeyO, "O"),
-    (KeyCode::KeyP, "P"),
-    (KeyCode::KeyQ, "Q"),
-    (KeyCode::KeyR, "R"),
-    (KeyCode::KeyS, "S"),
-    (KeyCode::KeyT, "T"),
-    (KeyCode::KeyU, "U"),
-    (KeyCode::KeyV, "V"),
-    (KeyCode::KeyW, "W"),
-    (KeyCode::KeyX, "X"),
-    (KeyCode::KeyY, "Y"),
-    (KeyCode::KeyZ, "Z"),
-    (KeyCode::Delete, "Delete"),
-    (KeyCode::Numpad0, "KeypadZero"),
-    (KeyCode::Numpad1, "KeypadOne"),
-    (KeyCode::Numpad2, "KeypadTwo"),
-    (KeyCode::Numpad3, "KeypadThree"),
-    (KeyCode::Numpad4, "KeypadFour"),
-    (KeyCode::Numpad5, "KeypadFive"),
-    (KeyCode::Numpad6, "KeypadSix"),
-    (KeyCode::Numpad7, "KeypadSeven"),
-    (KeyCode::Numpad8, "KeypadEight"),
-    (KeyCode::Numpad9, "KeypadNine"),
-    (KeyCode::NumpadDecimal, "KeypadPeriod"),
-    (KeyCode::NumpadDivide, "KeypadDivide"),
-    (KeyCode::NumpadMultiply, "KeypadMultiply"),
-    (KeyCode::NumpadSubtract, "KeypadMinus"),
-    (KeyCode::NumpadAdd, "KeypadPlus"),
-    (KeyCode::NumpadEnter, "KeypadEnter"),
-    (KeyCode::NumpadEqual, "KeypadEquals"),
-    (KeyCode::ArrowUp, "Up"),
-    (KeyCode::ArrowDown, "Down"),
-    (KeyCode::ArrowRight, "Right"),
-    (KeyCode::ArrowLeft, "Left"),
-    (KeyCode::Insert, "Insert"),
-    (KeyCode::Home, "Home"),
-    (KeyCode::End, "End"),
-    (KeyCode::PageUp, "PageUp"),
-    (KeyCode::PageDown, "PageDown"),
-    (KeyCode::F1, "F1"),
-    (KeyCode::F2, "F2"),
-    (KeyCode::F3, "F3"),
-    (KeyCode::F4, "F4"),
-    (KeyCode::F5, "F5"),
-    (KeyCode::F6, "F6"),
-    (KeyCode::F7, "F7"),
-    (KeyCode::F8, "F8"),
-    (KeyCode::F9, "F9"),
-    (KeyCode::F10, "F10"),
-    (KeyCode::F11, "F11"),
-    (KeyCode::F12, "F12"),
-    (KeyCode::F13, "F13"),
-    (KeyCode::F14, "F14"),
-    (KeyCode::F15, "F15"),
-    (KeyCode::NumLock, "NumLock"),
-    (KeyCode::CapsLock, "CapsLock"),
-    (KeyCode::ScrollLock, "ScrollLock"),
-    (KeyCode::ShiftRight, "RightShift"),
-    (KeyCode::ShiftLeft, "LeftShift"),
-    (KeyCode::ControlRight, "RightControl"),
-    (KeyCode::ControlLeft, "LeftControl"),
-    (KeyCode::AltRight, "RightAlt"),
-    (KeyCode::AltLeft, "LeftAlt"),
-    (KeyCode::SuperLeft, "LeftSuper"),
-    (KeyCode::SuperRight, "RightSuper"),
-    (KeyCode::Help, "Help"),
-    (KeyCode::PrintScreen, "Print"),
-    (KeyCode::ContextMenu, "Menu"),
-    (KeyCode::Power, "Power"),
-    (KeyCode::Undo, "Undo"),
-];
-
-/// Every gamepad button that has a name, with that name.
-pub const PAD_BUTTONS: &[(gilrs::Button, &str)] = &[
-    (gilrs::Button::South, "ButtonA"),
-    (gilrs::Button::East, "ButtonB"),
-    (gilrs::Button::West, "ButtonX"),
-    (gilrs::Button::North, "ButtonY"),
-    (gilrs::Button::LeftTrigger, "ButtonL1"),
-    (gilrs::Button::RightTrigger, "ButtonR1"),
-    (gilrs::Button::LeftTrigger2, "ButtonL2"),
-    (gilrs::Button::RightTrigger2, "ButtonR2"),
-    (gilrs::Button::LeftThumb, "ButtonL3"),
-    (gilrs::Button::RightThumb, "ButtonR3"),
-    (gilrs::Button::Start, "ButtonStart"),
-    (gilrs::Button::Select, "ButtonSelect"),
-    (gilrs::Button::DPadUp, "DPadUp"),
-    (gilrs::Button::DPadDown, "DPadDown"),
-    (gilrs::Button::DPadLeft, "DPadLeft"),
-    (gilrs::Button::DPadRight, "DPadRight"),
-];
-
-/// The name of a keyboard key, or [`UNKNOWN`].
-pub fn key_name(code: KeyCode) -> &'static str {
-    KEYS.iter()
-        .find(|(c, _)| *c == code)
-        .map_or(UNKNOWN, |(_, n)| n)
+/// The device kind and name of a button, as a raw event reports them.
+pub fn describe(button: Button) -> (InputKind, String) {
+    let text = button_name(button);
+    let (_, name) = text
+        .split_once(':')
+        .expect("binding names have a device prefix");
+    let kind = match button {
+        Button::Key(_) => InputKind::Keyboard,
+        Button::Mouse(_) => InputKind::MouseButton,
+        Button::Pad(_) => InputKind::Gamepad,
+    };
+    (kind, name.to_string())
 }
 
-/// The keyboard key with this name.
-pub fn key_by_name(name: &str) -> Option<KeyCode> {
-    KEYS.iter().find(|(_, n)| *n == name).map(|(c, _)| *c)
+/// The key with winit name `name` (`KeyW`).
+pub fn key(name: &str) -> Option<Button> {
+    parse_button(&format!("key:{name}")).filter(|b| matches!(b, Button::Key(_)))
 }
 
-/// The name of a gamepad button, or [`UNKNOWN`].
-pub fn pad_button_name(button: gilrs::Button) -> &'static str {
-    PAD_BUTTONS
-        .iter()
-        .find(|(b, _)| *b == button)
-        .map_or(UNKNOWN, |(_, n)| n)
+/// The mouse button named `name` (`Left`).
+pub fn mouse_button(name: &str) -> Option<Button> {
+    parse_button(&format!("mouse:{name}")).filter(|b| matches!(b, Button::Mouse(_)))
 }
 
-/// The gamepad button with this name.
-pub fn pad_button_by_name(name: &str) -> Option<gilrs::Button> {
-    PAD_BUTTONS
-        .iter()
-        .find(|(_, n)| *n == name)
-        .map(|(b, _)| *b)
-}
-
-/// The number of a mouse button: 1 left, 2 right, 3 middle; `None` for the
-/// others.
-pub fn mouse_button_number(button: MouseButton) -> Option<u8> {
-    match button {
-        MouseButton::Left => Some(1),
-        MouseButton::Right => Some(2),
-        MouseButton::Middle => Some(3),
-        _ => None,
-    }
-}
-
-/// The mouse button with this number (1, 2 or 3).
-pub fn mouse_button_by_number(n: u8) -> Option<MouseButton> {
-    match n {
-        1 => Some(MouseButton::Left),
-        2 => Some(MouseButton::Right),
-        3 => Some(MouseButton::Middle),
-        _ => None,
-    }
-}
-
-/// The button a key or button name stands for: a keyboard key first, then a
-/// gamepad button.
-pub fn button_by_name(name: &str) -> Option<Button> {
-    key_by_name(name)
-        .map(Button::Key)
-        .or_else(|| pad_button_by_name(name).map(Button::Pad))
-}
-
-/// The device kind and key name of a button, as a raw event reports them.
-pub fn describe(button: Button) -> (&'static str, &'static str) {
-    match button {
-        Button::Key(k) => ("Keyboard", key_name(k)),
-        Button::Mouse(m) => (
-            match mouse_button_number(m) {
-                Some(1) => "MouseButton1",
-                Some(2) => "MouseButton2",
-                Some(3) => "MouseButton3",
-                _ => "None",
-            },
-            UNKNOWN,
-        ),
-        Button::Pad(b) => ("Gamepad1", pad_button_name(b)),
-    }
+/// The gamepad button with gilrs name `name` (`South`).
+pub fn pad_button(name: &str) -> Option<Button> {
+    parse_button(&format!("pad:{name}")).filter(|b| matches!(b, Button::Pad(_)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use winit::event::MouseButton;
+    use winit::keyboard::KeyCode;
 
     #[test]
-    fn names_are_unique_and_round_trip() {
-        let mut seen = std::collections::HashSet::new();
-        for (code, name) in KEYS {
-            assert!(seen.insert(*name), "duplicate key name {name}");
-            assert_eq!(key_by_name(name), Some(*code));
-            assert_eq!(key_name(*code), *name);
+    fn names_round_trip() {
+        for b in [
+            Button::Key(KeyCode::KeyW),
+            Button::Key(KeyCode::Space),
+            Button::Mouse(MouseButton::Left),
+            Button::Mouse(MouseButton::Other(4)),
+            Button::Pad(gilrs::Button::South),
+        ] {
+            let (kind, name) = describe(b);
+            let back = match kind {
+                InputKind::Keyboard => key(&name),
+                InputKind::MouseButton => mouse_button(&name),
+                _ => pad_button(&name),
+            };
+            assert_eq!(back, Some(b), "{name}");
         }
-        for (b, name) in PAD_BUTTONS {
-            assert!(seen.insert(*name), "duplicate button name {name}");
-            assert_eq!(pad_button_by_name(name), Some(*b));
-        }
-        assert_eq!(key_name(KeyCode::F30), UNKNOWN);
-        for n in 1..=3 {
-            assert_eq!(
-                mouse_button_by_number(n).and_then(mouse_button_number),
-                Some(n)
-            );
-        }
+        assert_eq!(key("Left"), None);
+        assert_eq!(mouse_button("KeyW"), None);
     }
 }

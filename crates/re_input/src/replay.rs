@@ -16,7 +16,7 @@ use std::path::Path;
 
 use glam::Vec2;
 use re_core::{Diagnostic, Location};
-use re_types::input::{ActionFrame, ButtonState, InputPhase, RawInputFrame};
+use re_types::input::{ActionFrame, ButtonState, InputKind, InputPhase, RawInputFrame};
 use re_types::replay::{RawReplayInput, ReplayCheck, ReplayCommand, ReplayDoc, ReplayInput};
 
 use crate::codes;
@@ -136,25 +136,44 @@ impl Replay {
             }
             if !r.is_well_formed() {
                 problems.push(invalid(format!(
-                    "{entry} needs exactly one of `key`, `mouse_button`, `mouse_move`, \
-                     `mouse_position` and `wheel`, with `down` for a key or mouse button"
+                    "{entry} needs exactly one of `key`, `mouse_button`, `pad_button`, \
+                     `mouse_move`, `mouse_position` and `wheel`, with `down` for a button"
                 )));
                 continue;
             }
-            if let Some(k) = &r.key
-                && keycodes::button_by_name(k).is_none()
-            {
-                problems.push(
-                    invalid(format!("{entry} names the unknown key `{k}`"))
-                        .with_hint("keys are named like `W`, `Space`, `LeftShift` or `ButtonA`"),
-                );
-            }
-            if let Some(b) = r.mouse_button
-                && keycodes::mouse_button_by_number(b).is_none()
-            {
-                problems.push(invalid(format!(
-                    "{entry} names mouse button {b}; buttons are 1 (left), 2 (right) and 3 (middle)"
-                )));
+            let unknown = [
+                (
+                    &r.key,
+                    keycodes::key as fn(&str) -> Option<Button>,
+                    "key",
+                    "key:KeyW, key:Space",
+                ),
+                (
+                    &r.mouse_button,
+                    keycodes::mouse_button,
+                    "mouse button",
+                    "Left, Right, Middle",
+                ),
+                (
+                    &r.pad_button,
+                    keycodes::pad_button,
+                    "gamepad button",
+                    "South, Start",
+                ),
+            ];
+            for (name, parse, what, examples) in unknown {
+                if let Some(n) = name
+                    && parse(n).is_none()
+                {
+                    problems.push(
+                        invalid(format!("{entry} names the unknown {what} `{n}`")).with_hint(
+                            format!(
+                                "buttons are named as real.toml binds them, without the \
+                                 device prefix ({examples})"
+                            ),
+                        ),
+                    );
+                }
             }
         }
         for (what, frames) in [
@@ -373,30 +392,28 @@ impl ReplayRecorder {
                 InputPhase::Ended => Some(false),
                 InputPhase::Changed => None,
             };
-            let mouse_button = match e.input_type.as_str() {
-                "MouseButton1" => Some(1),
-                "MouseButton2" => Some(2),
-                "MouseButton3" => Some(3),
-                _ => None,
-            };
-            match (e.input_type.as_str(), down) {
-                (_, Some(down)) if mouse_button.is_some() => self.doc.raw.push(RawReplayInput {
-                    mouse_button,
+            let button = Some(e.button.clone());
+            match (e.kind, down) {
+                (InputKind::Keyboard, Some(down)) => self.doc.raw.push(RawReplayInput {
+                    key: button,
                     down: Some(down),
                     ..row()
                 }),
-                (_, Some(down)) if e.key != keycodes::UNKNOWN => {
-                    self.doc.raw.push(RawReplayInput {
-                        key: Some(e.key.clone()),
-                        down: Some(down),
-                        ..row()
-                    })
-                }
-                ("MouseWheel", None) => self.doc.raw.push(RawReplayInput {
+                (InputKind::MouseButton, Some(down)) => self.doc.raw.push(RawReplayInput {
+                    mouse_button: button,
+                    down: Some(down),
+                    ..row()
+                }),
+                (InputKind::Gamepad, Some(down)) => self.doc.raw.push(RawReplayInput {
+                    pad_button: button,
+                    down: Some(down),
+                    ..row()
+                }),
+                (InputKind::MouseWheel, None) => self.doc.raw.push(RawReplayInput {
                     wheel: Some(e.delta.z),
                     ..row()
                 }),
-                ("MouseMovement", None) => moved = true,
+                (InputKind::MouseMovement, None) => moved = true,
                 _ => {}
             }
         }
@@ -433,14 +450,14 @@ impl ReplayRecorder {
 
 /// Applies one raw replay row to `raw`.
 fn apply_raw(raw: &mut RawInput, r: &RawReplayInput) {
-    if let (Some(k), Some(down)) = (&r.key, r.down) {
-        if let Some(b) = keycodes::button_by_name(k) {
-            raw.set_button(b, down);
-        }
-    } else if let (Some(n), Some(down)) = (r.mouse_button, r.down) {
-        if let Some(m) = keycodes::mouse_button_by_number(n) {
-            raw.set_button(Button::Mouse(m), down);
-        }
+    let button = match (&r.key, &r.mouse_button, &r.pad_button) {
+        (Some(k), _, _) => keycodes::key(k),
+        (_, Some(m), _) => keycodes::mouse_button(m),
+        (_, _, Some(p)) => keycodes::pad_button(p),
+        _ => None,
+    };
+    if let (Some(b), Some(down)) = (button, r.down) {
+        raw.set_button(b, down);
     } else if let Some([dx, dy]) = r.mouse_move {
         raw.add_mouse_delta(f64::from(dx), f64::from(dy));
     } else if let Some([x, y]) = r.mouse_position {

@@ -41,3 +41,7 @@ pub const INVALID_RIG: Code = Code::new("RE9200");
 /// An `Animation.AnimationId` resolves to no clip; the track plays as an
 /// empty clip.
 pub const UNKNOWN_ANIMATION: Code = Code::new("RE9201");
+
+/// `[compat.animations]` in `real.toml` has a key that is not an asset id, a
+/// value that is not a built-in clip or a dotted path, or one id twice.
+pub const BAD_ANIMATION_MAP: Code = Code::new("RE9202");

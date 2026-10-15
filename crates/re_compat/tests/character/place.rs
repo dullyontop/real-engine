@@ -64,7 +64,7 @@ impl HostServices for Services {
     fn raw_input(&self) -> Option<&RawInputFrame> {
         self.raw.as_ref()
     }
-    fn set_mouse_mode(&mut self, lock: MouseLock, icon: bool) -> HostResult<()> {
+    fn set_mouse_behavior(&mut self, lock: MouseLock, icon: bool) -> HostResult<()> {
         self.mouse = Some((lock, icon));
         Ok(())
     }

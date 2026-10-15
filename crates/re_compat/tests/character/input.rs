@@ -3,15 +3,15 @@
 
 use re_script::ContextKind;
 use re_types::glam::{Vec2, Vec3};
-use re_types::input::{InputEvent, InputPhase, MouseLock, RawInputFrame};
+use re_types::input::{InputEvent, InputKind, InputPhase, MouseLock, RawInputFrame};
 
 use crate::place::{Place, place};
 
-fn ev(phase: InputPhase, ty: &str, key: &str) -> InputEvent {
+fn ev(phase: InputPhase, kind: InputKind, button: &str) -> InputEvent {
     InputEvent {
         phase,
-        input_type: ty.into(),
-        key: key.into(),
+        kind,
+        button: button.into(),
         position: Vec3::ZERO,
         delta: Vec3::ZERO,
     }
@@ -53,12 +53,18 @@ fn input_began_and_ended_reuse_one_object_per_key() {
     );
     feed(
         &mut p,
-        keys(&["W"], vec![ev(InputPhase::Began, "Keyboard", "W")]),
+        keys(
+            &["KeyW"],
+            vec![ev(InputPhase::Began, InputKind::Keyboard, "KeyW")],
+        ),
     );
     p.run(r#"print(game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.W), game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.S))"#);
     feed(
         &mut p,
-        keys(&[], vec![ev(InputPhase::Ended, "Keyboard", "W")]),
+        keys(
+            &[],
+            vec![ev(InputPhase::Ended, InputKind::Keyboard, "KeyW")],
+        ),
     );
     p.run(r#"print(game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.W))"#);
     assert_eq!(
@@ -85,14 +91,14 @@ fn mouse_location_delta_buttons_and_last_input_type() {
         end)
         "#,
     );
-    let mut moved = ev(InputPhase::Changed, "MouseMovement", "Unknown");
+    let mut moved = ev(InputPhase::Changed, InputKind::MouseMovement, "");
     moved.position = Vec3::new(40.0, 30.0, 0.0);
     moved.delta = Vec3::new(4.0, -3.0, 0.0);
     feed(
         &mut p,
         RawInputFrame {
-            events: vec![moved, ev(InputPhase::Began, "MouseButton1", "Unknown")],
-            mouse_buttons_down: vec![1],
+            events: vec![moved, ev(InputPhase::Began, InputKind::MouseButton, "Left")],
+            mouse_buttons_down: vec!["Left".into()],
             mouse_position: Vec2::new(40.0, 30.0),
             mouse_delta: Vec2::new(4.0, -3.0),
             keyboard: true,
@@ -175,7 +181,10 @@ fn the_server_sees_no_input() {
     );
     feed(
         &mut p,
-        keys(&["W"], vec![ev(InputPhase::Began, "Keyboard", "W")]),
+        keys(
+            &["KeyW"],
+            vec![ev(InputPhase::Began, InputKind::Keyboard, "KeyW")],
+        ),
     );
     p.run(r#"print(game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.W))"#);
     assert_eq!(p.out(), ["false"]);
@@ -196,10 +205,10 @@ fn jump_request_and_modifier_keys() {
     feed(
         &mut p,
         keys(
-            &["LeftShift", "Space"],
+            &["ShiftLeft", "Space"],
             vec![
-                ev(InputPhase::Began, "Keyboard", "LeftShift"),
-                ev(InputPhase::Began, "Keyboard", "Space"),
+                ev(InputPhase::Began, InputKind::Keyboard, "ShiftLeft"),
+                ev(InputPhase::Began, InputKind::Keyboard, "Space"),
             ],
         ),
     );
@@ -235,11 +244,17 @@ fn actions_go_by_priority_and_sink_or_pass() {
     );
     feed(
         &mut p,
-        keys(&["E"], vec![ev(InputPhase::Began, "Keyboard", "E")]),
+        keys(
+            &["KeyE"],
+            vec![ev(InputPhase::Began, InputKind::Keyboard, "KeyE")],
+        ),
     );
     feed(
         &mut p,
-        keys(&[], vec![ev(InputPhase::Ended, "Keyboard", "E")]),
+        keys(
+            &[],
+            vec![ev(InputPhase::Ended, InputKind::Keyboard, "KeyE")],
+        ),
     );
     assert_eq!(
         p.out(),
@@ -265,14 +280,17 @@ fn unbinding_a_held_action_cancels_it() {
     feed(
         &mut p,
         keys(
-            &["LeftShift"],
-            vec![ev(InputPhase::Began, "Keyboard", "LeftShift")],
+            &["ShiftLeft"],
+            vec![ev(InputPhase::Began, InputKind::Keyboard, "ShiftLeft")],
         ),
     );
     p.run(r#"game:GetService("ContextActionService"):UnbindAction("run")"#);
     feed(
         &mut p,
-        keys(&[], vec![ev(InputPhase::Ended, "Keyboard", "LeftShift")]),
+        keys(
+            &[],
+            vec![ev(InputPhase::Ended, InputKind::Keyboard, "ShiftLeft")],
+        ),
     );
     assert_eq!(p.out(), ["run Begin", "run Cancel"]);
 }

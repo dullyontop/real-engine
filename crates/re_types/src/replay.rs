@@ -88,13 +88,15 @@ impl ReplayInput {
     }
 }
 
-/// One raw device change in a replay: a key or mouse button going down or
-/// up, the cursor moving, or the wheel turning. Exactly one of `key`,
-/// `mouse_button`, `mouse_move`, `mouse_position` and `wheel` is set; `key`
-/// and `mouse_button` also need `down`.
+/// One raw device change in a replay: a key, mouse button or gamepad button
+/// going down or up, the cursor moving, or the wheel turning. Exactly one of
+/// `key`, `mouse_button`, `pad_button`, `mouse_move`, `mouse_position` and
+/// `wheel` is set; the three buttons also need `down`. Buttons are named as
+/// `real.toml` binds them, without the device prefix (`KeyW`, `Left`,
+/// `South`).
 ///
 /// ```json
-/// { "frame": 30, "key": "W", "down": true }
+/// { "frame": 30, "key": "KeyW", "down": true }
 /// { "frame": 31, "mouse_move": [12, -4] }
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -103,13 +105,16 @@ impl ReplayInput {
 pub struct RawReplayInput {
     /// The frame the change happens on.
     pub frame: u64,
-    /// A key or gamepad button name (`W`, `Space`, `ButtonA`).
+    /// A keyboard key (a winit key code: `KeyW`, `Space`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    /// A mouse button: 1 left, 2 right, 3 middle.
+    /// A mouse button (`Left`, `Right`, `Middle`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mouse_button: Option<u8>,
-    /// For `key` and `mouse_button`: down or up.
+    pub mouse_button: Option<String>,
+    /// A gamepad button (a gilrs button: `South`, `Start`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pad_button: Option<String>,
+    /// For a button: down or up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub down: Option<bool>,
     /// Mouse motion in pixels.
@@ -125,11 +130,12 @@ pub struct RawReplayInput {
 
 impl RawReplayInput {
     /// True when exactly one change is set, and `down` is set exactly for a
-    /// key or mouse button.
+    /// button.
     pub fn is_well_formed(&self) -> bool {
         let set = [
             self.key.is_some(),
             self.mouse_button.is_some(),
+            self.pad_button.is_some(),
             self.mouse_move.is_some(),
             self.mouse_position.is_some(),
             self.wheel.is_some(),
@@ -137,7 +143,7 @@ impl RawReplayInput {
         .iter()
         .filter(|b| **b)
         .count();
-        let button = self.key.is_some() || self.mouse_button.is_some();
+        let button = self.key.is_some() || self.mouse_button.is_some() || self.pad_button.is_some();
         set == 1 && button == self.down.is_some()
     }
 }

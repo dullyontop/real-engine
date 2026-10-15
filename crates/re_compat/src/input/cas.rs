@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use mlua::{Function, Lua, MultiValue, Result, Table, Value as LuaValue};
 use re_scene::Entity;
-use re_types::input::{InputEvent, InputPhase};
+use re_types::input::InputPhase;
 
-use super::{Shared, input_state};
+use super::{Event, Shared, input_state};
 use crate::enums::EnumItem;
 use crate::instance::methods_api::{args, ret};
 use crate::instance::push;
@@ -54,7 +54,7 @@ pub(crate) struct Actions {
     seq: u64,
 }
 
-fn matches(inputs: &[Input], ev: &InputEvent) -> bool {
+fn matches(inputs: &[Input], ev: &Event) -> bool {
     inputs.iter().any(|i| match i {
         Input::Key(k) => k == &ev.key,
         Input::Type(t) => t == &ev.input_type,
@@ -102,7 +102,7 @@ fn passes(v: &Option<LuaValue>) -> bool {
 }
 
 /// Offers one raw event to the bound actions.
-pub(super) fn dispatch(lua: &Lua, st: &Shared, ev: &InputEvent, obj: Entity) -> Result<()> {
+pub(super) fn dispatch(lua: &Lua, st: &Shared, ev: &Event, obj: Entity) -> Result<()> {
     let mut order: Vec<(i64, u64)> = st
         .borrow()
         .actions

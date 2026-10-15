@@ -94,6 +94,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE9201.md"),
     },
     DiagInfo {
+        code: codes::BAD_ANIMATION_MAP,
+        title: "Bad animation substitute table",
+        page: include_str!("../explain/RE9202.md"),
+    },
+    DiagInfo {
         code: codes::DEPRECATED_MEMBER,
         title: "Deprecated member used",
         page: include_str!("../explain/RE9101.md"),
