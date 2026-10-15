@@ -1,0 +1,300 @@
+{
+  "format": "real-engine/font-substitutes",
+  "version": 1,
+  "note": "Font families scripts name, mapped to the bundled open-licence substitutes. Generated data; see README.md.",
+  "substitutes": {
+    "montserrat": {
+      "400": "montserrat-latin-400.ttf",
+      "500": "montserrat-latin-500.ttf",
+      "700": "montserrat-latin-700.ttf",
+      "900": "montserrat-latin-900.ttf"
+    },
+    "source-sans-3": {
+      "400": "source-sans-3-latin-400.ttf",
+      "700": "source-sans-3-latin-700.ttf"
+    },
+    "roboto-mono": {
+      "400": "roboto-mono-latin-400.ttf",
+      "700": "roboto-mono-latin-700.ttf"
+    }
+  },
+  "default": "source-sans-3",
+  "families": {
+    "BuilderSans": "montserrat",
+    "FredokaOne": "montserrat",
+    "GothamSSm": "montserrat",
+    "Inconsolata": "roboto-mono",
+    "JosefinSans": "montserrat",
+    "Jura": "montserrat",
+    "Michroma": "montserrat",
+    "Montserrat": "montserrat",
+    "Nunito": "montserrat",
+    "PressStart2P": "roboto-mono",
+    "RobotoMono": "roboto-mono",
+    "Sarpanch": "montserrat",
+    "SpecialElite": "roboto-mono",
+    "TitilliumWeb": "montserrat"
+  },
+  "enum": {
+    "AmaticSC": [
+      "AmaticSC",
+      "Regular",
+      "Normal"
+    ],
+    "Antique": [
+      "SpecialElite",
+      "Regular",
+      "Normal"
+    ],
+    "Arcade": [
+      "PressStart2P",
+      "Regular",
+      "Normal"
+    ],
+    "Arial": [
+      "Arial",
+      "Regular",
+      "Normal"
+    ],
+    "ArialBold": [
+      "Arial",
+      "Bold",
+      "Normal"
+    ],
+    "Arimo": [
+      "Arimo",
+      "Regular",
+      "Normal"
+    ],
+    "ArimoBold": [
+      "Arimo",
+      "Bold",
+      "Normal"
+    ],
+    "Bangers": [
+      "Bangers",
+      "Regular",
+      "Normal"
+    ],
+    "Bodoni": [
+      "AccanthisADFStd",
+      "Regular",
+      "Normal"
+    ],
+    "BuilderSans": [
+      "BuilderSans",
+      "Regular",
+      "Normal"
+    ],
+    "BuilderSansBold": [
+      "BuilderSans",
+      "Bold",
+      "Normal"
+    ],
+    "BuilderSansExtraBold": [
+      "BuilderSans",
+      "ExtraBold",
+      "Normal"
+    ],
+    "BuilderSansMedium": [
+      "BuilderSans",
+      "Medium",
+      "Normal"
+    ],
+    "Cartoon": [
+      "ComicNeueAngular",
+      "Regular",
+      "Normal"
+    ],
+    "Code": [
+      "Inconsolata",
+      "Regular",
+      "Normal"
+    ],
+    "Creepster": [
+      "Creepster",
+      "Regular",
+      "Normal"
+    ],
+    "DenkOne": [
+      "DenkOne",
+      "Regular",
+      "Normal"
+    ],
+    "Fantasy": [
+      "Balthazar",
+      "Regular",
+      "Normal"
+    ],
+    "Fondamento": [
+      "Fondamento",
+      "Regular",
+      "Normal"
+    ],
+    "FredokaOne": [
+      "FredokaOne",
+      "Regular",
+      "Normal"
+    ],
+    "Garamond": [
+      "Guru",
+      "Regular",
+      "Normal"
+    ],
+    "Gotham": [
+      "GothamSSm",
+      "Regular",
+      "Normal"
+    ],
+    "GothamBlack": [
+      "GothamSSm",
+      "Heavy",
+      "Normal"
+    ],
+    "GothamBold": [
+      "GothamSSm",
+      "Bold",
+      "Normal"
+    ],
+    "GothamMedium": [
+      "GothamSSm",
+      "Medium",
+      "Normal"
+    ],
+    "GrenzeGotisch": [
+      "GrenzeGotisch",
+      "Regular",
+      "Normal"
+    ],
+    "Highway": [
+      "HighwayGothic",
+      "Regular",
+      "Normal"
+    ],
+    "IndieFlower": [
+      "IndieFlower",
+      "Regular",
+      "Normal"
+    ],
+    "JosefinSans": [
+      "JosefinSans",
+      "Regular",
+      "Normal"
+    ],
+    "Jura": [
+      "Jura",
+      "Regular",
+      "Normal"
+    ],
+    "Kalam": [
+      "Kalam",
+      "Regular",
+      "Normal"
+    ],
+    "Legacy": [
+      "LegacyArial",
+      "Regular",
+      "Normal"
+    ],
+    "LuckiestGuy": [
+      "LuckiestGuy",
+      "Regular",
+      "Normal"
+    ],
+    "Merriweather": [
+      "Merriweather",
+      "Regular",
+      "Normal"
+    ],
+    "Michroma": [
+      "Michroma",
+      "Regular",
+      "Normal"
+    ],
+    "Nunito": [
+      "Nunito",
+      "Regular",
+      "Normal"
+    ],
+    "Oswald": [
+      "Oswald",
+      "Regular",
+      "Normal"
+    ],
+    "PatrickHand": [
+      "PatrickHand",
+      "Regular",
+      "Normal"
+    ],
+    "PermanentMarker": [
+      "PermanentMarker",
+      "Regular",
+      "Normal"
+    ],
+    "Roboto": [
+      "Roboto",
+      "Regular",
+      "Normal"
+    ],
+    "RobotoCondensed": [
+      "RobotoCondensed",
+      "Regular",
+      "Normal"
+    ],
+    "RobotoMono": [
+      "RobotoMono",
+      "Regular",
+      "Normal"
+    ],
+    "Sarpanch": [
+      "Sarpanch",
+      "Regular",
+      "Normal"
+    ],
+    "SciFi": [
+      "Zekton",
+      "Regular",
+      "Normal"
+    ],
+    "SourceSans": [
+      "SourceSansPro",
+      "Regular",
+      "Normal"
+    ],
+    "SourceSansBold": [
+      "SourceSansPro",
+      "Bold",
+      "Normal"
+    ],
+    "SourceSansItalic": [
+      "SourceSansPro",
+      "Regular",
+      "Italic"
+    ],
+    "SourceSansLight": [
+      "SourceSansPro",
+      "Light",
+      "Normal"
+    ],
+    "SourceSansSemibold": [
+      "SourceSansPro",
+      "SemiBold",
+      "Normal"
+    ],
+    "SpecialElite": [
+      "SpecialElite",
+      "Regular",
+      "Normal"
+    ],
+    "TitilliumWeb": [
+      "TitilliumWeb",
+      "Regular",
+      "Normal"
+    ],
+    "Ubuntu": [
+      "Ubuntu",
+      "Regular",
+      "Normal"
+    ]
+  }
+}

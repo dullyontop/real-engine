@@ -2,9 +2,9 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1453,
-    "partial": 122,
-    "stub-error": 51,
+    "implemented": 1629,
+    "partial": 142,
+    "stub-error": 53,
     "missing": 3
   },
   "classes": [
@@ -671,6 +671,78 @@
       ]
     },
     {
+      "name": "BillboardGui",
+      "superclass": "LayerCollector",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Active",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Adornee",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AlwaysOnTop",
+          "kind": "property",
+          "status": "partial",
+          "note": "Billboards always draw over the 3D view: there is no depth test against parts."
+        },
+        {
+          "name": "Brightness",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "ClipsDescendants",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ExtentsOffset",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: not applied."
+        },
+        {
+          "name": "LightInfluence",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: billboards draw unlit."
+        },
+        {
+          "name": "MaxDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Size",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SizeOffset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "StudsOffset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "StudsOffsetWorldSpace",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "BindableEvent",
       "superclass": "Instance",
       "creatable": true,
@@ -993,6 +1065,213 @@
       "members": [
         {
           "name": "Visible",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Frame",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "GuiBase2d",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AbsolutePosition",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AbsoluteRotation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AbsoluteSize",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "GuiButton",
+      "superclass": "GuiObject",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Activated",
+          "kind": "event",
+          "status": "partial",
+          "note": "inputObject is nil; clickCount is 1."
+        },
+        {
+          "name": "AutoButtonColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Modal",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: the mouse is never locked."
+        },
+        {
+          "name": "MouseButton1Click",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseButton1Down",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseButton1Up",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseButton2Click",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseButton2Down",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseButton2Up",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Selectable",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Selected",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "GuiObject",
+      "superclass": "GuiBase2d",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Active",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AnchorPoint",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AutomaticSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BackgroundColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BackgroundTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BorderColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BorderMode",
+          "kind": "property",
+          "status": "partial",
+          "note": "Always drawn as Outline."
+        },
+        {
+          "name": "BorderSizePixel",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClipsDescendants",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Interactable",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LayoutOrder",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseEnter",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseLeave",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseMoved",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Position",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Rotation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Selectable",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SelectionOrder",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: selection moves by position."
+        },
+        {
+          "name": "Size",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Visible",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ZIndex",
           "kind": "property",
           "status": "implemented"
         }
@@ -1759,6 +2038,66 @@
       ]
     },
     {
+      "name": "ImageButton",
+      "superclass": "GuiButton",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Image",
+          "kind": "property",
+          "status": "partial",
+          "note": "Images are not loaded yet: a placeholder in ImageColor3 is drawn for a non-empty id."
+        },
+        {
+          "name": "ImageColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ImageTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScaleType",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: the placeholder fills the element."
+        }
+      ]
+    },
+    {
+      "name": "ImageLabel",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Image",
+          "kind": "property",
+          "status": "partial",
+          "note": "Images are not loaded yet: a placeholder in ImageColor3 is drawn for a non-empty id."
+        },
+        {
+          "name": "ImageColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ImageTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScaleType",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: the placeholder fills the element."
+        }
+      ]
+    },
+    {
       "name": "InputObject",
       "superclass": "Instance",
       "status": "implemented",
@@ -2107,6 +2446,28 @@
         },
         {
           "name": "Priority",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "LayerCollector",
+      "superclass": "GuiBase2d",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ResetOnSpawn",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ZIndexBehavior",
           "kind": "property",
           "status": "implemented"
         }
@@ -3102,11 +3463,92 @@
       ]
     },
     {
+      "name": "ScreenGui",
+      "superclass": "LayerCollector",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "DisplayOrder",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IgnoreGuiInset",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Script",
       "superclass": "BaseScript",
       "creatable": true,
       "status": "partial",
       "members": []
+    },
+    {
+      "name": "ScrollingFrame",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AbsoluteCanvasSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AbsoluteWindowSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AutomaticCanvasSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanvasPosition",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanvasSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClipsDescendants",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScrollBarImageColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScrollBarImageTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScrollBarThickness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScrollingDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScrollingEnabled",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "ServerScriptService",
@@ -3477,6 +3919,13 @@
       "members": []
     },
     {
+      "name": "SurfaceGui",
+      "superclass": "LayerCollector",
+      "creatable": true,
+      "status": "stub-error",
+      "members": []
+    },
+    {
       "name": "TeleportOptions",
       "superclass": "Instance",
       "creatable": true,
@@ -3549,6 +3998,251 @@
       "members": []
     },
     {
+      "name": "TextBox",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CaptureFocus",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ClearTextOnFocus",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CursorPosition",
+          "kind": "property",
+          "status": "partial",
+          "note": "Typing always moves the cursor to the end, and the caret is drawn there; a script's write is kept until the next keystroke."
+        },
+        {
+          "name": "FocusLost",
+          "kind": "event",
+          "status": "partial",
+          "note": "inputThatCausedFocusLoss is nil."
+        },
+        {
+          "name": "Focused",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Font",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FontFace",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IsFocused",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LineHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MultiLine",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlaceholderColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlaceholderText",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ReleaseFocus",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "RichText",
+          "kind": "property",
+          "status": "partial",
+          "note": "Only the bold and font colour tags; other tags are drawn as text."
+        },
+        {
+          "name": "Text",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextBounds",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextEditable",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextFits",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextScaled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTruncate",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextWrapped",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextXAlignment",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextYAlignment",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TextButton",
+      "superclass": "GuiButton",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Font",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FontFace",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LineHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RichText",
+          "kind": "property",
+          "status": "partial",
+          "note": "Only the bold and font colour tags; other tags are drawn as text."
+        },
+        {
+          "name": "Text",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextBounds",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextFits",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextScaled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTruncate",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextWrapped",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextXAlignment",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextYAlignment",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "TextChannel",
       "superclass": "Instance",
       "creatable": true,
@@ -3606,6 +4300,100 @@
         },
         {
           "name": "CreateDefaultTextChannels",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TextLabel",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Font",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FontFace",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LineHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RichText",
+          "kind": "property",
+          "status": "partial",
+          "note": "Only the bold and font colour tags; other tags are drawn as text."
+        },
+        {
+          "name": "Text",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextBounds",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextFits",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextScaled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTruncate",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextWrapped",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextXAlignment",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextYAlignment",
           "kind": "property",
           "status": "implemented"
         }
@@ -3717,6 +4505,291 @@
           "name": "SmoothDamp",
           "kind": "method",
           "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "UIAspectRatioConstraint",
+      "superclass": "UIConstraint",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AspectRatio",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AspectType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DominantAxis",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIBase",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "UIComponent",
+      "superclass": "UIBase",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "UIConstraint",
+      "superclass": "UIComponent",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "UICorner",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CornerRadius",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIGradient",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Offset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Rotation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Transparency",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIGridLayout",
+      "superclass": "UIGridStyleLayout",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AbsoluteCellCount",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AbsoluteCellSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CellPadding",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CellSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FillDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FillDirectionMaxCells",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "StartCorner",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIGridStyleLayout",
+      "superclass": "UILayout",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AbsoluteContentSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HorizontalAlignment",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SortOrder",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "VerticalAlignment",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UILayout",
+      "superclass": "UIComponent",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "UIListLayout",
+      "superclass": "UIGridStyleLayout",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "FillDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Padding",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Wraps",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: lists do not wrap."
+        }
+      ]
+    },
+    {
+      "name": "UIPadding",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "PaddingBottom",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PaddingLeft",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PaddingRight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PaddingTop",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIScale",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Scale",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UISizeConstraint",
+      "superclass": "UIConstraint",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "MaxSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MinSize",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIStroke",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "ApplyStrokeMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LineJoinMode",
+          "kind": "property",
+          "status": "partial",
+          "note": "Corners are always mitred."
+        },
+        {
+          "name": "Thickness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Transparency",
+          "kind": "property",
+          "status": "implemented"
         }
       ]
     },
@@ -3934,6 +5007,13 @@
           "status": "implemented"
         }
       ]
+    },
+    {
+      "name": "ViewportFrame",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "stub-error",
+      "members": []
     },
     {
       "name": "WedgePart",
