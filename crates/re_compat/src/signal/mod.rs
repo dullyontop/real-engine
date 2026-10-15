@@ -95,6 +95,9 @@ struct Conn {
     key: SignalKey,
     target: Target,
     once: bool,
+    /// The script that connected (its handlers' threads belong to it, and
+    /// destroying it disconnects them).
+    owner: Option<sched::Owner>,
 }
 
 /// The connections of one script context, in connection order.
@@ -107,7 +110,13 @@ pub struct SignalHub {
 }
 
 impl SignalHub {
-    fn add(&mut self, key: SignalKey, target: Target, once: bool) -> u64 {
+    fn add(
+        &mut self,
+        key: SignalKey,
+        target: Target,
+        once: bool,
+        owner: Option<sched::Owner>,
+    ) -> u64 {
         self.next += 1;
         let id = self.next;
         self.by_key.entry(key.clone()).or_default().push(id);
@@ -115,7 +124,15 @@ impl SignalHub {
         if !names.contains(&key.name) {
             names.push(key.name.clone());
         }
-        self.conns.insert(id, Conn { key, target, once });
+        self.conns.insert(
+            id,
+            Conn {
+                key,
+                target,
+                once,
+                owner,
+            },
+        );
         id
     }
 
@@ -185,7 +202,8 @@ pub fn connect(lua: &Lua, key: SignalKey, f: Function, once: bool) -> Result<u64
     events::dispatch(lua)?;
     let reg = lua.create_registry_value(f)?;
     let watch = key.clone();
-    let id = hub(lua, |h| h.add(key, Target::Func(reg), once))?;
+    let owner = sched::current_owner(lua)?;
+    let id = hub(lua, |h| h.add(key, Target::Func(reg), once, owner))?;
     events::watch_connected(lua, &watch)?;
     Ok(id)
 }
@@ -238,6 +256,26 @@ pub fn disconnect_entities(lua: &Lua, entities: &[Entity]) -> Result<()> {
     Ok(())
 }
 
+/// Disconnects every connection script `owner` made (the script was
+/// destroyed).
+pub fn disconnect_owner(lua: &Lua, owner: sched::Owner) -> Result<()> {
+    let removed = hub(lua, |h| {
+        let ids: Vec<u64> = h
+            .conns
+            .iter()
+            .filter(|(_, c)| c.owner == Some(owner))
+            .map(|(id, _)| *id)
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| h.remove(id))
+            .collect::<Vec<_>>()
+    })?;
+    for c in removed {
+        drop_target(lua, c.target)?;
+    }
+    Ok(())
+}
+
 /// How [`fire_with`] queues deferred handlers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Guard {
@@ -258,7 +296,7 @@ pub fn fire(lua: &Lua, entity: Entity, name: &str, args: MultiValue) -> Result<(
 pub fn fire_with(lua: &Lua, key: &SignalKey, args: MultiValue, guard: Guard) -> Result<()> {
     let behavior = state(lua)?.behavior;
     enum Act {
-        Call(u64, Function, bool),
+        Call(u64, Function, bool, Option<sched::Owner>),
         Wake(YieldToken),
     }
     let mut free = Vec::new();
@@ -281,6 +319,7 @@ pub fn fire_with(lua: &Lua, key: &SignalKey, args: MultiValue, guard: Guard) -> 
                 Target::Func(reg) => {
                     let f: Function = lua.registry_value(reg)?;
                     let once = c.once;
+                    let owner = c.owner;
                     if once
                         && let Some(Conn {
                             target: Target::Func(k),
@@ -289,7 +328,7 @@ pub fn fire_with(lua: &Lua, key: &SignalKey, args: MultiValue, guard: Guard) -> 
                     {
                         free.push(k);
                     }
-                    acts.push(Act::Call(id, f, once));
+                    acts.push(Act::Call(id, f, once, owner));
                 }
             }
         }
@@ -304,10 +343,13 @@ pub fn fire_with(lua: &Lua, key: &SignalKey, args: MultiValue, guard: Guard) -> 
             Act::Wake(t) => {
                 sched::wake(lua, t, args.clone(), behavior.wake_mode())?;
             }
-            Act::Call(id, f, once) => match behavior {
+            Act::Call(id, f, once, owner) => match behavior {
                 SignalBehavior::Immediate => {
                     if once || guard == Guard::None || is_connected(lua, id) {
-                        sched::spawn(lua, f, args.clone(), &label)?;
+                        match owner {
+                            Some(o) => sched::spawn_owned(lua, f, args.clone(), &label, o)?,
+                            None => sched::spawn(lua, f, args.clone(), &label)?,
+                        };
                     }
                 }
                 SignalBehavior::Deferred => {
@@ -316,7 +358,7 @@ pub fn fire_with(lua: &Lua, key: &SignalKey, args: MultiValue, guard: Guard) -> 
                     } else {
                         Some(Rc::new(move |lua: &Lua| is_connected(lua, id)))
                     };
-                    sched::defer(lua, f, args.clone(), &label, cond)?;
+                    sched::defer_owned(lua, f, args.clone(), &label, cond, owner)?;
                 }
             },
         }
@@ -383,7 +425,9 @@ fn wait(lua: &Lua, this: &SignalRef) -> Result<MultiValue> {
         hub(lua, |h| h.remove(id))?;
     }
     let (values, token) = sched::park(lua, &label, None)?;
-    hub(lua, |h| h.add(this.0.clone(), Target::Wait(token), true))?;
+    hub(lua, |h| {
+        h.add(this.0.clone(), Target::Wait(token), true, None)
+    })?;
     events::watch_connected(lua, &this.0)?;
     Ok(values)
 }

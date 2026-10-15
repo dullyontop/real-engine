@@ -436,6 +436,64 @@ mod physics_parts {
     }
 
     #[test]
+    fn a_part_outside_the_world_limits_is_reported_not_dropped_silently() {
+        let mut p = place();
+        p.run(
+            r#"
+            local a = Instance.new("Part")
+            a.Name = "Near"
+            a.Anchored = true
+            a.Parent = workspace
+            local b = Instance.new("Part")
+            b.Name = "Far"
+            b.Position = Vector3.new(12000, 100, 0)
+            b.Parent = workspace
+            "#,
+        );
+        let d = physics::step(&mut p.world, DT);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].code.to_string(), "RE5006");
+        // It stays where it is, and is not reported again until it changes.
+        assert!(physics::step(&mut p.world, DT).is_empty());
+        assert_eq!(p.num("workspace.Far.Position.Y"), 100.0);
+    }
+
+    #[test]
+    fn a_map_wider_than_the_limits_around_the_origin_still_simulates() {
+        let mut p = place();
+        let add = |i: usize, x: i32| {
+            format!(
+                "local floor = Instance.new('Part') floor.Name = 'Floor{i}' floor.Anchored = true floor.Size = Vector3.new(20, 1, 20) floor.Position = Vector3.new({x}, 0, 0) floor.Parent = workspace \
+                 local box = Instance.new('Part') box.Name = 'Box{i}' box.Size = Vector3.new(2, 2, 2) box.Position = Vector3.new({x}, 10, 0) box.Parent = workspace"
+            )
+        };
+        // One end of the map first, the other after the simulation started:
+        // the simulation's origin moves to hold both.
+        p.run(&add(1, -4800));
+        assert!(physics::step(&mut p.world, DT).is_empty());
+        p.run(&add(2, 5000));
+        for _ in 0..90 {
+            let d = physics::step(&mut p.world, DT);
+            assert!(d.is_empty(), "{d:?}");
+        }
+        for i in 1..=2 {
+            let y = p.num(&format!("workspace.Box{i}.Position.Y"));
+            assert!((y - 1.5).abs() < 0.05, "box {i} at {y}");
+        }
+        let hit = p.eval(
+            "workspace:Raycast(Vector3.new(5000, 50, 0), Vector3.new(0, -100, 0)).Instance.Name",
+        );
+        assert_eq!(hit, "Box2");
+        // A script moves a box to the far end: it lands there.
+        p.run("workspace.Box1.Position = Vector3.new(5000, 10, 5)");
+        for _ in 0..90 {
+            assert!(physics::step(&mut p.world, DT).is_empty());
+        }
+        let y = p.num("workspace.Box1.Position.Y");
+        assert!((y - 1.5).abs() < 0.05, "moved box at {y}");
+    }
+
+    #[test]
     fn hinge_motor_rope_and_movers_act() {
         let mut p = place();
         p.run(

@@ -198,13 +198,25 @@ pub(crate) fn create_compat(
         lines: Vec::new(),
     });
     scheduler::init(&lua, budget)?;
+    scheduler::enable_adoption(&lua)?;
     api::entity::init(&lua)?;
+    install_pcall(&lua, &globals)?;
     let mut task = api::Lib::new(
         &lua,
         "task",
         "Script threads: waiting, spawning and deferring.",
     )?;
     scheduler::task_lib(&lua, &mut task)?;
+    // M2 has no parallel Luau: every script runs serially already.
+    for name in ["synchronize", "desynchronize"] {
+        task.func(
+            &lua,
+            name,
+            "() -> ()",
+            "Does nothing: scripts always run serially (there is no parallel Luau).",
+            |_, ()| Ok(()),
+        )?;
+    }
     let (task, _) = task.finish(&lua)?;
     globals.raw_set("task", task)?;
     globals.raw_set("print", api::libs::output_fn(&lua, false)?)?;
@@ -217,6 +229,54 @@ pub(crate) fn create_compat(
     }
     crate::budget::install(&lua)?;
     Ok(lua)
+}
+
+/// The message of an error raised by Rust code, without mlua's wrapping (the
+/// callback chain and its traceback): what `pcall` gives scripts in compat
+/// contexts, where scripts treat error values as strings.
+pub fn error_message(e: &mlua::Error) -> String {
+    match e {
+        mlua::Error::RuntimeError(m) => m.clone(),
+        mlua::Error::CallbackError { cause, .. } => error_message(cause),
+        mlua::Error::WithContext { cause, .. } => error_message(cause),
+        other => other.to_string(),
+    }
+}
+
+/// Replaces `pcall` and `xpcall` with Luau wrappers (so they still yield)
+/// that turn an error raised by Rust, which reaches Luau as an error object,
+/// into its message string. Errors scripts raise with `error` are unchanged.
+fn install_pcall(lua: &Lua, globals: &Table) -> Result<()> {
+    let norm = lua.create_function(|lua, v: Value| match v {
+        Value::Error(e) => Ok(Value::String(lua.create_string(error_message(&e))?)),
+        other => Ok(other),
+    })?;
+    let (pcall, xpcall): (Function, Function) = lua
+        .load(
+            r#"
+            local pcall_, xpcall_, NORM = pcall, xpcall, ...
+            local function fix(ok, ...)
+                if ok then
+                    return ok, ...
+                end
+                return false, NORM((...))
+            end
+            local function pcall(f, ...)
+                return fix(pcall_(f, ...))
+            end
+            local function xpcall(f, handler, ...)
+                return xpcall_(f, function(e)
+                    return handler(NORM(e))
+                end, ...)
+            end
+            return pcall, xpcall
+            "#,
+        )
+        .set_name("=pcall")
+        .call(norm)?;
+    globals.raw_set("pcall", pcall)?;
+    globals.raw_set("xpcall", xpcall)?;
+    Ok(())
 }
 
 /// Writes a line to the context's output (as `print` does, or `warn` when

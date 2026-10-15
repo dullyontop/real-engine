@@ -60,8 +60,8 @@ const STORED_TYPES: &[&str] = &[
 /// [`install`] (through the `Vector3` global's constructor), the userdata
 /// and stored-value conversions, and enum items for enum properties.
 ///
-/// `Random.new()` without a seed is seeded with 0 until the runtime has a run
-/// seed to pass.
+/// A compat VM installs them with its run seed (`[compat] seed`) first; any
+/// other VM gets seed 0 for `Random.new()` without a seed.
 ///
 /// Known limit: an attribute holding a `NumberSequence`, `ColorSequence` or
 /// `EnumItem` reads back as a list or the item's name, because attribute
@@ -71,6 +71,11 @@ pub fn register(b: &mut crate::runtime::Bindings) {
         "Vector3",
         std::sync::Arc::new(|lua: &Lua, _env: &crate::runtime::GlobalEnv| {
             let globals = lua.globals();
+            // A VM made by `CompatVm` has them already, with its run seed.
+            let made = globals.raw_get::<Value>("Vector3")?;
+            if !made.is_nil() {
+                return Ok(made);
+            }
             install(lua, &globals, 0)?;
             globals.raw_get::<Value>("Vector3")
         }),

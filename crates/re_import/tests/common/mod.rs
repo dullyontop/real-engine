@@ -16,8 +16,8 @@ pub fn registry() -> ClassRegistry {
         "tests/fixtures/classes.json",
         ClassFile::parse("classes.json", TEST_CLASSES).unwrap(),
     );
-    for (prop, a) in re_compat::instance::accessors() {
-        b = b.accessor("Instance", prop, a);
+    for (class, prop, a) in re_compat::runtime::accessors() {
+        b = b.accessor(class, prop, a);
     }
     b.build().unwrap()
 }

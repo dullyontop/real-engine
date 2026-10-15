@@ -128,6 +128,7 @@ pub fn step(world: &mut World, dt: f32) -> Vec<Diagnostic> {
         }
         sim.write_back(w);
         sim.publish_cells(w);
+        out.append(&mut sim.refused);
         out.extend(sim.physics.take_diagnostics());
         out
     })

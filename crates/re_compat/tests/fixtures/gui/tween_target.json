@@ -1,0 +1,25 @@
+{
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "TweenTarget",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A test class with one property of each tweenable type.",
+      "properties": [
+        { "name": "N", "type": "number", "storage": { "kind": "own" }, "status": "implemented" },
+        { "name": "I", "type": "int", "storage": { "kind": "own" }, "status": "implemented" },
+        { "name": "V", "type": "Vector3", "storage": { "kind": "own" }, "status": "implemented" },
+        { "name": "C", "type": "Color3", "storage": { "kind": "own" }, "status": "implemented" },
+        { "name": "U", "type": "UDim2", "storage": { "kind": "own" }, "status": "implemented" },
+        { "name": "F", "type": "CFrame", "storage": { "kind": "own" }, "default": [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], "status": "implemented" },
+        { "name": "V2", "type": "Vector2", "storage": { "kind": "own" }, "status": "implemented" },
+        { "name": "B", "type": "bool", "storage": { "kind": "own" }, "status": "implemented" },
+        { "name": "M", "type": "Enum.Material", "storage": { "kind": "own" }, "default": "Plastic", "status": "implemented" },
+        { "name": "R", "type": "number", "storage": { "kind": "own" }, "read_only": true, "status": "implemented" }
+      ]
+    }
+  ]
+}

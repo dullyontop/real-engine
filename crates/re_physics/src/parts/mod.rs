@@ -356,6 +356,10 @@ pub(crate) struct PartsState {
     moved: BTreeSet<EntityId>,
     pub(crate) joints: joints::Joints,
     scratch: Vec<oxijolt::BodyPose>,
+    /// Where the simulation's origin lies in the world: positions go to Jolt
+    /// relative to it, so a map away from the world origin still fits Jolt's
+    /// limits.
+    origin: Vec3,
 }
 
 impl Default for PartsState {
@@ -372,6 +376,7 @@ impl Default for PartsState {
             moved: BTreeSet::new(),
             joints: joints::Joints::default(),
             scratch: Vec::new(),
+            origin: Vec3::ZERO,
         }
     }
 }
@@ -676,8 +681,8 @@ impl Physics {
             )
             .at(at(p.id)));
         }
-        if !crate::world::in_world(desc.pose.pos) {
-            return Err(crate::world::outside_world(key, "assembly", desc.pose.pos));
+        if !self.in_reach(desc.pose.pos) {
+            return Err(self.out_of_reach(key, desc.pose.pos));
         }
         let rot = unit_rotation(desc.pose.rot)
             .ok_or_else(|| invalid(key, "its rotation is zero or not finite"))?;
@@ -690,7 +695,7 @@ impl Physics {
             BodyKind::Kinematic => BodySettings::new_kinematic(),
         }
         .object_layer(object_layer(re_types::physics::Layer(0), moving))
-        .position(rv(desc.pose.pos))
+        .position(self.jolt_point(desc.pose.pos))
         .rotation(jq(rot))
         .linear_damping(0.0)
         .angular_damping(0.0)
@@ -927,6 +932,86 @@ impl Physics {
         Ok(())
     }
 
+    /// Where the simulation's origin lies in the world (the origin, unless
+    /// [`set_origin`](Self::set_origin) moved it).
+    pub fn origin(&self) -> Vec3 {
+        self.parts.origin
+    }
+
+    /// Moves the simulation's origin to world point `origin`, so that parts
+    /// within Jolt's limits of it ([`WORLD_LIMIT`](crate::WORLD_LIMIT) per
+    /// axis) can be simulated wherever the world puts them. Assemblies keep
+    /// their world poses and velocities. Fails with `RE5016` for a point that
+    /// is not finite, while the world has bodies or characters outside the
+    /// part assemblies, or when an assembly would end up outside the limits.
+    pub fn set_origin(&mut self, origin: Vec3) -> Result<(), Diagnostic> {
+        let refuse = |why: &str| {
+            Diagnostic::error(
+                codes::INVALID_ARGUMENT,
+                format!("the simulation origin cannot move to {origin}: {why}"),
+            )
+        };
+        if !origin.is_finite() {
+            return Err(refuse("it is not finite"));
+        }
+        if origin == self.parts.origin {
+            return Ok(());
+        }
+        if self.parts.assemblies.is_empty() {
+            self.parts.origin = origin;
+            return Ok(());
+        }
+        if !self.bodies.is_empty() || !self.characters.is_empty() {
+            return Err(refuse("the world has bodies besides part assemblies"));
+        }
+        let bodies: Vec<BodyId> = self.parts.assemblies.values().map(|a| a.body).collect();
+        for a in self.parts.assemblies.values() {
+            let p = self.assembly_pose_raw(a.body).pos + self.parts.origin;
+            if !crate::world::in_world(p - origin) {
+                return Err(refuse("an assembly would be outside the limits"));
+            }
+        }
+        self.world
+            .rebase(&bodies, jq(Quat::IDENTITY), rv(self.parts.origin - origin))
+            .map_err(|e| refuse(&e.to_string()))?;
+        self.parts.origin = origin;
+        Ok(())
+    }
+
+    /// The smallest box holding every assembly's origin, in the world.
+    pub fn assembly_extent(&self) -> Option<(Vec3, Vec3)> {
+        let mut out: Option<(Vec3, Vec3)> = None;
+        for a in self.parts.assemblies.values() {
+            let p = self.assembly_pose_raw(a.body).pos + self.parts.origin;
+            out = Some(out.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p))));
+        }
+        out
+    }
+
+    fn in_reach(&self, p: Vec3) -> bool {
+        crate::world::in_world(p - self.parts.origin)
+    }
+
+    fn out_of_reach(&self, key: EntityId, p: Vec3) -> Diagnostic {
+        let mut d = crate::world::outside_world(key, "assembly", p);
+        if self.parts.origin != Vec3::ZERO {
+            d.message = format!(
+                "{} of the simulation origin {}",
+                d.message, self.parts.origin
+            );
+        }
+        d
+    }
+
+    fn jolt_point(&self, p: Vec3) -> oxijolt::RVec3 {
+        rv(p - self.parts.origin)
+    }
+
+    fn world_point(&self, p: oxijolt::RVec3) -> Vec3 {
+        grv(p) + self.parts.origin
+    }
+
+    /// An assembly body's pose in Jolt's frame (relative to the origin).
     fn assembly_pose_raw(&self, body: BodyId) -> Pose {
         self.world
             .body(body)
@@ -971,7 +1056,7 @@ impl Physics {
     pub fn assembly(&self, key: EntityId) -> Option<AssemblyInfo> {
         let asm = self.parts.assemblies.get(&key)?;
         let b = self.world.body(asm.body).ok()?;
-        let pose = Pose::new(grv(b.position()), gq(b.rotation()));
+        let pose = Pose::new(self.world_point(b.position()), gq(b.rotation()));
         Some(AssemblyInfo {
             kind: asm.kind,
             pose,
@@ -1001,8 +1086,8 @@ impl Physics {
             .assemblies
             .get(&key)
             .ok_or_else(|| unknown_assembly(key))?;
-        if !crate::world::in_world(pose.pos) {
-            return Err(crate::world::outside_world(key, "assembly", pose.pos));
+        if !self.in_reach(pose.pos) {
+            return Err(self.out_of_reach(key, pose.pos));
         }
         let rot = unit_rotation(pose.rot)
             .ok_or_else(|| invalid(key, "its rotation is zero or not finite"))?;
@@ -1012,9 +1097,10 @@ impl Physics {
             Activation::Activate
         };
         let body = asm.body;
+        let at = self.jolt_point(pose.pos);
         self.world
             .body_mut(body)
-            .and_then(|mut b| b.set_position_and_rotation(rv(pose.pos), jq(rot), activation))
+            .and_then(|mut b| b.set_position_and_rotation(at, jq(rot), activation))
             .map_err(|e| invalid(key, e))?;
         self.refresh_assembly(key, Pose::new(pose.pos, rot));
         Ok(())
@@ -1077,10 +1163,11 @@ impl Physics {
         at_point: Option<Vec3>,
     ) -> Result<(), Diagnostic> {
         let body = self.dynamic_body(key, "impulse")?;
+        let origin = self.parts.origin;
         self.world
             .body_mut(body)
             .and_then(|mut b| match at_point {
-                Some(p) => b.add_impulse_at_point(jv(impulse), rv(p)),
+                Some(p) => b.add_impulse_at_point(jv(impulse), rv(p - origin)),
                 None => b.add_impulse(jv(impulse)),
             })
             .map_err(|e| invalid(key, e))
@@ -1108,11 +1195,12 @@ impl Physics {
         at_point: Option<Vec3>,
     ) -> Result<(), Diagnostic> {
         let body = self.dynamic_body(key, "force")?;
+        let origin = self.parts.origin;
         self.world
             .body_mut(body)
             .and_then(|mut b| {
                 match at_point {
-                    Some(p) => b.add_force_at_point(jv(force), rv(p))?,
+                    Some(p) => b.add_force_at_point(jv(force), rv(p - origin))?,
                     None => b.add_force(jv(force))?,
                 }
                 b.activate();
@@ -1154,11 +1242,15 @@ impl Physics {
             .at(at(key)));
         }
         let body = asm.body;
+        if !self.in_reach(pose.pos) {
+            return Err(self.out_of_reach(key, pose.pos));
+        }
+        let origin = self.parts.origin;
         let rot = unit_rotation(pose.rot)
             .ok_or_else(|| invalid(key, "its rotation is zero or not finite"))?;
         self.world
             .body_mut(body)
-            .and_then(|mut b| b.move_kinematic(rv(pose.pos), jq(rot), dt))
+            .and_then(|mut b| b.move_kinematic(rv(pose.pos - origin), jq(rot), dt))
             .map_err(|e| invalid(key, e))
     }
 
@@ -1211,19 +1303,21 @@ impl Physics {
         }
         let mut poses = std::mem::take(&mut self.parts.scratch);
         self.world.active_body_poses_into(&mut poses);
+        let origin = self.parts.origin;
         let mut moved: Vec<(EntityId, Pose)> = poses
             .iter()
             .filter_map(|p| {
                 self.parts
                     .body_key
                     .get(&p.id)
-                    .map(|k| (*k, Pose::new(grv(p.position), gq(p.rotation))))
+                    .map(|k| (*k, Pose::new(grv(p.position) + origin, gq(p.rotation))))
             })
             .collect();
         self.parts.scratch = poses;
         for body in slept {
             if let Some(k) = self.parts.body_key.get(body) {
-                moved.push((*k, self.assembly_pose_raw(*body)));
+                let raw = self.assembly_pose_raw(*body);
+                moved.push((*k, Pose::new(raw.pos + self.parts.origin, raw.rot)));
             }
         }
         for (key, pose) in moved {
@@ -1284,7 +1378,7 @@ impl Physics {
                     let point = manifold
                         .points
                         .first()
-                        .map_or(Vec3::ZERO, |p| grv(p.point_on1));
+                        .map_or(Vec3::ZERO, |p| grv(p.point_on1) + self.parts.origin);
                     self.parts.sub_pairs.insert(
                         key,
                         SubPair {

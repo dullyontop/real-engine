@@ -155,6 +155,10 @@ pub(crate) struct Scheduler {
     /// Park timeouts: (deadline, token).
     deadlines: BinaryHeap<Reverse<(WakeTime, u64)>>,
     settle: Option<SettleHook>,
+    /// Compat contexts: a coroutine made with `coroutine.create` or
+    /// `coroutine.wrap` may wait; it is then resumed by the scheduler, and its
+    /// resumer gets control back at once (as in Roblox).
+    adopt: bool,
 }
 
 /// A parked thread's slot. The slot exists from [`park`] until the thread is
@@ -224,6 +228,7 @@ impl Scheduler {
             next_token: 1,
             deadlines: BinaryHeap::new(),
             settle: None,
+            adopt: false,
         }
     }
 
@@ -691,6 +696,52 @@ pub(crate) fn init(lua: &Lua, budget: Duration) -> Result<()> {
     Ok(())
 }
 
+/// Lets coroutines made with `coroutine.create` or `coroutine.wrap` wait
+/// (compat contexts).
+pub(crate) fn enable_adoption(lua: &Lua) -> Result<()> {
+    sched(lua, |s| s.adopt = true)
+}
+
+/// For a wait from a coroutine the scheduler did not start: when adoption is
+/// on, puts `thread` to sleep for `seconds` as a scheduler thread and returns
+/// true (the caller then yields back to its resumer).
+fn adopt_sleep(lua: &Lua, thread: Thread, seconds: f64) -> Result<bool> {
+    sched(lua, |s| {
+        if !s.adopt {
+            return false;
+        }
+        let task = Task {
+            thread,
+            cond: None,
+            args: None,
+            slept_at: s.now,
+            label: "coroutine".into(),
+            owner: s.current_owner(),
+        };
+        s.sleep(task, seconds);
+        true
+    })
+}
+
+/// For a park from a coroutine the scheduler did not start: when adoption is
+/// on, files `thread` under `token` and returns true.
+fn adopt_park(lua: &Lua, thread: Thread, token: u64) -> Result<bool> {
+    let (adopt, now, owner) = sched(lua, |s| (s.adopt, s.now, s.current_owner()))?;
+    if !adopt {
+        return Ok(false);
+    }
+    let task = Task {
+        thread,
+        cond: None,
+        args: None,
+        slept_at: now,
+        label: "coroutine".into(),
+        owner,
+    };
+    park_task(lua, task, token)?;
+    Ok(true)
+}
+
 fn task_arg(v: Value, what: &str) -> Result<Function> {
     match v {
         Value::Function(f) => Ok(f),
@@ -722,16 +773,22 @@ pub(crate) fn task_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
             s.running.last().is_some_and(|(p, _)| *p == ptr(&t))
         })
     })?;
+    let adopt = lua.create_function(|lua, (t, secs): (Thread, Option<f64>)| {
+        adopt_sleep(lua, t, secs.unwrap_or(0.0))
+    })?;
     let wait: Function = lua
         .load(format!(
             r#"
-            local SENTINEL, IS_CURRENT = ...
+            local SENTINEL, IS_CURRENT, ADOPT = ...
             local yield, isyieldable, running = coroutine.yield, coroutine.isyieldable, coroutine.running
             return function(seconds)
                 if not isyieldable() then
                     error("[{yield_code}] task.wait can only be called from a script thread, not from a callback the engine calls directly", 2)
                 end
                 if not IS_CURRENT(running()) then
+                    if ADOPT(running(), seconds) then
+                        return yield()
+                    end
                     error("[{yield_code}] task.wait inside a coroutine made with coroutine.create or coroutine.wrap is not supported in M1; use task.spawn", 2)
                 end
                 return yield(SENTINEL, seconds or 0)
@@ -740,7 +797,7 @@ pub(crate) fn task_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
             yield_code = codes::YIELD
         ))
         .set_name("=task")
-        .call((sentinel, is_current))?;
+        .call((sentinel, is_current, adopt))?;
     lib.value(
         "wait",
         "(seconds: number?) -> number",
@@ -880,6 +937,26 @@ pub fn defer(
     Ok(thread)
 }
 
+/// [`defer`] with the thread owned by `owner` (a signal connection's script)
+/// instead of the code running now; `None` keeps the code running now.
+pub fn defer_owned(
+    lua: &Lua,
+    f: Function,
+    args: MultiValue,
+    label: &str,
+    cond: Option<DeferCondition>,
+    owner: Option<Owner>,
+) -> Result<Thread> {
+    let mut task = queued(lua, f, args, label)?;
+    task.cond = cond;
+    if owner.is_some() {
+        task.owner = owner;
+    }
+    let thread = task.thread.clone();
+    sched(lua, |s| s.deferred.push_back(task))?;
+    Ok(thread)
+}
+
 /// Parks the calling thread: called by a host function wrapped with
 /// [`yielding`], which returns the values this gives back. The wrapper then
 /// yields, and the thread waits until [`wake`] (or, with `timeout`, until that
@@ -982,6 +1059,35 @@ pub fn parked_labels(lua: &Lua) -> Result<Vec<String>> {
     })
 }
 
+/// Starts `f` as a new thread now, owned by `owner` (an entry script the
+/// caller starts); [`stop_owner`] stops what it started.
+pub fn spawn_owned(
+    lua: &Lua,
+    f: Function,
+    args: MultiValue,
+    label: &str,
+    owner: Owner,
+) -> Result<Thread> {
+    start_owned(lua, f, args, label.to_string(), Some(owner))
+}
+
+/// Stops every thread `owner` started (waiting, deferred or parked; a running
+/// one stops when it next yields). Returns how many went.
+pub fn stop_owner(lua: &Lua, owner: Owner) -> Result<usize> {
+    drop_owner(lua, owner)
+}
+
+/// The threads parked now, in park order: each park's label and the label of
+/// the thread that waits (the script that started it, for an entry script).
+pub fn parked_waits(lua: &Lua) -> Result<Vec<(String, String)>> {
+    sched(lua, |s| {
+        s.parked
+            .values()
+            .filter_map(|p| p.task.as_ref().map(|t| (p.label.clone(), t.label.clone())))
+            .collect()
+    })
+}
+
 /// Threads waiting in `task.wait` or `task.delay`.
 pub fn sleeping_count(lua: &Lua) -> Result<usize> {
     sched(lua, |s| s.sleeping())
@@ -1001,16 +1107,25 @@ pub fn yielding(lua: &Lua, name: &str, f: Function) -> Result<Function> {
     })?;
     let cancel =
         lua.create_function(|lua, token: f64| cancel_park(lua, YieldToken(token as u64)))?;
+    let adopt =
+        lua.create_function(|lua, (t, token): (Thread, f64)| adopt_park(lua, t, token as u64))?;
     lua.load(format!(
         r#"
-        local f, MARK, IS_CURRENT, CANCEL = ...
+        local f, MARK, IS_CURRENT, CANCEL, ADOPT = ...
         local yield, isyieldable, running, select = coroutine.yield, coroutine.isyieldable, coroutine.running, select
         local function finish(...)
             if (...) ~= MARK then
                 return ...
             end
             local token = select(2, ...)
-            if not isyieldable() or not IS_CURRENT(running()) then
+            if not isyieldable() then
+                CANCEL(token)
+                error({msg:?}, 3)
+            end
+            if not IS_CURRENT(running()) then
+                if ADOPT(running(), token) then
+                    return yield()
+                end
                 CANCEL(token)
                 error({msg:?}, 3)
             end
@@ -1026,7 +1141,22 @@ pub fn yielding(lua: &Lua, name: &str, f: Function) -> Result<Function> {
         )
     ))
     .set_name(format!("={name}"))
-    .call((f, marker, is_current, cancel))
+    .call((f, marker, is_current, cancel, adopt))
+}
+
+/// True while the scheduler still holds thread `t`: running (and not
+/// cancelled), waiting, deferred or parked. A thread a stopped script owned,
+/// or one cancelled with `task.cancel`, is no longer held.
+pub fn is_scheduled(lua: &Lua, t: &Thread) -> Result<bool> {
+    let p = ptr(t);
+    sched(lua, |s| {
+        (s.running.iter().any(|(r, _)| *r == p) && !s.cancelled.contains(&p))
+            || s.sleeping.values().any(|x| ptr(&x.thread) == p)
+            || s.deferred.iter().any(|x| ptr(&x.thread) == p)
+            || s.parked
+                .values()
+                .any(|x| x.task.as_ref().is_some_and(|x| ptr(&x.thread) == p))
+    })
 }
 
 /// The owner of the code running now (the entry script that started it).

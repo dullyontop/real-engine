@@ -67,7 +67,7 @@ pub use parts::{
     PartFilter, PartGeom, PartHit, PartMaterial, PartShape, PartView, Pose,
 };
 pub use query::QueryFilter;
-pub use world::{BodyMotion, MotionState, Physics, PhysicsSnapshot};
+pub use world::{BodyMotion, MotionState, Physics, PhysicsSnapshot, WORLD_LIMIT};
 
 use re_core::DiagInfo;
 

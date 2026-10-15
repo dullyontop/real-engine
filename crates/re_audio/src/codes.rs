@@ -21,3 +21,6 @@ pub const PLAYBACK_LIMIT: Code = Code::new("RE7403");
 
 /// A command has a volume that is negative or not finite.
 pub const INVALID_VOLUME: Code = Code::new("RE7404");
+
+/// A playback rate is not a finite number above zero.
+pub const INVALID_RATE: Code = Code::new("RE7405");

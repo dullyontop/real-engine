@@ -260,10 +260,13 @@ fn collision_layers(table: &LayerTable) -> CollisionLayers {
     layers
 }
 
+/// How far from the simulation origin, per axis, a body may be (Jolt's
+/// limit for single precision), in studs.
+#[allow(clippy::unnecessary_cast)]
+pub const WORLD_LIMIT: f32 = oxijolt::limits::MAX_POSITION as f32;
+
 fn max_position() -> f32 {
-    #[allow(clippy::unnecessary_cast)]
-    let max = oxijolt::limits::MAX_POSITION as f32;
-    max
+    WORLD_LIMIT
 }
 
 pub(crate) fn in_world(p: Vec3) -> bool {

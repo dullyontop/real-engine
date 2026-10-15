@@ -36,6 +36,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Mutex;
 
 use glam::{Affine3A, Quat, Vec3};
+use re_core::Diagnostic;
 use re_physics::{
     AssemblyDesc, GroupTable, HingeDrive, JointDesc, JointKind, PartDesc, PartEvent, PartMaterial,
     Physics, PhysicsConfig, Pose,
@@ -359,6 +360,9 @@ pub(crate) struct Sim {
     /// The parts each part touches now.
     pub(crate) touching: HashMap<Entity, BTreeSet<Entity>>,
     pub(crate) fallen: Vec<Entity>,
+    /// What the simulation refused since the last step (a part outside the
+    /// world limits, say): reported by `step`.
+    pub(crate) refused: Vec<Diagnostic>,
     /// Parts whose assembly must be rebuilt at the next sync.
     dirty: HashSet<Entity>,
     /// Parts a script moved since the last sync.
@@ -512,6 +516,7 @@ impl Sim {
             touches: Vec::new(),
             touching: HashMap::new(),
             fallen: Vec::new(),
+            refused: Vec::new(),
             dirty: HashSet::new(),
             moved: HashSet::new(),
             moved_asm: Vec::new(),
@@ -605,6 +610,50 @@ impl Sim {
     /// Looks at `list` (tree changes, or the whole workspace at the start):
     /// tracks what is now a simulated part, joint or constraint, and forgets
     /// what no longer is.
+    /// Before the first assembly: when the parts reach past what the
+    /// simulation holds around the world origin, its origin moves to the
+    /// middle of them, so a map centred away from the origin (or a little
+    /// wider than the limits allow) still simulates whole.
+    fn place_origin(&mut self, w: &World) {
+        // Room kept for parts that move outward from the map.
+        const MARGIN: f32 = 500.0;
+        let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        for e in self.parts.keys() {
+            if let Some(p) = world_pose(w, *e).filter(|p| p.pos.is_finite()) {
+                lo = lo.min(p.pos);
+                hi = hi.max(p.pos);
+            }
+        }
+        if !lo.is_finite() {
+            return;
+        }
+        let reach = re_physics::WORLD_LIMIT - MARGIN;
+        let fits_now = lo.min_element() >= -reach && hi.max_element() <= reach;
+        // A map wider than the limits stays where it is: its far parts are
+        // reported (RE5006) wherever the origin goes.
+        let too_wide = (hi - lo).max_element() > 2.0 * re_physics::WORLD_LIMIT;
+        if fits_now || too_wide {
+            return;
+        }
+        // On a coarse grid, so the origin is exact in f32 and easy to read.
+        let origin = ((lo + hi) * 0.5 / 64.0).round() * 64.0;
+        let _ = self.physics.set_origin(origin);
+    }
+
+    /// Moves the simulation origin to the middle of every assembly and `pos`,
+    /// when they all fit around one origin; whether it moved.
+    fn recentre(&mut self, pos: Vec3) -> bool {
+        let (lo, hi) = self
+            .physics
+            .assembly_extent()
+            .map_or((pos, pos), |(lo, hi)| (lo.min(pos), hi.max(pos)));
+        if (hi - lo).max_element() > 2.0 * (re_physics::WORLD_LIMIT - 64.0) {
+            return false;
+        }
+        let origin = ((lo + hi) * 0.5 / 64.0).round() * 64.0;
+        self.physics.set_origin(origin).is_ok()
+    }
+
     fn examine(&mut self, w: &World, list: &[Entity], initial: bool) {
         let mut statics = Vec::new();
         for &e in list {
@@ -662,6 +711,9 @@ impl Sim {
                     }
                 }
             }
+        }
+        if initial {
+            self.place_origin(w);
         }
         if !statics.is_empty() {
             // Anchored parts with a joint are assemblies, not cell members.
@@ -1037,7 +1089,17 @@ impl Sim {
             angular,
             parts: descs,
         };
-        if self.physics.add_assembly(key, &desc).is_err() {
+        let mut added = self.physics.add_assembly(key, &desc);
+        if added
+            .as_ref()
+            .is_err_and(|d| d.code == re_physics::codes::OUTSIDE_WORLD)
+            && self.recentre(root_pose.pos)
+        {
+            added = self.physics.add_assembly(key, &desc);
+        }
+        if let Err(d) = added {
+            // The parts stay where they are, unsimulated, until they change.
+            self.refused.push(d);
             return;
         }
         for &e in comp {
@@ -1217,9 +1279,10 @@ impl Sim {
             let Some(asm) = self.assemblies.get(&key) else {
                 continue;
             };
+            let (root, members) = (asm.root, asm.members.clone());
             // The root's new pose wins; otherwise the first moved member's.
-            let mover = if moved.binary_search(&asm.root).is_ok() {
-                asm.root
+            let mover = if moved.binary_search(&root).is_ok() {
+                root
             } else {
                 e
             };
@@ -1229,12 +1292,21 @@ impl Sim {
             let local = self.parts[&mover].local;
             let pose = now.mul(&local.inverse());
             let pose = Pose::new(pose.pos, pose.rot.normalize());
-            if self.physics.set_assembly_pose(key, pose).is_err() {
+            let mut placed = self.physics.set_assembly_pose(key, pose);
+            if placed
+                .as_ref()
+                .is_err_and(|d| d.code == re_physics::codes::OUTSIDE_WORLD)
+                && self.recentre(pose.pos)
+            {
+                placed = self.physics.set_assembly_pose(key, pose);
+            }
+            if placed.is_err() {
+                // Rebuilt at the next sync, which reports why it cannot be.
+                self.dirty.extend(members);
                 continue;
             }
             // The other members follow.
-            let follow: Vec<(Entity, Pose)> = asm
-                .members
+            let follow: Vec<(Entity, Pose)> = members
                 .iter()
                 .filter(|m| **m != mover)
                 .map(|m| (*m, pose.mul(&self.parts[m].local)))

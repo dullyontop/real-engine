@@ -19,7 +19,7 @@
       "name": "DataModel",
       "superclass": "ServiceProvider",
       "status": "partial",
-      "note": "Only the tree and services; game fields come with the runtime.",
+      "note": "The tree, services, the session fields and BindToClose; other members are missing.",
       "doc": "The root of a place, reached as the global `game`. In a scene it is the root entity with id \"game\"; services are its children."
     },
     {
@@ -53,13 +53,15 @@
     {
       "name": "LuaSourceContainer",
       "superclass": "Instance",
-      "status": "missing",
+      "status": "partial",
+      "note": "Its source is the file its ScriptRef names; there is no Source property.",
       "doc": "An instance that holds Luau source. The source itself lives in a file under scripts/, named by the entity's ScriptRef."
     },
     {
       "name": "BaseScript",
       "superclass": "LuaSourceContainer",
-      "status": "missing",
+      "status": "partial",
+      "note": "No Enabled or Disabled yet.",
       "doc": "A script that starts on its own when the place runs, in the context its class and run context choose.",
       "properties": [
         {
@@ -67,7 +69,7 @@
           "type": "Enum.RunContext",
           "storage": { "kind": "own" },
           "default": "Legacy",
-          "status": "missing",
+          "status": "implemented",
           "doc": "Where the script runs. Legacy follows the class and the script's place in the tree; Server and Client run it in that context wherever it is."
         }
       ]
@@ -76,21 +78,24 @@
       "name": "Script",
       "superclass": "BaseScript",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
+      "note": "Starts in the server context by the rules of docs/M2_PLAN.md WP11; no Enabled yet.",
       "doc": "A script that runs in the server context (or the client context when its run context is Client). Its ScriptRef has context \"server\" or \"client\"."
     },
     {
       "name": "LocalScript",
       "superclass": "Script",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
+      "note": "Starts in the client context by the rules of docs/M2_PLAN.md WP11; no Enabled yet.",
       "doc": "A script that runs in the client context for the local player. Its ScriptRef has context \"client\"."
     },
     {
       "name": "ModuleScript",
       "superclass": "LuaSourceContainer",
       "creatable": true,
-      "status": "missing",
+      "status": "partial",
+      "note": "Runs once per context through require.",
       "doc": "A module: it runs only when a script requires it, once per context, and its result is cached. Its ScriptRef has context \"module\"."
     }
   ]
