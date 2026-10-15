@@ -102,6 +102,26 @@ pub struct PhysicsFeed {
     pub(crate) dirty: Vec<Entity>,
     /// Parts a script moved (`CFrame`, `PivotTo`, ...).
     pub(crate) moved: Vec<Entity>,
+    /// Each script move since the last full sync, in order: the part, the
+    /// change tick before the move and the pose it moved from. A
+    /// `WeldConstraint` joined before a move holds the part where it was.
+    pub(crate) moves: Vec<(Entity, Tick, Pose)>,
+}
+
+/// Where part `p` was at change tick `at`: the pose a script moved it from
+/// after `at`, or where it is now.
+fn pose_when(w: &World, p: Entity, at: Option<Tick>) -> Option<Pose> {
+    if let (Some(at), Some(feed)) = (at, w.ecs.get_resource::<PhysicsFeed>()) {
+        let now = w.ecs.read_change_tick();
+        if let Some((_, _, before)) = feed
+            .moves
+            .iter()
+            .find(|(e, tick, _)| *e == p && !at.is_newer_than(*tick, now))
+        {
+            return Some(*before);
+        }
+    }
+    world_pose(w, p)
 }
 
 fn on_parented(ev: On<Insert<ChildOf>>, feed: Option<ResMut<PhysicsFeed>>) {
@@ -264,7 +284,7 @@ pub(crate) struct AsmRec {
 pub(crate) enum RigidKind {
     /// Weld, Motor6D, Snap, ...: `Part0 * C0 * Transform * C1⁻¹`.
     Joint,
-    /// WeldConstraint: the offset at build time.
+    /// WeldConstraint: the offset the parts had when it was joined.
     WeldConstraint,
 }
 
@@ -275,7 +295,8 @@ pub(crate) struct RigidRec {
     pub(crate) part0: Option<Entity>,
     pub(crate) part1: Option<Entity>,
     pub(crate) enabled: bool,
-    /// `C0 * Transform * C1⁻¹` (joints only).
+    /// `C0 * Transform * C1⁻¹` for a joint; for a `WeldConstraint`, Part1
+    /// in Part0's frame when it was joined.
     pub(crate) offset: Pose,
 }
 
@@ -648,8 +669,12 @@ impl Sim {
                 let _ = self.physics.set_gravity(Vec3::new(0.0, -g, 0.0));
             }
         }
-        // Writes after this sync carry a later tick than `this`.
+        // Writes after this sync carry a later tick than `this`; the welds
+        // joined before it are placed.
         if full {
+            if let Some(mut f) = w.ecs.get_resource_mut::<PhysicsFeed>() {
+                f.moves.clear();
+            }
             w.ecs.increment_change_tick();
         }
     }
@@ -820,12 +845,28 @@ impl Sim {
             }
             RigidKind::WeldConstraint => {
                 let j = &self.layout.weld_constraint;
+                let part0 = j.part0.and_then(|f| f.entity(w, e));
+                let part1 = j.part1.and_then(|f| f.entity(w, e));
+                // Where the parts were when the weld was last written: a
+                // script may have moved one since, before this sync.
+                let joined = self.ids.weld_constraint.and_then(|id| {
+                    w.ecs
+                        .get_entity(e)
+                        .ok()?
+                        .get_change_ticks_by_id(id)
+                        .map(|t| t.changed)
+                });
+                let at = |p: Option<Entity>| p.and_then(|p| pose_when(w, p, joined));
+                let offset = match (at(part0), at(part1)) {
+                    (Some(a), Some(b)) => a.inverse().mul(&b),
+                    _ => Pose::IDENTITY,
+                };
                 RigidRec {
                     kind,
-                    part0: j.part0.and_then(|f| f.entity(w, e)),
-                    part1: j.part1.and_then(|f| f.entity(w, e)),
+                    part0,
+                    part1,
                     enabled: j.enabled.is_none_or(|f| f.bool(w, e, true)),
-                    offset: Pose::IDENTITY,
+                    offset,
                 }
             }
         }
@@ -834,6 +875,13 @@ impl Sim {
     fn set_rigid(&mut self, e: Entity, rec: RigidRec) {
         match self.rigid.get(&e) {
             Some(old) if *old == rec => {}
+            // A weld keeps the offset it was joined at.
+            Some(old)
+                if rec.kind == RigidKind::WeldConstraint
+                    && old.kind == rec.kind
+                    && old.part0 == rec.part0
+                    && old.part1 == rec.part1
+                    && old.enabled == rec.enabled => {}
             Some(old)
                 if old.kind == rec.kind
                     && old.part0 == rec.part0
@@ -1027,7 +1075,7 @@ impl Sim {
                 .map(|i| i.pose)
                 .or_else(|| world_pose(w, asm.root))
                 .unwrap_or(Pose::IDENTITY);
-            let placed = self.place_from(w, asm.root, root_pose, &adj);
+            let placed = self.place_from(asm.root, root_pose, &adj);
             if asm.members.iter().any(|m| !placed.contains_key(m)) {
                 // The joints no longer reach every member.
                 self.dirty.extend(asm.members.iter().copied());
@@ -1060,7 +1108,6 @@ impl Sim {
     /// rigid joints.
     fn place_from(
         &self,
-        w: &World,
         root: Entity,
         root_pose: Pose,
         adj: &HashMap<Entity, Vec<(Entity, Entity)>>,
@@ -1078,22 +1125,10 @@ impl Sim {
                     continue;
                 }
                 let r = &self.rigid[&j];
-                let pn = match r.kind {
-                    RigidKind::Joint => {
-                        if r.part0 == Some(e) {
-                            pe.mul(&r.offset)
-                        } else {
-                            pe.mul(&r.offset.inverse())
-                        }
-                    }
-                    RigidKind::WeldConstraint => {
-                        // Keep the offset the two parts have now.
-                        let (we, wn) = (
-                            world_pose(w, e).unwrap_or(pe),
-                            world_pose(w, n).unwrap_or(Pose::IDENTITY),
-                        );
-                        pe.mul(&we.inverse().mul(&wn))
-                    }
+                let pn = if r.part0 == Some(e) {
+                    pe.mul(&r.offset)
+                } else {
+                    pe.mul(&r.offset.inverse())
                 };
                 placed.insert(n, pn);
                 queue.push(n);
@@ -1228,7 +1263,7 @@ impl Sim {
         let root = self.choose_root(comp);
         let root_pose = world_pose(w, root).unwrap_or(Pose::IDENTITY);
         // Place every part from the root through the joints.
-        let placed = self.place_from(w, root, root_pose, adj);
+        let placed = self.place_from(root, root_pose, adj);
         let anchored = comp.iter().any(|e| self.parts[e].snap.anchored);
         let kind = if anchored {
             BodyKind::Static

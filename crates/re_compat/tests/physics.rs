@@ -370,6 +370,87 @@ mod physics_parts {
     }
 
     #[test]
+    fn a_weld_holds_the_offset_its_parts_had_when_it_was_joined() {
+        let mut p = place();
+        p.run(
+            r#"
+            local function gun(name, x)
+                local m = Instance.new("Model")
+                m.Name = name
+                local body = Instance.new("Part")
+                body.Name = "Body"
+                body.Anchored = true
+                body.Size = Vector3.new(0.2, 0.2, 0.2)
+                body.Parent = m
+                for i = 1, 3 do
+                    local q = Instance.new("Part")
+                    q.Name = "Bit" .. i
+                    q.Size = Vector3.new(0.2, 0.2, 0.5)
+                    q.CFrame = body.CFrame * CFrame.new(0, 0, -i)
+                    q.Parent = m
+                    local weld = Instance.new("WeldConstraint")
+                    weld.Part0 = body
+                    weld.Part1 = q
+                    weld.Parent = q
+                end
+                m.Parent = workspace
+                return m
+            end
+            -- Joined at the origin, then moved far away in the same frame:
+            -- the welded parts go with it.
+            local a = gun("A")
+            a.Body.CFrame = CFrame.new(3000, 50, 2000)
+            -- Moved first, then joined there.
+            local m = Instance.new("Model")
+            m.Name = "B"
+            local body = Instance.new("Part")
+            body.Name = "Body"
+            body.Anchored = true
+            body.CFrame = CFrame.new(-1000, 50, 800)
+            body.Parent = m
+            local q = Instance.new("Part")
+            q.Name = "Bit1"
+            q.CFrame = body.CFrame * CFrame.new(0, 0, -1)
+            q.Parent = m
+            local weld = Instance.new("WeldConstraint")
+            weld.Part0 = body
+            weld.Part1 = q
+            weld.Parent = q
+            m.Parent = workspace
+            "#,
+        );
+        p.frame();
+        assert!((p.num("workspace.A.Bit3.Position.X") - 3000.0).abs() < 1e-3);
+        assert!((p.num("workspace.A.Bit3.Position.Z") - 1997.0).abs() < 1e-3);
+        assert!((p.num("workspace.B.Bit1.Position.Z") - 799.0).abs() < 1e-3);
+        // The body moves every frame while the assembly is rebuilt (a part
+        // joins it): the offsets stay.
+        for i in 1..=5 {
+            p.run(&format!(
+                r#"
+                workspace.A.Body.CFrame = CFrame.new({x}, 50, 2000)
+                local extra = Instance.new("Part")
+                extra.CFrame = workspace.A.Body.CFrame * CFrame.new(0, 1, 0)
+                extra.Parent = workspace.A
+                local weld = Instance.new("WeldConstraint")
+                weld.Part0 = workspace.A.Body
+                weld.Part1 = extra
+                weld.Parent = extra
+                "#,
+                x = 3000 - i * 100
+            ));
+            p.frame();
+        }
+        assert!((p.num("workspace.A.Bit3.Position.X") - 2500.0).abs() < 1e-3);
+        assert!((p.num("workspace.A.Bit3.Position.Z") - 1997.0).abs() < 1e-3);
+        assert_eq!(p.eval("#workspace.A:GetChildren()"), "9");
+        assert_eq!(
+            p.eval("workspace.A.Bit3:GetRootPart() == workspace.A.Body"),
+            "true"
+        );
+    }
+
+    #[test]
     fn welded_parts_move_as_one_and_split_when_the_weld_goes() {
         let mut p = place();
         p.run(

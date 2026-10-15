@@ -1477,7 +1477,7 @@
       "superclass": "Instance",
       "creatable": true,
       "status": "implemented",
-      "doc": "Holds two parts at the offset they had when it was joined, or when either part was last moved by a script.",
+      "doc": "Holds two parts at the offset they had when it was joined (Part0, Part1 or Enabled last written). Moving either part with a script moves the whole assembly.",
       "properties": [
         {
           "name": "Part0",
