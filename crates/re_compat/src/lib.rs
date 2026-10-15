@@ -18,17 +18,25 @@
 //! The behaviour lives in the runtime ([`runtime`]): [`runtime::CompatVm`] is
 //! one `server` or `client` script context bound to one world, with the
 //! instance handles ([`instance`]), signals ([`signal`]) and services
-//! ([`services`]) that scripts reach through `game`. Each area registers its
+//! ([`services`]) that scripts reach through `game`. [`net`] runs a server and
+//! a client world side by side ([`CompatWorlds`]), with replication and the
+//! remotes, and [`players`] adds the simulated players and their characters. Each area registers its
 //! accessors, methods, globals and value conversions in
 //! [`runtime::Bindings`].
 
+pub mod anim;
 pub mod class;
 pub mod codes;
 pub mod data;
 pub mod datatypes;
 pub mod enums;
 pub mod error;
+pub mod gui;
+pub mod humanoid;
+pub mod input;
 pub mod instance;
+pub mod net;
+pub mod players;
 pub mod runtime;
 pub mod scene;
 pub mod services;
@@ -45,6 +53,7 @@ pub use class::{
 pub use data::{COVERAGE_JSON, CoverageFile, DataSet, Status};
 pub use enums::EnumItem;
 pub use error::CompatError;
+pub use net::{CompatWorlds, ReplicationReport, ReplicationSet};
 pub use runtime::{Bindings, CompatSetup, CompatVm, ValueCodec};
 pub use scene::{CompatApi, CompatConfig, GAME_ID, ROOT_CLASS, ServiceTag, script_context};
 pub use signal::SignalBehavior;
@@ -84,6 +93,26 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE9008.md"),
     },
     DiagInfo {
+        code: codes::INVALID_RIG,
+        title: "Character rig could not be built",
+        page: include_str!("../explain/RE9200.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_ANIMATION,
+        title: "Unknown animation id",
+        page: include_str!("../explain/RE9201.md"),
+    },
+    DiagInfo {
+        code: codes::BAD_ANIMATION_MAP,
+        title: "Bad animation substitute table",
+        page: include_str!("../explain/RE9202.md"),
+    },
+    DiagInfo {
+        code: codes::OFFLINE_DEFAULT,
+        title: "Offline default returned",
+        page: include_str!("../explain/RE9203.md"),
+    },
+    DiagInfo {
         code: codes::UNKNOWN_ASSET,
         title: "Asset id not in the substitute table",
         page: include_str!("../explain/RE9350.md"),
@@ -102,6 +131,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::DEPRECATED_MEMBER,
         title: "Deprecated member used",
         page: include_str!("../explain/RE9101.md"),
+    },
+    DiagInfo {
+        code: codes::REMOTE_VALUE,
+        title: "Value cannot be sent",
+        page: include_str!("../explain/RE9300.md"),
+    },
+    DiagInfo {
+        code: codes::REMOTE_CALL,
+        title: "Remote call failed",
+        page: include_str!("../explain/RE9301.md"),
+    },
+    DiagInfo {
+        code: codes::PLAYER_STEP,
+        title: "Player step refused",
+        page: include_str!("../explain/RE9302.md"),
     },
 ];
 

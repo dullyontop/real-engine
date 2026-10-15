@@ -526,6 +526,8 @@ fn event_def(e: &EventDoc) -> EventDef {
 ///   `Color3` (color);
 /// * `Instance` or `Instance<Class>` (entity), where `allow_entity`;
 /// * `Enum.<Name>` (an enum of the item names of a declared enum type);
+/// * `NumberSequence` and `ColorSequence` (a list of their keypoint
+///   records);
 /// * a record type declared by a library's `record` (or otherwise registered);
 /// * a reflection type name (`f32`, `quat`, ...), for record fields that need
 ///   one.
@@ -543,6 +545,15 @@ pub(crate) fn field_type(
         "int" => FieldType::I64,
         "Vector3" => FieldType::Vec3,
         "Color3" => FieldType::Color,
+        "NumberSequence" | "ColorSequence" => {
+            let keypoint = format!("{ty}Keypoint");
+            let Some(id) = RecordId::by_name(&keypoint) else {
+                return Err(bad(format!(
+                    "{what}: type {ty} needs the {keypoint} record, which no library declares"
+                )));
+            };
+            FieldType::List(Box::new(FieldType::Record(id)))
+        }
         _ if entity && allow_entity => FieldType::Entity,
         _ => {
             if let Some(name) = ty.strip_prefix("Enum.") {
@@ -640,8 +651,11 @@ impl ClassRegistry {
                             c.name, p.name
                         )));
                     }
+                    // A callback's function lives in the VM, not the world
+                    // (`crate::instance::callback`); it needs no accessor.
                     Storage::Builtin
                         if matches!(p.status, Status::Implemented | Status::Partial)
+                            && p.ty != crate::instance::CALLBACK_TYPE
                             && !self
                                 .accessors
                                 .contains_key(&(c.name.clone(), p.name.clone())) =>

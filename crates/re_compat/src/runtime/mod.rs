@@ -97,9 +97,16 @@ impl Bindings {
         crate::datatypes::register(&mut b);
         crate::tween::register(&mut b);
         crate::sound::register(&mut b);
+        crate::gui::register(&mut b);
         scripts::register(&mut b);
         session::register(&mut b);
         globals::register(&mut b);
+        crate::input::register(&mut b);
+        crate::anim::register(&mut b);
+        crate::humanoid::register(&mut b);
+        crate::net::register(&mut b);
+        crate::players::register(&mut b);
+        crate::services::extra::register(&mut b);
         Ok(b)
     }
 
@@ -249,10 +256,15 @@ pub(crate) struct UnsupportedHits(pub(crate) BTreeMap<String, u32>);
 /// Counts a use of a member the layer does not have and returns its `RE9001`
 /// error.
 pub(crate) fn unsupported(lua: &Lua, key: String, message: impl std::fmt::Display) -> mlua::Error {
+    count_unsupported(lua, key);
+    lua_error(re_script::codes::UNSUPPORTED_MEMBER, message)
+}
+
+/// Counts one hit of `key` in [`UnsupportedHits`].
+pub(crate) fn count_unsupported(lua: &Lua, key: String) {
     if let Some(mut h) = lua.app_data_mut::<UnsupportedHits>() {
         *h.0.entry(key).or_default() += 1;
     }
-    lua_error(re_script::codes::UNSUPPORTED_MEMBER, message)
 }
 
 /// A [`CompatError`] as a Luau error carrying its code.
@@ -304,6 +316,7 @@ pub fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
             .into_iter()
             .map(|(p, a)| ("DataModel", p, a)),
     );
+    out.extend(crate::gui::accessors());
     out
 }
 
@@ -505,19 +518,32 @@ impl CompatVm {
     }
 
     /// One headless frame of one fixed step of `dt` seconds: [`pre_render`],
-    /// then [`pre_animation`], [`pre_simulation`] and [`post_simulation`]
-    /// (there is no physics between them here).
+    /// then [`pre_animation`], [`pre_simulation`], [`media`] and
+    /// [`post_simulation`] (there is no physics between them here).
     ///
     /// [`pre_render`]: CompatVm::pre_render
     /// [`pre_animation`]: CompatVm::pre_animation
     /// [`pre_simulation`]: CompatVm::pre_simulation
+    /// [`media`]: CompatVm::media
     /// [`post_simulation`]: CompatVm::post_simulation
     pub fn frame(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
         let mut out = self.pre_render(host, dt);
         out.extend(self.pre_animation(host, dt));
         out.extend(self.pre_simulation(host, dt));
+        out.extend(self.media(host, dt));
         out.extend(self.post_simulation(host, dt));
         out
+    }
+
+    /// Advances the tweens ([`crate::tween::step`]), then the sounds
+    /// ([`crate::sound::step`]), by `dt` seconds; a host runs it after the
+    /// simulation, before [`post_simulation`](Self::post_simulation), so
+    /// `Heartbeat` sees the new values.
+    pub fn media(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+        self.run(host, |lua| {
+            crate::tween::step(lua, dt)?;
+            crate::sound::step(lua, dt)
+        })
     }
 
     /// Shutdown: runs every `game:BindToClose` callback, then runs frames
@@ -552,7 +578,8 @@ impl CompatVm {
 
     /// How often scripts reached each member the layer does not have (an
     /// `RE9001` raised), by `Class.Member`, `GetService(Name)` or
-    /// `Instance.new(Class)`; caught errors count too.
+    /// `Instance.new(Class)`, and each online-only method they called (an
+    /// `RE9002` raised), by `Class.Member (RE9002)`; caught errors count too.
     pub fn unsupported(&self) -> BTreeMap<String, u32> {
         self.ctx
             .lua()

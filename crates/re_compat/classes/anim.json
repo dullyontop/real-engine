@@ -1,0 +1,523 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "Animator",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Plays animation tracks on the joints of the model it sits in (under a Humanoid or an AnimationController). Each step it blends the playing tracks by priority and weight and writes the result to the Motor6D joints' Transform. A script that writes a joint's Transform in the same frame wins over the Animator.",
+      "methods": [
+        {
+          "name": "LoadAnimation",
+          "params": [
+            {
+              "name": "animation",
+              "type": "Animation"
+            }
+          ],
+          "returns": [
+            "AnimationTrack"
+          ],
+          "status": "implemented",
+          "doc": "Makes a track that plays the animation on this Animator's rig. The animation's id is resolved through the project's substitute table and the built-in clips; an unknown id gives an empty track and an RE9201 warning."
+        },
+        {
+          "name": "GetPlayingAnimationTracks",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The tracks playing now, in the order they started."
+        },
+        {
+          "name": "StepAnimations",
+          "params": [
+            {
+              "name": "deltaTime",
+              "type": "number"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Advances every track by deltaTime seconds now and writes the joints, outside the normal step."
+        }
+      ],
+      "events": [
+        {
+          "name": "AnimationPlayed",
+          "params": [
+            {
+              "name": "animationTrack",
+              "type": "AnimationTrack"
+            }
+          ],
+          "status": "implemented",
+          "doc": "A track of this Animator started playing."
+        }
+      ]
+    },
+    {
+      "name": "Animation",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Names an animation by its asset id, for Animator:LoadAnimation.",
+      "properties": [
+        {
+          "name": "AnimationId",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "implemented",
+          "doc": "The animation's asset id (rbxassetid://..., or a substitute key from real.toml)."
+        }
+      ]
+    },
+    {
+      "name": "AnimationTrack",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "One animation loaded on an Animator: it plays, fades, loops and reports keyframes and markers.",
+      "properties": [
+        {
+          "name": "Animation",
+          "type": "Instance<Animation>",
+          "storage": {
+            "kind": "own"
+          },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The Animation it was loaded from."
+        },
+        {
+          "name": "IsPlaying",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True from Play until Stop or the end of a non-looped animation."
+        },
+        {
+          "name": "Length",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The animation's length in seconds (0 for an empty clip)."
+        },
+        {
+          "name": "Looped",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "Whether it starts over at the end. Defaults to the clip's own setting."
+        },
+        {
+          "name": "Priority",
+          "type": "Enum.AnimationPriority",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Core",
+          "status": "implemented",
+          "doc": "Its blending priority: a track of higher priority overrides lower ones on the joints it animates."
+        },
+        {
+          "name": "Speed",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The playback speed (1 is normal). Change it with AdjustSpeed."
+        },
+        {
+          "name": "TimePosition",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "status": "implemented",
+          "doc": "Where in the animation it is, in seconds."
+        },
+        {
+          "name": "WeightCurrent",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "Its blend weight now, while fading in or out."
+        },
+        {
+          "name": "WeightTarget",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The weight it is fading to."
+        }
+      ],
+      "methods": [
+        {
+          "name": "Play",
+          "params": [
+            {
+              "name": "fadeTime",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "weight",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "speed",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "status": "implemented",
+          "doc": "Starts playing, fading in over fadeTime seconds (0.1 by default) to weight (1) at speed (1)."
+        },
+        {
+          "name": "Stop",
+          "params": [
+            {
+              "name": "fadeTime",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fades out over fadeTime seconds (0.1 by default), then stops."
+        },
+        {
+          "name": "AdjustSpeed",
+          "params": [
+            {
+              "name": "speed",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "status": "implemented",
+          "doc": "Changes the playback speed (1 by default); 0 holds the pose and a negative speed plays backward."
+        },
+        {
+          "name": "AdjustWeight",
+          "params": [
+            {
+              "name": "weight",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "fadeTime",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fades the blend weight to weight over fadeTime seconds."
+        },
+        {
+          "name": "GetMarkerReachedSignal",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "RBXScriptSignal"
+          ],
+          "status": "implemented",
+          "doc": "A signal that fires with the marker's value each time playback passes a marker with this name."
+        },
+        {
+          "name": "GetTimeOfKeyframe",
+          "params": [
+            {
+              "name": "keyframeName",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "The time of the first keyframe with this name. A name the clip lacks is an error."
+        }
+      ],
+      "events": [
+        {
+          "name": "KeyframeReached",
+          "params": [
+            {
+              "name": "keyframeName",
+              "type": "string"
+            }
+          ],
+          "deprecated": "GetMarkerReachedSignal",
+          "status": "implemented",
+          "doc": "Playback passed a named keyframe."
+        },
+        {
+          "name": "Stopped",
+          "status": "implemented",
+          "doc": "The track stopped and faded out."
+        },
+        {
+          "name": "Ended",
+          "status": "implemented",
+          "doc": "A non-looped track reached its end."
+        },
+        {
+          "name": "DidLoop",
+          "status": "implemented",
+          "doc": "A looped track started over."
+        }
+      ]
+    },
+    {
+      "name": "AnimationController",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Holds an Animator for a model that has no Humanoid."
+    },
+    {
+      "name": "KeyframeSequence",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "An animation made of keyframes, built in the place. A substitute table entry can point an animation id at one.",
+      "properties": [
+        {
+          "name": "Loop",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the animation loops by default."
+        },
+        {
+          "name": "Priority",
+          "type": "Enum.AnimationPriority",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Action",
+          "status": "implemented",
+          "doc": "The default priority of tracks made from it."
+        }
+      ]
+    },
+    {
+      "name": "Keyframe",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "One moment of a KeyframeSequence: the poses of the joints at that time.",
+      "properties": [
+        {
+          "name": "Time",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.0,
+          "status": "implemented",
+          "doc": "When the keyframe happens, in seconds from the start."
+        }
+      ]
+    },
+    {
+      "name": "Pose",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "The pose of one joint in a keyframe, named after the joint's Part1. Poses nest as the parts do.",
+      "properties": [
+        {
+          "name": "CFrame",
+          "type": "CFrame",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The joint's Transform at this keyframe."
+        },
+        {
+          "name": "Weight",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "implemented",
+          "doc": "How strongly the pose applies, from 0 to 1."
+        },
+        {
+          "name": "EasingStyle",
+          "type": "Enum.PoseEasingStyle",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Linear",
+          "status": "implemented",
+          "doc": "How the joint moves from this keyframe to the next."
+        },
+        {
+          "name": "EasingDirection",
+          "type": "Enum.PoseEasingDirection",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "In",
+          "status": "implemented",
+          "doc": "Which end of the move the easing shapes."
+        }
+      ]
+    },
+    {
+      "name": "KeyframeMarker",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A named marker on a keyframe; tracks fire their marker signal with its value.",
+      "properties": [
+        {
+          "name": "Value",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "implemented",
+          "doc": "The text passed to the marker signal."
+        }
+      ]
+    },
+    {
+      "name": "IKControl",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "A two-bone solve for Position and Transform, and a look-at turn for LookAt and Rotation; no joint limits, pole weight or smoothing.",
+      "doc": "Bends a chain of joints so its end reaches a target. Sits under the Humanoid or AnimationController of a rig.",
+      "properties": [
+        {
+          "name": "Type",
+          "type": "Enum.IKControlType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Transform",
+          "status": "implemented",
+          "doc": "What to match: the target's position, rotation, both, or a look direction."
+        },
+        {
+          "name": "ChainRoot",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The first part of the chain (an upper arm)."
+        },
+        {
+          "name": "EndEffector",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The part or attachment that should reach the target (a hand)."
+        },
+        {
+          "name": "Target",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The part or attachment to reach."
+        },
+        {
+          "name": "Pole",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "A part or attachment the chain bends toward."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether it applies."
+        },
+        {
+          "name": "Weight",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "implemented",
+          "doc": "How strongly it applies, from 0 to 1."
+        },
+        {
+          "name": "Offset",
+          "type": "CFrame",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "An offset applied to the target."
+        },
+        {
+          "name": "Priority",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Order among IKControls of one rig: higher runs later."
+        }
+      ]
+    }
+  ]
+}

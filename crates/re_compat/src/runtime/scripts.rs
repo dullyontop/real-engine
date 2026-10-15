@@ -15,9 +15,13 @@
 //!   templates (`StarterPlayer`, `StarterGui`, `StarterPack`);
 //! * nothing starts outside `game`.
 //!
-//! Until players exist (WP12), [`StartOptions::templates_as_player`] starts
-//! the client scripts of the templates (`StarterPlayerScripts`, `StarterGui`)
-//! in place, as if they had been copied to a player.
+//! A one-world run (no players) can set [`StartOptions::templates_as_player`]
+//! to start the client scripts of the templates (`StarterPlayerScripts`,
+//! `StarterGui`) in place, as if they had been copied to a player. In a
+//! two-world run (`re_compat::net`) players get real copies, and the scripts
+//! that become startable later (copied to a player or a character, cloned
+//! into `Workspace`) start at the next pump ([`unstarted`]). A script starts
+//! at most once.
 //!
 //! `require(module)` runs a `ModuleScript` once per context and caches its
 //! result. The module runs in the requiring thread, so it may yield. A module
@@ -106,12 +110,37 @@ pub fn start_side(
     } else if side == ContextKind::Server {
         under(w, e, &["Workspace", "ServerScriptService"])
     } else {
-        under(w, e, &["PlayerScripts", "PlayerGui", "Backpack"])
+        (under(w, e, &["PlayerScripts", "PlayerGui", "Backpack"]) || in_character(w, e))
+            && mine(w, e)
             || (opts.templates_as_player
                 && under(w, e, &["StarterPlayerScripts", "StarterGui"])
                 && !under(w, e, &["StarterCharacterScripts"]))
     };
     starts.then_some(side)
+}
+
+/// True if an ancestor of `e` is a player's character.
+fn in_character(w: &World, e: Entity) -> bool {
+    tree::ancestors(w, e)
+        .into_iter()
+        .any(|a| crate::players::player_of_character(w, a).is_some())
+}
+
+/// False if `e` belongs to a player (under the `Player` or its character)
+/// other than the local player: a client runs only its own player's
+/// `LocalScript`s.
+fn mine(w: &World, e: Entity) -> bool {
+    let owner = tree::ancestors(w, e).into_iter().find_map(|a| {
+        if tree::class(w, a) == Some("Player") {
+            Some(a)
+        } else {
+            crate::players::player_of_character(w, a)
+        }
+    });
+    match owner {
+        Some(p) => crate::players::local_player_in(w) == Some(p),
+        None => true,
+    }
 }
 
 /// The scripts under `game` that start in context `kind`, in tree order.
@@ -167,8 +196,43 @@ pub fn owner_of(e: Entity) -> sched::Owner {
     e.to_bits()
 }
 
+/// The script instances started in this context.
+#[derive(Default)]
+struct Started(std::collections::HashSet<Entity>);
+
+/// The scripts that start in this context now and have not started yet, in
+/// tree order (default [`StartOptions`]). A script with no source (one a
+/// script made with `Instance.new`) has nothing to run and is left out.
+pub(crate) fn unstarted(lua: &Lua) -> Result<Vec<Entity>> {
+    let st = state(lua)?;
+    let (kind, game, classes) = (st.kind, st.game, st.setup.classes.clone());
+    drop(st);
+    let list = with_world(lua, |w| {
+        let mut list: Vec<Entity> = startable(w, &classes, game, kind, StartOptions::default())
+            .into_iter()
+            .filter(|e| {
+                w.ecs
+                    .get::<ScriptRef>(*e)
+                    .is_some_and(|r| !r.path.is_empty())
+            })
+            .collect();
+        // A player's own scripts (PlayerScripts, PlayerGui, Backpack) start
+        // before the ones in its character, as when it joins.
+        list.sort_by_key(|e| !under(w, *e, &["Players"]));
+        list
+    })?;
+    let started = lua.app_data_ref::<Started>();
+    Ok(list
+        .into_iter()
+        .filter(|e| !started.as_ref().is_some_and(|s| s.0.contains(e)))
+        .collect())
+}
+
 /// Starts script instance `e` now in a thread it owns.
 pub(crate) fn start(lua: &Lua, e: Entity) -> Result<()> {
+    if let Some(mut s) = lua.app_data_mut::<Started>() {
+        s.0.insert(e);
+    }
     let (name, f) = compile(lua, e)?;
     sched::spawn_owned(lua, f, MultiValue::new(), &name, owner_of(e))?;
     Ok(())
@@ -176,6 +240,9 @@ pub(crate) fn start(lua: &Lua, e: Entity) -> Result<()> {
 
 /// Stops what script instance `e` started (when it is destroyed).
 pub(crate) fn stop(lua: &Lua, e: Entity) -> Result<()> {
+    if let Some(mut s) = lua.app_data_mut::<Started>() {
+        s.0.remove(&e);
+    }
     let owner = owner_of(e);
     crate::signal::disconnect_owner(lua, owner)?;
     crate::services::core::run_service::drop_owner(lua, owner)?;
@@ -206,6 +273,7 @@ struct Modules {
 
 pub(crate) fn install(lua: &Lua) -> Result<()> {
     lua.set_app_data(Modules::default());
+    lua.set_app_data(Started::default());
     Ok(())
 }
 

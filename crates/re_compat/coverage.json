@@ -2,14 +2,199 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1007,
-    "partial": 18,
-    "stub-error": 2,
+    "implemented": 1474,
+    "partial": 104,
+    "stub-error": 52,
     "missing": 3
   },
   "classes": [
     {
+      "name": "Animation",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AnimationId",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "AnimationController",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "AnimationTrack",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AdjustSpeed",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "AdjustWeight",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Animation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DidLoop",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Ended",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMarkerReachedSignal",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetTimeOfKeyframe",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsPlaying",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "KeyframeReached",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Length",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Looped",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Play",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Priority",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Speed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Stop",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Stopped",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "TimePosition",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WeightCurrent",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WeightTarget",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Animator",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AnimationPlayed",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPlayingAnimationTracks",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LoadAnimation",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "StepAnimations",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Backpack",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "BadgeService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "AwardBadge",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetBadgeInfoAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "UserHasBadgeAsync",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
       "name": "BasePlayerGui",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "BaseRemoteEvent",
       "superclass": "Instance",
       "status": "implemented",
       "members": []
@@ -21,6 +206,114 @@
       "members": [
         {
           "name": "RunContext",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "BillboardGui",
+      "superclass": "LayerCollector",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Active",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Adornee",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AlwaysOnTop",
+          "kind": "property",
+          "status": "partial",
+          "note": "Billboards always draw over the 3D view: there is no depth test against parts."
+        },
+        {
+          "name": "Brightness",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "ClipsDescendants",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ExtentsOffset",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: not applied."
+        },
+        {
+          "name": "LightInfluence",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: billboards draw unlit."
+        },
+        {
+          "name": "MaxDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Size",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SizeOffset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "StudsOffset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "StudsOffsetWorldSpace",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "BindableEvent",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Event",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Fire",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "BindableFunction",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Invoke",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "OnInvoke",
           "kind": "property",
           "status": "implemented"
         }
@@ -82,6 +375,84 @@
       "members": []
     },
     {
+      "name": "ContextActionService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "BindAction",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "BindActionAtPriority",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAllBoundActionInfo",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetBoundActionInfo",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetButton",
+          "kind": "method",
+          "status": "partial",
+          "note": "There are no touch buttons, so it is always nil."
+        },
+        {
+          "name": "LocalToolEquipped",
+          "kind": "event",
+          "status": "stub-error"
+        },
+        {
+          "name": "LocalToolUnequipped",
+          "kind": "event",
+          "status": "stub-error"
+        },
+        {
+          "name": "SetDescription",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons."
+        },
+        {
+          "name": "SetImage",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons."
+        },
+        {
+          "name": "SetPosition",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons."
+        },
+        {
+          "name": "SetTitle",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons."
+        },
+        {
+          "name": "UnbindAction",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "UnbindAllActions",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "DataModel",
       "superclass": "ServiceProvider",
       "status": "partial",
@@ -124,11 +495,1069 @@
       ]
     },
     {
+      "name": "DataStoreService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "GetDataStore",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetGlobalDataStore",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetOrderedDataStore",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetRequestBudgetForRequestType",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "ListDataStoresAsync",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "Debris",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AddItem",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxItems",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Folder",
       "superclass": "Instance",
       "creatable": true,
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "ForceField",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Visible",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Frame",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "GuiBase2d",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AbsolutePosition",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AbsoluteRotation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AbsoluteSize",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "GuiButton",
+      "superclass": "GuiObject",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Activated",
+          "kind": "event",
+          "status": "partial",
+          "note": "inputObject is nil; clickCount is 1."
+        },
+        {
+          "name": "AutoButtonColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Modal",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: the mouse is never locked."
+        },
+        {
+          "name": "MouseButton1Click",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseButton1Down",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseButton1Up",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseButton2Click",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseButton2Down",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseButton2Up",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Selectable",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Selected",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "GuiObject",
+      "superclass": "GuiBase2d",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Active",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AnchorPoint",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AutomaticSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BackgroundColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BackgroundTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BorderColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BorderMode",
+          "kind": "property",
+          "status": "partial",
+          "note": "Always drawn as Outline."
+        },
+        {
+          "name": "BorderSizePixel",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClipsDescendants",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Interactable",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LayoutOrder",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseEnter",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseLeave",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseMoved",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Position",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Rotation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Selectable",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SelectionOrder",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: selection moves by position."
+        },
+        {
+          "name": "Size",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Visible",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ZIndex",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "GuiService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AutoSelectGuiEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GetGuiInset",
+          "kind": "method",
+          "status": "partial",
+          "note": "A fixed top inset of 58 pixels and no bottom inset."
+        },
+        {
+          "name": "GuiNavigationEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MenuClosed",
+          "kind": "event",
+          "status": "partial",
+          "note": "Never fires: there is no system menu offline."
+        },
+        {
+          "name": "MenuIsOpen",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MenuOpened",
+          "kind": "event",
+          "status": "partial",
+          "note": "Never fires: there is no system menu offline."
+        },
+        {
+          "name": "SelectedObject",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TopbarInset",
+          "kind": "property",
+          "status": "partial",
+          "note": "A fixed 58-pixel band from x 0 to 0; there is no top bar or real screen width here."
+        }
+      ]
+    },
+    {
+      "name": "HttpService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "GenerateGUID",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "HttpEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "JSONDecode",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "JSONEncode",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PostAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "RequestAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "UrlEncode",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Humanoid",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ApplyDescription",
+          "kind": "method",
+          "status": "partial",
+          "note": "Applies body colours, scales and animation ids; accessories, clothing and faces are kept on the description but not applied."
+        },
+        {
+          "name": "AutoRotate",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AutomaticScalingEnabled",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; descriptions always rescale the rig."
+        },
+        {
+          "name": "BreakJointsOnDeath",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraOffset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ChangeState",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Climbing",
+          "kind": "event",
+          "status": "partial",
+          "note": "Climbing is not supported; it never fires."
+        },
+        {
+          "name": "Died",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "DisplayDistanceType",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; no name or health bar is drawn yet."
+        },
+        {
+          "name": "DisplayName",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; no name is drawn over characters yet."
+        },
+        {
+          "name": "EquipTool",
+          "kind": "method",
+          "status": "stub-error",
+          "note": "Tools are not supported yet."
+        },
+        {
+          "name": "EvaluateStateMachine",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FallingDown",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "FloorMaterial",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FreeFalling",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAppliedDescription",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetBodyPartR15",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetLimb",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPlayingAnimationTracks",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetState",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetStateEnabled",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GettingUp",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Health",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HealthChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "HealthDisplayDistance",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; no health bar is drawn yet."
+        },
+        {
+          "name": "HealthDisplayType",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; no health bar is drawn yet."
+        },
+        {
+          "name": "HipHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Jump",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "JumpHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "JumpPower",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Jumping",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "LoadAnimation",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxHealth",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxSlopeAngle",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the character controller uses its own slope limit."
+        },
+        {
+          "name": "Move",
+          "kind": "method",
+          "status": "partial",
+          "note": "relativeToCamera turns the direction by the current camera's yaw only when a camera exists; otherwise it is ignored."
+        },
+        {
+          "name": "MoveDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MoveTo",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "MoveToFinished",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "NameDisplayDistance",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; no name is drawn over characters yet."
+        },
+        {
+          "name": "NameOcclusion",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; no name is drawn over characters yet."
+        },
+        {
+          "name": "PlatformStand",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlatformStanding",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Ragdoll",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "RequiresNeck",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RigType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RootPart",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Running",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "SeatPart",
+          "kind": "property",
+          "status": "partial",
+          "note": "Seats are not supported yet; always nil."
+        },
+        {
+          "name": "Seated",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "SetStateEnabled",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Sit",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "StateChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "StateEnabledChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Swimming",
+          "kind": "event",
+          "status": "partial",
+          "note": "Swimming is not supported; it never fires."
+        },
+        {
+          "name": "TakeDamage",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "UnequipTools",
+          "kind": "method",
+          "status": "stub-error",
+          "note": "Tools are not supported yet."
+        },
+        {
+          "name": "UseJumpPower",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WalkSpeed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WalkToPart",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WalkToPoint",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "HumanoidDescription",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "BackAccessory",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "BodyTypeScale",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "ClimbAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DepthScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Face",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "FaceAccessory",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "FallAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FrontAccessory",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "GraphicTShirt",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "HairAccessory",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "HatAccessory",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "Head",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "HeadColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HeadScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HeightScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IdleAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "JumpAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LeftArm",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "LeftArmColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LeftLeg",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "LeftLegColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "NeckAccessory",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "Pants",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "ProportionScale",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "RightArm",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "RightArmColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RightLeg",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "RightLegColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RunAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Shirt",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "ShouldersAccessory",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "SwimAnimation",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; characters never swim."
+        },
+        {
+          "name": "Torso",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "TorsoColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WaistAccessory",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored, not applied."
+        },
+        {
+          "name": "WalkAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WidthScale",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "IKControl",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ChainRoot",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EndEffector",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Offset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Pole",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Priority",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Target",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Type",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Weight",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "ImageButton",
+      "superclass": "GuiButton",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Image",
+          "kind": "property",
+          "status": "partial",
+          "note": "Images are not loaded yet: a placeholder in ImageColor3 is drawn for a non-empty id."
+        },
+        {
+          "name": "ImageColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ImageTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScaleType",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: the placeholder fills the element."
+        }
+      ]
+    },
+    {
+      "name": "ImageLabel",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Image",
+          "kind": "property",
+          "status": "partial",
+          "note": "Images are not loaded yet: a placeholder in ImageColor3 is drawn for a non-empty id."
+        },
+        {
+          "name": "ImageColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ImageTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScaleType",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: the placeholder fills the element."
+        }
+      ]
+    },
+    {
+      "name": "InputObject",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Delta",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IsModifierKeyDown",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "KeyCode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Position",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "UserInputState",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "UserInputType",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "Instance",
@@ -367,6 +1796,72 @@
       ]
     },
     {
+      "name": "Keyframe",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Time",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "KeyframeMarker",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Value",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "KeyframeSequence",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Loop",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Priority",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "LayerCollector",
+      "superclass": "GuiBase2d",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ResetOnSpawn",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ZIndexBehavior",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Lighting",
       "superclass": "Instance",
       "service": true,
@@ -387,6 +1882,80 @@
       "members": []
     },
     {
+      "name": "MarketplaceService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "GetProductInfo",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "PlayerOwnsAsset",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "PromptGamePassPurchase",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "PromptProductPurchase",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "UserOwnsGamePassAsync",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "MemoryStoreService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "GetHashMap",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetQueue",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetSortedMap",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "MessagingService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "PublishAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "SubscribeAsync",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
       "name": "Model",
       "superclass": "PVInstance",
       "creatable": true,
@@ -405,6 +1974,518 @@
       "superclass": "Instance",
       "status": "missing",
       "members": []
+    },
+    {
+      "name": "Player",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AccountAge",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AutoJumpEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMaxZoomDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMinZoomDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanLoadCharacterAppearance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Character",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterAdded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterAppearanceId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterAppearanceLoaded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterRemoving",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Chatted",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "DisplayName",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GetNetworkPing",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetRankInGroup",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetRoleInGroup",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "HasAppearanceLoaded",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "HealthDisplayDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IsFriendsWith",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "IsInGroup",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "Kick",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LoadCharacter",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LoadCharacterAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LocaleId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MembershipType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Move",
+          "kind": "method",
+          "status": "partial",
+          "note": "Forwards to the character's Humanoid:Move; does nothing without a character or Humanoid. Raises RE9001 until the Humanoid implements Move."
+        },
+        {
+          "name": "NameDisplayDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Neutral",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RespawnLocation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "UserId",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "PlayerGui",
+      "superclass": "BasePlayerGui",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "PlayerScripts",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "Players",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CharacterAutoLoads",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CreateHumanoidModelFromDescription",
+          "kind": "method",
+          "status": "partial",
+          "note": "Body colours and scales are applied; asset ids (clothing, accessories, meshes) are not loaded. Returns nil while the part classes are not loaded."
+        },
+        {
+          "name": "GetFriendsAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetHumanoidDescriptionFromUserId",
+          "kind": "method",
+          "status": "partial",
+          "note": "Offline there is no avatar to read: returns a default description with an RE9203 warning."
+        },
+        {
+          "name": "GetNameFromUserIdAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetPlayerByUserId",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPlayerFromCharacter",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPlayers",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetUserIdFromNameAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetUserThumbnailAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "LocalPlayer",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxPlayers",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlayerAdded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PlayerMembershipChanged",
+          "kind": "event",
+          "status": "partial",
+          "note": "Never fires: there are no memberships offline."
+        },
+        {
+          "name": "PlayerRemoving",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "RespawnTime",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Pose",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CFrame",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EasingDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EasingStyle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Weight",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "ProximityPrompt",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ActionText",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AutoLocalize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClickablePrompt",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Exclusivity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GamepadKeyCode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HoldDuration",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "InputHoldBegin",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "InputHoldEnd",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "KeyboardKeyCode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxActivationDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ObjectText",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptButtonHoldBegan",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptButtonHoldEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptHidden",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptShown",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "RequiresLineOfSight",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored but not checked: there is no line-of-sight test yet."
+        },
+        {
+          "name": "Style",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TriggerEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Triggered",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "UIOffset",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "ProximityPromptService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxPromptsVisible",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptButtonHoldBegan",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptButtonHoldEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptHidden",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptShown",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptTriggerEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PromptTriggered",
+          "kind": "event",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "RemoteEvent",
+      "superclass": "BaseRemoteEvent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "FireAllClients",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FireClient",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FireServer",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "OnClientEvent",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "OnServerEvent",
+          "kind": "event",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "RemoteFunction",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "InvokeClient",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "InvokeServer",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "OnClientInvoke",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "OnServerInvoke",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "ReplicatedStorage",
@@ -492,11 +2573,92 @@
       ]
     },
     {
+      "name": "ScreenGui",
+      "superclass": "LayerCollector",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "DisplayOrder",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IgnoreGuiInset",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Script",
       "superclass": "BaseScript",
       "creatable": true,
       "status": "partial",
       "members": []
+    },
+    {
+      "name": "ScrollingFrame",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AbsoluteCanvasSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AbsoluteWindowSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AutomaticCanvasSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanvasPosition",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanvasSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClipsDescendants",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScrollBarImageColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScrollBarImageTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScrollBarThickness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScrollingDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScrollingEnabled",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "ServerScriptService",
@@ -670,6 +2832,39 @@
       ]
     },
     {
+      "name": "SoundService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "AmbientReverb",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DistanceFactor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DopplerScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RespectFilteringEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RolloffScale",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "StarterCharacterScripts",
       "superclass": "StarterPlayerScripts",
       "status": "implemented",
@@ -680,6 +2875,42 @@
       "superclass": "BasePlayerGui",
       "service": true,
       "status": "partial",
+      "members": [
+        {
+          "name": "GetCore",
+          "kind": "method",
+          "status": "partial",
+          "note": "Reads back what SetCore recorded, else the default of a readable option (ChatActive, TopbarEnabled, the notification and menu switches); raises for options with no readable value offline."
+        },
+        {
+          "name": "GetCoreGuiEnabled",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "SetCore",
+          "kind": "method",
+          "status": "partial",
+          "note": "Values are recorded and read back; nothing is drawn."
+        },
+        {
+          "name": "SetCoreGuiEnabled",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded; the built-in interface is not drawn."
+        },
+        {
+          "name": "ShowDevelopmentGui",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "StarterPack",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
       "members": []
     },
     {
@@ -687,13 +2918,584 @@
       "superclass": "Instance",
       "service": true,
       "status": "implemented",
-      "members": []
+      "members": [
+        {
+          "name": "AutoJumpEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMaxZoomDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMinZoomDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterJumpHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterJumpPower",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterMaxSlopeAngle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterUseJumpPower",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CharacterWalkSpeed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EnableMouseLockOption",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HealthDisplayDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LoadCharacterAppearance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "NameDisplayDistance",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "StarterPlayerScripts",
       "superclass": "Instance",
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "SurfaceGui",
+      "superclass": "LayerCollector",
+      "creatable": true,
+      "status": "stub-error",
+      "members": []
+    },
+    {
+      "name": "TeleportOptions",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "GetTeleportData",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "ReservedServerAccessCode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ServerInstanceId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SetTeleportData",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "ShouldReserveServer",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TeleportService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "GetLocalPlayerTeleportData",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "ReserveServer",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "Teleport",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "TeleportAsync",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "TeleportToPlaceInstance",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "TextBox",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CaptureFocus",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ClearTextOnFocus",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CursorPosition",
+          "kind": "property",
+          "status": "partial",
+          "note": "Typing always moves the cursor to the end, and the caret is drawn there; a script's write is kept until the next keystroke."
+        },
+        {
+          "name": "FocusLost",
+          "kind": "event",
+          "status": "partial",
+          "note": "inputThatCausedFocusLoss is nil."
+        },
+        {
+          "name": "Focused",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Font",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FontFace",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IsFocused",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "LineHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MultiLine",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlaceholderColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlaceholderText",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ReleaseFocus",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "RichText",
+          "kind": "property",
+          "status": "partial",
+          "note": "Only the bold and font colour tags; other tags are drawn as text."
+        },
+        {
+          "name": "Text",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextBounds",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextEditable",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextFits",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextScaled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTruncate",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextWrapped",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextXAlignment",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextYAlignment",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TextButton",
+      "superclass": "GuiButton",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Font",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FontFace",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LineHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RichText",
+          "kind": "property",
+          "status": "partial",
+          "note": "Only the bold and font colour tags; other tags are drawn as text."
+        },
+        {
+          "name": "Text",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextBounds",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextFits",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextScaled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTruncate",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextWrapped",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextXAlignment",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextYAlignment",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TextChannel",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": []
+    },
+    {
+      "name": "TextChatCommand",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AutocompleteVisible",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PrimaryAlias",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SecondaryAlias",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Triggered",
+          "kind": "event",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TextChatService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ChatVersion",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CreateDefaultCommands",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CreateDefaultTextChannels",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TextLabel",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Font",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FontFace",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LineHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RichText",
+          "kind": "property",
+          "status": "partial",
+          "note": "Only the bold and font colour tags; other tags are drawn as text."
+        },
+        {
+          "name": "Text",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextBounds",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextFits",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextScaled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextStrokeTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextTruncate",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextWrapped",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextXAlignment",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextYAlignment",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TextService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "stub-error",
+      "members": [
+        {
+          "name": "FilterStringAsync",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "TextSource",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CanSend",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "UserId",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "Tween",
@@ -766,6 +3568,490 @@
           "status": "stub-error"
         }
       ]
+    },
+    {
+      "name": "UIAspectRatioConstraint",
+      "superclass": "UIConstraint",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AspectRatio",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AspectType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DominantAxis",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIBase",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "UIComponent",
+      "superclass": "UIBase",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "UIConstraint",
+      "superclass": "UIComponent",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "UICorner",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CornerRadius",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIGradient",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Offset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Rotation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Transparency",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIGridLayout",
+      "superclass": "UIGridStyleLayout",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AbsoluteCellCount",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AbsoluteCellSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CellPadding",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CellSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FillDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FillDirectionMaxCells",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "StartCorner",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIGridStyleLayout",
+      "superclass": "UILayout",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AbsoluteContentSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HorizontalAlignment",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SortOrder",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "VerticalAlignment",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UILayout",
+      "superclass": "UIComponent",
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "UIListLayout",
+      "superclass": "UIGridStyleLayout",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "FillDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Padding",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Wraps",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: lists do not wrap."
+        }
+      ]
+    },
+    {
+      "name": "UIPadding",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "PaddingBottom",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PaddingLeft",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PaddingRight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PaddingTop",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIScale",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Scale",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UISizeConstraint",
+      "superclass": "UIConstraint",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "MaxSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MinSize",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UIStroke",
+      "superclass": "UIComponent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "ApplyStrokeMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LineJoinMode",
+          "kind": "property",
+          "status": "partial",
+          "note": "Corners are always mitred."
+        },
+        {
+          "name": "Thickness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Transparency",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UnreliableRemoteEvent",
+      "superclass": "BaseRemoteEvent",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "FireAllClients",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FireClient",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "FireServer",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "OnClientEvent",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "OnServerEvent",
+          "kind": "event",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UserInputService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "AccelerometerEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GamepadConnected",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "GamepadDisconnected",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "GamepadEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GetConnectedGamepads",
+          "kind": "method",
+          "status": "partial",
+          "note": "Every connected pad reports as Gamepad1."
+        },
+        {
+          "name": "GetFocusedTextBox",
+          "kind": "method",
+          "status": "partial",
+          "note": "No TextBox takes keyboard focus yet, so it is always nil."
+        },
+        {
+          "name": "GetGamepadConnected",
+          "kind": "method",
+          "status": "partial",
+          "note": "Every connected pad reports as Gamepad1."
+        },
+        {
+          "name": "GetKeysPressed",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetLastInputType",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMouseButtonsPressed",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMouseDelta",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMouseLocation",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GyroscopeEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "InputBegan",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "InputChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "InputEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "IsGamepadButtonDown",
+          "kind": "method",
+          "status": "partial",
+          "note": "Every connected pad reports as Gamepad1."
+        },
+        {
+          "name": "IsKeyDown",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsMouseButtonPressed",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "JumpRequest",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "KeyboardEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LastInputTypeChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseBehavior",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseDeltaSensitivity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MouseIconEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextBoxFocusReleased",
+          "kind": "event",
+          "status": "partial",
+          "note": "No TextBox takes keyboard focus yet, so it never fires."
+        },
+        {
+          "name": "TextBoxFocused",
+          "kind": "event",
+          "status": "partial",
+          "note": "No TextBox takes keyboard focus yet, so it never fires."
+        },
+        {
+          "name": "TouchEnabled",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "ViewportFrame",
+      "superclass": "GuiObject",
+      "creatable": true,
+      "status": "stub-error",
+      "members": []
     },
     {
       "name": "Workspace",

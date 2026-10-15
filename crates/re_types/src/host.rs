@@ -11,7 +11,7 @@ use glam::Vec3;
 use serde::Serialize;
 
 use crate::ids::EntityId;
-use crate::input::ActionFrame;
+use crate::input::{ActionFrame, MouseLock, RawInputFrame};
 use crate::physics::{CharacterState, GroupMask, RayHit};
 
 /// Why a [`HostServices`] call failed.
@@ -95,4 +95,19 @@ pub trait HostServices {
     /// Asks the runtime to restart the game (reload the entry scene) at the end of
     /// the frame.
     fn request_restart(&mut self);
+
+    /// This frame's raw device state and events, for layers that read keys
+    /// rather than actions. `None` when the host has no raw input (the
+    /// default). Implemented by `re_app`'s host (WP16) from `re_input`.
+    fn raw_input(&self) -> Option<&RawInputFrame> {
+        None
+    }
+
+    /// Asks the window to hold or free the cursor and to show or hide it.
+    /// The default ignores it: a host without a window has no cursor.
+    /// Implemented by `re_app`'s host (WP16).
+    fn set_mouse_behavior(&mut self, lock: MouseLock, icon_visible: bool) -> HostResult<()> {
+        let _ = (lock, icon_visible);
+        Ok(())
+    }
 }

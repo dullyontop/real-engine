@@ -49,6 +49,10 @@ const WAIT_SENTINEL: &str = "re_script.wait_sentinel";
 /// calling thread ([`park`]).
 const PARK_SENTINEL: &str = "re_script.park_sentinel";
 
+/// The marker a parked thread is woken with when its host call failed
+/// ([`wake_error`]); its wrapper raises the message that follows it.
+const ERROR_SENTINEL: &str = "re_script.park_error_sentinel";
+
 /// How many times one settle pass may run the settle hook (each run may queue
 /// more deferred threads).
 const MAX_SETTLE_ROUNDS: usize = 1_000;
@@ -692,6 +696,9 @@ pub(crate) fn init(lua: &Lua, budget: Duration) -> Result<()> {
     let park = lua.create_table()?;
     park.set_readonly(true);
     lua.set_named_registry_value(PARK_SENTINEL, &park)?;
+    let failed = lua.create_table()?;
+    failed.set_readonly(true);
+    lua.set_named_registry_value(ERROR_SENTINEL, &failed)?;
     lua.set_app_data(Scheduler::new(budget));
     Ok(())
 }
@@ -1036,6 +1043,18 @@ pub fn wake(lua: &Lua, token: YieldToken, args: MultiValue, mode: WakeMode) -> R
     }
 }
 
+/// Wakes a parked thread so that its host call raises `message` (a call that
+/// failed after it parked: the callback of a remote invocation raised). False
+/// when the token is no longer parked.
+pub fn wake_error(lua: &Lua, token: YieldToken, message: &str, mode: WakeMode) -> Result<bool> {
+    let marker: Table = lua.named_registry_value(ERROR_SENTINEL)?;
+    let args = MultiValue::from_iter([
+        Value::Table(marker),
+        Value::String(lua.create_string(message)?),
+    ]);
+    wake(lua, token, args, mode)
+}
+
 /// True while `token` is parked (not yet woken, timed out or cancelled).
 pub fn is_parked(lua: &Lua, token: YieldToken) -> Result<bool> {
     sched(lua, |s| s.parked.contains_key(&token.0))
@@ -1100,6 +1119,7 @@ pub fn sleeping_count(lua: &Lua) -> Result<usize> {
 /// `coroutine.create`) raises `RE3005`; `name` names the call in that error.
 pub fn yielding(lua: &Lua, name: &str, f: Function) -> Result<Function> {
     let marker: Table = lua.named_registry_value(PARK_SENTINEL)?;
+    let failed: Table = lua.named_registry_value(ERROR_SENTINEL)?;
     let is_current = lua.create_function(|lua, t: Thread| {
         sched(lua, |s| {
             s.running.last().is_some_and(|(p, _)| *p == ptr(&t))
@@ -1111,8 +1131,14 @@ pub fn yielding(lua: &Lua, name: &str, f: Function) -> Result<Function> {
         lua.create_function(|lua, (t, token): (Thread, f64)| adopt_park(lua, t, token as u64))?;
     lua.load(format!(
         r#"
-        local f, MARK, IS_CURRENT, CANCEL, ADOPT = ...
+        local f, MARK, IS_CURRENT, CANCEL, ADOPT, FAILED = ...
         local yield, isyieldable, running, select = coroutine.yield, coroutine.isyieldable, coroutine.running, select
+        local function resumed(first, ...)
+            if first == FAILED then
+                error((...), 0)
+            end
+            return first, ...
+        end
         local function finish(...)
             if (...) ~= MARK then
                 return ...
@@ -1124,12 +1150,12 @@ pub fn yielding(lua: &Lua, name: &str, f: Function) -> Result<Function> {
             end
             if not IS_CURRENT(running()) then
                 if ADOPT(running(), token) then
-                    return yield()
+                    return resumed(yield())
                 end
                 CANCEL(token)
                 error({msg:?}, 3)
             end
-            return yield(MARK, token)
+            return resumed(yield(MARK, token))
         end
         return function(...)
             return finish(f(...))
@@ -1141,7 +1167,7 @@ pub fn yielding(lua: &Lua, name: &str, f: Function) -> Result<Function> {
         )
     ))
     .set_name(format!("={name}"))
-    .call((f, marker, is_current, cancel, adopt))
+    .call((f, marker, is_current, cancel, adopt, failed))
 }
 
 /// True while the scheduler still holds thread `t`: running (and not

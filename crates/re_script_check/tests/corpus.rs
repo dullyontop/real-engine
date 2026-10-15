@@ -64,11 +64,13 @@ fn fixtures() {
     // gaps; what the data model and runtime cover (`game`, `workspace`,
     // `Instance.new`, `RunService`) and the native API do not.
     let gap = &report.scan.gap.missing;
-    assert!(
-        gap.contains_key("Players.PlayerAdded"),
-        "Players.PlayerAdded missing from {gap:?}"
-    );
-    for name in ["game", "Instance", "workspace", "RunService.Heartbeat"] {
+    for name in [
+        "game",
+        "Instance",
+        "workspace",
+        "RunService.Heartbeat",
+        "Players.PlayerAdded",
+    ] {
         assert!(!gap.contains_key(name), "{name} is covered: {gap:?}");
     }
     assert!(!gap.contains_key("world.query") && !gap.contains_key("vector.create"));

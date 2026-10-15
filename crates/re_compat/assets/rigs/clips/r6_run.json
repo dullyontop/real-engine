@@ -1,0 +1,307 @@
+{
+ "format": "real-engine/compat-clip",
+ "version": 1,
+ "name": "r6_run",
+ "doc": "R6 run: a faster, wider version of the walk swing.",
+ "looped": true,
+ "priority": "Core",
+ "keyframes": [
+  {
+   "time": 0.0,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      -0.0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      -0.0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.0625,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      0.8485
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      0.8485
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      -0.8485
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      -0.8485
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.125,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      1.2
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      1.2
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      -1.2
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      -1.2
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.1875,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      0.8485
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      0.8485
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      -0.8485
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      -0.8485
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.25,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      -0.0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      -0.0
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.3125,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      -0.8485
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -0.8485
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0.8485
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0.8485
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.375,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      -1.2
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -1.2
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      1.2
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      1.2
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.4375,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      -0.8485
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -0.8485
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0.8485
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0.8485
+     ]
+    }
+   }
+  },
+  {
+   "time": 0.5,
+   "poses": {
+    "Right Arm": {
+     "angles": [
+      0,
+      0,
+      -0.0
+     ]
+    },
+    "Left Arm": {
+     "angles": [
+      0,
+      0,
+      -0.0
+     ]
+    },
+    "Right Leg": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    },
+    "Left Leg": {
+     "angles": [
+      0,
+      0,
+      0.0
+     ]
+    }
+   }
+  }
+ ]
+}

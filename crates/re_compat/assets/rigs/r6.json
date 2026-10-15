@@ -1,0 +1,486 @@
+{
+ "format": "real-engine/compat-rig",
+ "version": 1,
+ "rig": "R6",
+ "doc": "The six-part rig: a root part, a torso, a head and four limbs, joined by Motor6Ds whose frames turn about their Z axis.",
+ "hip_height": 0.0,
+ "parts": [
+  {
+   "name": "HumanoidRootPart",
+   "size": [
+    2,
+    2,
+    1
+   ],
+   "position": [
+    0,
+    3,
+    0
+   ],
+   "transparency": 1
+  },
+  {
+   "name": "Torso",
+   "size": [
+    2,
+    2,
+    1
+   ],
+   "position": [
+    0,
+    3,
+    0
+   ],
+   "color": "TorsoColor"
+  },
+  {
+   "name": "Head",
+   "size": [
+    2,
+    1,
+    1
+   ],
+   "position": [
+    0,
+    4.5,
+    0
+   ],
+   "color": "HeadColor"
+  },
+  {
+   "name": "Right Arm",
+   "size": [
+    1,
+    2,
+    1
+   ],
+   "position": [
+    1.5,
+    3,
+    0
+   ],
+   "color": "RightArmColor"
+  },
+  {
+   "name": "Left Arm",
+   "size": [
+    1,
+    2,
+    1
+   ],
+   "position": [
+    -1.5,
+    3,
+    0
+   ],
+   "color": "LeftArmColor"
+  },
+  {
+   "name": "Right Leg",
+   "size": [
+    1,
+    2,
+    1
+   ],
+   "position": [
+    0.5,
+    1,
+    0
+   ],
+   "color": "RightLegColor"
+  },
+  {
+   "name": "Left Leg",
+   "size": [
+    1,
+    2,
+    1
+   ],
+   "position": [
+    -0.5,
+    1,
+    0
+   ],
+   "color": "LeftLegColor"
+  }
+ ],
+ "joints": [
+  {
+   "name": "RootJoint",
+   "parent": "HumanoidRootPart",
+   "part0": "HumanoidRootPart",
+   "part1": "Torso",
+   "c0": [
+    0,
+    0,
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    1,
+    0
+   ],
+   "c1": [
+    0,
+    0,
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    1,
+    0
+   ]
+  },
+  {
+   "name": "Neck",
+   "parent": "Torso",
+   "part0": "Torso",
+   "part1": "Head",
+   "c0": [
+    0,
+    1,
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    1,
+    0
+   ],
+   "c1": [
+    0,
+    -0.5,
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    1,
+    0
+   ]
+  },
+  {
+   "name": "Right Shoulder",
+   "parent": "Torso",
+   "part0": "Torso",
+   "part1": "Right Arm",
+   "c0": [
+    1,
+    0.5,
+    0,
+    0,
+    0,
+    1,
+    0,
+    1,
+    0,
+    -1,
+    0,
+    0
+   ],
+   "c1": [
+    -0.5,
+    0.5,
+    0,
+    0,
+    0,
+    1,
+    0,
+    1,
+    0,
+    -1,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "Left Shoulder",
+   "parent": "Torso",
+   "part0": "Torso",
+   "part1": "Left Arm",
+   "c0": [
+    -1,
+    0.5,
+    0,
+    0,
+    0,
+    -1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    0
+   ],
+   "c1": [
+    0.5,
+    0.5,
+    0,
+    0,
+    0,
+    -1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "Right Hip",
+   "parent": "Torso",
+   "part0": "Torso",
+   "part1": "Right Leg",
+   "c0": [
+    1,
+    -1,
+    0,
+    0,
+    0,
+    1,
+    0,
+    1,
+    0,
+    -1,
+    0,
+    0
+   ],
+   "c1": [
+    0.5,
+    1,
+    0,
+    0,
+    0,
+    1,
+    0,
+    1,
+    0,
+    -1,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "Left Hip",
+   "parent": "Torso",
+   "part0": "Torso",
+   "part1": "Left Leg",
+   "c0": [
+    -1,
+    -1,
+    0,
+    0,
+    0,
+    -1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    0
+   ],
+   "c1": [
+    -0.5,
+    1,
+    0,
+    0,
+    0,
+    -1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    0
+   ]
+  }
+ ],
+ "attachments": [
+  {
+   "name": "RootAttachment",
+   "part": "HumanoidRootPart",
+   "position": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "HatAttachment",
+   "part": "Head",
+   "position": [
+    0,
+    0.6,
+    0
+   ]
+  },
+  {
+   "name": "HairAttachment",
+   "part": "Head",
+   "position": [
+    0,
+    0.6,
+    0
+   ]
+  },
+  {
+   "name": "FaceFrontAttachment",
+   "part": "Head",
+   "position": [
+    0,
+    0,
+    -0.6
+   ]
+  },
+  {
+   "name": "FaceCenterAttachment",
+   "part": "Head",
+   "position": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "NeckAttachment",
+   "part": "Torso",
+   "position": [
+    0,
+    1,
+    0
+   ]
+  },
+  {
+   "name": "BodyFrontAttachment",
+   "part": "Torso",
+   "position": [
+    0,
+    0,
+    -0.5
+   ]
+  },
+  {
+   "name": "BodyBackAttachment",
+   "part": "Torso",
+   "position": [
+    0,
+    0,
+    0.5
+   ]
+  },
+  {
+   "name": "LeftCollarAttachment",
+   "part": "Torso",
+   "position": [
+    -1,
+    1,
+    0
+   ]
+  },
+  {
+   "name": "RightCollarAttachment",
+   "part": "Torso",
+   "position": [
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "name": "WaistFrontAttachment",
+   "part": "Torso",
+   "position": [
+    0,
+    -1,
+    -0.5
+   ]
+  },
+  {
+   "name": "WaistCenterAttachment",
+   "part": "Torso",
+   "position": [
+    0,
+    -1,
+    0
+   ]
+  },
+  {
+   "name": "WaistBackAttachment",
+   "part": "Torso",
+   "position": [
+    0,
+    -1,
+    0.5
+   ]
+  },
+  {
+   "name": "LeftShoulderAttachment",
+   "part": "Left Arm",
+   "position": [
+    0,
+    1,
+    0
+   ]
+  },
+  {
+   "name": "LeftGripAttachment",
+   "part": "Left Arm",
+   "position": [
+    0,
+    -1,
+    0
+   ]
+  },
+  {
+   "name": "RightShoulderAttachment",
+   "part": "Right Arm",
+   "position": [
+    0,
+    1,
+    0
+   ]
+  },
+  {
+   "name": "RightGripAttachment",
+   "part": "Right Arm",
+   "position": [
+    0,
+    -1,
+    0
+   ]
+  },
+  {
+   "name": "LeftFootAttachment",
+   "part": "Left Leg",
+   "position": [
+    0,
+    -1,
+    0
+   ]
+  },
+  {
+   "name": "RightFootAttachment",
+   "part": "Right Leg",
+   "position": [
+    0,
+    -1,
+    0
+   ]
+  }
+ ]
+}
