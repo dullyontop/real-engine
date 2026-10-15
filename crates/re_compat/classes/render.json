@@ -1,0 +1,1931 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "Lighting",
+      "extend": true,
+      "properties": [
+        {
+          "name": "Ambient",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "Light added everywhere, indoors and out: the ground half of the ambient light."
+        },
+        {
+          "name": "OutdoorAmbient",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "status": "implemented",
+          "doc": "Light from the open sky, added to Ambient from above."
+        },
+        {
+          "name": "Brightness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 2,
+          "status": "implemented",
+          "doc": "How strong the sun is; 0 turns it off."
+        },
+        {
+          "name": "ClockTime",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 14,
+          "status": "implemented",
+          "doc": "The time of day in hours (0 to 24); it sets where the sun is."
+        },
+        {
+          "name": "TimeOfDay",
+          "type": "string",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The time of day as \"HH:MM:SS\"; the same value as ClockTime."
+        },
+        {
+          "name": "GeographicLatitude",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 41.733,
+          "status": "implemented",
+          "doc": "The latitude in degrees; it tilts the sun's path."
+        },
+        {
+          "name": "FogStart",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Distance from the camera, in studs, where the fog begins."
+        },
+        {
+          "name": "FogEnd",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 100000,
+          "status": "implemented",
+          "doc": "Distance from the camera, in studs, where the fog is opaque."
+        },
+        {
+          "name": "FogColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.753,
+            0.753,
+            0.753
+          ],
+          "status": "implemented",
+          "doc": "The colour of the fog."
+        },
+        {
+          "name": "ExposureCompensation",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Brightens (positive) or darkens (negative) the whole lit scene, in stops."
+        },
+        {
+          "name": "GlobalShadows",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the sun casts no shadows."
+        },
+        {
+          "name": "ColorShift_Top",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "A tint added to surfaces facing the sun."
+        },
+        {
+          "name": "ColorShift_Bottom",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "A tint added to surfaces facing away from the sun."
+        },
+        {
+          "name": "EnvironmentDiffuseScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored; the hemisphere ambient is always used.",
+          "doc": "How much the sky lights surfaces."
+        },
+        {
+          "name": "EnvironmentSpecularScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored; reflections come from the hemisphere ambient.",
+          "doc": "How much the sky is reflected."
+        },
+        {
+          "name": "ShadowSoftness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.2,
+          "status": "partial",
+          "note": "Stored; the shadow filter is fixed.",
+          "doc": "How soft shadow edges are."
+        }
+      ],
+      "methods": [
+        {
+          "name": "GetSunDirection",
+          "params": [],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The unit vector from the world's origin towards the sun at the current ClockTime."
+        },
+        {
+          "name": "GetMoonDirection",
+          "params": [],
+          "returns": [
+            "Vector3"
+          ],
+          "status": "implemented",
+          "doc": "The unit vector towards the moon: opposite the sun."
+        },
+        {
+          "name": "GetMinutesAfterMidnight",
+          "params": [],
+          "returns": [
+            "number"
+          ],
+          "status": "implemented",
+          "doc": "ClockTime in minutes."
+        },
+        {
+          "name": "SetMinutesAfterMidnight",
+          "params": [
+            {
+              "name": "minutes",
+              "type": "number"
+            }
+          ],
+          "returns": [],
+          "status": "implemented",
+          "doc": "Sets ClockTime from minutes after midnight."
+        }
+      ]
+    },
+    {
+      "name": "Atmosphere",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "Drawn as fog and a horizon tint: Density and Haze thicken the fog, Color tints it and the horizon; Offset, Decay and Glare are stored only.",
+      "doc": "Haze in the air, under Lighting: it fades distant objects and colours the horizon.",
+      "properties": [
+        {
+          "name": "Density",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.395,
+          "status": "implemented",
+          "doc": "How thick the air is (0 to 1)."
+        },
+        {
+          "name": "Offset",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "How far the haze starts from the camera."
+        },
+        {
+          "name": "Color",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.78,
+            0.78,
+            0.78
+          ],
+          "status": "implemented",
+          "doc": "The colour of the haze."
+        },
+        {
+          "name": "Decay",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.416,
+            0.443,
+            0.49
+          ],
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "The colour of the haze away from the sun."
+        },
+        {
+          "name": "Glare",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "A glow around the sun."
+        },
+        {
+          "name": "Haze",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Extra haze near the horizon (0 to 10)."
+        }
+      ]
+    },
+    {
+      "name": "Sky",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "The sky is a gradient with a sun disc; skybox images are stored, not drawn.",
+      "doc": "The sky's look, under Lighting.",
+      "properties": [
+        {
+          "name": "SkyboxBk",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn.",
+          "doc": "The image of the sky's back side."
+        },
+        {
+          "name": "SkyboxDn",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn.",
+          "doc": "The image of the sky's bottom side."
+        },
+        {
+          "name": "SkyboxFt",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn.",
+          "doc": "The image of the sky's front side."
+        },
+        {
+          "name": "SkyboxLf",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn.",
+          "doc": "The image of the sky's left side."
+        },
+        {
+          "name": "SkyboxRt",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn.",
+          "doc": "The image of the sky's right side."
+        },
+        {
+          "name": "SkyboxUp",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn.",
+          "doc": "The image of the sky's top side."
+        },
+        {
+          "name": "SunTextureId",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; the sun is a plain disc.",
+          "doc": "The image of the sun."
+        },
+        {
+          "name": "MoonTextureId",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; the moon is not drawn.",
+          "doc": "The image of the moon."
+        },
+        {
+          "name": "SunAngularSize",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 21,
+          "status": "partial",
+          "note": "Stored; the disc has a fixed size.",
+          "doc": "The sun's size in degrees."
+        },
+        {
+          "name": "MoonAngularSize",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 11,
+          "status": "partial",
+          "note": "Stored; the moon is not drawn.",
+          "doc": "The moon's size in degrees."
+        },
+        {
+          "name": "CelestialBodiesShown",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the sun disc is not drawn."
+        },
+        {
+          "name": "StarCount",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 3000,
+          "status": "partial",
+          "note": "Stored; stars are not drawn.",
+          "doc": "How many stars show at night."
+        }
+      ]
+    },
+    {
+      "name": "PostEffect",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "What every screen effect under Lighting or the camera has.",
+      "properties": [
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the effect is not applied."
+        }
+      ]
+    },
+    {
+      "name": "BloomEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "partial",
+      "note": "Stored; bloom is not drawn yet (real post-processing is M3).",
+      "doc": "Makes bright parts of the image glow.",
+      "properties": [
+        {
+          "name": "Intensity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "How strong the glow is."
+        },
+        {
+          "name": "Size",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 24,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "How far the glow spreads."
+        },
+        {
+          "name": "Threshold",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 2,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "How bright a pixel must be to glow."
+        }
+      ]
+    },
+    {
+      "name": "BlurEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "partial",
+      "note": "Stored; the blur is not drawn yet (M3).",
+      "doc": "Blurs the image.",
+      "properties": [
+        {
+          "name": "Size",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 24,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "How strong the blur is."
+        }
+      ]
+    },
+    {
+      "name": "ColorCorrectionEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Changes the brightness, contrast, saturation and tint of the 3D view.",
+      "properties": [
+        {
+          "name": "Brightness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Added to every colour channel."
+        },
+        {
+          "name": "Contrast",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Stretches colours away from mid grey (positive) or towards it."
+        },
+        {
+          "name": "Saturation",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Strengthens (positive) or weakens colours; -1 is grey."
+        },
+        {
+          "name": "TintColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1,
+            1,
+            1
+          ],
+          "status": "implemented",
+          "doc": "Multiplies the image."
+        }
+      ]
+    },
+    {
+      "name": "SunRaysEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "partial",
+      "note": "Stored; sun rays are not drawn yet (M3).",
+      "doc": "Rays of light from the sun past objects.",
+      "properties": [
+        {
+          "name": "Intensity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.25,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "How bright the rays are."
+        },
+        {
+          "name": "Spread",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "How far the rays reach."
+        }
+      ]
+    },
+    {
+      "name": "Light",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "What every light has. A light shines from its parent part or attachment.",
+      "properties": [
+        {
+          "name": "Brightness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "How strong the light is."
+        },
+        {
+          "name": "Color",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1,
+            1,
+            1
+          ],
+          "status": "implemented",
+          "doc": "The light's colour."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the light is off."
+        },
+        {
+          "name": "Shadows",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored; only the sun casts shadows.",
+          "doc": "Whether the light casts shadows."
+        }
+      ]
+    },
+    {
+      "name": "PointLight",
+      "superclass": "Light",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Light in every direction from its parent.",
+      "properties": [
+        {
+          "name": "Range",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 8,
+          "status": "implemented",
+          "doc": "How far the light reaches, in studs (at most 60)."
+        }
+      ]
+    },
+    {
+      "name": "SpotLight",
+      "superclass": "Light",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A cone of light from one face of its parent.",
+      "properties": [
+        {
+          "name": "Range",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 16,
+          "status": "implemented",
+          "doc": "How far the light reaches, in studs (at most 60)."
+        },
+        {
+          "name": "Angle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 90,
+          "status": "implemented",
+          "doc": "The cone's full angle in degrees (at most 180)."
+        },
+        {
+          "name": "Face",
+          "type": "Enum.NormalId",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Front",
+          "status": "implemented",
+          "doc": "The face of the parent part the cone points out of."
+        }
+      ]
+    },
+    {
+      "name": "SurfaceLight",
+      "superclass": "Light",
+      "creatable": true,
+      "status": "partial",
+      "note": "Drawn as a spot light from the centre of the face, not from the whole face.",
+      "doc": "Light out of one face of its parent part.",
+      "properties": [
+        {
+          "name": "Range",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 16,
+          "status": "implemented",
+          "doc": "How far the light reaches, in studs (at most 60)."
+        },
+        {
+          "name": "Angle",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 90,
+          "status": "implemented",
+          "doc": "The spread of the light in degrees (at most 180)."
+        },
+        {
+          "name": "Face",
+          "type": "Enum.NormalId",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Front",
+          "status": "implemented",
+          "doc": "The face the light comes out of."
+        }
+      ]
+    },
+    {
+      "name": "Camera",
+      "extend": true,
+      "properties": [
+        {
+          "name": "CFrame",
+          "type": "CFrame",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Position": [
+              0,
+              20,
+              20
+            ],
+            "XVector": [
+              1,
+              0,
+              0
+            ],
+            "YVector": [
+              0,
+              1,
+              0
+            ],
+            "ZVector": [
+              0,
+              0,
+              1
+            ]
+          },
+          "status": "implemented",
+          "doc": "Where the camera is and where it looks (along its -Z axis)."
+        },
+        {
+          "name": "Focus",
+          "type": "CFrame",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Position": [
+              0,
+              0,
+              0
+            ],
+            "XVector": [
+              1,
+              0,
+              0
+            ],
+            "YVector": [
+              0,
+              1,
+              0
+            ],
+            "ZVector": [
+              0,
+              0,
+              1
+            ]
+          },
+          "status": "implemented",
+          "doc": "The point the camera looks at, for detail and sound around it."
+        },
+        {
+          "name": "FieldOfView",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 70,
+          "status": "implemented",
+          "doc": "The vertical field of view in degrees (1 to 120)."
+        },
+        {
+          "name": "FieldOfViewMode",
+          "type": "Enum.FieldOfViewMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Vertical",
+          "status": "partial",
+          "note": "Only Vertical; other modes read as Vertical.",
+          "doc": "Which angle FieldOfView measures."
+        },
+        {
+          "name": "CameraType",
+          "type": "Enum.CameraType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Custom",
+          "status": "partial",
+          "note": "Custom and Scriptable; the other types behave as Scriptable.",
+          "doc": "How the camera moves: Custom follows CameraSubject through the default camera script, Scriptable leaves CFrame to scripts."
+        },
+        {
+          "name": "CameraSubject",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "What the Custom camera follows: a Humanoid or a part."
+        },
+        {
+          "name": "ViewportSize",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1280,
+            720
+          ],
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The size of the 3D view in pixels, written each frame."
+        },
+        {
+          "name": "NearPlaneZ",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": -0.1,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The near clipping plane, in studs along the camera's -Z axis."
+        }
+      ],
+      "methods": [
+        {
+          "name": "WorldToScreenPoint",
+          "params": [
+            {
+              "name": "worldPoint",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3",
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "The screen pixel (minus the top bar) of a world point, with its depth in Z, and whether it is in front of the camera and inside the view."
+        },
+        {
+          "name": "WorldToViewportPoint",
+          "params": [
+            {
+              "name": "worldPoint",
+              "type": "Vector3"
+            }
+          ],
+          "returns": [
+            "Vector3",
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "The viewport pixel of a world point, with its depth in Z, and whether it is in front of the camera and inside the view."
+        },
+        {
+          "name": "ScreenPointToRay",
+          "params": [
+            {
+              "name": "x",
+              "type": "number"
+            },
+            {
+              "name": "y",
+              "type": "number"
+            },
+            {
+              "name": "depth",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Ray"
+          ],
+          "status": "implemented",
+          "doc": "A unit ray from the camera through a screen pixel (below the top bar), starting depth studs out."
+        },
+        {
+          "name": "ViewportPointToRay",
+          "params": [
+            {
+              "name": "x",
+              "type": "number"
+            },
+            {
+              "name": "y",
+              "type": "number"
+            },
+            {
+              "name": "depth",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "Ray"
+          ],
+          "status": "implemented",
+          "doc": "A unit ray from the camera through a viewport pixel, starting depth studs out."
+        },
+        {
+          "name": "GetRenderCFrame",
+          "params": [],
+          "returns": [
+            "CFrame"
+          ],
+          "status": "implemented",
+          "doc": "The frame the camera is drawn from: its CFrame."
+        }
+      ]
+    },
+    {
+      "name": "BasePart",
+      "extend": true,
+      "properties": [
+        {
+          "name": "CastShadow",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the part casts no shadow."
+        },
+        {
+          "name": "Reflectance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Approximated: the surface gets smoother and more metallic; nothing is mirrored.",
+          "doc": "How mirror-like the part is (0 to 1); drawn as a smoother, shinier surface."
+        },
+        {
+          "name": "LocalTransparencyModifier",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Extra transparency on this machine only, for example the local character in first person."
+        }
+      ]
+    },
+    {
+      "name": "Highlight",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Draws an outline and a fill over a part or model.",
+      "properties": [
+        {
+          "name": "Adornee",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The part or model highlighted; the parent when empty."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false nothing is drawn."
+        },
+        {
+          "name": "DepthMode",
+          "type": "Enum.HighlightDepthMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "AlwaysOnTop",
+          "status": "implemented",
+          "doc": "AlwaysOnTop shows through other objects; Occluded only where the object is seen."
+        },
+        {
+          "name": "FillColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "The colour drawn over the object."
+        },
+        {
+          "name": "FillTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.5,
+          "status": "implemented",
+          "doc": "How see-through the fill is."
+        },
+        {
+          "name": "OutlineColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1,
+            1,
+            1
+          ],
+          "status": "implemented",
+          "doc": "The colour of the outline."
+        },
+        {
+          "name": "OutlineTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How see-through the outline is."
+        }
+      ]
+    },
+    {
+      "name": "Beam",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "Drawn without its texture; LightInfluence and Brightness are stored only.",
+      "doc": "A strip drawn between two attachments.",
+      "properties": [
+        {
+          "name": "Attachment0",
+          "type": "Instance<Attachment>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "Where the beam starts."
+        },
+        {
+          "name": "Attachment1",
+          "type": "Instance<Attachment>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "Where the beam ends."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false the beam is not drawn."
+        },
+        {
+          "name": "Color",
+          "type": "ColorSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              [
+                1,
+                1,
+                1
+              ]
+            ],
+            [
+              1,
+              [
+                1,
+                1,
+                1
+              ]
+            ]
+          ],
+          "status": "implemented",
+          "doc": "The colour along the beam."
+        },
+        {
+          "name": "Transparency",
+          "type": "NumberSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              0.5,
+              0
+            ],
+            [
+              1,
+              0.5,
+              0
+            ]
+          ],
+          "status": "implemented",
+          "doc": "How see-through the beam is along its length."
+        },
+        {
+          "name": "Width0",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "The width at Attachment0, in studs."
+        },
+        {
+          "name": "Width1",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "The width at Attachment1, in studs."
+        },
+        {
+          "name": "CurveSize0",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How far the curve bends out along Attachment0's X axis."
+        },
+        {
+          "name": "CurveSize1",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How far the curve bends in along Attachment1's X axis."
+        },
+        {
+          "name": "Segments",
+          "type": "int",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 10,
+          "status": "implemented",
+          "doc": "How many straight pieces the curve is drawn with (1 to 1000)."
+        },
+        {
+          "name": "FaceCamera",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the strip turns to face the camera."
+        },
+        {
+          "name": "LightEmission",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How much the beam adds light to what is behind it (0 to 1)."
+        },
+        {
+          "name": "LightInfluence",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored; beams are unlit.",
+          "doc": "How much scene light colours the beam."
+        },
+        {
+          "name": "Brightness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "Multiplies the beam's light."
+        },
+        {
+          "name": "ZOffset",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored; not used.",
+          "doc": "Moves the beam towards the camera when sorting."
+        },
+        {
+          "name": "Texture",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures.",
+          "doc": "An image along the beam."
+        },
+        {
+          "name": "TextureLength",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures.",
+          "doc": "How long the image is, in studs."
+        },
+        {
+          "name": "TextureMode",
+          "type": "Enum.TextureMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Stretch",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures.",
+          "doc": "How the image fits the beam."
+        },
+        {
+          "name": "TextureSpeed",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures.",
+          "doc": "How fast the image moves."
+        }
+      ]
+    },
+    {
+      "name": "Trail",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "Drawn without its texture; LightInfluence and Brightness are stored only.",
+      "doc": "A ribbon left behind two moving attachments.",
+      "properties": [
+        {
+          "name": "Attachment0",
+          "type": "Instance<Attachment>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "One edge of the trail."
+        },
+        {
+          "name": "Attachment1",
+          "type": "Instance<Attachment>",
+          "storage": {
+            "kind": "own"
+          },
+          "status": "implemented",
+          "doc": "The other edge."
+        },
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false no new trail is left; what is there fades out."
+        },
+        {
+          "name": "Color",
+          "type": "ColorSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              [
+                1,
+                1,
+                1
+              ]
+            ],
+            [
+              1,
+              [
+                1,
+                1,
+                1
+              ]
+            ]
+          ],
+          "status": "implemented",
+          "doc": "The colour over the trail's life."
+        },
+        {
+          "name": "Transparency",
+          "type": "NumberSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              0.5,
+              0
+            ],
+            [
+              1,
+              0.5,
+              0
+            ]
+          ],
+          "status": "implemented",
+          "doc": "How see-through the trail is over its life."
+        },
+        {
+          "name": "Lifetime",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 2,
+          "status": "implemented",
+          "doc": "How long each piece lasts, in seconds."
+        },
+        {
+          "name": "MinLength",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.1,
+          "status": "implemented",
+          "doc": "How far the attachments move before a new piece is added."
+        },
+        {
+          "name": "MaxLength",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "The longest the trail gets, in studs; 0 for no limit."
+        },
+        {
+          "name": "WidthScale",
+          "type": "NumberSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              1,
+              0
+            ],
+            [
+              1,
+              1,
+              0
+            ]
+          ],
+          "status": "implemented",
+          "doc": "Scales the width over the trail's life."
+        },
+        {
+          "name": "FaceCamera",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true the trail turns to face the camera."
+        },
+        {
+          "name": "LightEmission",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How much the trail adds light to what is behind it (0 to 1)."
+        },
+        {
+          "name": "LightInfluence",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored; trails are unlit.",
+          "doc": "How much scene light colours the trail."
+        },
+        {
+          "name": "Brightness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "Multiplies the trail's light."
+        },
+        {
+          "name": "Texture",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures.",
+          "doc": "An image along the trail."
+        },
+        {
+          "name": "TextureLength",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures.",
+          "doc": "How long the image is, in studs."
+        },
+        {
+          "name": "TextureMode",
+          "type": "Enum.TextureMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Stretch",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures.",
+          "doc": "How the image fits the trail."
+        }
+      ],
+      "methods": [
+        {
+          "name": "Clear",
+          "params": [],
+          "returns": [],
+          "status": "implemented",
+          "doc": "Removes the trail drawn so far."
+        }
+      ]
+    },
+    {
+      "name": "ParticleEmitter",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "note": "Particles are camera-facing soft spots without textures; VelocityInheritance, LockedToPart and Orientation other than FacingCamera are stored only.",
+      "doc": "Sends out particles from its parent part or attachment.",
+      "properties": [
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When false no particles are sent out by Rate; Emit still works."
+        },
+        {
+          "name": "Rate",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 5,
+          "status": "implemented",
+          "doc": "Particles sent out per second."
+        },
+        {
+          "name": "Lifetime",
+          "type": "NumberRange",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Min": 5,
+            "Max": 10
+          },
+          "status": "implemented",
+          "doc": "How long each particle lives, in seconds, picked in this range."
+        },
+        {
+          "name": "Speed",
+          "type": "NumberRange",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Min": 5,
+            "Max": 5
+          },
+          "status": "implemented",
+          "doc": "The starting speed in studs per second, picked in this range."
+        },
+        {
+          "name": "SpreadAngle",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "How far, in degrees, particles stray from the emission direction about X and Y."
+        },
+        {
+          "name": "Acceleration",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "Added to every particle's velocity each second."
+        },
+        {
+          "name": "Drag",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How fast particles slow down: speed halves every 1/Drag seconds."
+        },
+        {
+          "name": "EmissionDirection",
+          "type": "Enum.NormalId",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Top",
+          "status": "implemented",
+          "doc": "The face of the parent the particles leave from."
+        },
+        {
+          "name": "Shape",
+          "type": "Enum.ParticleEmitterShape",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Box",
+          "status": "implemented",
+          "doc": "Where particles start: in a box, sphere, cylinder or disc the size of the parent."
+        },
+        {
+          "name": "ShapeInOut",
+          "type": "Enum.ParticleEmitterShapeInOut",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Outward",
+          "status": "implemented",
+          "doc": "Whether particles move out of the shape, into it, or both."
+        },
+        {
+          "name": "ShapeStyle",
+          "type": "Enum.ParticleEmitterShapeStyle",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Volume",
+          "status": "implemented",
+          "doc": "Whether particles start inside the shape or on its surface."
+        },
+        {
+          "name": "ShapePartial",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored; the whole shape is used.",
+          "doc": "The part of the shape particles start from (0 to 1)."
+        },
+        {
+          "name": "Color",
+          "type": "ColorSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              [
+                1,
+                1,
+                1
+              ]
+            ],
+            [
+              1,
+              [
+                1,
+                1,
+                1
+              ]
+            ]
+          ],
+          "status": "implemented",
+          "doc": "The colour over a particle's life."
+        },
+        {
+          "name": "Transparency",
+          "type": "NumberSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ]
+          ],
+          "status": "implemented",
+          "doc": "How see-through a particle is over its life."
+        },
+        {
+          "name": "Size",
+          "type": "NumberSequence",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            [
+              0,
+              1,
+              0
+            ],
+            [
+              1,
+              1,
+              0
+            ]
+          ],
+          "status": "implemented",
+          "doc": "A particle's size in studs over its life."
+        },
+        {
+          "name": "Rotation",
+          "type": "NumberRange",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Min": 0,
+            "Max": 0
+          },
+          "status": "implemented",
+          "doc": "The starting rotation in degrees, picked in this range."
+        },
+        {
+          "name": "RotSpeed",
+          "type": "NumberRange",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Min": 0,
+            "Max": 0
+          },
+          "status": "implemented",
+          "doc": "The turning speed in degrees per second, picked in this range."
+        },
+        {
+          "name": "LightEmission",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How much particles add light to what is behind them (0 to 1)."
+        },
+        {
+          "name": "LightInfluence",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored; particles are unlit.",
+          "doc": "How much scene light colours particles."
+        },
+        {
+          "name": "Brightness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "Multiplies the particles' light."
+        },
+        {
+          "name": "TimeScale",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "Speeds up (above 1) or slows down the particles' motion and ageing."
+        },
+        {
+          "name": "VelocityInheritance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored; not used.",
+          "doc": "How much of the parent's velocity particles take."
+        },
+        {
+          "name": "LockedToPart",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored; particles stay where they were sent out.",
+          "doc": "When true particles move with the parent."
+        },
+        {
+          "name": "Orientation",
+          "type": "Enum.ParticleOrientation",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "FacingCamera",
+          "status": "partial",
+          "note": "Particles always face the camera.",
+          "doc": "How particles turn."
+        },
+        {
+          "name": "ZOffset",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored; not used.",
+          "doc": "Moves particles towards the camera when sorting."
+        },
+        {
+          "name": "Texture",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "rbxasset://textures/particles/sparkles_main.dds",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures.",
+          "doc": "The particle image."
+        }
+      ],
+      "methods": [
+        {
+          "name": "Emit",
+          "params": [
+            {
+              "name": "particleCount",
+              "type": "number"
+            }
+          ],
+          "returns": [],
+          "status": "implemented",
+          "doc": "Sends out this many particles at once."
+        },
+        {
+          "name": "Clear",
+          "params": [],
+          "returns": [],
+          "status": "implemented",
+          "doc": "Removes every particle."
+        }
+      ]
+    }
+  ]
+}

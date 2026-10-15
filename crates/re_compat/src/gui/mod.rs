@@ -12,7 +12,7 @@
 mod fonts;
 mod layout;
 mod paint;
-mod props;
+pub(crate) mod props;
 mod text;
 
 use std::sync::Arc;

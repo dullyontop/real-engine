@@ -10,7 +10,8 @@
 //! * [`Renderer`]: uploads meshes and textures and creates materials behind
 //!   generation-checked handles, draws snapshots (one shadowed sun, up to eight
 //!   point lights, ambient, MSAA where the adapter allows it, debug lines) and
-//!   paints egui ([`UiFrame`]).
+//!   paints egui ([`UiFrame`]). [`Renderer::render_with`] adds [`SceneExtras`]:
+//!   fog, a sky, colour correction, spot lights, sprites, ribbons and highlights.
 //! * [`Capture`] and [`Image`]: offscreen targets, readback and PNG files.
 //! * [`imgdiff`]: golden-image comparison with a per-channel tolerance and an
 //!   outlier budget.
@@ -35,6 +36,7 @@
 
 pub mod capture;
 pub mod codes;
+pub mod extras;
 mod frame;
 pub mod gpu;
 pub mod imgdiff;
@@ -44,6 +46,10 @@ mod slots;
 mod ui;
 
 pub use capture::{Capture, Image, ImageStats};
+pub use extras::{
+    Ambient, ColorGrading, Fog, Highlight, MAX_HIGHLIGHTS, MAX_SPOT_LIGHTS, Ribbon, RibbonPoint,
+    SceneExtras, Sky, SpotLight, Sprite, SpriteShape,
+};
 pub use frame::MAX_POINT_LIGHTS;
 pub use gpu::{Gpu, GpuErrors, backends_from_env, parse_backends};
 pub use renderer::{
@@ -83,6 +89,7 @@ diagnostics! {
     BAD_TEXTURE, "Malformed texture data", "../explain/RE6015.md";
     BAD_MATERIAL, "Invalid material values", "../explain/RE6016.md";
     TOO_MANY_LIGHTS, "Too many lights", "../explain/RE6017.md";
+    TOO_MANY_HIGHLIGHTS, "Too many highlights", "../explain/RE6018.md";
     READBACK_FAILED, "GPU readback failed", "../explain/RE6020.md";
     IMAGE_WRITE_FAILED, "Image file could not be written", "../explain/RE6021.md";
     IMAGE_READ_FAILED, "Image file could not be read", "../explain/RE6022.md";
