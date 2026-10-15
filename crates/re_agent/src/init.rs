@@ -316,15 +316,16 @@ pub fn init(
         }
     }
 
-    // The engine API for luau-lsp and agents (ignored by git: it follows the
-    // engine build, not the project).
-    re_script::write_definitions(project).map_err(|e| {
-        init_error(
-            &project.join(re_script::DEFINITIONS_PATH),
-            format!("cannot write {}: {e}", re_script::DEFINITIONS_PATH),
-        )
-    })?;
-    report.written.push(re_script::DEFINITIONS_PATH.to_string());
+    // The engine API for luau-lsp and agents (not meant to be committed: it
+    // follows the engine build, not the project). Like `real check --types`,
+    // a failure here does not stop the rest.
+    match re_script::write_definitions(project) {
+        Ok(_) => report.written.push(re_script::DEFINITIONS_PATH.to_string()),
+        Err(e) => report.kept.push((
+            re_script::DEFINITIONS_PATH.to_string(),
+            format!("it cannot be written ({e}); `real describe --luau-defs` prints it"),
+        )),
+    }
 
     for config in client_configs(&options.program) {
         match merged_config(project, &config) {

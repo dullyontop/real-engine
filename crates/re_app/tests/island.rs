@@ -254,7 +254,9 @@ fn an_edit_saved_to_the_scene_keeps_the_island_loading() {
 /// frame), waits on the win message and presses R. Run with
 /// `cargo test -p re_app --test island record_full_game -- --ignored` after
 /// a change to the island; the replay is played back by `real verify` and by
-/// [`the_full_game_replay_pushes_wins_and_restarts`].
+/// [`the_full_game_replay_pushes_wins_and_restarts`]. The golden's name holds
+/// the win frame: after recording, run `real verify --update-goldens` on each
+/// backend (Vulkan, and `RE_BACKENDS=gl`) and delete the old `full_game_f*.png`.
 #[test]
 #[ignore = "writes the replay file; run by hand"]
 fn record_full_game() {
@@ -361,7 +363,10 @@ fn record_full_game() {
 }
 
 /// Input recorded frame by frame: each frame is played as a one-frame replay
-/// carrying the current input, and every change is kept for the file.
+/// carrying the current input, and every change is kept for the file. Each
+/// one-frame replay starts with every button up, so the frame after a press
+/// has no release edge here while the file has one: equivalent for scripts
+/// that use `on_pressed` and `down` (all the island's), not for `on_released`.
 #[derive(Default)]
 struct Recorder {
     frame: u64,
