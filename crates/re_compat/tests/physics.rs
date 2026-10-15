@@ -370,6 +370,30 @@ mod physics_parts {
     }
 
     #[test]
+    fn a_parts_surfaces_and_lock_are_stored() {
+        let mut p = place();
+        p.run(
+            r#"
+            local floor = Instance.new("Part")
+            floor.Name = "Floor"
+            floor.TopSurface = Enum.SurfaceType.Studs
+            floor.BottomSurface = "Inlet"
+            floor.Locked = true
+            floor.Parent = workspace
+            "#,
+        );
+        assert_eq!(p.eval("workspace.Floor.TopSurface.Name"), "Studs");
+        assert_eq!(p.eval("workspace.Floor.BottomSurface.Name"), "Inlet");
+        assert_eq!(p.eval("workspace.Floor.Locked"), "true");
+        for face in ["Front", "Back", "Left", "Right"] {
+            assert_eq!(
+                p.eval(&format!("workspace.Floor.{face}Surface.Name")),
+                "Smooth"
+            );
+        }
+    }
+
+    #[test]
     fn a_weld_holds_the_offset_its_parts_had_when_it_was_joined() {
         let mut p = place();
         p.run(
@@ -601,7 +625,7 @@ mod physics_parts {
     }
 
     #[test]
-    fn a_part_outside_the_world_limits_is_reported_not_dropped_silently() {
+    fn a_part_outside_the_world_limits_is_reported_once_and_kept() {
         let mut p = place();
         p.run(
             r#"
@@ -618,9 +642,32 @@ mod physics_parts {
         let d = physics::step(&mut p.world, DT);
         assert_eq!(d.len(), 1, "{d:?}");
         assert_eq!(d[0].code.to_string(), "RE5006");
-        // It stays where it is, and is not reported again until it changes.
+        assert_eq!(d[0].severity, re_core::Severity::Warning);
+        // It stays where it is, without a body, and is not reported again
+        // however often a script parks it out there.
         assert!(physics::step(&mut p.world, DT).is_empty());
         assert_eq!(p.num("workspace.Far.Position.Y"), 100.0);
+        for y in [10000, 20000, 10000] {
+            p.run(&format!("workspace.Far.CFrame = CFrame.new(0, {y}, 0)"));
+            assert!(physics::step(&mut p.world, DT).is_empty());
+            assert_eq!(p.num("workspace.Far.Position.Y"), y as f32);
+        }
+        assert_eq!(
+            p.eval("workspace:Raycast(Vector3.new(0, 10050, 0), Vector3.new(0, -100, 0))"),
+            "nil"
+        );
+        // Back inside, it gets its body and falls.
+        p.run("workspace.Far.CFrame = CFrame.new(20, 100, 0)");
+        assert_eq!(
+            p.eval(
+                "workspace:Raycast(Vector3.new(20, 150, 0), Vector3.new(0, -100, 0)).Instance.Name"
+            ),
+            "Far"
+        );
+        for _ in 0..30 {
+            assert!(physics::step(&mut p.world, DT).is_empty());
+        }
+        assert!(p.num("workspace.Far.Position.Y") < 99.0);
     }
 
     #[test]

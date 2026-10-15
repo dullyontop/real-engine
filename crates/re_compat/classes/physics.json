@@ -224,6 +224,83 @@
           "doc": "The part's material; it sets how the part looks and its default density, friction and elasticity."
         },
         {
+          "name": "TopSurface",
+          "type": "Enum.SurfaceType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Smooth",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth.",
+          "doc": "The legacy surface style of the part's top face."
+        },
+        {
+          "name": "BottomSurface",
+          "type": "Enum.SurfaceType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Smooth",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth.",
+          "doc": "The legacy surface style of the part's bottom face."
+        },
+        {
+          "name": "FrontSurface",
+          "type": "Enum.SurfaceType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Smooth",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth.",
+          "doc": "The legacy surface style of the part's front face."
+        },
+        {
+          "name": "BackSurface",
+          "type": "Enum.SurfaceType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Smooth",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth.",
+          "doc": "The legacy surface style of the part's back face."
+        },
+        {
+          "name": "LeftSurface",
+          "type": "Enum.SurfaceType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Smooth",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth.",
+          "doc": "The legacy surface style of the part's left face."
+        },
+        {
+          "name": "RightSurface",
+          "type": "Enum.SurfaceType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Smooth",
+          "status": "partial",
+          "note": "Stored; the face is drawn and joined as Smooth.",
+          "doc": "The legacy surface style of the part's right face."
+        },
+        {
+          "name": "Locked",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "partial",
+          "note": "Stored; the editor does not read it yet.",
+          "doc": "When true, the part cannot be selected by clicking it in the editor. Scripts and physics ignore it."
+        },
+        {
           "name": "CollisionGroup",
           "type": "string",
           "storage": {

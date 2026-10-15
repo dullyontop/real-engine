@@ -424,6 +424,9 @@ pub(crate) struct Sim {
     /// What the simulation refused since the last step (a part outside the
     /// world limits, say): reported by `step`.
     pub(crate) refused: Vec<Diagnostic>,
+    /// The parts already reported as outside the world limits: each is
+    /// reported once, however often a script parks it out there.
+    outside: HashSet<Entity>,
     /// The model each tracked `Humanoid` is in.
     humanoids: HashMap<Entity, Entity>,
     /// Assemblies whose joints only changed their offsets (an animated
@@ -583,6 +586,7 @@ impl Sim {
             touching: HashMap::new(),
             fallen: Vec::new(),
             refused: Vec::new(),
+            outside: HashSet::new(),
             humanoids: HashMap::new(),
             reposed: HashSet::new(),
             dirty: HashSet::new(),
@@ -1096,7 +1100,7 @@ impl Sim {
                 }
             }
             if let Err(d) = self.physics.set_assembly_parts(key, &descs) {
-                self.refused.push(d);
+                self.refuse(d, &asm.members);
                 self.dirty.extend(asm.members.iter().copied());
                 continue;
             }
@@ -1311,7 +1315,7 @@ impl Sim {
         }
         if let Err(d) = added {
             // The parts stay where they are, unsimulated, until they change.
-            self.refused.push(d);
+            self.refuse(d, comp);
             return;
         }
         for &e in comp {
@@ -1332,6 +1336,24 @@ impl Sim {
         for c in self.constraints.values_mut() {
             c.joint = None;
         }
+    }
+
+    /// Reports a body the physics world refused. Parts outside the world
+    /// limits are a script's to place (debris parked far away, say): they
+    /// keep their frames without a body, are reported once each as a
+    /// warning, and get their body back when moved inside.
+    fn refuse(&mut self, mut d: Diagnostic, members: &[Entity]) {
+        if d.code == re_physics::codes::OUTSIDE_WORLD {
+            let mut new = false;
+            for &m in members {
+                new |= self.outside.insert(m);
+            }
+            if !new {
+                return;
+            }
+            d.severity = re_core::Severity::Warning;
+        }
+        self.refused.push(d);
     }
 
     fn part_desc(&self, e: Entity, local: Pose, is_root: bool) -> PartDesc {
@@ -1430,7 +1452,7 @@ impl Sim {
         };
         if let Err(d) = done {
             // The cell's parts stay where they are, unsimulated: reported.
-            self.refused.push(d);
+            self.refuse(d, &members);
             return;
         }
         for e in &members {
@@ -1484,7 +1506,12 @@ impl Sim {
             let Some(rec) = self.parts.get(&e) else {
                 continue;
             };
-            let Some(key) = rec.asm else { continue };
+            let Some(key) = rec.asm else {
+                // A part without a body (refused where it was) tries again
+                // where it is now.
+                self.dirty.insert(e);
+                continue;
+            };
             if !done.insert(key) {
                 continue;
             }
@@ -1524,6 +1551,10 @@ impl Sim {
                 .map(|m| (*m, pose.mul(&self.parts[m].local)))
                 .collect();
             write_world_poses(w, &follow);
+        }
+        // Moved out of the world limits, or back in: placed now.
+        if !self.dirty.is_empty() {
+            self.rebuild(w);
         }
     }
 
