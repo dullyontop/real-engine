@@ -96,7 +96,9 @@ function Camera:Update(dt: number)
 	local character = player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	local root = humanoid and humanoid.RootPart
-	if not root then
+	-- A root part that was destroyed (the character fell out of the world)
+	-- has no parent and no position to follow.
+	if not root or not root.Parent then
 		return
 	end
 	camera.CameraSubject = humanoid
