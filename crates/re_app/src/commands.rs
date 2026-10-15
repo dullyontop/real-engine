@@ -22,7 +22,7 @@ pub const PLAY_MAX_FRAMES: u64 = 3600;
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VerifyArgs {
-    /// Frames the boot stage runs (default 120).
+    /// Frames the boot stage runs (default 120; 600 in a `[compat]` project).
     #[serde(default)]
     pub boot_frames: Option<u64>,
 }
@@ -295,6 +295,7 @@ pub fn register(registry: &mut CommandRegistry<App>) {
             let mut options = VerifyOptions::default();
             if let Some(n) = args.boot_frames {
                 options.boot_frames = n.max(1);
+        options.compat_boot_frames = options.boot_frames;
                 options.warmup_frames = options.warmup_frames.min(options.boot_frames - 1);
             }
             let stages = app.verify_stages();
