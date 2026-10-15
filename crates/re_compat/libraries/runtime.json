@@ -1,0 +1,199 @@
+{
+  "$schema": "../../../schemas/compat-libraries.schema.json",
+  "format": "real-engine/compat-libraries",
+  "version": 1,
+  "libraries": [
+    {
+      "name": "script",
+      "class": "LuaSourceContainer",
+      "status": "implemented",
+      "doc": "The script or module instance whose code is running."
+    },
+    {
+      "name": "require",
+      "status": "implemented",
+      "doc": "Global function: runs a ModuleScript once per context and returns its value; later calls return the same value. Modules are found by instance, not by path. A cycle raises RE3004 with the chain; a module that fails or does not return exactly one value raises RE3004 on every later require. A number (an asset id) raises RE9002."
+    },
+    {
+      "name": "task",
+      "status": "implemented",
+      "doc": "Script threads: waiting, spawning, deferring and cancelling.",
+      "members": [
+        {
+          "name": "wait",
+          "params": [
+            {
+              "name": "seconds",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "number"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Suspends the thread for the given seconds (default: until the next step) and returns the time that passed. Threads resume after Heartbeat."
+        },
+        {
+          "name": "spawn",
+          "params": [
+            {
+              "name": "f",
+              "type": "function"
+            },
+            {
+              "name": "...",
+              "type": "any",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "thread"
+          ],
+          "status": "implemented",
+          "doc": "Runs a function or resumes a thread now."
+        },
+        {
+          "name": "defer",
+          "params": [
+            {
+              "name": "f",
+              "type": "function"
+            },
+            {
+              "name": "...",
+              "type": "any",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "thread"
+          ],
+          "status": "implemented",
+          "doc": "Runs a function at the end of the current resumption cycle."
+        },
+        {
+          "name": "delay",
+          "params": [
+            {
+              "name": "seconds",
+              "type": "number"
+            },
+            {
+              "name": "f",
+              "type": "function"
+            },
+            {
+              "name": "...",
+              "type": "any",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "thread"
+          ],
+          "status": "implemented",
+          "doc": "Runs a function after the given seconds of game time."
+        },
+        {
+          "name": "cancel",
+          "params": [
+            {
+              "name": "thread",
+              "type": "thread"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Cancels a thread made by task.spawn, task.defer or task.delay, or one waiting."
+        },
+        {
+          "name": "synchronize",
+          "status": "implemented",
+          "doc": "Does nothing: scripts always run serially."
+        },
+        {
+          "name": "desynchronize",
+          "status": "implemented",
+          "doc": "Does nothing: there is no parallel Luau."
+        }
+      ]
+    },
+    {
+      "name": "wait",
+      "deprecated": "task.wait",
+      "status": "implemented",
+      "doc": "Global function: task.wait with a floor of 0.03 s; returns the time waited and the game time. The first use in a context writes an RE9101 note."
+    },
+    {
+      "name": "delay",
+      "deprecated": "task.delay",
+      "status": "implemented",
+      "doc": "Global function: task.delay. The first use in a context writes an RE9101 note."
+    },
+    {
+      "name": "spawn",
+      "deprecated": "task.defer",
+      "status": "implemented",
+      "doc": "Global function: task.defer (the function runs later in the same cycle). The first use in a context writes an RE9101 note."
+    },
+    {
+      "name": "debug",
+      "status": "partial",
+      "note": "profilebegin and profileend keep the label stack, but the profiler does not record script labels yet.",
+      "doc": "Luau's debug library plus profiling marks.",
+      "members": [
+        {
+          "name": "traceback",
+          "params": [
+            {
+              "name": "message",
+              "type": "string",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "string"
+          ],
+          "status": "implemented",
+          "doc": "The current call stack as text."
+        },
+        {
+          "name": "info",
+          "params": [
+            {
+              "name": "level",
+              "type": "number"
+            },
+            {
+              "name": "options",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "any"
+          ],
+          "status": "implemented",
+          "doc": "Facts about a function or stack level."
+        },
+        {
+          "name": "profilebegin",
+          "params": [
+            {
+              "name": "label",
+              "type": "string"
+            }
+          ],
+          "status": "partial",
+          "note": "The label is kept but not recorded by the profiler yet.",
+          "doc": "Opens a profiling label."
+        },
+        {
+          "name": "profileend",
+          "status": "implemented",
+          "doc": "Closes the innermost profiling label."
+        }
+      ]
+    }
+  ]
+}

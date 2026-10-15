@@ -530,7 +530,7 @@ The ADRs this plan adds or changes:
 - ADR-0033: the private sample runner and its expectation kit.
 - ADR-0034: class and enum data, which are facts and not copied prose.
 - ADR-0023 amendment (WP16): `verify-plaza` becomes a required job.
-- A font ADR (WP15) for the open-licence substitutes bundled for the Roblox font names. It is tied to the ADR-0019 font exceptions and to the open license question.
+- ADR-0035 (WP15): open-licensed font substitutes (Montserrat, Source Sans 3, Roboto Mono) bundled as files for the Roblox font names. It is tied to the ADR-0019 font exceptions and to the open license question.
 
 ## Dependency graph
 

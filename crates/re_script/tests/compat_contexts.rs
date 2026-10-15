@@ -182,3 +182,75 @@ fn native_entry_points_refuse_compat_contexts() {
     });
     assert!(r.is_err());
 }
+
+#[test]
+fn coroutines_may_wait_and_their_resumer_continues_at_once() {
+    let mut r = rig(ContextKind::Server);
+    r.script(
+        r#"
+        local co = coroutine.wrap(function()
+            local dt = task.wait(1)
+            print("waited", dt >= 1)
+            print("held", hold())
+        end)
+        co()
+        print("resumer goes on")
+        "#,
+    );
+    assert_eq!(r.out(), ["resumer goes on"]);
+    let d = r.run(|lua| {
+        sched::advance(lua, 1.0)?;
+        sched::resume_due(lua).map(|_| ())
+    });
+    assert!(d.is_empty(), "{d:#?}");
+    assert_eq!(r.out(), ["waited\ttrue"]);
+    let token = r.held();
+    let d = r.run(|lua| {
+        sched::wake(
+            lua,
+            token,
+            MultiValue::from_iter([Value::Integer(3)]),
+            WakeMode::Deferred,
+        )?;
+        Ok(())
+    });
+    assert!(d.is_empty(), "{d:#?}");
+    assert_eq!(r.out(), ["held\t3"]);
+}
+
+#[test]
+fn pcall_gives_errors_raised_by_rust_as_strings() {
+    let mut r = rig(ContextKind::Server);
+    r.script(
+        r#"
+        local ok, err = pcall(task.spawn, 42)
+        print(ok, type(err), string.find(err, "task.spawn expects a function") ~= nil)
+        print(xpcall(task.spawn, function(e) return type(e) end, 42))
+        local ok2, err2 = pcall(error, { code = 1 })
+        print(type(err2), err2.code)
+        print(pcall(function() return 1, 2 end))
+        print("across a yield", pcall(hold))
+        "#,
+    );
+    assert_eq!(
+        r.out(),
+        [
+            "false\tstring\ttrue",
+            "false\tstring",
+            "table\t1",
+            "true\t1\t2"
+        ]
+    );
+    let token = r.held();
+    let d = r.run(|lua| {
+        sched::wake(
+            lua,
+            token,
+            MultiValue::from_iter([Value::Integer(5)]),
+            WakeMode::Immediate,
+        )?;
+        Ok(())
+    });
+    assert!(d.is_empty(), "{d:#?}");
+    assert_eq!(r.out(), ["across a yield\ttrue\t5"]);
+}
