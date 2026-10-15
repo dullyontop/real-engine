@@ -49,6 +49,7 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0 to M3+, their exit criteria, and why they are in this order |
 | [docs/M1_PLAN.md](docs/M1_PLAN.md) | The first milestone as nine self-contained work packages, with owned paths, cross-package contracts, acceptance commands, and the definition of done |
 | [docs/M2_PLAN.md](docs/M2_PLAN.md) | The second milestone, the Roblox-style compatibility layer, as work packages WP9–WP17 in the same shape |
+| [docs/M3_PLAN.md](docs/M3_PLAN.md) | Draft of the third milestone (ship games: platforms and D2, export, rendering, skinning, vehicles, streaming, the procedural workflow, the editor, the AI track, compat follow-ups and `examples/valley`), as work packages WP18–WP28 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records, plus open questions for the project owner |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Every dependency with its version, license, MSRV and verification status; system packages |
 | [docs/research/core.md](docs/research/core.md) | Findings from the entity-core spike (bevy_ecs, the component registry, scene files) |
