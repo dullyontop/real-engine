@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** partly implemented (M1 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. Every M1 work package has merged; the definition of done is being checked. In progress: `re_compat` (M2), whose class layer, data formats, coverage table and scene conventions have merged (WP9); its behaviour is still design. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** partly implemented (M1 done, M2 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. In progress: `re_compat` (M2), whose class layer, data formats, coverage table and scene conventions have merged (WP9); its behaviour is still design. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -79,8 +79,18 @@ graph TD
     cli[re_cli / real] --> app
   end
 
+  subgraph "Compatibility (M2)"
+    compat[re_compat] --> script
+    compat --> command
+    compat --> scene
+    cli --> compat
+  end
+
   subgraph "Tooling (re_cli feature: tooling)"
     check[re_script_check] --> script
+    check --> compat
+    import[re_import] --> compat
+    cli -.-> import
     agent[re_agent] --> command
     agent --> script
     mcp[re_mcp] --> agent
@@ -93,7 +103,7 @@ graph TD
   end
 ```
 
-Dashed edges exist only when `re_cli` is built with the default-on `tooling` feature. A runtime-only build (`--no-default-features`) links none of the tooling crates, so it links no tokio, rmcp or full_moon (ADR-0019, ADR-0027). The rule is simple: a subcommand that needs a tooling crate exists only in the tooling build. That covers `check`, `mcp`, `agent`, `editor` and `do` (`real do` uses `re_agent`'s single-writer lock and editor-socket client), so a runtime-only `real` runs, verifies, describes and explains a project but does not edit it.
+Dashed edges exist only when `re_cli` is built with the default-on `tooling` feature. A runtime-only build (`--no-default-features`) links none of the tooling crates, so it links no tokio, rmcp or full_moon (ADR-0019, ADR-0027). The rule is simple: a subcommand that needs a tooling crate exists only in the tooling build. That covers `check`, `import` (M2), `mcp`, `agent`, `editor` and `do` (`real do` uses `re_agent`'s single-writer lock and editor-socket client), so a runtime-only `real` runs, verifies, describes and explains a project but does not edit it.
 
 ### Crate responsibilities
 
@@ -120,6 +130,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_agent` | Agent policy, sessions, checkpoints, agent commands, `AGENTS.md` and client configs, the editor socket (client and server loop; Unix only in M1) and the single-writer lock | `Policy`, `Session`, `Checkpoint`, `register_commands`, `generate_agents_md`, `remote::{connect, serve}`, `lock::{acquire, probe}` | tokio |
 | `re_mcp` | The MCP server (rmcp, stdio) | `serve_stdio(EngineHandle, McpOptions)` | `re_app` |
 | `re_editor` | Editor-lite UI and the editor socket | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
+| `re_import` | Static importer for Rojo-style projects and Studio loader scripts (tooling, M2 WP16; in progress) | `import`, `ImportReport` | `re_app` |
 | `re_compat` | The Roblox-style compatibility layer (M2, in progress): the class layer, the class, enum and library data, the coverage table and the compat scene conventions (§4) | `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | subsystems (it reaches them through `HostServices`), full_moon, tokio |
 
 Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
@@ -500,7 +511,7 @@ my-game/
   AGENTS.md  CLAUDE.md       generated by `real agent init`
 ```
 
-`.real/types/engine.d.luau` is written by `real check --types` and `real agent init` from the running engine's binding registry.
+`.real/types/engine.d.luau` is written by `real check --types` (inside a project; the type checker then uses that file) and by `real agent init`, both from the running engine's binding registry. If the file cannot be written, `agent init` reports it under `kept` and carries on.
 
 ### `real.toml`
 

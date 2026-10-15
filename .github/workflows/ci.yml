@@ -104,18 +104,19 @@ jobs:
           cargo run --locked --release -p re_cli -- verify --project examples/island --json > out/verify.json
       - name: Check the verify report (M1_PLAN, definition of done item 2)
         # verify exits 0 when a stage is skipped, so the report itself is checked:
-        # every stage ran and passed, at least two replays (each run twice with the
-        # same state_hash, one of them regenerating the island), at least three
-        # goldens that match, and a PerfReport.
+        # every stage ran and passed, at least three replays (each run twice with
+        # the same state_hash, one of them regenerating the island, one the full
+        # game), at least four goldens that match, and a PerfReport.
         run: |
           jq -e '
             .ok == true
             and ([.stages[].name] | contains(["schema", "compile", "scan", "boot", "replays", "goldens", "perf"]))
             and all(.stages[]; .ok and ((.data | type) != "object" or (.data | has("skipped") | not)))
             and ([.stages[] | select(.name == "replays") | .data.runs[]] as $r
-                 | ($r | length) >= 2 and all($r[]; .deterministic) and any($r[]; (.regenerations | length) > 0))
+                 | ($r | length) >= 3 and all($r[]; .deterministic) and any($r[]; (.regenerations | length) > 0)
+                   and any($r[]; .file | endswith("full_game.replay.json")))
             and ([.stages[] | select(.name == "goldens") | .data.checks[]] as $g
-                 | ($g | length) >= 3 and all($g[]; .matches))
+                 | ($g | length) >= 4 and all($g[]; .matches))
             and (.perf | type == "object")
           ' out/verify.json
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json

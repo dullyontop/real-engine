@@ -31,7 +31,7 @@ All M0 spikes are done.
 
 **Exit (met):** the stack versions are verified, every subsystem choice has spike evidence (ADR-0005 included), and the design documents in `docs/` are written.
 
-## M1: Core vertical slice
+## M1: Core vertical slice (done)
 
 **Scope.** See M1_PLAN for the nine work packages:
 - the workspace, CI, the contracts and the entity core: reflection, the scene and commands, ported from the core spike (WP0);
@@ -45,7 +45,7 @@ All M0 spikes are done.
 - editor-lite (WP8).
 
 **Exit criteria** (the full list is in M1_PLAN, "Definition of done"):
-- `real verify --project examples/island --json` exits 0 headless: schemas, compile, boot, two input replays with identical `state_hash`, goldens, and PerfReport.
+- `real verify --project examples/island --json` exits 0 headless: schemas, compile, boot, three input replays with identical `state_hash`, goldens, and PerfReport.
 - The Xvfb smoke run prints `RUN OK`.
 - The island can be played to its goal (collect everything, restart), and it can be regenerated with a new seed during play: generated entities whose StableKey survives keep their `Entity` and their overrides, collected items stay collected, and the character is re-grounded.
 - The MCP end-to-end tests pass for both supported protocol revisions, and the policy blocks out-of-scope writes.

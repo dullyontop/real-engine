@@ -901,7 +901,7 @@ Everything WP6 builds before the CLI and the demo (the milestone PR plus those i
   - a goal: when every collectible is collected, the HUD shows a win message and `R` restarts (`world.restart()` reloads the entry scene);
   - a key (`G`) that regenerates the island with a new seed during play, through `proc.regenerate`, while the character stands on it. Collected items stay collected (runtime suppression by key);
   - `real.toml` with an `[input]` section and a committed `.real/agent-policy.toml` from `real agent init`;
-  - two replays (`walk_collect`, `regenerate`) and three goldens per backend.
+  - three replays (`walk_collect`, `regenerate`, and `full_game`, which walks, pushes a crate, collects every gem, wins and presses `R`) and four goldens per backend (`walk_collect_f120`, `walk_collect_f599`, `regenerate_f479`, `full_game_f2776`).
 
 **Interfaces this WP freezes:** `App::open`, `App::serve`, `AppConfig`, `verify::{run, VerifyStage}` (milestone "app"; consumed by WP7 and WP8).
 
@@ -1107,10 +1107,12 @@ Critical path: WP0 → WP3 → WP6 → WP8. Every area now starts from a working
 
 ## Definition of done for M1
 
+**Status:** done. Every item below holds on `main` and is checked by the CI-required jobs; the `verify-demo` job fails if the report has fewer replays or goldens than item 2 names, or any skipped stage.
+
 M1 is done when **all** of the following are true on a clean checkout in the reference container (headless, lavapipe, no audio device), after the one-time setup in "Common rules":
 
 1. The CI-required jobs of ADR-0023 pass on Linux. Windows and macOS build jobs have run and their status is reported. They are not required to pass, except for WP0's scope.
-2. `real verify --project examples/island --json` exits 0 with every stage ok, including two replays with matching `state_hash`, three goldens within tolerance, and a PerfReport.
+2. `real verify --project examples/island --json` exits 0 with every stage ok, including three replays with matching `state_hash`, four goldens within tolerance, and a PerfReport.
 3. `xvfb-run … real run --project examples/island --frames 300 --exit-after` prints `RUN OK`.
 4. The demo shows, and replays check:
    - walking, with the camera following;
