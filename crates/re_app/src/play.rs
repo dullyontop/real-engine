@@ -28,7 +28,7 @@ pub enum PlayStep {
     /// `{"invoke": {"path": "ServerStorage.Hooks.Score", "args": [1]}}`.
     Invoke(InvokeStep),
     /// The instance tree, with attributes and tags, as `scene.dump_tree`
-    /// returns it: `{"dump_tree": {"root": "Workspace", "depth": 2}}`.
+    /// returns it: `{"dump_tree": {"path": "Workspace", "depth": 2}}`.
     DumpTree(DumpStep),
 }
 
@@ -106,8 +106,11 @@ pub(crate) fn instance_at(world: &World, path: &str) -> Result<Entity, Diagnosti
     let mut cur = world
         .entity(re_compat::GAME_ID)
         .map_err(|_| step_failed("the world has no `game` instance"))?;
-    let rest = path.strip_prefix("game").unwrap_or(path);
-    let rest = rest.strip_prefix('.').unwrap_or(rest);
+    let rest = if path == "game" {
+        ""
+    } else {
+        path.strip_prefix("game.").unwrap_or(path)
+    };
     if rest.is_empty() {
         return Ok(cur);
     }

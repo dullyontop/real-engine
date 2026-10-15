@@ -123,11 +123,13 @@ impl CompatPlay {
         let setup = setup()?;
         // Instances scripts make get ids from a fixed sequence, so a run
         // and its replay end with the same state hash.
-        world
+        // The split works on a fork, so a scene that breaks the compat
+        // conventions leaves `world` as it was.
+        let mut server = world.fork();
+        server
             .ecs
             .insert_resource(re_scene::IdGen::seeded(SERVER_ID_SEED));
-        install_default_scripts(project, world, &setup.classes)?;
-        let server = std::mem::replace(world, World::new());
+        install_default_scripts(project, &mut server, &setup.classes)?;
         let worlds = CompatWorlds::new(&setup, server)?;
         let CompatWorlds {
             server,

@@ -304,10 +304,11 @@ impl App {
     ) -> Result<(RunReport, Vec<serde_json::Value>, Option<Image>), Diagnostic> {
         // A compat game that already started has split its World into the
         // server's and the client's; the copy starts again from the scene.
-        let mut world = if self.compat.is_some() {
-            load_world(&self.project, &self.config)?.0
+        let restarted = self.compat.is_some();
+        let (mut world, problems) = if restarted {
+            load_world(&self.project, &self.config)?
         } else {
-            self.world.fork()
+            (self.world.fork(), Vec::new())
         };
         if let Some(store) = self.world.ecs.get_resource::<re_proc::GraphStore>() {
             world.ecs.insert_resource(store.clone());
@@ -320,6 +321,7 @@ impl App {
             Arc::clone(&self.commands),
         )?;
         copy.alpha = self.alpha;
+        copy.diagnostics.extend(problems);
         load_collider_sources(&mut copy.world, &mut copy.shapes, &mut self.media);
         physics::push(
             &mut copy.world,
@@ -329,8 +331,10 @@ impl App {
             &mut copy.diagnostics,
         );
         copy.physics.apply(&mut copy.physics_cmds);
-        copy.physics
-            .apply_motion_state(&self.physics.motion_state());
+        if !restarted {
+            copy.physics
+                .apply_motion_state(&self.physics.motion_state());
+        }
         // Lend the GPU side and the loaded media, so nothing is loaded twice.
         std::mem::swap(&mut copy.media, &mut self.media);
         copy.graphics = self.graphics.take();
@@ -1536,14 +1540,18 @@ impl App {
                 "joining a player needs a [compat] project",
             ));
         };
-        c.players += 1;
-        let n = c.players;
+        let n = c.players + 1;
         let mut joined = Err(crate::play::step_failed("the player did not join"));
         self.compat_call(ContextKind::Server, |vm, h| {
             let (j, d) = crate::compat::add_player(vm, h, n);
             joined = j;
             d
         });
+        if joined.is_ok()
+            && let Some(c) = self.compat.as_mut()
+        {
+            c.players = n;
+        }
         joined
     }
 
@@ -1772,7 +1780,8 @@ impl App {
     }
 
     /// Reloads a changed script (hot reload): modules are patched or replaced,
-    /// entry scripts restart.
+    /// entry scripts restart. A `[compat]` project's scripts do not hot
+    /// reload: a changed script takes effect at the next `world.restart`.
     pub fn reload_script(&mut self, path: &str) {
         if self.scripts.is_none() {
             // Nothing runs yet; the new version is what starts.
@@ -1831,6 +1840,10 @@ impl App {
                 // The compat contexts start again on the next frame.
                 self.compat = None;
                 self.compat_failed = false;
+                if self.compat_config.is_some() {
+                    // A cursor the old scripts held or hid is let go.
+                    self.mouse_behavior = Some((re_types::input::MouseLock::Free, true));
+                }
                 if let Some(scripts) = &mut self.scripts
                     && let Err(e) = scripts.reset()
                 {

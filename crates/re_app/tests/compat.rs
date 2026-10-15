@@ -241,3 +241,65 @@ UIS.InputEnded:Connect(function(input) print("ended", input.KeyCode.Name) end)
     assert!(r.ok(), "{:?}", r.diagnostics);
     assert_eq!(r.output, ["[client] began\tW", "[client] ended\tW"]);
 }
+
+#[test]
+fn a_restart_starts_the_compat_game_again_the_same_way() {
+    let dir = project(SERVER, CLIENT);
+    let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+    let first = app.run_headless(Some(40), None).unwrap();
+    app.restart();
+    let second = app.run_headless(Some(40), None).unwrap();
+    assert!(second.ok(), "{:?}", second.diagnostics);
+    assert_eq!(first.state_hash, second.state_hash);
+    assert_eq!(first.output, second.output);
+}
+
+#[test]
+fn verify_replays_a_compat_project_twice_with_the_same_hash() {
+    let dir = project(SERVER, CLIENT);
+    let replays = dir.path().join("tests/replays");
+    std::fs::create_dir_all(&replays).unwrap();
+    let doc = re_types::replay::ReplayDoc::new(1, 90);
+    std::fs::write(
+        replays.join("idle.replay.json"),
+        serde_json::to_string(&doc).unwrap(),
+    )
+    .unwrap();
+    let report = verify::run_project(dir.path(), &config(dir.path()), &quick(), &[]);
+    let stage = report.stage("replays").unwrap();
+    assert!(stage.ok, "{:?} {}", stage.diagnostics, stage.data);
+}
+
+#[test]
+fn play_after_a_live_start_copies_the_scene() {
+    let dir = project(HOOKS, "");
+    let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+    app.run_headless(Some(10), None).unwrap();
+    let plan = steps(serde_json::json!([
+        { "invoke": { "path": "game.ServerStorage.Score", "args": [1] } },
+    ]));
+    let (report, results, _) = app.play_copy(10, None, &plan, false).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert_eq!(results[0]["results"], serde_json::json!([2, 1]));
+}
+
+#[test]
+fn a_scene_that_cannot_start_compat_keeps_its_world() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("scenes")).unwrap();
+    std::fs::write(
+        dir.path().join("real.toml"),
+        "[project]\nname = \"n\"\n\n[compat]\napi = \"roblox\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("scenes/main.scene.json"),
+        r#"{ "format": "real-engine/scene", "version": 1, "entities": [
+            { "id": "box", "name": "Box", "components": {} } ] }"#,
+    )
+    .unwrap();
+    let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+    let r = app.run_headless(Some(2), None).unwrap();
+    assert!(!r.ok());
+    assert!(app.world().entity("box").is_ok());
+}

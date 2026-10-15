@@ -295,7 +295,7 @@ pub fn register(registry: &mut CommandRegistry<App>) {
             let mut options = VerifyOptions::default();
             if let Some(n) = args.boot_frames {
                 options.boot_frames = n.max(1);
-        options.compat_boot_frames = options.boot_frames;
+                options.compat_boot_frames = options.boot_frames;
                 options.warmup_frames = options.warmup_frames.min(options.boot_frames - 1);
             }
             let stages = app.verify_stages();
