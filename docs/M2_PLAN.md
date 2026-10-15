@@ -491,6 +491,8 @@ xvfb-run -a -s "-screen 0 1280x720x24" real run --project examples/plaza --frame
 
 ## WP17: The M2 AI track
 
+**Status:** merged in #48. `project.import` and the new `play.run` steps (which need WP16 "boot") are still to come.
+
 **Goal.** The M2 row of the ROADMAP AI track: Luau-defined tools, MCP resources, structured output schemas and a verify-diff loop, plus MCP access to the new compat features.
 
 **Owned paths:** `crates/re_agent/`, `crates/re_mcp/`, `crates/re_cli/src/tooling/{mcp,agent}.rs` and `crates/re_cli/tests/mcp_e2e.rs`.

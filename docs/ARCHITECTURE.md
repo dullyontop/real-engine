@@ -457,6 +457,14 @@ Each M1 command is one MCP tool. There is no generic `command.run` tool in M1, b
 
 Annotations are derived from the tier and set explicitly on every tool (ADR-0025): `read` gives `readOnlyHint: true, destructiveHint: false`; `edit` gives `readOnlyHint: false, destructiveHint: false`; `destructive` gives `destructiveHint: true`. `idempotentHint` is set per command, and `openWorldHint` is `false` for all of them.
 
+### MCP additions (M2, WP17)
+
+- **Output schemas.** Every tool has an `outputSchema`: the outcome envelope `{ok, changes, diagnostics, data}`. `data` is typed when the command was registered with `CommandRegistry::register_typed_output`, and open otherwise. A successful call also returns `structuredContent`.
+- **Resources.** The server offers the MCP resources capability (`resources/list`, `resources/read`) over the explain pages (`real://explain/RE8001`), the documents under `docs/` (`real://docs/ARCHITECTURE.md`) and the Luau definition files (`real://luau/engine.d.luau`). Clients without resources reach the same content through the `resource.list` and `resource.read` tools.
+- **New tools:** `verify.diff` (run verify and report what changed against a checkpoint), `checkpoint.create`, `resource.list`, `resource.read`, `compat.coverage` (query the coverage table) and `scene.dump_tree` (instances with their attributes and tags, as JSON).
+- **Luau tools.** Scripts under `scripts/tools/commands/` register commands with a JSON schema. A Luau tool is capped at the `edit` tier and runs as one transaction per call, and its direct world writes are reverted. Its result is checked against its declared output schema. Luau tools are listed in `tools/list`, `real describe` and `real do`.
+- `real mcp` registers all of these. The editor's socket registers only the M1 agent commands for now; a shared registration helper is planned so that both expose the same tools.
+
 ## 7. Diagnostics and error model
 
 - **One type.** `re_core::Diagnostic { code, severity, message, location, hint, related }`. Library crates use `thiserror` enums internally and convert to `Diagnostic` at their public boundary. Binaries use `anyhow` only for top-level plumbing.
