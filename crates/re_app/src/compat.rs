@@ -273,40 +273,6 @@ pub fn step_tweens(vm: &CompatVm, host: &mut dyn ScriptHost, dt: f64) -> Vec<Dia
     vm.run(host, |lua| re_compat::tween::step(lua, dt))
 }
 
-/// The start of a context's frame, before its render step: the client reads
-/// this frame's raw input into `UserInputService` (nothing on the server),
-/// then the Animators note their joints, so a script's write later in the
-/// frame wins over the animation.
-pub fn begin_frame(vm: &CompatVm, host: &mut dyn ScriptHost) -> Vec<Diagnostic> {
-    vm.run(host, |lua| {
-        re_compat::input::frame(lua)?;
-        re_compat::anim::begin_frame(lua)
-    })
-}
-
-/// A fixed step's `PreAnimation`: the clock and the event, then the
-/// Animators.
-pub fn pre_animation(vm: &CompatVm, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
-    let mut d = vm.pre_animation(host, dt);
-    d.extend(vm.run(host, |lua| re_compat::anim::step(lua, dt)));
-    d
-}
-
-/// A fixed step's `PreSimulation`: `Stepped`, then the Humanoids' moves.
-pub fn pre_simulation(vm: &CompatVm, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
-    let mut d = vm.pre_simulation(host, dt);
-    d.extend(vm.run(host, |lua| re_compat::humanoid::pre_simulation(lua, dt)));
-    d
-}
-
-/// A fixed step's `PostSimulation`: the Humanoids after the physics, then
-/// `Heartbeat` and the due waits.
-pub fn post_simulation(vm: &CompatVm, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
-    let mut d = vm.run(host, |lua| re_compat::humanoid::post_simulation(lua, dt));
-    d.extend(vm.post_simulation(host, dt));
-    d
-}
-
 /// Steps a compat world's character physics (`CharacterPhysics`), when it
 /// has one, by `dt`.
 pub fn step_characters(world: &mut World, dt: f64) -> Option<Diagnostic> {

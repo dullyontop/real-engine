@@ -983,8 +983,7 @@ impl App {
         if self.compat.is_some() {
             let dt = frame_time.as_secs_f64();
             self.compat_call(ContextKind::Server, |vm, h| {
-                let mut d = crate::compat::begin_frame(vm, h);
-                d.extend(re_compat::net::pump(vm, h));
+                let mut d = re_compat::net::pump(vm, h);
                 d.extend(crate::compat::step_tweens(vm, h, dt));
                 d.extend(vm.pre_render(h, dt));
                 d
@@ -1479,9 +1478,9 @@ impl App {
             // The server context's fixed-step phases; PreRender is in `frame`.
             if self.compat.is_some() {
                 self.compat_call(ContextKind::Server, |vm, h| match phase {
-                    Phase::PreAnimation => crate::compat::pre_animation(vm, h, dt),
-                    Phase::PreSimulation => crate::compat::pre_simulation(vm, h, dt),
-                    Phase::PostSimulation => crate::compat::post_simulation(vm, h, dt),
+                    Phase::PreAnimation => vm.pre_animation(h, dt),
+                    Phase::PreSimulation => vm.pre_simulation(h, dt),
+                    Phase::PostSimulation => vm.post_simulation(h, dt),
                     _ => Vec::new(),
                 });
             }
@@ -1730,14 +1729,13 @@ impl App {
         let step_dt: f64 = self.clock.dt_secs().into();
         self.compat_call(ContextKind::Client, |vm, h| {
             let mut d = re_compat::net::pump(vm, h);
-            d.extend(crate::compat::begin_frame(vm, h));
             d.extend(crate::compat::step_tweens(vm, h, frame_dt));
             d.extend(vm.pre_render(h, frame_dt));
             for _ in 0..steps {
-                d.extend(crate::compat::pre_animation(vm, h, step_dt));
-                d.extend(crate::compat::pre_simulation(vm, h, step_dt));
+                d.extend(vm.pre_animation(h, step_dt));
+                d.extend(vm.pre_simulation(h, step_dt));
                 d.extend(crate::compat::step_characters(h.world, step_dt));
-                d.extend(crate::compat::post_simulation(vm, h, step_dt));
+                d.extend(vm.post_simulation(h, step_dt));
             }
             d
         });
