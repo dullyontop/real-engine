@@ -88,6 +88,7 @@ impl Bindings {
         let mut b = Bindings::new(ClassRegistryBuilder::builtin()?);
         crate::instance::register(&mut b);
         crate::services::core::register(&mut b);
+        crate::datatypes::register(&mut b);
         Ok(b)
     }
 
