@@ -283,7 +283,8 @@ pub struct CompatConfig {
     #[serde(default, skip_serializing_if = "GameInfo::is_default")]
     pub game: GameInfo,
     /// Seeds `Random.new()` called without a seed (the client context uses
-    /// `seed + 1`), so runs repeat.
+    /// `seed + 1`), so runs repeat. TOML integers are signed, so a seed
+    /// written to `real.toml` must be at most `i64::MAX`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub seed: u64,
 }
@@ -369,6 +370,8 @@ impl CompatConfig {
         if self.seed != 0 {
             out.push_str(&format!("seed = {}\n", self.seed));
         }
+        // Tables last: plain `key = value` lines go above this point, or they
+        // would land inside `[compat.game]`.
         if self.game != GameInfo::default() {
             let g = toml::to_string(&self.game).expect("plain values serialize");
             out.push_str("\n[compat.game]\n");
