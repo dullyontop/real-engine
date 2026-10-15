@@ -67,7 +67,7 @@ mod datatypes {
         let mut world = re_scene::World::new();
         re_compat::scene::create_place(&mut world, &setup.classes, &["Workspace"]).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let vm = CompatVm::new(
+        let compat = CompatVm::new(
             &setup,
             ContextKind::Server,
             &mut world,
@@ -81,7 +81,7 @@ mod datatypes {
                 world: &mut world,
                 services: &mut services,
             };
-            let d = vm.exec(&mut host, name, src);
+            let d = compat.exec(&mut host, name, src);
             assert!(d.is_empty(), "{name}: {d:#?}");
         };
         for name in [
@@ -117,6 +117,27 @@ mod datatypes {
             assert(typeof(Vector3.zero) == "Vector3" and typeof(Enum.Material.Plastic) == "EnumItem")
             "#,
         );
+        // Enum properties read items, names and numbers, and refuse the rest
+        // with one plain message.
+        let lua = vm(0);
+        let codec = &setup.codec;
+        let item: LuaValue = lua.load("return Enum.RunContext.Client").eval().unwrap();
+        let from = |v: LuaValue| codec.from_lua(&lua, v, "Enum.RunContext");
+        assert_eq!(from(item), Ok(Value::Enum("Client".into())));
+        let name = LuaValue::String(lua.create_string("Server").unwrap());
+        assert_eq!(from(name), Ok(Value::Enum("Server".into())));
+        let bogus = from(LuaValue::String(lua.create_string("Bogus").unwrap())).unwrap_err();
+        assert_eq!(bogus, "\"Bogus\" is not an Enum.RunContext item");
+        let table = from(LuaValue::Table(lua.create_table().unwrap())).unwrap_err();
+        assert!(!table.contains("RE3006"), "{table}");
+        let back = codec
+            .to_lua(&lua, Value::Enum("Client".into()), "Enum.RunContext")
+            .unwrap();
+        let is_item: mlua::Function = lua
+            .load("return function(v) return v == Enum.RunContext.Client end")
+            .eval()
+            .unwrap();
+        assert!(is_item.call::<bool>(back).unwrap());
     }
 
     #[test]

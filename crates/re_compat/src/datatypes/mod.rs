@@ -62,6 +62,10 @@ const STORED_TYPES: &[&str] = &[
 ///
 /// `Random.new()` without a seed is seeded with 0 until the runtime has a run
 /// seed to pass.
+///
+/// Known limit: an attribute holding a `NumberSequence`, `ColorSequence` or
+/// `EnumItem` reads back as a list or the item's name, because attribute
+/// values carry no datatype name for the codec to pick a hook by.
 pub fn register(b: &mut crate::runtime::Bindings) {
     b.global(
         "Vector3",
@@ -89,10 +93,39 @@ pub fn register(b: &mut crate::runtime::Bindings) {
         }));
     b.codec
         .set_enum_from_lua(std::sync::Arc::new(|_lua: &Lua, ty: &str, v: &Value| {
-            Ok(Some(
-                crate::enums::EnumItem::coerce(v, ty)?.name().to_string(),
-            ))
+            // Only items, names and numbers can be enum values; anything else
+            // is left to the codec, which refuses it with its own message.
+            let readable = match v {
+                Value::UserData(ud) => ud.is::<crate::enums::EnumItem>(),
+                Value::String(_) | Value::Integer(_) | Value::Number(_) => true,
+                _ => false,
+            };
+            if !readable {
+                return Ok(None);
+            }
+            // The codec adds the code and the property; the message is plain.
+            match crate::enums::EnumItem::coerce(v, ty) {
+                Ok(item) => Ok(Some(item.name().to_string())),
+                Err(_) => Err(mlua::Error::external(format!(
+                    "{} is not an Enum.{ty} item",
+                    describe(v)
+                ))),
+            }
         }));
+}
+
+/// How an enum value a script wrote reads in a message.
+fn describe(v: &Value) -> String {
+    match v {
+        Value::UserData(ud) => match ud.borrow::<crate::enums::EnumItem>() {
+            Ok(item) => format!("Enum.{}.{}", item.enum_name(), item.name()),
+            Err(_) => "this value".to_string(),
+        },
+        Value::String(s) => format!("{:?}", s.to_string_lossy()),
+        Value::Integer(i) => i.to_string(),
+        Value::Number(n) => n.to_string(),
+        _ => "this value".to_string(),
+    }
 }
 
 /// Installs every datatype table (`Vector3`, `CFrame`, ...), `Enum` and the
