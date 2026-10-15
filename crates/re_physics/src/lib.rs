@@ -56,11 +56,16 @@ pub mod codes;
 mod config;
 mod convert;
 mod jobs;
+pub mod parts;
 mod query;
 mod shapes;
 mod world;
 
 pub use config::{LayerTable, PhysicsConfig};
+pub use parts::{
+    AssemblyDesc, AssemblyInfo, GroupTable, HingeDrive, JointDesc, JointKind, PartDesc, PartEvent,
+    PartFilter, PartGeom, PartHit, PartMaterial, PartShape, PartView, Pose,
+};
 pub use query::QueryFilter;
 pub use world::{BodyMotion, MotionState, Physics, PhysicsSnapshot};
 
@@ -147,6 +152,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::INVALID_ARGUMENT,
         title: "Invalid step length or query",
         page: include_str!("../explain/RE5016.md"),
+    },
+    DiagInfo {
+        code: codes::ASSEMBLY_INVALID,
+        title: "Invalid assembly of parts",
+        page: include_str!("../explain/RE5017.md"),
     },
 ];
 
