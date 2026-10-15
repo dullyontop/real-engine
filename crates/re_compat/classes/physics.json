@@ -150,8 +150,7 @@
             0.635,
             0.647
           ],
-          "status": "partial",
-          "note": "Stored and replicated; the renderer does not draw it yet.",
+          "status": "implemented",
           "doc": "The part's colour."
         },
         {
@@ -161,8 +160,7 @@
             "kind": "own"
           },
           "default": 0.0,
-          "status": "partial",
-          "note": "Stored and replicated; the renderer does not draw it yet.",
+          "status": "implemented",
           "doc": "How see-through the part is, from 0 (opaque) to 1 (invisible)."
         },
         {
@@ -223,7 +221,7 @@
           },
           "default": "Plastic",
           "status": "implemented",
-          "doc": "The part's material; it sets the default density, friction and elasticity."
+          "doc": "The part's material; it sets how the part looks and its default density, friction and elasticity."
         },
         {
           "name": "CollisionGroup",

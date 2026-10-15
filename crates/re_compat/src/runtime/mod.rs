@@ -99,6 +99,7 @@ impl Bindings {
         crate::tween::register(&mut b);
         crate::sound::register(&mut b);
         crate::gui::register(&mut b);
+        crate::render::register(&mut b);
         scripts::register(&mut b);
         session::register(&mut b);
         globals::register(&mut b);
@@ -319,6 +320,7 @@ pub fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
     );
     out.extend(crate::gui::accessors());
     out.extend(crate::physics::accessors());
+    out.extend(crate::render::accessors());
     out
 }
 

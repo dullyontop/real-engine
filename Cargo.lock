@@ -3614,6 +3614,7 @@ dependencies = [
  "re_core",
  "re_import",
  "re_input",
+ "re_noise",
  "re_physics",
  "re_reflect",
  "re_render",

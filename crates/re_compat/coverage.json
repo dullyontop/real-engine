@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1629,
-    "partial": 142,
+    "implemented": 1735,
+    "partial": 198,
     "stub-error": 53,
     "missing": 3
   },
@@ -281,6 +281,47 @@
       ]
     },
     {
+      "name": "Atmosphere",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Decay",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "Density",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Glare",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "Haze",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Offset",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        }
+      ]
+    },
+    {
       "name": "Attachment",
       "superclass": "Instance",
       "creatable": true,
@@ -505,6 +546,11 @@
           "status": "implemented"
         },
         {
+          "name": "CastShadow",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
           "name": "CollisionGroup",
           "kind": "property",
           "status": "implemented"
@@ -512,8 +558,7 @@
         {
           "name": "Color",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored and replicated; the renderer does not draw it yet."
+          "status": "implemented"
         },
         {
           "name": "CurrentPhysicalProperties",
@@ -567,6 +612,11 @@
           "status": "implemented"
         },
         {
+          "name": "LocalTransparencyModifier",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
           "name": "Mass",
           "kind": "property",
           "status": "implemented"
@@ -590,6 +640,12 @@
           "name": "Position",
           "kind": "property",
           "status": "implemented"
+        },
+        {
+          "name": "Reflectance",
+          "kind": "property",
+          "status": "partial",
+          "note": "Approximated: the surface gets smoother and more metallic; nothing is mirrored."
         },
         {
           "name": "RootPriority",
@@ -636,8 +692,7 @@
         {
           "name": "Transparency",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored and replicated; the renderer does not draw it yet."
+          "status": "implemented"
         },
         {
           "name": "Velocity",
@@ -667,6 +722,116 @@
           "name": "RunContext",
           "kind": "property",
           "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Beam",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Attachment0",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Attachment1",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Brightness",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CurveSize0",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CurveSize1",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FaceCamera",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightEmission",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightInfluence",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; beams are unlit."
+        },
+        {
+          "name": "Segments",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Texture",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures."
+        },
+        {
+          "name": "TextureLength",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures."
+        },
+        {
+          "name": "TextureMode",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures."
+        },
+        {
+          "name": "TextureSpeed",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures."
+        },
+        {
+          "name": "Transparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Width0",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Width1",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ZOffset",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not used."
         }
       ]
     },
@@ -779,11 +944,119 @@
       ]
     },
     {
+      "name": "BloomEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Intensity",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "Size",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "Threshold",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        }
+      ]
+    },
+    {
+      "name": "BlurEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Size",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        }
+      ]
+    },
+    {
       "name": "Camera",
       "superclass": "Instance",
       "creatable": true,
       "status": "partial",
-      "members": []
+      "members": [
+        {
+          "name": "CFrame",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraSubject",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraType",
+          "kind": "property",
+          "status": "partial",
+          "note": "Custom and Scriptable; the other types behave as Scriptable."
+        },
+        {
+          "name": "FieldOfView",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FieldOfViewMode",
+          "kind": "property",
+          "status": "partial",
+          "note": "Only Vertical; other modes read as Vertical."
+        },
+        {
+          "name": "Focus",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GetRenderCFrame",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "NearPlaneZ",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ScreenPointToRay",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ViewportPointToRay",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ViewportSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WorldToScreenPoint",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "WorldToViewportPoint",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "CollectionService",
@@ -829,6 +1102,34 @@
         {
           "name": "RemoveTag",
           "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "ColorCorrectionEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Brightness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Contrast",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Saturation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TintColor",
+          "kind": "property",
           "status": "implemented"
         }
       ]
@@ -1326,6 +1627,49 @@
           "kind": "property",
           "status": "partial",
           "note": "A fixed 58-pixel band from x 0 to 0; there is no top bar or real screen width here."
+        }
+      ]
+    },
+    {
+      "name": "Highlight",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Adornee",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DepthMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FillColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FillTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "OutlineColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "OutlineTransparency",
+          "kind": "property",
+          "status": "implemented"
         }
       ]
     },
@@ -2474,11 +2818,145 @@
       ]
     },
     {
+      "name": "Light",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Brightness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Shadows",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; only the sun casts shadows."
+        }
+      ]
+    },
+    {
       "name": "Lighting",
       "superclass": "Instance",
       "service": true,
       "status": "partial",
-      "members": []
+      "members": [
+        {
+          "name": "Ambient",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Brightness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClockTime",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ColorShift_Bottom",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "ColorShift_Top",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "EnvironmentDiffuseScale",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the hemisphere ambient is always used."
+        },
+        {
+          "name": "EnvironmentSpecularScale",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; reflections come from the hemisphere ambient."
+        },
+        {
+          "name": "ExposureCompensation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FogColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FogEnd",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FogStart",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GeographicLatitude",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMinutesAfterMidnight",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMoonDirection",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetSunDirection",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GlobalShadows",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "OutdoorAmbient",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SetMinutesAfterMidnight",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ShadowSoftness",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the shadow filter is fixed."
+        },
+        {
+          "name": "TimeOfDay",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "LinearVelocity",
@@ -2741,6 +3219,162 @@
           "name": "Shape",
           "kind": "property",
           "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "ParticleEmitter",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Acceleration",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Brightness",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "Clear",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Drag",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EmissionDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Emit",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Lifetime",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightEmission",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightInfluence",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles are unlit."
+        },
+        {
+          "name": "LockedToPart",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; particles stay where they were sent out."
+        },
+        {
+          "name": "Orientation",
+          "kind": "property",
+          "status": "partial",
+          "note": "Particles always face the camera."
+        },
+        {
+          "name": "Rate",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RotSpeed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Rotation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Shape",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ShapeInOut",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ShapePartial",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the whole shape is used."
+        },
+        {
+          "name": "ShapeStyle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Size",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Speed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SpreadAngle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Texture",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures."
+        },
+        {
+          "name": "TimeScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Transparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "VelocityInheritance",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not used."
+        },
+        {
+          "name": "ZOffset",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not used."
         }
       ]
     },
@@ -3079,6 +3713,19 @@
       ]
     },
     {
+      "name": "PointLight",
+      "superclass": "Light",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Range",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Pose",
       "superclass": "Instance",
       "creatable": true,
@@ -3101,6 +3748,18 @@
         },
         {
           "name": "Weight",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "PostEffect",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Enabled",
           "kind": "property",
           "status": "implemented"
         }
@@ -3582,6 +4241,85 @@
       ]
     },
     {
+      "name": "Sky",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "CelestialBodiesShown",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MoonAngularSize",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the moon is not drawn."
+        },
+        {
+          "name": "MoonTextureId",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the moon is not drawn."
+        },
+        {
+          "name": "SkyboxBk",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn."
+        },
+        {
+          "name": "SkyboxDn",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn."
+        },
+        {
+          "name": "SkyboxFt",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn."
+        },
+        {
+          "name": "SkyboxLf",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn."
+        },
+        {
+          "name": "SkyboxRt",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn."
+        },
+        {
+          "name": "SkyboxUp",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; skybox images are not drawn."
+        },
+        {
+          "name": "StarCount",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; stars are not drawn."
+        },
+        {
+          "name": "SunAngularSize",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the disc has a fixed size."
+        },
+        {
+          "name": "SunTextureId",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the sun is a plain disc."
+        }
+      ]
+    },
+    {
       "name": "Snap",
       "superclass": "JointInstance",
       "creatable": true,
@@ -3791,6 +4529,29 @@
       ]
     },
     {
+      "name": "SpotLight",
+      "superclass": "Light",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Angle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Face",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Range",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "StarterCharacterScripts",
       "superclass": "StarterPlayerScripts",
       "status": "implemented",
@@ -3919,11 +4680,54 @@
       "members": []
     },
     {
+      "name": "SunRaysEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Intensity",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "Spread",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        }
+      ]
+    },
+    {
       "name": "SurfaceGui",
       "superclass": "LayerCollector",
       "creatable": true,
       "status": "stub-error",
       "members": []
+    },
+    {
+      "name": "SurfaceLight",
+      "superclass": "Light",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Angle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Face",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Range",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "TeleportOptions",
@@ -4424,6 +5228,104 @@
         },
         {
           "name": "UserId",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Trail",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Attachment0",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Attachment1",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Brightness",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "Clear",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FaceCamera",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Lifetime",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightEmission",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightInfluence",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; trails are unlit."
+        },
+        {
+          "name": "MaxLength",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MinLength",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Texture",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures."
+        },
+        {
+          "name": "TextureLength",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures."
+        },
+        {
+          "name": "TextureMode",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; effects are drawn without textures."
+        },
+        {
+          "name": "Transparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WidthScale",
           "kind": "property",
           "status": "implemented"
         }
