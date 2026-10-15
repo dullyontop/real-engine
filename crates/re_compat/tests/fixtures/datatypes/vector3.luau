@@ -1,0 +1,56 @@
+-- Vector3: the native vector with the Roblox-style members.
+local v = Vector3.new(3, 4, 0)
+assert(type(v) == "vector")
+assert(typeof(v) == "Vector3")
+assert(v.X == 3 and v.Y == 4 and v.Z == 0)
+assert(v.x == 3 and v.y == 4)
+assert(v.Magnitude == 5)
+assert(v.Unit == Vector3.new(0.6, 0.8, 0))
+assert(Vector3.new() == Vector3.zero)
+assert(Vector3.new(2) == Vector3.new(2, 0, 0))
+assert(Vector3.one == Vector3.new(1, 1, 1))
+assert(Vector3.xAxis:Cross(Vector3.yAxis) == Vector3.zAxis)
+assert(v:Dot(Vector3.new(1, 1, 1)) == 7)
+assert(Vector3.zero:Lerp(Vector3.new(10, 20, 30), 0.5) == Vector3.new(5, 10, 15))
+assert(Vector3.new(1, 2, 3):FuzzyEq(Vector3.new(1, 2, 3.000001)))
+assert(not Vector3.new(1, 2, 3):FuzzyEq(Vector3.new(1, 2, 3.1)))
+assert(Vector3.new(1, 2, 3):FuzzyEq(Vector3.new(1, 2, 3.05), 0.1))
+assert(Vector3.new(-1.5, 2.5, -0):Abs() == Vector3.new(1.5, 2.5, 0))
+assert(Vector3.new(-1.5, 2.5, 0):Floor() == Vector3.new(-2, 2, 0))
+assert(Vector3.new(-1.5, 2.5, 0):Ceil() == Vector3.new(-1, 3, 0))
+assert(Vector3.new(-3, 2, 0):Sign() == Vector3.new(-1, 1, 0))
+assert(Vector3.new(1, 5, 3):Min(Vector3.new(2, 2, 2), Vector3.new(0, 9, 9)) == Vector3.new(0, 2, 2))
+assert(Vector3.new(1, 5, 3):Max(Vector3.new(2, 2, 2)) == Vector3.new(2, 5, 3))
+assert(math.abs(Vector3.xAxis:Angle(Vector3.yAxis) - math.pi / 2) < 1e-6)
+assert(Vector3.xAxis:Angle(Vector3.yAxis, Vector3.zAxis) > 0)
+assert(Vector3.yAxis:Angle(Vector3.xAxis, Vector3.zAxis) < 0)
+assert(Vector3.FromNormalId(Enum.NormalId.Top) == Vector3.yAxis)
+assert(Vector3.FromNormalId(Enum.NormalId.Front) == Vector3.new(0, 0, -1))
+assert(Vector3.FromAxis(Enum.Axis.Z) == Vector3.zAxis)
+-- Arithmetic is native and f32.
+assert(v * 2 == Vector3.new(6, 8, 0))
+assert(2 * v == Vector3.new(6, 8, 0))
+assert(v / 2 == Vector3.new(1.5, 2, 0))
+assert(-v == Vector3.new(-3, -4, 0))
+assert(v + Vector3.one - Vector3.one == v)
+assert(Vector3.new(0.1, 0, 0).X ~= 0.1) -- f32, as in Roblox
+assert(tostring(Vector3.new(1, 0.5, -2)) == "1, 0.5, -2")
+assert(tostring(Vector3.new(0.1, 0, 0)) == "0.1, 0, 0")
+-- Vectors are values: usable as table keys by value.
+local t = {}
+t[Vector3.new(1, 2, 3)] = true
+assert(t[Vector3.new(1, 2, 3)])
+-- Unknown members and writes fail with RE9001.
+local ok, err = pcall(function()
+	return (v :: any).Foo
+end)
+assert(not ok and string.find(tostring(err), "RE9001", 1, true) and string.find(tostring(err), "Foo is not a valid member of Vector3", 1, true))
+ok, err = pcall(function()
+	(v :: any).X = 1
+end)
+assert(not ok)
+ok, err = pcall(Vector3.new, "x")
+assert(not ok and string.find(tostring(err), "RE3006", 1, true))
+-- The shared vector metatable is locked.
+assert(getmetatable(Vector3.zero) == "The metatable is locked")
+assert(not pcall(setmetatable, {}, getmetatable(Vector3.zero) :: any))

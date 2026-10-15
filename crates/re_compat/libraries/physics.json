@@ -1,0 +1,241 @@
+{
+  "$schema": "../../../schemas/compat-libraries.schema.json",
+  "format": "real-engine/compat-libraries",
+  "version": 1,
+  "libraries": [
+    {
+      "name": "PhysicalProperties",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "...",
+              "type": "any"
+            }
+          ],
+          "returns": [
+            "PhysicalProperties"
+          ],
+          "status": "partial",
+          "note": "The Material form uses this engine's table of the common materials; other materials get Plastic's values.",
+          "doc": "From a Material, or from density, friction, elasticity and optional friction weight, elasticity weight and acoustic absorption (weights default to 1)."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Density",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Mass per cubic stud."
+        },
+        {
+          "name": "Friction",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Friction coefficient."
+        },
+        {
+          "name": "Elasticity",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Bounciness, 0 to 1."
+        },
+        {
+          "name": "FrictionWeight",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "How much this part's friction counts when two parts touch."
+        },
+        {
+          "name": "ElasticityWeight",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "How much this part's elasticity counts when two parts touch."
+        },
+        {
+          "name": "AcousticAbsorption",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "How much sound the material absorbs, 0 to 1."
+        }
+      ],
+      "record": [
+        {
+          "name": "Density",
+          "type": "f32"
+        },
+        {
+          "name": "Friction",
+          "type": "f32"
+        },
+        {
+          "name": "Elasticity",
+          "type": "f32"
+        },
+        {
+          "name": "FrictionWeight",
+          "type": "f32"
+        },
+        {
+          "name": "ElasticityWeight",
+          "type": "f32"
+        },
+        {
+          "name": "AcousticAbsorption",
+          "type": "f32"
+        }
+      ],
+      "status": "implemented",
+      "doc": "The physical material of a part: density, friction and elasticity with their weights."
+    },
+    {
+      "name": "RaycastParams",
+      "members": [
+        {
+          "name": "new",
+          "returns": [
+            "RaycastParams"
+          ],
+          "status": "implemented",
+          "doc": "The default filter: exclude nothing, Default collision group."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "FilterDescendantsInstances",
+          "kind": "property",
+          "type": "{Instance}",
+          "status": "implemented",
+          "doc": "The instances (with their descendants) to exclude or include; reading returns a new array."
+        },
+        {
+          "name": "FilterType",
+          "kind": "property",
+          "type": "Enum.RaycastFilterType",
+          "status": "implemented",
+          "doc": "Exclude (the default) or Include."
+        },
+        {
+          "name": "CollisionGroup",
+          "kind": "property",
+          "type": "string",
+          "status": "implemented",
+          "doc": "Only parts that collide with this group are tested; \"Default\" by default."
+        },
+        {
+          "name": "RespectCanCollide",
+          "kind": "property",
+          "type": "boolean",
+          "status": "implemented",
+          "doc": "True to skip parts whose CanCollide is false."
+        },
+        {
+          "name": "BruteForceAllSlow",
+          "kind": "property",
+          "type": "boolean",
+          "status": "implemented",
+          "doc": "True to test every part, skipping the broad phase."
+        },
+        {
+          "name": "AddToFilter",
+          "kind": "method",
+          "params": [
+            {
+              "name": "instances",
+              "type": "any"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Appends an instance or an array of instances to the filter."
+        },
+        {
+          "name": "IgnoreWater",
+          "kind": "property",
+          "type": "boolean",
+          "status": "implemented",
+          "doc": "True to pass through terrain water."
+        }
+      ],
+      "status": "implemented",
+      "doc": "The filter of a ray or shape cast. The workspace queries read it."
+    },
+    {
+      "name": "OverlapParams",
+      "members": [
+        {
+          "name": "new",
+          "returns": [
+            "OverlapParams"
+          ],
+          "status": "implemented",
+          "doc": "The default filter: exclude nothing, no part limit."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "FilterDescendantsInstances",
+          "kind": "property",
+          "type": "{Instance}",
+          "status": "implemented",
+          "doc": "The instances (with their descendants) to exclude or include; reading returns a new array."
+        },
+        {
+          "name": "FilterType",
+          "kind": "property",
+          "type": "Enum.RaycastFilterType",
+          "status": "implemented",
+          "doc": "Exclude (the default) or Include."
+        },
+        {
+          "name": "CollisionGroup",
+          "kind": "property",
+          "type": "string",
+          "status": "implemented",
+          "doc": "Only parts that collide with this group are tested; \"Default\" by default."
+        },
+        {
+          "name": "RespectCanCollide",
+          "kind": "property",
+          "type": "boolean",
+          "status": "implemented",
+          "doc": "True to skip parts whose CanCollide is false."
+        },
+        {
+          "name": "BruteForceAllSlow",
+          "kind": "property",
+          "type": "boolean",
+          "status": "implemented",
+          "doc": "True to test every part, skipping the broad phase."
+        },
+        {
+          "name": "AddToFilter",
+          "kind": "method",
+          "params": [
+            {
+              "name": "instances",
+              "type": "any"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Appends an instance or an array of instances to the filter."
+        },
+        {
+          "name": "MaxParts",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The most parts a query returns; 0 for no limit."
+        }
+      ],
+      "status": "implemented",
+      "doc": "The filter of a region query."
+    }
+  ]
+}

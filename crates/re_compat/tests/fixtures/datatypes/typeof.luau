@@ -1,0 +1,20 @@
+assert(typeof(1) == "number")
+assert(typeof("s") == "string")
+assert(typeof({}) == "table")
+assert(typeof(nil) == "nil")
+assert(typeof(print) == "function")
+assert(typeof(Vector3.zero) == "Vector3")
+assert(type(Vector3.zero) == "vector")
+assert(typeof(CFrame.identity) == "CFrame")
+assert(typeof(Color3.new()) == "Color3")
+assert(typeof(NumberRange.new(0)) == "NumberRange")
+assert(typeof(Random.new(1)) == "Random")
+assert(typeof(Enum.KeyCode.A) == "EnumItem")
+-- Libraries are frozen.
+assert(not pcall(function()
+	(Vector3 :: any).new = nil
+end))
+-- Luau's own math.noise and table.clone are present.
+assert(type(math.noise(0.5, 0.25, 0.125)) == "number")
+assert(math.noise(1, 2, 3) == math.noise(1, 2, 3))
+assert(table.clone({ 1, 2 })[2] == 2)

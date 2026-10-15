@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../schemas/compat-libraries.schema.json",
+  "format": "real-engine/compat-libraries",
+  "version": 1,
+  "libraries": [
+    {
+      "name": "typeof",
+      "status": "implemented",
+      "doc": "Global function: the type name of a value, with Roblox-style names: Vector3 for vectors and the type name of each datatype, enum and instance."
+    },
+    {
+      "name": "Enum",
+      "status": "implemented",
+      "doc": "The enum tables. Enum.<Type> is an Enum, Enum.<Type>.<Item> an EnumItem with Name, Value and EnumType. Every item is a single object per VM, so items compare with == and work as table keys. Enum.<Type>:GetEnumItems(), :FromName(name) and :FromValue(number) are supported; Enum:GetEnums() lists the types."
+    }
+  ]
+}

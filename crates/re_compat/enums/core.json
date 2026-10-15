@@ -11,8 +11,8 @@
         { "name": "Client", "value": 2 },
         { "name": "Plugin", "value": 3 }
       ],
-      "status": "missing",
-      "doc": "Where a script runs. The scene conventions read it to choose a script's context; scripts cannot reach Enum.RunContext until the enum tables exist."
+      "status": "implemented",
+      "doc": "Where a script runs. The scene conventions read it to choose a script's context."
     }
   ]
 }

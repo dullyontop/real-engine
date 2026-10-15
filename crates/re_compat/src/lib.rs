@@ -10,7 +10,10 @@
 //!   the crate from `classes/`, `enums/` and `libraries/`, and the generated
 //!   coverage table `coverage.json` that the gap report reads;
 //! * the scene conventions ([`scene`]): the `game` root, services, the class
-//!   marker, script contexts and the `[compat]` section of `real.toml`.
+//!   marker, script contexts and the `[compat]` section of `real.toml`;
+//! * the datatypes ([`datatypes`]) and enums ([`enums`]): `Vector3`,
+//!   `CFrame`, `Color3` and the rest, and the `Enum` tables, which
+//!   [`datatypes::install`] puts into a compat VM.
 //!
 //! The behaviour lives in the runtime ([`runtime`]): [`runtime::CompatVm`] is
 //! one `server` or `client` script context bound to one world, with the
@@ -22,6 +25,8 @@
 pub mod class;
 pub mod codes;
 pub mod data;
+pub mod datatypes;
+pub mod enums;
 pub mod error;
 pub mod instance;
 pub mod runtime;
@@ -35,6 +40,7 @@ pub use class::{
     own_component_name,
 };
 pub use data::{COVERAGE_JSON, CoverageFile, DataSet, Status};
+pub use enums::EnumItem;
 pub use error::CompatError;
 pub use runtime::{Bindings, CompatSetup, CompatVm, ValueCodec};
 pub use scene::{CompatApi, CompatConfig, GAME_ID, ROOT_CLASS, ServiceTag, script_context};
