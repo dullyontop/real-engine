@@ -50,7 +50,7 @@ The M1 ownership rule ([M1_PLAN.md](M1_PLAN.md)) carries over, with these change
 ## Common rules for every WP
 
 The M1 common rules hold unchanged: build settings, toolchain, one-time setup, headless, GPU tests, errors, clean ports, lints and output files. Five rules are added:
-- **Diagnostic codes.** `re_compat` owns `RE9002`–`RE9799`, and the new tooling crate `re_import` owns `RE9800`–`RE9899`. `re_script` keeps `RE3000`–`RE3999` and `RE9001` ("unsupported API member"), which every layer raises for a member with no implementation. `RE9000` and `RE9900`–`RE9999` are reserved: no crate owns them, so the range check fails if any code in them is raised or given an explain page. A later milestone assigns them through the maintainer. WP9 changes the ranges in `tools/xtask/src/explain.rs` and ARCHITECTURE §7. Every code has an explain page, as in M1.
+- **Diagnostic codes.** `re_compat` owns `RE9002`–`RE9799`, and the new tooling crate `re_import` owns `RE9800`–`RE9899`. `re_script` keeps `RE3000`–`RE3999` and `RE9001` ("unsupported API member"), which every layer raises for a member with no implementation. `RE9000` and `RE9900`–`RE9999` are reserved: no crate owns them, so the range check fails if any code in them is raised or given an explain page. A later milestone assigns them through the maintainer. WP9 changes the ranges in `tools/xtask/src/explain.rs` and ARCHITECTURE §7. Every code has an explain page, as in M1. Inside `re_compat`'s range, each WP gets its own block, reserved in `src/codes.rs`: WP9 `RE9002`–`RE9005` and `RE9101`, WP11 `RE9006`–`RE9019`, WP14 `RE9200`–`RE9249`, WP13 `RE9250`–`RE9299`, WP12 `RE9300`–`RE9349` and WP15 `RE9350`–`RE9399`. A WP that needs more asks the maintainer.
 - **No copied reference text.** Class, member, enum and type names, signatures and default values are facts about an API and may be written into our data files. Descriptions, examples and other prose from any vendor's documentation are not copied. Each doc string in a data file is written for this repository (ADR-0034).
 - **Coverage status is honest.**
   - `implemented` means the behaviour matches for the cases our tests cover.
@@ -285,6 +285,8 @@ cargo test --locked -p re_compat net
 - `crates/re_physics/`.
 
 **Starts after:** WP11 PR "data model". It needs WP12 PR "two worlds" only for its client-side tests.
+
+**Physics ownership.** `re_compat` depends on `re_physics` directly (an exception to "subsystems through `HostServices`", ARCHITECTURE §2). `re_compat::physics` owns one `re_physics::Physics` per compat world, as a world resource, and syncs parts to it, the way `re_app`'s physics sync does for native scenes; WP16 "boot" only calls it. `re_physics` stays contract-only and never depends on `re_scene`. Characters (WP14) use the same `Physics`.
 
 **Build:**
 - `BasePart`, `Part` (`Shape` Block, Ball, Cylinder along X, and Wedge), `WedgePart`, `CornerWedgePart`, `TrussPart` and `SpawnLocation`, mapped to `Transform`, a primitive shape component and `RigidBody`:

@@ -84,6 +84,7 @@ graph TD
     compat --> command
     compat --> scene
     compat --> anim
+    compat --> physics
     cli --> compat
   end
 
@@ -132,7 +133,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_mcp` | The MCP server (rmcp, stdio) | `serve_stdio(EngineHandle, McpOptions)` | `re_app` |
 | `re_editor` | Editor-lite UI and the editor socket | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
 | `re_import` | Static importer for Rojo-style projects and Studio loader scripts (tooling, M2 WP16); it never runs Luau | `import`, `ImportReport`, `new_project` | `re_app` |
-| `re_compat` | The Roblox-style compatibility layer (M2, in progress): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, and the compat VM with instances, signals and core services (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | subsystems other than `re_anim` (pure computation, used for animation tracks; it reaches the rest through `HostServices`), full_moon, tokio |
+| `re_compat` | The Roblox-style compatibility layer (M2, in progress): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, and the compat VM with instances, signals and core services (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app` |
 
 Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
 
