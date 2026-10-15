@@ -12,7 +12,8 @@
 //! The agent-facing registry adds, beyond the engine's commands: the agent
 //! commands (`script.write`, `checkpoint.*`, `file.delete`), the resources
 //! (`resource.list`, `resource.read`, also served as MCP resources),
-//! `compat.coverage`, `scene.dump_tree`, `verify.diff`, the static scan stage
+//! `compat.coverage`, `scene.dump_tree`, `verify.diff`, `project.import`
+//! (a dry run unless `write` is set), the static scan stage
 //! of `verify`, and last the project's Luau tools
 //! (`scripts/tools/commands/`).
 //!
@@ -48,11 +49,20 @@ fn fail(d: &Diagnostic) -> ExitCode {
 }
 
 /// The resources agents can read: every explain page this build links, the
-/// engine documents and `engine.d.luau`.
+/// engine documents, `engine.d.luau` and `roblox.d.luau` (the Roblox-style
+/// API's types).
 pub(crate) fn resources() -> Arc<ResourceSet> {
+    let mut definitions = vec![("engine.d.luau", re_script::definitions())];
+    match super::import::classes() {
+        Ok(classes) => definitions.push((
+            "roblox.d.luau",
+            re_script_check::roblox::definitions(&classes),
+        )),
+        Err(d) => eprint!("{}", d.render_human()),
+    }
     Arc::new(ResourceSet::standard(
         &crate::explain::catalog(),
-        &[("engine.d.luau", re_script::definitions())],
+        &definitions,
     ))
 }
 
@@ -95,6 +105,7 @@ pub(crate) fn register_agent_tools(app: &mut App, agent: &Agent) -> Arc<Resource
     re_agent::resources::register_commands(commands, Arc::clone(&resources));
     re_agent::compat::register_commands(commands);
     register_verify_diff(commands, agent);
+    super::mcp_import::register(commands, agent);
     app.add_verify_stage(Arc::new(super::check::ScanStage));
     // Last, so a tool cannot take an engine command's name.
     let (_tools, problems) = re_agent::luau_tools::register(app.commands_mut(), &project);

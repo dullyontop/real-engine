@@ -86,7 +86,7 @@ pub const DEFAULT_INSTRUCTIONS: &str = "Real Engine project tools. Call `describ
 Every tool that changes the project accepts `dry_run: true` to preview its changes; dry runs are allowed at any tier. \
 Use `scene_apply` for multi-step edits (one atomic, undoable transaction), `verify` and `screenshot` to check your work, \
 `verify_diff` to see what a change altered since the last checkpoint, and `undo` or `checkpoint_restore` to go back. \
-Explain pages, the engine docs and engine.d.luau are resources (or `resource_list` and `resource_read`). Wait for a call's result before a call that depends on it. Refused calls (RE8001 tier, RE8002 path, RE8008 budget) changed nothing; \
+Explain pages, the engine docs, engine.d.luau and roblox.d.luau are resources (or `resource_list` and `resource_read`). Wait for a call's result before a call that depends on it. Refused calls (RE8001 tier, RE8002 path, RE8008 budget) changed nothing; \
 the project's .real/agent-policy.toml decides what agents may do. AGENTS.md in the project explains the operation JSON.";
 
 /// Serves MCP over stdin and stdout until the client closes stdin. Runs its
