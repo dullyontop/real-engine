@@ -808,3 +808,58 @@ for i = 1, 8 do
     end
 end
 "##;
+
+/// A class file with one `ColorSequence` property whose default is `default`.
+fn sequence_class(default: &str) -> Result<(), String> {
+    let file = format!(
+        r#"{{"format": "real-engine/compat-classes", "version": 1, "classes": [{{
+            "name": "SeqTarget", "superclass": "Instance", "creatable": true,
+            "status": "implemented", "doc": "A test class.",
+            "properties": [{{"name": "C", "type": "ColorSequence", "storage": {{"kind": "own"}},
+                "default": {default}, "status": "implemented"}}]
+        }}]}}"#
+    );
+    let parsed = re_compat::data::ClassFile::parse("seq.json", &file).map_err(|e| e.to_string())?;
+    let mut b = re_compat::Bindings::standard().unwrap();
+    b.classes(|c| c.classes("seq.json", parsed));
+    re_compat::CompatSetup::new(b)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[test]
+fn sequence_properties_store_lists_of_keypoints() {
+    // The built-in UIGradient defaults read back as sequences, and a script
+    // can write one.
+    let mut u = ui();
+    u.run(
+        r#"
+        local g = Instance.new("UIGradient")
+        S.g = g
+        "#,
+    );
+    assert_eq!(
+        u.eval(
+            "local k = S.g.Color.Keypoints print(#k, k[1].Time, k[2].Time, k[2].Value.R, \
+             #S.g.Transparency.Keypoints)"
+        ),
+        ["2\t0\t1\t1\t2"]
+    );
+    u.run(
+        "S.g.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.new(1, 0, 0)), \
+         ColorSequenceKeypoint.new(0.5, Color3.new(0, 1, 0)), \
+         ColorSequenceKeypoint.new(1, Color3.new(0, 0, 1))})",
+    );
+    assert_eq!(
+        u.eval("local k = S.g.Color.Keypoints print(#k, k[2].Time, k[2].Value.G)"),
+        ["3\t0.5\t1"]
+    );
+    // A data file's default is checked when the registry is built.
+    assert!(sequence_class("[[0, [1, 1, 1]], [1, [0, 0, 0]]]").is_ok());
+    for bad in ["[[0]]", "[[0, \"red\"]]", "5"] {
+        let err = sequence_class(bad)
+            .err()
+            .unwrap_or_else(|| panic!("{bad} was accepted"));
+        assert!(err.contains("SeqTarget.C"), "{bad}: {err}");
+    }
+}
