@@ -6,13 +6,17 @@
 //! `--test-threads=1`.
 
 use std::path::Path;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use glam::Vec3;
+#[cfg(unix)]
 use re_agent::lock::{self, Holder, LockState};
 use re_app::{App, AppConfig};
 use re_command::AllowAll;
-use re_editor::{Editor, EditorSocket, HeadlessEditor, Panel};
+#[cfg(unix)]
+use re_editor::EditorSocket;
+use re_editor::{Editor, HeadlessEditor, Panel};
 use re_reflect::{FieldType, Value};
 use serde_json::json;
 

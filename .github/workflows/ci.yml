@@ -173,7 +173,13 @@ jobs:
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
           jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' out/verify.json
           jq -c '.stages[] | select(.name == "goldens") | .data' out/verify.json
-          jq -e '.ok == true' out/verify.json
+          # Goldens are blessed on Linux only (lavapipe and GL). Here every other
+          # stage must pass, and goldens must match where a set for this backend
+          # exists; a backend with no set at all is reported, not failed.
+          jq -e '.ok == true or (
+            ([.stages[] | select(.name != "goldens") | .ok] | all) and
+            (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)))
+          )' out/verify.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -199,16 +205,26 @@ jobs:
         run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
       - name: Test (GPU crates, Metal)
         if: success() || failure()
+        env:
+          RE_BACKENDS: metal
         run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1
       - name: real verify on the island
         if: success() || failure()
+        env:
+          RE_BACKENDS: metal
         run: |
           mkdir -p out
           cargo run --locked --release -p re_cli -- verify --project examples/island --json > out/verify.json || true
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
           jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' out/verify.json
           jq -c '.stages[] | select(.name == "goldens") | .data' out/verify.json
-          jq -e '.ok == true' out/verify.json
+          # Goldens are blessed on Linux only (lavapipe and GL). Here every other
+          # stage must pass, and goldens must match where a set for this backend
+          # exists; a backend with no set at all is reported, not failed.
+          jq -e '.ok == true or (
+            ([.stages[] | select(.name != "goldens") | .ok] | all) and
+            (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)))
+          )' out/verify.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
