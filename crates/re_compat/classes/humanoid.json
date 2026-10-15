@@ -1118,6 +1118,51 @@
           "note": "Stored, not applied."
         }
       ]
+    },
+    {
+      "name": "Players",
+      "extend": true,
+      "methods": [
+        {
+          "name": "CreateHumanoidModelFromDescription",
+          "params": [
+            {
+              "name": "description",
+              "type": "HumanoidDescription"
+            },
+            {
+              "name": "rigType",
+              "type": "Enum.HumanoidRigType"
+            },
+            {
+              "name": "assetTypeVerification",
+              "type": "Enum.AssetTypeVerification?"
+            }
+          ],
+          "returns": [
+            "Model"
+          ],
+          "status": "partial",
+          "note": "Body colours and scales are applied; asset ids (clothing, accessories, meshes) are not loaded. Returns nil while the part classes are not loaded.",
+          "doc": "Builds a new character model, not parented, with a Humanoid dressed in the description."
+        },
+        {
+          "name": "GetHumanoidDescriptionFromUserId",
+          "params": [
+            {
+              "name": "userId",
+              "type": "int64"
+            }
+          ],
+          "returns": [
+            "HumanoidDescription"
+          ],
+          "yields": true,
+          "status": "partial",
+          "note": "Offline there is no avatar to read: returns a default description with an RE9203 warning.",
+          "doc": "The description of a user's avatar."
+        }
+      ]
     }
   ]
 }

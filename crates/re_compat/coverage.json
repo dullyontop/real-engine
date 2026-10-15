@@ -3,7 +3,7 @@
   "version": 1,
   "totals": {
     "implemented": 1473,
-    "partial": 102,
+    "partial": 104,
     "stub-error": 52,
     "missing": 3
   },
@@ -2157,9 +2157,21 @@
           "status": "implemented"
         },
         {
+          "name": "CreateHumanoidModelFromDescription",
+          "kind": "method",
+          "status": "partial",
+          "note": "Body colours and scales are applied; asset ids (clothing, accessories, meshes) are not loaded. Returns nil while the part classes are not loaded."
+        },
+        {
           "name": "GetFriendsAsync",
           "kind": "method",
           "status": "stub-error"
+        },
+        {
+          "name": "GetHumanoidDescriptionFromUserId",
+          "kind": "method",
+          "status": "partial",
+          "note": "Offline there is no avatar to read: returns a default description with an RE9203 warning."
         },
         {
           "name": "GetNameFromUserIdAsync",
