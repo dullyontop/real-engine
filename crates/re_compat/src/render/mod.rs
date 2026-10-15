@@ -1,0 +1,627 @@
+//! The 3D view (WP15): parts, materials, lights, the sky and fog, the
+//! camera, particles, beams, trails and highlights, as data for a renderer.
+//!
+//! The host calls [`build`] once a frame, after the frame's scripts and
+//! simulation, with the viewport. It returns a [`RenderFrame`]: the camera
+//! and lights, one [`FrameItem`] per drawn part or merged static cell, the
+//! environment (ambient light, fog, sky, colour grading), the effects, and
+//! the meshes, materials and textures to upload or release since the last
+//! frame. Nothing here talks to the GPU: the host maps the frame onto its
+//! renderer (`re_render`'s `RenderSnapshot` and `SceneExtras`), keeping a
+//! table from [`MeshKey`], [`MaterialKey`] and texture names to its
+//! handles.
+//!
+//! Anchored parts that `re_compat::physics` groups into a static cell
+//! (ADR-0031) are drawn as one mesh per cell and material, with their colour
+//! in the vertices; transparent, `Neon`, `ForceField` and highlighted parts
+//! are always drawn on their own.
+
+mod camera;
+mod effects;
+mod lighting;
+mod looks;
+mod mesh;
+mod parts;
+
+use std::collections::HashSet;
+
+use glam::{Mat4, Quat, Vec2, Vec3};
+use mlua::Lua;
+use re_core::Diagnostic;
+use re_scene::{Entity, World};
+use re_types::EntityId;
+use re_types::mesh::MeshData;
+use re_types::render::{Camera, Light, MaterialDesc, TextureData};
+
+pub use lighting::sun_direction;
+pub use looks::{MaterialKey, TEXTURE_SIZE};
+pub use mesh::UV_STUDS;
+
+use crate::class::Accessor;
+use crate::gui::props::{FxMap, Scope};
+use crate::instance::tree;
+use crate::physics::CellId;
+use crate::runtime::{Bindings, state, with_world};
+use crate::scene::CompatConfig;
+
+/// The `Enum.Material` items, in the order [`MaterialKey::material`]
+/// numbers them.
+pub const MATERIALS: &[&str] = &[
+    "Plastic",
+    "SmoothPlastic",
+    "Neon",
+    "Wood",
+    "WoodPlanks",
+    "Marble",
+    "Basalt",
+    "Slate",
+    "CrackedLava",
+    "Concrete",
+    "Limestone",
+    "Granite",
+    "Pavement",
+    "Brick",
+    "Pebble",
+    "Cobblestone",
+    "Rock",
+    "Sandstone",
+    "CorrodedMetal",
+    "DiamondPlate",
+    "Foil",
+    "Metal",
+    "Grass",
+    "LeafyGrass",
+    "Sand",
+    "Fabric",
+    "Snow",
+    "Mud",
+    "Ground",
+    "Asphalt",
+    "Salt",
+    "Ice",
+    "Glacier",
+    "Glass",
+    "ForceField",
+    "Air",
+    "Water",
+    "Cardboard",
+    "Carpet",
+    "CeramicTiles",
+    "ClayRoofTiles",
+    "RoofShingles",
+    "Leather",
+    "Plaster",
+    "Rubber",
+];
+
+/// The number of [`MATERIALS`] item `name`, `Plastic`'s for an unknown one.
+pub(crate) fn material_index(name: &str) -> u8 {
+    MATERIALS.iter().position(|m| *m == name).unwrap_or(0) as u8
+}
+
+/// Frames a mesh or material stays uploaded after its last use.
+pub const RELEASE_AFTER_FRAMES: u64 = 300;
+
+/// A mesh the host uploads once and draws by this key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MeshKey(pub u64);
+
+/// One thing to draw: a mesh with a material at a world transform.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrameItem {
+    /// The part, or for a merged cell its first member.
+    pub entity: EntityId,
+    /// The mesh, uploaded by a frame's [`RenderFrame::new_meshes`].
+    pub mesh: MeshKey,
+    /// The material, created by a frame's [`RenderFrame::new_materials`].
+    pub material: MaterialKey,
+    /// Model-to-world transform.
+    pub world: Mat4,
+    /// `CastShadow`.
+    pub cast_shadow: bool,
+}
+
+/// Distance fog, in studs, linear RGB.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fog {
+    /// Where it starts.
+    pub start: f32,
+    /// Where it is complete.
+    pub end: f32,
+    /// Its colour.
+    pub color: [f32; 3],
+}
+
+/// The sky behind everything, linear RGB.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sky {
+    /// Straight up.
+    pub zenith: [f32; 3],
+    /// At the horizon.
+    pub horizon: [f32; 3],
+    /// Below the horizon.
+    pub ground: [f32; 3],
+    /// The direction towards the sun and its disc's colour, when shown.
+    pub sun: Option<(Vec3, [f32; 3])>,
+}
+
+/// The colour correction of the frame (`ColorCorrectionEffect`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColorGrading {
+    /// Added to every channel.
+    pub brightness: f32,
+    /// 0 keeps the contrast; 1 doubles it.
+    pub contrast: f32,
+    /// 0 keeps the saturation; -1 is grey.
+    pub saturation: f32,
+    /// Multiplies the colour, linear RGB.
+    pub tint: [f32; 3],
+}
+
+impl Default for ColorGrading {
+    fn default() -> Self {
+        ColorGrading {
+            brightness: 0.0,
+            contrast: 0.0,
+            saturation: 0.0,
+            tint: [1.0; 3],
+        }
+    }
+}
+
+/// A cone of light (`SpotLight`, `SurfaceLight`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpotLight {
+    /// World position.
+    pub position: Vec3,
+    /// The direction it shines, normalised.
+    pub direction: Vec3,
+    /// Linear RGB.
+    pub color: [f32; 3],
+    /// Lumens, as for a point light.
+    pub intensity: f32,
+    /// Where it reaches zero.
+    pub range: f32,
+    /// Half the cone's angle, in radians.
+    pub half_angle: f32,
+}
+
+/// How a sprite's quad fades.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SpriteShape {
+    /// A round spot fading to its rim.
+    #[default]
+    Soft,
+    /// The whole quad.
+    Square,
+}
+
+/// One camera-facing quad (a particle).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sprite {
+    /// The centre.
+    pub position: Vec3,
+    /// The side, in studs.
+    pub size: f32,
+    /// Rotation about the view axis, in radians.
+    pub rotation: f32,
+    /// Linear RGB and opacity.
+    pub color: [f32; 4],
+    /// 0 blends; 1 adds (`LightEmission`).
+    pub emission: f32,
+    /// How it fades.
+    pub shape: SpriteShape,
+}
+
+/// One point of a [`Ribbon`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RibbonPoint {
+    /// World position.
+    pub position: Vec3,
+    /// Width here, in studs.
+    pub width: f32,
+    /// Linear RGB and opacity here.
+    pub color: [f32; 4],
+}
+
+/// A strip through points (a beam or a trail).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ribbon {
+    /// The points, in order.
+    pub points: Vec<RibbonPoint>,
+    /// `None` faces the camera; `Some(n)` keeps the strip perpendicular to
+    /// `n`.
+    pub normal: Option<Vec3>,
+    /// 0 blends; 1 adds.
+    pub emission: f32,
+}
+
+/// A `Highlight`: a fill and outline over some parts' items.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Highlight {
+    /// The highlighted parts (each drawn as its own [`FrameItem`]).
+    pub entities: Vec<EntityId>,
+    /// Linear RGB and opacity of the fill.
+    pub fill: [f32; 4],
+    /// Linear RGB and opacity of the outline.
+    pub outline: [f32; 4],
+    /// `DepthMode` `AlwaysOnTop`.
+    pub always_on_top: bool,
+}
+
+/// How many effect pieces a frame drew and left out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EffectStats {
+    /// Particles plus beam and trail segments drawn.
+    pub drawn: u32,
+    /// The ones over the budget, left out (`RE9351`).
+    pub dropped: u32,
+}
+
+/// What the host gives a frame.
+#[derive(Clone, Copy, Debug)]
+pub struct RenderInput {
+    /// The window's size in pixels.
+    pub viewport: Vec2,
+    /// The height of the top bar (the GUI inset), in pixels.
+    pub top_inset: f32,
+    /// The frame's time in seconds (particles and trails advance by it).
+    pub dt: f32,
+}
+
+impl Default for RenderInput {
+    fn default() -> Self {
+        RenderInput {
+            viewport: Vec2::new(1280.0, 720.0),
+            top_inset: 0.0,
+            dt: 1.0 / 60.0,
+        }
+    }
+}
+
+/// One frame of the 3D view.
+#[derive(Clone, Debug)]
+pub struct RenderFrame {
+    /// `Workspace.CurrentCamera`.
+    pub camera: Camera,
+    /// The same camera for the UI step's billboards
+    /// ([`GuiFrame::camera`](crate::gui::GuiFrame)).
+    pub gui_camera: crate::gui::GuiCamera,
+    /// The sun (or moon) and the point lights.
+    pub lights: Vec<Light>,
+    /// Spot and surface lights.
+    pub spot_lights: Vec<SpotLight>,
+    /// What to draw.
+    pub items: Vec<FrameItem>,
+    /// The colour behind the sky.
+    pub clear: [f32; 4],
+    /// Multiplies every light (`ExposureCompensation`).
+    pub exposure: f32,
+    /// Light from above and from below, linear RGB.
+    pub ambient: ([f32; 3], [f32; 3]),
+    /// Distance fog.
+    pub fog: Option<Fog>,
+    /// The sky.
+    pub sky: Sky,
+    /// Colour correction.
+    pub grading: Option<ColorGrading>,
+    /// Particles.
+    pub sprites: Vec<Sprite>,
+    /// Beams and trails.
+    pub ribbons: Vec<Ribbon>,
+    /// Highlights.
+    pub highlights: Vec<Highlight>,
+    /// Effect pieces drawn and dropped.
+    pub effects: EffectStats,
+    /// Meshes to upload before drawing.
+    pub new_meshes: Vec<(MeshKey, MeshData)>,
+    /// Meshes no longer drawn, to release.
+    pub released_meshes: Vec<MeshKey>,
+    /// Textures to upload, by name; materials name them as
+    /// `TextureRef::Asset`.
+    pub new_textures: Vec<(String, TextureData)>,
+    /// Materials to create before drawing.
+    pub new_materials: Vec<(MaterialKey, MaterialDesc)>,
+    /// Materials no longer drawn, to release.
+    pub released_materials: Vec<MaterialKey>,
+    /// Warnings (`RE9351`, once per budget overflow streak).
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// What the view needs from the project's configuration.
+#[derive(Clone, Copy, Debug)]
+pub struct RenderSettings {
+    /// Particles plus beam and trail segments per frame.
+    pub effect_budget: u32,
+    /// The seed of the particles' randomness.
+    pub seed: u64,
+}
+
+impl Default for RenderSettings {
+    fn default() -> Self {
+        RenderSettings::from_config(&CompatConfig::default())
+    }
+}
+
+impl RenderSettings {
+    /// The settings of a project: `[compat] effect_budget` and `seed`.
+    pub fn from_config(config: &CompatConfig) -> Self {
+        RenderSettings {
+            effect_budget: config.effect_budget(),
+            seed: config.seed,
+        }
+    }
+}
+
+/// The key of a part's own mesh: its shape and size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ShapeKey(u8, [u32; 3]);
+
+/// What a merged cell is drawn with.
+#[derive(Clone, Debug, Default)]
+struct CellRender {
+    signature: u64,
+    batches: Vec<(MeshKey, MaterialKey, EntityId, bool)>,
+    /// The members drawn in the batches.
+    merged: HashSet<Entity>,
+}
+
+/// What the view keeps from frame to frame, in the VM's app data.
+#[derive(Default)]
+pub(crate) struct Hub {
+    settings: RenderSettings,
+    frame: u64,
+    next_mesh: u64,
+    shapes: FxMap<ShapeKey, (MeshKey, u64)>,
+    cells: FxMap<CellId, CellRender>,
+    materials: FxMap<MaterialKey, u64>,
+    textures: HashSet<String>,
+    /// The last frame's viewport and inset, for the camera's methods.
+    pub(crate) viewport: Vec2,
+    pub(crate) inset: f32,
+    pub(crate) effects: effects::State,
+}
+
+pub(crate) fn hub_mut<R>(lua: &Lua, f: impl FnOnce(&mut Hub) -> R) -> R {
+    if lua.app_data_ref::<Hub>().is_none() {
+        lua.set_app_data(Hub {
+            viewport: RenderInput::default().viewport,
+            ..Hub::default()
+        });
+    }
+    let mut h = lua.app_data_mut::<Hub>().expect("installed above");
+    f(&mut h)
+}
+
+/// Installs the view's settings for this VM.
+pub fn configure(lua: &Lua, settings: RenderSettings) {
+    hub_mut(lua, |h| {
+        h.settings = settings;
+        h.effects.reseed(settings.seed);
+    });
+}
+
+impl Hub {
+    fn new_mesh(&mut self, out: &mut RenderFrame, data: MeshData) -> MeshKey {
+        self.next_mesh += 1;
+        let key = MeshKey(self.next_mesh);
+        out.new_meshes.push((key, data));
+        key
+    }
+
+    /// Notes a material as used this frame, sending it (and its texture)
+    /// the first time.
+    fn use_material(&mut self, out: &mut RenderFrame, key: MaterialKey) {
+        let frame = self.frame;
+        if let Some(last) = self.materials.get_mut(&key) {
+            *last = frame;
+            return;
+        }
+        self.materials.insert(key, frame);
+        let name = MATERIALS[usize::from(key.material).min(MATERIALS.len() - 1)];
+        let desc = looks::desc(&key, name);
+        if desc.base_color_texture.is_some()
+            && self.textures.insert(name.to_string())
+            && let Some(t) = looks::texture(name)
+        {
+            out.new_textures.push((looks::texture_name(name), t));
+        }
+        out.new_materials.push((key, desc));
+    }
+
+    /// Releases what has not been drawn for [`RELEASE_AFTER_FRAMES`].
+    fn collect(&mut self, out: &mut RenderFrame) {
+        let frame = self.frame;
+        let old = |last: u64| frame.saturating_sub(last) > RELEASE_AFTER_FRAMES;
+        self.shapes.retain(|_, (key, last)| {
+            let keep = !old(*last);
+            if !keep {
+                out.released_meshes.push(*key);
+            }
+            keep
+        });
+        self.materials.retain(|key, last| {
+            let keep = !old(*last);
+            if !keep {
+                out.released_materials.push(*key);
+            }
+            keep
+        });
+    }
+}
+
+/// The world frame of an instance with one: a part's pose and size, or an
+/// attachment's world frame (size zero). `None` otherwise.
+pub(crate) fn frame_of(s: &Scope, e: Entity) -> Option<(Vec3, Quat, Vec3)> {
+    if s.is_a(e, "BasePart") {
+        let pose = crate::physics::world_pose(s.w, e)?;
+        return Some((pose.pos, pose.rot, s.props(e).vec3("Size")));
+    }
+    if s.is_a(e, "Attachment") {
+        let parent = tree::parent(s.w, e)?;
+        let (pos, rot, _) = frame_of(s, parent)?;
+        let local = s
+            .props(e)
+            .get("CFrame")
+            .and_then(|v| crate::physics::pose_of(&v))
+            .unwrap_or(re_physics::Pose::IDENTITY);
+        return Some((pos + rot * local.pos, rot * local.rot, Vec3::ZERO));
+    }
+    None
+}
+
+/// The entities whose own component is `class`'s.
+pub(crate) fn instances_of(w: &mut World, class: &str) -> Vec<Entity> {
+    let Some(key) = w.registry.try_key(&crate::class::own_component_name(class)) else {
+        return Vec::new();
+    };
+    let id = w.registry.component_id(key);
+    let mut q = re_scene::ecs::query::QueryBuilder::<Entity>::new(&mut w.ecs)
+        .with_id(id)
+        .build();
+    q.iter(&w.ecs).collect()
+}
+
+/// The builtin-property accessors of the view's classes.
+pub fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
+    lighting::accessors()
+}
+
+/// Registers the view's accessors, methods and the `Ray` global.
+pub fn register(b: &mut Bindings) {
+    for (class, prop, a) in accessors() {
+        b.accessor(class, prop, a);
+    }
+    lighting::register(b);
+    camera::register(b);
+    effects::register(b);
+}
+
+/// Builds the frame of the 3D view: reads the world after the frame's
+/// scripts and simulation, advances particles and trails by `input.dt`,
+/// and writes `Camera.ViewportSize` when the window's size changed.
+///
+/// # Errors
+/// When the VM has no world bound or the camera write fails.
+pub fn build(lua: &Lua, input: &RenderInput) -> mlua::Result<RenderFrame> {
+    let st = state(lua)?;
+    let classes = st.setup.classes.clone();
+    let game = st.game;
+    let mut hub = lua.remove_app_data::<Hub>().unwrap_or_else(|| Hub {
+        viewport: RenderInput::default().viewport,
+        ..Hub::default()
+    });
+    let out = with_world(lua, |w| build_in(w, &classes, game, &mut hub, input));
+    lua.set_app_data(hub);
+    out?
+}
+
+fn build_in(
+    w: &mut World,
+    classes: &crate::ClassRegistry,
+    game: Entity,
+    hub: &mut Hub,
+    input: &RenderInput,
+) -> mlua::Result<RenderFrame> {
+    hub.frame += 1;
+    hub.inset = input.top_inset;
+    let workspace = crate::services::core::find_service(w, game, "Workspace");
+    let lighting = crate::services::core::find_service(w, game, "Lighting");
+    let camera_entity = workspace.and_then(|ws| {
+        let s = Scope::new(w, classes);
+        s.props(ws).entity("CurrentCamera")
+    });
+    if let Some(cam) = camera_entity
+        && hub.viewport != input.viewport
+    {
+        hub.viewport = input.viewport;
+        let v = crate::gui::props::vec2_value(input.viewport);
+        let _ = crate::tween::set_own(w, cam, "Camera", "ViewportSize", v);
+    }
+    let part_list = instances_of(w, "BasePart");
+    let light_list = instances_of(w, "Light");
+    let effect_lists = effects::Lists::find(w);
+    let cells = w
+        .ecs
+        .get_resource::<crate::physics::StaticCells>()
+        .map(|c| c.cells().clone())
+        .unwrap_or_default();
+
+    let s = Scope::new(w, classes);
+    let cam = camera::read(&s, camera_entity);
+    let env = lighting::environment(&s, lighting, camera_entity);
+    let mut out = RenderFrame {
+        camera: cam.camera(input.viewport),
+        gui_camera: cam.gui(),
+        lights: env.sun.into_iter().collect(),
+        spot_lights: Vec::new(),
+        items: Vec::new(),
+        clear: [
+            env.sky.horizon[0],
+            env.sky.horizon[1],
+            env.sky.horizon[2],
+            1.0,
+        ],
+        exposure: env.exposure,
+        ambient: env.ambient,
+        fog: env.fog,
+        sky: env.sky,
+        grading: env.grading,
+        sprites: Vec::new(),
+        ribbons: Vec::new(),
+        highlights: Vec::new(),
+        effects: EffectStats::default(),
+        new_meshes: Vec::new(),
+        released_meshes: Vec::new(),
+        new_textures: Vec::new(),
+        new_materials: Vec::new(),
+        released_materials: Vec::new(),
+        diagnostics: Vec::new(),
+    };
+    let in_workspace =
+        |e: Entity| workspace.is_some_and(|ws| tree::ancestors(s.w, e).contains(&ws));
+    let lights: Vec<Entity> = light_list
+        .into_iter()
+        .filter(|&e| in_workspace(e))
+        .collect();
+    lighting::lights(&s, &lights, &mut out.lights, &mut out.spot_lights);
+
+    let highlights = effects::highlights(&s, &effect_lists, &in_workspace, &mut out);
+    parts::draw(
+        &s,
+        hub,
+        &part_list,
+        &cells,
+        &in_workspace,
+        &highlights,
+        &mut out,
+    );
+    effects::draw(
+        &s,
+        hub,
+        &effect_lists,
+        &in_workspace,
+        &cam,
+        input.dt,
+        &mut out,
+    );
+    hub.collect(&mut out);
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn materials_are_the_enum_items() {
+        for m in MATERIALS {
+            assert!(
+                crate::enums::EnumItem::lookup("Material", m).is_some(),
+                "{m} is not an Enum.Material item"
+            );
+        }
+        assert_eq!(material_index("Neon"), 2);
+        assert_eq!(material_index("Nope"), 0);
+    }
+}

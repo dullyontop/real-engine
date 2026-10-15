@@ -39,6 +39,7 @@ pub mod instance;
 pub mod net;
 pub mod physics;
 pub mod players;
+pub mod render;
 pub mod runtime;
 pub mod scene;
 pub mod services;

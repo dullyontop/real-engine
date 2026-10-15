@@ -1,6 +1,8 @@
 // Forward PBR-lite pass: base colour, texture, metallic and roughness, a normal
-// map, one shadowed sun, up to eight point lights, hemisphere ambient and emissive.
+// map, one shadowed sun, up to eight point and eight spot lights, hemisphere
+// ambient, emissive, distance fog and colour correction.
 #include "common.wgsl"
+#include "fx.wgsl"
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
@@ -138,7 +140,8 @@ fn shade(in: VsOut, front_facing: bool) -> vec4<f32> {
     }
     let alpha = select(1.0, base.a, material.flags.z > 0.5);
     if (material.params.w > 0.5) {
-        return vec4<f32>(base.rgb, alpha);
+        let unlit = mix(base.rgb, frame.fog_color.rgb, fog_amount(distance(frame.camera_pos.xyz, in.world_pos)));
+        return vec4<f32>(grade(unlit), alpha);
     }
 
     var n = normalize(in.normal);
@@ -183,6 +186,19 @@ fn shade(in: VsOut, front_facing: bool) -> vec4<f32> {
         let attenuation = window * window / d2;
         color += direct(n, v, to_light * inverseSqrt(d2), light.color.rgb * attenuation, diffuse_color, f0, a);
     }
+    let spot_count = u32(frame.fog_params.z);
+    for (var i = 0u; i < spot_count; i++) {
+        let light = frame.spots[i];
+        let to_light = light.position_range.xyz - in.world_pos;
+        let d2 = max(dot(to_light, to_light), 1e-4);
+        let range = light.position_range.w;
+        let ratio = d2 / (range * range);
+        let window = clamp(1.0 - ratio * ratio, 0.0, 1.0);
+        let l = to_light * inverseSqrt(d2);
+        let cone = smoothstep(light.direction.w, light.color.w, dot(-l, light.direction.xyz));
+        let attenuation = window * window / d2 * cone;
+        color += direct(n, v, l, light.color.rgb * attenuation, diffuse_color, f0, a);
+    }
     let r = reflect(-v, n);
     let ambient_spec = mix(hemisphere(r), hemisphere(n), roughness) * env_brdf(f0, roughness, n_dot_v);
     color += hemisphere(n) * diffuse_color + ambient_spec;
@@ -190,7 +206,8 @@ fn shade(in: VsOut, front_facing: bool) -> vec4<f32> {
     if (in.flags.y > 0.5) {
         color = mix(color, vec3<f32>(1.0, 0.55, 0.1), 0.35);
     }
-    return vec4<f32>(color, alpha);
+    color = mix(color, frame.fog_color.rgb, fog_amount(distance(frame.camera_pos.xyz, in.world_pos)));
+    return vec4<f32>(grade(color), alpha);
 }
 
 @fragment
