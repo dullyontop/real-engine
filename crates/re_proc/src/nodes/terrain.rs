@@ -1,0 +1,410 @@
+//! `terrain.heightfield`, `terrain.island_mask`, `terrain.mesh` and
+//! `terrain.water_plane`.
+
+use std::sync::Arc;
+
+use glam::Vec3;
+use re_geom::Heightfield;
+use re_noise::{Basis, Fractal, fbm2, ridged2, warped_fbm2};
+use re_reflect::Value;
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+use super::{NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
+use crate::value::{DerivedAsset, FragItem, Fragment, MeshValue, Output, PortType, derived_name};
+
+/// The largest field size (samples per side).
+pub const MAX_FIELD_SIZE: u32 = 2049;
+
+/// The noise of a [`HeightfieldParams`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NoiseKind {
+    /// Fractal Brownian motion: rolling hills.
+    #[default]
+    Fbm,
+    /// Ridged multifractal: sharp crests.
+    Ridged,
+    /// Domain-warped fBm: swirled, eroded-looking shapes.
+    Warped,
+}
+
+/// The base noise of a [`HeightfieldParams`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BasisKind {
+    /// Perlin gradient noise.
+    #[default]
+    Perlin,
+    /// Simplex gradient noise.
+    Simplex,
+}
+
+/// Parameters of `terrain.heightfield`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct HeightfieldParams {
+    /// Samples per side (2 to 2049). The field is centred on the source.
+    pub size: u32,
+    /// Distance between samples, in metres.
+    pub cell: f32,
+    /// Noise frequency: noise units per metre (smaller is broader).
+    pub scale: f32,
+    /// Height of the highest possible point, in metres (heights run from 0 to this).
+    pub height: f32,
+    /// The noise: `fbm`, `ridged` or `warped`.
+    pub noise: NoiseKind,
+    /// The base noise: `perlin` or `simplex`.
+    pub basis: BasisKind,
+    /// Number of octaves (1 to 16).
+    pub octaves: u32,
+    /// Frequency multiplier per octave.
+    pub lacunarity: f32,
+    /// Amplitude multiplier per octave.
+    pub gain: f32,
+    /// Warp strength in noise units (`warped` only).
+    pub warp: f32,
+    /// Moves the noise pattern, in metres `[x, z]`.
+    pub offset: [f32; 2],
+}
+
+impl Default for HeightfieldParams {
+    fn default() -> Self {
+        HeightfieldParams {
+            size: 128,
+            cell: 1.0,
+            scale: 0.01,
+            height: 30.0,
+            noise: NoiseKind::Fbm,
+            basis: BasisKind::Perlin,
+            octaves: 5,
+            lacunarity: 2.0,
+            gain: 0.5,
+            warp: 1.0,
+            offset: [0.0, 0.0],
+        }
+    }
+}
+
+fn check_size(size: u32) -> Result<(), String> {
+    if (2..=MAX_FIELD_SIZE).contains(&size) {
+        Ok(())
+    } else {
+        Err(format!("`size` must be 2 to {MAX_FIELD_SIZE}, got {size}"))
+    }
+}
+
+impl Params for HeightfieldParams {
+    fn validate(&self) -> Result<(), String> {
+        check_size(self.size)?;
+        positive("cell", self.cell)?;
+        positive("scale", self.scale)?;
+        within("height", self.height, -10_000.0, 10_000.0)?;
+        if !(1..=16).contains(&self.octaves) {
+            return Err(format!("`octaves` must be 1 to 16, got {}", self.octaves));
+        }
+        within("lacunarity", self.lacunarity, 1.0, 8.0)?;
+        within("gain", self.gain, 0.0, 1.0)?;
+        within("warp", self.warp, 0.0, 100.0)?;
+        for v in self.offset {
+            within("offset", v, -1.0e6, 1.0e6)?;
+        }
+        Ok(())
+    }
+}
+
+fn heightfield(ctx: &super::NodeCtx, p: &HeightfieldParams) -> Result<Output, String> {
+    let n = p.size as usize;
+    let f = Fractal {
+        basis: match p.basis {
+            BasisKind::Perlin => Basis::Perlin,
+            BasisKind::Simplex => Basis::Simplex,
+        },
+        octaves: p.octaves,
+        lacunarity: p.lacunarity,
+        gain: p.gain,
+    };
+    let half = Heightfield::half_extent(p.size, p.cell);
+    let seed = ctx.seed;
+    let mut values = vec![0.0f32; n * n];
+    ctx.par_rows(&mut values, n, |z, row| {
+        let wz = z as f32 * p.cell - half + p.offset[1];
+        for (x, out) in row.iter_mut().enumerate() {
+            let wx = x as f32 * p.cell - half + p.offset[0];
+            let (sx, sz) = (wx * p.scale, wz * p.scale);
+            let unit = match p.noise {
+                NoiseKind::Fbm => fbm2(seed, &f, sx, sz) * 0.5 + 0.5,
+                NoiseKind::Ridged => ridged2(seed, &f, sx, sz),
+                NoiseKind::Warped => warped_fbm2(seed, &f, p.warp, sx, sz) * 0.5 + 0.5,
+            };
+            *out = unit.clamp(0.0, 1.0) * p.height;
+        }
+    });
+    Ok(Output::Field(Arc::new(crate::value::Field::new(
+        p.size, p.cell, values,
+    )?)))
+}
+
+/// The outline of a [`MaskParams`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MaskShape {
+    /// Round island.
+    #[default]
+    Circle,
+    /// Square island.
+    Square,
+}
+
+/// Parameters of `terrain.island_mask`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct MaskParams {
+    /// Samples per side (2 to 2049). `field.combine` resamples it to the
+    /// other field's size, so it rarely needs changing.
+    pub size: u32,
+    /// Distance between samples, in metres.
+    pub cell: f32,
+    /// The island's radius as a fraction of the half extent (1 reaches the
+    /// middle of each edge).
+    pub radius: f32,
+    /// The fraction of the radius over which the mask falls from 1 to 0.
+    pub falloff: f32,
+    /// `circle` or `square`.
+    pub shape: MaskShape,
+}
+
+impl Default for MaskParams {
+    fn default() -> Self {
+        MaskParams {
+            size: 128,
+            cell: 1.0,
+            radius: 0.9,
+            falloff: 0.6,
+            shape: MaskShape::Circle,
+        }
+    }
+}
+
+impl Params for MaskParams {
+    fn validate(&self) -> Result<(), String> {
+        check_size(self.size)?;
+        positive("cell", self.cell)?;
+        within("radius", self.radius, 0.01, 2.0)?;
+        within("falloff", self.falloff, 0.0, 1.0)
+    }
+}
+
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    if e1 <= e0 {
+        return if x < e0 { 0.0 } else { 1.0 };
+    }
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn island_mask(ctx: &super::NodeCtx, p: &MaskParams) -> Result<Output, String> {
+    let n = p.size as usize;
+    let last = (n - 1) as f32;
+    let inner = p.radius * (1.0 - p.falloff);
+    let mut values = vec![0.0f32; n * n];
+    ctx.par_rows(&mut values, n, |z, row| {
+        let v = z as f32 / last * 2.0 - 1.0;
+        for (x, out) in row.iter_mut().enumerate() {
+            let u = x as f32 / last * 2.0 - 1.0;
+            let d = match p.shape {
+                MaskShape::Circle => (u * u + v * v).sqrt(),
+                MaskShape::Square => u.abs().max(v.abs()),
+            };
+            *out = 1.0 - smoothstep(inner, p.radius, d);
+        }
+    });
+    Ok(Output::Field(Arc::new(crate::value::Field::new(
+        p.size, p.cell, values,
+    )?)))
+}
+
+/// Parameters of `terrain.mesh`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct TerrainMeshParams {
+    /// Also add a heightfield `Collider` built from the same samples.
+    pub collider: bool,
+    /// A material file (`materials/grass.material.json`), or empty.
+    pub material: String,
+    /// The entity's name.
+    pub name: String,
+}
+
+impl Default for TerrainMeshParams {
+    fn default() -> Self {
+        TerrainMeshParams {
+            collider: false,
+            material: String::new(),
+            name: "Terrain".into(),
+        }
+    }
+}
+
+impl Params for TerrainMeshParams {}
+
+fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, String> {
+    let field = ctx.need_field("field")?;
+    let hf = &field.0;
+    let mesh = Arc::new(hf.to_mesh());
+    let mesh_name = derived_name(&ctx.key);
+    let mut components = vec![
+        ("Transform".to_string(), Vec::new()),
+        (
+            "MeshRef".to_string(),
+            vec![("asset".to_string(), Value::Str(mesh_name.clone()))],
+        ),
+    ];
+    let mut assets = vec![(mesh_name, DerivedAsset::Mesh(mesh))];
+    if !p.material.is_empty() {
+        components.push((
+            "MaterialRef".into(),
+            vec![("asset".into(), Value::Str(p.material.clone()))],
+        ));
+    }
+    if p.collider {
+        let mut h = blake3::Hasher::new();
+        h.update(b"re_proc heightfield collider");
+        h.update(&ctx.key);
+        let hf_name = derived_name(h.finalize().as_bytes());
+        components.push((
+            "Collider".into(),
+            vec![
+                ("shape".into(), Value::Enum("Heightfield".into())),
+                ("source".into(), Value::Str(hf_name.clone())),
+            ],
+        ));
+        assets.push((hf_name, DerivedAsset::Heightfield(Arc::new(hf.clone()))));
+    }
+    Ok(Output::Fragment(Arc::new(Fragment {
+        items: vec![FragItem {
+            key: format!("{}/terrain", ctx.node_id),
+            name: p.name.clone(),
+            parent_key: None,
+            components,
+            prefab: None,
+        }],
+        assets,
+    })))
+}
+
+/// Parameters of `terrain.water_plane`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct WaterParams {
+    /// The water's height, in metres.
+    pub level: f32,
+    /// The side length of the square plane, in metres.
+    pub size: f32,
+    /// Cells per side of the plane mesh (1 to 1024).
+    pub subdivisions: u32,
+    /// A material file, or empty.
+    pub material: String,
+    /// The entity's name.
+    pub name: String,
+}
+
+impl Default for WaterParams {
+    fn default() -> Self {
+        WaterParams {
+            level: 2.0,
+            size: 512.0,
+            subdivisions: 1,
+            material: String::new(),
+            name: "Water".into(),
+        }
+    }
+}
+
+impl Params for WaterParams {
+    fn validate(&self) -> Result<(), String> {
+        within("level", self.level, -10_000.0, 10_000.0)?;
+        positive("size", self.size)
+    }
+}
+
+fn water_plane(ctx: &super::NodeCtx, p: &WaterParams) -> Result<Output, String> {
+    let plane = re_geom::plane(p.size, p.size, p.subdivisions).map_err(|e| e.to_string())?;
+    let mesh = MeshValue {
+        mesh: plane,
+        material: p.material.clone(),
+        asset: ctx.key,
+    };
+    let mut item =
+        super::fragment::mesh_item(format!("{}/water", ctx.node_id), p.name.clone(), &mesh);
+    item.0.components[0].1 = vec![(
+        "translation".into(),
+        Value::Vec3(Vec3::new(0.0, p.level, 0.0)),
+    )];
+    Ok(Output::Fragment(Arc::new(Fragment {
+        items: vec![item.0],
+        assets: vec![item.1],
+    })))
+}
+
+const FIELD: &[PortType] = &[PortType::Field];
+
+pub(super) fn register(r: &mut NodeRegistry) {
+    r.register(NodeDef::new(
+        NodeSpec {
+            kind: "terrain.heightfield",
+            version: 1,
+            doc: "A noise heightfield (fbm, ridged or warped), centred on the source, with heights from 0 to `height` metres.",
+            inputs: &[],
+            variadic: None,
+            output: PortType::Field,
+            uses_seed: true,
+            file_params: &[],
+        },
+        heightfield,
+    ));
+    r.register(NodeDef::new(
+        NodeSpec {
+            kind: "terrain.island_mask",
+            version: 1,
+            doc: "A radial falloff from 1 in the middle to 0 at the edges; multiply a heightfield by it to make an island.",
+            inputs: &[],
+            variadic: None,
+            output: PortType::Field,
+            uses_seed: false,
+            file_params: &[],
+        },
+        island_mask,
+    ));
+    r.register(NodeDef::new(
+        NodeSpec {
+            kind: "terrain.mesh",
+            version: 1,
+            doc: "Turns a field into a terrain entity: a derived mesh, an optional material and an optional heightfield collider.",
+            inputs: &[PortDef {
+                name: "field",
+                accepts: FIELD,
+                required: true,
+                doc: "The heights, in metres.",
+            }],
+            variadic: None,
+            output: PortType::Fragment,
+            uses_seed: false,
+            file_params: &[],
+        },
+        terrain_mesh,
+    ));
+    r.register(NodeDef::new(
+        NodeSpec {
+            kind: "terrain.water_plane",
+            version: 1,
+            doc: "A flat square water entity at a height.",
+            inputs: &[],
+            variadic: None,
+            output: PortType::Fragment,
+            uses_seed: false,
+            file_params: &[],
+        },
+        water_plane,
+    ));
+}

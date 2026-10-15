@@ -1,0 +1,170 @@
+//! `re_proc`: the procedural core of Real Engine (ARCHITECTURE §5, ADR-0015).
+//!
+//! * [`ProcGraph`]: the validated IR of a `*.graph.json` document
+//!   ([`re_types::graph::GraphDoc`]), with errors `RE4000`–`RE4007`;
+//! * [`NodeRegistry`]: the 16 M1 node kinds ([`NodeRegistry::m1`]), each
+//!   with typed ports and a schemars parameter schema
+//!   ([`NodeRegistry::graph_json_schema`] gives `graph.schema.json`);
+//! * [`Evaluator`]: topological, parallel evaluation on the
+//!   [`TaskPool`](re_core::TaskPool), with per-node blake3 keys, per-node
+//!   seeds (`Pcg32::from_seed(seed).fork(hash64(node_id))`), a memory cache
+//!   and a postcard disk cache in `.real/cache/proc/`, reported in an
+//!   [`EvalReport`];
+//! * [`GraphStore`]: the world resource holding each procedural source's
+//!   graph, the shared evaluator, the derived assets (meshes and
+//!   heightfields named `derived:<key>`) and the last reports;
+//! * [`register_generator`]: the `graph` generator for `re_scene`'s
+//!   procedural sources (StableKeys `<node id>/<local key>`);
+//! * [`register_commands`]: `graph.set_param`, `graph.regenerate`,
+//!   `graph.generate` and `graph.report`.
+//!
+//! # Ports and the graph's output
+//!
+//! Values are [`Field`]s (square grids of heights in metres, or weights),
+//! meshes, [`Points`] and fragments (entities to create). Each node has one
+//! output port named after its type (`field`, `mesh`, `points`,
+//! `fragment`), and named inputs; `mesh.merge` and `fragment.merge` take
+//! inputs on any port names. The graph's output is the fragment of every
+//! node that no edge leaves (a mesh there becomes one entity), in document
+//! order.
+//!
+//! # Determinism
+//!
+//! The same graph, parameters and seed give the same fragment, bit for bit,
+//! on any number of threads: nodes are pure functions of their key, noise
+//! and geometry follow `re_noise`'s portable rules, and results are
+//! gathered in document order.
+//!
+//! `re_proc` reaches no GPU, physics or scripting crate.
+
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+mod cache;
+pub mod canon;
+pub mod codes;
+mod commands;
+mod eval;
+mod generator;
+mod graph;
+pub mod nodes;
+mod store;
+pub mod value;
+
+pub use commands::{
+    DEFAULT_GENERATE_ENTITIES, DEFAULT_GENERATE_MS, GenerateArgs, RegenerateArgs, ReportArgs,
+    SetParamArgs, register_commands,
+};
+pub use eval::{
+    CacheState, DEFAULT_MEMORY_BUDGET, EvalOptions, EvalReport, Evaluation, Evaluator, NodeReport,
+    OutputInfo, fragment_hash_hex, to_scene_fragment,
+};
+pub use generator::{
+    GENERATOR, ParamOverrides, apply_overrides, overrides_text, parse_overrides, register_generator,
+};
+pub use graph::{Edge, GraphId, Node, NodeId, PortName, ProcGraph};
+pub use nodes::{NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef};
+pub use store::{Budget, GraphStore};
+pub use value::{
+    DerivedAsset, Field, FragItem, Fragment, MeshValue, Output, Point, Points, PortType, PrefabUse,
+};
+
+use re_core::DiagInfo;
+
+/// Every diagnostic code `re_proc` uses, with its explain page.
+pub const DIAGNOSTICS: &[DiagInfo] = &[
+    DiagInfo {
+        code: codes::INVALID_GRAPH,
+        title: "Invalid graph document",
+        page: include_str!("../explain/RE4000.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_NODE_KIND,
+        title: "Unknown node kind",
+        page: include_str!("../explain/RE4001.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_PORT,
+        title: "Unknown port",
+        page: include_str!("../explain/RE4002.md"),
+    },
+    DiagInfo {
+        code: codes::PORT_TYPE_MISMATCH,
+        title: "Port type mismatch",
+        page: include_str!("../explain/RE4003.md"),
+    },
+    DiagInfo {
+        code: codes::CYCLE,
+        title: "Cycle in a graph",
+        page: include_str!("../explain/RE4004.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_PARAMS,
+        title: "Invalid node parameters",
+        page: include_str!("../explain/RE4005.md"),
+    },
+    DiagInfo {
+        code: codes::MISSING_INPUT,
+        title: "Required input not connected",
+        page: include_str!("../explain/RE4006.md"),
+    },
+    DiagInfo {
+        code: codes::INPUT_CONNECTED_TWICE,
+        title: "Input connected twice",
+        page: include_str!("../explain/RE4007.md"),
+    },
+    DiagInfo {
+        code: codes::NODE_FAILED,
+        title: "Node failed",
+        page: include_str!("../explain/RE4008.md"),
+    },
+    DiagInfo {
+        code: codes::NO_GRAPH,
+        title: "No graph for a procedural source",
+        page: include_str!("../explain/RE4009.md"),
+    },
+    DiagInfo {
+        code: codes::ORPHANED_OVERRIDE,
+        title: "Orphaned override",
+        page: include_str!("../explain/RE4010.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_OVERRIDE,
+        title: "Override names an unknown node or parameter",
+        page: include_str!("../explain/RE4011.md"),
+    },
+    DiagInfo {
+        code: codes::UNSUPPORTED_NODE_VERSION,
+        title: "Unsupported node version",
+        page: include_str!("../explain/RE4012.md"),
+    },
+    DiagInfo {
+        code: codes::DUPLICATE_KEY,
+        title: "Duplicate key in a graph's output",
+        page: include_str!("../explain/RE4013.md"),
+    },
+    DiagInfo {
+        code: codes::PREFAB_FAILED,
+        title: "Prefab failed",
+        page: include_str!("../explain/RE4014.md"),
+    },
+    DiagInfo {
+        code: codes::CACHE_IO,
+        title: "Procedural cache I/O failed",
+        page: include_str!("../explain/RE4015.md"),
+    },
+    DiagInfo {
+        code: codes::BUDGET_EXCEEDED,
+        title: "Budget exceeded",
+        page: include_str!("../explain/RE4016.md"),
+    },
+    DiagInfo {
+        code: codes::NOT_A_GRAPH_SOURCE,
+        title: "Not a graph source",
+        page: include_str!("../explain/RE4017.md"),
+    },
+];
+
+/// The code range this crate uses: `RE4000`–`RE4499`, the part of the
+/// `RE4xxx` block (ARCHITECTURE §7) that `re_geom` leaves to it.
+pub const CODE_RANGE: std::ops::RangeInclusive<u16> = 4000..=4499;
