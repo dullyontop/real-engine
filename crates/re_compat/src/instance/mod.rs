@@ -256,7 +256,7 @@ fn resolve(lua: &Lua, class: &str, key: &str) -> Result<Resolved> {
     let st = state(lua)?;
     let classes = &st.setup.classes;
     let r = match classes.member(class, key) {
-        Ok(m) => match m.require_implemented() {
+        Ok(m) => match m.require_implemented_by_script() {
             // A stub with an implementation raises its own error when called.
             Err(_)
                 if matches!(m.member, Member::Method(_))

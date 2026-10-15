@@ -998,8 +998,8 @@ mod model {
             "{s:?}"
         );
         assert_eq!(s[5], "Color3\t1\tNumberRange\t2");
-        // An enum item has no attribute form: it is stored as its name.
-        assert_eq!(s[6], "string\tPlastic");
+        // An enum item attribute keeps its type and reads back as the item.
+        assert_eq!(s[6], "EnumItem\tEnum.Material.Plastic");
         assert_eq!(s[7], "2\t3");
     }
 

@@ -22,6 +22,7 @@
 //! because component names are identifiers (ADR-0032).
 
 mod access;
+mod trace;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -38,6 +39,7 @@ use crate::data::{
 use crate::error::CompatError;
 
 pub use access::own_component_name;
+pub use trace::TRACE_ENV as MEMBER_TRACE_ENV;
 
 component! {
     /// Marks an entity as an instance of a Roblox-style class.
@@ -242,6 +244,15 @@ impl MemberRef<'_> {
             )
             .with_hint(format!("use {instead}"))
         })
+    }
+
+    /// [`Self::require_implemented`] for a member a script reached (an index,
+    /// an assignment, `GetPropertyChangedSignal`, a tween goal). It also
+    /// records the member for the member-call check when tracing is on.
+    pub(crate) fn require_implemented_by_script(&self) -> Result<(), CompatError> {
+        self.require_implemented()?;
+        trace::record(&self.class.name, self.member.name());
+        Ok(())
     }
 
     /// `Ok` if the member is `implemented` or `partial`; the `RE9001` error

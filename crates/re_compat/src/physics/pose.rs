@@ -55,6 +55,16 @@ pub fn set_world_pose(w: &mut World, e: Entity, pose: Pose) -> Result<(), Compat
     if w.ecs.get::<Transform>(e).is_none() {
         return Err(CompatError::Scene("the instance has no Transform".into()));
     }
+    // The move is logged with the tick before it, and later writes carry a
+    // newer one, so a weld joined before it knows where the part was.
+    if w.ecs.get_resource::<super::sim::PhysicsFeed>().is_some()
+        && let Some(before) = world_pose(w, e)
+    {
+        let tick = w.ecs.increment_change_tick();
+        if let Some(mut f) = w.ecs.get_resource_mut::<super::sim::PhysicsFeed>() {
+            f.moves.push((e, tick, before));
+        }
+    }
     // Children with a frame keep theirs: a part's CFrame is in the world.
     let kids: Vec<(Entity, Pose)> = re_scene::hierarchy::children(&w.ecs, e)
         .to_vec()

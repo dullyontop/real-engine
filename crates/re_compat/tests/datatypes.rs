@@ -114,6 +114,14 @@ mod datatypes {
             assert(f:GetAttribute("F"):FuzzyEq(cf))
             assert(f:GetAttribute("U") == UDim2.new(0.5, 10, 1, -4))
             assert(f:GetAttribute("R") == NumberRange.new(1, 2))
+            f:SetAttribute("M", Enum.Material.Plastic)
+            assert(f:GetAttribute("M") == Enum.Material.Plastic)
+            local ns = NumberSequence.new(0, 1)
+            f:SetAttribute("N", ns)
+            assert(typeof(f:GetAttribute("N")) == "NumberSequence" and f:GetAttribute("N") == ns)
+            local cs = ColorSequence.new(Color3.new(1, 0, 0), Color3.new(0, 0, 1))
+            f:SetAttribute("S", cs)
+            assert(typeof(f:GetAttribute("S")) == "ColorSequence" and f:GetAttribute("S") == cs)
             assert(typeof(Vector3.zero) == "Vector3" and typeof(Enum.Material.Plastic) == "EnumItem")
             "#,
         );
@@ -425,11 +433,18 @@ mod datatypes {
             );
             if let LuaValue::UserData(ud) = &back {
                 let untyped = datatypes::userdata_to_value(&lua, ud).unwrap();
-                let expect = match &stored {
-                    Value::Enum(s) => Value::Enum(s.clone()),
-                    other => other.clone(),
-                };
-                assert_eq!(untyped, Some(expect), "{ty}: untyped conversion");
+                match (&stored, untyped) {
+                    // An untyped enum item is an EnumItem record that reads
+                    // back as the same item.
+                    (Value::Enum(_), Some(rec @ Value::Record(id, _))) => {
+                        assert_eq!(id.name(), "EnumItem");
+                        let item = datatypes::to_lua(&lua, "EnumItem", rec).unwrap();
+                        assert!(eq.call::<bool>((back.clone(), item)).unwrap(), "{ty}");
+                    }
+                    (other, untyped) => {
+                        assert_eq!(untyped.as_ref(), Some(other), "{ty}: untyped conversion")
+                    }
+                }
             }
             let again = datatypes::from_lua(&lua, ty, back).unwrap();
             assert_eq!(stored, again, "{ty}");

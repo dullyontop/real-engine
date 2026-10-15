@@ -214,7 +214,7 @@ fn create(lua: &Lua, _svc: Entity, a: MultiValue) -> mlua::Result<MultiValue> {
                 format!("TweenService:Create: {name} is not a property of {class}"),
             ));
         };
-        m.require_implemented().map_err(compat_error)?;
+        m.require_implemented_by_script().map_err(compat_error)?;
         if p.read_only {
             return Err(compat_error(CompatError::ReadOnly {
                 class: class.clone(),

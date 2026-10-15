@@ -410,7 +410,7 @@ fn get_property_changed_signal(lua: &Lua, e: Entity, a: MultiValue) -> Result<Mu
             kind: m.member.kind(),
         }));
     }
-    m.require_implemented().map_err(compat_error)?;
+    m.require_implemented_by_script().map_err(compat_error)?;
     ret(
         lua,
         signal::push(lua, e, &format!("PropertyChanged:{prop}"))?,
