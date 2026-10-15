@@ -9,12 +9,16 @@
 //!   a global, or a local holding `game:GetService("X")` (receiver `X`);
 //! * `game:GetService("X")` lookups, `Instance.new("Class")` classes and
 //!   `Enum.X.Y` items;
+//! * datatype constructors: `X.new(...)` and `X.fromY(...)` on a capitalized
+//!   global other than `Instance` (`Vector3.new`, `CFrame.fromEulerAnglesXYZ`);
 //! * `require` targets: string literals by text, anything computed as dynamic.
 //!
 //! Members on receivers the scan cannot name (locals, call results) are counted
-//! by member name in [`ApiUsage::unknown_receivers`]. The scan is approximate by
-//! design: scopes are tracked per block, and a local is visible from its
-//! declaration to the end of its block.
+//! by member name in [`ApiUsage::unknown_receivers`]. Globals the file itself
+//! defines (`helper = ...`, `function Util.f()`) are not counted. The scan is
+//! approximate by design: scopes are tracked per block, and a local is visible
+//! from its declaration to the end of its block. A file nested deeper than
+//! [`MAX_DEPTH`] is not scanned (`RE3080`), since the parser recurses per level.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -46,6 +50,8 @@ pub struct ApiUsage {
     pub instance_new: BTreeMap<String, usize>,
     /// `Enum.X.Y` items.
     pub enums: BTreeMap<String, usize>,
+    /// Datatype constructors, as `Type.constructor`.
+    pub constructors: BTreeMap<String, usize>,
     /// `require` targets given as string literals.
     pub requires: BTreeMap<String, usize>,
     /// `require` calls with a computed target.
@@ -66,6 +72,7 @@ impl ApiUsage {
             (&mut self.services, &other.services),
             (&mut self.instance_new, &other.instance_new),
             (&mut self.enums, &other.enums),
+            (&mut self.constructors, &other.constructors),
             (&mut self.requires, &other.requires),
         ] {
             for (k, n) in theirs {
@@ -95,6 +102,49 @@ pub fn scan(path: &Path) -> Result<ApiUsage, Diagnostic> {
 /// The stack the parser and the walk get: full_moon recurses per nesting level.
 const SCAN_STACK: usize = 64 * 1024 * 1024;
 
+/// The deepest bracket and block nesting the scan parses. Luau's own parser
+/// stops at a similar depth, and the scan thread's 64 MB stack holds it with room
+/// to spare.
+pub const MAX_DEPTH: usize = 256;
+
+/// The deepest bracket and block nesting in `source`, and the line where it is
+/// first reached, by a flat pass over the tokens. `None` when it does not lex.
+fn nesting_depth(source: &str) -> Option<(usize, usize)> {
+    use full_moon::tokenizer::{Lexer, LexerResult, Symbol};
+    let mut lexer = Lexer::new(source, LuaVersion::luau());
+    let (mut depth, mut max, mut line) = (0usize, 0usize, 0usize);
+    while let Some(t) = lexer.consume() {
+        let t = match t {
+            LexerResult::Ok(t) | LexerResult::Recovered(t, _) => t,
+            LexerResult::Fatal(_) => return None,
+        };
+        if let TokenType::Symbol { symbol } = t.token().token_type() {
+            match symbol {
+                Symbol::LeftParen
+                | Symbol::LeftBracket
+                | Symbol::LeftBrace
+                | Symbol::Function
+                | Symbol::If
+                | Symbol::Do
+                | Symbol::Repeat => {
+                    depth += 1;
+                    if depth > max {
+                        max = depth;
+                        line = t.token().start_position().line();
+                    }
+                }
+                Symbol::RightParen
+                | Symbol::RightBracket
+                | Symbol::RightBrace
+                | Symbol::End
+                | Symbol::Until => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    Some((max, line))
+}
+
 /// Scans Luau source; `name` labels diagnostics.
 pub fn scan_source(source: &str, name: &str) -> Result<ApiUsage, Diagnostic> {
     let source = source.to_string();
@@ -119,6 +169,19 @@ pub fn scan_source(source: &str, name: &str) -> Result<ApiUsage, Diagnostic> {
 }
 
 fn scan_on_this_thread(source: &str, name: &str) -> Result<ApiUsage, Diagnostic> {
+    if let Some((depth, line)) = nesting_depth(source)
+        && depth > MAX_DEPTH
+    {
+        return Err(Diagnostic::warning(
+            codes::SCAN_PARSE,
+            format!("the static scan skips this file: it nests {depth} levels deep (the limit is {MAX_DEPTH})"),
+        )
+        .at(Location::File {
+            file: name.to_string(),
+            line: Some(line as u32),
+            column: None,
+        }));
+    }
     let result = full_moon::parse_fallible(source, LuaVersion::luau());
     if let Some(err) = result.errors().first() {
         let (start, _) = err.range();
@@ -138,7 +201,7 @@ fn scan_on_this_thread(source: &str, name: &str) -> Result<ApiUsage, Diagnostic>
     let mut walker = Walker::default();
     walker.scopes.push(Scope::default());
     walker.visit_ast(result.ast());
-    Ok(walker.usage)
+    Ok(walker.finish())
 }
 
 #[derive(Default)]
@@ -148,12 +211,24 @@ struct Scope {
     services: HashMap<String, String>,
 }
 
+/// A block's address, to match a statement with the block it owns.
+fn key(b: &ast::Block) -> usize {
+    b as *const ast::Block as usize
+}
+
 #[derive(Default)]
 struct Walker {
     usage: ApiUsage,
     scopes: Vec<Scope>,
-    /// Names declared by a function body or loop, added when its block opens.
-    pending: Vec<String>,
+    /// Names a function body or loop declares, by the block they belong to;
+    /// added when that block opens.
+    pending: HashMap<usize, Vec<String>>,
+    /// `repeat` bodies: their scope stays open through the `until` condition.
+    repeat_bodies: HashSet<usize>,
+    /// Assignment targets, by address, so that `visit_var` skips them.
+    targets: HashSet<usize>,
+    /// Globals this file assigns or declares functions on.
+    defined: HashSet<String>,
 }
 
 fn identifier(t: &TokenReference) -> Option<&str> {
@@ -302,9 +377,39 @@ impl Walker {
                     add(&mut self.usage.enums, format!("{kind}.{item}"), 1);
                 }
             }
+            (ty, ctor)
+                if ty.starts_with(|c: char| c.is_ascii_uppercase())
+                    && (ctor == "new" || ctor.starts_with("from"))
+                    && matches!(suffixes.get(1), Some(Suffix::Call(Call::AnonymousCall(_)))) =>
+            {
+                add(&mut self.usage.constructors, format!("{ty}.{ctor}"), 1);
+            }
             _ => {}
         }
         add(&mut self.usage.by_member, format!("{receiver}.{m}"), 1);
+    }
+
+    /// Drops what the file defined itself from the usage.
+    fn finish(mut self) -> ApiUsage {
+        let defined = &self.defined;
+        self.usage.globals.retain(|g, _| !defined.contains(g));
+        self.usage.by_member.retain(|m, _| {
+            m.split_once('.')
+                .is_none_or(|(recv, _)| !defined.contains(recv))
+        });
+        self.usage
+    }
+
+    /// An assignment to `name`: a global becomes defined, and a local stops
+    /// being a service alias.
+    fn assign(&mut self, name: &str) {
+        for s in self.scopes.iter_mut().rev() {
+            if s.locals.contains(name) {
+                s.services.remove(name);
+                return;
+            }
+        }
+        self.defined.insert(name.to_string());
     }
 
     fn require(&mut self, call: Option<&Suffix>) {
@@ -317,38 +422,79 @@ impl Walker {
 }
 
 impl Visitor for Walker {
-    fn visit_block(&mut self, _: &ast::Block) {
+    fn visit_block(&mut self, b: &ast::Block) {
         let mut scope = Scope::default();
-        scope.locals.extend(self.pending.drain(..));
+        scope
+            .locals
+            .extend(self.pending.remove(&key(b)).unwrap_or_default());
         self.scopes.push(scope);
     }
 
-    fn visit_block_end(&mut self, _: &ast::Block) {
+    fn visit_block_end(&mut self, b: &ast::Block) {
+        if !self.repeat_bodies.contains(&key(b)) {
+            self.scopes.pop();
+        }
+    }
+
+    fn visit_repeat(&mut self, r: &ast::Repeat) {
+        self.repeat_bodies.insert(key(r.block()));
+    }
+
+    fn visit_repeat_end(&mut self, r: &ast::Repeat) {
+        // The body's scope, kept open for the `until` condition.
+        self.repeat_bodies.remove(&key(r.block()));
         self.scopes.pop();
     }
 
     fn visit_function_body(&mut self, body: &ast::FunctionBody) {
+        let names = self.pending.entry(key(body.block())).or_default();
         for p in body.parameters() {
             if let Parameter::Name(n) = p
                 && let Some(name) = identifier(n)
             {
-                self.pending.push(name.to_string());
+                names.push(name.to_string());
+            }
+        }
+    }
+
+    fn visit_function_declaration(&mut self, f: &ast::FunctionDeclaration) {
+        let name = f.name();
+        if name.method_name().is_some() {
+            self.pending
+                .entry(key(f.body().block()))
+                .or_default()
+                .push("self".to_string());
+        }
+        if let Some(first) = name.names().iter().next().and_then(identifier) {
+            let first = first.to_string();
+            if name.names().len() == 1 && name.method_name().is_none() {
+                self.assign(&first);
+            } else if !self.is_local(&first) && !self.defined.contains(&first) {
+                // `function Util.f()` on a global table reads `Util`.
+                add(&mut self.usage.globals, first, 1);
             }
         }
     }
 
     fn visit_numeric_for(&mut self, f: &ast::NumericFor) {
         if let Some(name) = identifier(f.index_variable()) {
-            self.pending.push(name.to_string());
+            self.pending
+                .entry(key(f.block()))
+                .or_default()
+                .push(name.to_string());
         }
     }
 
     fn visit_generic_for(&mut self, f: &ast::GenericFor) {
-        for n in f.names() {
-            if let Some(name) = identifier(n) {
-                self.pending.push(name.to_string());
-            }
-        }
+        let names: Vec<String> = f
+            .names()
+            .iter()
+            .filter_map(|n| identifier(n).map(str::to_string))
+            .collect();
+        self.pending
+            .entry(key(f.block()))
+            .or_default()
+            .extend(names);
     }
 
     fn visit_local_function(&mut self, f: &ast::LocalFunction) {
@@ -357,7 +503,8 @@ impl Visitor for Walker {
         }
     }
 
-    fn visit_local_assignment(&mut self, a: &ast::LocalAssignment) {
+    fn visit_local_assignment_end(&mut self, a: &ast::LocalAssignment) {
+        // Declared after the right-hand side, so `local x = x` reads the outer x.
         let services: Vec<Option<String>> = a
             .expressions()
             .iter()
@@ -377,6 +524,25 @@ impl Visitor for Walker {
         }
     }
 
+    fn visit_assignment(&mut self, a: &ast::Assignment) {
+        for v in a.variables() {
+            if let Var::Name(n) = v
+                && let Some(name) = identifier(n)
+            {
+                self.targets.insert(v as *const Var as usize);
+                self.assign(name);
+            }
+        }
+    }
+
+    fn visit_compound_assignment(&mut self, a: &ast::CompoundAssignment) {
+        if let Var::Name(n) = a.lhs()
+            && let Some(name) = identifier(n)
+        {
+            self.assign(name);
+        }
+    }
+
     fn visit_function_call(&mut self, c: &FunctionCall) {
         self.chain(c.prefix(), c.suffixes());
     }
@@ -386,6 +552,9 @@ impl Visitor for Walker {
     }
 
     fn visit_var(&mut self, v: &Var) {
+        if self.targets.remove(&(v as *const Var as usize)) {
+            return;
+        }
         if let Var::Name(n) = v
             && let Some(name) = identifier(n)
             && !self.is_local(name)
@@ -450,5 +619,93 @@ mod tests {
             d.location,
             Some(Location::File { line: Some(1), .. })
         ));
+    }
+
+    #[test]
+    fn local_x_equals_x_reads_the_global() {
+        let u = usage(
+            "local Vector3 = Vector3\nlocal game = game\nlocal v = Vector3.new(1, 2, 3)\ngame:GetService('Players')",
+        );
+        assert_eq!(u.globals["Vector3"], 1);
+        assert_eq!(u.globals["game"], 1);
+        // Through the local copies the receivers are unknown.
+        assert_eq!(u.unknown_receivers[".new"], 1);
+    }
+
+    #[test]
+    fn methods_declare_self_and_loops_scope_their_names() {
+        let u = usage(
+            "local Obj = {}\nfunction Obj:m() return self.x end\n\
+             for i = 1, (function() return 2 end)() do print(i) end\n\
+             repeat local done = true until done",
+        );
+        assert!(!u.globals.contains_key("self"));
+        assert!(!u.globals.contains_key("i"));
+        assert!(!u.globals.contains_key("done"));
+        assert!(!u.by_member.contains_key("self.x"));
+    }
+
+    #[test]
+    fn globals_the_file_defines_are_not_gaps() {
+        let u = usage(
+            "helper = 1\nfunction util() end\nUtils = {}\nfunction Utils.f() end\n\
+             print(helper, util(), Utils.f())",
+        );
+        for g in ["helper", "util", "Utils"] {
+            assert!(!u.globals.contains_key(g), "{g}");
+        }
+        assert!(!u.by_member.contains_key("Utils.f"));
+        assert_eq!(u.globals["print"], 1);
+    }
+
+    #[test]
+    fn reassigned_service_locals_lose_the_service() {
+        let u = usage("local s = game:GetService('A')\ns.P()\ns = {}\ns.Q()");
+        assert_eq!(u.by_member["A.P"], 1);
+        assert!(!u.by_member.contains_key("A.Q"));
+        assert_eq!(u.unknown_receivers[".Q"], 1);
+    }
+
+    #[test]
+    fn datatype_constructors_are_recorded() {
+        let u = usage(
+            "local a = Vector3.new(1, 2, 3)\nlocal b = CFrame.fromEulerAnglesXYZ(0, 0, 0)\nlocal p = Instance.new('Part')\nlocal f = Vector3.new",
+        );
+        assert_eq!(u.constructors["Vector3.new"], 1);
+        assert_eq!(u.constructors["CFrame.fromEulerAnglesXYZ"], 1);
+        assert!(!u.constructors.contains_key("Instance.new"));
+    }
+
+    #[test]
+    fn deep_nesting_is_skipped_not_crashed() {
+        let deep = format!("local x = {}1{}", "(".repeat(5000), ")".repeat(5000));
+        let d = scan_source(&deep, "deep.luau").unwrap_err();
+        assert_eq!(d.code, codes::SCAN_PARSE);
+        assert!(d.message.contains("nests"), "{}", d.message);
+        let blocks = format!("{}{}", "do ".repeat(3000), "end ".repeat(3000));
+        assert!(scan_source(&blocks, "blocks.luau").is_err());
+        // The limit itself is within the scan's stack, for every kind of level.
+        // Each `(function() return` opens two levels, three at its peak.
+        let half = MAX_DEPTH / 2 - 1;
+        let mixed = format!(
+            "local x = {}1{}",
+            "(function() return ".repeat(half),
+            " end)()".repeat(half)
+        );
+        assert!(scan_source(&mixed, "mixed.luau").is_ok());
+        let tables = format!(
+            "local t = {}1{}",
+            "{".repeat(MAX_DEPTH),
+            "}".repeat(MAX_DEPTH)
+        );
+        assert!(scan_source(&tables, "tables.luau").is_ok());
+    }
+
+    #[test]
+    fn long_flat_expressions_scan() {
+        let chain = format!("local x = 1{}", " + 1".repeat(20000));
+        assert!(scan_source(&chain, "chain.luau").is_ok());
+        let nots = format!("local x = {}true", "not ".repeat(200));
+        assert!(scan_source(&nots, "nots.luau").is_ok());
     }
 }

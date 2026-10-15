@@ -38,24 +38,27 @@ pub struct TypesOptions {
     pub definitions: Option<PathBuf>,
 }
 
-/// The checker [`run`] would use: the given program if it exists, else
-/// `luau-lsp` on `PATH`.
+/// The checker [`run`] would use, as an absolute path: a bare program name is
+/// looked up on `PATH`, any other path is taken relative to the current
+/// directory. With no checker given, `luau-lsp` on `PATH`.
 pub fn find_checker(options: &TypesOptions) -> Option<PathBuf> {
-    if let Some(c) = &options.checker {
-        if c.is_file() {
-            return Some(c.clone());
+    match &options.checker {
+        Some(c) if c.components().count() == 1 => on_path(&c.to_string_lossy()),
+        Some(c) => {
+            let c = std::path::absolute(c).ok()?;
+            c.is_file().then_some(c)
         }
-        // A bare program name is looked up on PATH.
-        if c.components().count() == 1 {
-            return on_path(&c.to_string_lossy());
-        }
-        return None;
+        None => on_path("luau-lsp"),
     }
-    on_path("luau-lsp")
 }
 
 fn on_path(program: &str) -> Option<PathBuf> {
-    let exe = format!("{program}{}", std::env::consts::EXE_SUFFIX);
+    let suffix = std::env::consts::EXE_SUFFIX;
+    let exe = if suffix.is_empty() || program.ends_with(suffix) {
+        program.to_string()
+    } else {
+        format!("{program}{suffix}")
+    };
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|dir| dir.join(&exe))
         .find(|p| p.is_file())
@@ -148,7 +151,8 @@ pub fn run(project: &Path, files: &[PathBuf], options: &TypesOptions) -> Vec<Dia
         };
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let found = parse_gnu(&format!("{stdout}\n{stderr}"));
+        let mut found = parse_gnu(&stdout);
+        found.extend(parse_gnu(&stderr));
         let code = output.status.code();
         let failed = match code {
             Some(0) => false,
@@ -156,7 +160,9 @@ pub fn run(project: &Path, files: &[PathBuf], options: &TypesOptions) -> Vec<Dia
             _ => true,
         };
         if failed {
+            // The temporary definitions path differs per run; name it stably.
             let tail: String = format!("{stdout}{stderr}")
+                .replace(&defs.display().to_string(), "engine.d.luau")
                 .lines()
                 .filter(|l| !l.trim().is_empty())
                 .take(20)
@@ -193,10 +199,24 @@ fn sort_key(d: &Diagnostic) -> (String, u32, u32, String) {
     }
 }
 
-/// Parses gnu-formatted checker output: `file:l.c-l.c: Kind: message`. Other
-/// lines (such as `[INFO] ...`) are ignored.
+/// Parses gnu-formatted checker output: `file:l.c-l.c: Kind: message`. A line
+/// that follows a diagnostic and is not one continues its message (the new
+/// solver writes multi-line messages); `[INFO] ...` lines and anything before
+/// the first diagnostic are ignored.
 pub fn parse_gnu(output: &str) -> Vec<Diagnostic> {
-    output.lines().filter_map(parse_line).collect()
+    let mut out: Vec<Diagnostic> = Vec::new();
+    for line in output.lines() {
+        if let Some(d) = parse_line(line) {
+            out.push(d);
+        } else if let Some(last) = out.last_mut()
+            && !line.trim().is_empty()
+            && !line.starts_with('[')
+        {
+            last.message.push('\n');
+            last.message.push_str(line.trim_end());
+        }
+    }
+    out
 }
 
 fn parse_line(line: &str) -> Option<Diagnostic> {
@@ -287,6 +307,38 @@ mod tests {
         assert!(
             matches!(&d[1].location, Some(Location::File { file, .. }) if file == "C:/proj/b.luau")
         );
+    }
+
+    #[test]
+    fn multi_line_messages_are_kept_whole() {
+        let out = "a.luau:3.21-3.22: TypeError: Expected this to be\n\
+                   \t'string'\n\
+                   but got\n\
+                   \t'number'\n\
+                   [INFO] done\n\
+                   a.luau:5.1-5.2: TypeError: Unknown global 'x'\n";
+        let d = parse_gnu(out);
+        assert_eq!(d.len(), 2);
+        assert_eq!(
+            d[0].message,
+            "TypeError: Expected this to be\n\t'string'\nbut got\n\t'number'"
+        );
+        assert_eq!(d[1].message, "TypeError: Unknown global 'x'");
+    }
+
+    #[test]
+    fn a_relative_checker_path_is_made_absolute() {
+        // A directory under the current one, named by a relative path.
+        let cwd = std::env::current_dir().unwrap();
+        let dir = tempfile::tempdir_in(&cwd).unwrap();
+        let prog = dir.path().join("luau-lsp");
+        std::fs::write(&prog, "").unwrap();
+        let rel = prog.strip_prefix(&cwd).unwrap().to_path_buf();
+        let options = TypesOptions {
+            checker: Some(rel),
+            definitions: None,
+        };
+        assert_eq!(find_checker(&options), Some(prog));
     }
 
     #[test]

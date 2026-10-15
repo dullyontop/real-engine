@@ -60,6 +60,8 @@ pub struct ScanReport {
     pub instance_new: BTreeMap<String, usize>,
     /// `Enum.X.Y` items.
     pub enums: BTreeMap<String, usize>,
+    /// Datatype constructors, as `Type.constructor`.
+    pub constructors: BTreeMap<String, usize>,
     /// The gap report against the native coverage table.
     pub gap: GapReport,
     /// Files the scan could not parse (`RE3080`).
@@ -159,8 +161,28 @@ pub fn run(dirs: &[PathBuf], options: &CorpusOptions) -> CorpusReport {
     if let Some(t) = &mut types {
         t.checker = types::find_checker(&options.types_options).map(|p| display(&p));
     }
+    // A file under two of the directories is checked once.
+    let mut seen = std::collections::HashSet::new();
     for dir in dirs {
-        let files = luau_files(dir);
+        if !dir.is_dir() {
+            // A mistyped directory must not pass as an empty corpus.
+            report.compile.failed.push(
+                Diagnostic::error(
+                    re_script::codes::SCRIPT_READ,
+                    format!("the corpus directory {} does not exist", display(dir)),
+                )
+                .at(Location::File {
+                    file: display(dir),
+                    line: None,
+                    column: None,
+                }),
+            );
+            continue;
+        }
+        let files: Vec<PathBuf> = luau_files(dir)
+            .into_iter()
+            .filter(|f| seen.insert(std::fs::canonicalize(f).unwrap_or_else(|_| f.clone())))
+            .collect();
         report.files += files.len();
         for file in &files {
             let name = display(file);
@@ -221,6 +243,7 @@ pub fn run(dirs: &[PathBuf], options: &CorpusOptions) -> CorpusReport {
     report.scan.services = usage.services;
     report.scan.instance_new = usage.instance_new;
     report.scan.enums = usage.enums;
+    report.scan.constructors = usage.constructors;
     report.types = types;
     report
 }

@@ -20,6 +20,24 @@ fn checker_present() -> bool {
     found
 }
 
+/// Whether the installed luau-lsp is the pinned one, whose output the tier 3
+/// snapshot records. CI pins it, so there it must be.
+fn checker_is_pinned() -> bool {
+    let version =
+        std::process::Command::new(types::find_checker(&TypesOptions::default()).unwrap())
+            .arg("--version")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+    let pinned = version == types::LUAU_LSP_VERSION;
+    assert!(
+        pinned || std::env::var_os("CI").is_none(),
+        "CI must run luau-lsp {}, found {version:?}",
+        types::LUAU_LSP_VERSION
+    );
+    pinned
+}
+
 #[test]
 fn fixtures() {
     let dirs = [PathBuf::from("tests/fixtures")];
@@ -62,6 +80,11 @@ fn fixtures() {
         "the syntax error does not parse either"
     );
 
+    // Tiers 1 and 2 are snapshotted whether or not a checker is installed.
+    let mut snapshot = report.clone();
+    snapshot.types = None;
+    insta::assert_json_snapshot!("fixtures_report", snapshot);
+
     // Tier 3: the deliberate type error is reported against engine.d.luau.
     let Some(t) = &report.types else {
         println!("skipped tier 3: luau-lsp not found");
@@ -77,11 +100,38 @@ fn fixtures() {
         .collect();
     assert_eq!(type_errors.len(), 1, "{:#?}", t.diagnostics);
 
-    let mut snapshot = report.clone();
-    if let Some(t) = &mut snapshot.types {
-        t.checker = t.checker.as_ref().map(|_| "luau-lsp".to_string());
+    if !checker_is_pinned() {
+        println!(
+            "skipped the tier 3 snapshot: luau-lsp is not {}",
+            types::LUAU_LSP_VERSION
+        );
+        return;
     }
-    insta::assert_json_snapshot!("fixtures_report", snapshot);
+    let mut t = t.clone();
+    t.checker = t.checker.as_ref().map(|_| "luau-lsp".to_string());
+    insta::assert_json_snapshot!("fixtures_types", t);
+}
+
+#[test]
+fn missing_and_overlapping_directories() {
+    let dirs = [
+        PathBuf::from("tests/fixtures"),
+        PathBuf::from("tests/fixtures/lib"),
+        PathBuf::from("tests/no_such_dir"),
+    ];
+    let report = corpus::run(&dirs, &CorpusOptions::default());
+    // lib/ is inside fixtures/, so its file is counted once.
+    assert_eq!(report.files, 9);
+    assert!(!report.compile_passed());
+    assert!(
+        report
+            .compile
+            .failed
+            .iter()
+            .any(|d| d.message.contains("tests/no_such_dir")),
+        "{:#?}",
+        report.compile.failed
+    );
 }
 
 #[test]

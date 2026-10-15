@@ -82,6 +82,9 @@ expression: snapshot
     "enums": {
       "KeyCode.Space": 1
     },
+    "constructors": {
+      "Vector3.new": 1
+    },
     "gap": {
       "covered": 19,
       "missing": {
@@ -109,112 +112,6 @@ expression: snapshot
           "file": "tests/fixtures/syntax_error.luau",
           "line": 3,
           "column": 7
-        }
-      }
-    ]
-  },
-  "types": {
-    "checker": "luau-lsp",
-    "errors": 8,
-    "warnings": 1,
-    "diagnostics": [
-      {
-        "code": "RE3081",
-        "severity": "error",
-        "message": "TypeError: Unknown global 'game'; consider assigning to it first",
-        "location": {
-          "kind": "file",
-          "file": "tests/fixtures/roblox_style.luau",
-          "line": 3,
-          "column": 17
-        }
-      },
-      {
-        "code": "RE3081",
-        "severity": "error",
-        "message": "TypeError: Unknown global 'game'; consider assigning to it first",
-        "location": {
-          "kind": "file",
-          "file": "tests/fixtures/roblox_style.luau",
-          "line": 4,
-          "column": 20
-        }
-      },
-      {
-        "code": "RE3081",
-        "severity": "error",
-        "message": "TypeError: Unknown global 'Instance'; consider assigning to it first",
-        "location": {
-          "kind": "file",
-          "file": "tests/fixtures/roblox_style.luau",
-          "line": 7,
-          "column": 15
-        }
-      },
-      {
-        "code": "RE3081",
-        "severity": "error",
-        "message": "TypeError: Unknown global 'Vector3'; consider assigning to it first",
-        "location": {
-          "kind": "file",
-          "file": "tests/fixtures/roblox_style.luau",
-          "line": 9,
-          "column": 18
-        }
-      },
-      {
-        "code": "RE3081",
-        "severity": "error",
-        "message": "TypeError: Unknown global 'workspace'; consider assigning to it first",
-        "location": {
-          "kind": "file",
-          "file": "tests/fixtures/roblox_style.luau",
-          "line": 10,
-          "column": 16
-        }
-      },
-      {
-        "code": "RE3081",
-        "severity": "error",
-        "message": "TypeError: Unknown global 'Enum'; consider assigning to it first",
-        "location": {
-          "kind": "file",
-          "file": "tests/fixtures/roblox_style.luau",
-          "line": 11,
-          "column": 21
-        }
-      },
-      {
-        "code": "RE3082",
-        "severity": "warning",
-        "message": "FunctionUnused: Function 'broken' is never used; prefix with '_' to silence",
-        "location": {
-          "kind": "file",
-          "file": "tests/fixtures/syntax_error.luau",
-          "line": 2,
-          "column": 16
-        }
-      },
-      {
-        "code": "RE3081",
-        "severity": "error",
-        "message": "SyntaxError: Expected ')' (to close '(' at line 2), got '('",
-        "location": {
-          "kind": "file",
-          "file": "tests/fixtures/syntax_error.luau",
-          "line": 3,
-          "column": 7
-        }
-      },
-      {
-        "code": "RE3081",
-        "severity": "error",
-        "message": "TypeError: Expected this to be 'string', but got 'number'",
-        "location": {
-          "kind": "file",
-          "file": "tests/fixtures/type_error.luau",
-          "line": 3,
-          "column": 21
         }
       }
     ]
