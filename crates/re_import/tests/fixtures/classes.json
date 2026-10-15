@@ -1,0 +1,30 @@
+{
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    { "name": "Workspace", "superclass": "Model", "service": true, "status": "missing" },
+    { "name": "Lighting", "superclass": "Instance", "service": true, "status": "missing" },
+    { "name": "ReplicatedStorage", "superclass": "Instance", "service": true, "status": "missing" },
+    { "name": "ServerScriptService", "superclass": "Instance", "service": true, "status": "missing" },
+    { "name": "ServerStorage", "superclass": "Instance", "service": true, "status": "missing" },
+    { "name": "StarterGui", "superclass": "Instance", "service": true, "status": "missing" },
+    { "name": "StarterPlayer", "superclass": "Instance", "service": true, "status": "missing" },
+    { "name": "CollectionService", "superclass": "Instance", "service": true, "status": "missing" },
+    { "name": "ChangeHistoryService", "superclass": "Instance", "service": true, "status": "missing" },
+    { "name": "RunService", "superclass": "Instance", "service": true, "status": "missing" },
+    { "name": "StarterPlayerScripts", "superclass": "Instance", "status": "missing" },
+    { "name": "StarterCharacterScripts", "superclass": "Instance", "status": "missing" },
+    {
+      "name": "TestLamp",
+      "superclass": "PVInstance",
+      "creatable": true,
+      "status": "partial",
+      "note": "Test class for the importer: properties only.",
+      "properties": [
+        { "name": "Brightness", "type": "number", "storage": { "kind": "own" }, "default": 1.0, "status": "implemented" },
+        { "name": "Enabled", "type": "bool", "storage": { "kind": "own" }, "default": true, "status": "implemented" },
+        { "name": "Label", "type": "string", "storage": { "kind": "own" }, "status": "implemented" }
+      ]
+    }
+  ]
+}

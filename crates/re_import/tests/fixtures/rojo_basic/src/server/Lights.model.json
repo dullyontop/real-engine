@@ -1,0 +1,7 @@
+{
+  "ClassName": "Folder",
+  "Children": [
+    { "Name": "Desk", "ClassName": "TestLamp", "Properties": { "Enabled": false } },
+    { "Name": "Hall", "ClassName": "TestLamp", "Properties": { "Brightness": "very" } }
+  ]
+}

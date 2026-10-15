@@ -34,6 +34,7 @@ const BEVY_USERS: &[&str] = &["re_reflect", "re_scene", "re_command"];
 /// the tooling crates and the tooling-only dependencies (ADR-0027).
 const RUNTIME_FORBIDDEN: &[&str] = &[
     "re_script_check",
+    "re_import",
     "re_agent",
     "re_mcp",
     "re_editor",
