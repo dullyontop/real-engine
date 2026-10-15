@@ -1,0 +1,22 @@
+---
+source: crates/re_agent/tests/init.rs
+expression: "read(project, \".real/agent-policy.toml\")"
+---
+# Agent policy (ADR-0020). Committing this file lets agents edit the project.
+# max_tier: "read", "edit" or "destructive" (destructive is never generated).
+max_tier = "edit"
+
+# Where file-writing commands (script.write, file.delete, asset.import) may write.
+# `**` matches any number of directories. `.real/` and `.git/` are always refused.
+[scopes]
+allow = ["scripts/**", "scenes/**", "graphs/**", "prefabs/**", "materials/**", "assets/**"]
+deny = []
+
+[budgets]
+# Frames one play.run or graph.generate may step.
+frames = 600
+# Wall-clock milliseconds and MiB of memory one budgeted command may use.
+milliseconds = 10000
+memory_mb = 512
+# Operations one transaction (scene.apply) may hold.
+entities_per_transaction = 2000
