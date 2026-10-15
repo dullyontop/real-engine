@@ -29,6 +29,7 @@ pub mod host;
 pub mod hud;
 pub mod media;
 pub mod perf;
+pub mod play;
 pub mod procedural;
 pub mod sync;
 pub mod verify;
@@ -181,6 +182,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::STUCK_YIELD,
         title: "A script waits forever",
         page: include_str!("../explain/RE0526.md"),
+    },
+    DiagInfo {
+        code: codes::PLAY_STEP_FAILED,
+        title: "A play.run step failed",
+        page: include_str!("../explain/RE0527.md"),
     },
 ];
 

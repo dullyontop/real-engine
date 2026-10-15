@@ -98,3 +98,7 @@ pub const REGENERATION_BROKE: Code = Code::new("RE0525");
 /// A compat script was still waiting in `WaitForChild` when the boot run of
 /// `real verify` ended.
 pub const STUCK_YIELD: Code = Code::new("RE0526");
+
+/// A `play.run` step could not run: it needs a `[compat]` project, or its
+/// path names no instance.
+pub const PLAY_STEP_FAILED: Code = Code::new("RE0527");

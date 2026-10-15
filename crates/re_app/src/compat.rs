@@ -84,6 +84,8 @@ pub struct CompatPlay {
     set: ReplicationSet,
     pub(crate) server_vm: CompatVm,
     pub(crate) client_vm: CompatVm,
+    /// The players joined so far (`Player1` to `Player<players>`).
+    pub(crate) players: u32,
     uncaught: Vec<(ContextKind, Diagnostic)>,
 }
 
@@ -158,6 +160,7 @@ impl CompatPlay {
             set,
             server_vm,
             client_vm,
+            players: 0,
             uncaught: Vec::new(),
         })
     }
@@ -237,12 +240,12 @@ pub fn start_scripts(vm: &CompatVm, host: &mut dyn ScriptHost) -> Vec<Diagnostic
 }
 
 /// Joins player `n` (1-based; player 1 is the local player).
-pub fn add_player(vm: &CompatVm, host: &mut dyn ScriptHost, n: u32) -> Vec<Diagnostic> {
-    let (joined, mut diags) = players::add_player(vm, host, &PlayerSpec::numbered(n));
-    if let Err(d) = joined {
-        diags.push(d);
-    }
-    diags
+pub fn add_player(
+    vm: &CompatVm,
+    host: &mut dyn ScriptHost,
+    n: u32,
+) -> (Result<re_scene::Entity, Diagnostic>, Vec<Diagnostic>) {
+    players::add_player(vm, host, &PlayerSpec::numbered(n))
 }
 
 /// The client frame's tween, sound and listener work; returns the sound

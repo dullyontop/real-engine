@@ -139,3 +139,68 @@ fn verify_fails_on_an_uncaught_error_and_lists_it_once() {
     assert!(uncaught[0]["message"].as_str().unwrap().contains("boom"));
 }
 
+
+const HOOKS: &str = r#"
+local Players = game:GetService("Players")
+local hook = Instance.new("BindableFunction")
+hook.Name = "Score"
+hook.OnInvoke = function(x)
+	return x * 2, #Players:GetPlayers()
+end
+hook.Parent = game:GetService("ServerStorage")
+Players.PlayerAdded:Connect(function(p)
+	p:SetAttribute("Coins", 0)
+	p.Chatted:Connect(function(text)
+		print(p.Name, "said", text)
+		p:SetAttribute("Coins", p:GetAttribute("Coins") + 1)
+	end)
+end)
+"#;
+
+fn steps(json: serde_json::Value) -> Vec<re_app::play::PlayStep> {
+    serde_json::from_value(json).unwrap()
+}
+
+#[test]
+fn play_steps_join_players_chat_invoke_hooks_and_dump_the_tree() {
+    let dir = project(HOOKS, "");
+    let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+    let plan = steps(serde_json::json!([
+        "add_player",
+        { "frames": 5 },
+        { "say": { "player": 2, "text": "hello" } },
+        { "invoke": { "path": "ServerStorage.Score", "args": [21] } },
+        { "dump_tree": { "path": "Players", "depth": 1 } },
+        { "invoke": { "path": "ServerStorage.Missing" } },
+    ]));
+    let (report, results, _) = app.play_copy(10, None, &plan, false).unwrap();
+    assert_eq!(report.frames, 15);
+    assert!(report.output.contains(&"[server] Player2\tsaid\thello".to_string()), "{:?}", report.output);
+    assert_eq!(results[0]["player"], "Player2");
+    assert_eq!(results[3]["results"], serde_json::json!([42, 2]));
+    let players = &results[4]["roots"][0]["children"];
+    assert_eq!(players.as_array().unwrap().len(), 2, "{players}");
+    assert_eq!(players[1]["attributes"]["Coins"], 1.0);
+    assert_eq!(results[5]["ok"], false);
+    assert_eq!(results[5]["error"]["code"], "RE0527");
+    // The live app did not start its game.
+    assert!(app.world().find("game/Players/Player1").is_none());
+}
+
+#[test]
+fn compat_steps_need_a_compat_project() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("scenes")).unwrap();
+    std::fs::write(dir.path().join("real.toml"), "[project]\nname = \"n\"\n").unwrap();
+    std::fs::write(
+        dir.path().join("scenes/main.scene.json"),
+        r#"{ "format": "real-engine/scene", "version": 1, "entities": [] }"#,
+    )
+    .unwrap();
+    let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+    let (_, results, _) = app
+        .play_copy(1, None, &steps(serde_json::json!(["add_player"])), false)
+        .unwrap();
+    assert_eq!(results[0]["ok"], false);
+    assert_eq!(results[0]["error"]["code"], "RE0527");
+}
