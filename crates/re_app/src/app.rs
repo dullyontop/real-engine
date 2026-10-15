@@ -123,6 +123,10 @@ pub struct App {
     /// What each procedural source's graph was last loaded from, to load the
     /// graph again when a source's `graph` or `builder` is edited.
     graph_inputs: procedural::GraphInputs,
+    /// How many times the World was reloaded by [`App::restart`].
+    restarts: u64,
+    /// Characters [`App::link_new_characters`] already tried to link.
+    link_tried: std::collections::BTreeSet<re_types::EntityId>,
 
     scripts: Option<ScriptRuntime>,
     scripts_failed: bool,
@@ -236,6 +240,8 @@ impl App {
             anim_sync: AnimSync::new(),
             ground: None,
             graph_inputs,
+            restarts: 0,
+            link_tried: Default::default(),
             scripts: None,
             scripts_failed: false,
             script_output: Vec::new(),
@@ -374,6 +380,12 @@ impl App {
     /// The extra verify stages added with [`App::add_verify_stage`].
     pub fn verify_stages(&self) -> Vec<Arc<dyn VerifyStage + Send + Sync>> {
         self.verify_stages.clone()
+    }
+
+    /// How many times the World was reloaded (`world.restart()`, `R` in the
+    /// demo) since the app opened.
+    pub fn restarts(&self) -> u64 {
+        self.restarts
     }
 
     /// The physics world.
@@ -581,6 +593,11 @@ impl App {
     /// The fixed simulation step.
     pub fn step(&self) -> Duration {
         self.clock.dt()
+    }
+
+    /// The diagnostics reported since the last [`App::take_diagnostics`].
+    pub fn pending_diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
     }
 
     /// Takes the diagnostics reported since the last call.
@@ -819,6 +836,21 @@ impl App {
         frames: Option<u64>,
         replay: Option<ReplayDoc>,
     ) -> Result<RunReport, Diagnostic> {
+        self.run_headless_observed(frames, replay, |_| {})
+    }
+
+    /// [`App::run_headless`], calling `observe` after every frame (verify
+    /// watches regenerations this way).
+    ///
+    /// # Errors
+    ///
+    /// As [`App::run_headless`].
+    pub fn run_headless_observed(
+        &mut self,
+        frames: Option<u64>,
+        replay: Option<ReplayDoc>,
+        mut observe: impl FnMut(&mut App),
+    ) -> Result<RunReport, Diagnostic> {
         let frames = frames.or(replay.as_ref().map(|r| r.frames)).unwrap_or(60);
         if let Some(doc) = replay {
             self.play_replay(doc)?;
@@ -827,6 +859,7 @@ impl App {
         let start = self.frame;
         for _ in 0..frames {
             self.frame(dt);
+            observe(self);
         }
         let mut diagnostics = self.take_diagnostics();
         diagnostics.retain(|d| d.severity != re_core::Severity::Note || d.is_error());
@@ -955,6 +988,7 @@ impl App {
         // PreSimulation: fixed-update script callbacks; what they queue reaches
         // this step's physics.
         let t = Instant::now();
+        self.link_new_characters();
         self.run_scripts(Phase::PreSimulation, self.clock.dt_secs().into());
         self.perf.add(Phase::PreSimulation, t.elapsed());
 
@@ -1007,6 +1041,35 @@ impl App {
         }
         self.run_scripts(Phase::PostSimulation, self.clock.dt_secs().into());
         self.perf.add(Phase::PostSimulation, t.elapsed());
+    }
+
+    /// Gives characters that appeared since the last physics push (the first
+    /// step, a spawn, a restart) their physics character now, so scripts can
+    /// move them in the step they appear.
+    fn link_new_characters(&mut self) {
+        let unlinked: Vec<re_types::EntityId> = self
+            .world
+            .ecs
+            .query_filtered::<re_scene::Entity, re_scene::ecs::query::With<re_scene::CharacterController>>()
+            .iter(&self.world.ecs)
+            .map(re_scene::entity_id)
+            .filter(|&id| self.physics_sync.kind(id) != Some(physics::LinkKind::Character))
+            .collect();
+        // A character that cannot be linked (reported by `push`) is tried
+        // once here, not on every step.
+        let fresh = unlinked.iter().any(|id| !self.link_tried.contains(id));
+        self.link_tried = unlinked.into_iter().collect();
+        if fresh {
+            self.load_collider_sources();
+            physics::push(
+                &mut self.world,
+                &mut self.physics_sync,
+                &self.shapes,
+                &mut self.physics_cmds,
+                &mut self.diagnostics,
+            );
+            self.physics.apply(&mut self.physics_cmds);
+        }
     }
 
     /// Puts characters back on the ground after the terrain changed: a ray
@@ -1401,7 +1464,9 @@ impl App {
                 self.world = world;
                 self.diagnostics.extend(problems);
                 self.ground = None;
+                self.link_tried.clear();
                 self.graph_inputs = procedural::inputs(&mut self.world);
+                self.restarts += 1;
                 self.history = History::default();
                 match Physics::new(physics_config(&self.config), TaskPool::global()) {
                     Ok(p) => self.physics = p,

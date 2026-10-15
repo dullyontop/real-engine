@@ -329,9 +329,192 @@ fn replay_once(
     project: &Path,
     config: &AppConfig,
     doc: &re_types::ReplayDoc,
-) -> Result<crate::app::RunReport, Diagnostic> {
+) -> Result<(crate::app::RunReport, RegenWatch), Diagnostic> {
     let mut app = App::open(project, headless_config(config))?;
-    app.run_headless(None, Some(doc.clone()))
+    let mut watch = RegenWatch::default();
+    let report =
+        app.run_headless_observed(None, Some(doc.clone()), |app| watch.after_frame(app))?;
+    Ok((report, watch))
+}
+
+/// Frames a regenerated character has to find its feet again.
+const SETTLE_FRAMES: u64 = 60;
+
+/// One regeneration seen during a replay, and what it kept.
+#[derive(Debug, Serialize)]
+struct Regeneration {
+    /// The frame the new terrain appeared.
+    frame: u64,
+    /// Every character kept its `Entity`.
+    characters_kept: bool,
+    /// Every character stood on the ground again within `SETTLE_FRAMES`.
+    grounded: bool,
+    /// Items removed by a game script (collected) that stayed removed.
+    collected_kept: usize,
+    /// Errors reported after it (a script's stale handle shows up as one).
+    script_errors: usize,
+    #[serde(skip)]
+    errors_before: usize,
+    #[serde(skip)]
+    waiting: std::collections::BTreeSet<String>,
+}
+
+/// Watches a replay for regenerations of the terrain (the set of derived
+/// heightfields colliders use changes) and checks the demo's promises: the
+/// characters keep their `Entity`, stand on the new ground, collected items
+/// stay collected and scripts keep working.
+#[derive(Default)]
+struct RegenWatch {
+    ground: Option<std::collections::BTreeSet<String>>,
+    characters: std::collections::BTreeMap<String, re_scene::Entity>,
+    restarts: u64,
+    seen: Vec<Regeneration>,
+    problems: Vec<Diagnostic>,
+}
+
+impl RegenWatch {
+    fn characters(world: &mut World) -> std::collections::BTreeMap<String, re_scene::Entity> {
+        let found: Vec<re_scene::Entity> = world
+            .ecs
+            .query_filtered::<re_scene::Entity, re_scene::ecs::query::With<re_scene::CharacterController>>()
+            .iter(&world.ecs)
+            .collect();
+        found
+            .into_iter()
+            .filter_map(|e| world.id_of(e).map(|id| (id.to_string(), e)))
+            .collect()
+    }
+
+    fn broke(&mut self, frame: u64, message: String) {
+        self.problems.push(Diagnostic::error(
+            codes::REGENERATION_BROKE,
+            format!("frame {frame}: {message}"),
+        ));
+    }
+
+    fn after_frame(&mut self, app: &mut App) {
+        // The frame that just ran (the counter has moved past it).
+        let frame = app.frame_count().saturating_sub(1);
+        if app.restarts() != self.restarts {
+            // A fresh World: its characters start over and are not the ones
+            // a regeneration was waiting on.
+            for r in &mut self.seen {
+                r.waiting.clear();
+            }
+        }
+        let errors = app
+            .pending_diagnostics()
+            .iter()
+            .filter(|d| d.is_error())
+            .count();
+        for r in &mut self.seen {
+            r.script_errors = errors.saturating_sub(r.errors_before);
+        }
+        // Characters waiting to land.
+        for i in 0..self.seen.len() {
+            let waiting = std::mem::take(&mut self.seen[i].waiting);
+            let mut still = std::collections::BTreeSet::new();
+            for id in waiting {
+                let landed = app
+                    .world()
+                    .entity(&id)
+                    .ok()
+                    .and_then(|e| app.physics().character(re_scene::entity_id(e)));
+                if !landed.is_some_and(|c| c.ground == re_types::GroundState::OnGround) {
+                    still.insert(id);
+                }
+            }
+            let start = self.seen[i].frame;
+            if !still.is_empty() && frame >= start + SETTLE_FRAMES {
+                self.seen[i].grounded = false;
+                let ids = still.into_iter().collect::<Vec<_>>().join(", ");
+                self.broke(
+                    frame,
+                    format!(
+                        "after the regeneration at frame {start}, {ids} did not stand on the ground"
+                    ),
+                );
+            } else {
+                self.seen[i].waiting = still;
+            }
+        }
+        let ground = crate::procedural::ground(app.world_mut());
+        let restarted = app.restarts() != self.restarts;
+        let world = app.world_mut();
+        if !restarted
+            && let Some(old) = &self.ground
+            && *old != ground
+            && !ground.is_empty()
+        {
+            let now = Self::characters(world);
+            let mut kept = true;
+            let lost: Vec<String> = self
+                .characters
+                .iter()
+                // A character a script removed is gone, not lost.
+                .filter(|(id, entity)| now.get(*id).is_some_and(|e| e != *entity))
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in &lost {
+                kept = false;
+                self.broke(
+                    frame,
+                    format!(
+                        "the character {id:?} lost its Entity when the terrain was regenerated"
+                    ),
+                );
+            }
+            let collected: Vec<String> = world.suppressions().iter().map(str::to_string).collect();
+            let back: Vec<&String> = collected
+                .iter()
+                .filter(|id| world.entity(id).is_ok())
+                .collect();
+            if !back.is_empty() {
+                let list = back
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.broke(
+                    frame,
+                    format!("collected items came back with the new terrain: {list}"),
+                );
+            }
+            self.seen.push(Regeneration {
+                frame,
+                characters_kept: kept,
+                grounded: true,
+                collected_kept: collected.len() - back.len(),
+                script_errors: 0,
+                errors_before: errors,
+                waiting: self.characters.keys().cloned().collect(),
+            });
+        }
+        self.restarts = app.restarts();
+        self.characters = Self::characters(app.world_mut());
+        self.ground = Some(ground);
+    }
+
+    /// At the end of the run: characters still in the air fail.
+    fn finish(mut self, frame: u64) -> (Vec<Regeneration>, Vec<Diagnostic>) {
+        for r in &mut self.seen {
+            if !r.waiting.is_empty() {
+                r.grounded = false;
+                let ids = std::mem::take(&mut r.waiting)
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.problems.push(Diagnostic::error(
+                    codes::REGENERATION_BROKE,
+                    format!(
+                        "frame {frame}: the replay ended before {ids} stood on the ground after the regeneration at frame {}",
+                        r.frame
+                    ),
+                ));
+            }
+        }
+        (self.seen, self.problems)
+    }
 }
 
 /// Stage 5: each replay twice, with matching state hashes.
@@ -351,9 +534,13 @@ fn stage_replays(project: &Path, config: &AppConfig) -> StageReport {
             }
         };
         let first = replay_once(project, config, &doc);
-        let second = replay_once(project, config, &doc);
+        let second = replay_once(project, config, &doc).map(|(b, _)| b);
         match (first, second) {
-            (Ok(a), Ok(b)) => {
+            (Ok((a, watch)), Ok(b)) => {
+                let (regenerations, problems) = watch.finish(a.frames);
+                for d in problems {
+                    diags.push(d.at(Location::file(file.clone())));
+                }
                 for d in a
                     .diagnostics
                     .iter()
@@ -383,6 +570,7 @@ fn stage_replays(project: &Path, config: &AppConfig) -> StageReport {
                     "state_hash": a.state_hash,
                     "deterministic": same,
                     "screenshots": a.screenshots.len(),
+                    "regenerations": regenerations,
                 }));
             }
             (Err(d), _) | (_, Err(d)) => diags.push(d),

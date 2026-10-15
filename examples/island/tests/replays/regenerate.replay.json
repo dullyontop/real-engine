@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "seed": 1,
+  "frames": 480,
+  "input": [
+    { "frame": 150, "action": "move", "axis": [0.45, 0.89] },
+    { "frame": 292, "action": "move", "axis": [0.0, 0.0] },
+    { "frame": 320, "action": "regenerate", "down": true },
+    { "frame": 322, "action": "regenerate", "down": false }
+  ],
+  "checks": [
+    { "frame": 479, "screenshot": "tests/goldens/{backend}/regenerate_f479.png" }
+  ]
+}

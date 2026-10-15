@@ -1,0 +1,17 @@
+{
+  "format": "real-engine/prefab",
+  "version": 1,
+  "entities": [
+    {
+      "id": "crate",
+      "name": "Crate",
+      "components": {
+        "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] },
+        "MaterialRef": { "asset": "materials/crate.material.json" },
+        "MeshRef": { "asset": "builtin:cube" },
+        "RigidBody": { "kind": "Dynamic", "mass": 8.0 },
+        "Transform": { "translation": [0.0, 0.6, 0.0], "scale": [1.2, 1.2, 1.2] }
+      }
+    }
+  ]
+}
