@@ -89,3 +89,8 @@ pub const GRAPH_SOURCE_FAILED: Code = Code::new("RE0523");
 /// A character could not be put back on the ground after the terrain under it
 /// was regenerated (no ground below it).
 pub const REGROUND_FAILED: Code = Code::new("RE0524");
+
+/// A regeneration during a verify replay broke a promise of the runtime: a
+/// character lost its `Entity` or did not stand on the new ground, or a
+/// collected (script-removed) item came back.
+pub const REGENERATION_BROKE: Code = Code::new("RE0525");

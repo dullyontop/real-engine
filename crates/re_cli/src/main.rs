@@ -431,6 +431,14 @@ fn install_crash_hook(project: PathBuf) {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     install_crash_hook(cli.project.clone());
+    // Warnings, plus what scripts `print`, on standard error (stdout stays for
+    // results and JSON); `RUST_LOG` replaces this.
+    if let Err(d) = re_core::init_logging(re_core::LogConfig {
+        filter: "warn,script=info".into(),
+        ..re_core::LogConfig::default()
+    }) {
+        print_diagnostics(&[d]);
+    }
     let project = cli.project;
     match cli.command {
         Command::New { dir, name } => match new::create(&dir, name.as_deref()) {

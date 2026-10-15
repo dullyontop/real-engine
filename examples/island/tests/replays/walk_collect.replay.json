@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "seed": 1,
+  "frames": 600,
+  "input": [
+    { "frame": 150, "action": "move", "axis": [0.45, 0.89] },
+    { "frame": 292, "action": "move", "axis": [0.246, -0.969] },
+    { "frame": 516, "action": "move", "axis": [0.0, 0.0] }
+  ],
+  "checks": [
+    { "frame": 120, "screenshot": "tests/goldens/{backend}/walk_collect_f120.png" },
+    { "frame": 599, "screenshot": "tests/goldens/{backend}/walk_collect_f599.png" }
+  ]
+}

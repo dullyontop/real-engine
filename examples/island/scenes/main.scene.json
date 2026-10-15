@@ -1,0 +1,32 @@
+{
+  "format": "real-engine/scene",
+  "version": 1,
+  "script_components": [
+    {
+      "name": "Collectible",
+      "fields": [ { "name": "value", "type": { "kind": "i32" }, "default": 1 } ]
+    }
+  ],
+  "entities": [
+    { "id": "camera", "name": "Camera", "components": {
+        "Camera": { "active": true },
+        "ScriptRef": { "path": "scripts/game/camera.luau" },
+        "Transform": { "translation": [0.0, 24.0, 12.0] } } },
+    { "id": "game", "name": "Game", "components": {
+        "HudText": { "text": "", "size": 22.0 },
+        "ScriptRef": { "path": "scripts/game/game.luau" } } },
+    { "id": "hero", "name": "Hero", "components": {
+        "CharacterController": { "height": 1.8, "radius": 0.4 },
+        "MaterialRef": { "asset": "materials/hero.material.json" },
+        "MeshRef": { "asset": "builtin:capsule" },
+        "ScriptRef": { "path": "scripts/game/player.luau" },
+        "Transform": { "translation": [0.0, 30.0, 0.0] } } },
+    { "id": "island", "name": "Island", "components": {
+        "GraphSource": { "builder": "scripts/tools/island_graph.luau" },
+        "Procedural": { "generator": "graph", "seed": 1 },
+        "Transform": {} } },
+    { "id": "sun", "name": "Sun", "components": {
+        "Light": { "kind": "Directional", "intensity": 1.2, "shadows": true },
+        "Transform": { "rotation": [-0.5, 0.3, 0.1, 0.8] } } }
+  ]
+}

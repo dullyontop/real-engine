@@ -171,6 +171,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "Character not re-grounded",
         page: include_str!("../explain/RE0524.md"),
     },
+    DiagInfo {
+        code: codes::REGENERATION_BROKE,
+        title: "Regeneration broke the game",
+        page: include_str!("../explain/RE0525.md"),
+    },
 ];
 
 /// The code range this crate owns (ARCHITECTURE §7; `re_cli` owns RE0900–0999).
