@@ -18,7 +18,7 @@ path = "src/main.rs"
 # ownership rule).
 [features]
 default = ["tooling"]
-tooling = []
+tooling = ["dep:re_editor"]
 
 # Workspace crates without a `[workspace.dependencies]` entry yet are named by path.
 [dependencies]
@@ -35,6 +35,7 @@ serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 anyhow.workspace = true
+re_editor = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

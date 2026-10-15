@@ -1,0 +1,364 @@
+//! `re_editor` tests on a small project in a temporary directory: the panels
+//! rendered headless, the editor socket and lock, the inspector's undo and
+//! the command palette.
+//!
+//! The GPU tests need an adapter (lavapipe in CI); run them with
+//! `--test-threads=1`.
+
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+use glam::Vec3;
+use re_agent::lock::{self, Holder, LockState};
+use re_app::{App, AppConfig};
+use re_command::AllowAll;
+use re_editor::{Editor, EditorSocket, HeadlessEditor, Panel};
+use re_reflect::{FieldType, Value};
+use serde_json::json;
+
+const CONFIG: &str = r#"[project]
+name = "fixture"
+
+[render]
+clear = [0.2, 0.4, 0.6, 1.0]
+"#;
+
+const SCENE: &str = r#"{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    { "id": "box", "name": "Box", "components": {
+        "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] },
+        "MeshRef": { "asset": "assets/cube.glb" },
+        "RigidBody": { "kind": "Dynamic", "mass": 10.0 },
+        "Transform": { "translation": [0.0, 4.0, 0.0] } } },
+    { "id": "camera", "name": "Camera", "components": {
+        "Camera": { "active": true },
+        "Transform": { "translation": [0.0, 5.0, 12.0] } } },
+    { "id": "crates", "name": "Crates", "components": { "Transform": {} } },
+    { "id": "crate_1", "name": "Crate", "parent": "crates", "components": {
+        "Transform": { "translation": [2.0, 0.5, 0.0] } } },
+    { "id": "sun", "name": "Sun", "components": {
+        "Light": { "kind": "Directional", "intensity": 3.0 } } }
+  ]
+}
+"#;
+
+/// Writes the project, with the scene in the canonical form `App::save_scene`
+/// writes, and returns its directory.
+fn project() -> tempfile::TempDir {
+    // A short path: Unix socket paths are limited to about 100 bytes.
+    let dir = tempfile::Builder::new()
+        .prefix("ed")
+        .tempdir_in(std::env::temp_dir())
+        .unwrap();
+    std::fs::create_dir_all(dir.path().join("scenes")).unwrap();
+    std::fs::write(dir.path().join("real.toml"), CONFIG).unwrap();
+    std::fs::write(dir.path().join("scenes/main.scene.json"), SCENE).unwrap();
+    let mut app = open(dir.path(), false);
+    app.save_scene().unwrap();
+    dir
+}
+
+fn open(dir: &Path, persist_edits: bool) -> App {
+    let config = AppConfig {
+        persist_edits,
+        ..AppConfig::load(dir).unwrap()
+    };
+    App::open(dir, config).unwrap()
+}
+
+fn scene_text(dir: &Path) -> String {
+    std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap()
+}
+
+/// Every panel is laid out and painted: after the warm-up frame each has a
+/// rectangle, and the pixels inside it are not all one colour.
+#[test]
+fn panels_render_headless() {
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let mut ed = HeadlessEditor::new(1280, 720).expect("a headless GPU");
+    ed.editor.select(Some("box"));
+    ed.editor.set_palette_open(true);
+    ed.frame(&mut app, &AllowAll, egui::RawInput::default())
+        .unwrap();
+    let image = ed
+        .frame(&mut app, &AllowAll, egui::RawInput::default())
+        .unwrap();
+    assert_eq!((image.width, image.height), (1280, 720));
+    let rects = *ed.editor.rects();
+    for panel in Panel::ALL {
+        let rect = rects
+            .get(panel)
+            .unwrap_or_else(|| panic!("{panel:?} was not drawn"));
+        assert!(
+            rect.width() >= 40.0 && rect.height() >= 20.0,
+            "{panel:?} is too small: {rect:?}"
+        );
+        if panel == Panel::Viewport {
+            continue;
+        }
+        let colours = distinct_colours(&image, rect);
+        assert!(
+            colours > 2,
+            "{panel:?} at {rect:?} looks empty ({colours} colours)"
+        );
+    }
+
+    // The game view shows the scene's clear colour where no panel covers it.
+    let view = rects.get(Panel::Viewport).unwrap();
+    let palette = rects.get(Panel::Palette).unwrap();
+    let probe = [
+        view.left_bottom() + egui::vec2(8.0, -8.0),
+        view.right_bottom() + egui::vec2(-8.0, -8.0),
+    ]
+    .into_iter()
+    .find(|p| !palette.contains(*p))
+    .expect("a corner of the viewport outside the palette");
+    let px = image.pixel(probe.x as u32, probe.y as u32);
+    let want = [0.2f32, 0.4, 0.6].map(re_render::capture::linear_to_srgb_u8);
+    for c in 0..3 {
+        assert!(
+            px[c].abs_diff(want[c]) <= 3,
+            "viewport pixel {px:?} at {probe:?} is not the clear colour {want:?}"
+        );
+    }
+    assert!(ed.view.size().is_some());
+}
+
+fn distinct_colours(image: &re_render::Image, rect: egui::Rect) -> usize {
+    let mut seen = std::collections::BTreeSet::new();
+    let x0 = rect.left().max(0.0) as u32;
+    let y0 = rect.top().max(0.0) as u32;
+    let x1 = (rect.right() as u32).min(image.width);
+    let y1 = (rect.bottom() as u32).min(image.height);
+    for y in (y0..y1).step_by(2) {
+        for x in (x0..x1).step_by(2) {
+            seen.insert(image.pixel(x, y));
+            if seen.len() > 16 {
+                return seen.len();
+            }
+        }
+    }
+    seen.len()
+}
+
+/// The panels draw every field type of the built-in components and take
+/// keyboard input without dispatching anything by themselves.
+#[test]
+fn every_component_inspects_without_changes() {
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let mut ed = HeadlessEditor::new(1280, 720).expect("a headless GPU");
+    let names: Vec<String> = app
+        .world()
+        .registry
+        .schemas()
+        .map(|s| s.name.clone())
+        .collect();
+    let mut editor = Editor::new();
+    for name in &names {
+        let out = editor.run(
+            &mut app,
+            &AllowAll,
+            "component.add",
+            json!({ "id": "crates", "component": name }),
+            false,
+        );
+        // `Transform` is already there; every other built-in is added.
+        assert!(
+            out.ok || name == "Transform",
+            "{name}: {:?}",
+            out.diagnostics
+        );
+    }
+    let before = app.history().log().len();
+    ed.editor.select(Some("crates"));
+    for _ in 0..3 {
+        ed.frame(&mut app, &AllowAll, egui::RawInput::default())
+            .unwrap();
+    }
+    assert_eq!(
+        app.history().log().len(),
+        before,
+        "drawing changed the scene"
+    );
+    // The only error is the empty `Procedural` that was just added: it names
+    // no generator (`RE1207`).
+    let errors: Vec<_> = ed
+        .editor
+        .console()
+        .iter()
+        .filter(|l| l.kind == re_editor::LineKind::Error)
+        .collect();
+    assert!(
+        errors.iter().all(|l| l.text.contains("RE1207")),
+        "{errors:?}"
+    );
+    assert!(ed.editor.rects().get(Panel::Graph).is_some());
+}
+
+/// With the editor socket served, a command sent through
+/// `re_agent::remote::connect` is applied to the editor's world, and a second
+/// writer is refused with `RE8003`.
+#[cfg(unix)]
+#[test]
+fn socket_round_trip_and_second_writer() {
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let socket = EditorSocket::open(dir.path()).unwrap();
+    assert_eq!(
+        lock::probe(dir.path()),
+        LockState::Editor(lock::socket_path(dir.path()))
+    );
+
+    let path = socket.path().expect("the socket is served on Unix");
+    let client = std::thread::spawn(move || {
+        let handle = re_agent::remote::connect(&path).unwrap();
+        let spawn = handle.call(
+            "entity.spawn",
+            json!({ "id": "rock", "name": "Rock", "parent": "crates" }),
+            false,
+        );
+        let specs = handle.list_specs().unwrap();
+        (spawn, specs.len())
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !client.is_finished() {
+        socket.serve_pending(&mut app, &AllowAll);
+        assert!(Instant::now() < deadline, "the socket call did not finish");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (spawn, specs) = client.join().unwrap();
+    assert!(spawn.ok, "{:?}", spawn.diagnostics);
+    assert!(specs > 10);
+    let rock = app.world().entity("rock").expect("the socket's spawn");
+    assert_eq!(app.world().name_of(rock), "Rock");
+
+    // The editor holds the lock: a second writer is refused.
+    let refused = lock::acquire(dir.path(), Holder::headless("real do")).unwrap_err();
+    assert_eq!(refused.code.to_string(), "RE8003");
+    assert!(
+        refused.message.contains("the editor"),
+        "{}",
+        refused.message
+    );
+    // ...and the editor's own lock cannot be taken twice either.
+    let twice = EditorSocket::open(dir.path()).unwrap_err();
+    assert_eq!(twice.code.to_string(), "RE8003");
+
+    // Closing the editor removes the socket and frees the project.
+    drop(socket);
+    assert!(!lock::socket_path(dir.path()).exists());
+    assert_eq!(lock::probe(dir.path()), LockState::Free);
+    lock::acquire(dir.path(), Holder::headless("real do")).unwrap();
+}
+
+/// An inspector edit is one undo step, and after `undo` the saved scene is
+/// byte-identical to the one before the edit.
+#[test]
+fn inspector_edit_is_undone_byte_identically() {
+    let dir = project();
+    let before = scene_text(dir.path());
+    let mut app = open(dir.path(), true);
+    let mut editor = Editor::new();
+    let out = editor.set_field(
+        &mut app,
+        &AllowAll,
+        "crate_1",
+        "Transform",
+        "translation",
+        &FieldType::Vec3,
+        &Value::Vec3(Vec3::new(3.25, 0.5, -1.0)),
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    let edited = scene_text(dir.path());
+    assert_ne!(edited, before);
+    assert!(edited.contains("3.25"), "{edited}");
+
+    let out = editor.undo(&mut app, &AllowAll);
+    assert!(out.ok, "{:?}", out.diagnostics);
+    assert!(!app.history().can_undo(), "the edit was more than one step");
+    assert_eq!(scene_text(dir.path()), before);
+
+    let out = editor.redo(&mut app, &AllowAll);
+    assert!(out.ok, "{:?}", out.diagnostics);
+    assert_eq!(scene_text(dir.path()), edited);
+}
+
+/// The palette runs any command with JSON arguments; arguments that are not
+/// a JSON object are refused with `RE8802` and run nothing.
+#[test]
+fn palette_runs_commands_and_refuses_bad_arguments() {
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let mut editor = Editor::new();
+    editor.set_palette_command("entity.spawn", r#"{"id": "p1", "name": "From palette"}"#);
+    let out = editor.run_palette(&mut app, &AllowAll).unwrap();
+    assert!(out.ok, "{:?}", out.diagnostics);
+    assert!(app.world().entity("p1").is_ok());
+
+    let log = app.history().log().len();
+    editor.set_palette_command("entity.spawn", "[1, 2]");
+    assert!(editor.run_palette(&mut app, &AllowAll).is_none());
+    editor.set_palette_command("entity.spawn", "{\"id\": ");
+    assert!(editor.run_palette(&mut app, &AllowAll).is_none());
+    assert_eq!(app.history().log().len(), log);
+    let errors: Vec<_> = editor
+        .console()
+        .iter()
+        .filter(|l| l.text.contains("RE8802"))
+        .collect();
+    assert_eq!(errors.len(), 2, "{:?}", editor.console());
+
+    // A read command shows its result in the console.
+    editor.set_palette_command("entity.get", r#"{"id": "p1"}"#);
+    let out = editor.run_palette(&mut app, &AllowAll).unwrap();
+    assert!(out.ok);
+    assert!(
+        editor
+            .console()
+            .last()
+            .is_some_and(|l| l.text.contains("From palette")),
+        "{:?}",
+        editor.console().last()
+    );
+}
+
+/// Commands from the panels go through the editor's policy.
+#[test]
+fn the_policy_applies_to_editor_actions() {
+    struct ReadOnly;
+    impl re_command::PolicyCheck for ReadOnly {
+        fn check(
+            &self,
+            spec: &re_command::CommandSpec,
+            _args: &serde_json::Value,
+            dry_run: bool,
+        ) -> Result<(), re_core::Diagnostic> {
+            if dry_run || spec.tier == re_command::Tier::Read {
+                Ok(())
+            } else {
+                Err(re_core::Diagnostic::error(
+                    re_core::Code::new("RE2005"),
+                    "read only",
+                ))
+            }
+        }
+    }
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let mut editor = Editor::new();
+    let out = editor.set_field(
+        &mut app,
+        &ReadOnly,
+        "box",
+        "Transform",
+        "translation",
+        &FieldType::Vec3,
+        &Value::Vec3(Vec3::ZERO),
+    );
+    assert!(!out.ok);
+    assert!(!app.history().can_undo());
+}

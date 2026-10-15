@@ -1,0 +1,28 @@
+[package]
+name = "re_editor"
+description = "Real Engine editor-lite: the game view with egui panels (hierarchy, inspector, console, graph parameters, command palette), holding the project lock and serving the editor socket."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Tooling crate (ADR-0027): re_cli links it only with the `tooling` feature.
+[dependencies]
+re_core.workspace = true
+re_types.workspace = true
+re_reflect.workspace = true
+re_scene.workspace = true
+re_command.workspace = true
+re_app.workspace = true
+re_agent.workspace = true
+re_render.workspace = true
+glam.workspace = true
+egui.workspace = true
+egui-winit.workspace = true
+winit.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,263 @@
+//! [`run_editor`]: the windowed editor (winit, a wgpu surface, egui).
+
+use std::sync::Arc;
+
+use re_app::App;
+use re_core::Diagnostic;
+use re_render::{Gpu, Renderer, UiFrame, wgpu};
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::window::{Window, WindowId};
+
+use crate::view::{self, GameView};
+use crate::{Editor, EditorOptions, EditorSocket, codes};
+
+/// Runs the editor on `app` until its window is closed (or for
+/// [`EditorOptions::max_frames`] frames).
+///
+/// It first takes the project's single-writer lock as the editor and serves
+/// `.real/editor.sock` ([`EditorSocket`]); commands that other writers send
+/// are applied between frames. Then it opens a window with the game view and
+/// the panels. The lock is released and the socket removed when it returns.
+///
+/// Must run on the main thread (winit's rule).
+///
+/// # Errors
+///
+/// A [`Diagnostic`]: `RE8003` when another process holds the project,
+/// `RE8801` when no window can be opened, or a GPU error (`RE6002`,
+/// `RE6004`, …).
+pub fn run_editor(app: App, options: EditorOptions) -> anyhow::Result<()> {
+    let socket = EditorSocket::open(app.project())?;
+    let mut status = match socket.path() {
+        Some(_) => format!(
+            "editor · {}",
+            re_agent::lock::socket_path(app.project()).display()
+        ),
+        None => "editor · no socket on this platform".to_string(),
+    };
+    if let Some(w) = socket.warning() {
+        eprint!("{}", w.render_human());
+        status.push_str(" (other writers are refused)");
+    }
+    let backends = match options.backends {
+        Some(b) => b,
+        None => re_render::backends_from_env()?,
+    };
+    let event_loop = EventLoop::new()
+        .map_err(|e| no_display(format!("the event loop could not be created: {e}")))?;
+    event_loop.set_control_flow(ControlFlow::Poll);
+    let size = options
+        .size
+        .unwrap_or([app.config().render.width, app.config().render.height]);
+    let mut editor = Editor::new();
+    editor.set_status(status);
+    let mut host = Host {
+        app,
+        socket,
+        options,
+        backends,
+        size,
+        editor,
+        window: None,
+        gfx: None,
+        frames: 0,
+        error: None,
+    };
+    event_loop
+        .run_app(&mut host)
+        .map_err(|e| no_display(format!("the editor's event loop failed: {e}")))?;
+    if let Some(gfx) = host.gfx.as_mut() {
+        gfx.view.release(&mut gfx.renderer);
+    }
+    // GPU objects (the surface first) before the window.
+    host.gfx = None;
+    host.window = None;
+    match host.error {
+        Some(d) => Err(d.into()),
+        None => Ok(()),
+    }
+}
+
+fn no_display(message: String) -> Diagnostic {
+    Diagnostic::error(
+        codes::NO_DISPLAY,
+        format!("cannot open the editor window: {message}"),
+    )
+    .with_hint("run it in a desktop session, or under a virtual display: xvfb-run -a real editor")
+}
+
+struct Gfx {
+    // Field order is drop order: the surface goes before the GPU.
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    renderer: Renderer,
+    view: GameView,
+    egui_ctx: egui::Context,
+    egui_state: egui_winit::State,
+    gpu: Gpu,
+}
+
+struct Host {
+    app: App,
+    socket: EditorSocket,
+    options: EditorOptions,
+    backends: wgpu::Backends,
+    size: [u32; 2],
+    editor: Editor,
+    window: Option<Arc<Window>>,
+    gfx: Option<Gfx>,
+    frames: u64,
+    error: Option<Diagnostic>,
+}
+
+impl Host {
+    fn init(&mut self, event_loop: &ActiveEventLoop) -> Result<(), Diagnostic> {
+        let title = format!("{} · Real Engine editor", self.app.config().project.name);
+        let attrs = Window::default_attributes()
+            .with_title(title)
+            .with_inner_size(winit::dpi::PhysicalSize::new(self.size[0], self.size[1]));
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .map_err(|e| no_display(format!("the window could not be created: {e}")))?,
+        );
+        let (gpu, surface) = Gpu::for_surface(window.clone(), self.backends)?;
+        let inner = window.inner_size();
+        let config = gpu.surface_config(&surface, inner.width, inner.height)?;
+        surface.configure(&gpu.device, &config);
+        let renderer = Renderer::new(&gpu, config.format);
+        let egui_ctx = egui::Context::default();
+        let egui_state = egui_winit::State::new(
+            egui_ctx.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            Some(gpu.device.limits().max_texture_dimension_2d as usize),
+        );
+        window.request_redraw();
+        self.window = Some(window);
+        self.gfx = Some(Gfx {
+            surface,
+            config,
+            renderer,
+            view: GameView::new(),
+            egui_ctx,
+            egui_state,
+            gpu,
+        });
+        Ok(())
+    }
+
+    fn reconfigure(gfx: &mut Gfx, width: u32, height: u32) {
+        gfx.config.width = width.max(1);
+        gfx.config.height = height.max(1);
+        gfx.surface.configure(&gfx.gpu.device, &gfx.config);
+    }
+
+    /// One frame: serve the socket, run the panels, draw the game view, paint
+    /// the UI and present.
+    fn redraw(&mut self) -> Result<(), Diagnostic> {
+        let (Some(window), Some(gfx)) = (self.window.clone(), self.gfx.as_mut()) else {
+            return Ok(());
+        };
+        let policy = &*self.options.policy;
+        self.socket.serve_pending(&mut self.app, policy);
+        let frame = match gfx.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                let s = window.inner_size();
+                Self::reconfigure(gfx, s.width, s.height);
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err(Diagnostic::error(
+                    re_render::codes::SURFACE_FAILED,
+                    "the window surface reported a validation error",
+                ));
+            }
+        };
+        let target = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        gfx.view
+            .sync(&gfx.gpu, &mut gfx.renderer, &mut self.editor)?;
+        let input = gfx.egui_state.take_egui_input(&window);
+        let editor = &mut self.editor;
+        let app = &mut self.app;
+        let mut output = gfx.egui_ctx.run_ui(input, |ui| editor.ui(ui, app, policy));
+        let platform = std::mem::take(&mut output.platform_output);
+        let ui = UiFrame::from_output(
+            &gfx.egui_ctx,
+            &mut output,
+            [gfx.config.width, gfx.config.height],
+        );
+        if let Err(d) = gfx.view.render(&gfx.gpu, &mut gfx.renderer, &mut self.app) {
+            self.editor.log_diagnostic(&d);
+        }
+        view::clear(&gfx.gpu, &target);
+        gfx.renderer
+            .paint_ui(&gfx.gpu.device, &gfx.gpu.queue, &target, &ui)?;
+        gfx.egui_state.handle_platform_output(&window, platform);
+        for d in gfx.gpu.errors().take() {
+            self.editor.log_diagnostic(&d);
+        }
+        window.pre_present_notify();
+        gfx.gpu.queue.present(frame);
+        self.frames += 1;
+        Ok(())
+    }
+}
+
+impl ApplicationHandler for Host {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        if let Err(d) = self.init(event_loop) {
+            self.error = Some(d);
+            event_loop.exit();
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let (Some(window), Some(gfx)) = (self.window.as_ref(), self.gfx.as_mut())
+            && gfx.egui_state.on_window_event(window, &event).repaint
+        {
+            window.request_redraw();
+        }
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => {
+                if let Some(gfx) = self.gfx.as_mut() {
+                    Self::reconfigure(gfx, size.width, size.height);
+                }
+            }
+            WindowEvent::RedrawRequested => {
+                if let Err(d) = self.redraw() {
+                    self.error = Some(d);
+                    event_loop.exit();
+                    return;
+                }
+                if self.options.max_frames.is_some_and(|n| self.frames >= n) {
+                    event_loop.exit();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // Redraw continuously so socket commands are applied promptly and the
+        // view follows them; throttled by the surface's Fifo present mode.
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+}
