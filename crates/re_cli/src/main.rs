@@ -69,6 +69,10 @@ enum Command {
         /// The project name (default: the directory name).
         #[arg(long)]
         name: Option<String>,
+        /// The kind of project: `native` (the engine's own API) or `roblox`
+        /// (an empty Roblox-style place; tooling build).
+        #[arg(long, default_value = "native")]
+        template: new::Template,
     },
     /// Run the project.
     Run(RunArgs),
@@ -123,6 +127,10 @@ enum Command {
     /// Open the editor.
     #[cfg(feature = "tooling")]
     Editor(tooling::editor::EditorArgs),
+    /// Import a Rojo-style project or a Studio loader script into a
+    /// Roblox-style project (created when --project is new or empty).
+    #[cfg(feature = "tooling")]
+    Import(tooling::import::ImportArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -445,7 +453,11 @@ fn main() -> ExitCode {
     }
     let project = cli.project;
     match cli.command {
-        Command::New { dir, name } => match new::create(&dir, name.as_deref()) {
+        Command::New {
+            dir,
+            name,
+            template,
+        } => match new::create_from(&dir, name.as_deref(), template) {
             Ok(files) => {
                 println!("created {} ({})", dir.display(), files.join(", "));
                 ExitCode::SUCCESS
@@ -471,6 +483,8 @@ fn main() -> ExitCode {
         Command::Agent(args) => tooling_exit(tooling::agent::run(args, &project)),
         #[cfg(feature = "tooling")]
         Command::Editor(args) => tooling_exit(tooling::editor::run(args, &project)),
+        #[cfg(feature = "tooling")]
+        Command::Import(args) => tooling_exit(tooling::import::run(args, &project)),
     }
 }
 

@@ -63,14 +63,52 @@ fn canonical_scene() -> String {
     re_scene::scene::to_json(&saved)
 }
 
-/// Creates the project at `dir`, named `name` (the directory name when `None`).
-/// Returns the files written, relative to `dir`.
+/// The project templates of `real new --template`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Template {
+    /// A native project: the starter scene with a falling box.
+    Native,
+    /// An empty Roblox-style place (`[compat] api = "roblox"`), the shape
+    /// `real import` writes. Needs the tooling build.
+    Roblox,
+}
+
+/// Creates the project at `dir` from `template`.
 ///
 /// # Errors
 ///
-/// `RE0901` when `dir` exists and is not empty; `RE0902` when a file cannot be
-/// written.
-pub fn create(dir: &Path, name: Option<&str>) -> Result<Vec<String>, Diagnostic> {
+/// As [`create`]; a `roblox` project in a runtime-only build gives `RE0902`
+/// with a hint to use the tooling build.
+pub fn create_from(
+    dir: &Path,
+    name: Option<&str>,
+    template: Template,
+) -> Result<Vec<String>, Diagnostic> {
+    match template {
+        Template::Native => create(dir, name),
+        Template::Roblox => {
+            refuse_non_empty(dir)?;
+            create_roblox(dir, name)
+        }
+    }
+}
+
+#[cfg(feature = "tooling")]
+fn create_roblox(dir: &Path, name: Option<&str>) -> Result<Vec<String>, Diagnostic> {
+    let classes = crate::tooling::import::classes()?;
+    re_import::new_project(dir, name, &classes)
+}
+
+#[cfg(not(feature = "tooling"))]
+fn create_roblox(_dir: &Path, _name: Option<&str>) -> Result<Vec<String>, Diagnostic> {
+    Err(Diagnostic::error(
+        codes::WRITE_FAILED,
+        "this build of `real` cannot create Roblox-style projects",
+    )
+    .with_hint("use the default (tooling) build of `real`"))
+}
+
+fn refuse_non_empty(dir: &Path) -> Result<(), Diagnostic> {
     if dir.exists()
         && std::fs::read_dir(dir)
             .map(|mut d| d.next().is_some())
@@ -82,6 +120,18 @@ pub fn create(dir: &Path, name: Option<&str>) -> Result<Vec<String>, Diagnostic>
         )
         .with_hint("choose a new directory; `real new` never overwrites files"));
     }
+    Ok(())
+}
+
+/// Creates the project at `dir`, named `name` (the directory name when `None`).
+/// Returns the files written, relative to `dir`.
+///
+/// # Errors
+///
+/// `RE0901` when `dir` exists and is not empty; `RE0902` when a file cannot be
+/// written.
+pub fn create(dir: &Path, name: Option<&str>) -> Result<Vec<String>, Diagnostic> {
+    refuse_non_empty(dir)?;
     let fail = |what: &str, e: std::io::Error| {
         Diagnostic::error(codes::WRITE_FAILED, format!("cannot write {what}: {e}"))
     };

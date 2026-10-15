@@ -1,0 +1,22 @@
+{
+  "name": "rojo-basic",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": { "$path": "src/shared" }
+    },
+    "ServerScriptService": {
+      "$path": "src/server"
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": { "$className": "StarterPlayerScripts", "$path": "src/client" }
+    },
+    "Workspace": {
+      "Lamp": {
+        "$className": "TestLamp",
+        "$properties": { "Brightness": 2.5, "Label": "porch" },
+        "$attributes": { "Kind": "light", "Watts": 40 }
+      }
+    }
+  }
+}
