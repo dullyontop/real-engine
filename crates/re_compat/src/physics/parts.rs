@@ -538,6 +538,18 @@ pub(crate) fn register_methods(b: &mut Bindings) {
         ),
         ("BasePart", "CanCollideWith", can_collide_with),
         ("BasePart", "BreakJoints", break_joints),
+        ("BasePart", "SetNetworkOwner", set_network_owner),
+        ("BasePart", "GetNetworkOwner", get_network_owner),
+        (
+            "BasePart",
+            "SetNetworkOwnershipAuto",
+            set_network_ownership_auto,
+        ),
+        (
+            "BasePart",
+            "CanSetNetworkOwnership",
+            can_set_network_ownership,
+        ),
     ];
     for (class, name, f) in methods {
         b.method(class, name, Arc::new(*f));
@@ -769,14 +781,18 @@ fn get_joints(lua: &Lua, e: Entity, a: MultiValue) -> mlua::Result<MultiValue> {
 
 fn is_grounded(lua: &Lua, e: Entity, a: MultiValue) -> mlua::Result<MultiValue> {
     let () = args(lua, a, "IsGrounded")?;
-    let grounded = synced(lua, |s, w| {
+    ret(lua, grounded(lua, e)?)
+}
+
+/// Whether `e` is anchored or joined to an anchored part.
+fn grounded(lua: &Lua, e: Entity) -> mlua::Result<bool> {
+    let joined = synced(lua, |s, w| {
         connected(s, w, e, true)
             .into_iter()
             .any(|p| s.parts.get(&p).is_some_and(|r| r.snap.anchored))
     })?
     .unwrap_or(false);
-    let grounded = grounded || with_world(lua, |w| snap(w, e).is_some_and(|s| s.anchored))?;
-    ret(lua, grounded)
+    Ok(joined || with_world(lua, |w| snap(w, e).is_some_and(|s| s.anchored))?)
 }
 
 fn get_touching_parts(lua: &Lua, e: Entity, a: MultiValue) -> mlua::Result<MultiValue> {
@@ -821,6 +837,91 @@ fn can_collide_with(lua: &Lua, e: Entity, a: MultiValue) -> mlua::Result<MultiVa
     })?
     .map_err(compat_error)?;
     ret(lua, ok)
+}
+
+// ------------------------------------------------------- network ownership
+
+/// Why the network ownership of `e`'s assembly cannot be set, if it cannot:
+/// only the server sets it, and never on a grounded assembly.
+fn ownership_refusal(lua: &Lua, e: Entity) -> mlua::Result<Option<&'static str>> {
+    let replica = with_world(lua, |w| {
+        w.ecs.get_resource::<crate::net::Replica>().is_some()
+    })?;
+    if replica {
+        return Ok(Some(
+            "Network Ownership API can only be called from the server.",
+        ));
+    }
+    Ok(grounded(lua, e)?.then_some(
+        "Network Ownership API cannot be called on anchored parts or parts welded to anchored parts.",
+    ))
+}
+
+/// Every part of `e`'s assembly, `e` first.
+fn assembly_parts(lua: &Lua, e: Entity) -> mlua::Result<Vec<Entity>> {
+    let mut parts = vec![e];
+    if let Some(more) = synced(lua, |s, w| connected(s, w, e, true))? {
+        parts.extend(more.into_iter().filter(|p| *p != e));
+    }
+    Ok(parts)
+}
+
+fn set_owner(lua: &Lua, e: Entity, owner: Option<Entity>, what: &str) -> mlua::Result<()> {
+    if let Some(why) = ownership_refusal(lua, e)? {
+        return Err(lua_error(BAD_ARGUMENT, format!("{what}: {why}")));
+    }
+    let parts = assembly_parts(lua, e)?;
+    with_world(lua, |w| {
+        for p in parts {
+            crate::net::set_network_owner(w, p, owner);
+        }
+    })
+}
+
+fn set_network_owner(lua: &Lua, e: Entity, a: MultiValue) -> mlua::Result<MultiValue> {
+    let (player,): (LuaValue,) = args(lua, a, "SetNetworkOwner")?;
+    let owner = match player {
+        LuaValue::Nil => None,
+        v => {
+            let p = crate::instance::arg_instance(&v, "SetNetworkOwner")?;
+            let ok = with_world(lua, |w| tree::class(w, p) == Some("Player"))?;
+            if !ok {
+                return Err(lua_error(
+                    BAD_ARGUMENT,
+                    "SetNetworkOwner: the owner must be a Player or nil",
+                ));
+            }
+            Some(p)
+        }
+    };
+    set_owner(lua, e, owner, "SetNetworkOwner")?;
+    ret(lua, ())
+}
+
+fn get_network_owner(lua: &Lua, e: Entity, a: MultiValue) -> mlua::Result<MultiValue> {
+    let () = args(lua, a, "GetNetworkOwner")?;
+    if let Some(why) = ownership_refusal(lua, e)? {
+        return Err(lua_error(BAD_ARGUMENT, format!("GetNetworkOwner: {why}")));
+    }
+    let owner = with_world(lua, |w| crate::net::network_owner(w, e))?;
+    match owner {
+        Some(p) => ret(lua, push(lua, p)?),
+        None => ret(lua, LuaValue::Nil),
+    }
+}
+
+fn set_network_ownership_auto(lua: &Lua, e: Entity, a: MultiValue) -> mlua::Result<MultiValue> {
+    let () = args(lua, a, "SetNetworkOwnershipAuto")?;
+    set_owner(lua, e, None, "SetNetworkOwnershipAuto")?;
+    ret(lua, ())
+}
+
+fn can_set_network_ownership(lua: &Lua, e: Entity, a: MultiValue) -> mlua::Result<MultiValue> {
+    let () = args(lua, a, "CanSetNetworkOwnership")?;
+    match ownership_refusal(lua, e)? {
+        None => ret(lua, (true, LuaValue::Nil)),
+        Some(why) => ret(lua, (false, why)),
+    }
 }
 
 fn break_joints(lua: &Lua, e: Entity, a: MultiValue) -> mlua::Result<MultiValue> {

@@ -35,7 +35,12 @@ fn place() -> Place {
     create_place(
         &mut world,
         &setup.classes,
-        &["Workspace", "ReplicatedStorage", "ServerScriptService"],
+        &[
+            "Workspace",
+            "ReplicatedStorage",
+            "ServerScriptService",
+            "Players",
+        ],
     )
     .unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -283,6 +288,75 @@ mod physics_parts {
         assert!(out[2].contains("[RE9250]"), "{out:?}");
         assert_eq!(out[3], "32\t32");
         assert_eq!(out[4], "true\tfalse");
+    }
+
+    #[test]
+    fn network_ownership_is_recorded_on_the_assembly_and_refused_when_grounded() {
+        let mut p = place();
+        let mut host = WorldHost {
+            world: &mut p.world,
+            services: &mut p.services,
+        };
+        let (player, d) = re_compat::players::add_player(
+            &p.vm,
+            &mut host,
+            &re_compat::players::PlayerSpec::numbered(1),
+        );
+        assert!(d.is_empty(), "{d:#?}");
+        let player = player.unwrap();
+        p.run(
+            r#"
+            local a = Instance.new("Part")
+            a.Name = "A"
+            a.Position = Vector3.new(0, 50, 0)
+            a.Parent = workspace
+            local b = Instance.new("Part")
+            b.Name = "B"
+            b.Position = Vector3.new(0, 51, 0)
+            b.Parent = workspace
+            local w = Instance.new("WeldConstraint")
+            w.Part0 = a
+            w.Part1 = b
+            w.Parent = a
+            local g = Instance.new("Part")
+            g.Name = "G"
+            g.Anchored = true
+            g.Position = Vector3.new(20, 0, 0)
+            g.Parent = workspace
+            "#,
+        );
+        p.frame();
+        let me = "game.Players:GetPlayers()[1]";
+        assert_eq!(p.eval("workspace.A:CanSetNetworkOwnership()"), "true\tnil");
+        p.run(&format!("workspace.A:SetNetworkOwner({me})"));
+        assert_eq!(
+            p.eval(&format!("workspace.B:GetNetworkOwner() == {me}")),
+            "true"
+        );
+        let parts = p.by_name();
+        assert_eq!(
+            re_compat::net::network_owner(&p.world, parts["A"]),
+            Some(player)
+        );
+        assert_eq!(
+            re_compat::net::network_owner(&p.world, parts["B"]),
+            Some(player)
+        );
+        p.run("workspace.B:SetNetworkOwnershipAuto()");
+        assert_eq!(p.eval("workspace.A:GetNetworkOwner()"), "nil");
+        let refused = p.eval("workspace.G:CanSetNetworkOwnership()");
+        assert!(refused.starts_with("false\t"), "{refused}");
+        assert_eq!(
+            p.eval(&format!(
+                "(pcall(workspace.G.SetNetworkOwner, workspace.G, {me}))"
+            )),
+            "false"
+        );
+        assert_eq!(
+            p.eval("(pcall(workspace.A.SetNetworkOwner, workspace.A, workspace.B))"),
+            "false"
+        );
+        assert_eq!(re_compat::net::network_owner(&p.world, parts["G"]), None);
     }
 
     #[test]

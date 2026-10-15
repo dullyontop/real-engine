@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1452,
-    "partial": 117,
+    "implemented": 1454,
+    "partial": 119,
     "stub-error": 51,
     "missing": 3
   },
@@ -494,6 +494,11 @@
           "status": "implemented"
         },
         {
+          "name": "CanSetNetworkOwnership",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
           "name": "CanTouch",
           "kind": "property",
           "status": "implemented"
@@ -532,6 +537,11 @@
         },
         {
           "name": "GetMass",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetNetworkOwner",
           "kind": "method",
           "status": "implemented"
         },
@@ -594,6 +604,18 @@
           "name": "Rotation",
           "kind": "property",
           "status": "implemented"
+        },
+        {
+          "name": "SetNetworkOwner",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded on the assembly's parts and used by replication; the server still simulates the assembly."
+        },
+        {
+          "name": "SetNetworkOwnershipAuto",
+          "kind": "method",
+          "status": "partial",
+          "note": "Gives ownership back to the server; ownership is never assigned automatically."
         },
         {
           "name": "Size",

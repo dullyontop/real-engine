@@ -507,6 +507,42 @@
           "deprecated": "Destroy",
           "status": "implemented",
           "doc": "Destroys the welds and joints attached to the part."
+        },
+        {
+          "name": "SetNetworkOwner",
+          "params": [
+            {
+              "name": "player",
+              "type": "Player",
+              "optional": true
+            }
+          ],
+          "status": "partial",
+          "note": "Recorded on the assembly's parts and used by replication; the server still simulates the assembly.",
+          "doc": "Makes a player's client (or the server, for nil) the owner of the part's assembly. Server only; refused on a grounded assembly."
+        },
+        {
+          "name": "GetNetworkOwner",
+          "returns": [
+            "Player"
+          ],
+          "status": "implemented",
+          "doc": "The player that owns the part, or nil for the server. Server only."
+        },
+        {
+          "name": "SetNetworkOwnershipAuto",
+          "status": "partial",
+          "note": "Gives ownership back to the server; ownership is never assigned automatically.",
+          "doc": "Lets the engine choose the owner of the part's assembly. Server only."
+        },
+        {
+          "name": "CanSetNetworkOwnership",
+          "returns": [
+            "bool",
+            "string"
+          ],
+          "status": "implemented",
+          "doc": "Whether the ownership of the part's assembly can be set, and why not if it cannot."
         }
       ],
       "events": [
