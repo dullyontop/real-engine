@@ -696,7 +696,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
    - `real mcp` opens the project headless by default.
    - If `.real/editor.sock` is live, it proxies every command to the running editor instead, so the human sees changes immediately and there is one writer (ADR-0020).
 2. **Multiple writers?** Not supported. There is one writer per project.
-   - The editor, or else the first headless writer (`real do`, `real mcp`), holds `.real/editor.lock`. One module, `re_agent::lock`, implements the lock for every writer.
+   - The editor, or else the first headless writer (`real do`, `real mcp`), holds an operating-system file lock (`std::fs::File::try_lock`) on `.real/editor.lock` and writes its pid and kind to `.real/editor.owner`. The OS lock alone decides who holds the project; the owner file is information for `RE8003` and `probe`, and a leftover one from a dead holder is ignored. The OS releases the lock however the holder exits, so there is no stale-lock recovery. One module, `re_agent::lock`, implements the lock for every writer.
+   - Amended in M1 (WP7): the first design created the lock file with `create_new` and replaced it when its pid was dead. Review showed that two writers racing to replace a stale lock could both win, so WP7 froze the OS-lock scheme instead.
    - A second headless writer gets `RE8003 project is locked by <pid>`, with a hint to start the editor or stop the other process.
    - Readers are always allowed.
 3. **Error shape.**
