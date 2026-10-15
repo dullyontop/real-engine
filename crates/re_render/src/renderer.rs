@@ -13,7 +13,10 @@ use re_types::render::{
     TextureFormat, TextureHandle, TextureRef,
 };
 
-use crate::frame::{self, FrameUniform, InstanceRaw, LineVertex, MaterialUniform, PointLightRaw};
+use crate::extras::{self, EffectVertex, MAX_HIGHLIGHTS, SceneExtras};
+use crate::frame::{
+    self, FrameUniform, InstanceRaw, LineVertex, MaterialUniform, PointLightRaw, SpotLightRaw,
+};
 use crate::gpu::Gpu;
 use crate::slots::Slots;
 use crate::ui::{UiFrame, UiPainter};
@@ -21,6 +24,9 @@ use crate::{codes, shader};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
+/// The width of a highlight's outline, in pixels.
+const OUTLINE_PX: f32 = 2.0;
 const MSAA_SAMPLES: u32 = 4;
 /// Render-target sets kept for different target sizes and formats.
 const TARGET_CACHE: usize = 4;
@@ -95,6 +101,12 @@ pub struct FrameStats {
     pub debug_lines: u32,
     /// Point lights drawn.
     pub point_lights: u32,
+    /// Spot lights drawn.
+    pub spot_lights: u32,
+    /// Sprite and ribbon quads drawn.
+    pub effect_quads: u32,
+    /// Highlights drawn.
+    pub highlights: u32,
     /// MSAA sample count of the scene pass.
     pub samples: u32,
 }
@@ -153,6 +165,24 @@ struct FormatPipelines {
     /// Indexed by `double_sided | blend << 1`.
     forward: [wgpu::RenderPipeline; 4],
     lines: wgpu::RenderPipeline,
+    effects: wgpu::RenderPipeline,
+    sky: wgpu::RenderPipeline,
+}
+
+/// The highlight mask's targets for one size.
+struct MaskTargets {
+    size: (u32, u32),
+    mask: wgpu::TextureView,
+    depth: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+}
+
+/// `struct Highlights` in highlight.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct HighlightUniform {
+    colors: [[f32; 4]; 2 * MAX_HIGHLIGHTS],
+    params: [f32; 4],
 }
 
 struct FrameTargets {
@@ -170,8 +200,11 @@ struct Layouts {
     frame: wgpu::BindGroupLayout,
     shadow_frame: wgpu::BindGroupLayout,
     material: wgpu::BindGroupLayout,
+    highlight: wgpu::BindGroupLayout,
     forward: wgpu::PipelineLayout,
     shadow: wgpu::PipelineLayout,
+    frame_only: wgpu::PipelineLayout,
+    highlight_pipeline: wgpu::PipelineLayout,
 }
 
 struct GrowBuffer {
@@ -248,7 +281,15 @@ pub struct Renderer {
     layouts: Layouts,
     forward_shader: wgpu::ShaderModule,
     lines_shader: wgpu::ShaderModule,
+    effects_shader: wgpu::ShaderModule,
+    sky_shader: wgpu::ShaderModule,
+    highlight_shader: wgpu::ShaderModule,
     shadow_pipeline: wgpu::RenderPipeline,
+    /// The depth-only pass and the numbering mask pipelines.
+    mask_pipelines: [wgpu::RenderPipeline; 2],
+    highlight_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    mask_targets: Option<MaskTargets>,
+    highlight_buffer: wgpu::Buffer,
     pipelines: HashMap<(wgpu::TextureFormat, u32), FormatPipelines>,
     targets: HashMap<(u32, u32, wgpu::TextureFormat, u32), FrameTargets>,
     frame_buffer: wgpu::Buffer,
@@ -257,6 +298,8 @@ pub struct Renderer {
     shadow: ShadowMap,
     instances: GrowBuffer,
     lines: GrowBuffer,
+    effect_vertices: GrowBuffer,
+    effect_indices: GrowBuffer,
     defaults: Defaults,
     meshes: Slots<GpuMesh>,
     textures: Slots<GpuTexture>,
@@ -302,6 +345,17 @@ fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: size_of::<InstanceRaw>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &ATTRIBUTES,
+    }
+}
+
+fn effect_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+        0 => Float32x3, 1 => Float32x2, 2 => Float32x4, 3 => Float32x2
+    ];
+    wgpu::VertexBufferLayout {
+        array_stride: size_of::<EffectVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &ATTRIBUTES,
     }
 }
@@ -407,12 +461,45 @@ fn create_layouts(device: &wgpu::Device) -> Layouts {
         bind_group_layouts: &[Some(&shadow_frame)],
         immediate_size: 0,
     });
+    let frame_only = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("re_render frame only"),
+        bind_group_layouts: &[Some(&frame)],
+        immediate_size: 0,
+    });
+    let highlight = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("re_render highlight"),
+        entries: &[
+            uniform_entry(
+                0,
+                wgpu::ShaderStages::FRAGMENT,
+                size_of::<HighlightUniform>(),
+            ),
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+    let highlight_pipeline = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("re_render highlight"),
+        bind_group_layouts: &[Some(&highlight)],
+        immediate_size: 0,
+    });
     Layouts {
         frame,
         shadow_frame,
         material,
+        highlight,
         forward,
         shadow,
+        frame_only,
+        highlight_pipeline,
     }
 }
 
@@ -533,6 +620,57 @@ impl Renderer {
         let forward_shader = shader::module(&device, "forward.wgsl");
         let lines_shader = shader::module(&device, "lines.wgsl");
         let shadow_shader = shader::module(&device, "shadow.wgsl");
+        let mask_shader = shader::module(&device, "mask.wgsl");
+        let mask_pipelines = [None, Some(wgpu::CompareFunction::LessEqual)]
+            .into_iter()
+            .enumerate()
+            .map(|(i, compare)| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("re_render highlight mask"),
+                    layout: Some(&layouts.shadow),
+                    vertex: wgpu::VertexState {
+                        module: &mask_shader,
+                        entry_point: Some("vs_mask"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[Some(position_only_layout()), Some(instance_layout())],
+                    },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(compare.unwrap_or(wgpu::CompareFunction::Less)),
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &mask_shader,
+                        entry_point: Some("fs_mask"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: MASK_FORMAT,
+                            blend: None,
+                            // The depth-only pass (index 0) writes no number.
+                            write_mask: if i == 0 {
+                                wgpu::ColorWrites::empty()
+                            } else {
+                                wgpu::ColorWrites::ALL
+                            },
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            })
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("two mask pipelines"));
+        let highlight_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("re_render highlights"),
+            size: size_of::<HighlightUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("re_render shadow"),
             layout: Some(&layouts.shadow),
@@ -619,6 +757,23 @@ impl Renderer {
         let mut renderer = Renderer {
             instances: GrowBuffer::new(&device, "re_render instances", wgpu::BufferUsages::VERTEX),
             lines: GrowBuffer::new(&device, "re_render lines", wgpu::BufferUsages::VERTEX),
+            effect_vertices: GrowBuffer::new(
+                &device,
+                "re_render effect vertices",
+                wgpu::BufferUsages::VERTEX,
+            ),
+            effect_indices: GrowBuffer::new(
+                &device,
+                "re_render effect indices",
+                wgpu::BufferUsages::INDEX,
+            ),
+            effects_shader: shader::module(&device, "effects.wgsl"),
+            sky_shader: shader::module(&device, "sky.wgsl"),
+            highlight_shader: shader::module(&device, "highlight.wgsl"),
+            mask_pipelines,
+            highlight_pipelines: HashMap::new(),
+            mask_targets: None,
+            highlight_buffer,
             ui: UiPainter::new(&device),
             adapter: gpu.adapter.clone(),
             device,
@@ -825,6 +980,80 @@ impl Renderer {
                 multiview_mask: None,
                 cache: None,
             });
+        let effects = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("re_render effects"),
+                layout: Some(&self.layouts.frame_only),
+                vertex: wgpu::VertexState {
+                    module: &self.effects_shader,
+                    entry_point: Some("vs_effect"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[Some(effect_layout())],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample,
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.effects_shader,
+                    entry_point: Some(if gamma {
+                        "fs_effect_gamma"
+                    } else {
+                        "fs_effect_linear"
+                    }),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+        let sky = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("re_render sky"),
+                layout: Some(&self.layouts.frame_only),
+                vertex: wgpu::VertexState {
+                    module: &self.sky_shader,
+                    entry_point: Some("vs_sky"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample,
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.sky_shader,
+                    entry_point: Some(if gamma {
+                        "fs_sky_gamma"
+                    } else {
+                        "fs_sky_linear"
+                    }),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
         FormatPipelines {
             forward: [
                 forward(false, false),
@@ -833,7 +1062,102 @@ impl Renderer {
                 forward(true, true),
             ],
             lines,
+            effects,
+            sky,
         }
+    }
+
+    fn highlight_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+        if !self.highlight_pipelines.contains_key(&format) {
+            let gamma = stores_gamma(format);
+            let pipeline = self
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("re_render highlight"),
+                    layout: Some(&self.layouts.highlight_pipeline),
+                    vertex: wgpu::VertexState {
+                        module: &self.highlight_shader,
+                        entry_point: Some("vs_fullscreen"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[],
+                    },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &self.highlight_shader,
+                        entry_point: Some(if gamma {
+                            "fs_highlight_gamma"
+                        } else {
+                            "fs_highlight_linear"
+                        }),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                });
+            self.highlight_pipelines.insert(format, pipeline);
+        }
+        &self.highlight_pipelines[&format]
+    }
+
+    fn mask_targets(&mut self, width: u32, height: u32) -> &MaskTargets {
+        if self.mask_targets.as_ref().map(|m| m.size) != Some((width, height)) {
+            let make = |label: &str, format: wgpu::TextureFormat, usage: wgpu::TextureUsages| {
+                self.device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some(label),
+                        size: wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage,
+                        view_formats: &[],
+                    })
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            };
+            let mask = make(
+                "re_render highlight mask",
+                MASK_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            let depth = make(
+                "re_render highlight depth",
+                DEPTH_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            );
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("re_render highlight"),
+                layout: &self.layouts.highlight,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.highlight_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&mask),
+                    },
+                ],
+            });
+            self.mask_targets = Some(MaskTargets {
+                size: (width, height),
+                mask,
+                depth,
+                bind_group,
+            });
+        }
+        self.mask_targets.as_ref().expect("created above")
     }
 
     fn frame_targets(
@@ -1245,6 +1569,23 @@ impl Renderer {
         target: &wgpu::TextureView,
         snapshot: &RenderSnapshot,
     ) -> Result<FrameReport, Diagnostic> {
+        self.render_with(device, queue, target, snapshot, &SceneExtras::default())
+    }
+
+    /// Draws `snapshot` like [`Renderer::render`], with the environment, lights,
+    /// sprites, ribbons and highlights of `extras` (see [`SceneExtras`]).
+    ///
+    /// More than [`MAX_HIGHLIGHTS`](crate::MAX_HIGHLIGHTS) highlights give an
+    /// `RE6018` warning and the later ones are not drawn; an entity in two
+    /// highlights shows the first.
+    pub fn render_with(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        snapshot: &RenderSnapshot,
+        extras: &SceneExtras,
+    ) -> Result<FrameReport, Diagnostic> {
         let texture = target.texture();
         let (width, height, format) = (texture.width(), texture.height(), texture.format());
         self.check_target(texture)?;
@@ -1265,6 +1606,28 @@ impl Renderer {
         let samples = self.sample_count(format);
         let mut report = FrameReport::default();
         report.stats.samples = samples;
+
+        // Each highlighted entity's highlight number (1-based; the first wins).
+        let mut highlight_of: HashMap<u64, u8> = HashMap::new();
+        if extras.highlights.len() > MAX_HIGHLIGHTS {
+            report.warnings.push(
+                Diagnostic::warning(
+                    codes::TOO_MANY_HIGHLIGHTS,
+                    format!(
+                        "{} highlights in the frame; only the first {MAX_HIGHLIGHTS} are drawn",
+                        extras.highlights.len()
+                    ),
+                )
+                .with_hint("remove highlights that are not needed, or group objects under one"),
+            );
+        }
+        let drawn_highlights = &extras.highlights[..extras.highlights.len().min(MAX_HIGHLIGHTS)];
+        for (n, h) in drawn_highlights.iter().enumerate() {
+            for e in &h.entities {
+                highlight_of.entry(e.0).or_insert(n as u8 + 1);
+            }
+        }
+        let mut highlighted: Vec<(bool, u8, u32, usize)> = Vec::new();
 
         // Resolve every item; skip (and report once) the ones with stale handles.
         let mut reported = HashSet::new();
@@ -1310,6 +1673,10 @@ impl Renderer {
             if let Some(b) = world_box {
                 scene_bounds = Some(scene_bounds.map_or(b, |s| s.union(&b)));
             }
+            if let Some(&n) = highlight_of.get(&item.entity.0) {
+                let on_top = drawn_highlights[usize::from(n - 1)].always_on_top;
+                highlighted.push((on_top, n, item.mesh.index, i));
+            }
             let key = (material.variant(), item.material.index, item.mesh.index);
             if material.blend {
                 let depth = world_box
@@ -1334,11 +1701,16 @@ impl Renderer {
         let mut instances: Vec<InstanceRaw> =
             Vec::with_capacity(opaque.len() + blended.len() + casters.len());
         let mut batches: Vec<Batch> = Vec::new();
+        let opaque_count = opaque.len();
+        let mut opaque_batches = 0;
         let ordered = opaque
             .iter()
             .map(|&(key, i)| (key, i))
             .chain(blended.iter().map(|&(_, i, key)| (key, i)));
-        for (key, i) in ordered {
+        for (n, (key, i)) in ordered.enumerate() {
+            if n == opaque_count {
+                opaque_batches = batches.len();
+            }
             let item = &snapshot.items[i];
             instances.push(InstanceRaw::new(
                 item.world,
@@ -1360,6 +1732,9 @@ impl Renderer {
                 }),
             }
         }
+        if opaque_count == instances.len() {
+            opaque_batches = batches.len();
+        }
         let mut shadow_batches: Vec<Batch> = Vec::new();
         for &(_, i) in &casters {
             let item = &snapshot.items[i];
@@ -1374,6 +1749,30 @@ impl Renderer {
                     first_instance: instances.len() as u32 - 1,
                     instances: 1,
                 }),
+            }
+        }
+
+        // Highlighted items, the occluded ones first, batched by mesh.
+        highlighted.sort_unstable();
+        let mut highlight_batches: Vec<(bool, Batch)> = Vec::new();
+        for &(on_top, n, _, i) in &highlighted {
+            let item = &snapshot.items[i];
+            let mut raw = InstanceRaw::new(item.world, false, false);
+            raw.flags[2] = f32::from(n);
+            instances.push(raw);
+            let mesh = (item.mesh.index, item.mesh.generation);
+            match highlight_batches.last_mut() {
+                Some((top, b)) if *top == on_top && b.mesh == mesh => b.instances += 1,
+                _ => highlight_batches.push((
+                    on_top,
+                    Batch {
+                        variant: 0,
+                        material: (0, 0),
+                        mesh,
+                        first_instance: instances.len() as u32 - 1,
+                        instances: 1,
+                    },
+                )),
             }
         }
 
@@ -1396,7 +1795,49 @@ impl Renderer {
         let exposure = self.settings.exposure;
         let mut points = [PointLightRaw::default(); frame::MAX_POINT_LIGHTS];
         points[..lights.points.len()].copy_from_slice(&lights.points);
+        let spot_list = frame::select_spots(
+            &extras.spot_lights,
+            camera_pos,
+            exposure,
+            &mut report.warnings,
+        );
+        report.stats.spot_lights = spot_list.len() as u32;
+        let mut spots = [SpotLightRaw::default(); extras::MAX_SPOT_LIGHTS];
+        spots[..spot_list.len()].copy_from_slice(&spot_list);
+        let (ambient_sky, ambient_ground) = extras.ambient.map_or(
+            (self.settings.ambient_sky, self.settings.ambient_ground),
+            |a| (a.sky, a.ground),
+        );
+        let fog = extras.fog.filter(|f| {
+            f.start.is_finite() && f.end.is_finite() && f.color.iter().all(|c| c.is_finite())
+        });
+        let grading = extras.grading.filter(|g| {
+            [g.brightness, g.contrast, g.saturation]
+                .iter()
+                .chain(&g.tint)
+                .all(|v| v.is_finite())
+        });
+        let sky = extras.sky;
+        let sky_sun = sky.and_then(|s| s.sun).filter(|(d, c)| {
+            d.is_finite() && d.length_squared() > 1e-12 && c.iter().all(|v| v.is_finite())
+        });
         let uniform = FrameUniform {
+            inv_view_proj: view_proj.inverse().to_cols_array_2d(),
+            fog_color: fog.map_or([0.0; 4], |f| frame::rgb_w(f.color, f.start)),
+            fog_params: [
+                fog.map_or(0.0, |f| f.end),
+                f32::from(u8::from(fog.is_some())),
+                spot_list.len() as f32,
+                0.0,
+            ],
+            grading: grading.map_or([0.0; 4], |g| [g.brightness, g.contrast, g.saturation, 1.0]),
+            tint: grading.map_or([1.0; 4], |g| frame::rgb_w(g.tint, 0.0)),
+            sky_zenith: sky.map_or([0.0; 4], |s| frame::rgb_w(s.zenith, 1.0)),
+            sky_horizon: sky.map_or([0.0; 4], |s| frame::rgb_w(s.horizon, 0.0)),
+            sky_ground: sky.map_or([0.0; 4], |s| frame::rgb_w(s.ground, 0.0)),
+            sky_sun_dir: sky_sun.map_or([0.0; 4], |(d, _)| d.normalize().extend(1.0).to_array()),
+            sky_sun_color: sky_sun.map_or([0.0; 4], |(_, c)| frame::rgb_w(c, 0.0)),
+            spots,
             view_proj: view_proj.to_cols_array_2d(),
             light_view_proj: shadow_fit
                 .map_or(Mat4::IDENTITY, |f| f.light_view_proj)
@@ -1410,12 +1851,9 @@ impl Renderer {
                     .extend(f32::from(u8::from(shadow_fit.is_some())))
                     .to_array()
             }),
-            ambient_sky: frame::rgb_w(
-                (Vec3::from_array(self.settings.ambient_sky) * exposure).to_array(),
-                0.0,
-            ),
+            ambient_sky: frame::rgb_w((Vec3::from_array(ambient_sky) * exposure).to_array(), 0.0),
             ambient_ground: frame::rgb_w(
-                (Vec3::from_array(self.settings.ambient_ground) * exposure).to_array(),
+                (Vec3::from_array(ambient_ground) * exposure).to_array(),
                 0.0,
             ),
             params: [
@@ -1448,6 +1886,24 @@ impl Renderer {
         self.lines
             .write(device, queue, bytemuck::cast_slice(&line_vertices));
         report.stats.debug_lines = snapshot.debug_lines.len() as u32;
+        let effect_vertices = extras::effect_quads(
+            &extras.sprites,
+            &extras.ribbons,
+            camera_pos,
+            snapshot.camera.world.x_axis.truncate().normalize_or_zero(),
+            snapshot.camera.world.y_axis.truncate().normalize_or_zero(),
+        );
+        let quads = effect_vertices.len() / 4;
+        report.stats.effect_quads = quads as u32;
+        if quads > 0 {
+            self.effect_vertices
+                .write(device, queue, bytemuck::cast_slice(&effect_vertices));
+            self.effect_indices.write(
+                device,
+                queue,
+                bytemuck::cast_slice(&extras::quad_indices(quads)),
+            );
+        }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("re_render frame"),
@@ -1543,6 +1999,10 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.shadow.frame_bind_group, &[]);
+            if sky.is_some() {
+                pass.set_pipeline(&pipelines.sky);
+                pass.draw(0..3, 0..1);
+            }
             // The pipeline, material and mesh currently bound.
             let mut current: (Option<usize>, Option<Slot>, Option<Slot>) = (None, None, None);
             for batch in &batches {
@@ -1579,6 +2039,21 @@ impl Renderer {
                 report.stats.triangles +=
                     u64::from(mesh.index_count / 3) * u64::from(batch.instances);
             }
+            if quads > 0 {
+                pass.set_pipeline(&pipelines.effects);
+                pass.set_vertex_buffer(
+                    0,
+                    self.effect_vertices
+                        .buffer
+                        .slice(..(effect_vertices.len() * size_of::<EffectVertex>()) as u64),
+                );
+                pass.set_index_buffer(
+                    self.effect_indices.buffer.slice(..(quads * 6 * 4) as u64),
+                    wgpu::IndexFormat::Uint32,
+                );
+                pass.draw_indexed(0..(quads * 6) as u32, 0, 0..1);
+                report.stats.draw_calls += 1;
+            }
             if !line_vertices.is_empty() {
                 pass.set_pipeline(&pipelines.lines);
                 pass.set_vertex_buffer(
@@ -1590,9 +2065,144 @@ impl Renderer {
                 pass.draw(0..line_vertices.len() as u32, 0..1);
             }
         }
+        if !highlight_batches.is_empty() {
+            report.stats.highlights = drawn_highlights.len() as u32;
+            self.draw_highlights(
+                device,
+                queue,
+                &mut encoder,
+                target,
+                (width, height),
+                &batches[..opaque_batches],
+                &highlight_batches,
+                drawn_highlights,
+            );
+        }
         queue.submit([encoder.finish()]);
         self.last_frame = report.stats;
         Ok(report)
+    }
+
+    /// The highlight mask (a depth pass of the opaque scene, the occluded
+    /// highlights, then the on-top ones over a cleared depth) and its
+    /// composite over `target`.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_highlights(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        size: (u32, u32),
+        opaque: &[Batch],
+        highlighted: &[(bool, Batch)],
+        highlights: &[extras::Highlight],
+    ) {
+        let mut uniform = HighlightUniform {
+            colors: [[0.0; 4]; 2 * MAX_HIGHLIGHTS],
+            params: [OUTLINE_PX, 0.0, 0.0, 0.0],
+        };
+        let clean = |c: [f32; 4]| {
+            c.map(|v| {
+                if v.is_finite() {
+                    v.clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
+            })
+        };
+        for (i, h) in highlights.iter().enumerate() {
+            uniform.colors[2 * i] = clean(h.fill);
+            uniform.colors[2 * i + 1] = clean(h.outline);
+        }
+        queue.write_buffer(&self.highlight_buffer, 0, bytemuck::bytes_of(&uniform));
+        self.highlight_pipeline(target.texture().format());
+        self.mask_targets(size.0, size.1);
+        let targets = self.mask_targets.as_ref().expect("created above");
+        let shadow_frame = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("re_render mask frame"),
+            layout: &self.layouts.shadow_frame,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.frame_buffer.as_entire_binding(),
+            }],
+        });
+        let stride = size_of::<InstanceRaw>() as u64;
+        let draw = |pass: &mut wgpu::RenderPass<'_>, batch: &Batch| {
+            let mesh = self
+                .meshes
+                .get(batch.mesh.0, batch.mesh.1)
+                .expect("resolved above");
+            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            let start = u64::from(batch.first_instance) * stride;
+            pass.set_vertex_buffer(
+                1,
+                self.instances
+                    .buffer
+                    .slice(start..start + u64::from(batch.instances) * stride),
+            );
+            pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instances);
+        };
+        for on_top in [false, true] {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("re_render highlight mask"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &targets.mask,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: if on_top {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                        },
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &targets.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, &shadow_frame, &[]);
+            if !on_top {
+                pass.set_pipeline(&self.mask_pipelines[0]);
+                for batch in opaque {
+                    draw(&mut pass, batch);
+                }
+            }
+            pass.set_pipeline(&self.mask_pipelines[1]);
+            for (_, batch) in highlighted.iter().filter(|(top, _)| *top == on_top) {
+                draw(&mut pass, batch);
+            }
+        }
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("re_render highlight"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.highlight_pipelines[&target.texture().format()]);
+        pass.set_bind_group(0, &targets.bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 
     fn check_target(&self, texture: &wgpu::Texture) -> Result<(), Diagnostic> {
