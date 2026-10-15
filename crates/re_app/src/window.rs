@@ -135,6 +135,9 @@ impl Runner<'_> {
         let Some(s) = &self.surface else {
             return;
         };
+        if let Some((lock, icon)) = self.app.take_mouse_behavior() {
+            apply_mouse(&s.window, lock, icon);
+        }
         let frame = match s.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
             | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
@@ -258,4 +261,20 @@ pub fn run_windowed(app: &mut App, options: WindowOptions) -> Result<WindowRepor
     let mut report = std::mem::take(&mut runner.report);
     report.diagnostics = runner.app.take_diagnostics();
     Ok(report)
+}
+
+/// Holds or frees the cursor and shows or hides it, as a compat script asked
+/// (`UserInputService.MouseBehavior`). A platform that cannot hold the cursor
+/// in place falls back to confining it, then to leaving it free.
+fn apply_mouse(window: &winit::window::Window, lock: re_types::input::MouseLock, icon: bool) {
+    use re_types::input::MouseLock;
+    use winit::window::CursorGrabMode;
+    let grab = match lock {
+        MouseLock::Free => CursorGrabMode::None,
+        MouseLock::LockCenter | MouseLock::LockCurrentPosition => CursorGrabMode::Locked,
+    };
+    if window.set_cursor_grab(grab).is_err() && grab == CursorGrabMode::Locked {
+        let _ = window.set_cursor_grab(CursorGrabMode::Confined);
+    }
+    window.set_cursor_visible(icon);
 }

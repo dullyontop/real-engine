@@ -101,6 +101,10 @@ pub struct App {
 
     action_map: ActionMap<String>,
     raw: RawInput,
+    /// This frame's raw input, as scripts see it (compat `UserInputService`).
+    raw_frame: re_types::input::RawInputFrame,
+    /// The cursor settings scripts asked for, until the window takes them.
+    mouse_behavior: Option<(re_types::input::MouseLock, bool)>,
     actions: ActionFrame,
     replay: Option<Replay>,
 
@@ -232,6 +236,8 @@ impl App {
             alpha: 0.0,
             action_map,
             raw: RawInput::default(),
+            raw_frame: re_types::input::RawInputFrame::default(),
+            mouse_behavior: None,
             actions: ActionFrame::default(),
             replay: None,
             physics,
@@ -659,10 +665,18 @@ impl App {
             physics: &self.physics,
             links: &self.physics_sync,
             actions: &self.actions,
+            raw: &self.raw_frame,
             physics_cmds: &mut self.physics_cmds,
             audio_cmds: &mut self.audio_cmds,
             pending: &mut self.pending,
         }
+    }
+
+    /// The cursor settings scripts asked for since the last call
+    /// (`UserInputService.MouseBehavior` and `MouseIconEnabled`); the window
+    /// applies them.
+    pub fn take_mouse_behavior(&mut self) -> Option<(re_types::input::MouseLock, bool)> {
+        self.mouse_behavior.take()
     }
 
     // ---- editing --------------------------------------------------------
@@ -926,8 +940,13 @@ impl App {
                 let mut actions = replay.next_frame().unwrap_or_default();
                 actions.frame = f;
                 self.actions = actions;
+                self.raw_frame = replay.raw_frame().clone();
+                self.raw_frame.frame = f;
             }
-            None => self.actions = self.action_map.frame(&self.raw, f),
+            None => {
+                self.actions = self.action_map.frame(&self.raw, f);
+                self.raw_frame = self.raw.raw_frame(f);
+            }
         }
         self.raw.end_frame();
         self.poll_files();
@@ -960,7 +979,8 @@ impl App {
         if self.compat.is_some() {
             let dt = frame_time.as_secs_f64();
             self.compat_call(ContextKind::Server, |vm, h| {
-                let mut d = re_compat::net::pump(vm, h);
+                let mut d = crate::compat::begin_frame(vm, h);
+                d.extend(re_compat::net::pump(vm, h));
                 d.extend(crate::compat::step_tweens(vm, h, dt));
                 d.extend(vm.pre_render(h, dt));
                 d
@@ -1078,6 +1098,12 @@ impl App {
         }
         let step = Instant::now();
         if let Err(d) = self.physics.step(self.clock.dt_secs()) {
+            self.diagnostics.push(d);
+        }
+        if self.compat.is_some()
+            && let Some(d) =
+                crate::compat::step_characters(&mut self.world, self.clock.dt_secs().into())
+        {
             self.diagnostics.push(d);
         }
         self.perf.physics_step(step.elapsed());
@@ -1231,6 +1257,9 @@ impl App {
 
     fn end_frame(&mut self, f: u64) {
         let pending = std::mem::take(&mut self.pending);
+        if pending.mouse.is_some() {
+            self.mouse_behavior = pending.mouse;
+        }
         for (entity, text) in pending.hud {
             let ok = entity_from_id(entity)
                 .and_then(|e| self.world.ecs.get_mut::<HudText>(e))
@@ -1430,6 +1459,7 @@ impl App {
                 physics: &self.physics,
                 links: &self.physics_sync,
                 actions: &self.actions,
+                raw: &self.raw_frame,
                 physics_cmds: &mut self.physics_cmds,
                 audio_cmds: &mut self.audio_cmds,
                 pending: &mut self.pending,
@@ -1445,9 +1475,9 @@ impl App {
             // The server context's fixed-step phases; PreRender is in `frame`.
             if self.compat.is_some() {
                 self.compat_call(ContextKind::Server, |vm, h| match phase {
-                    Phase::PreAnimation => vm.pre_animation(h, dt),
-                    Phase::PreSimulation => vm.pre_simulation(h, dt),
-                    Phase::PostSimulation => vm.post_simulation(h, dt),
+                    Phase::PreAnimation => crate::compat::pre_animation(vm, h, dt),
+                    Phase::PreSimulation => crate::compat::pre_simulation(vm, h, dt),
+                    Phase::PostSimulation => crate::compat::post_simulation(vm, h, dt),
                     _ => Vec::new(),
                 });
             }
@@ -1661,6 +1691,7 @@ impl App {
                 physics: &self.physics,
                 links: &self.physics_sync,
                 actions: &self.actions,
+                raw: &self.raw_frame,
                 physics_cmds: &mut self.physics_cmds,
                 audio_cmds: &mut self.audio_cmds,
                 pending: &mut self.pending,
@@ -1691,12 +1722,14 @@ impl App {
         let step_dt: f64 = self.clock.dt_secs().into();
         self.compat_call(ContextKind::Client, |vm, h| {
             let mut d = re_compat::net::pump(vm, h);
+            d.extend(crate::compat::begin_frame(vm, h));
             d.extend(crate::compat::step_tweens(vm, h, frame_dt));
             d.extend(vm.pre_render(h, frame_dt));
             for _ in 0..steps {
-                d.extend(vm.pre_animation(h, step_dt));
-                d.extend(vm.pre_simulation(h, step_dt));
-                d.extend(vm.post_simulation(h, step_dt));
+                d.extend(crate::compat::pre_animation(vm, h, step_dt));
+                d.extend(crate::compat::pre_simulation(vm, h, step_dt));
+                d.extend(crate::compat::step_characters(h.world, step_dt));
+                d.extend(crate::compat::post_simulation(vm, h, step_dt));
             }
             d
         });

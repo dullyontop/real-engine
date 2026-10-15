@@ -218,3 +218,26 @@ fn compat_steps_need_a_compat_project() {
     assert_eq!(results[0]["ok"], false);
     assert_eq!(results[0]["error"]["code"], "RE0527");
 }
+
+#[test]
+fn a_replays_raw_keys_reach_client_scripts() {
+    use re_types::replay::{RawReplayInput, ReplayDoc};
+    let client = r#"
+local UIS = game:GetService("UserInputService")
+UIS.InputBegan:Connect(function(input) print("began", input.KeyCode.Name) end)
+UIS.InputEnded:Connect(function(input) print("ended", input.KeyCode.Name) end)
+"#;
+    let dir = project("", client);
+    let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+    let key = |frame, down| RawReplayInput {
+        frame,
+        key: Some("KeyW".into()),
+        down: Some(down),
+        ..RawReplayInput::default()
+    };
+    let mut doc = ReplayDoc::new(1, 30);
+    doc.raw = vec![key(5, true), key(20, false)];
+    let r = app.run_headless(None, Some(doc)).unwrap();
+    assert!(r.ok(), "{:?}", r.diagnostics);
+    assert_eq!(r.output, ["[client] began\tW", "[client] ended\tW"]);
+}

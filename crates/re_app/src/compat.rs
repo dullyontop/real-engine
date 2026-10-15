@@ -126,6 +126,7 @@ impl CompatPlay {
         world
             .ecs
             .insert_resource(re_scene::IdGen::seeded(SERVER_ID_SEED));
+        install_default_scripts(project, world, &setup.classes)?;
         let server = std::mem::replace(world, World::new());
         let worlds = CompatWorlds::new(&setup, server)?;
         let CompatWorlds {
@@ -151,6 +152,7 @@ impl CompatPlay {
                 vm.context().lua(),
                 re_compat::sound::SoundSettings::from_config(compat, Some(lookup)),
             );
+            re_compat::anim::set_substitutes(vm.context().lua(), compat.animations.clone());
         }
         Ok(CompatPlay {
             client,
@@ -267,4 +269,108 @@ pub fn client_media(
 /// Advances the tweens of a context by `dt` (before its `Heartbeat`).
 pub fn step_tweens(vm: &CompatVm, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
     vm.run(host, |lua| re_compat::tween::step(lua, dt))
+}
+
+/// The start of a context's frame, before its render step: the client reads
+/// this frame's raw input into `UserInputService` (nothing on the server),
+/// then the Animators note their joints, so a script's write later in the
+/// frame wins over the animation.
+pub fn begin_frame(vm: &CompatVm, host: &mut dyn ScriptHost) -> Vec<Diagnostic> {
+    vm.run(host, |lua| {
+        re_compat::input::frame(lua)?;
+        re_compat::anim::begin_frame(lua)
+    })
+}
+
+/// A fixed step's `PreAnimation`: the clock and the event, then the
+/// Animators.
+pub fn pre_animation(vm: &CompatVm, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+    let mut d = vm.pre_animation(host, dt);
+    d.extend(vm.run(host, |lua| re_compat::anim::step(lua, dt)));
+    d
+}
+
+/// A fixed step's `PreSimulation`: `Stepped`, then the Humanoids' moves.
+pub fn pre_simulation(vm: &CompatVm, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+    let mut d = vm.pre_simulation(host, dt);
+    d.extend(vm.run(host, |lua| re_compat::humanoid::pre_simulation(lua, dt)));
+    d
+}
+
+/// A fixed step's `PostSimulation`: the Humanoids after the physics, then
+/// `Heartbeat` and the due waits.
+pub fn post_simulation(vm: &CompatVm, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+    let mut d = vm.run(host, |lua| re_compat::humanoid::post_simulation(lua, dt));
+    d.extend(vm.post_simulation(host, dt));
+    d
+}
+
+/// Steps a compat world's character physics (`CharacterPhysics`), when it
+/// has one, by `dt`.
+pub fn step_characters(world: &mut World, dt: f64) -> Option<Diagnostic> {
+    let mut physics = world
+        .ecs
+        .get_resource_mut::<re_compat::humanoid::body::CharacterPhysics>()?;
+    physics.0.step(dt as f32).err()
+}
+
+/// Adds the default player and character scripts
+/// ([`re_compat::humanoid::scripts::DEFAULT_SCRIPTS`]) that the place does
+/// not replace with its own (a child of the same name in the same
+/// container), once the class layer has parts and `Workspace.CurrentCamera`.
+/// Their sources are written under `.real/defaults/`.
+pub fn install_default_scripts(
+    project: &Path,
+    world: &mut World,
+    classes: &re_compat::ClassRegistry,
+) -> Result<(), Diagnostic> {
+    use re_compat::instance::tree;
+    let fail = |m: String| Diagnostic::error(codes::BOOT_FAILED, m);
+    let Ok(game) = world.entity(re_compat::GAME_ID) else {
+        return Ok(());
+    };
+    // The defaults drive a character made of parts and the camera; until the
+    // class layer has both, a character is an empty `Model` and they would
+    // only wait for it.
+    if classes.class("Part").is_err() || classes.member("Workspace", "CurrentCamera").is_err() {
+        return Ok(());
+    }
+    for script in re_compat::humanoid::scripts::DEFAULT_SCRIPTS {
+        let Some(starter) = tree::find_child(world, game, "StarterPlayer", false) else {
+            continue;
+        };
+        let Some(container) = tree::find_child(world, starter, script.container, false) else {
+            continue;
+        };
+        if tree::find_child(world, container, script.name, false).is_some() {
+            continue;
+        }
+        let rel = format!(".real/defaults/{}/{}.luau", script.container, script.name);
+        let path = project.join(&rel);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| fail(format!("cannot write {rel}: {e}")))?;
+        }
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(script.source) {
+            std::fs::write(&path, script.source)
+                .map_err(|e| fail(format!("cannot write {rel}: {e}")))?;
+        }
+        let e = re_compat::scene::spawn_instance(
+            world,
+            classes,
+            script.class,
+            None,
+            script.name,
+            Some(container),
+        )
+        .map_err(|e| fail(format!("cannot add the default {}: {e}", script.name)))?;
+        world
+            .ecs
+            .entity_mut(e)
+            .insert(re_scene::ScriptRef {
+                path: rel,
+                context: re_compat::script_context(script.class, None)
+                    .unwrap_or(re_scene::ScriptContext::Server),
+            });
+    }
+    Ok(())
 }
