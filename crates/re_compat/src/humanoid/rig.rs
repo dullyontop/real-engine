@@ -17,7 +17,7 @@ use crate::class::ClassRegistry;
 use crate::codes;
 use crate::datatypes::CFrame;
 use crate::error::CompatError;
-use crate::input::get_own;
+use crate::input::{get_own, set_own};
 use crate::instance::tree;
 use crate::scene::spawn_instance;
 
@@ -336,6 +336,8 @@ pub fn build(
         "HipHeight",
         Value::Float(f64::from(data.hip_height * scale.height)),
     )?;
+    let root = parts.get("HumanoidRootPart").copied();
+    set_own(w, "Humanoid", humanoid, "RootPart", Value::Entity(root));
     spawn_instance(w, classes, "Animator", None, "Animator", Some(humanoid))?;
     if let Some(d) = desc {
         super::description::remember(w, classes, humanoid, d)?;

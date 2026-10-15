@@ -199,16 +199,19 @@ fn set_state(rt: &mut HumanoidRt, new: &'static str, evs: &mut Vec<Ev>) -> bool 
 /// Health bookkeeping: clamps to `MaxHealth`, notices changes and death.
 fn health(w: &mut World, classes: &ClassRegistry, e: Entity, evs: &mut Vec<Ev>) {
     let max = get_num(w, e, "MaxHealth");
-    let mut h = get_num(w, e, "Health");
-    if h > max {
-        h = max;
+    let h0 = get_num(w, e, "Health");
+    let mut h = h0.clamp(0.0, max.max(0.0));
+    if h != h0 {
         set_own(w, HUM, e, "Health", Value::Float(h));
     }
+    // The neck counts once the rig has had one, whenever it was added.
+    let neck_now = tree::parent(w, e).is_some_and(|rig| has_neck(w, classes, rig));
     let neck_lost = {
-        let rt = rt(w, classes, e);
+        let mut rt = rt(w, classes, e);
+        rt.had_neck |= neck_now;
         rt.had_neck
     } && get_bool(w, e, "RequiresNeck")
-        && tree::parent(w, e).is_some_and(|rig| !has_neck(w, classes, rig));
+        && !neck_now;
     if neck_lost && h > 0.0 {
         h = 0.0;
         set_own(w, HUM, e, "Health", Value::Float(0.0));
@@ -298,7 +301,11 @@ const STILL: &[&str] = &[
 
 fn pre_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mut Vec<Ev>) {
     health(w, classes, e, evs);
-    let Some(root) = root_part(w, classes, e) else {
+    let found = root_part(w, classes, e);
+    if get_own(w, HUM, e, "RootPart") != Some(Value::Entity(found)) {
+        set_own(w, HUM, e, "RootPart", Value::Entity(found));
+    }
+    let Some(root) = found else {
         return;
     };
     let dead = rt(w, classes, e).state == "Dead";
@@ -721,7 +728,8 @@ fn h_take_damage(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
                 .any(|c| tree::is_a(w, &classes, c, "ForceField"))
         });
         if !shielded {
-            let h = get_num(w, e, "Health") - amount;
+            let max = get_num(w, e, "MaxHealth").max(0.0);
+            let h = (get_num(w, e, "Health") - amount).clamp(0.0, max);
             set_own(w, HUM, e, "Health", Value::Float(h));
         }
     })?;
@@ -752,7 +760,8 @@ fn h_change_state(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
     with_world(lua, |w| {
         let mut rt = rt(w, &classes, e);
         if s == "Jumping" {
-            if !rt.disabled.contains("Jumping") {
+            // A jump starts from the ground; in the air it is ignored.
+            if !rt.disabled.contains("Jumping") && rt.on_ground {
                 rt.jump_now = true;
             }
         } else {

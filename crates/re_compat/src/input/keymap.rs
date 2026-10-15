@@ -1,6 +1,6 @@
 //! Raw key names (`re_input`'s binding names: winit key codes such as
 //! `KeyW`, gilrs gamepad buttons such as `South`) to `Enum.KeyCode` items.
-//! A key with no item here reports as `KeyCode.Unknown`.
+//! A key with no item here reports as `KeyCode.None`.
 
 /// Keyboard keys: winit name, `KeyCode` item.
 pub const KEYS: &[(&str, &str)] = &[
@@ -135,6 +135,8 @@ pub const PAD_BUTTONS: &[(&str, &str)] = &[
     ("DPadDown", "DPadDown"),
     ("DPadLeft", "DPadLeft"),
     ("DPadRight", "DPadRight"),
+    ("LeftStick", "Thumbstick1"),
+    ("RightStick", "Thumbstick2"),
 ];
 
 /// The `KeyCode` item of a keyboard key name.

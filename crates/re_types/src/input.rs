@@ -103,11 +103,11 @@ pub struct InputEvent {
     pub kind: InputKind,
     /// The key or button; empty for motion and the wheel.
     pub button: String,
-    /// For mouse events, the cursor in window pixels (`x`, `y`) with the wheel
-    /// position in `z`; zero otherwise.
+    /// For mouse events, the cursor in window pixels (`x`, `y`); for a wheel
+    /// event, the turn in notches in `z`. Zero otherwise.
     pub position: Vec3,
-    /// For mouse movement, the motion in pixels; for the wheel, the turn in
-    /// `z`; zero otherwise.
+    /// For mouse movement, the frame's motion (at most one movement event a
+    /// frame); for the wheel, the turn in `z`; zero otherwise.
     pub delta: Vec3,
 }
 

@@ -57,8 +57,12 @@ pub struct RawInput {
     cursor: Option<(f64, f64)>,
     /// The last known cursor position, kept while the cursor is outside.
     last_cursor: (f64, f64),
-    wheel: f32,
     events: Vec<InputEvent>,
+    /// This frame's one mouse movement event, once there is one.
+    move_event: Option<usize>,
+    /// Whether raw device motion gave this frame's movement delta (it wins
+    /// over cursor-position differences, which are in other units).
+    device_motion: bool,
     keyboard: bool,
     mouse: bool,
     gamepad: bool,
@@ -75,8 +79,9 @@ impl Default for RawInput {
             mouse_delta: (0.0, 0.0),
             cursor: None,
             last_cursor: (0.0, 0.0),
-            wheel: 0.0,
             events: Vec::new(),
+            move_event: None,
+            device_motion: false,
             keyboard: true,
             mouse: true,
             gamepad: false,
@@ -123,11 +128,40 @@ impl RawInput {
 
     fn cursor_vec(&self) -> Vec3 {
         let (x, y) = self.cursor.unwrap_or(self.last_cursor);
-        Vec3::new(x as f32, y as f32, self.wheel)
+        Vec3::new(x as f32, y as f32, 0.0)
     }
 
-    /// Moves the cursor to `(x, y)` in window pixels, reported as a mouse
-    /// movement event.
+    /// Records mouse movement: a frame has at most one movement event, at the
+    /// place of the first motion, carrying the latest cursor and the frame's
+    /// motion (raw device motion when there is any, else the cursor's).
+    fn note_motion(&mut self, delta: Vec3, device: bool) {
+        let position = self.cursor_vec();
+        match self.move_event {
+            Some(i) => {
+                let ev = &mut self.events[i];
+                ev.position = position;
+                if device && !self.device_motion {
+                    ev.delta = delta;
+                } else if device == self.device_motion {
+                    ev.delta += delta;
+                }
+            }
+            None => {
+                self.move_event = Some(self.events.len());
+                self.events.push(InputEvent {
+                    phase: InputPhase::Changed,
+                    kind: InputKind::MouseMovement,
+                    button: String::new(),
+                    position,
+                    delta,
+                });
+            }
+        }
+        self.device_motion |= device;
+    }
+
+    /// Moves the cursor to `(x, y)` in window pixels, reported as (part of)
+    /// the frame's mouse movement event.
     pub fn set_cursor(&mut self, x: f64, y: f64) {
         if self.cursor == Some((x, y)) {
             return;
@@ -135,27 +169,22 @@ impl RawInput {
         let (px, py) = self.cursor.unwrap_or(self.last_cursor);
         self.cursor = Some((x, y));
         self.last_cursor = (x, y);
-        self.events.push(InputEvent {
-            phase: InputPhase::Changed,
-            kind: InputKind::MouseMovement,
-            button: String::new(),
-            position: self.cursor_vec(),
-            delta: Vec3::new((x - px) as f32, (y - py) as f32, 0.0),
-        });
+        self.note_motion(Vec3::new((x - px) as f32, (y - py) as f32, 0.0), false);
     }
 
     /// Turns the mouse wheel by `notches` (positive away from the user),
-    /// reported as a wheel event.
+    /// reported as a wheel event with the turn in `position.z` and `delta.z`.
     pub fn add_wheel(&mut self, notches: f32) {
         if !notches.is_finite() || notches == 0.0 {
             return;
         }
-        self.wheel += notches;
+        let mut position = self.cursor_vec();
+        position.z = notches;
         self.events.push(InputEvent {
             phase: InputPhase::Changed,
             kind: InputKind::MouseWheel,
             button: String::new(),
-            position: self.cursor_vec(),
+            position,
             delta: Vec3::new(0.0, 0.0, notches),
         });
     }
@@ -167,16 +196,58 @@ impl RawInput {
         self.gamepad = gamepad;
     }
 
-    /// Sets a gamepad axis value, in `[-1, 1]` (+y is up on sticks).
+    /// Sets a gamepad axis value, in `[-1, 1]` (+y is up on sticks). A stick
+    /// that moves is reported as a gamepad `Changed` event named `LeftStick`
+    /// or `RightStick`, with the stick's `x` and `y` in `position` (one event
+    /// a frame per stick).
     pub fn set_pad_axis(&mut self, axis: gilrs::Axis, value: f32) {
-        self.pad_axes.insert(
-            axis,
-            if value.is_finite() {
-                value.clamp(-1.0, 1.0)
-            } else {
-                0.0
-            },
-        );
+        let value = if value.is_finite() {
+            value.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        let old = self.pad_axes.insert(axis, value).unwrap_or(0.0);
+        let (stick, x, y) = match axis {
+            gilrs::Axis::LeftStickX | gilrs::Axis::LeftStickY => (
+                "LeftStick",
+                gilrs::Axis::LeftStickX,
+                gilrs::Axis::LeftStickY,
+            ),
+            gilrs::Axis::RightStickX | gilrs::Axis::RightStickY => (
+                "RightStick",
+                gilrs::Axis::RightStickX,
+                gilrs::Axis::RightStickY,
+            ),
+            _ => return,
+        };
+        if old == value {
+            return;
+        }
+        let position = Vec3::new(self.pad_axis(x), self.pad_axis(y), 0.0);
+        let existing = self.events.iter_mut().find(|e| {
+            e.kind == InputKind::Gamepad && e.phase == InputPhase::Changed && e.button == stick
+        });
+        match existing {
+            Some(ev) => {
+                ev.delta += position - ev.position;
+                ev.position = position;
+            }
+            None => {
+                let mut before = position;
+                if axis == x {
+                    before.x = old;
+                } else {
+                    before.y = old;
+                }
+                self.events.push(InputEvent {
+                    phase: InputPhase::Changed,
+                    kind: InputKind::Gamepad,
+                    button: stick.to_string(),
+                    position,
+                    delta: position - before,
+                });
+            }
+        }
     }
 
     /// Adds raw mouse motion, in device units (screen y grows downward).
@@ -186,13 +257,7 @@ impl RawInput {
         }
         self.mouse_delta.0 += dx;
         self.mouse_delta.1 += dy;
-        self.events.push(InputEvent {
-            phase: InputPhase::Changed,
-            kind: InputKind::MouseMovement,
-            button: String::new(),
-            position: self.cursor_vec(),
-            delta: Vec3::new(dx as f32, dy as f32, 0.0),
-        });
+        self.note_motion(Vec3::new(dx as f32, dy as f32, 0.0), true);
     }
 
     /// True while the button is held.
@@ -324,6 +389,8 @@ impl RawInput {
         self.released_this_frame.clear();
         self.mouse_delta = (0.0, 0.0);
         self.events.clear();
+        self.move_event = None;
+        self.device_motion = false;
     }
 }
 
@@ -356,8 +423,13 @@ impl Gamepads {
         self.gilrs.as_ref().map_or(0, |g| g.gamepads().count())
     }
 
-    /// Feeds every pending gamepad event into `raw`.
+    /// Feeds every pending gamepad event into `raw`. A pad already connected
+    /// when gilrs opened sends no `Connected` event, so the count is checked
+    /// too.
     pub fn poll(&mut self, raw: &mut RawInput) {
+        if self.connected() > 0 {
+            raw.gamepad = true;
+        }
         if let Some(g) = &mut self.gilrs {
             while let Some(ev) = g.next_event() {
                 raw.on_gamepad_event(&ev.event);

@@ -90,8 +90,7 @@ pub(crate) fn get_own(w: &World, class: &str, e: Entity, prop: &str) -> Option<V
     w.registry.get_field(&w.ecs, e, key, index)
 }
 
-/// The `KeyCode` item name of a raw key name (`None` for a key the enum
-/// lacks).
+/// `name` when it is a `KeyCode` item, else `None`.
 fn key_code(name: &str) -> &str {
     if EnumItem::lookup("KeyCode", name).is_some() {
         name
@@ -122,7 +121,7 @@ pub(crate) struct Event {
     phase: InputPhase,
     /// The `UserInputType` item name.
     input_type: String,
-    /// The `KeyCode` item name (`Unknown` for devices without keys).
+    /// The `KeyCode` item name (`None` for devices without keys).
     key: String,
     position: glam::Vec3,
     delta: glam::Vec3,
@@ -151,7 +150,7 @@ fn translate(ev: &InputEvent) -> Event {
     Event {
         phase: ev.phase,
         input_type: ty.to_string(),
-        key: key.unwrap_or("Unknown").to_string(),
+        key: key.unwrap_or("None").to_string(),
         position: ev.position,
         delta: ev.delta,
     }
@@ -394,7 +393,7 @@ fn get_keys_pressed(lua: &Lua, _: Entity, _: MultiValue) -> Result<MultiValue> {
     let raw = st.borrow().raw.clone();
     let mut out = Vec::new();
     for k in &raw.keys_down {
-        let code = keymap::key_code(k).unwrap_or("Unknown");
+        let code = keymap::key_code(k).unwrap_or("None");
         out.push(object(lua, &st, "Keyboard", code)?);
     }
     ret(lua, crate::instance::push_list(lua, &out)?)
@@ -405,7 +404,7 @@ fn get_mouse_buttons_pressed(lua: &Lua, _: Entity, _: MultiValue) -> Result<Mult
     let raw = st.borrow().raw.clone();
     let mut out = Vec::new();
     for b in &raw.mouse_buttons_down {
-        out.push(object(lua, &st, mouse_type(b), "Unknown")?);
+        out.push(object(lua, &st, mouse_type(b), "None")?);
     }
     ret(lua, crate::instance::push_list(lua, &out)?)
 }

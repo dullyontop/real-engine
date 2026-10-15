@@ -168,7 +168,7 @@ fn damage_kills_and_breaks_the_joints() {
          h:TakeDamage(80)",
     );
     p.frames(2);
-    assert_eq!(p.out(), ["health 70", "health -10", "died Dead"]);
+    assert_eq!(p.out(), ["health 70", "health 0", "died Dead"]);
     p.run(
         "local n = 0
          for _, d in workspace.Dummy:GetDescendants() do
@@ -212,7 +212,7 @@ fn rig_queries_and_descriptions() {
     let mut p = settled("R6");
     p.run(
         "local h = workspace.Dummy.Humanoid
-         print(h:GetLimb(workspace.Dummy['Left Arm']).Name, h.RigType.Name)
+         print(h:GetLimb(workspace.Dummy['Left Arm']).Name, h.RigType.Name, h.RootPart.Name)
          local d = Instance.new('HumanoidDescription')
          d.HeightScale = 2
          d.TorsoColor = Color3.new(1, 0, 0)
@@ -221,9 +221,27 @@ fn rig_queries_and_descriptions() {
          print(s.X, s.Y, s.Z, workspace.Dummy.Torso.Color)
          print(h:GetAppliedDescription().HeightScale)",
     );
-    assert_eq!(p.out(), ["LeftArm R6", "2 4 1 1, 0, 0", "2"]);
+    assert_eq!(
+        p.out(),
+        ["LeftArm R6 HumanoidRootPart", "2 4 1 1, 0, 0", "2"]
+    );
     // The capsule is rebuilt for the taller rig: the root stands twice as high.
     p.frames(30);
     let y = root_y(&p, "Dummy");
     assert!((y - 6.0).abs() <= 0.1, "root at {y}");
+}
+
+#[test]
+fn change_state_jumping_in_the_air_does_not_queue_a_jump() {
+    let mut p = settled("R15");
+    p.run("workspace.Dummy.Humanoid.Jump = true");
+    p.frames(5);
+    p.run("workspace.Dummy.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)");
+    p.frames(90);
+    let y = root_y(&p, "Dummy");
+    p.frames(30);
+    assert!(
+        (root_y(&p, "Dummy") - y).abs() < 0.05,
+        "it jumped again after landing"
+    );
 }

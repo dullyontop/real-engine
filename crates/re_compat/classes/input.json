@@ -354,7 +354,7 @@
           },
           "default": "None",
           "status": "implemented",
-          "doc": "The key or gamepad button, or None for mouse and stick input."
+          "doc": "The key or gamepad button (Thumbstick1 or Thumbstick2 for a stick), or None for mouse, wheel and touch input."
         },
         {
           "name": "UserInputType",

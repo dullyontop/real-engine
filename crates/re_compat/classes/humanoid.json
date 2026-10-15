@@ -136,8 +136,9 @@
             "kind": "own"
           },
           "read_only": true,
-          "status": "implemented",
-          "doc": "The seat it sits in, or nil."
+          "status": "partial",
+          "doc": "The seat it sits in, or nil.",
+          "note": "Seats are not supported yet; always nil."
         },
         {
           "name": "PlatformStand",
@@ -227,8 +228,9 @@
             "kind": "own"
           },
           "default": 89.0,
-          "status": "implemented",
-          "doc": "The steepest slope it can walk up, in degrees."
+          "status": "partial",
+          "doc": "The steepest slope it can walk up, in degrees.",
+          "note": "Stored; the character controller uses its own slope limit."
         },
         {
           "name": "CameraOffset",
@@ -251,8 +253,9 @@
             "kind": "own"
           },
           "default": true,
-          "status": "implemented",
-          "doc": "Whether body scale values resize the rig."
+          "status": "partial",
+          "doc": "Whether body scale values resize the rig.",
+          "note": "Stored; descriptions always rescale the rig."
         },
         {
           "name": "EvaluateStateMachine",
@@ -271,8 +274,9 @@
             "kind": "own"
           },
           "default": "",
-          "status": "implemented",
-          "doc": "The name shown over the character; empty shows the model's name."
+          "status": "partial",
+          "doc": "The name shown over the character; empty shows the model's name.",
+          "note": "Stored; no name is drawn over characters yet."
         },
         {
           "name": "DisplayDistanceType",
@@ -281,8 +285,9 @@
             "kind": "own"
           },
           "default": "Viewer",
-          "status": "implemented",
-          "doc": "Which distance the name and health display use."
+          "status": "partial",
+          "doc": "Which distance the name and health display use.",
+          "note": "Stored; no name or health bar is drawn yet."
         },
         {
           "name": "NameDisplayDistance",
@@ -291,8 +296,9 @@
             "kind": "own"
           },
           "default": 100.0,
-          "status": "implemented",
-          "doc": "The farthest the name is shown from, in studs."
+          "status": "partial",
+          "doc": "The farthest the name is shown from, in studs.",
+          "note": "Stored; no name is drawn over characters yet."
         },
         {
           "name": "HealthDisplayDistance",
@@ -301,8 +307,9 @@
             "kind": "own"
           },
           "default": 100.0,
-          "status": "implemented",
-          "doc": "The farthest the health bar is shown from, in studs."
+          "status": "partial",
+          "doc": "The farthest the health bar is shown from, in studs.",
+          "note": "Stored; no health bar is drawn yet."
         },
         {
           "name": "HealthDisplayType",
@@ -311,8 +318,9 @@
             "kind": "own"
           },
           "default": "DisplayWhenDamaged",
-          "status": "implemented",
-          "doc": "When the health bar is shown."
+          "status": "partial",
+          "doc": "When the health bar is shown.",
+          "note": "Stored; no health bar is drawn yet."
         },
         {
           "name": "NameOcclusion",
@@ -321,8 +329,9 @@
             "kind": "own"
           },
           "default": "OccludeAll",
-          "status": "implemented",
-          "doc": "Which names show through walls."
+          "status": "partial",
+          "doc": "Which names show through walls.",
+          "note": "Stored; no name is drawn over characters yet."
         }
       ],
       "methods": [
@@ -667,7 +676,7 @@
               "type": "number"
             }
           ],
-          "status": "stub-error",
+          "status": "partial",
           "note": "Climbing is not supported; it never fires.",
           "doc": "It climbed, with its climbing speed."
         },
@@ -679,7 +688,7 @@
               "type": "number"
             }
           ],
-          "status": "stub-error",
+          "status": "partial",
           "note": "Swimming is not supported; it never fires.",
           "doc": "It swam, with its swimming speed."
         }
@@ -740,8 +749,9 @@
             "kind": "own"
           },
           "default": 0.3,
-          "status": "implemented",
-          "doc": "Blends between body shapes; stored, not applied."
+          "status": "partial",
+          "doc": "Blends between body shapes; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "ProportionScale",
@@ -750,8 +760,9 @@
             "kind": "own"
           },
           "default": 1.0,
-          "status": "implemented",
-          "doc": "Blends between body proportions; stored, not applied."
+          "status": "partial",
+          "doc": "Blends between body proportions; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "HeadColor",
@@ -904,8 +915,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the swim animation; 0 keeps the default."
+          "status": "partial",
+          "doc": "The id of the swim animation; 0 keeps the default.",
+          "note": "Stored; characters never swim."
         },
         {
           "name": "Face",
@@ -914,8 +926,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the face; stored, not applied."
+          "status": "partial",
+          "doc": "The id of the face; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "Head",
@@ -924,8 +937,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the head mesh; stored, not applied."
+          "status": "partial",
+          "doc": "The id of the head mesh; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "Torso",
@@ -934,8 +948,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the torso mesh; stored, not applied."
+          "status": "partial",
+          "doc": "The id of the torso mesh; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "LeftArm",
@@ -944,8 +959,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the left arm mesh; stored, not applied."
+          "status": "partial",
+          "doc": "The id of the left arm mesh; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "RightArm",
@@ -954,8 +970,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the right arm mesh; stored, not applied."
+          "status": "partial",
+          "doc": "The id of the right arm mesh; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "LeftLeg",
@@ -964,8 +981,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the left leg mesh; stored, not applied."
+          "status": "partial",
+          "doc": "The id of the left leg mesh; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "RightLeg",
@@ -974,8 +992,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the right leg mesh; stored, not applied."
+          "status": "partial",
+          "doc": "The id of the right leg mesh; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "Shirt",
@@ -984,8 +1003,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the shirt; stored, not applied."
+          "status": "partial",
+          "doc": "The id of the shirt; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "Pants",
@@ -994,8 +1014,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the pants; stored, not applied."
+          "status": "partial",
+          "doc": "The id of the pants; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "GraphicTShirt",
@@ -1004,8 +1025,9 @@
             "kind": "own"
           },
           "default": 0,
-          "status": "implemented",
-          "doc": "The id of the t-shirt graphic; stored, not applied."
+          "status": "partial",
+          "doc": "The id of the t-shirt graphic; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "HatAccessory",
@@ -1014,8 +1036,9 @@
             "kind": "own"
           },
           "default": "",
-          "status": "implemented",
-          "doc": "Comma-separated ids of hats; stored, not applied."
+          "status": "partial",
+          "doc": "Comma-separated ids of hats; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "HairAccessory",
@@ -1024,8 +1047,9 @@
             "kind": "own"
           },
           "default": "",
-          "status": "implemented",
-          "doc": "Comma-separated ids of hair; stored, not applied."
+          "status": "partial",
+          "doc": "Comma-separated ids of hair; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "FaceAccessory",
@@ -1034,8 +1058,9 @@
             "kind": "own"
           },
           "default": "",
-          "status": "implemented",
-          "doc": "Comma-separated ids of face accessories; stored, not applied."
+          "status": "partial",
+          "doc": "Comma-separated ids of face accessories; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "NeckAccessory",
@@ -1044,8 +1069,9 @@
             "kind": "own"
           },
           "default": "",
-          "status": "implemented",
-          "doc": "Comma-separated ids of neck accessories; stored, not applied."
+          "status": "partial",
+          "doc": "Comma-separated ids of neck accessories; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "ShouldersAccessory",
@@ -1054,8 +1080,9 @@
             "kind": "own"
           },
           "default": "",
-          "status": "implemented",
-          "doc": "Comma-separated ids of shoulder accessories; stored, not applied."
+          "status": "partial",
+          "doc": "Comma-separated ids of shoulder accessories; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "FrontAccessory",
@@ -1064,8 +1091,9 @@
             "kind": "own"
           },
           "default": "",
-          "status": "implemented",
-          "doc": "Comma-separated ids of front accessories; stored, not applied."
+          "status": "partial",
+          "doc": "Comma-separated ids of front accessories; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "BackAccessory",
@@ -1074,8 +1102,9 @@
             "kind": "own"
           },
           "default": "",
-          "status": "implemented",
-          "doc": "Comma-separated ids of back accessories; stored, not applied."
+          "status": "partial",
+          "doc": "Comma-separated ids of back accessories; stored, not applied.",
+          "note": "Stored, not applied."
         },
         {
           "name": "WaistAccessory",
@@ -1084,8 +1113,9 @@
             "kind": "own"
           },
           "default": "",
-          "status": "implemented",
-          "doc": "Comma-separated ids of waist accessories; stored, not applied."
+          "status": "partial",
+          "doc": "Comma-separated ids of waist accessories; stored, not applied.",
+          "note": "Stored, not applied."
         }
       ]
     }

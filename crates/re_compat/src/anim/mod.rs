@@ -50,6 +50,10 @@ pub struct AnimatorState {
     mixer: Mixer,
     tracks: Vec<(TrackId, Entity)>,
     seen: HashMap<Entity, Value>,
+    /// The joints this Animator posed last frame (tracks or IK): what it left
+    /// in `Transform`, and what to put back when nothing poses the joint
+    /// again (identity for a track, the pre-IK value for IK alone).
+    owned: BTreeMap<Entity, (Value, Value)>,
 }
 
 /// Links an `AnimationTrack` instance to its Animator's mixer.
@@ -182,19 +186,35 @@ pub fn begin_frame(lua: &Lua) -> Result<()> {
 }
 
 /// Advances every Animator by `dt` seconds: track events fire, the blended
-/// poses are written to the joints, then the IK controls apply.
+/// poses are written to the joints, then the IK controls apply, and rigs
+/// under an `AnimationController` move their parts to the new pose.
 pub fn step(lua: &Lua, dt: f64) -> Result<()> {
     let classes = state(lua)?.setup.classes.clone();
-    let animators: Vec<Entity> = with_world(lua, |w| {
+    let mut animators: Vec<Entity> = with_world(lua, |w| {
         w.ecs
             .query_filtered::<Entity, bevy_ecs::query::With<AnimatorState>>()
             .iter(&w.ecs)
             .collect()
     })?;
-    for a in animators {
-        step_one(lua, &classes, a, dt as f32)?;
+    animators.sort();
+    for a in &animators {
+        step_one(lua, &classes, *a, dt as f32)?;
     }
     ik::apply_all(lua, &classes)?;
+    // A Humanoid's rig is posed after physics moves its root part; a rig
+    // under an AnimationController is posed here.
+    with_world(lua, |w| {
+        for a in animators {
+            let controlled = tree::parent(w, a)
+                .is_some_and(|h| tree::is_a(w, &classes, h, "AnimationController"));
+            if controlled
+                && !tree::is_destroyed(w, a)
+                && let Some(rig) = rig_of(w, a)
+            {
+                pose::apply(w, &classes, rig);
+            }
+        }
+    })?;
     signal::events::after_write(lua)
 }
 
@@ -242,28 +262,74 @@ fn step_one(lua: &Lua, classes: &Arc<ClassRegistry>, a: Entity, dt: f32) -> Resu
         }
         (events, poses)
     })?;
-    if !poses.is_empty() {
-        with_world(lua, |w| write_pose(w, classes, a, &poses))?;
-    }
+    with_world(lua, |w| write_pose(w, classes, a, &poses))?;
     for (inst, e) in events {
         fire_event(lua, inst, e)?;
     }
     Ok(())
 }
 
+/// Writes `v` to a joint's `Transform` and returns what the field stored
+/// (rounding included).
+fn set_transform(w: &mut World, classes: &ClassRegistry, motor: Entity, v: Value) -> Option<Value> {
+    classes.set_property(w, motor, "Transform", v).ok()?;
+    classes.get_property(w, motor, "Transform").ok()
+}
+
+/// Notes that the Animator (its IK) changed a joint's `Transform` from
+/// `before` to `after`, so the next frame starts from `before` again.
+pub(crate) fn note_ik(w: &mut World, animator: Entity, motor: Entity, before: Value, after: Value) {
+    if w.ecs.get::<AnimatorState>(animator).is_none() {
+        w.ecs.entity_mut(animator).insert(AnimatorState::default());
+    }
+    if let Some(mut st) = w.ecs.get_mut::<AnimatorState>(animator) {
+        let restore = st.owned.get(&motor).map_or(before, |(_, r)| r.clone());
+        st.owned.insert(motor, (after.clone(), restore));
+        st.seen.insert(motor, after);
+    }
+}
+
+/// Puts back the joints this Animator posed last frame, where nothing wrote
+/// them since, so a stopped track or a removed IK control leaves no pose.
+fn restore_owned(w: &mut World, classes: &ClassRegistry, animator: Entity) {
+    let owned = match w.ecs.get_mut::<AnimatorState>(animator) {
+        Some(mut st) => std::mem::take(&mut st.owned),
+        None => return,
+    };
+    let mut written = Vec::new();
+    for (motor, (left, restore)) in owned {
+        if !tree::alive(w, motor) {
+            continue;
+        }
+        let current = classes.get_property(w, motor, "Transform").ok();
+        if current.as_ref() == Some(&left)
+            && let Some(stored) = set_transform(w, classes, motor, restore)
+        {
+            written.push((motor, stored));
+        }
+    }
+    if let Some(mut st) = w.ecs.get_mut::<AnimatorState>(animator) {
+        for (m, v) in written {
+            st.seen.insert(m, v);
+        }
+    }
+}
+
 /// Writes blended poses to the rig's joints, skipping joints a script wrote
-/// this frame.
+/// this frame. Joints posed last frame and not now go back to rest first.
 fn write_pose(
     w: &mut World,
     classes: &ClassRegistry,
     animator: Entity,
     poses: &BTreeMap<String, (glam::Vec3, glam::Quat)>,
 ) {
+    restore_owned(w, classes, animator);
     let Some(rig) = rig_of(w, animator) else {
         return;
     };
     let joints = joints(w, classes, rig);
     let mut written = Vec::new();
+    let mut posed = Vec::new();
     for (name, (t, r)) in poses {
         let Some(&motor) = joints.get(name) else {
             continue;
@@ -282,16 +348,18 @@ fn write_pose(
             continue;
         }
         let v = cframe_value(&cframe_of(*t, *r));
-        if classes.set_property(w, motor, "Transform", v).is_ok() {
-            // Read back what the field stored (rounding included).
-            if let Ok(stored) = classes.get_property(w, motor, "Transform") {
-                written.push((motor, stored));
-            }
+        if let Some(stored) = set_transform(w, classes, motor, v) {
+            written.push((motor, stored.clone()));
+            posed.push((motor, stored));
         }
     }
+    let rest = cframe_value(&CFrame::default());
     if let Some(mut st) = w.ecs.get_mut::<AnimatorState>(animator) {
         for (m, v) in written {
             st.seen.insert(m, v);
+        }
+        for (m, v) in posed {
+            st.owned.insert(m, (v, rest.clone()));
         }
     }
 }

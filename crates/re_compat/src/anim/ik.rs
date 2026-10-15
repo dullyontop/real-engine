@@ -15,7 +15,7 @@
 //! `Weight` blends from the animated pose (0) to the solved one (1), and
 //! `Offset` is applied to the target's frame.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use glam::{Quat, Vec3};
@@ -61,7 +61,7 @@ pub fn apply_all(lua: &Lua, classes: &Arc<ClassRegistry>) -> Result<()> {
                 .collect();
             controls.sort_by_key(|(p, _)| *p);
             for (_, c) in controls {
-                apply_one(w, classes, rig, c);
+                apply_one(w, classes, a, rig, c);
             }
         }
     })
@@ -121,15 +121,29 @@ fn chain(joints: &[Joint], root: Entity, end: Entity) -> Option<Vec<Joint>> {
 
 /// Turns joint `j` so its world rotation is pre-multiplied by `delta`, given
 /// its `part0`'s current frame, and writes the new `Transform`.
-fn turn(w: &mut World, classes: &ClassRegistry, j: &mut Joint, part0: &CFrame, delta: Quat) {
+fn turn(
+    w: &mut World,
+    classes: &ClassRegistry,
+    animator: Entity,
+    j: &mut Joint,
+    part0: &CFrame,
+    delta: Quat,
+) {
     let base = quat(&(*part0 * j.c0));
     let t = quat(&j.transform);
     let r = (base.inverse() * delta * base * t).normalize();
+    let before = classes.get_property(w, j.motor, "Transform");
     j.transform = CFrame::from_quaternion(j.transform.p, [r.x, r.y, r.z, r.w]);
-    let _ = classes.set_property(w, j.motor, "Transform", cframe_value(&j.transform));
+    if classes
+        .set_property(w, j.motor, "Transform", cframe_value(&j.transform))
+        .is_ok()
+        && let (Ok(before), Ok(after)) = (before, classes.get_property(w, j.motor, "Transform"))
+    {
+        super::note_ik(w, animator, j.motor, before, after);
+    }
 }
 
-fn apply_one(w: &mut World, classes: &ClassRegistry, rig: Entity, ctl: Entity) {
+fn apply_one(w: &mut World, classes: &ClassRegistry, a: Entity, rig: Entity, ctl: Entity) {
     let weight = num_prop(w, classes, ctl, "Weight").clamp(0.0, 1.0);
     if weight <= 0.0 {
         return;
@@ -168,7 +182,7 @@ fn apply_one(w: &mut World, classes: &ClassRegistry, rig: Entity, ctl: Entity) {
     let blend = |d: Quat| Quat::IDENTITY.slerp(d, weight);
 
     // Re-poses the chain from its first joint after a change.
-    let refresh = |frames: &mut HashMap<Entity, crate::datatypes::CFrame>, chain: &[Joint]| {
+    let refresh = |frames: &mut BTreeMap<Entity, crate::datatypes::CFrame>, chain: &[Joint]| {
         let p0 = chain[0].part0;
         for j in chain {
             frames.remove(&j.part1);
@@ -184,7 +198,7 @@ fn apply_one(w: &mut World, classes: &ClassRegistry, rig: Entity, ctl: Entity) {
             return;
         };
         let d = re_anim::ik::look_at_delta(v(eff.look_vector()), v(eff.p), v(goal.p));
-        turn(w, classes, &mut chain[0], &base, blend(d));
+        turn(w, classes, a, &mut chain[0], &base, blend(d));
         return;
     }
 
@@ -199,13 +213,13 @@ fn apply_one(w: &mut World, classes: &ClassRegistry, rig: Entity, ctl: Entity) {
         let root_pt = v(chain[0].world(&b0).p);
         let mid_pt = v(chain[1].world(&b1).p);
         let (dr, dm) = re_anim::ik::two_bone(root_pt, mid_pt, v(eff.p), v(goal.p), pole);
-        turn(w, classes, &mut chain[0], &b0, blend(dr));
+        turn(w, classes, a, &mut chain[0], &b0, blend(dr));
         refresh(&mut frames, &chain);
         let Some(b1) = frames.get(&chain[1].part0).copied() else {
             return;
         };
         let mut second = chain[1];
-        turn(w, classes, &mut second, &b1, blend(dm));
+        turn(w, classes, a, &mut second, &b1, blend(dm));
         chain[1] = second;
         refresh(&mut frames, &chain);
     }
@@ -219,6 +233,6 @@ fn apply_one(w: &mut World, classes: &ClassRegistry, rig: Entity, ctl: Entity) {
             return;
         };
         let d = (quat(&goal) * quat(&eff).inverse()).normalize();
-        turn(w, classes, &mut chain[last], &base, blend(d));
+        turn(w, classes, a, &mut chain[last], &base, blend(d));
     }
 }

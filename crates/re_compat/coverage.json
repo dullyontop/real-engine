@@ -2,9 +2,9 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1107,
-    "partial": 27,
-    "stub-error": 6,
+    "implemented": 1077,
+    "partial": 59,
+    "stub-error": 4,
     "missing": 9
   },
   "classes": [
@@ -342,7 +342,8 @@
         {
           "name": "AutomaticScalingEnabled",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored; descriptions always rescale the rig."
         },
         {
           "name": "BreakJointsOnDeath",
@@ -362,7 +363,7 @@
         {
           "name": "Climbing",
           "kind": "event",
-          "status": "stub-error",
+          "status": "partial",
           "note": "Climbing is not supported; it never fires."
         },
         {
@@ -373,12 +374,14 @@
         {
           "name": "DisplayDistanceType",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored; no name or health bar is drawn yet."
         },
         {
           "name": "DisplayName",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored; no name is drawn over characters yet."
         },
         {
           "name": "EquipTool",
@@ -454,12 +457,14 @@
         {
           "name": "HealthDisplayDistance",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored; no health bar is drawn yet."
         },
         {
           "name": "HealthDisplayType",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored; no health bar is drawn yet."
         },
         {
           "name": "HipHeight",
@@ -499,7 +504,8 @@
         {
           "name": "MaxSlopeAngle",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored; the character controller uses its own slope limit."
         },
         {
           "name": "Move",
@@ -525,12 +531,14 @@
         {
           "name": "NameDisplayDistance",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored; no name is drawn over characters yet."
         },
         {
           "name": "NameOcclusion",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored; no name is drawn over characters yet."
         },
         {
           "name": "PlatformStand",
@@ -570,7 +578,8 @@
         {
           "name": "SeatPart",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Seats are not supported yet; always nil."
         },
         {
           "name": "Seated",
@@ -600,7 +609,7 @@
         {
           "name": "Swimming",
           "kind": "event",
-          "status": "stub-error",
+          "status": "partial",
           "note": "Swimming is not supported; it never fires."
         },
         {
@@ -645,12 +654,14 @@
         {
           "name": "BackAccessory",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "BodyTypeScale",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "ClimbAnimation",
@@ -665,12 +676,14 @@
         {
           "name": "Face",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "FaceAccessory",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "FallAnimation",
@@ -680,27 +693,32 @@
         {
           "name": "FrontAccessory",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "GraphicTShirt",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "HairAccessory",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "HatAccessory",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "Head",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "HeadColor",
@@ -730,7 +748,8 @@
         {
           "name": "LeftArm",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "LeftArmColor",
@@ -740,7 +759,8 @@
         {
           "name": "LeftLeg",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "LeftLegColor",
@@ -750,22 +770,26 @@
         {
           "name": "NeckAccessory",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "Pants",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "ProportionScale",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "RightArm",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "RightArmColor",
@@ -775,7 +799,8 @@
         {
           "name": "RightLeg",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "RightLegColor",
@@ -790,22 +815,26 @@
         {
           "name": "Shirt",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "ShouldersAccessory",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "SwimAnimation",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored; characters never swim."
         },
         {
           "name": "Torso",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "TorsoColor",
@@ -815,7 +844,8 @@
         {
           "name": "WaistAccessory",
           "kind": "property",
-          "status": "implemented"
+          "status": "partial",
+          "note": "Stored, not applied."
         },
         {
           "name": "WalkAnimation",

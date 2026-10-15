@@ -5,7 +5,7 @@
 //! The Animator writes `Transform`; [`solve`] follows the joints out from the
 //! root part, and [`apply`] writes the result to the parts' `CFrame`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use re_reflect::Value;
 use re_scene::{Entity, World};
@@ -106,9 +106,9 @@ pub fn root_part(
 /// The world frame of every part reachable from the rig's root part through
 /// its joints, starting from the root part's `CFrame`. A part that two joints
 /// move keeps the first one found.
-pub fn solve(w: &World, classes: &ClassRegistry, rig: Entity) -> HashMap<Entity, CFrame> {
+pub fn solve(w: &World, classes: &ClassRegistry, rig: Entity) -> BTreeMap<Entity, CFrame> {
     let js = joints(w, classes, rig);
-    let mut out = HashMap::new();
+    let mut out = BTreeMap::new();
     let Some(root) = root_part(w, classes, rig, &js) else {
         return out;
     };
@@ -121,7 +121,7 @@ pub fn solve(w: &World, classes: &ClassRegistry, rig: Entity) -> HashMap<Entity,
 }
 
 /// Extends `frames` outward from `from` through `joints`.
-pub fn solve_from(joints: &[Joint], frames: &mut HashMap<Entity, CFrame>, from: Entity) {
+pub fn solve_from(joints: &[Joint], frames: &mut BTreeMap<Entity, CFrame>, from: Entity) {
     let mut by_part0: BTreeMap<Entity, Vec<&Joint>> = BTreeMap::new();
     for j in joints {
         by_part0.entry(j.part0).or_default().push(j);
@@ -161,7 +161,7 @@ pub fn apply(w: &mut World, classes: &ClassRegistry, rig: Entity) {
 pub fn world_of(
     w: &World,
     classes: &ClassRegistry,
-    frames: &HashMap<Entity, CFrame>,
+    frames: &BTreeMap<Entity, CFrame>,
     e: Entity,
 ) -> Option<CFrame> {
     let part_frame = |p: Entity| {

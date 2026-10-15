@@ -61,6 +61,29 @@ fn stop_fades_out_and_fires_stopped() {
 }
 
 #[test]
+fn a_stopped_track_leaves_the_rig_at_rest() {
+    for fade in ["0", "0.1"] {
+        let mut p = rigged("R6");
+        p.run(
+            "local a = Instance.new('Animation')
+             a.AnimationId = 'builtin:r6_walk'
+             workspace.Dummy.Humanoid.Animator:LoadAnimation(a):Play(0)",
+        );
+        p.frames(10);
+        assert!(shoulder_angle(&p) > 0.05, "the arm swings");
+        p.run(&format!(
+            "workspace.Dummy.Humanoid.Animator:GetPlayingAnimationTracks()[1]:Stop({fade})"
+        ));
+        p.frames(12);
+        assert!(
+            shoulder_angle(&p) < 1e-4,
+            "fade {fade}: shoulder at {}",
+            shoulder_angle(&p)
+        );
+    }
+}
+
+#[test]
 fn script_writes_to_track_properties_reach_the_mixer() {
     let mut p = rigged("R6");
     p.run(
@@ -190,4 +213,57 @@ fn ik_bends_an_arm_toward_a_target() {
         ((at[0] - target[0]).powi(2) + (at[1] - target[1]).powi(2) + (at[2] - target[2]).powi(2))
             .sqrt();
     assert!(d < 0.3, "hand at {at:?}");
+}
+
+#[test]
+fn ik_does_not_build_up_and_lets_go_when_disabled() {
+    let mut p = rigged("R15");
+    p.run(
+        "local target = Instance.new('Part')
+         target.Anchored = true
+         target.CFrame = CFrame.new(2.2, 4.5, -0.5)
+         target.Parent = workspace
+         local ik = Instance.new('IKControl')
+         ik.Type = Enum.IKControlType.Position
+         ik.ChainRoot = workspace.Dummy.RightUpperArm
+         ik.EndEffector = workspace.Dummy.RightHand
+         ik.Target = target
+         ik.Weight = 0.5
+         ik.Parent = workspace.Dummy.Humanoid",
+    );
+    let shoulder = p.find(&["Workspace", "Dummy", "RightUpperArm", "RightShoulder"]);
+    let angle = |p: &Place| {
+        let (rx, ry, rz) = p.cframe(shoulder, "Transform").to_euler_xyz();
+        rx.abs() + ry.abs() + rz.abs()
+    };
+    p.frames(2);
+    let early = angle(&p);
+    assert!(early > 0.05, "half weight bends the arm");
+    p.frames(30);
+    let late = angle(&p);
+    assert!((late - early).abs() < 1e-3, "{early} then {late}");
+    p.run("workspace.Dummy.Humanoid.IKControl.Enabled = false");
+    p.frames(2);
+    assert!(angle(&p) < 1e-4, "released: {}", angle(&p));
+}
+
+#[test]
+fn an_animation_controller_rig_moves_its_parts() {
+    let mut p = rigged("R6");
+    p.run(
+        "workspace.Dummy.Humanoid:Destroy()
+         local ac = Instance.new('AnimationController')
+         ac.Parent = workspace.Dummy
+         local animator = Instance.new('Animator')
+         animator.Parent = ac
+         local a = Instance.new('Animation')
+         a.AnimationId = 'builtin:r6_walk'
+         animator:LoadAnimation(a):Play(0)",
+    );
+    let arm = p.find(&["Workspace", "Dummy", "Right Arm"]);
+    let before = p.cframe(arm, "CFrame").p;
+    p.frames(10);
+    let after = p.cframe(arm, "CFrame").p;
+    let moved = (0..3).map(|i| (after[i] - before[i]).abs()).sum::<f32>();
+    assert!(moved > 0.05, "arm {before:?} -> {after:?}");
 }

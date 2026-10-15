@@ -30,15 +30,18 @@ fn events_keep_their_order_and_names() {
             (InputKind::Keyboard, "KeyW", InputPhase::Began),
             (InputKind::MouseMovement, "", InputPhase::Changed),
             (InputKind::MouseButton, "Left", InputPhase::Began),
-            (InputKind::MouseMovement, "", InputPhase::Changed),
             (InputKind::MouseWheel, "", InputPhase::Changed),
             (InputKind::Gamepad, "South", InputPhase::Began),
         ]
     );
+    // One movement event a frame; raw device motion gives its delta.
+    assert_eq!(f.events[1].position.to_array(), [10.0, 20.0, 0.0]);
+    assert_eq!(f.events[1].delta.to_array(), [3.0, -2.0, 0.0]);
     assert_eq!(f.events[2].position.x, 10.0);
     assert_eq!(f.events[2].position.y, 20.0);
-    assert_eq!(f.events[3].delta.x, 3.0);
-    assert_eq!(f.events[4].delta.z, 1.0);
+    // The wheel event carries this turn, not a running total.
+    assert_eq!(f.events[3].position.z, 1.0);
+    assert_eq!(f.events[3].delta.z, 1.0);
     assert_eq!(f.keys_down, ["KeyW"]);
     assert_eq!(f.mouse_buttons_down, ["Left"]);
     assert_eq!(f.pad_buttons_down, ["South"]);
@@ -198,4 +201,24 @@ fn raw_rows_round_trip_as_json() {
     // A replay without raw rows writes no `raw` key.
     let plain = serde_json::to_string(&ReplayDoc::new(0, 1)).unwrap();
     assert!(!plain.contains("raw"), "{plain}");
+}
+
+#[test]
+fn sticks_report_one_changed_event_a_frame() {
+    let mut raw = RawInput::default();
+    raw.set_pad_axis(gilrs::Axis::LeftStickX, 0.5);
+    raw.set_pad_axis(gilrs::Axis::LeftStickY, -0.25);
+    raw.set_pad_axis(gilrs::Axis::LeftZ, 1.0);
+    let f = raw.raw_frame(0);
+    assert_eq!(f.events.len(), 1);
+    let ev = &f.events[0];
+    assert_eq!(
+        (ev.kind, ev.button.as_str()),
+        (InputKind::Gamepad, "LeftStick")
+    );
+    assert_eq!(ev.position.to_array(), [0.5, -0.25, 0.0]);
+    assert_eq!(ev.delta.to_array(), [0.5, -0.25, 0.0]);
+    raw.end_frame();
+    raw.set_pad_axis(gilrs::Axis::LeftStickX, 0.5);
+    assert!(raw.raw_frame(1).events.is_empty(), "no change, no event");
 }
