@@ -618,7 +618,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0023: CI: Linux with lavapipe blocks merges; Windows and macOS are reported only
 
-**Status:** Accepted
+**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16).
 
 **Context.** Development containers are Linux with lavapipe, llvmpipe and Xvfb, and no audio device. Nothing has been verified on Windows or macOS.
 
@@ -626,12 +626,13 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - The required jobs, all on Ubuntu, are exactly these (M1_PLAN refers to this list):
   - `fmt` (`cargo fmt --all --check`);
   - `clippy` (`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`);
-  - `test` (`CARGO_BUILD_JOBS=2`, lavapipe). It has two steps: the non-GPU crates in parallel, then the GPU crates (`re_render`, `re_app`, `re_cli`, `re_editor`) with `--test-threads=1`;
+  - `test` (`CARGO_BUILD_JOBS=2`, lavapipe). It has two steps: the non-GPU crates in parallel, then the GPU crates (`re_render`, `re_app`, `re_cli`, `re_editor`) with `--test-threads=1`. Since M2 a last step runs `cargo xtask members` over the compat members those tests reached;
   - `msrv` (toolchain 1.95.0, `cargo build --workspace --all-targets --locked`);
   - `deny` (`cargo deny check`, cargo-deny 0.20.2);
   - `xtask` (`cargo xtask check`: crate graph, duplicate versions, explain pages, schema drift);
   - `verify-demo` (`real verify --project examples/island --json`);
-  - `xvfb-smoke` (`real run --frames 300 --exit-after` under Xvfb).
+  - `xvfb-smoke` (`real run --frames 300 --exit-after` under Xvfb);
+  - `verify-plaza` (added in M2: `real check --types` and `real verify --project examples/plaza --json` with a check of the report, then a windowed run under Xvfb).
 - Windows (`windows-latest`) and macOS (`macos-latest`) run `cargo build --workspace --locked`, then the tests of the pure-Rust crates that need no GPU, no audio device and no C++ toolchain (`re_core`, `re_noise`, `re_types`, `re_reflect`, `re_scene`, `re_command`). Their status is reported on the PR, and they do not block a merge (`continue-on-error: true`).
 - The workflow lives in `.github/workflows/ci.yml` and is written by M1 WP0 (M1_PLAN). Jobs for crates that do not exist yet skip themselves, so CI is green from the first PR.
 
@@ -965,6 +966,13 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - Disabling the maths builtins changes `compile::compiler()`'s output, so ADR-0037's `COMPILER_ID` changes with PR "d2" (whichever of WP18's and WP19's PRs lands second sets the new string), and archives built before it are refused with `RE0602`.
 - ADR-0043 already makes `^` a static-scan warning in Luau generator scripts; extending it to every script is `re_script`'s call, as above.
 - GPU output stays out of scope (goldens keep their tolerance), as do other CPU architectures.
+
+*Browser builds (wasm32) and online play (added after the owner's answer of 2026-10-15; WP29 and WP30 own the details).*
+- **What carries over unchanged.** Wasm arithmetic is IEEE single and double with round-to-nearest and no flush-to-zero, and has no FMA outside the opt-in relaxed-SIMD proposal, so Rust code, Luau's VM arithmetic and the `libm` crate (pure Rust; its wasm32 module uses only exact `floor`, `ceil`, `trunc`, `sqrt` instructions) give the same bits as on x86_64. Jolt lists "WASM32 emscripten running in nodejs" and "WASM64" among its cross-platform-deterministic configurations. The harness report already names any `os`/`arch`, so a wasm run (in Node or a headless browser) is one more report for `d2 compare`.
+- **NaN bits.** Wasm leaves the sign and payload of a NaN that an operation produces nondeterministic, and x86 (default NaN `0xFFC00000`) and ARM (`0x7FC00000`) already differ there. `state_hash` hashes floats by their bits (ADR-0018), so a NaN anywhere in the world would hash differently across platforms for no simulation reason. **Decision:** `re_scene`'s `state_hash` hashes every NaN as one canonical bit pattern (a one-line change in `hash.rs` through the maintainer, in PR "d2"); a NaN in simulated state is a bug to report anyway, not a value to compare.
+- **glam is the open question for the web.** On wasm32 without `simd128` glam uses its scalar code, whose operation order differs from SSE2's: `Vec4::dot` is `((x + y) + z) + w` in scalar code and `(x + z) + (y + w)` in SSE2 (`src/sse2.rs`, `dot4_into_m128`), and the NEON paths fuse. So the web, like macOS arm64, matches x86_64 only if every platform uses the same glam path (its `scalar-math` feature everywhere, with the alignment change noted above) or simulated code avoids glam's SIMD types (`Vec3A`, `Vec4`, `Quat`, `Mat4`, `Affine3A`) in favour of `Vec3`/`Mat3` and explicit scalar maths, as `re_geom::math` does. This ADR does not choose: the web WP measures both on its build, and the `d2` job reports the web until then.
+- **Luau and Jolt in the browser** need a C and C++ toolchain for wasm (emscripten or wasi-sdk) and a C library (emscripten's musl or wasi-libc); with this ADR's Luau rules the only maths that still reaches that library is `^`. Which wasm target, and how wgpu's WebGPU backend fits it, is the web WP's ADR.
+- **Online play does not need lockstep.** Server-authoritative replication sends state, not inputs, so it works without D2; D2 makes client prediction, rollback and replay of recorded matches agree with the server. The network ADR decides which model it uses; if it chooses lockstep or rollback, `d2` becomes a correctness gate for multiplayer, and the web question above becomes required rather than reported.
 
 ## ADR-0037: Packaged games: one archive behind `ProjectFiles`, Luau bytecode, zstd, and per-platform bundles
 
@@ -2283,6 +2291,29 @@ The engine already has what these need underneath: the scheduler's `park`/`wake`
 - Script reload is a restart, so edits during play lose the edited script's local state; modules restart everything that uses them.
 - Place files import without Studio, Rojo or network access. Anything we cannot map is in the report, not lost silently. The format is undocumented by the vendor, so a future vendor change can need a reader update; unknown chunks and type ids degrade to warnings, not failures.
 - Four small MIT-family crates join the tooling build; none ships in the runtime.
+
+**Amendment (M3, WP27 PR "incremental render"; accepted by the maintainer, 2026-10-15).** `re_compat::render::build` stops walking every part each frame. WP20 measured it at about 1.2–1.3 s per frame on ADR-0031's 250,000-part bigmap, against 38.6 ms for `Renderer::render` after culling (research `m3/wp20/measurements.md` §1), so the walk is the frame's bottleneck on large maps.
+  - **Where the time goes.** On every frame the build lists every `BasePart` and `Light` by a dynamic query, clones the static-cell table, walks each part's ancestors to test "is it in `Workspace`", and reads each part's properties by name to rebuild its `FrameItem`. All of that is per part, even when nothing moved.
+  - **A change journal is the feed, not a scan.** bevy_ecs change ticks (ADR-0005) tell us whether a component changed, but only when we ask each entity or iterate each matching archetype row, and `Changed<T>` needs a Rust type while the compat classes' `Compat_<Class>` components are host components registered at run time (ADR-0032). Asking each of 250,000 entities every frame is still a walk. So the build is fed by a **journal of what changed**, filled at the few places where changes happen:
+    - **Field writes.** Every compat property write, tween, editor or agent command ends in `re_reflect::Registry::set_field` (or `insert`/`remove`). The registry already skips equal writes. When the world holds a `ChangeJournal` resource, each write that changes a value appends `(entity, component key)` to it. A world without the resource pays nothing. This is a small change in `re_reflect`, a maintainer crate: WP27 writes it as a maintainer-reviewed PR, or the maintainer makes it.
+    - **Structure.** Spawning, despawning and reparenting go through `re_compat::instance::tree` and through `re_command` ops. Both append the entity, and on a reparent its subtree, to the journal. An observer on `ChildOf` catches the rest, so a path missed by the first two is still caught.
+    - **Physics poses.** The compat physics write-back (`physics/pose.rs`, `physics/sim.rs`) writes `Transform` directly for bodies that moved, so it appends those entities itself. Sleeping and anchored bodies cost nothing.
+  - **Retained state in the render hub.** Per part, the hub keeps its `FrameItem` (or its static cell and slot), whether it is in `Workspace`, and its looks key. Per cell, it keeps the merged meshes. It also keeps the lists of lights and effects. Each frame the build drains the journal, recomputes only the touched parts and the cells they belong to (a touched cell part still splits out as ADR-0031 says), and copies the retained items into the frame. Camera-dependent work (billboards, particles, beams, highlights) stays per frame, as it is bounded by those instances, not by parts.
+  - **What "fixed cost" means.** On a frame where nothing changed, the build does no per-part work. The remaining cost is copying the retained draw items (about 23,000 on the bigmap, one per cell and material plus loose parts) and the camera-dependent work.
+  - **Acceptance.**
+    - **Idle frames visit no parts.** A counter test asserts that an idle frame visits zero parts on the 60,000-part and 250,000-part maps; it runs in `cargo test`.
+    - **Bigmap timing.** Measured with WP20's harness, the build's mean on the idle 250,000-part map is at most 5 ms in the reference container (from about 1,300 ms), and a frame that moves 100 loose parts or touches one cell part is at most 5 ms more.
+    - **Equivalence with a full rebuild.** A test runs random script edits (properties, reparenting, destroy, clone, tweens and physics moves) for many frames. On each frame it compares the incremental frame with a full rebuild from scratch, and they must be equal.
+    - **Goldens.** The existing render goldens are unchanged, and `verify-plaza` stays green.
+  - **Safety net.** In debug builds, `REAL_RENDER_VERIFY=1` makes every 60th frame also do a full rebuild and compare, and it fails loudly on a difference. A write path that skips the journal is a bug, and this check finds it in tests.
+  - **Unaffected.** The build only reads the world, so simulation and D2 are untouched. After this merges, WP20 re-measures the render-thread threshold (ADR-0038).
+  - **Order.** "incremental render" lands after "place files" and before "surfaces". The SurfaceGui and ViewportFrame redraw tracking then reuses the same journal.
+  - **Accepted with conditions (maintainer).**
+    - The `ChangeJournal` type lives in `re_scene`, next to `World`. `re_reflect` sees it only as an optional sink, through a small trait or a resource lookup, so `re_reflect` gets no compat concepts.
+    - The hook does nothing unless the resource exists. The PR includes a bench showing that `set_field` costs the same without it.
+    - Every write that bypasses `Registry` (native systems that mutate `Transform`, `re_anim` poses, and tweens or anything else that goes around `set_property`) either feeds the journal or is caught by `REAL_RENDER_VERIFY` and the randomized test. The PR description lists the ones found.
+    - WP27 writes the hook in its "incremental render" PR, and the maintainer reviews that part.
+  - Maintainer conditions: the `ChangeJournal` type lives in `re_scene` beside `World`, and `re_reflect` reaches it as an optional sink, so `re_reflect` learns no compat concepts; the PR shows `set_field` costs the same without the resource; and any write that bypasses the registry (native systems on `Transform`, `re_anim` poses) either feeds the journal or is caught by the randomized equivalence test and `REAL_RENDER_VERIFY`, listed in the PR description.
 
 ## Open questions for the owner
 
