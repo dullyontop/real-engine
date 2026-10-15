@@ -104,26 +104,9 @@ pub trait HostServices {
     }
 
     /// Asks the window to hold or free the cursor and to show or hide it.
-    /// The default fails with `RE9001`.
+    /// The default ignores it: a host without a window has no cursor.
     fn set_mouse_mode(&mut self, lock: MouseLock, icon_visible: bool) -> HostResult<()> {
         let _ = (lock, icon_visible);
-        Err(unsupported("set_mouse_mode"))
+        Ok(())
     }
-
-    /// Makes a character jump on its next step, if it is on the ground, with
-    /// an upward speed of `speed` (m/s) instead of the world's default jump
-    /// speed. The default fails with `RE9001`.
-    fn character_jump(&mut self, entity: EntityId, speed: f32) -> HostResult<()> {
-        let _ = (entity, speed);
-        Err(unsupported("character_jump"))
-    }
-}
-
-/// The error of a provided [`HostServices`] method the host does not
-/// implement: `RE9001`, the code every layer uses for an unsupported member.
-fn unsupported(what: &str) -> HostError {
-    HostError::new(
-        "RE9001",
-        format!("unsupported API member: this host does not implement {what}"),
-    )
 }

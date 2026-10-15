@@ -119,11 +119,11 @@ pub fn apply(
                         classes.set_property(w, d, prop, cframe_value(&c))?;
                     }
                 }
-            } else if tree::is_a(w, classes, d, "Attachment") {
-                if let Some(mut c) = cframe_prop(w, classes, d, "CFrame") {
-                    scale_pos(&mut c, body);
-                    classes.set_property(w, d, "CFrame", cframe_value(&c))?;
-                }
+            } else if tree::is_a(w, classes, d, "Attachment")
+                && let Some(mut c) = cframe_prop(w, classes, d, "CFrame")
+            {
+                scale_pos(&mut c, body);
+                classes.set_property(w, d, "CFrame", cframe_value(&c))?;
             }
         }
         if let Ok(Value::Float(h)) = classes.get_property(w, humanoid, "HipHeight") {

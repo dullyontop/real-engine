@@ -34,5 +34,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Replays of raw input drive the character tests (WP14).
+re_input.workspace = true
 # The sample runner (tests/samples.rs) imports each sample (WP16).
 re_import.workspace = true

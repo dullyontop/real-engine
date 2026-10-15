@@ -36,6 +36,13 @@
       },
       "default": []
     },
+    "raw": {
+      "description": "Raw key and mouse changes, in frame order, for layers that read keys\nrather than actions (the compatibility layer's input services).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RawReplayInput"
+      }
+    },
     "commands": {
       "description": "Engine commands to dispatch, in frame order.",
       "type": "array",
@@ -99,6 +106,80 @@
       "required": [
         "frame",
         "action"
+      ]
+    },
+    "RawReplayInput": {
+      "description": "One raw device change in a replay: a key or mouse button going down or\nup, the cursor moving, or the wheel turning. Exactly one of `key`,\n`mouse_button`, `mouse_move`, `mouse_position` and `wheel` is set; `key`\nand `mouse_button` also need `down`.\n\n```json\n{ \"frame\": 30, \"key\": \"W\", \"down\": true }\n{ \"frame\": 31, \"mouse_move\": [12, -4] }\n```",
+      "type": "object",
+      "properties": {
+        "frame": {
+          "description": "The frame the change happens on.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "key": {
+          "description": "A key or gamepad button name (`W`, `Space`, `ButtonA`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mouse_button": {
+          "description": "A mouse button: 1 left, 2 right, 3 middle.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "down": {
+          "description": "For `key` and `mouse_button`: down or up.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "mouse_move": {
+          "description": "Mouse motion in pixels.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "mouse_position": {
+          "description": "The cursor's new position in window pixels.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "wheel": {
+          "description": "A wheel turn, in notches (positive away from the user).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame"
       ]
     },
     "ReplayCommand": {

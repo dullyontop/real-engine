@@ -106,6 +106,8 @@ fn build(kind: ContextKind, characters: bool) -> Place {
         CompatSetup::standard().unwrap()
     };
     let mut world = World::new();
+    // Fixed instance ids, so two runs hash the same (replays).
+    world.ecs.insert_resource(re_scene::IdGen::seeded(7));
     if characters {
         let config = PhysicsConfig {
             gravity: Vec3::new(0.0, -196.2, 0.0),

@@ -21,6 +21,7 @@
 pub mod body;
 pub mod description;
 pub mod rig;
+pub mod scripts;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -380,18 +381,22 @@ fn pre_one(w: &mut World, classes: &ClassRegistry, e: Entity, dt: f32, evs: &mut
     // Jumping.
     let wants = get_bool(w, e, "Jump") || rt(w, classes, e).jump_now;
     if wants {
-        let mut rt = rt(w, classes, e);
-        let can = rt.on_ground
-            && !rt.disabled.contains("Jumping")
-            && matches!(
-                rt.state,
-                "Running" | "Landed" | "Seated" | "RunningNoPhysics"
-            );
+        let can = {
+            let mut rt = rt(w, classes, e);
+            let can = rt.on_ground
+                && !rt.disabled.contains("Jumping")
+                && matches!(
+                    rt.state,
+                    "Running" | "Landed" | "Seated" | "RunningNoPhysics"
+                );
+            if can {
+                set_state(&mut rt, "Jumping", evs);
+                rt.jump_now = false;
+                rt.on_ground = false;
+            }
+            can
+        };
         if can {
-            set_state(&mut rt, "Jumping", evs);
-            rt.jump_now = false;
-            rt.on_ground = false;
-            drop(rt);
             let g = gravity(w);
             let v = if get_bool(w, e, "UseJumpPower") {
                 get_num(w, e, "JumpPower") as f32

@@ -13,4 +13,6 @@ mod character {
     mod humanoid;
     #[path = "../character/input.rs"]
     mod input;
+    #[path = "../character/replay.rs"]
+    mod replay;
 }

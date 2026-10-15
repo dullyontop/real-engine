@@ -21,7 +21,7 @@ fn ev(phase: InputPhase, ty: &str, key: &str) -> InputEvent {
 /// handlers run.
 fn feed(p: &mut Place, frame: RawInputFrame) {
     p.services.raw = Some(frame);
-    p.with(|lua| re_compat::input::frame(lua));
+    p.with(re_compat::input::frame);
     p.step(1.0 / 60.0);
 }
 

@@ -237,7 +237,6 @@ fn step_one(lua: &Lua, classes: &Arc<ClassRegistry>, a: Entity, dt: f32) -> Resu
         }
         let mut poses = BTreeMap::new();
         st.mixer.evaluate(&mut poses);
-        drop(st);
         for (_, inst) in &ids {
             publish(w, *inst);
         }
