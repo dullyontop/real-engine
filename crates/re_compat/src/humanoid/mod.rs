@@ -648,7 +648,7 @@ fn die(lua: &Lua, e: Entity) -> Result<()> {
     Ok(())
 }
 
-/// The live Humanoids in the place.
+/// The live Humanoids in the Workspace.
 fn humanoids(lua: &Lua) -> Result<Vec<Entity>> {
     let st = state(lua)?;
     let (classes, game) = (st.setup.classes.clone(), st.game);
@@ -660,7 +660,16 @@ fn humanoids(lua: &Lua) -> Result<Vec<Entity>> {
             .filter(|(_, m)| classes.is_a(&m.class, HUM))
             .map(|(e, _)| e)
             .collect();
-        out.retain(|e| !tree::is_destroyed(w, *e) && tree::in_game(w, game, *e));
+        // Only the Humanoids in the Workspace are simulated (one in
+        // `StarterPlayer.StarterCharacter` or `ReplicatedStorage` is a
+        // template).
+        let workspace = crate::services::core::find_service(w, game, "Workspace");
+        out.retain(|e| {
+            !tree::is_destroyed(w, *e)
+                && workspace.is_some_and(|ws| {
+                    re_scene::hierarchy::is_self_or_ancestor(&w.ecs, ws, *e)
+                })
+        });
         out.sort();
         out
     })

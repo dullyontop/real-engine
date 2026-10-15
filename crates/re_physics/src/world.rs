@@ -991,6 +991,9 @@ impl Physics {
             };
             new_velocity += gravity * dt;
             new_velocity += desired - up * desired.dot(up);
+            // Jolt refuses a faster character; a long fall stops speeding up
+            // there (a terminal velocity).
+            new_velocity = new_velocity.clamp_length_max(oxijolt::limits::MAX_LINEAR_VELOCITY);
             let step_up = jv(up * ch.step_height);
             let extended = ExtendedUpdateSettings::default().walk_stairs_step_up(step_up);
             self.gate.current.store(ch.groups.0, Ordering::Relaxed);
