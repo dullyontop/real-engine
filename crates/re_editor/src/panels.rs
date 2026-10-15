@@ -19,7 +19,13 @@ use crate::editor::{Action, Editor, LineKind, Palette, Pending, command};
 
 /// Draws every panel into the root `ui`.
 pub(crate) fn draw(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Action>) {
-    let r = egui::Panel::top("re_editor.toolbar").show(ui, |ui| toolbar(ed, ui, app, actions));
+    // A selection clicked in the last frame is applied after this one: a
+    // field being edited in the inspector sees its focus loss one frame after
+    // the click, and commits to the entity it belongs to first.
+    let select_now = ed.select_next.take();
+    // Undo and Redo clicks wait a frame for the same reason.
+    let later = std::mem::take(&mut ed.later);
+    let r = egui::Panel::top("re_editor.toolbar").show(ui, |ui| toolbar(ed, ui, app));
     ed.rects.set(Panel::Toolbar, r.response.rect);
 
     let r = egui::Panel::bottom("re_editor.console")
@@ -63,11 +69,16 @@ pub(crate) fn draw(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut 
     ed.rects.set(Panel::Viewport, r.response.rect);
 
     palette(ed, ui.ctx(), app, actions);
+
+    actions.extend(later);
+    if let Some(id) = select_now {
+        select(ed, Some(id));
+    }
 }
 
 // ---- toolbar ------------------------------------------------------------
 
-fn toolbar(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Action>) {
+fn toolbar(ed: &mut Editor, ui: &mut egui::Ui, app: &App) {
     ui.horizontal(|ui| {
         ui.strong(&app.config().project.name);
         ui.separator();
@@ -79,7 +90,8 @@ fn toolbar(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Acti
                 None => "Nothing to undo".to_string(),
             });
         if undo.clicked() {
-            actions.push(command("undo", json!({})));
+            ed.later.push(command("undo", json!({})));
+            ui.ctx().request_repaint();
         }
         let redo = ui
             .add_enabled(history.can_redo(), egui::Button::new("Redo"))
@@ -88,7 +100,8 @@ fn toolbar(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Acti
                 None => "Nothing to redo".to_string(),
             });
         if redo.clicked() {
-            actions.push(command("redo", json!({})));
+            ed.later.push(command("redo", json!({})));
+            ui.ctx().request_repaint();
         }
         if ui
             .button("Commands…")
@@ -140,6 +153,7 @@ fn hierarchy(ed: &mut Editor, ui: &mut egui::Ui, world: &World, actions: &mut Ve
         .collect();
     roots.sort();
     let mut clicked = None;
+    let mut rows = Vec::new();
     egui::ScrollArea::vertical()
         .id_salt("re_editor.hierarchy")
         .auto_shrink(false)
@@ -148,11 +162,25 @@ fn hierarchy(ed: &mut Editor, ui: &mut egui::Ui, world: &World, actions: &mut Ve
                 ui.label(RichText::new("The scene is empty.").weak());
             }
             for (_, e) in roots {
-                tree_node(ui, world, e, ed.selected.as_deref(), &mut clicked);
+                tree_node(
+                    ui,
+                    world,
+                    e,
+                    ed.selected.as_deref(),
+                    &mut clicked,
+                    &mut rows,
+                );
             }
         });
-    if let Some(id) = clicked {
-        select(ed, Some(id));
+    // Applied at the end of the next frame (see `draw`).
+    for (id, rect) in rows {
+        ed.pending
+            .rects
+            .insert(crate::editor::row_key(&id), vec![rect]);
+    }
+    if clicked.is_some() {
+        ed.select_next = clicked;
+        ui.ctx().request_repaint();
     }
 }
 
@@ -169,6 +197,7 @@ fn tree_node(
     e: Entity,
     selected: Option<&str>,
     clicked: &mut Option<String>,
+    rows: &mut Vec<(String, egui::Rect)>,
 ) {
     let Some(id) = world.id_of(e) else {
         return;
@@ -185,7 +214,9 @@ fn tree_node(
     let is_selected = selected == Some(id);
     let kids = children(&world.ecs, e);
     if kids.is_empty() {
-        if ui.selectable_label(is_selected, text).clicked() {
+        let r = ui.selectable_label(is_selected, text);
+        rows.push((id.to_string(), r.rect));
+        if r.clicked() {
             *clicked = Some(id.to_string());
         }
         return;
@@ -197,13 +228,15 @@ fn tree_node(
     );
     state
         .show_header(ui, |ui| {
-            if ui.selectable_label(is_selected, text).clicked() {
+            let r = ui.selectable_label(is_selected, text);
+            rows.push((id.to_string(), r.rect));
+            if r.clicked() {
                 *clicked = Some(id.to_string());
             }
         })
         .body(|ui| {
             for kid in kids {
-                tree_node(ui, world, *kid, selected, clicked);
+                tree_node(ui, world, *kid, selected, clicked, rows);
             }
         });
 }
@@ -304,7 +337,7 @@ struct FieldTarget<'a> {
 
 impl FieldTarget<'_> {
     fn key(&self) -> String {
-        format!("{}\u{1f}{}\u{1f}{}", self.id, self.component, self.field)
+        crate::editor::field_key(self.id, self.component, self.field)
     }
 
     fn set(&self, value: Value) -> Action {
@@ -344,63 +377,43 @@ fn field_widget(
         }
         (FieldType::I32 | FieldType::I64, Value::Int(i)) => {
             let mut i = *i;
-            let mut drag = egui::DragValue::new(&mut i).speed(0.1);
+            let mut drag = egui::DragValue::new(&mut i)
+                .speed(0.1)
+                .update_while_editing(false);
             if *target.ty == FieldType::I32 {
                 drag = drag.range(i32::MIN..=i32::MAX);
             }
-            let r = ui.add(drag);
-            settle(
-                ui,
-                &r,
-                pending,
-                key,
-                Value::Int(i),
-                current,
-                target,
-                actions,
-            );
+            let rs = [ui.add(drag)];
+            pending.widgets(&key, &rs);
+            let value = Value::Int(i);
+            settle(ui, &rs, pending, key, value, current, target, actions);
         }
         (FieldType::F32 | FieldType::F64, Value::Float(x)) => {
             let mut x = *x;
-            let r = ui.add(egui::DragValue::new(&mut x).speed(0.01).max_decimals(6));
-            settle(
-                ui,
-                &r,
-                pending,
-                key,
-                Value::Float(x),
-                current,
-                target,
-                actions,
-            );
+            let rs = [ui.add(
+                egui::DragValue::new(&mut x)
+                    .speed(0.01)
+                    .max_decimals(6)
+                    .update_while_editing(false),
+            )];
+            pending.widgets(&key, &rs);
+            let value = Value::Float(x);
+            settle(ui, &rs, pending, key, value, current, target, actions);
         }
         (FieldType::Vec3, Value::Vec3(v)) => {
             let mut a = v.to_array();
-            let r = ui
-                .horizontal(|ui| {
-                    let mut r = ui.add(egui::DragValue::new(&mut a[0]).speed(0.01).prefix("x "));
-                    r |= ui.add(egui::DragValue::new(&mut a[1]).speed(0.01).prefix("y "));
-                    r |= ui.add(egui::DragValue::new(&mut a[2]).speed(0.01).prefix("z "));
-                    r
-                })
-                .inner;
+            let rs = drag3(ui, &mut a, 0.01, ["x ", "y ", "z "], "");
+            pending.widgets(&key, &rs);
             let value = Value::Vec3(Vec3::from_array(a));
-            settle(ui, &r, pending, key, value, current, target, actions);
+            settle(ui, &rs, pending, key, value, current, target, actions);
         }
         (FieldType::Quat, Value::Quat(q)) => {
             // Shown as Euler angles in degrees (yaw, pitch, roll: Y, X, Z).
             let (y, x, z) = q.to_euler(EulerRot::YXZ);
             let mut a = [x.to_degrees(), y.to_degrees(), z.to_degrees()];
-            let r = ui
-                .horizontal(|ui| {
-                    let mut r = ui.add(egui::DragValue::new(&mut a[0]).speed(0.5).suffix("°"));
-                    r |= ui.add(egui::DragValue::new(&mut a[1]).speed(0.5).suffix("°"));
-                    r |= ui.add(egui::DragValue::new(&mut a[2]).speed(0.5).suffix("°"));
-                    r
-                })
-                .inner
-                .on_hover_text("rotation about X, Y and Z in degrees (applied Y, then X, then Z)");
-            let value = if r.changed() {
+            let rs = drag3(ui, &mut a, 0.5, ["", "", ""], "°");
+            pending.widgets(&key, &rs);
+            let value = if rs.iter().any(egui::Response::changed) {
                 Value::Quat(Quat::from_euler(
                     EulerRot::YXZ,
                     a[1].to_radians(),
@@ -410,13 +423,14 @@ fn field_widget(
             } else {
                 shown.clone()
             };
-            settle(ui, &r, pending, key, value, current, target, actions);
+            settle(ui, &rs, pending, key, value, current, target, actions);
         }
         (FieldType::Color, Value::Color(c)) => {
             let mut rgba = [c.r, c.g, c.b, c.a];
-            let r = ui.color_edit_button_rgba_unmultiplied(&mut rgba);
+            let rs = [ui.color_edit_button_rgba_unmultiplied(&mut rgba)];
+            pending.widgets(&key, &rs);
             let value = Value::Color(Color::rgba(rgba[0], rgba[1], rgba[2], rgba[3]));
-            settle(ui, &r, pending, key, value, current, target, actions);
+            settle(ui, &rs, pending, key, value, current, target, actions);
         }
         (FieldType::String, Value::Str(s)) => {
             if let Some(text) = text_field(ui, pending, &key, s) {
@@ -466,12 +480,38 @@ fn field_widget(
     }
 }
 
+/// Three drag values in a row (a Vec3, or a rotation as Euler angles). They
+/// change their value only when typing is confirmed, never per keystroke.
+fn drag3(
+    ui: &mut egui::Ui,
+    a: &mut [f32; 3],
+    speed: f64,
+    prefixes: [&str; 3],
+    suffix: &str,
+) -> Vec<egui::Response> {
+    ui.horizontal(|ui| {
+        a.iter_mut()
+            .zip(prefixes)
+            .map(|(v, prefix)| {
+                ui.add(
+                    egui::DragValue::new(v)
+                        .speed(speed)
+                        .prefix(prefix)
+                        .suffix(suffix)
+                        .update_while_editing(false),
+                )
+            })
+            .collect()
+    })
+    .inner
+}
+
 /// Keeps a dragged or typed value pending while its widget is in use, and
 /// commits it once when the widget is released.
 #[allow(clippy::too_many_arguments)]
 fn settle(
     ui: &egui::Ui,
-    r: &egui::Response,
+    rs: &[egui::Response],
     pending: &mut Pending,
     key: String,
     value: Value,
@@ -479,12 +519,15 @@ fn settle(
     target: &FieldTarget<'_>,
     actions: &mut Vec<Action>,
 ) {
-    if r.changed() {
+    if rs.iter().any(egui::Response::changed) {
         pending.values.insert(key.clone(), value);
     }
-    let in_use = r.dragged()
-        || r.has_focus()
+    // Each widget is checked on its own (a union of responses keeps only the
+    // first one's id, hiding the others' focus); an open popup, such as the
+    // colour picker, counts as in use.
+    let in_use = rs.iter().any(|r| r.dragged() || r.has_focus())
         || ui.ctx().dragged_id().is_some()
+        || ui.ctx().any_popup_open()
         || ui.input(|i| i.pointer.any_down());
     if !in_use
         && let Some(v) = pending.values.remove(&key)
@@ -495,7 +538,7 @@ fn settle(
 }
 
 /// A single-line text field that returns its text when it is committed
-/// (Enter or focus lost) and differs from `current`.
+/// (Enter or focus lost, not Escape) and differs from `current`.
 fn text_field(
     ui: &mut egui::Ui,
     pending: &mut Pending,
@@ -510,7 +553,9 @@ fn text_field(
     let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(180.0));
     if r.lost_focus() {
         pending.texts.remove(key);
-        return (text != current).then_some(text);
+        // Escape cancels the edit.
+        let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        return (!cancelled && text != current).then_some(text);
     }
     if r.has_focus() {
         pending.texts.insert(key.to_string(), text);
@@ -572,11 +617,15 @@ fn graph(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Action
                         _ => seed,
                     };
                     let mut s = shown;
-                    let r = ui.add(egui::DragValue::new(&mut s).speed(1.0));
+                    let r = ui.add(
+                        egui::DragValue::new(&mut s)
+                            .speed(1.0)
+                            .update_while_editing(false),
+                    );
                     let mut seed_actions = Vec::new();
                     settle(
                         ui,
-                        &r,
+                        &[r],
                         &mut ed.pending,
                         key,
                         Value::Int(s),

@@ -64,6 +64,16 @@ pub struct EditorOptions {
     /// Close after this many presented frames (smoke tests); `None` runs until
     /// the window is closed.
     pub max_frames: Option<u64>,
+    /// Register `re_agent`'s commands (`script.write`, `checkpoint.restore`,
+    /// `file.delete`) and start an agent session once the lock is held, so
+    /// that `real mcp` works through the editor and `checkpoint.restore`
+    /// returns to the scene as the editor opened it. Default: on.
+    pub agent_commands: bool,
+    /// The project lock and socket, when the caller took them before opening
+    /// the project (as `real editor` does, so that no other writer can
+    /// change the scene between loading it and locking it). `None`: taken
+    /// by [`run_editor`].
+    pub socket: Option<EditorSocket>,
 }
 
 impl Default for EditorOptions {
@@ -73,6 +83,8 @@ impl Default for EditorOptions {
             backends: None,
             size: None,
             max_frames: None,
+            agent_commands: true,
+            socket: None,
         }
     }
 }
@@ -83,6 +95,7 @@ impl std::fmt::Debug for EditorOptions {
             .field("backends", &self.backends)
             .field("size", &self.size)
             .field("max_frames", &self.max_frames)
+            .field("agent_commands", &self.agent_commands)
             .finish_non_exhaustive()
     }
 }

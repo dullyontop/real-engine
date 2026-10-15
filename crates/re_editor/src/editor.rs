@@ -126,6 +126,26 @@ pub(crate) struct Palette {
 pub(crate) struct Pending {
     pub values: HashMap<String, Value>,
     pub texts: HashMap<String, String>,
+    /// Where each field's widgets were drawn in the last frame.
+    pub rects: HashMap<String, Vec<egui::Rect>>,
+}
+
+impl Pending {
+    /// Records where a field's widgets were drawn this frame.
+    pub fn widgets(&mut self, key: &str, rs: &[egui::Response]) {
+        self.rects
+            .insert(key.to_string(), rs.iter().map(|r| r.rect).collect());
+    }
+}
+
+/// The key of one hierarchy row in [`Pending::rects`].
+pub(crate) fn row_key(id: &str) -> String {
+    format!("row\u{1f}{id}")
+}
+
+/// The key of one inspector field in [`Pending`].
+pub(crate) fn field_key(id: &str, component: &str, field: &str) -> String {
+    format!("{id}\u{1f}{component}\u{1f}{field}")
 }
 
 /// The editor's UI: selection, console, palette and in-progress edits.
@@ -141,6 +161,8 @@ pub struct Editor {
     pub(crate) palette: Palette,
     pub(crate) pending: Pending,
     pub(crate) graph_new: HashMap<String, [String; 3]>,
+    pub(crate) select_next: Option<String>,
+    pub(crate) later: Vec<Action>,
     pub(crate) rects: PanelRects,
     pub(crate) status: String,
     pub(crate) viewport_texture: Option<(egui::TextureId, [u32; 2])>,
@@ -176,6 +198,8 @@ impl Editor {
             },
             pending: Pending::default(),
             graph_new: HashMap::new(),
+            select_next: None,
+            later: Vec::new(),
             rects: PanelRects::default(),
             status: String::new(),
             viewport_texture: None,
@@ -197,6 +221,25 @@ impl Editor {
     /// Where each panel was drawn in the last frame.
     pub fn rects(&self) -> &PanelRects {
         &self.rects
+    }
+
+    /// Where the inspector drew the widgets of one field in the last frame
+    /// (one rectangle per sub-widget: three for a vector), in egui points.
+    /// Empty when the field was not shown.
+    pub fn field_rects(&self, id: &str, component: &str, field: &str) -> &[egui::Rect] {
+        self.pending
+            .rects
+            .get(&field_key(id, component, field))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Where the hierarchy drew the row of entity `id` in the last frame (in
+    /// egui points), if it was shown.
+    pub fn hierarchy_row(&self, id: &str) -> Option<egui::Rect> {
+        self.pending
+            .rects
+            .get(&row_key(id))
+            .and_then(|r| r.first().copied())
     }
 
     /// The console's lines, oldest first.
@@ -264,9 +307,15 @@ impl Editor {
     pub fn ui(&mut self, ui: &mut egui::Ui, app: &mut App, policy: &dyn PolicyCheck) {
         self.pull_log(app);
         self.rects = PanelRects::default();
+        self.pending.rects.clear();
         let mut actions = Vec::new();
         self.shortcuts(ui.ctx(), &mut actions);
         panels::draw(self, ui, app, &mut actions);
+        // A field committed in the same frame as an Undo or Redo click (the
+        // click took its focus) is applied first, so undo sees it.
+        actions.sort_by_key(
+            |a| matches!(a, Action::Command { name, .. } if name == "undo" || name == "redo"),
+        );
         for action in actions {
             self.apply(app, policy, action);
         }

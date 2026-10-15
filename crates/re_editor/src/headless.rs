@@ -85,9 +85,16 @@ impl HeadlessEditor {
         let size = [self.capture.width(), self.capture.height()];
         self.view
             .sync(&self.gpu, &mut self.renderer, &mut self.editor)?;
+        // The screen in points: the capture's pixels over the scale the input
+        // asks for (1 unless it sets `native_pixels_per_point`).
+        let ppp = input
+            .viewports
+            .get(&input.viewport_id)
+            .and_then(|v| v.native_pixels_per_point)
+            .unwrap_or(1.0);
         input.screen_rect = Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
-            egui::vec2(size[0] as f32, size[1] as f32),
+            egui::vec2(size[0] as f32, size[1] as f32) / ppp,
         ));
         self.time += 1.0 / 60.0;
         input.time = Some(self.time);

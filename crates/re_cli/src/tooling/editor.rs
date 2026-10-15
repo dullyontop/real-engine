@@ -10,7 +10,7 @@ use std::process::ExitCode;
 
 use re_app::{App, AppConfig};
 use re_core::Diagnostic;
-use re_editor::EditorOptions;
+use re_editor::{EditorOptions, EditorSocket};
 
 /// Arguments of `real editor`.
 #[derive(Clone, Debug, Default, clap::Args)]
@@ -21,16 +21,27 @@ pub struct EditorArgs {
     pub frames: Option<u64>,
 }
 
-/// Runs `real editor` for the project at `project`: opens the project with
-/// edits written back to the entry scene, takes the project lock as the
-/// editor, serves `.real/editor.sock` and shows the editor window.
+/// Runs `real editor` for the project at `project`: takes the project lock as
+/// the editor and serves `.real/editor.sock`, opens the project with edits
+/// written back to the entry scene, and shows the editor window.
 pub fn run(args: EditorArgs, project: &Path) -> anyhow::Result<ExitCode> {
-    let app = match open(project) {
+    // The project's config first (is it a project?), then the lock, then the
+    // scene: no other writer can change the scene between loading and locking.
+    let config = match AppConfig::load(project) {
+        Ok(config) => config,
+        Err(d) => return Ok(fail(&d)),
+    };
+    let socket = match EditorSocket::open(project) {
+        Ok(socket) => socket,
+        Err(d) => return Ok(fail(&d)),
+    };
+    let app = match open(project, config) {
         Ok(app) => app,
         Err(d) => return Ok(fail(&d)),
     };
     let options = EditorOptions {
         max_frames: args.frames,
+        socket: Some(socket),
         ..EditorOptions::default()
     };
     match re_editor::run_editor(app, options) {
@@ -42,12 +53,12 @@ pub fn run(args: EditorArgs, project: &Path) -> anyhow::Result<ExitCode> {
     }
 }
 
-fn open(project: &Path) -> Result<App, Diagnostic> {
+fn open(project: &Path, config: AppConfig) -> Result<App, Diagnostic> {
     // The editor is the project's writer: every change, its own and those
     // that other writers send through its socket, is saved to the scene.
     let config = AppConfig {
         persist_edits: true,
-        ..AppConfig::load(project)?
+        ..config
     };
     let mut app = App::open(project, config)?;
     crate::explain::register(app.commands_mut());

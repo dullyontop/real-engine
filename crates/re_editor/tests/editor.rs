@@ -362,3 +362,146 @@ fn the_policy_applies_to_editor_actions() {
     assert!(!out.ok);
     assert!(!app.history().can_undo());
 }
+
+fn click(at: egui::Pos2) -> Vec<egui::Event> {
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    vec![egui::Event::PointerMoved(at), button(true), button(false)]
+}
+
+fn input(events: Vec<egui::Event>) -> egui::RawInput {
+    egui::RawInput {
+        events,
+        ..egui::RawInput::default()
+    }
+}
+
+/// Typing a number into the Y box of a vector field, one key per frame as a
+/// person types, then Enter, is one `entity.set` and one undo step; undo
+/// restores the saved scene byte for byte.
+#[test]
+fn typing_into_an_inspector_field_is_one_undo_step() {
+    let dir = project();
+    let before = scene_text(dir.path());
+    let mut app = open(dir.path(), true);
+    let mut ed = HeadlessEditor::new(1280, 720).expect("a headless GPU");
+    ed.editor.select(Some("crate_1"));
+    for _ in 0..2 {
+        ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    }
+    let rects = ed
+        .editor
+        .field_rects("crate_1", "Transform", "translation")
+        .to_vec();
+    assert_eq!(rects.len(), 3, "x, y and z boxes");
+    let log = app.history().log().len();
+
+    ed.frame(&mut app, &AllowAll, input(click(rects[1].center())))
+        .unwrap();
+    // Select what the box shows, then type over it.
+    let select_all = egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    ed.frame(&mut app, &AllowAll, input(vec![select_all]))
+        .unwrap();
+    for ch in ["1", "2", ".", "5"] {
+        ed.frame(
+            &mut app,
+            &AllowAll,
+            input(vec![egui::Event::Text(ch.into())]),
+        )
+        .unwrap();
+        assert_eq!(
+            app.history().log().len(),
+            log,
+            "committed while typing {ch}"
+        );
+    }
+    let enter = egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    for _ in 0..2 {
+        ed.frame(&mut app, &AllowAll, input(vec![enter.clone()]))
+            .unwrap();
+    }
+    ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    assert_eq!(
+        app.history().log().len(),
+        log + 1,
+        "{:?}",
+        ed.editor.console()
+    );
+    assert_eq!(
+        app.world()
+            .get("crate_1", "Transform", "translation")
+            .unwrap(),
+        Value::Vec3(Vec3::new(2.0, 12.5, 0.0))
+    );
+    assert_ne!(scene_text(dir.path()), before);
+
+    let out = ed.editor.undo(&mut app, &AllowAll);
+    assert!(out.ok, "{:?}", out.diagnostics);
+    assert!(!app.history().can_undo());
+    assert_eq!(scene_text(dir.path()), before);
+}
+
+/// Clicking another entity while a field is being typed into commits the
+/// typed value to the entity it belongs to, then selects the other one.
+#[test]
+fn changing_selection_commits_the_field_being_edited() {
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let mut ed = HeadlessEditor::new(1280, 720).expect("a headless GPU");
+    ed.editor.select(Some("crate_1"));
+    for _ in 0..2 {
+        ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    }
+    let rects = ed
+        .editor
+        .field_rects("crate_1", "Transform", "translation")
+        .to_vec();
+    ed.frame(&mut app, &AllowAll, input(click(rects[0].center())))
+        .unwrap();
+    let select_all = egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    ed.frame(&mut app, &AllowAll, input(vec![select_all]))
+        .unwrap();
+    ed.frame(
+        &mut app,
+        &AllowAll,
+        input(vec![egui::Event::Text("7".into())]),
+    )
+    .unwrap();
+    let sun = ed.editor.hierarchy_row("sun").expect("the Sun row");
+    ed.frame(&mut app, &AllowAll, input(click(sun.center())))
+        .unwrap();
+    for _ in 0..3 {
+        ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    }
+    assert_eq!(ed.editor.selected(), Some("sun"));
+    assert_eq!(
+        app.world()
+            .get("crate_1", "Transform", "translation")
+            .unwrap(),
+        Value::Vec3(Vec3::new(7.0, 0.5, 0.0)),
+        "{:?}",
+        ed.editor.console()
+    );
+}

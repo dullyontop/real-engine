@@ -104,7 +104,16 @@ impl Drop for EditorSocket {
     fn drop(&mut self) {
         if let Some((stop, thread)) = self.server.take() {
             stop.stop();
-            let _ = thread.join();
+            // `stop` wakes the server by connecting to the socket file; if
+            // that file was removed (`git clean`, a moved project), the
+            // server thread cannot be woken: leave it rather than hang.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            while !thread.is_finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            if thread.is_finished() {
+                let _ = thread.join();
+            }
         }
     }
 }

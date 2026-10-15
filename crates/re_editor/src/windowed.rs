@@ -1,6 +1,7 @@
 //! [`run_editor`]: the windowed editor (winit, a wgpu surface, egui).
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use re_app::App;
 use re_core::Diagnostic;
@@ -11,6 +12,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::view::{self, GameView};
+
+/// The time between frames when nothing else wakes the editor.
+const FRAME: Duration = Duration::from_millis(16);
 use crate::{Editor, EditorOptions, EditorSocket, codes};
 
 /// Runs the editor on `app` until its window is closed (or for
@@ -18,7 +22,8 @@ use crate::{Editor, EditorOptions, EditorSocket, codes};
 ///
 /// It first takes the project's single-writer lock as the editor and serves
 /// `.real/editor.sock` ([`EditorSocket`]); commands that other writers send
-/// are applied between frames. Then it opens a window with the game view and
+/// are applied between frames. With [`EditorOptions::agent_commands`] it also
+/// registers `re_agent`'s commands and starts an agent session. Then it opens a window with the game view and
 /// the panels. The lock is released and the socket removed when it returns.
 ///
 /// Must run on the main thread (winit's rule).
@@ -28,8 +33,18 @@ use crate::{Editor, EditorOptions, EditorSocket, codes};
 /// A [`Diagnostic`]: `RE8003` when another process holds the project,
 /// `RE8801` when no window can be opened, or a GPU error (`RE6002`,
 /// `RE6004`, …).
-pub fn run_editor(app: App, options: EditorOptions) -> anyhow::Result<()> {
-    let socket = EditorSocket::open(app.project())?;
+pub fn run_editor(mut app: App, mut options: EditorOptions) -> anyhow::Result<()> {
+    let socket = match options.socket.take() {
+        Some(socket) => socket,
+        None => EditorSocket::open(app.project())?,
+    };
+    if options.agent_commands {
+        // After the lock: the session's start checkpoint is the scene as the
+        // editor opened it, before any agent edit arrives on the socket.
+        let agent = re_agent::Agent::new(app.project());
+        re_agent::register_commands(app.commands_mut(), &agent);
+        agent.start_session(app.world())?;
+    }
     let mut status = match socket.path() {
         Some(_) => format!(
             "editor · {}",
@@ -47,7 +62,7 @@ pub fn run_editor(app: App, options: EditorOptions) -> anyhow::Result<()> {
     };
     let event_loop = EventLoop::new()
         .map_err(|e| no_display(format!("the event loop could not be created: {e}")))?;
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(ControlFlow::Wait);
     let size = options
         .size
         .unwrap_or([app.config().render.width, app.config().render.height]);
@@ -63,6 +78,7 @@ pub fn run_editor(app: App, options: EditorOptions) -> anyhow::Result<()> {
         window: None,
         gfx: None,
         frames: 0,
+        last_render_error: None,
         error: None,
     };
     event_loop
@@ -109,6 +125,7 @@ struct Host {
     window: Option<Arc<Window>>,
     gfx: Option<Gfx>,
     frames: u64,
+    last_render_error: Option<String>,
     error: Option<Diagnostic>,
 }
 
@@ -198,8 +215,14 @@ impl Host {
             &mut output,
             [gfx.config.width, gfx.config.height],
         );
-        if let Err(d) = gfx.view.render(&gfx.gpu, &mut gfx.renderer, &mut self.app) {
-            self.editor.log_diagnostic(&d);
+        match gfx.view.render(&gfx.gpu, &mut gfx.renderer, &mut self.app) {
+            // A persistent render error is logged once, not every frame.
+            Err(d) if self.last_render_error.as_ref() != Some(&d.message) => {
+                self.editor.log_diagnostic(&d);
+                self.last_render_error = Some(d.message);
+            }
+            Err(_) => {}
+            Ok(_) => self.last_render_error = None,
         }
         view::clear(&gfx.gpu, &target);
         gfx.renderer
@@ -253,10 +276,26 @@ impl ApplicationHandler for Host {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Redraw continuously so socket commands are applied promptly and the
-        // view follows them; throttled by the surface's Fifo present mode.
-        if let Some(window) = &self.window {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Serve the socket here too, not only when drawing: a hidden or
+        // minimized window may get no redraws, and a writer waiting on the
+        // socket must not hang. Then redraw at most every ~16 ms.
+        if self
+            .socket
+            .serve_pending(&mut self.app, &*self.options.policy)
+            > 0
+            && let Some(window) = &self.window
+        {
+            window.request_redraw();
+        }
+        let next = Instant::now() + FRAME;
+        event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+    }
+
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        if matches!(cause, winit::event::StartCause::ResumeTimeReached { .. })
+            && let Some(window) = &self.window
+        {
             window.request_redraw();
         }
     }
