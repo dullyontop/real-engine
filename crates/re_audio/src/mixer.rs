@@ -1,6 +1,6 @@
 //! `Audio`: the kira manager, the listener, and the sounds started by commands.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,6 +44,8 @@ struct Mixer<B: Backend> {
     listener: ListenerHandle,
     sources: HashMap<EntityId, Voice>,
     one_shots: Vec<Voice>,
+    /// Entities whose spatial sounds only pan (`SetSourceAttenuation`).
+    unattenuated: HashSet<EntityId>,
 }
 
 impl<B: Backend> Mixer<B> {
@@ -57,6 +59,7 @@ impl<B: Backend> Mixer<B> {
             listener,
             sources: HashMap::new(),
             one_shots: Vec::new(),
+            unattenuated: HashSet::new(),
         })
     }
 
@@ -64,12 +67,17 @@ impl<B: Backend> Mixer<B> {
         &mut self,
         data: StaticSoundData,
         position: Option<[f32; 3]>,
+        attenuate: bool,
     ) -> Result<Voice, Diagnostic> {
         match position {
             Some(p) => {
+                let mut builder = SpatialTrackBuilder::new();
+                if !attenuate {
+                    builder = builder.attenuation_function(None);
+                }
                 let mut track = self
                     .manager
-                    .add_spatial_sub_track(&self.listener, p, SpatialTrackBuilder::new())
+                    .add_spatial_sub_track(&self.listener, p, builder)
                     .map_err(|e| limit(&e.to_string()))?;
                 let sound = track.play(data).map_err(|e| limit(&e.to_string()))?;
                 Ok(Voice {
@@ -259,6 +267,16 @@ impl Audio {
         Ok(data)
     }
 
+    /// The length of a clip in seconds, loading it first if needed (see
+    /// [`Audio::load_clip`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Audio::load_clip`].
+    pub fn clip_seconds(&mut self, name: &str) -> Result<f64, Diagnostic> {
+        Ok(self.clip(name)?.duration().as_secs_f64())
+    }
+
     /// The number of sounds started by commands that are still playing.
     pub fn playing(&mut self) -> usize {
         with_mixer!(self, m => {
@@ -299,7 +317,7 @@ impl Audio {
                     .volume(linear_to_decibels(check_volume(*volume)?));
                 let position = position.map(|p| p.to_array());
                 with_mixer!(self, m => {
-                    let voice = m.play(data, position)?;
+                    let voice = m.play(data, position, true)?;
                     m.one_shots.push(voice);
                 });
             }
@@ -322,11 +340,13 @@ impl Audio {
                     if let Some(mut old) = m.sources.remove(entity) {
                         old.sound.stop(NOW);
                     }
-                    let voice = m.play(data, position)?;
+                    let attenuate = !m.unattenuated.contains(entity);
+                    let voice = m.play(data, position, attenuate)?;
                     m.sources.insert(*entity, voice);
                 });
             }
             AudioCmd::StopSource { entity } => with_mixer!(self, m => {
+                m.unattenuated.remove(entity);
                 if let Some(mut v) = m.sources.remove(entity) {
                     v.sound.stop(NOW);
                 }
@@ -344,6 +364,31 @@ impl Audio {
                     track.set_position(position.to_array(), NOW);
                 }
             }),
+            AudioCmd::SetSourceRate { entity, rate } => {
+                if !(rate.is_finite() && *rate > 0.0) {
+                    return Err(Diagnostic::error(
+                        codes::INVALID_RATE,
+                        format!("playback rate {rate} is not a finite number > 0"),
+                    ));
+                }
+                with_mixer!(self, m => {
+                    if let Some(v) = m.sources.get_mut(entity) {
+                        v.sound.set_playback_rate(f64::from(*rate), NOW);
+                    }
+                });
+            }
+            AudioCmd::SeekSource { entity, seconds } => with_mixer!(self, m => {
+                if let Some(v) = m.sources.get_mut(entity) {
+                    v.sound.seek_to(if seconds.is_finite() { seconds.max(0.0) } else { 0.0 });
+                }
+            }),
+            AudioCmd::SetSourceAttenuation { entity, enabled } => with_mixer!(self, m => {
+                if *enabled {
+                    m.unattenuated.remove(entity);
+                } else {
+                    m.unattenuated.insert(*entity);
+                }
+            }),
             AudioCmd::SetListener { position, rotation } => with_mixer!(self, m => {
                 m.listener.set_position(position.to_array(), NOW);
                 m.listener.set_orientation(rotation.normalize().to_array(), NOW);
@@ -353,6 +398,7 @@ impl Audio {
                 with_mixer!(self, m => m.manager.main_track().set_volume(db, NOW));
             }
             AudioCmd::StopAll => with_mixer!(self, m => {
+                m.unattenuated.clear();
                 for (_, mut v) in m.sources.drain() {
                     v.sound.stop(NOW);
                 }

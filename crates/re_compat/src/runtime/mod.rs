@@ -89,6 +89,8 @@ impl Bindings {
         crate::instance::register(&mut b);
         crate::services::core::register(&mut b);
         crate::datatypes::register(&mut b);
+        crate::tween::register(&mut b);
+        crate::sound::register(&mut b);
         crate::net::register(&mut b);
         crate::players::register(&mut b);
         crate::services::extra::register(&mut b);

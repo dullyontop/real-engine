@@ -37,6 +37,8 @@ pub mod runtime;
 pub mod scene;
 pub mod services;
 pub mod signal;
+pub mod sound;
+pub mod tween;
 
 pub use class::{
     Accessor, ClassDef, ClassMarker, ClassRegistry, ClassRegistryBuilder, Converter, EventDef,
@@ -84,6 +86,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::INVALID_PARENT,
         title: "Parent change refused",
         page: include_str!("../explain/RE9008.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_ASSET,
+        title: "Asset id not in the substitute table",
+        page: include_str!("../explain/RE9350.md"),
+    },
+    DiagInfo {
+        code: codes::EFFECT_BUDGET,
+        title: "Effect budget exceeded",
+        page: include_str!("../explain/RE9351.md"),
+    },
+    DiagInfo {
+        code: codes::NOT_TWEENABLE,
+        title: "Property cannot be tweened",
+        page: include_str!("../explain/RE9352.md"),
     },
     DiagInfo {
         code: codes::DEPRECATED_MEMBER,

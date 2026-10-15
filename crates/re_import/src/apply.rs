@@ -76,6 +76,8 @@ pub fn project_toml(name: &str) -> String {
             api: CompatApi::Roblox,
             signal_behavior: Default::default(),
             players: 1,
+            assets: Default::default(),
+            effect_budget: None,
         }
         .to_toml()
     )

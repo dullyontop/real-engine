@@ -247,3 +247,86 @@ fn commands_round_trip_through_json() {
     let text = serde_json::to_string(&cmd).unwrap();
     assert_eq!(text, r#"{"cmd":"stop_source","entity":7}"#);
 }
+
+fn start(e: EntityId, clip: &str, spatial: bool, position: Vec3) -> AudioCmd {
+    AudioCmd::StartSource {
+        entity: e,
+        clip: clip.into(),
+        volume: 1.0,
+        looping: false,
+        spatial,
+        position,
+    }
+}
+
+#[test]
+fn rate_and_seek_move_through_the_clip() {
+    let mut a = audio();
+    // 0.5 s clip: rate 2 ends it after 0.25 s.
+    a.insert_clip("tone", sine(440.0, 0.5, RATE, 0.5));
+    assert_eq!(a.clip_seconds("tone").unwrap(), 0.5);
+    let e = EntityId(3);
+    assert!(
+        a.apply(&[
+            start(e, "tone", false, Vec3::ZERO),
+            AudioCmd::SetSourceRate {
+                entity: e,
+                rate: 2.0
+            },
+        ])
+        .is_empty()
+    );
+    a.render_headless(RATE as usize / 5);
+    assert!(a.is_source_playing(e), "playing at 0.2 s");
+    a.render_headless(RATE as usize / 10);
+    assert!(!a.is_source_playing(e), "over by 0.3 s at double speed");
+
+    // A seek to 0.45 s leaves 0.05 s to play.
+    a.apply(&[
+        start(e, "tone", false, Vec3::ZERO),
+        AudioCmd::SeekSource {
+            entity: e,
+            seconds: 0.45,
+        },
+    ]);
+    a.render_headless(RATE as usize / 10);
+    assert!(!a.is_source_playing(e), "seeked near the end");
+
+    let errs = a.apply(&[AudioCmd::SetSourceRate {
+        entity: e,
+        rate: 0.0,
+    }]);
+    assert_eq!(errs.len(), 1);
+    assert_eq!(errs[0].code.to_string(), "RE7405");
+}
+
+#[test]
+fn a_source_without_attenuation_keeps_its_volume_far_away() {
+    let mut a = audio();
+    a.insert_clip("tone", sine(440.0, 2.0, RATE, 0.5));
+    let far = Vec3::new(0.0, 0.0, -500.0);
+    let (near_e, far_e) = (EntityId(1), EntityId(2));
+    a.apply(&[
+        AudioCmd::SetListener {
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+        },
+        AudioCmd::SetSourceAttenuation {
+            entity: near_e,
+            enabled: false,
+        },
+        start(near_e, "tone", true, far),
+    ]);
+    a.render_headless(2400);
+    let flat = rms(&a.render_headless(4800).unwrap(), 0);
+    a.apply(&[
+        AudioCmd::StopSource { entity: near_e },
+        start(far_e, "tone", true, far),
+    ]);
+    a.render_headless(2400);
+    let attenuated = rms(&a.render_headless(4800).unwrap(), 0);
+    assert!(
+        flat > 0.1 && attenuated < flat * 0.5,
+        "unattenuated {flat}, attenuated {attenuated}"
+    );
+}
