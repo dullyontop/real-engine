@@ -50,7 +50,7 @@ The M1 ownership rule ([M1_PLAN.md](M1_PLAN.md)) carries over, with these change
 ## Common rules for every WP
 
 The M1 common rules hold unchanged: build settings, toolchain, one-time setup, headless, GPU tests, errors, clean ports, lints and output files. Five rules are added:
-- **Diagnostic codes.** `re_compat` owns `RE9002`–`RE9799`, and the new tooling crate `re_import` owns `RE9800`–`RE9899`. `re_script` keeps `RE3000`–`RE3999` and `RE9001` ("unsupported API member"), which every layer raises for a member with no implementation. `RE9000` and `RE9900`–`RE9999` are reserved: no crate owns them, so the range check fails if any code in them is raised or given an explain page. A later milestone assigns them through the maintainer. WP9 changes the ranges in `tools/xtask/src/explain.rs` and ARCHITECTURE §7. Every code has an explain page, as in M1.
+- **Diagnostic codes.** `re_compat` owns `RE9002`–`RE9799`, and the new tooling crate `re_import` owns `RE9800`–`RE9899`. `re_script` keeps `RE3000`–`RE3999` and `RE9001` ("unsupported API member"), which every layer raises for a member with no implementation. `RE9000` and `RE9900`–`RE9999` are reserved: no crate owns them, so the range check fails if any code in them is raised or given an explain page. A later milestone assigns them through the maintainer. WP9 changes the ranges in `tools/xtask/src/explain.rs` and ARCHITECTURE §7. Every code has an explain page, as in M1. Inside `re_compat`'s range, each WP gets its own block, reserved in `src/codes.rs`: WP9 `RE9002`–`RE9005` and `RE9101`, WP11 `RE9006`–`RE9019`, WP14 `RE9200`–`RE9249`, WP13 `RE9250`–`RE9299`, WP12 `RE9300`–`RE9349` and WP15 `RE9350`–`RE9399`. A WP that needs more asks the maintainer.
 - **No copied reference text.** Class, member, enum and type names, signatures and default values are facts about an API and may be written into our data files. Descriptions, examples and other prose from any vendor's documentation are not copied. Each doc string in a data file is written for this repository (ADR-0034).
 - **Coverage status is honest.**
   - `implemented` means the behaviour matches for the cases our tests cover.
@@ -286,6 +286,8 @@ cargo test --locked -p re_compat net
 
 **Starts after:** WP11 PR "data model". It needs WP12 PR "two worlds" only for its client-side tests.
 
+**Physics ownership.** `re_compat` depends on `re_physics` directly (an exception to "subsystems through `HostServices`", ARCHITECTURE §2). `re_compat::physics` owns one `re_physics::Physics` per compat world, as a world resource, and syncs parts to it, the way `re_app`'s physics sync does for native scenes; WP16 "boot" only calls it. `re_physics` stays contract-only and never depends on `re_scene`. Characters (WP14) use the same `Physics`.
+
 **Build:**
 - `BasePart`, `Part` (`Shape` Block, Ball, Cylinder along X, and Wedge), `WedgePart`, `CornerWedgePart`, `TrussPart` and `SpawnLocation`, mapped to `Transform`, a primitive shape component and `RigidBody`:
   - `Size`, `CFrame`, `Position`, `Orientation`, `Anchored`, `CanCollide`, `CanQuery`, `CanTouch`, `Massless`, `CustomPhysicalProperties` (with Roblox's density units), `Material` (friction and density defaults per material);
@@ -418,7 +420,8 @@ cargo test --locked -p re_compat character
 
 **Acceptance:**
 ```sh
-RE_BACKENDS=vulkan cargo test --locked -p re_render -p re_compat gui -- --test-threads=1
+RE_BACKENDS=vulkan cargo test --locked -p re_render -- --test-threads=1
+RE_BACKENDS=vulkan cargo test --locked -p re_compat --test render --test gui --test tween --test sound -- --test-threads=1
 cargo test --locked -p re_audio
 ```
 - UI layout tests check `AbsolutePosition` and `AbsoluteSize` for nested frames with scale and offset, anchor points, list and grid layouts, padding, size constraints, aspect ratio and `AutomaticSize`, against hand-computed values.
@@ -491,6 +494,8 @@ xvfb-run -a -s "-screen 0 1280x720x24" real run --project examples/plaza --frame
 
 ## WP17: The M2 AI track
 
+**Status:** merged in #48. `project.import` and the new `play.run` steps (which need WP16 "boot") are still to come.
+
 **Goal.** The M2 row of the ROADMAP AI track: Luau-defined tools, MCP resources, structured output schemas and a verify-diff loop, plus MCP access to the new compat features.
 
 **Owned paths:** `crates/re_agent/`, `crates/re_mcp/`, `crates/re_cli/src/tooling/{mcp,agent}.rs` and `crates/re_cli/tests/mcp_e2e.rs`.
@@ -555,7 +560,7 @@ graph LR
 
 A solid arrow means "starts after". WP11's arrows to WP12–WP15 mean its "data model" PR, and its arrow to WP16 "boot" means both its PRs. A dotted arrow from WP16 "importer" means the private sample runner, which those WPs need before they are done; WP13–WP15 need it too, and come after WP16 "importer" in any order that reaches them. The dotted arrow to WP17 means its compat tools only.
 
-Critical path: WP9 → WP11 → WP12 → WP16 "boot" → WP14 → WP16 "plaza". WP11 is the widest WP and gates four others, so its first PR, "data model", stays small: contexts and `HostYield`, `InstanceRef`, property access, attributes and tags, signals, and `GetService` for the core services. `require`, script start, `RunService`, `task` and the `game` fields follow in "runtime".
+Critical path: WP9 → WP11 → WP12 → WP16 "boot" → WP16 "plaza", with WP13–WP15 running beside WP12 and "boot" and all three needed for "plaza". WP14 starts after WP11 "data model", like WP13 and WP15; it is on the critical path only because "plaza" needs it. WP11 is the widest WP and gates four others, so its first PR, "data model", stays small: contexts and `HostYield`, `InstanceRef`, property access, attributes and tags, signals, and `GetService` for the core services. `require`, script start, `RunService`, `task` and the `game` fields follow in "runtime".
 
 ## Definition of done for M2
 
