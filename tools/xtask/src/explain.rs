@@ -23,7 +23,8 @@ use anyhow::{Context, Result, bail};
 pub fn ranges(krate: &str) -> &'static [(u16, u16)] {
     match krate {
         "re_core" => &[(0, 499)],
-        "re_app" | "re_cli" => &[(500, 999)],
+        "re_app" => &[(500, 899)],
+        "re_cli" => &[(900, 999)],
         "re_reflect" => &[(1000, 1199)],
         "re_scene" => &[(1200, 1999)],
         "re_command" => &[(2000, 2999)],

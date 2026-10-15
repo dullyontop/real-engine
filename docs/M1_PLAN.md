@@ -65,7 +65,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | `Physics` (`new`, `config`, `apply`, `step`, `poses_into`, `velocity`, `pose`, `is_awake`, `character`, `events`, `take_diagnostics`, `body_count`, `character_count`, `jobs_queued`, `save_state` / `restore_state`, `motion_state` / `apply_motion_state`, queries `raycast` / `shape_cast` / `overlap_sphere`), `PhysicsConfig`, `LayerTable`, `QueryFilter`, `PhysicsSnapshot`, `MotionState`, `DIAGNOSTICS`, `codes` | `crates/re_physics/src/` | WP2 | WP2 exit | WP6 |
 | `ProcGraph`, `NodeRegistry`, `Evaluator`, `EvalReport`, `GraphStore`, `register_generator`, `register_commands` | `crates/re_proc/src/` | WP4 | WP4 exit | WP6 |
 | `AssetServer`, `load_material`, `AssetWatcher`, `RawInput`, `ActionMap`, `InputConfig`, `Replay`, `Audio`, `Sampler`, `Tween` | WP5 crates | WP5 | WP5 exit | WP6 |
-| `App::open`, `App::serve(EngineReceiver)`, `AppConfig`, `verify::{run, VerifyStage}` | `crates/re_app/src/` | WP6 | WP6 milestone "app" | WP7, WP8 |
+| `App::open`, `App::serve(EngineReceiver, &dyn PolicyCheck)`, `AppConfig`, `verify::{run, VerifyStage}` | `crates/re_app/src/` | WP6 | WP6 milestone "app" | WP7, WP8 |
 | `ScriptRuntime` (construction with a `HostServices`, the `game` and `tools` contexts, the per-phase entry point, `reload`), with signatures in rustdoc | `crates/re_script/src/` | WP3 | WP3 exit | WP6 |
 | `ReplayRecorder` | `crates/re_input/src/` | WP5 | WP5 exit | WP6 |
 | Tooling stubs: `McpArgs`, `AgentArgs`, `EditorArgs` and `run(args, project) -> anyhow::Result<ExitCode>` | `crates/re_cli/src/tooling/{mcp,agent,editor}.rs` | WP6 | WP6 milestone "app" | WP7, WP8 (fill them in) |
@@ -860,7 +860,7 @@ Required tests:
 
 Everything WP6 builds before the CLI and the demo (the milestone PR plus those integration PRs):
 - `re_app::App::open(project, AppConfig)`, `AppConfig` from `real.toml`, and the phase loop of ADR-0009. `App` implements `re_command::EditTarget`.
-- `App::serve(EngineReceiver)`: a headless loop on the current thread that answers `EngineRequest`s between frames.
+- `App::serve(EngineReceiver, &dyn PolicyCheck)`: a headless loop on the current thread that answers `EngineRequest`s, checking each against the policy it is given. It is edit mode: nothing simulates, so the scene being edited is the scene on disk (running the game is `play.run` or `real run`).
 - `sync::physics::{push, pull}` (`RigidBody`, `Collider`, `CharacterController` → `PhysicsCmd`; poses → `Transform`), `sync::render::build` (`Transform`/`GlobalTransform`, `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light` → `RenderSnapshot`), `sync::audio::build` and `GlobalTransform` interpolation. Sync uses typed bevy queries through `re_scene::World::ecs`, not by-name access. The component-to-`BodyDesc` / `CharacterDesc` mapping rules are the notes under WP0's built-in component table. Queries apply a character's `groups` to its inner body, so `HostServices::raycast` with a mask that excludes the player's groups skips the player.
 - `World::propagate()` runs in the Sync phase; `World::regenerate_changed()` runs in EndFrame after commands.
 - `run_windowed` and `run_headless(frames, replay)`.
@@ -876,7 +876,7 @@ Everything WP6 builds before the CLI and the demo (the milestone PR plus those i
 - Script hot reload: `AssetWatcher` changes under `scripts/` go to `ScriptRuntime::reload`.
 - PerfReport, giving per-phase mean, p95 and max, plus counts and the renderer's `stats()`.
 - `verify::run(&App, &VerifyOptions, extra: &[&dyn VerifyStage])`, with the stages of ADR-0022. Stage 3 (the static scan) is passed in by `re_cli` when it is built with `tooling`; without it the stage reports "skipped".
-- Codes RE0500–0999.
+- Codes RE0500–0899 (`re_app`) and RE0900–0999 (`re_cli`).
 
 **CLI and demo:**
 - `re_cli` builds the `real` binary. Global option: `--project DIR` (default: the current directory). Subcommands:
