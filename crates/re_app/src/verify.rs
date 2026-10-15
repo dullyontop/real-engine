@@ -227,7 +227,8 @@ fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
                     Some(e.to_diagnostic()),
                 )
             })?;
-            World::new().load(&doc).map(|_| ()).map_err(|e| {
+            let mut world = crate::app::content_world(config)?;
+            world.load(&doc).map(|_| ()).map_err(|e| {
                 invalid(
                     file,
                     format!("{file} does not load"),
@@ -260,7 +261,7 @@ fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
                     Some(e.to_diagnostic()),
                 )
             })?;
-            let mut w = World::new();
+            let mut w = crate::app::content_world(config)?;
             w.declare_script_components(&p.script_components)
                 .and_then(|()| p.instantiate(&w.registry, "verify"))
                 .map(|_| ())

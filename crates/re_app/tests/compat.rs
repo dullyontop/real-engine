@@ -105,6 +105,8 @@ fn quick() -> VerifyOptions {
 fn verify_boots_a_compat_project_and_reports_its_output() {
     let dir = project(SERVER, CLIENT);
     let report = verify::run_project(dir.path(), &config(dir.path()), &quick(), &[]);
+    let schema = report.stage("schema").unwrap();
+    assert!(schema.ok, "{:?}", schema.diagnostics);
     let boot = report.stage("boot").unwrap();
     assert!(boot.ok, "{:?}", boot.diagnostics);
     assert_eq!(boot.data["frames"], 60);

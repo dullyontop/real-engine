@@ -1898,6 +1898,23 @@ fn headless_audio(project: &Path) -> Audio {
     audio
 }
 
+/// An empty World with the components the project's content may use: in a
+/// compat project, the class layer's components too.
+pub(crate) fn content_world(config: &AppConfig) -> Result<World, Diagnostic> {
+    let mut world = World::new();
+    if config.compat.is_some() {
+        // A compat scene's instances carry the class layer's components.
+        let setup = crate::compat::setup()?;
+        setup.classes.register_components(&mut world).map_err(|e| {
+            Diagnostic::error(
+                codes::ENTRY_SCENE_FAILED,
+                format!("the compat classes do not register: {e}"),
+            )
+        })?;
+    }
+    Ok(world)
+}
+
 /// A fresh World with the entry scene loaded and the graphs of its procedural
 /// sources in its store (they generate on the first `regenerate_changed`), with
 /// the problems making those graphs.
@@ -1910,16 +1927,8 @@ fn load_world(project: &Path, config: &AppConfig) -> Result<(World, Vec<Diagnost
     let doc = re_scene::scene::from_json(&text).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not parse")).with_related(e.to_diagnostic())
     })?;
-    let mut world = World::new();
+    let mut world = content_world(config).map_err(|e| fail(e.message.clone()))?;
     procedural::install(&mut world, project);
-    if config.compat.is_some() {
-        // A compat scene's instances carry the class layer's components.
-        let setup = crate::compat::setup()?;
-        setup
-            .classes
-            .register_components(&mut world)
-            .map_err(|e| fail(format!("the compat classes do not register: {e}")))?;
-    }
     world.load(&doc).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not load")).with_related(e.to_diagnostic())
     })?;
