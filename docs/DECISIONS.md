@@ -832,7 +832,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Consequences.**
 - The registry is about 400 lines, with our own error messages and coercion rules, and one model for native and script components.
 - By-name access costs about 2× typed access with a pre-resolved key, and about 12× when every name is looked up; that is fine for scripts, commands and agents, while hot engine systems stay typed.
-- Container field types (lists and string-keyed maps) are not in M1. M2 adds them for attributes and tags (ARCHITECTURE §4); they affect the schema, the Luau bindings and diffing, so they get their own design pass.
+- **Amendment (M2, WP9 PR "containers").** The closed set grows by three container types. `list` holds items of one scalar or record type. `map` holds string keys and dynamically typed values: scalars, records, or lists of those; integers are stored as floats. `record` is a named, fixed tuple of scalar fields registered once per process (`RecordSchema::register`); registration refuses a changed shape, so the set stays closed. No container holds an entity reference. In files, map values that are not a bool, number or string carry a `$type` tag. `Value::diff` reports changed list indices, map keys or record fields, and an equal write trips no change detection. In Luau, a list is an array, a map a string-keyed table, and a record a frozen table until WP10 replaces it with userdata. Immutable components can be reflected; the registry writes them by replacement so their hooks see every change, which keeps `re_scene`'s `TagIndex` exact.
 
 ## ADR-0033: Private sample projects are checked by a public runner and a private kit
 
