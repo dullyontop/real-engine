@@ -7,20 +7,19 @@ use std::path::{Path, PathBuf};
 use re_compat::data::ClassFile;
 use re_compat::{ClassRegistry, ClassRegistryBuilder};
 
-/// Stand-in service classes (and a test class with properties) until the data
-/// model work package's classes land; the importer reads whatever the class
-/// layer defines.
+/// Stand-in classes the data files do not declare yet (and a test class with
+/// properties); the importer reads whatever the class layer defines.
 pub const TEST_CLASSES: &str = include_str!("../fixtures/classes.json");
 
 pub fn registry() -> ClassRegistry {
-    ClassRegistryBuilder::builtin()
-        .unwrap()
-        .classes(
-            "tests/fixtures/classes.json",
-            ClassFile::parse("classes.json", TEST_CLASSES).unwrap(),
-        )
-        .build()
-        .unwrap()
+    let mut b = ClassRegistryBuilder::builtin().unwrap().classes(
+        "tests/fixtures/classes.json",
+        ClassFile::parse("classes.json", TEST_CLASSES).unwrap(),
+    );
+    for (prop, a) in re_compat::instance::accessors() {
+        b = b.accessor("Instance", prop, a);
+    }
+    b.build().unwrap()
 }
 
 pub fn fixture(name: &str) -> PathBuf {
