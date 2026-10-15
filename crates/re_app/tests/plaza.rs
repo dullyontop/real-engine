@@ -110,7 +110,7 @@ fn a_play_copy_draws_with_the_lent_renderer_and_gives_it_back() {
 }
 
 #[test]
-fn text_a_play_copy_laid_out_first_still_reaches_the_window() {
+fn text_a_play_copy_laid_out_first_reaches_the_window_too() {
     // The copy runs the egui context's first pass and draws nothing, so the
     // font atlas it made must go to the live view.
     let mut app = open();
@@ -127,4 +127,29 @@ fn text_a_play_copy_laid_out_first_still_reaches_the_window() {
     let mut fresh = open();
     fresh.run_headless(Some(30), None).unwrap();
     assert_eq!(after_copy.rgba, fresh.screenshot(None).unwrap().rgba);
+}
+
+#[test]
+fn the_walk_replay_moves_the_character_and_picks_up_a_coin() {
+    let path = plaza().join("tests/replays/walk.replay.json");
+    let replay: re_types::replay::ReplayDoc =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let mut app = open();
+    let steps = serde_json::from_value::<Vec<re_app::play::PlayStep>>(json!([
+        hook("Position", json!(["Player1"])),
+        hook("Coins", json!(["Player1"])),
+    ]))
+    .unwrap();
+    let frames = replay.frames;
+    let (report, results, _) = app.play_copy(frames, Some(replay), &steps, false).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    // The spawn is at (0, 4, 14); the walk ends on the plaza, north of it.
+    let at = &results[0]["results"][0];
+    let (x, y, z) = (
+        at[0].as_f64().unwrap(),
+        at[1].as_f64().unwrap(),
+        at[2].as_f64().unwrap(),
+    );
+    assert!(z < -20.0 && x.abs() < 60.0 && y > 0.0, "{at}");
+    assert_eq!(results[1]["results"], json!([1]));
 }

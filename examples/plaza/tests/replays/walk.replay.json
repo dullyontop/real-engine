@@ -9,37 +9,37 @@
       "down": true
     },
     {
-      "frame": 240,
+      "frame": 200,
       "key": "KeyD",
       "down": true
     },
     {
-      "frame": 300,
+      "frame": 230,
       "key": "Space",
       "down": true
     },
     {
-      "frame": 306,
+      "frame": 236,
       "key": "Space",
       "down": false
     },
     {
-      "frame": 360,
-      "key": "KeyD",
-      "down": false
-    },
-    {
-      "frame": 480,
+      "frame": 260,
       "key": "KeyW",
       "down": false
     },
     {
-      "frame": 500,
+      "frame": 300,
+      "key": "KeyD",
+      "down": false
+    },
+    {
+      "frame": 320,
       "key": "KeyA",
       "down": true
     },
     {
-      "frame": 620,
+      "frame": 420,
       "key": "KeyA",
       "down": false
     },
@@ -59,6 +59,12 @@
         0.0
       ],
       "frame": 720
+    }
+  ],
+  "checks": [
+    {
+      "frame": 600,
+      "screenshot": "tests/goldens/{backend}/walk_f600.png"
     }
   ]
 }
