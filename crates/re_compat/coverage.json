@@ -2,12 +2,134 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1474,
-    "partial": 104,
-    "stub-error": 52,
+    "implemented": 1630,
+    "partial": 142,
+    "stub-error": 53,
     "missing": 3
   },
   "classes": [
+    {
+      "name": "AlignOrientation",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "CFrame",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxAngularVelocity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxTorque",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Mode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PrimaryAxisOnly",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: all three axes align."
+        },
+        {
+          "name": "ReactionTorqueEnabled",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "Responsiveness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RigidityEnabled",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "AlignPosition",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ApplyAtCenterOfMass",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxForce",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxVelocity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Mode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Position",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ReactionForceEnabled",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "Responsiveness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RigidityEnabled",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "AngularVelocity",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AngularVelocity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxTorque",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RelativeTo",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
     {
       "name": "Animation",
       "superclass": "Instance",
@@ -159,6 +281,69 @@
       ]
     },
     {
+      "name": "Attachment",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Axis",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CFrame",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Orientation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Position",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SecondaryAxis",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Visible",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WorldAxis",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WorldCFrame",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WorldOrientation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WorldPosition",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WorldSecondaryAxis",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Backpack",
       "superclass": "Instance",
       "status": "implemented",
@@ -184,6 +369,280 @@
           "name": "UserHasBadgeAsync",
           "kind": "method",
           "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "BallSocketConstraint",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "LimitsEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxFrictionTorque",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "Restitution",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "TwistLimitsEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TwistLowerAngle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TwistUpperAngle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "UpperAngle",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "BasePart",
+      "superclass": "PVInstance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Anchored",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ApplyAngularImpulse",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ApplyImpulse",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ApplyImpulseAtPosition",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "AssemblyAngularVelocity",
+          "kind": "property",
+          "status": "partial",
+          "note": "On a client, a part the server simulates reads zero: the client does not simulate it."
+        },
+        {
+          "name": "AssemblyCenterOfMass",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AssemblyLinearVelocity",
+          "kind": "property",
+          "status": "partial",
+          "note": "On a client, a part the server simulates reads zero: the client does not simulate it."
+        },
+        {
+          "name": "AssemblyMass",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AssemblyRootPart",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BreakJoints",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "CFrame",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanCollide",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanCollideWith",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "CanQuery",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanSetNetworkOwnership",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "CanTouch",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CollisionGroup",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored and replicated; the renderer does not draw it yet."
+        },
+        {
+          "name": "CurrentPhysicalProperties",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CustomPhysicalProperties",
+          "kind": "property",
+          "status": "partial",
+          "note": "Kept while the place runs; not saved with the scene. Setting it back to nil from a script is refused."
+        },
+        {
+          "name": "GetConnectedParts",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetJoints",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMass",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetNetworkOwner",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetRootPart",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetTouchingParts",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetVelocityAtPosition",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsGrounded",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Mass",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Massless",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Material",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Orientation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Position",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RootPriority",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RotVelocity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Rotation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SetNetworkOwner",
+          "kind": "method",
+          "status": "partial",
+          "note": "Recorded on the assembly's parts and used by replication; the server still simulates the assembly."
+        },
+        {
+          "name": "SetNetworkOwnershipAuto",
+          "kind": "method",
+          "status": "partial",
+          "note": "Gives ownership back to the server; ownership is never assigned automatically."
+        },
+        {
+          "name": "Size",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TouchEnded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Touched",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Transparency",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored and replicated; the renderer does not draw it yet."
+        },
+        {
+          "name": "Velocity",
+          "kind": "property",
+          "status": "implemented"
         }
       ]
     },
@@ -320,6 +779,13 @@
       ]
     },
     {
+      "name": "Camera",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": []
+    },
+    {
       "name": "CollectionService",
       "superclass": "Instance",
       "service": true,
@@ -373,6 +839,38 @@
       "creatable": true,
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "Constraint",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Active",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Attachment0",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Attachment1",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Visible",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "ContextActionService",
@@ -451,6 +949,13 @@
           "status": "implemented"
         }
       ]
+    },
+    {
+      "name": "CornerWedgePart",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "implemented",
+      "members": []
     },
     {
       "name": "DataModel",
@@ -821,6 +1326,76 @@
           "kind": "property",
           "status": "partial",
           "note": "A fixed 58-pixel band from x 0 to 0; there is no top bar or real screen width here."
+        }
+      ]
+    },
+    {
+      "name": "HingeConstraint",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ActuatorType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AngularSpeed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AngularVelocity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CurrentAngle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LimitsEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LowerAngle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MotorMaxAcceleration",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "MotorMaxTorque",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Restitution",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "ServoMaxTorque",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TargetAngle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "UpperAngle",
+          "kind": "property",
+          "status": "implemented"
         }
       ]
     },
@@ -1796,6 +2371,43 @@
       ]
     },
     {
+      "name": "JointInstance",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Active",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "C0",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "C1",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Part0",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Part1",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Keyframe",
       "superclass": "Instance",
       "creatable": true,
@@ -1869,6 +2481,50 @@
       "members": []
     },
     {
+      "name": "LinearVelocity",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ForceLimitsEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LineDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LineVelocity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxForce",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RelativeTo",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "VectorVelocity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "VelocityConstraintMode",
+          "kind": "property",
+          "status": "partial",
+          "note": "Plane mode is not built: the constraint applies no force in it."
+        }
+      ]
+    },
+    {
       "name": "LocalScript",
       "superclass": "Script",
       "creatable": true,
@@ -1879,6 +2535,13 @@
       "name": "LuaSourceContainer",
       "superclass": "Instance",
       "status": "partial",
+      "members": []
+    },
+    {
+      "name": "ManualWeld",
+      "superclass": "Weld",
+      "creatable": true,
+      "status": "implemented",
       "members": []
     },
     {
@@ -1960,7 +2623,50 @@
       "superclass": "PVInstance",
       "creatable": true,
       "status": "partial",
-      "members": []
+      "members": [
+        {
+          "name": "GetBoundingBox",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetExtentsSize",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPrimaryPartCFrame",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "MoveTo",
+          "kind": "method",
+          "status": "partial",
+          "note": "Does not step up over parts in the way."
+        },
+        {
+          "name": "PrimaryPart",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SetPrimaryPartCFrame",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "TranslateBy",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "WorldPivot",
+          "kind": "property",
+          "status": "partial",
+          "note": "With a primary part, setting it moves that part (PivotOffset is not built). Without one, the pivot set is kept while the place runs, not saved; until set it is the bounding-box centre."
+        }
+      ]
     },
     {
       "name": "ModuleScript",
@@ -1970,10 +2676,146 @@
       "members": []
     },
     {
+      "name": "Motor",
+      "superclass": "JointInstance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "CurrentAngle",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "DesiredAngle",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the motor does not turn toward it."
+        },
+        {
+          "name": "MaxVelocity",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        }
+      ]
+    },
+    {
+      "name": "Motor6D",
+      "superclass": "Motor",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Transform",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "PVInstance",
       "superclass": "Instance",
       "status": "missing",
-      "members": []
+      "members": [
+        {
+          "name": "GetPivot",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PivotTo",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Part",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Shape",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "PhysicsService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "CollisionGroupSetCollidable",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "CollisionGroupsAreCollidable",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "CreateCollisionGroup",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetCollisionGroupId",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetCollisionGroupName",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetMaxCollisionGroups",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetRegisteredCollisionGroups",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "IsCollisionGroupRegistered",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "RegisterCollisionGroup",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "RemoveCollisionGroup",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "RenameCollisionGroup",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "SetPartCollisionGroup",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "UnregisterCollisionGroup",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "Player",
@@ -2495,6 +3337,54 @@
       "members": []
     },
     {
+      "name": "RodConstraint",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "CurrentDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Length",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "RopeConstraint",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "CurrentDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Length",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Restitution",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        },
+        {
+          "name": "WinchEnabled",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only."
+        }
+      ]
+    },
+    {
       "name": "RunService",
       "superclass": "Instance",
       "service": true,
@@ -2692,6 +3582,13 @@
       ]
     },
     {
+      "name": "Snap",
+      "superclass": "JointInstance",
+      "creatable": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
       "name": "Sound",
       "superclass": "Instance",
       "creatable": true,
@@ -2859,6 +3756,35 @@
         },
         {
           "name": "RolloffScale",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "SpawnLocation",
+      "superclass": "Part",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "AllowTeamChangeOnTouch",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; touching the spawn does not change a player's team yet."
+        },
+        {
+          "name": "Duration",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Neutral",
           "kind": "property",
           "status": "implemented"
         }
@@ -3064,6 +3990,12 @@
           "status": "stub-error"
         }
       ]
+    },
+    {
+      "name": "Terrain",
+      "superclass": "BasePart",
+      "status": "partial",
+      "members": []
     },
     {
       "name": "TextBox",
@@ -3496,6 +4428,13 @@
           "status": "implemented"
         }
       ]
+    },
+    {
+      "name": "TrussPart",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "partial",
+      "members": []
     },
     {
       "name": "Tween",
@@ -4047,6 +4986,29 @@
       ]
     },
     {
+      "name": "VectorForce",
+      "superclass": "Constraint",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "ApplyAtCenterOfMass",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Force",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RelativeTo",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "ViewportFrame",
       "superclass": "GuiObject",
       "creatable": true,
@@ -4054,17 +5016,130 @@
       "members": []
     },
     {
+      "name": "WedgePart",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "Weld",
+      "superclass": "JointInstance",
+      "creatable": true,
+      "status": "implemented",
+      "members": []
+    },
+    {
+      "name": "WeldConstraint",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Active",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Part0",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Part1",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "Workspace",
       "superclass": "WorldRoot",
       "service": true,
       "status": "partial",
-      "members": []
+      "members": [
+        {
+          "name": "CurrentCamera",
+          "kind": "property",
+          "status": "partial",
+          "note": "The camera's own properties come with the rendering work."
+        },
+        {
+          "name": "FallenPartsDestroyHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Gravity",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Terrain",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "WorldRoot",
       "superclass": "Model",
       "status": "partial",
-      "members": []
+      "members": [
+        {
+          "name": "Blockcast",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "BulkMoveTo",
+          "kind": "method",
+          "status": "partial",
+          "note": "The event mode is ignored: CFrame change events fire as for single moves."
+        },
+        {
+          "name": "FindPartOnRay",
+          "kind": "method",
+          "status": "stub-error",
+          "note": "Use Raycast."
+        },
+        {
+          "name": "GetPartBoundsInBox",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPartBoundsInRadius",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPartsInPart",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Raycast",
+          "kind": "method",
+          "status": "partial",
+          "note": "IgnoreWater has no effect: there is no terrain water."
+        },
+        {
+          "name": "Shapecast",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Spherecast",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
     }
   ],
   "enums": [

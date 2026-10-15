@@ -22,12 +22,14 @@
 pub mod app;
 pub mod codes;
 pub mod commands;
+pub mod compat;
 pub mod config;
 pub mod gfx;
 pub mod host;
 pub mod hud;
 pub mod media;
 pub mod perf;
+pub mod play;
 pub mod procedural;
 pub mod sync;
 pub mod verify;
@@ -175,6 +177,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::REGENERATION_BROKE,
         title: "Regeneration broke the game",
         page: include_str!("../explain/RE0525.md"),
+    },
+    DiagInfo {
+        code: codes::STUCK_YIELD,
+        title: "A script waits forever",
+        page: include_str!("../explain/RE0526.md"),
+    },
+    DiagInfo {
+        code: codes::PLAY_STEP_FAILED,
+        title: "A play.run step failed",
+        page: include_str!("../explain/RE0527.md"),
     },
 ];
 

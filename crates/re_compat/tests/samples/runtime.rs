@@ -15,7 +15,8 @@
 //!   was written to it, else the instance's first child of that class), and `prelude` gives Luau run in `server` and `client`
 //!   before the scripts start (to make stand-in instances such as the local
 //!   player). `cpu_budget_ms` (default 10 000, Roblox's script timeout)
-//!   replaces the per-resume budget.
+//!   replaces the per-resume budget. `two_worlds: true` runs the server and
+//!   the client as two worlds with the `[compat] players` joined.
 //! * `runtime.graph`: after `runtime.boot`, every `require` the boot ran
 //!   resolved (no `RE3004`), and nothing it required sits under
 //!   `never_under`.
@@ -81,10 +82,29 @@ fn setup(ctx: &Ctx, stubs: Option<&str>) -> Result<Arc<CompatSetup>, String> {
         let path = ctx.kit_path(file);
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{file}: {e}"))?;
         let mut data = ClassFile::parse(file, &text).map_err(|e| e.to_string())?;
-        // A class the crate's own data declares by now is no longer stood in.
         let known = re_compat::ClassRegistry::builtin().map_err(|e| e.to_string())?;
-        data.classes
-            .retain(|c| c.extend || known.class(&c.name).is_err());
+        // A class the crate's own data declares by now is no longer stood
+        // in: what is left of it extends the crate's class with the members
+        // the crate still lacks.
+        for c in data.classes.iter_mut() {
+            if !c.extend && known.class(&c.name).is_ok() {
+                c.extend = true;
+                c.superclass = None;
+                c.creatable = false;
+                c.service = false;
+                c.components.clear();
+                c.status = None;
+                c.note.clear();
+                c.doc.clear();
+            }
+        }
+        // Nor is a member an extension adds that the class has by now.
+        for c in data.classes.iter_mut().filter(|c| c.extend) {
+            let has = |m: &str| known.member(&c.name, m).is_ok();
+            c.properties.retain(|p| !has(&p.name));
+            c.methods.retain(|m| !has(&m.name));
+            c.events.retain(|e| !has(&e.name));
+        }
         for c in &data.classes {
             for p in &c.properties {
                 if !matches!(p.storage, re_compat::data::StorageDoc::Builtin) {
@@ -187,8 +207,16 @@ fn start(ctx: &mut Ctx, args: &J) -> Result<(), String> {
     }
 }
 
-/// The harness after a boot, kept for `runtime.graph`.
+/// The harness after a boot, kept for `runtime.graph` and later steps.
 struct Booted(Harness);
+
+/// The harness `runtime.boot` left, for later steps to drive further.
+pub fn booted(ctx: &mut Ctx) -> Option<&mut Harness> {
+    ctx.state
+        .get_mut("runtime.booted")
+        .and_then(|b| b.downcast_mut::<Booted>())
+        .map(|b| &mut b.0)
+}
 
 fn boot(ctx: &mut Ctx, args: &J) -> Result<(), String> {
     let frames = args["frames"].as_u64().unwrap_or(1) as u32;
@@ -200,6 +228,7 @@ fn boot(ctx: &mut Ctx, args: &J) -> Result<(), String> {
     // trees.
     let opts = HarnessOptions {
         cpu_budget_ms: Some(args["cpu_budget_ms"].as_u64().unwrap_or(10_000)),
+        two_worlds: args["two_worlds"].as_bool().unwrap_or(false),
         ..HarnessOptions::default()
     };
     let mut h = Harness::open_with(&ctx.project(), &setup, opts).map_err(|d| d.render_human())?;

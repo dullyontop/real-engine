@@ -54,3 +54,6 @@ pub const UNKNOWN_LAYER: Code = Code::new("RE5015");
 
 /// A step length or query argument is out of range.
 pub const INVALID_ARGUMENT: Code = Code::new("RE5016");
+
+/// An assembly's part list is empty or malformed, or Jolt refused its shape.
+pub const ASSEMBLY_INVALID: Code = Code::new("RE5017");

@@ -92,7 +92,8 @@ with `script.write` is listed after the MCP server restarts.
 ## Reference material
 
 The explain pages, the engine's documents and the Luau definitions
-(`engine.d.luau`) are MCP resources (`real://explain/RE2005`,
+(`engine.d.luau`, and `roblox.d.luau` for the Roblox-style API) are MCP
+resources (`real://explain/RE2005`,
 `real://docs/ARCHITECTURE.md`, `real://luau/engine.d.luau`). Without
 resources, `resource.list` and `resource.read` return the same text.
 
@@ -103,6 +104,13 @@ libraries the engine implements (`implemented`, `partial` with the gap,
 `stub-error`, `missing`); ask for one class by `name` to see its inherited
 members. `scene.dump_tree` returns the instance tree with each entity's class,
 attributes and tags.
+
+`project.import` brings a Rojo-style project or a Studio loader script that is
+inside the project into it. It only reports what would change until you pass
+`write: true`; the write is one undoable step. It removes instances an earlier
+import made that the input no longer declares, which needs `destructive`;
+pass `keep_stale: true` to keep them. `play.run` plays the place with steps
+(`add_player`, `say`, `invoke`, `dump_tree`) to check it.
 
 ## What you may do
 

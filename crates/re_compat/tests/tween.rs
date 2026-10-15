@@ -360,7 +360,7 @@ fn a_destroyed_target_stops_its_tween_and_finished_tweens_are_collected() {
     }
     assert!(p.out().is_empty());
     assert_eq!(p.lua(re_compat::tween::count), 0);
-    p.run("for _, x in workspace:GetChildren() do assert(x.N > 0) end");
+    p.run("for _, x in workspace:GetChildren() do if x.ClassName == \"TweenTarget\" then assert(x.N > 0) end end");
 }
 
 #[test]
