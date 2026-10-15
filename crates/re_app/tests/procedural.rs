@@ -228,3 +228,90 @@ fn play_run_regenerates_on_the_copy_only() {
     let report = app.run_headless(Some(30), None).unwrap();
     assert!(report.ok(), "{:?}", report.diagnostics);
 }
+
+#[test]
+fn ten_regenerations_keep_the_shape_library_bounded() {
+    let dir = project(BUILDER);
+    let mut app = open(dir.path());
+    app.run_headless(Some(2), None).unwrap();
+    let base = app.shapes_mut().len();
+    assert!(base >= 1);
+    for seed in 2..12 {
+        regenerate(&mut app, seed);
+        app.run_headless(Some(2), None).unwrap();
+        assert_eq!(app.shapes_mut().len(), base, "after seed {seed}");
+    }
+}
+
+#[test]
+fn pointing_a_source_at_another_builder_loads_that_graph() {
+    let dir = project(BUILDER);
+    std::fs::write(
+        dir.path().join("scripts/tools/flat.luau"),
+        r#"local g = proc.graph("flat")
+local h = g:node("terrain.heightfield", { size = 9, cell = 4.0, height = 0.0 }, nil, "h")
+g:node("terrain.mesh", { collider = true }, { field = h }, "ground")
+return g
+"#,
+    )
+    .unwrap();
+    let mut app = open(dir.path());
+    app.run_headless(Some(30), None).unwrap();
+    let out = app.dispatch(
+        "entity.set",
+        json!({ "id": "island", "component": "GraphSource", "field": "builder", "value": "scripts/tools/flat.luau" }),
+        false,
+        &AllowAll,
+        Origin::User,
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    let report = app.run_headless(Some(120), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    let y = position(&app, "hero").y;
+    assert!((y - 0.9).abs() < 0.25, "on the flat ground now: {y}");
+}
+
+#[test]
+fn re_grounding_passes_through_what_is_above_the_terrain() {
+    let dir = project(BUILDER);
+    // A wide roof high over the hero: the ray must not put the hero on it.
+    let scene = SCENE.replace(
+        r#"    { "id": "island""#,
+        r#"    { "id": "roof", "components": {
+        "Collider": { "shape": "Box", "half_extents": [10.0, 0.5, 10.0] },
+        "Transform": { "translation": [3.0, 80.0, 2.0] } } },
+    { "id": "island""#,
+    );
+    std::fs::write(dir.path().join("scenes/main.scene.json"), scene).unwrap();
+    let mut app = open(dir.path());
+    app.run_headless(Some(150), None).unwrap();
+    regenerate(&mut app, 7);
+    app.run_headless(Some(1), None).unwrap();
+    let p = position(&app, "hero");
+    assert!(p.y < 60.0, "not on the roof: {p}");
+}
+
+#[test]
+fn terrain_that_appears_late_still_catches_the_character() {
+    let dir = project("error(\"no island yet\")\n");
+    let mut app = open(dir.path());
+    // No ground: the hero falls far below where the island will be.
+    app.run_headless(Some(240), None).unwrap();
+    let fallen = position(&app, "hero");
+    assert!(fallen.y < -20.0, "{fallen}");
+    std::fs::write(dir.path().join("scripts/tools/island_graph.luau"), BUILDER).unwrap();
+    app.apply_file_changes(&[re_assets::AssetChange::Modified(
+        "./scripts/tools/island_graph.luau".into(),
+    )]);
+    app.run_headless(Some(1), None).unwrap();
+    app.take_diagnostics();
+    let report = app.run_headless(Some(60), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    let p = position(&app, "hero");
+    let ground = ground_under(&app, p);
+    assert!(
+        (p.y - (ground + 0.9)).abs() < 0.25,
+        "put on the island that appeared: y {} over ground {ground}",
+        p.y
+    );
+}

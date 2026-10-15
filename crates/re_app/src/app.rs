@@ -119,7 +119,10 @@ pub struct App {
 
     /// The `derived:` heightfields colliders used at the last step: when they
     /// change during play, characters are put back on the new ground.
-    ground: std::collections::BTreeSet<String>,
+    ground: Option<std::collections::BTreeSet<String>>,
+    /// What each procedural source's graph was last loaded from, to load the
+    /// graph again when a source's `graph` or `builder` is edited.
+    graph_inputs: procedural::GraphInputs,
 
     scripts: Option<ScriptRuntime>,
     scripts_failed: bool,
@@ -201,6 +204,8 @@ impl App {
         action_map: ActionMap<String>,
         commands: Arc<CommandRegistry<App>>,
     ) -> Result<App, Diagnostic> {
+        let mut world = world;
+        let graph_inputs = procedural::inputs(&mut world);
         let physics = Physics::new(physics_config(&config), TaskPool::global())?;
         let clock = FixedClock::new(config.sim.fixed_hz, config.sim.max_steps_per_frame);
         Ok(App {
@@ -229,7 +234,8 @@ impl App {
             watcher: None,
             changed_scripts: Vec::new(),
             anim_sync: AnimSync::new(),
-            ground: Default::default(),
+            ground: None,
+            graph_inputs,
             scripts: None,
             scripts_failed: false,
             script_output: Vec::new(),
@@ -747,6 +753,9 @@ impl App {
     /// derived assets nothing uses any more (the GPU copies go at the next
     /// upload).
     fn regenerate_changed(&mut self) {
+        let problems =
+            procedural::refresh_graphs(&mut self.world, &self.project, &mut self.graph_inputs);
+        self.diagnostics.extend(problems);
         let report = self.world.regenerate_changed();
         self.diagnostics.extend(report.diagnostics.iter().cloned());
         procedural::release(
@@ -962,10 +971,12 @@ impl App {
         );
         self.physics.apply(&mut self.physics_cmds);
         let ground = procedural::ground(&mut self.world);
-        if ground != self.ground {
-            if !self.ground.is_empty() && !ground.is_empty() {
+        if self.ground.as_ref() != Some(&ground) {
+            if let Some(old) = self.ground.take()
+                && !ground.is_empty()
+            {
                 // The terrain changed under the characters: put them on it.
-                self.reground();
+                self.reground(&old, &ground);
                 physics::push(
                     &mut self.world,
                     &mut self.physics_sync,
@@ -975,7 +986,7 @@ impl App {
                 );
                 self.physics.apply(&mut self.physics_cmds);
             }
-            self.ground = ground;
+            self.ground = Some(ground);
         }
         let step = Instant::now();
         if let Err(d) = self.physics.step(self.clock.dt_secs()) {
@@ -998,13 +1009,22 @@ impl App {
         self.perf.add(Phase::PostSimulation, t.elapsed());
     }
 
-    /// Puts every character back on the ground after the terrain changed: a
-    /// ray down from above the highest terrain point at the character's x and
-    /// z, then the character's centre half its height (plus a skin) above the
-    /// hit.
-    fn reground(&mut self) {
+    /// Puts characters back on the ground after the terrain changed: a ray
+    /// down from above every terrain at the character's x and z finds the
+    /// first terrain (a derived heightfield in `new`, passing through anything
+    /// else on the way); when that terrain is a new one, the character's centre
+    /// goes half its height (plus a skin) above the hit. Characters over a
+    /// terrain that did not change stay where they are.
+    fn reground(
+        &mut self,
+        old: &std::collections::BTreeSet<String>,
+        new: &std::collections::BTreeSet<String>,
+    ) {
         const SKIN: f32 = 0.02;
-        let Some(top) = procedural::ground_top(&self.world) else {
+        const MARGIN: f32 = 10.0;
+        // Scripts and earlier steps this frame moved things since Sync.
+        self.world.propagate();
+        let Some((bottom, top)) = procedural::ground_span(&mut self.world) else {
             return;
         };
         let characters: Vec<(re_scene::Entity, f32)> = self
@@ -1015,25 +1035,14 @@ impl App {
             .map(|(e, c)| (e, c.height))
             .collect();
         for (entity, height) in characters {
-            let id = re_scene::entity_id(entity);
             let Some(gt) = self.world.ecs.get::<re_scene::GlobalTransform>(entity) else {
                 continue;
             };
             let pos = glam::Vec3::from(gt.0.translation);
-            // Above every terrain point (in any terrain's local space, with
-            // generous room for where the terrain entity sits).
-            let start = glam::Vec3::new(pos.x, pos.y.max(top) + 1000.0, pos.z);
-            let filter = re_physics::QueryFilter {
-                exclude: Some(id),
-                ..re_physics::QueryFilter::default()
-            };
-            match self
-                .physics
-                .raycast(start, glam::Vec3::NEG_Y, 4000.0, &filter)
-            {
-                Ok(Some(hit)) => {
-                    let y = hit.point.y + height * 0.5 + SKIN;
-                    let target = glam::Vec3::new(pos.x, y, pos.z);
+            match self.terrain_below(entity, pos, bottom - MARGIN, top + MARGIN, new) {
+                Some((source, _)) if old.contains(&source) => {}
+                Some((_, ground)) => {
+                    let target = glam::Vec3::new(pos.x, ground + height * 0.5 + SKIN, pos.z);
                     let local = match re_scene::hierarchy::parent(&self.world.ecs, entity)
                         .and_then(|p| self.world.ecs.get::<re_scene::GlobalTransform>(p))
                     {
@@ -1044,7 +1053,7 @@ impl App {
                         tr.translation = local;
                     }
                 }
-                _ => {
+                None => {
                     let name = self.world.id_of(entity).unwrap_or("?").to_string();
                     self.diagnostics.push(
                         Diagnostic::warning(
@@ -1057,6 +1066,50 @@ impl App {
             }
         }
         self.world.propagate();
+    }
+
+    /// The first terrain (a derived heightfield collider in `ground`) straight
+    /// below `pos`, between the heights `top` and `bottom`: its source and the
+    /// height of the hit.
+    fn terrain_below(
+        &self,
+        character: re_scene::Entity,
+        pos: glam::Vec3,
+        bottom: f32,
+        top: f32,
+        ground: &std::collections::BTreeSet<String>,
+    ) -> Option<(String, f32)> {
+        const MAX_SKIPS: usize = 64;
+        let mut origin = glam::Vec3::new(pos.x, top.max(pos.y), pos.z);
+        let mut exclude = re_scene::entity_id(character);
+        for _ in 0..MAX_SKIPS {
+            let length = origin.y - bottom;
+            if length <= 0.0 {
+                return None;
+            }
+            let filter = re_physics::QueryFilter {
+                exclude: Some(exclude),
+                sensors: false,
+                ..re_physics::QueryFilter::default()
+            };
+            let hit = self
+                .physics
+                .raycast(origin, glam::Vec3::NEG_Y, length, &filter)
+                .ok()??;
+            let terrain = entity_from_id(hit.entity)
+                .and_then(|e| self.world.ecs.get::<re_scene::Collider>(e))
+                .filter(|c| {
+                    c.shape == re_scene::ColliderShape::Heightfield && ground.contains(&c.source)
+                })
+                .map(|c| c.source.clone());
+            if let Some(source) = terrain {
+                return Some((source, hit.point.y));
+            }
+            // Something else (a crate, a roof, another character): look past it.
+            exclude = hit.entity;
+            origin = glam::Vec3::new(pos.x, hit.point.y - 1e-3, pos.z);
+        }
+        None
     }
 
     fn end_frame(&mut self, f: u64) {
@@ -1347,7 +1400,8 @@ impl App {
             Ok((world, problems)) => {
                 self.world = world;
                 self.diagnostics.extend(problems);
-                self.ground.clear();
+                self.ground = None;
+                self.graph_inputs = procedural::inputs(&mut self.world);
                 self.history = History::default();
                 match Physics::new(physics_config(&self.config), TaskPool::global()) {
                     Ok(p) => self.physics = p,

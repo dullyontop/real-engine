@@ -4,7 +4,7 @@
 //! derived meshes and heightfields it makes are handed to [`Media`] and the
 //! physics [`ShapeLibrary`], and released when nothing uses them any more.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use re_core::{Diagnostic, Location};
@@ -100,16 +100,55 @@ fn graph_of(
     })
 }
 
-/// Fills the World's store with the graph of every procedural source (only the
-/// sources whose `graph` or `builder` is in `only`, when given). A source whose
-/// graph cannot be made keeps its previous graph, if any, and is reported.
-pub fn load_graphs(world: &mut World, project: &Path, only: Option<&[String]>) -> Vec<Diagnostic> {
+/// A project path as the file watcher reports it (`./a.json` and `a\\b`
+/// spellings normalised); `None` for a path outside the project.
+fn norm(path: &str) -> Option<String> {
+    crate::commands::project_path(path, "", codes::GRAPH_SOURCE_FAILED)
+        .ok()
+        .map(|p| p.replace("/./", "/"))
+}
+
+/// True when the changed project file `path` is an input of `source`: its
+/// graph file, its builder, or a Luau module beside or below the builder (what
+/// it can `require`).
+fn reads(source: &(String, String, String), path: &str) -> bool {
+    let (_, graph, builder) = source;
+    let Some(path) = norm(path) else {
+        return false;
+    };
+    if norm(graph).is_some_and(|g| g == path) {
+        return true;
+    }
+    let Some(builder) = norm(builder) else {
+        return false;
+    };
+    if builder == path {
+        return true;
+    }
+    let dir = builder.rsplit_once('/').map_or("", |(d, _)| d);
+    path.ends_with(".luau") && (dir.is_empty() || path.starts_with(&format!("{dir}/")))
+}
+
+/// What each procedural source's graph is made from: `id -> (graph, builder)`.
+pub type GraphInputs = BTreeMap<String, (String, String)>;
+
+/// The current [`GraphInputs`] of the World's procedural sources.
+pub fn inputs(world: &mut World) -> GraphInputs {
+    sources(world)
+        .into_iter()
+        .map(|(id, graph, builder)| (id, (graph, builder)))
+        .collect()
+}
+
+fn load_where(
+    world: &mut World,
+    project: &Path,
+    wanted: impl Fn(&(String, String, String)) -> bool,
+) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut builders = None;
     for source in sources(world) {
-        if let Some(only) = only
-            && !only.iter().any(|p| *p == source.1 || *p == source.2)
-        {
+        if !wanted(&source) {
             continue;
         }
         match graph_of(world, project, &mut builders, &source) {
@@ -124,15 +163,49 @@ pub fn load_graphs(world: &mut World, project: &Path, only: Option<&[String]>) -
     diags
 }
 
-/// True when a changed project file is the graph or builder of a source.
+/// Fills the World's store with the graph of every procedural source (only the
+/// sources that read one of the changed project files in `only`, when given). A
+/// source whose graph cannot be made keeps its previous graph, if any, and is
+/// reported.
+pub fn load_graphs(world: &mut World, project: &Path, only: Option<&[String]>) -> Vec<Diagnostic> {
+    match only {
+        None => load_where(world, project, |_| true),
+        Some(paths) => load_where(world, project, |s| paths.iter().any(|p| reads(s, p))),
+    }
+}
+
+/// Loads the graphs of the sources that appeared, or whose `graph` or `builder`
+/// changed, since `known` was taken (by a command, an undo, a prefab spawn),
+/// and updates `known`. A source that fails is reported once, then left until
+/// its inputs or files change again.
+pub fn refresh_graphs(
+    world: &mut World,
+    project: &Path,
+    known: &mut GraphInputs,
+) -> Vec<Diagnostic> {
+    let now = inputs(world);
+    if now == *known {
+        return Vec::new();
+    }
+    let stale = |(id, graph, builder): &(String, String, String)| {
+        known
+            .get(id)
+            .is_none_or(|(g, b)| g != graph || b != builder)
+    };
+    let diags = load_where(world, project, stale);
+    *known = now;
+    diags
+}
+
+/// True when a changed project file is an input of a procedural source.
 pub fn is_graph_input(world: &mut World, path: &str) -> bool {
-    sources(world)
-        .iter()
-        .any(|(_, graph, builder)| graph == path || builder == path)
+    sources(world).iter().any(|s| reads(s, path))
 }
 
 /// Gives `media` the derived meshes that `MeshRef`s name, and `shapes` the
-/// derived meshes and heightfields that colliders name, from the World's store.
+/// derived meshes and heightfields that colliders name, from the World's store,
+/// and forgets the derived ones nothing names any more (whatever released them:
+/// a regeneration, a `graph.regenerate` command, a play copy).
 pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibrary) {
     let meshes: BTreeSet<String> = world
         .ecs
@@ -148,6 +221,8 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
         .filter(|c| c.source.starts_with(DERIVED))
         .map(|c| (c.shape, c.source.clone()))
         .collect();
+    media.retain_derived_meshes(|name| meshes.contains(name));
+    shapes.retain(|name| !name.starts_with(DERIVED) || colliders.iter().any(|(_, c)| c == name));
     let Some(store) = world.ecs.get_resource::<GraphStore>() else {
         return;
     };
@@ -214,6 +289,10 @@ pub fn release(
         }
         media.remove_derived_mesh(name);
         shapes.remove(name);
+        // A terrain's heightfield collider goes with its mesh.
+        if let Some(collider) = re_proc::value::collider_name(name) {
+            shapes.remove(&collider);
+        }
     }
     derived
 }
@@ -229,26 +308,49 @@ pub fn ground(world: &mut World) -> BTreeSet<String> {
         .collect()
 }
 
-/// The highest point of any derived heightfield in the store, in its local
-/// space (a ray from above it finds the ground).
-pub fn ground_top(world: &World) -> Option<f32> {
-    let store = world.ecs.get_resource::<GraphStore>()?;
-    let mut top: Option<f32> = None;
-    for name in world
+/// The lowest and highest world-space height of the derived heightfields
+/// colliders use (their samples placed by each terrain's `GlobalTransform`): a
+/// ray from above the top to below the bottom crosses all of them.
+pub fn ground_span(world: &mut World) -> Option<(f32, f32)> {
+    let terrains: Vec<(String, glam::Affine3A)> = world
         .ecs
-        .iter_entities()
-        .filter_map(|e| e.get::<Collider>())
-        .filter(|c| c.shape == ColliderShape::Heightfield)
-        .map(|c| c.source.clone())
-    {
-        if let Some(h) = store.heightfield(&name)
-            && let ShapeDesc::Heightfield {
-                samples, offset, ..
-            } = h.to_shape()
-        {
-            let max = samples.iter().copied().fold(f32::MIN, f32::max) + offset.y;
-            top = Some(top.map_or(max, |t| t.max(max)));
+        .query::<(&Collider, Option<&re_scene::GlobalTransform>)>()
+        .iter(&world.ecs)
+        .filter(|(c, _)| c.shape == ColliderShape::Heightfield && c.source.starts_with(DERIVED))
+        .map(|(c, gt)| {
+            (
+                c.source.clone(),
+                gt.map_or(glam::Affine3A::IDENTITY, |g| g.0),
+            )
+        })
+        .collect();
+    let store = world.ecs.get_resource::<GraphStore>()?;
+    let mut span: Option<(f32, f32)> = None;
+    for (name, pose) in terrains {
+        let Some(h) = store.heightfield(&name) else {
+            continue;
+        };
+        let ShapeDesc::Heightfield {
+            n,
+            samples,
+            spacing,
+            offset,
+        } = h.to_shape()
+        else {
+            continue;
+        };
+        let (lo, hi) = samples
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), &s| (lo.min(s), hi.max(s)));
+        let width = n.saturating_sub(1) as f32 * spacing;
+        for x in [0.0, width] {
+            for y in [lo, hi] {
+                for z in [0.0, width] {
+                    let p = pose.transform_point3(offset + glam::Vec3::new(x, y, z));
+                    span = Some(span.map_or((p.y, p.y), |(a, b)| (a.min(p.y), b.max(p.y))));
+                }
+            }
         }
     }
-    top
+    span
 }
