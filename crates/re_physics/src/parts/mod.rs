@@ -43,7 +43,7 @@ pub mod tree;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, PoisonError};
 
-use glam::{Quat, Vec3};
+use glam::{Mat3, Quat, Vec3};
 use oxijolt::{
     Activation, BodyId, BodySettings, CompoundChild, ContactEvent as JContactEvent, Shape,
     SubShapeIdPair,
@@ -249,6 +249,9 @@ pub struct AssemblyInfo {
     pub mass: f32,
     /// Its centre of mass in the world.
     pub center_of_mass: Vec3,
+    /// Its inertia tensor about the centre of mass, in world axes (each part
+    /// counted as a solid of its shape at its own density; zero when static).
+    pub inertia: Mat3,
     /// Linear velocity of the centre of mass.
     pub linear: Vec3,
     /// Angular velocity.
@@ -306,6 +309,7 @@ pub(crate) struct Assembly {
     gate: Arc<GateBody>,
     mass: f32,
     com_local: Vec3,
+    inertia_local: Mat3,
 }
 
 /// A touching pair of sub-shapes, as Jolt reports it.
@@ -533,6 +537,47 @@ fn build_shape(
     Ok((compound, body_shape, mass, com))
 }
 
+/// The inertia tensor of one solid of `mass` and `geom` about its own
+/// centroid, in its own axes (wedges count as their bounding boxes).
+fn part_inertia(geom: &PartGeom, mass: f32) -> Mat3 {
+    let s = geom.size;
+    match geom.shape {
+        PartShape::Ball => Mat3::from_diagonal(Vec3::splat(0.4 * mass * geom.radius().powi(2))),
+        PartShape::Cylinder => {
+            let (r, l) = (geom.radius(), s.x);
+            let side = mass * (3.0 * r * r + l * l) / 12.0;
+            Mat3::from_diagonal(Vec3::new(0.5 * mass * r * r, side, side))
+        }
+        _ => Mat3::from_diagonal(
+            Vec3::new(
+                s.y * s.y + s.z * s.z,
+                s.x * s.x + s.z * s.z,
+                s.x * s.x + s.y * s.y,
+            ) * (mass / 12.0),
+        ),
+    }
+}
+
+/// The inertia of the parts about `com`, in the assembly's axes.
+fn assembly_inertia(parts: &[PartDesc], com: Vec3) -> Mat3 {
+    let any_mass = parts.iter().any(|p| !p.massless && p.mass() > 0.0);
+    let mut total = Mat3::ZERO;
+    for p in parts {
+        if any_mass && p.massless {
+            continue;
+        }
+        let g = p.geom.sanitized();
+        let m = p.mass();
+        let r = Mat3::from_quat(p.local.rot);
+        let own = r * part_inertia(&g, m) * r.transpose();
+        // Parallel axis: m (|d|² I - d dᵀ).
+        let d = p.local.point(g.centroid()) - com;
+        let outer = Mat3::from_cols(d * d.x, d * d.y, d * d.z);
+        total += own + (Mat3::IDENTITY * d.length_squared() - outer) * m;
+    }
+    total
+}
+
 fn clamp_mass(m: f32) -> f32 {
     #[allow(clippy::unnecessary_cast)]
     let (lo, hi) = (
@@ -685,6 +730,7 @@ impl Physics {
                 kind: desc.kind,
                 parts: recs,
                 gate,
+                inertia_local: assembly_inertia(&desc.parts, com),
                 mass: if desc.kind == BodyKind::Dynamic {
                     clamp_mass(mass)
                 } else {
@@ -793,6 +839,7 @@ impl Physics {
         asm.gate = gate;
         asm.mass = jmass.unwrap_or(mass);
         asm.com_local = com;
+        asm.inertia_local = assembly_inertia(parts, com);
         // Touches of parts that left the assembly end; the rest carry on through
         // Jolt's own removed and added reports.
         let keep: BTreeSet<EntityId> = parts.iter().map(|p| p.id).collect();
@@ -934,6 +981,12 @@ impl Physics {
                 asm.mass
             },
             center_of_mass: pose.point(asm.com_local),
+            inertia: if asm.kind == BodyKind::Static {
+                Mat3::ZERO
+            } else {
+                let r = Mat3::from_quat(pose.rot);
+                r * asm.inertia_local * r.transpose()
+            },
             linear: gv(b.linear_velocity()),
             angular: gv(b.angular_velocity()),
             awake: b.is_active(),
