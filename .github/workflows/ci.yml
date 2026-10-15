@@ -151,13 +151,13 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Test (non-GPU crates)
         shell: bash
-        run: cargo test --workspace --locked --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
+        run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
       - name: Test (GPU crates, DX12 on WARP)
         if: success() || failure()
         shell: bash
         env:
           RE_BACKENDS: dx12
-        run: cargo test --locked -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1
+        run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1
       - name: real verify on the island
         if: success() || failure()
         shell: bash
@@ -167,6 +167,8 @@ jobs:
           mkdir -p out
           cargo run --locked --release -p re_cli -- verify --project examples/island --json > out/verify.json || true
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
+          jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' out/verify.json
+          jq -c '.stages[] | select(.name == "goldens") | .data' out/verify.json
           jq -e '.ok == true' out/verify.json
       - uses: actions/upload-artifact@v7
         if: always()
@@ -190,16 +192,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bin" && unzip -o "$RUNNER_TEMP/luau-lsp.zip" -d "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Test (non-GPU crates)
-        run: cargo test --workspace --locked --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
+        run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
       - name: Test (GPU crates, Metal)
         if: success() || failure()
-        run: cargo test --locked -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1
+        run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1
       - name: real verify on the island
         if: success() || failure()
         run: |
           mkdir -p out
           cargo run --locked --release -p re_cli -- verify --project examples/island --json > out/verify.json || true
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
+          jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' out/verify.json
+          jq -c '.stages[] | select(.name == "goldens") | .data' out/verify.json
           jq -e '.ok == true' out/verify.json
       - uses: actions/upload-artifact@v7
         if: always()
