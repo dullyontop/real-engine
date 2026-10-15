@@ -22,7 +22,7 @@
 //! | [`anim`] | [`ClipData`], [`TargetChannels`], [`Channel`] |
 //! | [`physics`] | [`PhysicsCmd`], [`BodyDesc`], [`BodyKind`], [`ShapeDesc`], [`Layer`], [`GroupMask`], [`BodyPose`], [`ContactEvent`], [`RayHit`], [`CharacterDesc`], [`CharacterState`], [`ConstraintDesc`], [`ConstraintKind`] |
 //! | [`audio`] | [`AudioCmd`] |
-//! | [`input`] | [`ActionFrame`], [`ButtonState`] |
+//! | [`input`] | [`ActionFrame`], [`ButtonState`], [`RawInputFrame`], [`InputEvent`], [`InputPhase`], [`MouseLock`] |
 //! | [`graph`] | [`GraphDoc`], [`NodeDoc`], [`EdgeDoc`] |
 //! | [`replay`] | [`ReplayDoc`] |
 //! | [`host`] | [`HostServices`], [`HostError`], [`HostResult`] |
@@ -49,7 +49,7 @@ pub use audio::AudioCmd;
 pub use graph::{EdgeDoc, GraphDoc, GraphDocError, NodeDoc};
 pub use host::{HostError, HostResult, HostServices};
 pub use ids::EntityId;
-pub use input::{ActionFrame, ButtonState};
+pub use input::{ActionFrame, ButtonState, InputEvent, InputPhase, MouseLock, RawInputFrame};
 pub use mesh::{Aabb, MeshData, Vertex};
 pub use physics::{
     BodyDesc, BodyKind, BodyPose, CharacterDesc, CharacterState, ConstraintDesc, ConstraintKind,
@@ -60,7 +60,7 @@ pub use render::{
     MaterialHandle, MeshHandle, RenderSnapshot, TextureData, TextureFormat, TextureHandle,
     TextureRef,
 };
-pub use replay::{ReplayCheck, ReplayCommand, ReplayDoc, ReplayInput};
+pub use replay::{RawReplayInput, ReplayCheck, ReplayCommand, ReplayDoc, ReplayInput};
 
 /// Re-export of the glam version used in every contract type (glam 0.34, ADR-0028).
 pub use glam;

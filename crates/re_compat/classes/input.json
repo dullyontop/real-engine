@@ -1,0 +1,627 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "UserInputService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "note": "Keyboard, mouse and gamepad buttons only: touch, gyro and accelerometer input are reported as absent, and no TextBox takes focus yet.",
+      "doc": "Reports raw key, mouse and gamepad input to client scripts, and holds the cursor settings. On the server it sees no input.",
+      "properties": [
+        {
+          "name": "MouseBehavior",
+          "type": "Enum.MouseBehavior",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Default",
+          "status": "implemented",
+          "doc": "Whether the cursor moves freely or is held at the window centre or in place. The window follows it; headless runs only record it."
+        },
+        {
+          "name": "MouseIconEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the cursor is drawn."
+        },
+        {
+          "name": "MouseDeltaSensitivity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1.0,
+          "status": "implemented",
+          "doc": "Scales the motion GetMouseDelta reports."
+        },
+        {
+          "name": "KeyboardEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True when a keyboard is present."
+        },
+        {
+          "name": "MouseEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True when a mouse is present."
+        },
+        {
+          "name": "TouchEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True when a touch screen is present. Touch input is not supported, so it is always false."
+        },
+        {
+          "name": "GamepadEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True while a gamepad is connected."
+        },
+        {
+          "name": "AccelerometerEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True when the device has an accelerometer; always false here."
+        },
+        {
+          "name": "GyroscopeEnabled",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True when the device has a gyroscope; always false here."
+        }
+      ],
+      "methods": [
+        {
+          "name": "IsKeyDown",
+          "params": [
+            {
+              "name": "keyCode",
+              "type": "Enum.KeyCode"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True while the key is held."
+        },
+        {
+          "name": "IsMouseButtonPressed",
+          "params": [
+            {
+              "name": "mouseButton",
+              "type": "Enum.UserInputType"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True while the mouse button (MouseButton1, 2 or 3) is held."
+        },
+        {
+          "name": "IsGamepadButtonDown",
+          "params": [
+            {
+              "name": "gamepadNum",
+              "type": "Enum.UserInputType"
+            },
+            {
+              "name": "gamepadKeyCode",
+              "type": "Enum.KeyCode"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "partial",
+          "note": "Every connected pad reports as Gamepad1.",
+          "doc": "True while the button is held on that gamepad."
+        },
+        {
+          "name": "GetMouseLocation",
+          "returns": [
+            "Vector2"
+          ],
+          "status": "implemented",
+          "doc": "The cursor position in window pixels, from the top-left corner."
+        },
+        {
+          "name": "GetMouseDelta",
+          "returns": [
+            "Vector2"
+          ],
+          "status": "implemented",
+          "doc": "How far the mouse moved this frame, in pixels, scaled by MouseDeltaSensitivity."
+        },
+        {
+          "name": "GetKeysPressed",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "An InputObject for every key held now."
+        },
+        {
+          "name": "GetMouseButtonsPressed",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "An InputObject for every mouse button held now."
+        },
+        {
+          "name": "GetLastInputType",
+          "returns": [
+            "Enum.UserInputType"
+          ],
+          "status": "implemented",
+          "doc": "The kind of the latest input (Keyboard, MouseMovement, MouseButton1, Gamepad1 and so on)."
+        },
+        {
+          "name": "GetFocusedTextBox",
+          "returns": [
+            "Instance"
+          ],
+          "status": "partial",
+          "note": "No TextBox takes keyboard focus yet, so it is always nil.",
+          "doc": "The text box the keyboard types into, or nil."
+        },
+        {
+          "name": "GetConnectedGamepads",
+          "returns": [
+            "table"
+          ],
+          "status": "partial",
+          "note": "Every connected pad reports as Gamepad1.",
+          "doc": "The gamepads connected now."
+        },
+        {
+          "name": "GetGamepadConnected",
+          "params": [
+            {
+              "name": "gamepadNum",
+              "type": "Enum.UserInputType"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "partial",
+          "note": "Every connected pad reports as Gamepad1.",
+          "doc": "True when that gamepad is connected."
+        }
+      ],
+      "events": [
+        {
+          "name": "InputBegan",
+          "params": [
+            {
+              "name": "input",
+              "type": "InputObject"
+            },
+            {
+              "name": "gameProcessedEvent",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "A key or button went down, or a touch began. The flag is true when the engine already used the input (a focused text box)."
+        },
+        {
+          "name": "InputChanged",
+          "params": [
+            {
+              "name": "input",
+              "type": "InputObject"
+            },
+            {
+              "name": "gameProcessedEvent",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "The mouse moved, the wheel turned or a stick moved."
+        },
+        {
+          "name": "InputEnded",
+          "params": [
+            {
+              "name": "input",
+              "type": "InputObject"
+            },
+            {
+              "name": "gameProcessedEvent",
+              "type": "bool"
+            }
+          ],
+          "status": "implemented",
+          "doc": "A key or button went up."
+        },
+        {
+          "name": "LastInputTypeChanged",
+          "params": [
+            {
+              "name": "lastInputType",
+              "type": "Enum.UserInputType"
+            }
+          ],
+          "status": "implemented",
+          "doc": "The kind of input the player uses changed."
+        },
+        {
+          "name": "JumpRequest",
+          "status": "implemented",
+          "doc": "The player pressed a jump control (Space, or the gamepad A button)."
+        },
+        {
+          "name": "GamepadConnected",
+          "params": [
+            {
+              "name": "gamepadNum",
+              "type": "Enum.UserInputType"
+            }
+          ],
+          "status": "implemented",
+          "doc": "A gamepad was connected."
+        },
+        {
+          "name": "GamepadDisconnected",
+          "params": [
+            {
+              "name": "gamepadNum",
+              "type": "Enum.UserInputType"
+            }
+          ],
+          "status": "implemented",
+          "doc": "A gamepad was disconnected."
+        },
+        {
+          "name": "TextBoxFocused",
+          "params": [
+            {
+              "name": "textboxFocused",
+              "type": "Instance"
+            }
+          ],
+          "status": "partial",
+          "note": "No TextBox takes keyboard focus yet, so it never fires.",
+          "doc": "A text box took keyboard focus."
+        },
+        {
+          "name": "TextBoxFocusReleased",
+          "params": [
+            {
+              "name": "textboxReleased",
+              "type": "Instance"
+            }
+          ],
+          "status": "partial",
+          "note": "No TextBox takes keyboard focus yet, so it never fires.",
+          "doc": "A text box gave up keyboard focus."
+        }
+      ]
+    },
+    {
+      "name": "InputObject",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "One input as scripts see it: which key or device, its state, and where the cursor or stick is. The same object is reused for every event of one key or device.",
+      "properties": [
+        {
+          "name": "KeyCode",
+          "type": "Enum.KeyCode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "None",
+          "status": "implemented",
+          "doc": "The key or gamepad button, or None for mouse and stick input."
+        },
+        {
+          "name": "UserInputType",
+          "type": "Enum.UserInputType",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "None",
+          "status": "implemented",
+          "doc": "The device kind: Keyboard, MouseButton1, MouseMovement, Gamepad1 and so on."
+        },
+        {
+          "name": "UserInputState",
+          "type": "Enum.UserInputState",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "None",
+          "status": "implemented",
+          "doc": "Begin, Change or End."
+        },
+        {
+          "name": "Position",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "For mouse input, the cursor in window pixels with the wheel position in Z; for a stick, its value."
+        },
+        {
+          "name": "Delta",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "status": "implemented",
+          "doc": "For mouse movement, the motion in pixels; for the wheel, the turn in Z."
+        }
+      ],
+      "methods": [
+        {
+          "name": "IsModifierKeyDown",
+          "params": [
+            {
+              "name": "modifierKey",
+              "type": "Enum.ModifierKey"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "implemented",
+          "doc": "True while the Shift, Ctrl, Alt or Meta key (either side) is held."
+        }
+      ]
+    },
+    {
+      "name": "ContextActionService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "note": "No on-screen touch buttons: the touch-button arguments and the button setters are recorded only.",
+      "doc": "Binds named actions to keys and buttons. Each input goes to the bound actions from the highest priority down, until one sinks it.",
+      "methods": [
+        {
+          "name": "BindAction",
+          "params": [
+            {
+              "name": "actionName",
+              "type": "string"
+            },
+            {
+              "name": "functionToBind",
+              "type": "function"
+            },
+            {
+              "name": "createTouchButton",
+              "type": "bool"
+            },
+            {
+              "name": "...",
+              "type": "any"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Binds an action to the given KeyCode or UserInputType items at the default priority. The function gets the action name, the input state and the InputObject, and returns Sink (the default) or Pass."
+        },
+        {
+          "name": "BindActionAtPriority",
+          "params": [
+            {
+              "name": "actionName",
+              "type": "string"
+            },
+            {
+              "name": "functionToBind",
+              "type": "function"
+            },
+            {
+              "name": "createTouchButton",
+              "type": "bool"
+            },
+            {
+              "name": "priorityLevel",
+              "type": "int"
+            },
+            {
+              "name": "...",
+              "type": "any"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Like BindAction, with a priority: higher priorities see the input first."
+        },
+        {
+          "name": "UnbindAction",
+          "params": [
+            {
+              "name": "actionName",
+              "type": "string"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Removes the action. An input it holds gets a Cancel call."
+        },
+        {
+          "name": "UnbindAllActions",
+          "status": "implemented",
+          "doc": "Removes every action this script context bound."
+        },
+        {
+          "name": "GetBoundActionInfo",
+          "params": [
+            {
+              "name": "actionName",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "A table describing the action (its priority, inputs and settings), empty when it is not bound."
+        },
+        {
+          "name": "GetAllBoundActionInfo",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The GetBoundActionInfo table of every bound action, by name."
+        },
+        {
+          "name": "SetTitle",
+          "params": [
+            {
+              "name": "actionName",
+              "type": "string"
+            },
+            {
+              "name": "title",
+              "type": "string"
+            }
+          ],
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons.",
+          "doc": "Sets the text of the action's touch button."
+        },
+        {
+          "name": "SetDescription",
+          "params": [
+            {
+              "name": "actionName",
+              "type": "string"
+            },
+            {
+              "name": "description",
+              "type": "string"
+            }
+          ],
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons.",
+          "doc": "Sets the description of the action."
+        },
+        {
+          "name": "SetImage",
+          "params": [
+            {
+              "name": "actionName",
+              "type": "string"
+            },
+            {
+              "name": "image",
+              "type": "string"
+            }
+          ],
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons.",
+          "doc": "Sets the image of the action's touch button."
+        },
+        {
+          "name": "SetPosition",
+          "params": [
+            {
+              "name": "actionName",
+              "type": "string"
+            },
+            {
+              "name": "position",
+              "type": "UDim2"
+            }
+          ],
+          "status": "partial",
+          "note": "Recorded only: there are no touch buttons.",
+          "doc": "Sets where the action's touch button sits."
+        },
+        {
+          "name": "GetButton",
+          "params": [
+            {
+              "name": "actionName",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance"
+          ],
+          "status": "partial",
+          "note": "There are no touch buttons, so it is always nil.",
+          "doc": "The action's touch button, or nil."
+        }
+      ],
+      "events": [
+        {
+          "name": "LocalToolEquipped",
+          "params": [
+            {
+              "name": "toolEquipped",
+              "type": "Instance"
+            }
+          ],
+          "status": "stub-error",
+          "doc": "A tool was equipped. Tools are not supported."
+        },
+        {
+          "name": "LocalToolUnequipped",
+          "params": [
+            {
+              "name": "toolUnequipped",
+              "type": "Instance"
+            }
+          ],
+          "status": "stub-error",
+          "doc": "A tool was unequipped. Tools are not supported."
+        }
+      ]
+    }
+  ]
+}

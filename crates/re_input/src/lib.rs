@@ -9,8 +9,12 @@
 //! * [`ActionMap`] binds actions to buttons and axis sources. It is built from
 //!   [`InputConfig`], the `[input]` section of `real.toml`, and gives one
 //!   [`ActionFrame`] per frame.
+//! * [`RawInput::raw_frame`] gives the frame's raw events and held keys as a
+//!   [`RawInputFrame`], with keys named as [`keycodes`] lists, for layers that
+//!   read keys rather than actions (the compatibility layer's input services).
 //! * [`ReplayRecorder`] records frames into a [`ReplayDoc`]; [`Replay`] plays one
-//!   back, giving the same frames.
+//!   back, giving the same frames. Replays carry actions and, in their `raw`
+//!   list, raw key and mouse changes.
 //!
 //! A frame of live input:
 //!
@@ -39,6 +43,7 @@
 
 pub mod codes;
 mod config;
+pub mod keycodes;
 mod map;
 pub mod names;
 mod raw;
@@ -47,7 +52,7 @@ mod replay;
 pub use config::{AxisSourceConfig, DEFAULT_DEAD_ZONE, InputConfig};
 pub use map::{ActionLayout, ActionMap, AxisSource};
 pub use raw::{Button, Gamepads, RawInput, Stick};
-pub use re_types::input::{ActionFrame, ButtonState};
+pub use re_types::input::{ActionFrame, ButtonState, InputEvent, InputPhase, RawInputFrame};
 pub use re_types::replay::ReplayDoc;
 pub use replay::{Replay, ReplayRecorder, load_replay, save_replay};
 

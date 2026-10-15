@@ -31,6 +31,10 @@ pub struct ReplayDoc {
     /// Input changes, in frame order. An action keeps its last value until changed.
     #[serde(default)]
     pub input: Vec<ReplayInput>,
+    /// Raw key and mouse changes, in frame order, for layers that read keys
+    /// rather than actions (the compatibility layer's input services).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub raw: Vec<RawReplayInput>,
     /// Engine commands to dispatch, in frame order.
     #[serde(default)]
     pub commands: Vec<ReplayCommand>,
@@ -51,6 +55,7 @@ impl ReplayDoc {
             seed,
             frames,
             input: Vec::new(),
+            raw: Vec::new(),
             commands: Vec::new(),
             checks: Vec::new(),
         }
@@ -80,6 +85,60 @@ impl ReplayInput {
     /// True when exactly one of `down` and `axis` is set.
     pub fn is_well_formed(&self) -> bool {
         self.down.is_some() != self.axis.is_some()
+    }
+}
+
+/// One raw device change in a replay: a key or mouse button going down or
+/// up, the cursor moving, or the wheel turning. Exactly one of `key`,
+/// `mouse_button`, `mouse_move`, `mouse_position` and `wheel` is set; `key`
+/// and `mouse_button` also need `down`.
+///
+/// ```json
+/// { "frame": 30, "key": "W", "down": true }
+/// { "frame": 31, "mouse_move": [12, -4] }
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct RawReplayInput {
+    /// The frame the change happens on.
+    pub frame: u64,
+    /// A key or gamepad button name (`W`, `Space`, `ButtonA`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// A mouse button: 1 left, 2 right, 3 middle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mouse_button: Option<u8>,
+    /// For `key` and `mouse_button`: down or up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub down: Option<bool>,
+    /// Mouse motion in pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mouse_move: Option<[f32; 2]>,
+    /// The cursor's new position in window pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mouse_position: Option<[f32; 2]>,
+    /// A wheel turn, in notches (positive away from the user).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wheel: Option<f32>,
+}
+
+impl RawReplayInput {
+    /// True when exactly one change is set, and `down` is set exactly for a
+    /// key or mouse button.
+    pub fn is_well_formed(&self) -> bool {
+        let set = [
+            self.key.is_some(),
+            self.mouse_button.is_some(),
+            self.mouse_move.is_some(),
+            self.mouse_position.is_some(),
+            self.wheel.is_some(),
+        ]
+        .iter()
+        .filter(|b| **b)
+        .count();
+        let button = self.key.is_some() || self.mouse_button.is_some();
+        set == 1 && button == self.down.is_some()
     }
 }
 

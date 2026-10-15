@@ -2,8 +2,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
+use glam::{Vec2, Vec3};
+use re_types::input::{InputEvent, InputPhase, RawInputFrame};
+use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
+
+use crate::keycodes;
 
 /// A physical control that reads as pressed or not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,9 +45,9 @@ impl Stick {
 /// [`RawInput::on_device_event`], [`RawInput::on_gamepad_event`]) or inject
 /// state directly ([`RawInput::set_button`], [`RawInput::set_pad_axis`],
 /// [`RawInput::add_mouse_delta`]) from tests, tools and AI agents. Read it
-/// through an [`ActionMap`](crate::ActionMap), then call
-/// [`RawInput::end_frame`].
-#[derive(Debug, Default, Clone)]
+/// through an [`ActionMap`](crate::ActionMap), or as raw events with
+/// [`RawInput::raw_frame`], then call [`RawInput::end_frame`].
+#[derive(Debug, Clone)]
 pub struct RawInput {
     down: HashSet<Button>,
     pressed_this_frame: HashSet<Button>,
@@ -51,19 +55,116 @@ pub struct RawInput {
     pad_axes: HashMap<gilrs::Axis, f32>,
     mouse_delta: (f64, f64),
     cursor: Option<(f64, f64)>,
+    /// The last known cursor position, kept while the cursor is outside.
+    last_cursor: (f64, f64),
+    wheel: f32,
+    events: Vec<InputEvent>,
+    keyboard: bool,
+    mouse: bool,
+    gamepad: bool,
+}
+
+impl Default for RawInput {
+    /// Nothing held, with a keyboard and a mouse present and no gamepad.
+    fn default() -> Self {
+        RawInput {
+            down: HashSet::new(),
+            pressed_this_frame: HashSet::new(),
+            released_this_frame: HashSet::new(),
+            pad_axes: HashMap::new(),
+            mouse_delta: (0.0, 0.0),
+            cursor: None,
+            last_cursor: (0.0, 0.0),
+            wheel: 0.0,
+            events: Vec::new(),
+            keyboard: true,
+            mouse: true,
+            gamepad: false,
+        }
+    }
 }
 
 impl RawInput {
     /// Sets a button's state. Only transitions count: setting a held button down
     /// again (a key repeat) is not a new press.
     pub fn set_button(&mut self, button: Button, down: bool) {
-        if down {
-            if self.down.insert(button) {
+        let changed = if down {
+            let new = self.down.insert(button);
+            if new {
                 self.pressed_this_frame.insert(button);
             }
-        } else if self.down.remove(&button) {
-            self.released_this_frame.insert(button);
+            new
+        } else {
+            let gone = self.down.remove(&button);
+            if gone {
+                self.released_this_frame.insert(button);
+            }
+            gone
+        };
+        if changed {
+            let (input_type, key) = keycodes::describe(button);
+            let position = match button {
+                Button::Mouse(_) => self.cursor_vec(),
+                _ => Vec3::ZERO,
+            };
+            self.events.push(InputEvent {
+                phase: if down {
+                    InputPhase::Began
+                } else {
+                    InputPhase::Ended
+                },
+                input_type: input_type.to_string(),
+                key: key.to_string(),
+                position,
+                delta: Vec3::ZERO,
+            });
         }
+    }
+
+    fn cursor_vec(&self) -> Vec3 {
+        let (x, y) = self.cursor.unwrap_or(self.last_cursor);
+        Vec3::new(x as f32, y as f32, self.wheel)
+    }
+
+    /// Moves the cursor to `(x, y)` in window pixels, reported as a mouse
+    /// movement event.
+    pub fn set_cursor(&mut self, x: f64, y: f64) {
+        if self.cursor == Some((x, y)) {
+            return;
+        }
+        let (px, py) = self.cursor.unwrap_or(self.last_cursor);
+        self.cursor = Some((x, y));
+        self.last_cursor = (x, y);
+        self.events.push(InputEvent {
+            phase: InputPhase::Changed,
+            input_type: "MouseMovement".to_string(),
+            key: keycodes::UNKNOWN.to_string(),
+            position: self.cursor_vec(),
+            delta: Vec3::new((x - px) as f32, (y - py) as f32, 0.0),
+        });
+    }
+
+    /// Turns the mouse wheel by `notches` (positive away from the user),
+    /// reported as a wheel event.
+    pub fn add_wheel(&mut self, notches: f32) {
+        if !notches.is_finite() || notches == 0.0 {
+            return;
+        }
+        self.wheel += notches;
+        self.events.push(InputEvent {
+            phase: InputPhase::Changed,
+            input_type: "MouseWheel".to_string(),
+            key: keycodes::UNKNOWN.to_string(),
+            position: self.cursor_vec(),
+            delta: Vec3::new(0.0, 0.0, notches),
+        });
+    }
+
+    /// Says which devices are present (reported in [`RawInputFrame`]).
+    pub fn set_devices(&mut self, keyboard: bool, mouse: bool, gamepad: bool) {
+        self.keyboard = keyboard;
+        self.mouse = mouse;
+        self.gamepad = gamepad;
     }
 
     /// Sets a gamepad axis value, in `[-1, 1]` (+y is up on sticks).
@@ -80,8 +181,18 @@ impl RawInput {
 
     /// Adds raw mouse motion, in device units (screen y grows downward).
     pub fn add_mouse_delta(&mut self, dx: f64, dy: f64) {
+        if !(dx.is_finite() && dy.is_finite()) || (dx == 0.0 && dy == 0.0) {
+            return;
+        }
         self.mouse_delta.0 += dx;
         self.mouse_delta.1 += dy;
+        self.events.push(InputEvent {
+            phase: InputPhase::Changed,
+            input_type: "MouseMovement".to_string(),
+            key: keycodes::UNKNOWN.to_string(),
+            position: self.cursor_vec(),
+            delta: Vec3::new(dx as f32, dy as f32, 0.0),
+        });
     }
 
     /// True while the button is held.
@@ -125,9 +236,12 @@ impl RawInput {
             WindowEvent::MouseInput { state, button, .. } => {
                 self.set_button(Button::Mouse(*button), *state == ElementState::Pressed);
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                self.cursor = Some((position.x, position.y))
-            }
+            WindowEvent::CursorMoved { position, .. } => self.set_cursor(position.x, position.y),
+            WindowEvent::MouseWheel { delta, .. } => match delta {
+                MouseScrollDelta::LineDelta(_, y) => self.add_wheel(*y),
+                // A notch is about 120 pixels of smooth scrolling on most platforms.
+                MouseScrollDelta::PixelDelta(p) => self.add_wheel((p.y / 120.0) as f32),
+            },
             WindowEvent::CursorLeft { .. } => self.cursor = None,
             // Releases that happen while unfocused never arrive; drop everything held.
             WindowEvent::Focused(false) => self.release_all(),
@@ -152,7 +266,9 @@ impl RawInput {
             gilrs::EventType::ButtonPressed(b, _) => self.set_button(Button::Pad(b), true),
             gilrs::EventType::ButtonReleased(b, _) => self.set_button(Button::Pad(b), false),
             gilrs::EventType::AxisChanged(a, v, _) => self.set_pad_axis(a, v),
+            gilrs::EventType::Connected => self.gamepad = true,
             gilrs::EventType::Disconnected => {
+                self.gamepad = false;
                 self.pad_axes.clear();
                 let pads: Vec<_> = self
                     .down
@@ -172,12 +288,51 @@ impl RawInput {
         held.into_iter().for_each(|b| self.set_button(b, false));
     }
 
-    /// Clears the per-frame state (presses, releases, mouse motion). Call after
-    /// the frame's actions have been read.
+    /// The raw device state and this frame's events, in the order they
+    /// happened, named as [`crate::keycodes`] describes.
+    pub fn raw_frame(&self, frame: u64) -> RawInputFrame {
+        let mut keys_down: Vec<String> = self
+            .down
+            .iter()
+            .filter_map(|b| match b {
+                Button::Key(_) | Button::Pad(_) => Some(keycodes::describe(*b).1),
+                Button::Mouse(_) => None,
+            })
+            .filter(|n| *n != keycodes::UNKNOWN)
+            .map(str::to_string)
+            .collect();
+        keys_down.sort();
+        keys_down.dedup();
+        let mut mouse_buttons_down: Vec<u8> = self
+            .down
+            .iter()
+            .filter_map(|b| match b {
+                Button::Mouse(m) => keycodes::mouse_button_number(*m),
+                _ => None,
+            })
+            .collect();
+        mouse_buttons_down.sort_unstable();
+        let (x, y) = self.cursor.unwrap_or(self.last_cursor);
+        RawInputFrame {
+            frame,
+            events: self.events.clone(),
+            keys_down,
+            mouse_buttons_down,
+            mouse_position: Vec2::new(x as f32, y as f32),
+            mouse_delta: Vec2::new(self.mouse_delta.0 as f32, self.mouse_delta.1 as f32),
+            keyboard: self.keyboard,
+            mouse: self.mouse,
+            gamepad: self.gamepad,
+        }
+    }
+
+    /// Clears the per-frame state (presses, releases, mouse motion, events).
+    /// Call after the frame's actions have been read.
     pub fn end_frame(&mut self) {
         self.pressed_this_frame.clear();
         self.released_this_frame.clear();
         self.mouse_delta = (0.0, 0.0);
+        self.events.clear();
     }
 }
 

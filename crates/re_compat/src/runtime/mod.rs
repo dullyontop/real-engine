@@ -89,6 +89,7 @@ impl Bindings {
         crate::instance::register(&mut b);
         crate::services::core::register(&mut b);
         crate::datatypes::register(&mut b);
+        crate::input::register(&mut b);
         Ok(b)
     }
 
