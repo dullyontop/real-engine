@@ -97,6 +97,7 @@ impl Bindings {
         crate::datatypes::register(&mut b);
         crate::tween::register(&mut b);
         crate::sound::register(&mut b);
+        crate::gui::register(&mut b);
         scripts::register(&mut b);
         session::register(&mut b);
         globals::register(&mut b);
@@ -315,6 +316,7 @@ pub fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
             .into_iter()
             .map(|(p, a)| ("DataModel", p, a)),
     );
+    out.extend(crate::gui::accessors());
     out
 }
 
@@ -516,19 +518,32 @@ impl CompatVm {
     }
 
     /// One headless frame of one fixed step of `dt` seconds: [`pre_render`],
-    /// then [`pre_animation`], [`pre_simulation`] and [`post_simulation`]
-    /// (there is no physics between them here).
+    /// then [`pre_animation`], [`pre_simulation`], [`media`] and
+    /// [`post_simulation`] (there is no physics between them here).
     ///
     /// [`pre_render`]: CompatVm::pre_render
     /// [`pre_animation`]: CompatVm::pre_animation
     /// [`pre_simulation`]: CompatVm::pre_simulation
+    /// [`media`]: CompatVm::media
     /// [`post_simulation`]: CompatVm::post_simulation
     pub fn frame(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
         let mut out = self.pre_render(host, dt);
         out.extend(self.pre_animation(host, dt));
         out.extend(self.pre_simulation(host, dt));
+        out.extend(self.media(host, dt));
         out.extend(self.post_simulation(host, dt));
         out
+    }
+
+    /// Advances the tweens ([`crate::tween::step`]), then the sounds
+    /// ([`crate::sound::step`]), by `dt` seconds; a host runs it after the
+    /// simulation, before [`post_simulation`](Self::post_simulation), so
+    /// `Heartbeat` sees the new values.
+    pub fn media(&self, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
+        self.run(host, |lua| {
+            crate::tween::step(lua, dt)?;
+            crate::sound::step(lua, dt)
+        })
     }
 
     /// Shutdown: runs every `game:BindToClose` callback, then runs frames

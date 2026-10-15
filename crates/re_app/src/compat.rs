@@ -249,28 +249,14 @@ pub fn add_player(
     players::add_player(vm, host, &PlayerSpec::numbered(n))
 }
 
-/// The client frame's tween, sound and listener work; returns the sound
-/// commands for the mixer.
-pub fn client_media(
-    vm: &CompatVm,
-    host: &mut dyn ScriptHost,
-    dt: f64,
-    listener: Option<(Vec3, Quat)>,
-) -> (Vec<re_types::AudioCmd>, Vec<Diagnostic>) {
+/// The client's listener for this frame, and the sound commands its
+/// scripts queued, for the mixer.
+pub fn client_sounds(vm: &CompatVm, listener: Option<(Vec3, Quat)>) -> Vec<re_types::AudioCmd> {
     let lua = vm.context().lua();
     if let Some((p, r)) = listener {
         re_compat::sound::set_listener(lua, p, r);
     }
-    let diags = vm.run(host, |lua| {
-        re_compat::sound::step(lua, dt)?;
-        Ok(())
-    });
-    (re_compat::sound::take_commands(lua), diags)
-}
-
-/// Advances the tweens of a context by `dt` (before its `Heartbeat`).
-pub fn step_tweens(vm: &CompatVm, host: &mut dyn ScriptHost, dt: f64) -> Vec<Diagnostic> {
-    vm.run(host, |lua| re_compat::tween::step(lua, dt))
+    re_compat::sound::take_commands(lua)
 }
 
 /// Steps a compat world's character physics (`CharacterPhysics`), when it

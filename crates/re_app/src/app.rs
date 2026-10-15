@@ -984,7 +984,6 @@ impl App {
             let dt = frame_time.as_secs_f64();
             self.compat_call(ContextKind::Server, |vm, h| {
                 let mut d = re_compat::net::pump(vm, h);
-                d.extend(crate::compat::step_tweens(vm, h, dt));
                 d.extend(vm.pre_render(h, dt));
                 d
             });
@@ -1480,7 +1479,14 @@ impl App {
                 self.compat_call(ContextKind::Server, |vm, h| match phase {
                     Phase::PreAnimation => vm.pre_animation(h, dt),
                     Phase::PreSimulation => vm.pre_simulation(h, dt),
-                    Phase::PostSimulation => vm.post_simulation(h, dt),
+                    Phase::PostSimulation => {
+                        // Tweens and sounds step after the physics (WP15);
+                        // the server plays no sound of its own.
+                        let mut d = vm.media(h, dt);
+                        re_compat::sound::take_commands(vm.context().lua());
+                        d.extend(vm.post_simulation(h, dt));
+                        d
+                    }
                     _ => Vec::new(),
                 });
             }
@@ -1721,7 +1727,8 @@ impl App {
 
     /// The client half of a compat frame, after the server's fixed steps:
     /// replication, the client's deliveries and phases (one round of fixed
-    /// phases per server step, without physics), then its tweens and sounds.
+    /// phases per server step, with character physics, tweens and sounds),
+    /// then the sound commands for the mixer.
     fn compat_client_frame(&mut self, frame_dt: f64, steps: u32) {
         if let Some(c) = &mut self.compat {
             c.replicate(&mut self.world);
@@ -1729,22 +1736,21 @@ impl App {
         let step_dt: f64 = self.clock.dt_secs().into();
         self.compat_call(ContextKind::Client, |vm, h| {
             let mut d = re_compat::net::pump(vm, h);
-            d.extend(crate::compat::step_tweens(vm, h, frame_dt));
             d.extend(vm.pre_render(h, frame_dt));
             for _ in 0..steps {
                 d.extend(vm.pre_animation(h, step_dt));
                 d.extend(vm.pre_simulation(h, step_dt));
                 d.extend(crate::compat::step_characters(h.world, step_dt));
+                d.extend(vm.media(h, step_dt));
                 d.extend(vm.post_simulation(h, step_dt));
             }
             d
         });
-        let mut sounds = Vec::new();
-        self.compat_call(ContextKind::Client, |vm, h| {
-            let (cmds, d) = crate::compat::client_media(vm, h, frame_dt, None);
-            sounds = cmds;
-            d
-        });
+        let sounds = self
+            .compat
+            .as_ref()
+            .map(|c| crate::compat::client_sounds(&c.client_vm, None))
+            .unwrap_or_default();
         self.audio_cmds.extend(sounds);
     }
 

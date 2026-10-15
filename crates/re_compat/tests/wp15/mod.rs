@@ -15,6 +15,7 @@ const TWEEN_TARGET: &str = include_str!("../fixtures/gui/tween_target.json");
 
 pub struct Place {
     pub world: World,
+    pub game: re_scene::Entity,
     pub services: NoServices,
     pub vm: CompatVm,
     _dir: tempfile::TempDir,
@@ -35,7 +36,7 @@ pub fn place_with(behavior: SignalBehavior) -> Place {
     });
     let setup: Arc<CompatSetup> = CompatSetup::new(b).unwrap();
     let mut world = World::new();
-    create_place(
+    let game = create_place(
         &mut world,
         &setup.classes,
         &["Workspace", "ReplicatedStorage"],
@@ -52,6 +53,7 @@ pub fn place_with(behavior: SignalBehavior) -> Place {
     .unwrap();
     Place {
         world,
+        game,
         services: NoServices::default(),
         vm,
         _dir: dir,
@@ -108,6 +110,28 @@ impl Place {
         assert!(d.is_empty(), "{d:#?}");
         let d = vm.step(&mut host, dt);
         assert!(d.is_empty(), "{d:#?}");
+    }
+
+    /// One UI frame inside `ctx`'s current pass, then the deferred handlers.
+    pub fn gui(
+        &mut self,
+        ctx: &egui::Context,
+        frame: &re_compat::gui::GuiFrame,
+    ) -> re_compat::gui::GuiOutput {
+        let vm = &self.vm;
+        let mut host = WorldHost {
+            world: &mut self.world,
+            services: &mut self.services,
+        };
+        let mut out = None;
+        let d = vm.run(&mut host, |lua| {
+            out = Some(re_compat::gui::step(lua, ctx, frame)?);
+            Ok(())
+        });
+        assert!(d.is_empty(), "{d:#?}");
+        let d = vm.step(&mut host, 0.0);
+        assert!(d.is_empty(), "{d:#?}");
+        out.expect("the step ran")
     }
 
     pub fn out(&mut self) -> Vec<String> {
