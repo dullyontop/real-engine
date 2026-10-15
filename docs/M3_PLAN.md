@@ -1,14 +1,18 @@
 # M3 plan (draft)
 
-**Status:** draft. No M3 work package has started. M3 starts when M2's definition of done holds; until then, M2 work comes first. The owner's decisions in "Defaults this plan picks" may change the WP list before it starts.
+**Status:** draft. No M3 work package has started. M3 runs in two phases ("How M3 starts" below): ADR drafts, the debugger spike and the maintainer's entity-core track may start now, beside the end of M2; WP code waits until M2's definition of done holds. The owner's decisions in "Defaults this plan picks" may change the WP list.
 
 M3 turns Real Engine from an engine that runs games from a project directory into one that ships them. When it is done, a developer can build a large procedural world that streams in as the player moves, put skinned characters and vehicles in it, light it with post-processing and cascaded shadows, debug its scripts, edit its graphs on a node canvas, and package it as a standalone game for Windows, macOS and Linux. Every platform blocks merges in CI, and runs repeat bit for bit across machines (D2). A new public example, `examples/valley`, exercises all of it, and `real verify` checks it in CI like the island and the plaza.
 
-The items come from [ROADMAP.md, "M3 and later"](ROADMAP.md#m3-and-later) and its AI track, plus the M2 follow-ups the M2 plan deferred (local persistence, `SurfaceGui` and `ViewportFrame`, compat hot reload). Each item still needs an ADR before its WP starts, as the roadmap says; this plan names them.
+The items come from [ROADMAP.md, "M3 and later"](ROADMAP.md#m3-and-later) and its AI track, plus the M2 follow-ups the M2 plan deferred (local persistence, `SurfaceGui` and `ViewportFrame`, compat hot reload, the `.rbxl`/`.rbxlx` reader). Each item still needs an ADR before its WP starts, as the roadmap says; this plan names them.
 
 This plan splits M3 into eleven work packages: WP18 to WP28. Numbering continues from M2, so a WP number always means one thing.
-- **WP18** (platforms and D2 determinism) starts first, because every later WP must stay green on three platforms.
-- **WP19** (export and packaging), **WP20** (rendering), **WP21** (skinned animation), **WP22** (vehicles, ragdolls and audio effects), **WP24** (procedural workflow), **WP25** (editor and debugger), **WP26** (the M3 AI track) and **WP27** (compat follow-ups) start in parallel once their ADRs are accepted.
+
+**How M3 starts.**
+- **Phase 0, now.** Each M3 thread starts by researching and drafting its WP's ADR as a new file and sends it to the maintainer, who accepts it and commits it to `docs/DECISIONS.md`. WP25's debugger spike and the maintainer's entity-core track also start now. No other M3 code merges in phase 0, so M2 keeps the reviewers' attention.
+- **Phase 1, when M2's definition of done holds.** A WP's code starts once its ADR is accepted, in the order below.
+- **WP18** (platforms and D2 determinism) goes first. From its PR "blocking" on, every WP must stay green on three platforms; WPs that start before it merges fix their own platform breaks when it lands.
+- **WP19** (export and packaging) starts after WP18 PR "blocking", because its bundles are tested on all three platforms. **WP20** (rendering), **WP21** (skinned animation), **WP22** (vehicles, ragdolls and audio effects), **WP24** (procedural workflow), **WP25** (editor and debugger), **WP26** (the M3 AI track) and **WP27** (compat follow-ups) start once their ADRs are accepted.
 - **WP23** (world streaming and terrain) starts after WP24's PR "versioning", because streaming caches generated cells by generator version.
 - **WP28** (`examples/valley`) starts once WP19, WP21, WP22 and WP23 have each merged their first PR, and closes M3.
 
@@ -46,15 +50,20 @@ The M1 and M2 ownership rules carry over, with these changes:
   - `re_editor` and `re_script`'s debugger module to WP25;
   - `re_agent`, `re_mcp`, `re_cli/src/tooling/{mcp,agent}.rs` and `templates/` (new) to WP26;
   - `re_compat` (except its shared files) and `re_import` to WP27;
+  - `re_script` (except `src/debug/`) to WP24, for its `generator` context;
   - `examples/valley/` to WP28.
-- `re_app` and `re_cli` are shared. WP19 owns `re_app/src/package.rs` and `re_cli/src/build/`; every other change to them goes through a small PR that the maintainer reviews, as M2 did for `re_compat`'s shared files.
+- `re_app` and `re_cli` are shared. WP19 owns `re_app/src/package.rs` and `re_cli/src/build/`; every other change to them, such as WP24's `real migrate-graph` and WP26's new `real new` templates, goes through a small PR that the maintainer reviews, as M2 did for `re_compat`'s shared files.
+- **Planned edits across owners.** Each is a small PR in the owner's paths, reviewed by the owner:
+  - WP21's GPU skinning path in `re_render` (WP20 reviews);
+  - WP23's streaming hooks in `re_scene` (the maintainer reviews), its per-chunk heightfield calls in `re_physics` (WP22 reviews), and its erosion node registered through WP24's `NodeRegistry` (WP24 reviews);
+  - WP27's skinned `MeshPart`s on WP21's `re_anim` API and its post effects on WP20's settings, through those WPs' public APIs only.
 
 ## Common rules for every WP
 
 The M1 and M2 common rules hold unchanged. Four rules are added:
 - **Three platforms from the start.** From WP18 PR "blocking" on, `build-windows` and `build-macos` run the full test suite and block merges. A WP's acceptance commands must pass on all three. A test that cannot run on a platform says so with `#[cfg]` and a reason, never by being skipped silently.
 - **D2 is kept.** From WP18 PR "d2" on, `cargo xtask d2` runs the island's and the plaza's replays and compares `state_hash` across the three CI platforms. A WP that changes simulation, physics, procedural output or script scheduling keeps it green.
-- **Diagnostic codes.** New crates get a range through the maintainer. The current owners keep their ranges; WP19's packaging codes go in `re_app`'s and `re_cli`'s ranges, WP23's streaming codes in `re_proc`'s and WP25's debugger codes in `re_script`'s.
+- **Diagnostic codes.** New crates get a range through the maintainer. The current owners keep their ranges; WP19's packaging codes go in `re_app`'s and `re_cli`'s ranges, and WP25's debugger codes in `re_script`'s. `re_proc`'s range is split: WP24 `RE4000`–`RE4299`, WP23 `RE4300`–`RE4499`. WP27 gets `re_compat`'s block `RE9400`–`RE9449`, reserved in `src/codes.rs` by the maintainer, and keeps `re_import`'s `RE9800`–`RE9899`.
 - **New dependencies** need an ADR and a `docs/DEPENDENCIES.md` row through the maintainer, as before. This plan expects a few (texture compression, the node canvas, HTTP transport); each WP lists its candidates below, and the ADR picks one after checking the crate's real API and version.
 
 ---
@@ -68,8 +77,10 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | D2 harness: `cargo xtask d2` input (project, replay, frames) and its JSON report (`state_hash` per platform and frame) | `tools/xtask/src/d2.rs` | WP18 | WP18 PR "d2" | every WP that changes simulation |
 | Package layout: the archive format, its index, the runtime-only binary's lookup order (archive, then project directory) and `real build` options | `crates/re_app/src/package.rs`, `docs/ARCHITECTURE.md` §8 | WP19 | WP19 PR "archive" | WP23, WP28 |
 | Post-processing settings in `RenderSnapshot` (exposure, tone mapping, bloom, colour grading) and the cascade settings of the sun | `crates/re_types/src/render.rs` | WP20 | WP20 PR "post" | WP27 (compat effects), WP28 |
-| Skins: `SkinData` (joints, inverse bind matrices, per-vertex weights), the skinned draw item, `AnimGraph` (states, transitions, blend nodes) as plain data | `crates/re_types/src/{render,anim}.rs` | WP21 | WP21 PR "skins" | WP22 (ragdolls), WP27, WP28 |
-| Vehicle and ragdoll commands in `PhysicsCmd` and their poses in the physics readout | `crates/re_types/src/physics.rs` | WP22 | WP22 PR "vehicles" | WP28 |
+| Skins: `SkinData` (joints, inverse bind matrices, per-vertex weights) and the skinned draw item | `crates/re_types/src/render.rs` | WP21 | WP21 PR "skins" | WP20 (skinning path), WP22 (ragdolls), WP27, WP28 |
+| Animation graphs: `AnimGraph` (states, transitions, blend nodes) as plain data, and its parameters | `crates/re_types/src/anim.rs` | WP21 | WP21 PR "graphs" | WP25 (editing), WP28 |
+| Vehicle commands in `PhysicsCmd` and vehicle poses in the physics readout | `crates/re_types/src/physics.rs` | WP22 | WP22 PR "vehicles" | WP28 |
+| Ragdoll commands in `PhysicsCmd`, their poses and the animated/simulated blend | `crates/re_types/src/physics.rs` | WP22 | WP22 PR "ragdolls" | WP27, WP28 |
 | Generator versions: a version per generator and node kind in the per-node cache key, and the bake format | `crates/re_proc/src/` | WP24 | WP24 PR "versioning" | WP23, WP25 |
 | Streaming: `StreamCell` (key, bounds, generator version), the load and unload events scripts see, and the budget settings in `real.toml` | `crates/re_proc/src/stream/`, `crates/re_scene/` | WP23 | WP23 PR "cells" | WP28 |
 
@@ -145,14 +156,14 @@ out/island-build/island --headless --frames 600
 
 **Owned paths:** `crates/re_render/`.
 
-**Starts after:** ADR-0038 (post-processing and shadows) is accepted.
+**Starts after:** ADR-0038 (post-processing and shadows) is accepted; PR "textures" also needs ADR-0047.
 
 **Build:**
 - PR "post": an HDR target, exposure, a tone-mapping operator chosen in ADR-0038, bloom, and colour grading moved from `SceneExtras` into the post chain. The settings join `RenderSnapshot` with defaults that keep today's goldens within tolerance or re-bless them in the same PR with before and after images.
 - PR "shadows": cascaded shadow maps for the sun (cascade count and split scheme in ADR-0038), stable under camera motion.
-- PR "textures": BC7 or BC1/BC3 on desktop through the asset cache, picked per adapter feature, with an uncompressed fallback. The encoder crate is chosen in an ADR after checking crates.io (candidates to evaluate: `intel_tex_2`, `texpresso`, a KTX2 reader). ASTC is not needed for desktop targets.
+- PR "textures": BC7 or BC1/BC3 on desktop through the asset cache, picked per adapter feature, with an uncompressed fallback. The encoder crate is chosen in ADR-0047 after checking crates.io (candidates to evaluate: `intel_tex_2`, `texpresso`, a KTX2 reader). ASTC is not needed for desktop targets.
 - PR "hot reload": WGSL files under the project or the engine reload on change in a development run, keeping the last good pipeline and reporting errors as `RE6xxx` with file and line.
-- Render thread: WP20 measures render submission on the valley scene once it exists. If it is above the ADR's threshold, a PR moves submission to a render thread over the existing `RenderSnapshot: Send` seam (ADR-0007); otherwise the ADR records the numbers and the decision not to.
+- Render thread: WP20 measures render submission on the largest scenes that exist then (the 250,000-part static map of ADR-0031 and the plaza). If it is above ADR-0038's threshold, a PR moves submission to a render thread over the existing `RenderSnapshot: Send` seam (ADR-0007); otherwise ADR-0038 records the numbers and the decision not to. WP28 measures the valley again and reopens the decision only if the valley crosses the threshold.
 
 **Non-goals:** GPU-driven rendering, global illumination, ray tracing.
 
@@ -227,7 +238,7 @@ cargo test --locked -p re_audio
 
 **Owned paths:** `crates/re_proc/src/stream/`, a terrain module in `crates/re_geom/` agreed with WP24.
 
-**Starts after:** WP24 PR "versioning" and ADR-0042 are accepted.
+**Starts after:** WP24 PR "versioning" has merged and ADR-0042 is accepted.
 
 **Build:**
 - PR "cells": `StreamCell` keyed by `StableKey`, the streaming radius and memory budget in `real.toml`, load and unload of entities by cell with their overrides kept, and script events when a cell loads or unloads.
@@ -335,16 +346,17 @@ cargo test --locked -p re_mcp
 
 ## WP27: Compat follow-ups
 
-**Goal.** The Roblox-style layer's follow-ups that M2 deferred: local persistence for data services, `SurfaceGui` and `ViewportFrame`, hot reload for compat scripts, skinned `MeshPart`s and the compat post effects.
+**Goal.** The Roblox-style layer's follow-ups that M2 deferred: local persistence for data services, `SurfaceGui` and `ViewportFrame`, hot reload for compat scripts, a `.rbxl`/`.rbxlx` reader, skinned `MeshPart`s and the compat post effects.
 
 **Owned paths:** `crates/re_compat/` (except its shared files), `crates/re_import/`.
 
-**Starts after:** M2 is done. The skinned and post-effect PRs wait for WP21 PR "skins" and WP20 PR "post".
+**Starts after:** M2 is done and ADR-0048 (local persistence, surfaces and the place-file reader) is accepted. The skinned and post-effect PRs wait for WP21 PR "skins" and WP20 PR "post".
 
 **Build:**
 - PR "persistence": `DataStoreService` and `MemoryStoreService` over local files under `.real/data/`, with the request budgets and errors scripts expect, instead of `RE9002`.
 - PR "surfaces": `SurfaceGui` and `ViewportFrame` rendered through WP15's UI and the render-to-texture path.
 - PR "reload": changed compat scripts restart in a running play, and a script set back to `Disabled = false` restarts (the WP11 follow-up).
+- PR "place files": a general `.rbxl` (binary) and `.rbxlx` (XML) reader in `re_import`, deferred from M2 WP16, writing the same project as the Rojo-style and loader imports. ADR-0048 records the format facts it relies on, written for this repository.
 - PR "skins and effects": skinned `MeshPart`s on WP21's skins, and `BloomEffect`, `BlurEffect` and `SunRaysEffect` drawn by WP20's post chain, each moving from `partial` to `implemented`.
 
 **Non-goals:** real networking (see "Defaults this plan picks"), terrain voxels, online services other than data storage.
@@ -356,7 +368,7 @@ real verify --project examples/plaza --json
 ```
 - Coverage rows move to `implemented` only with a fixture that calls them.
 
-**Definition of done:** the four PRs merged; `verify-plaza` stays green.
+**Definition of done:** the five PRs merged; `verify-plaza` stays green.
 
 ---
 
@@ -401,6 +413,8 @@ The ADRs this plan adds:
 - ADR-0044 (WP25): the node canvas and docking crates.
 - ADR-0045 (WP25): the script debugger.
 - ADR-0046 (WP26): the HTTP transport and the evaluation harness.
+- ADR-0047 (WP20): the texture encoder crate.
+- ADR-0048 (WP27): local persistence for data services, `SurfaceGui` and `ViewportFrame`, and the `.rbxl`/`.rbxlx` reader.
 - ADR-0023 amendments (WP18, WP28): Windows, macOS, `d2` and `verify-valley` become required jobs.
 
 ## Dependency graph
@@ -408,12 +422,12 @@ The ADRs this plan adds:
 ```mermaid
 graph LR
   M2[M2 done] --> WP18
-  M2 --> WP27
   WP18 --> WP19
   WP18 -.-> WP20
   WP18 -.-> WP21
   WP18 -.-> WP22
   WP18 -.-> WP24
+  WP18 -.-> WP27
   WP18 -.-> WP25
   WP18 -.-> WP26
   WP21 --> WP22r[WP22 ragdolls]
@@ -427,9 +441,9 @@ graph LR
   WP20 -.-> WP28
 ```
 
-A solid arrow means "starts after". A dotted arrow from WP18 means "must stay green on three platforms once WP18 PR 'blocking' merges"; those WPs may start before it. The dotted arrow from WP20 to WP28 means the valley uses post-processing and cascades when they have merged.
+A solid arrow means "starts after" (a merge). Every WP also waits for M2's definition of done and its own accepted ADR, which the graph leaves out. A dotted arrow from WP18 means "must stay green on three platforms once WP18 PR 'blocking' merges"; those WPs may start before it. The dotted arrow from WP20 to WP28 means the valley uses post-processing and cascades when they have merged.
 
-Critical path: WP18 → WP24 "versioning" → WP23 → WP28.
+Critical path: ADR-0043 → WP24 "versioning" → WP23 (three PRs) → WP28. WP18 runs beside it and must merge "blocking" before WP19, which WP28 also needs.
 
 ## Definition of done for M3
 

@@ -1,8 +1,8 @@
-<!-- One PR belongs to one work package (docs/M1_PLAN.md). -->
+<!-- One PR belongs to one work package (docs/M1_PLAN.md, docs/M2_PLAN.md, docs/M3_PLAN.md). -->
 
 ## Work package
 
-WP<!-- 0-8 -->, PR "<!-- name from the plan, if it has one -->"
+WP<!-- number from the milestone plan -->, PR "<!-- name from the plan, if it has one -->"
 
 ## Summary
 
@@ -10,7 +10,7 @@ WP<!-- 0-8 -->, PR "<!-- name from the plan, if it has one -->"
 
 ## Owned paths touched
 
-<!-- List every path changed. All must belong to this WP (docs/M1_PLAN.md, "Owned paths"),
+<!-- List every path changed. All must belong to this WP (its milestone plan, "Owned paths" and "Ownership"),
      except tool-generated `Cargo.lock` and `schemas/`. -->
 
 -
@@ -18,7 +18,7 @@ WP<!-- 0-8 -->, PR "<!-- name from the plan, if it has one -->"
 - [ ] No file outside this WP's owned paths changed (except `Cargo.lock` / `schemas/` written by tools)
 - [ ] Every new diagnostic code has `crates/<crate>/explain/RE####.md` and an entry in the crate's `DIAGNOSTICS`
 - [ ] New dependencies (if any) have an ADR in `docs/DECISIONS.md` and a row in `docs/DEPENDENCIES.md`
-- [ ] Frozen contracts (docs/M1_PLAN.md, "Cross-WP contracts") are unchanged, or the defining and consuming WPs reviewed the change
+- [ ] Frozen contracts (each milestone plan, "Cross-WP contracts") are unchanged, or the defining and consuming WPs reviewed the change
 
 ## Acceptance output
 
