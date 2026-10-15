@@ -27,9 +27,9 @@ re_types = { workspace = true, features = ["schemars"] }
 re_reflect.workspace = true
 re_scene.workspace = true
 re_command.workspace = true
-re_app = { path = "../re_app" }
-re_input = { path = "../re_input" }
-re_physics = { path = "../re_physics" }
+re_app.workspace = true
+re_input.workspace = true
+re_physics.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
