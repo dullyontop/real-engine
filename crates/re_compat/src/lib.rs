@@ -108,6 +108,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE9202.md"),
     },
     DiagInfo {
+        code: codes::OFFLINE_DEFAULT,
+        title: "Offline default returned",
+        page: include_str!("../explain/RE9203.md"),
+    },
+    DiagInfo {
         code: codes::COLLISION_GROUP,
         title: "Collision group refused",
         page: include_str!("../explain/RE9250.md"),

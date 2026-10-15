@@ -61,6 +61,10 @@ pub const UNKNOWN_ANIMATION: Code = Code::new("RE9201");
 /// value that is not a built-in clip or a dotted path, or one id twice.
 pub const BAD_ANIMATION_MAP: Code = Code::new("RE9202");
 
+/// A member that reads online data (a player's avatar) returned an offline
+/// default instead; the script goes on with it.
+pub const OFFLINE_DEFAULT: Code = Code::new("RE9203");
+
 /// A collision group operation was refused: the group is not registered, the
 /// name is invalid or taken, all groups are in use, or `Default` was to be
 /// removed or renamed (WP13 holds RE9250–RE9299).
