@@ -1,7 +1,5 @@
 //! WP15: Sound as scripts see it, in a client VM.
 
-use std::collections::HashMap;
-
 use re_compat::sound::{RollOffMode, SoundEventKind, SoundSettings, roll_off};
 use re_types::audio::AudioCmd;
 
@@ -15,8 +13,8 @@ fn sound_place() -> Place {
         re_compat::sound::configure(
             lua,
             SoundSettings {
-                assets: HashMap::from([
-                    ("rbxassetid://1".to_string(), "assets/two.wav".to_string()),
+                assets: std::collections::BTreeMap::from([
+                    ("1".to_string(), "assets/two.wav".to_string()),
                     ("3".to_string(), "assets/half.wav".to_string()),
                 ]),
                 clip_seconds: Some(std::sync::Arc::new(|clip| match clip {
@@ -202,4 +200,71 @@ fn roll_off_curves() {
     ));
     let far = roll_off(RollOffMode::InverseTapered, 10.0, 100.0, 90.0);
     assert!(near(far, (10.0f32 / 90.0).powi(2)), "{far}");
+}
+
+mod config {
+    use re_compat::CompatConfig;
+    use re_compat::scene::DEFAULT_EFFECT_BUDGET;
+
+    const HEAD: &str = "[compat]\napi = \"roblox\"\n";
+
+    fn load(extra: &str) -> Result<CompatConfig, String> {
+        CompatConfig::from_project_toml(&format!("{HEAD}{extra}"))
+            .map(Option::unwrap)
+            .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn assets_and_budget_round_trip() {
+        let cfg = load(
+            "effect_budget = 500\n\n[compat.assets]\n\"rbxassetid://12\" = \"assets/hit.wav\"\n\"7\" = \"sfx/./wind.ogg\"\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.effect_budget(), 500);
+        let keys: Vec<&str> = cfg.assets.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["12", "7"], "both forms normalise to the bare id");
+        let text = cfg.to_toml();
+        assert_eq!(
+            text,
+            "[compat]\napi = \"roblox\"\neffect_budget = 500\n\n[compat.assets]\n\"12\" = \"assets/hit.wav\"\n\"7\" = \"sfx/./wind.ogg\"\n"
+        );
+        assert_eq!(
+            CompatConfig::from_project_toml(&text).unwrap().unwrap(),
+            cfg
+        );
+
+        let s = re_compat::sound::SoundSettings::from_config(&cfg, None);
+        assert_eq!(s.resolve("rbxassetid://12"), Some("assets/hit.wav"));
+        assert_eq!(s.resolve("12"), Some("assets/hit.wav"));
+        assert_eq!(s.resolve("rbxassetid://7"), Some("sfx/./wind.ogg"));
+        assert_eq!(s.resolve("8"), None);
+    }
+
+    #[test]
+    fn absent_fields_are_not_written() {
+        let cfg = load("").unwrap();
+        assert!(cfg.assets.is_empty());
+        assert_eq!(cfg.effect_budget, None);
+        assert_eq!(cfg.effect_budget(), DEFAULT_EFFECT_BUDGET);
+        assert_eq!(cfg.to_toml(), HEAD);
+    }
+
+    #[test]
+    fn refused_values() {
+        let e = load("effect_budget = 0\n").unwrap_err();
+        assert!(e.contains("effect_budget"), "{e}");
+        let e = load("[compat.assets]\n\"rbxassetid://5\" = \"a.wav\"\n\"5\" = \"b.wav\"\n")
+            .unwrap_err();
+        assert!(e.contains("same id"), "{e}");
+        for path in [
+            "/etc/a.wav",
+            "../a.wav",
+            "assets/../../a.wav",
+            "a\\\\..\\\\b.wav",
+            "",
+        ] {
+            let e = load(&format!("[compat.assets]\n\"5\" = \"{path}\"\n")).unwrap_err();
+            assert!(e.contains("inside the project"), "{path}: {e}");
+        }
+    }
 }

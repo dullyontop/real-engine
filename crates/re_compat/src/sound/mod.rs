@@ -11,9 +11,10 @@
 //! read the play events from [`take_events`].
 //!
 //! * `SoundId` resolves through the substitute table ([`SoundSettings`]):
-//!   online ids are not available offline, so `real.toml` maps each id to a
-//!   project file. An unknown id is silent and warns once with `RE9350`; it
-//!   has a `TimeLength` of 0, so a sound that is not looped ends at once.
+//!   online ids are not available offline, so `[compat] assets` in
+//!   `real.toml` maps each id to a project file. An unknown id is silent and
+//!   warns once with `RE9350`; it has a `TimeLength` of 0, so a sound that is
+//!   not looped ends at once.
 //! * A sound whose parent is a part or an attachment is 3D: it plays at the
 //!   parent's position and its volume follows `RollOffMode` between
 //!   `RollOffMinDistance` and `RollOffMaxDistance` from the listener. Any
@@ -21,7 +22,7 @@
 //! * A script that writes `Playing` or `TimePosition` starts, stops or seeks
 //!   the sound, as `Play`, `Stop` and a seek would.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use glam::{Quat, Vec3};
@@ -33,6 +34,7 @@ use re_types::audio::AudioCmd;
 use crate::instance::methods_api::ret;
 use crate::instance::tree;
 use crate::runtime::{Bindings, state, with_world};
+use crate::scene::{CompatConfig, asset_key};
 use crate::signal;
 use crate::tween::set_own;
 
@@ -105,8 +107,9 @@ pub type ClipSecondsFn = dyn Fn(&str) -> Option<f64> + Send + Sync;
 /// unknown.
 #[derive(Clone, Default)]
 pub struct SoundSettings {
-    /// Asset id (`rbxassetid://123`, or the bare number) to project clip path.
-    pub assets: HashMap<String, String>,
+    /// Asset id to project clip path, keyed as [`asset_key`] gives them (the
+    /// `[compat] assets` table).
+    pub assets: BTreeMap<String, String>,
     /// The length of a clip in seconds, `None` when it cannot be loaded.
     pub clip_seconds: Option<Arc<ClipSecondsFn>>,
 }
@@ -120,19 +123,18 @@ impl std::fmt::Debug for SoundSettings {
 }
 
 impl SoundSettings {
-    /// The clip path of `id`: the table's entry for it, or for its bare number.
-    pub fn resolve(&self, id: &str) -> Option<&str> {
-        if let Some(p) = self.assets.get(id) {
-            return Some(p);
+    /// The settings of a project: its `[compat] assets` table, and the clip
+    /// lengths (usually `re_audio::Audio::clip_seconds`).
+    pub fn from_config(config: &CompatConfig, clip_seconds: Option<Arc<ClipSecondsFn>>) -> Self {
+        SoundSettings {
+            assets: config.assets.clone(),
+            clip_seconds,
         }
-        let bare = id
-            .strip_prefix("rbxassetid://")
-            .or_else(|| id.strip_prefix("http://www.roblox.com/asset/?id="))
-            .unwrap_or(id);
-        self.assets
-            .get(bare)
-            .or_else(|| self.assets.get(&format!("rbxassetid://{bare}")))
-            .map(String::as_str)
+    }
+
+    /// The clip path of `id` (`rbxassetid://123`, `123`, or the asset URL).
+    pub fn resolve(&self, id: &str) -> Option<&str> {
+        self.assets.get(asset_key(id)).map(String::as_str)
     }
 }
 
