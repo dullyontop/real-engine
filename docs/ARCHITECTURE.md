@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** partly implemented (M1 in progress). The contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`) and the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, plus `re_script` (compile checks and script diagnostics), `re_agent` (the project lock and editor socket), `re_app` (the runtime, `App::open` and `App::serve`), `re_cli` (the `real` CLI with the tooling stubs), `re_geom` and `re_proc` (geometry and the procedural core), exist; `re_script_check`, `re_mcp`, `re_editor` and `re_compat` are still design, and `re_script`, `re_agent`, `re_app` and `re_cli` are partial. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** partly implemented (M1 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`) and the editor (`re_editor`). Partial: `re_app` and `re_cli` (the runtime and the `real` CLI; the demo is still to come) and `re_agent` (lock, editor socket, policy, sessions and checkpoints). Still design: `re_mcp` and `re_compat`. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
