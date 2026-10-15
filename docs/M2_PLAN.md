@@ -79,6 +79,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | Script contexts: `ContextKind::{Server, Client}` in `re_script`, one VM per context, yielding host calls (`HostYield`), resume order within a phase | `crates/re_script/src/{vm,scheduler}.rs` | WP11 | WP11 PR "data model" | WP12, WP14, WP16 |
 | Two worlds: `CompatWorlds { server, client }`, the replication pass (`replicate(server, client, &ReplicationSet)`), the client-local write rule | `crates/re_compat/src/net/` | WP12 | WP12 PR "two worlds" | WP13–WP16 |
 | `re_import` output: a project directory, scene files and scripts, plus an `ImportReport` (created, adopted, removed, failed, unrecognised statements) | `crates/re_import/src/lib.rs` | WP16 | WP16 PR "importer" | WP17 (`project.import` tool) |
+| Raw input: `InputEvent { phase, kind: InputKind, button, position, delta }`, `RawInputFrame`, `MouseLock`, `HostServices::raw_input` and `set_mouse_behavior`, `ReplayDoc.raw` rows (`RawReplayInput`) | `crates/re_types/src/{input,host,replay}.rs` | WP14 | WP14 PR (#62) | WP16 (`re_app` host and replays) |
 | `VerifyStage::Boot` and its JSON (`frames`, `uncaught`, `stuck_yields`, `unsupported[]`, `output[]`) | `crates/re_app/src/verify.rs` | WP16 | WP16 PR "boot" | WP17 |
 
 ---
@@ -323,6 +324,8 @@ cargo run --release --locked -p re_compat --example bigmap -- --parts 250000 --f
 ---
 
 ## WP14: Characters, animation and input
+
+**Status:** merged in #62 (`RE9200`–`RE9202`, `[compat.animations]`, the raw input contract). WP16 "boot" implements `raw_input` and `set_mouse_behavior` in `re_app`'s host.
 
 **Goal.** Humanoid characters that walk, jump, sit, take damage and die, driven by the default player scripts or by game scripts; rigs and animation; and the input services.
 
