@@ -418,7 +418,8 @@ cargo test --locked -p re_compat character
 
 **Acceptance:**
 ```sh
-RE_BACKENDS=vulkan cargo test --locked -p re_render -p re_compat gui -- --test-threads=1
+RE_BACKENDS=vulkan cargo test --locked -p re_render -- --test-threads=1
+RE_BACKENDS=vulkan cargo test --locked -p re_compat --test render --test gui --test tween --test sound -- --test-threads=1
 cargo test --locked -p re_audio
 ```
 - UI layout tests check `AbsolutePosition` and `AbsoluteSize` for nested frames with scale and offset, anchor points, list and grid layouts, padding, size constraints, aspect ratio and `AutomaticSize`, against hand-computed values.
@@ -557,7 +558,7 @@ graph LR
 
 A solid arrow means "starts after". WP11's arrows to WP12–WP15 mean its "data model" PR, and its arrow to WP16 "boot" means both its PRs. A dotted arrow from WP16 "importer" means the private sample runner, which those WPs need before they are done; WP13–WP15 need it too, and come after WP16 "importer" in any order that reaches them. The dotted arrow to WP17 means its compat tools only.
 
-Critical path: WP9 → WP11 → WP12 → WP16 "boot" → WP14 → WP16 "plaza". WP11 is the widest WP and gates four others, so its first PR, "data model", stays small: contexts and `HostYield`, `InstanceRef`, property access, attributes and tags, signals, and `GetService` for the core services. `require`, script start, `RunService`, `task` and the `game` fields follow in "runtime".
+Critical path: WP9 → WP11 → WP12 → WP16 "boot" → WP16 "plaza", with WP13–WP15 running beside WP12 and "boot" and all three needed for "plaza". WP14 starts after WP11 "data model", like WP13 and WP15; it is on the critical path only because "plaza" needs it. WP11 is the widest WP and gates four others, so its first PR, "data model", stays small: contexts and `HostYield`, `InstanceRef`, property access, attributes and tags, signals, and `GetService` for the core services. `require`, script start, `RunService`, `task` and the `game` fields follow in "runtime".
 
 ## Definition of done for M2
 
