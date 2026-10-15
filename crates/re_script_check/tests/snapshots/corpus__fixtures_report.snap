@@ -106,12 +106,11 @@ expression: snapshot
       {
         "code": "RE3080",
         "severity": "warning",
-        "message": "the static scan cannot parse this file: expected a `)`",
+        "message": "the static scan skips this file: it does not compile: Expected ')' (to close '(' at line 2), got '('",
         "location": {
           "kind": "file",
           "file": "tests/fixtures/syntax_error.luau",
-          "line": 3,
-          "column": 7
+          "line": 3
         }
       }
     ]

@@ -169,7 +169,11 @@ pub fn run(dirs: &[PathBuf], options: &CorpusOptions) -> CorpusReport {
             report.compile.failed.push(
                 Diagnostic::error(
                     re_script::codes::SCRIPT_READ,
-                    format!("the corpus directory {} does not exist", display(dir)),
+                    if dir.exists() {
+                        format!("the corpus path {} is not a directory", display(dir))
+                    } else {
+                        format!("the corpus directory {} does not exist", display(dir))
+                    },
                 )
                 .at(Location::File {
                     file: display(dir),

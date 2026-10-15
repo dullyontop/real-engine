@@ -17,8 +17,9 @@
 //! by member name in [`ApiUsage::unknown_receivers`]. Globals the file itself
 //! defines (`helper = ...`, `function Util.f()`) are not counted. The scan is
 //! approximate by design: scopes are tracked per block, and a local is visible
-//! from its declaration to the end of its block. A file nested deeper than
-//! [`MAX_DEPTH`] is not scanned (`RE3080`), since the parser recurses per level.
+//! from its declaration to the end of its block. A file that does not compile
+//! is not scanned (`RE3080`): Luau's compiler bounds the nesting the scan's
+//! parser has to recurse through.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -99,54 +100,26 @@ pub fn scan(path: &Path) -> Result<ApiUsage, Diagnostic> {
     scan_source(&String::from_utf8_lossy(&source), &name)
 }
 
-/// The stack the parser and the walk get: full_moon recurses per nesting level.
-const SCAN_STACK: usize = 64 * 1024 * 1024;
+/// The stack the parser and the walk get. full_moon recurses once per nesting
+/// level, and only files that compile are parsed, so the depth is bounded by
+/// Luau's own recursion limit (about 1000 levels). The deepest such file needs
+/// well under this in a debug build; the memory is reserved, not committed.
+const SCAN_STACK: usize = 512 * 1024 * 1024;
 
-/// The deepest bracket and block nesting the scan parses. Luau's own parser
-/// stops at a similar depth, and the scan thread's 64 MB stack holds it with room
-/// to spare.
-pub const MAX_DEPTH: usize = 256;
-
-/// The deepest bracket and block nesting in `source`, and the line where it is
-/// first reached, by a flat pass over the tokens. `None` when it does not lex.
-fn nesting_depth(source: &str) -> Option<(usize, usize)> {
-    use full_moon::tokenizer::{Lexer, LexerResult, Symbol};
-    let mut lexer = Lexer::new(source, LuaVersion::luau());
-    let (mut depth, mut max, mut line) = (0usize, 0usize, 0usize);
-    while let Some(t) = lexer.consume() {
-        let t = match t {
-            LexerResult::Ok(t) | LexerResult::Recovered(t, _) => t,
-            LexerResult::Fatal(_) => return None,
-        };
-        if let TokenType::Symbol { symbol } = t.token().token_type() {
-            match symbol {
-                Symbol::LeftParen
-                | Symbol::LeftBracket
-                | Symbol::LeftBrace
-                | Symbol::Function
-                | Symbol::If
-                | Symbol::Do
-                | Symbol::Repeat => {
-                    depth += 1;
-                    if depth > max {
-                        max = depth;
-                        line = t.token().start_position().line();
-                    }
-                }
-                Symbol::RightParen
-                | Symbol::RightBracket
-                | Symbol::RightBrace
-                | Symbol::End
-                | Symbol::Until => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-        }
-    }
-    Some((max, line))
-}
-
-/// Scans Luau source; `name` labels diagnostics.
+/// Scans Luau source; `name` labels diagnostics. Source that does not compile
+/// gives `RE3080` with the compiler's first message.
 pub fn scan_source(source: &str, name: &str) -> Result<ApiUsage, Diagnostic> {
+    if let Some(d) = re_script::compile_check(source, name).into_iter().next() {
+        let mut out = Diagnostic::warning(
+            codes::SCAN_PARSE,
+            format!(
+                "the static scan skips this file: it does not compile: {}",
+                d.message
+            ),
+        );
+        out.location = d.location;
+        return Err(out);
+    }
     let source = source.to_string();
     let file = name.to_string();
     let worker = std::thread::Builder::new()
@@ -169,19 +142,6 @@ pub fn scan_source(source: &str, name: &str) -> Result<ApiUsage, Diagnostic> {
 }
 
 fn scan_on_this_thread(source: &str, name: &str) -> Result<ApiUsage, Diagnostic> {
-    if let Some((depth, line)) = nesting_depth(source)
-        && depth > MAX_DEPTH
-    {
-        return Err(Diagnostic::warning(
-            codes::SCAN_PARSE,
-            format!("the static scan skips this file: it nests {depth} levels deep (the limit is {MAX_DEPTH})"),
-        )
-        .at(Location::File {
-            file: name.to_string(),
-            line: Some(line as u32),
-            column: None,
-        }));
-    }
     let result = full_moon::parse_fallible(source, LuaVersion::luau());
     if let Some(err) = result.errors().first() {
         let (start, _) = err.range();
@@ -229,6 +189,11 @@ struct Walker {
     targets: HashSet<usize>,
     /// Globals this file assigns or declares functions on.
     defined: HashSet<String>,
+    /// Globals assigned `game:GetService("X")`, by name.
+    global_services: HashMap<String, String>,
+    /// Members and constructors used on global receivers, by receiver; kept
+    /// apart until [`Walker::finish`] knows which globals the file defines.
+    on_globals: BTreeMap<String, ApiUsage>,
 }
 
 fn identifier(t: &TokenReference) -> Option<&str> {
@@ -326,6 +291,7 @@ impl Walker {
     /// Records a chain `prefix suffix…` (a call or a variable expression).
     fn chain<'a>(&mut self, prefix: &Prefix, suffixes: impl Iterator<Item = &'a Suffix>) {
         let suffixes: Vec<&Suffix> = suffixes.collect();
+        let mut global = false;
         let receiver: Option<String> = match prefix {
             Prefix::Name(n) => {
                 let Some(name) = identifier(n) else { return };
@@ -333,12 +299,15 @@ impl Walker {
                     Some(svc.to_string())
                 } else if self.is_local(name) {
                     None
+                } else if let Some(svc) = self.global_services.get(name) {
+                    Some(svc.clone())
                 } else {
                     add(&mut self.usage.globals, name, 1);
                     if name == "require" {
                         self.require(suffixes.first().copied());
                         return;
                     }
+                    global = true;
                     Some(name.to_string())
                 }
             }
@@ -382,21 +351,40 @@ impl Walker {
                     && (ctor == "new" || ctor.starts_with("from"))
                     && matches!(suffixes.get(1), Some(Suffix::Call(Call::AnonymousCall(_)))) =>
             {
-                add(&mut self.usage.constructors, format!("{ty}.{ctor}"), 1);
+                let to = if global {
+                    &mut self
+                        .on_globals
+                        .entry(receiver.clone())
+                        .or_default()
+                        .constructors
+                } else {
+                    &mut self.usage.constructors
+                };
+                add(to, format!("{ty}.{ctor}"), 1);
             }
             _ => {}
         }
-        add(&mut self.usage.by_member, format!("{receiver}.{m}"), 1);
+        let to = if global {
+            &mut self
+                .on_globals
+                .entry(receiver.clone())
+                .or_default()
+                .by_member
+        } else {
+            &mut self.usage.by_member
+        };
+        add(to, format!("{receiver}.{m}"), 1);
     }
 
     /// Drops what the file defined itself from the usage.
     fn finish(mut self) -> ApiUsage {
         let defined = &self.defined;
         self.usage.globals.retain(|g, _| !defined.contains(g));
-        self.usage.by_member.retain(|m, _| {
-            m.split_once('.')
-                .is_none_or(|(recv, _)| !defined.contains(recv))
-        });
+        for (receiver, used) in &self.on_globals {
+            if !defined.contains(receiver) {
+                self.usage.merge(used);
+            }
+        }
         self.usage
     }
 
@@ -525,12 +513,28 @@ impl Visitor for Walker {
     }
 
     fn visit_assignment(&mut self, a: &ast::Assignment) {
-        for v in a.variables() {
+        let exprs: Vec<&Expression> = a.expressions().iter().collect();
+        for (i, v) in a.variables().iter().enumerate() {
             if let Var::Name(n) = v
                 && let Some(name) = identifier(n)
             {
                 self.targets.insert(v as *const Var as usize);
                 self.assign(name);
+                if self.is_local(name) {
+                    continue;
+                }
+                // `Players = game:GetService("Players")` makes a global alias.
+                match exprs.get(i) {
+                    Some(Expression::FunctionCall(c)) => {
+                        match get_service(c.prefix(), c.suffixes()) {
+                            Some(svc) => self.global_services.insert(name.to_string(), svc),
+                            None => self.global_services.remove(name),
+                        };
+                    }
+                    _ => {
+                        self.global_services.remove(name);
+                    }
+                }
             }
         }
     }
@@ -681,31 +685,40 @@ mod tests {
         let deep = format!("local x = {}1{}", "(".repeat(5000), ")".repeat(5000));
         let d = scan_source(&deep, "deep.luau").unwrap_err();
         assert_eq!(d.code, codes::SCAN_PARSE);
-        assert!(d.message.contains("nests"), "{}", d.message);
-        let blocks = format!("{}{}", "do ".repeat(3000), "end ".repeat(3000));
-        assert!(scan_source(&blocks, "blocks.luau").is_err());
-        // The limit itself is within the scan's stack, for every kind of level.
-        // Each `(function() return` opens two levels, three at its peak.
-        let half = MAX_DEPTH / 2 - 1;
-        let mixed = format!(
-            "local x = {}1{}",
-            "(function() return ".repeat(half),
-            " end)()".repeat(half)
-        );
-        assert!(scan_source(&mixed, "mixed.luau").is_ok());
-        let tables = format!(
-            "local t = {}1{}",
-            "{".repeat(MAX_DEPTH),
-            "}".repeat(MAX_DEPTH)
-        );
-        assert!(scan_source(&tables, "tables.luau").is_ok());
+        assert!(d.message.contains("does not compile"), "{}", d.message);
+        // The deepest nesting Luau compiles fits the scan's stack.
+        for src in [
+            format!("{}{}", "do ".repeat(1000), "end ".repeat(1000)),
+            format!("local x = {}true", "not ".repeat(990)),
+            format!("local x = 'a'{}", " .. 'a'".repeat(990)),
+            format!("local x = {}1{}", "(".repeat(990), ")".repeat(990)),
+        ] {
+            assert!(re_script::compile_check(&src, "t").is_empty());
+            assert!(scan_source(&src, "t.luau").is_ok());
+        }
     }
 
     #[test]
-    fn long_flat_expressions_scan() {
-        let chain = format!("local x = 1{}", " + 1".repeat(20000));
-        assert!(scan_source(&chain, "chain.luau").is_ok());
-        let nots = format!("local x = {}true", "not ".repeat(200));
-        assert!(scan_source(&nots, "nots.luau").is_ok());
+    fn many_flat_if_expressions_scan() {
+        let src = format!(
+            "local a = true\n{}",
+            "local x = if a then 1 else 2\n".repeat(400)
+        );
+        assert!(scan_source(&src, "ifs.luau").is_ok());
+    }
+
+    #[test]
+    fn global_service_aliases_and_defined_names() {
+        let u = usage(
+            "Players = game:GetService('Players')\nprint(Players.LocalPlayer)\n\
+             Signal = {}\nfunction Signal.new() end\nSignal.new()",
+        );
+        assert_eq!(u.by_member["Players.LocalPlayer"], 1);
+        assert!(!u.constructors.contains_key("Signal.new"));
+        assert!(!u.by_member.contains_key("Signal.new"));
+        let u = usage(
+            "local P = game:GetService('Players')\nprint(P.LocalPlayer)\nfunction Players() end",
+        );
+        assert_eq!(u.by_member["Players.LocalPlayer"], 1);
     }
 }
