@@ -14,7 +14,7 @@
 //! before converting record values.
 
 use glam::Vec3;
-use mlua::{Lua, Result, Value as LuaValue};
+use mlua::{AnyUserData, Lua, Result, Value as LuaValue};
 use re_reflect::{Color, RecordId, Value};
 
 use super::{
@@ -403,4 +403,53 @@ pub fn from_lua(_lua: &Lua, ty: &str, v: LuaValue) -> Result<Value> {
             )));
         }
     })
+}
+
+/// The datatype name of a value of this module, or `None` for other
+/// userdata: what a value written without a declared type (an attribute)
+/// is stored as.
+pub fn datatype_of(ud: &AnyUserData) -> Option<&'static str> {
+    Some(if ud.is::<CFrame>() {
+        "CFrame"
+    } else if ud.is::<Color3>() {
+        "Color3"
+    } else if ud.is::<Vector2>() {
+        "Vector2"
+    } else if ud.is::<UDim>() {
+        "UDim"
+    } else if ud.is::<UDim2>() {
+        "UDim2"
+    } else if ud.is::<Rect>() {
+        "Rect"
+    } else if ud.is::<NumberRange>() {
+        "NumberRange"
+    } else if ud.is::<NumberSequence>() {
+        "NumberSequence"
+    } else if ud.is::<ColorSequence>() {
+        "ColorSequence"
+    } else if ud.is::<NumberSequenceKeypoint>() {
+        "NumberSequenceKeypoint"
+    } else if ud.is::<ColorSequenceKeypoint>() {
+        "ColorSequenceKeypoint"
+    } else if ud.is::<PhysicalProperties>() {
+        "PhysicalProperties"
+    } else if ud.is::<Font>() {
+        "Font"
+    } else {
+        return None;
+    })
+}
+
+/// Converts any datatype or enum item of this module to its stored form;
+/// `Ok(None)` for userdata that is not one (an instance, a signal).
+pub fn userdata_to_value(lua: &Lua, ud: &AnyUserData) -> Result<Option<Value>> {
+    if ud.is::<EnumItem>() {
+        return Ok(Some(Value::Enum(
+            ud.borrow::<EnumItem>()?.name().to_string(),
+        )));
+    }
+    match datatype_of(ud) {
+        Some(ty) => from_lua(lua, ty, LuaValue::UserData(ud.clone())).map(Some),
+        None => Ok(None),
+    }
 }

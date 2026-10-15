@@ -28,7 +28,7 @@ mod vector;
 
 pub use cframe::CFrame;
 pub use color::{Color3, ColorSequence, ColorSequenceKeypoint};
-pub use convert::{from_lua, to_lua};
+pub use convert::{datatype_of, from_lua, to_lua, userdata_to_value};
 pub use misc::{Font, OverlapParams, PhysicalProperties, RaycastParams, TweenInfo};
 pub use random::Random;
 pub use sequence::{NumberRange, NumberSequence, NumberSequenceKeypoint};

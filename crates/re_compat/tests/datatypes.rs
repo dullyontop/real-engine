@@ -338,6 +338,14 @@ mod datatypes {
                 eq.call::<bool>((v, back.clone())).unwrap(),
                 "{ty}: round trip changed the value"
             );
+            if let LuaValue::UserData(ud) = &back {
+                let untyped = datatypes::userdata_to_value(&lua, ud).unwrap();
+                let expect = match &stored {
+                    Value::Enum(s) => Value::Enum(s.clone()),
+                    other => other.clone(),
+                };
+                assert_eq!(untyped, Some(expect), "{ty}: untyped conversion");
+            }
             let again = datatypes::from_lua(&lua, ty, back).unwrap();
             assert_eq!(stored, again, "{ty}");
         }
