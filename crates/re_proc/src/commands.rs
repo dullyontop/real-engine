@@ -12,7 +12,7 @@ use serde_json::{Map, Value as Json, json};
 
 use crate::codes;
 use crate::generator::{
-    GENERATOR, ParamOverrides, overrides_text, parse_overrides, validate_override,
+    GENERATOR, ParamOverrides, apply_overrides, overrides_text, parse_overrides, validate_override,
 };
 use crate::store::{Budget, GraphStore};
 
@@ -76,8 +76,33 @@ pub struct ReportArgs {
 struct Source {
     entity: Entity,
     doc: GraphDoc,
-    overrides: ParamOverrides,
+    /// `GraphSource.params`, or why it does not parse.
+    overrides: Result<ParamOverrides, String>,
     seed: i64,
+}
+
+impl Source {
+    /// The source's overrides; text that does not parse is an error rather
+    /// than "no overrides", so a new override never silently replaces it.
+    fn overrides(&self, id: &str) -> Result<ParamOverrides, Diagnostic> {
+        self.overrides.clone().map_err(|e| {
+            Diagnostic::error(codes::UNKNOWN_OVERRIDE, format!("{id}: {e}"))
+                .at(Location::entity(id.to_string()))
+                .with_hint("fix or clear `GraphSource.params` with `set_field` first")
+        })
+    }
+}
+
+/// `doc` with the overrides that apply, so a new value is checked against
+/// the parameters the node really has (`scale_max` against an overridden
+/// `scale_min`).
+fn current_doc(
+    doc: &GraphDoc,
+    overrides: &ParamOverrides,
+    registry: &crate::NodeRegistry,
+    id: &str,
+) -> GraphDoc {
+    apply_overrides(doc, overrides, registry, id).0
 }
 
 fn at_source(d: Diagnostic, source: &str) -> Diagnostic {
@@ -121,7 +146,7 @@ fn graph_source(world: &World, id: &str) -> Result<Source, Diagnostic> {
         )
         .at(Location::entity(id.to_string()))
     })?;
-    let overrides = parse_overrides(&text).unwrap_or_default();
+    let overrides = parse_overrides(&text);
     Ok(Source {
         entity,
         doc,
@@ -218,15 +243,12 @@ fn set_param<C: EditTarget>(
     let world = target.world();
     let src = graph_source(world, &a.source)?;
     let store = store_of(world).expect("graph_source checked the store");
-    validate_override(
-        &src.doc,
-        store.evaluator().registry(),
-        &a.node,
-        &a.param,
-        &a.value,
-    )
-    .map_err(|d| at_source(d, &a.source))?;
-    let overrides = with_override(src.overrides, &a.node, &a.param, &a.value);
+    let registry = store.evaluator().registry();
+    let overrides = src.overrides(&a.source)?;
+    let current = current_doc(&src.doc, &overrides, registry, &a.source);
+    validate_override(&current, registry, &a.node, &a.param, &a.value)
+        .map_err(|d| at_source(d, &a.source))?;
+    let overrides = with_override(overrides, &a.node, &a.param, &a.value);
     let text = overrides_text(&overrides);
     call.transact(
         target,
@@ -321,7 +343,7 @@ fn generate<C: EditTarget>(
     let src = graph_source(world, &a.source)?;
     let mut store = store_of(world).expect("graph_source checked the store");
     let registry = store.evaluator().registry().clone();
-    let mut overrides = src.overrides.clone();
+    let mut overrides = src.overrides(&a.source)?;
     if let Some(params) = &a.params {
         for (node, values) in params {
             let Some(values) = values.as_object() else {
@@ -332,7 +354,8 @@ fn generate<C: EditTarget>(
                 .at(Location::command("graph.generate")));
             };
             for (param, value) in values {
-                validate_override(&src.doc, &registry, node, param, value)
+                let current = current_doc(&src.doc, &overrides, &registry, &a.source);
+                validate_override(&current, &registry, node, param, value)
                     .map_err(|d| at_source(d, &a.source))?;
                 overrides = with_override(overrides, node, param, value);
             }

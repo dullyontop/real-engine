@@ -570,10 +570,12 @@ fn load_files(
         .map(|p| {
             let rel = Path::new(&p);
             let content = if rel.is_absolute()
-                || rel
-                    .components()
-                    .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
-            {
+                || rel.components().any(|c| {
+                    matches!(
+                        c,
+                        Component::ParentDir | Component::Prefix(_) | Component::RootDir
+                    )
+                }) {
                 Err("paths are relative to the project root and may not leave it".to_string())
             } else {
                 let full = root.map_or_else(|| rel.to_path_buf(), |r| r.join(rel));

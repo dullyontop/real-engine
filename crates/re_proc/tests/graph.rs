@@ -53,6 +53,18 @@ fn a_valid_graph_compiles_in_levels() {
 }
 
 #[test]
+fn out_names_any_nodes_output_port() {
+    let with_names = island(1);
+    let mut with_out = with_names.clone();
+    for e in &mut with_out.edges {
+        e.from.1 = "out".into();
+    }
+    let a = ProcGraph::from_doc(&with_names, &NodeRegistry::m1()).unwrap();
+    let b = ProcGraph::from_doc(&with_out, &NodeRegistry::m1()).unwrap();
+    assert_eq!(a.edges, b.edges, "`out` is stored as the real port name");
+}
+
+#[test]
 fn every_validation_problem_has_its_code() {
     let h = || {
         (
@@ -185,6 +197,32 @@ fn the_registry_describes_16_kinds_with_schemas() {
     let text = schema.to_string();
     for kind in &kinds {
         assert!(text.contains(kind), "graph.schema.json lacks {kind}");
+    }
+}
+
+#[test]
+fn every_schema_ref_resolves() {
+    fn refs(v: &Json, out: &mut Vec<String>) {
+        match v {
+            Json::Object(m) => {
+                for (k, x) in m {
+                    match (k.as_str(), x) {
+                        ("$ref", Json::String(r)) => out.push(r.clone()),
+                        _ => refs(x, out),
+                    }
+                }
+            }
+            Json::Array(a) => a.iter().for_each(|x| refs(x, out)),
+            _ => {}
+        }
+    }
+    let schema = NodeRegistry::m1().graph_json_schema();
+    let mut all = Vec::new();
+    refs(&schema, &mut all);
+    assert!(all.len() > 5, "{all:?}");
+    for r in all {
+        let pointer = r.strip_prefix('#').expect("local refs only");
+        assert!(schema.pointer(pointer).is_some(), "dangling {r}");
     }
 }
 

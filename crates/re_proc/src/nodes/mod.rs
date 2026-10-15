@@ -300,6 +300,9 @@ impl NodeRegistry {
     pub fn graph_json_schema(&self) -> Json {
         let mut doc = serde_json::to_value(schemars::schema_for!(re_types::graph::GraphDoc))
             .unwrap_or(Json::Null);
+        // Each kind's `$defs` move to the root (`$ref`s resolve against the
+        // document root), renamed `<kind>.<name>` so kinds cannot collide.
+        let mut root_defs = serde_json::Map::new();
         let variants: Vec<Json> = self
             .iter()
             .map(|d| {
@@ -310,16 +313,25 @@ impl NodeRegistry {
                     obj.remove("title");
                     defs = obj.remove("$defs").unwrap_or(Json::Null);
                 }
-                let mut v = json!({
+                let prefix = format!("{}.", d.kind);
+                rename_refs(&mut params, &prefix);
+                if let Json::Object(defs) = defs {
+                    for (name, mut def) in defs {
+                        rename_refs(&mut def, &prefix);
+                        root_defs.insert(format!("{prefix}{name}"), def);
+                    }
+                }
+                json!({
                     "if": { "properties": { "kind": { "const": d.kind } }, "required": ["kind"] },
                     "then": { "properties": { "params": params } },
-                });
-                if !defs.is_null() {
-                    v["then"]["$defs"] = defs;
-                }
-                v
+                })
             })
             .collect();
+        if let Some(defs) = doc.get_mut("$defs").and_then(Json::as_object_mut) {
+            defs.extend(root_defs);
+        } else if let Some(obj) = doc.as_object_mut() {
+            obj.insert("$defs".into(), Json::Object(root_defs));
+        }
         let kinds: Vec<&str> = self.kinds().collect();
         if let Some(node) = doc
             .pointer_mut("/$defs/NodeDoc")
@@ -335,6 +347,26 @@ impl NodeRegistry {
             }
         }
         doc
+    }
+}
+
+/// Rewrites every `"$ref": "#/$defs/<name>"` in `v` to `#/$defs/<prefix><name>`.
+fn rename_refs(v: &mut Json, prefix: &str) {
+    match v {
+        Json::Object(m) => {
+            for (k, x) in m.iter_mut() {
+                if k == "$ref"
+                    && let Json::String(r) = x
+                    && let Some(name) = r.strip_prefix("#/$defs/")
+                {
+                    *r = format!("#/$defs/{prefix}{name}");
+                } else {
+                    rename_refs(x, prefix);
+                }
+            }
+        }
+        Json::Array(a) => a.iter_mut().for_each(|x| rename_refs(x, prefix)),
+        _ => {}
     }
 }
 

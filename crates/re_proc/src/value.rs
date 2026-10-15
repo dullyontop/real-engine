@@ -241,3 +241,15 @@ impl Output {
 pub fn derived_name(key: &[u8; 32]) -> String {
     format!("derived:{}", blake3::Hash::from_bytes(*key).to_hex())
 }
+
+/// The name of the heightfield collider that goes with the derived terrain
+/// mesh named `mesh` (`terrain.mesh` with `collider = true`), or `None` if
+/// `mesh` is not a derived name. Releasing the mesh releases it too.
+pub fn collider_name(mesh: &str) -> Option<String> {
+    let hex = mesh.strip_prefix("derived:")?;
+    let key = blake3::Hash::from_hex(hex).ok()?;
+    let mut h = blake3::Hasher::new();
+    h.update(b"re_proc heightfield collider");
+    h.update(key.as_bytes());
+    Some(derived_name(h.finalize().as_bytes()))
+}

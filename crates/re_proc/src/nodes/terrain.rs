@@ -11,7 +11,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::{NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
-use crate::value::{DerivedAsset, FragItem, Fragment, MeshValue, Output, PortType, derived_name};
+use crate::value::{
+    DerivedAsset, FragItem, Fragment, MeshValue, Output, PortType, collider_name, derived_name,
+};
 
 /// The largest field size (samples per side).
 pub const MAX_FIELD_SIZE: u32 = 2049;
@@ -260,7 +262,7 @@ fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, S
             vec![("asset".to_string(), Value::Str(mesh_name.clone()))],
         ),
     ];
-    let mut assets = vec![(mesh_name, DerivedAsset::Mesh(mesh))];
+    let mut assets = vec![(mesh_name.clone(), DerivedAsset::Mesh(mesh))];
     if !p.material.is_empty() {
         components.push((
             "MaterialRef".into(),
@@ -268,10 +270,7 @@ fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, S
         ));
     }
     if p.collider {
-        let mut h = blake3::Hasher::new();
-        h.update(b"re_proc heightfield collider");
-        h.update(&ctx.key);
-        let hf_name = derived_name(h.finalize().as_bytes());
+        let hf_name = collider_name(&mesh_name).expect("a derived name");
         components.push((
             "Collider".into(),
             vec![

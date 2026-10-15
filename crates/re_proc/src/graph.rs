@@ -55,9 +55,14 @@ fn diag(code: re_core::Code, graph: &str, message: String) -> Diagnostic {
     Diagnostic::error(code, format!("graph `{graph}`: {message}"))
 }
 
+/// The output port name every node also answers to: an edge from
+/// `[node, "out"]` is read as an edge from that node's only output port.
+pub const OUT_ALIAS: &str = "out";
+
 impl ProcGraph {
     /// Builds and validates the IR of `doc`. Every problem found is
-    /// returned (`RE4000`–`RE4007`, `RE4012`), not only the first.
+    /// returned (`RE4000`–`RE4007`, `RE4012`), not only the first. An edge
+    /// from port [`OUT_ALIAS`] is stored with the node's real output port.
     pub fn from_doc(doc: &GraphDoc, registry: &NodeRegistry) -> Result<ProcGraph, Vec<Diagnostic>> {
         if let Err(e) = doc.validate() {
             return Err(vec![
@@ -85,9 +90,19 @@ impl ProcGraph {
             edges: doc
                 .edges
                 .iter()
-                .map(|e| Edge {
-                    from: e.from.clone(),
-                    to: e.to.clone(),
+                .map(|e| {
+                    // `out` names a node's only output port, whatever its type
+                    // (what script builders write for a bare node handle).
+                    let mut from = e.from.clone();
+                    if from.1 == OUT_ALIAS
+                        && let Some(def) = doc.node(&from.0).and_then(|n| registry.get(&n.kind))
+                    {
+                        from.1 = def.output_port().to_string();
+                    }
+                    Edge {
+                        from,
+                        to: e.to.clone(),
+                    }
                 })
                 .collect(),
         };

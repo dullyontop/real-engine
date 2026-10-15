@@ -30,10 +30,10 @@ pub struct Budget {
 /// file or `builder` script) and inserts it as a world resource; the `graph`
 /// generator reads it through `GenContext::resource`.
 ///
-/// **Cloning** (for a world copy, `World::fork`): the documents are copied;
-/// the evaluator (its caches) and the derived assets are shared, which is
-/// safe because both are keyed by content hash; the last reports are copied,
-/// so evaluating in the copy never changes the original's reports.
+/// **Cloning** (for a world copy, `World::fork`): the documents, the derived
+/// assets (cheap: each is an `Arc`) and the last reports are copied, so
+/// generating or releasing in the copy never changes the original; the
+/// evaluator (its caches, keyed by content hash) is shared.
 #[derive(bevy_ecs::resource::Resource)]
 pub struct GraphStore {
     graphs: IndexMap<String, GraphDoc>,
@@ -56,7 +56,7 @@ impl Clone for GraphStore {
             graphs: self.graphs.clone(),
             evaluator: self.evaluator.clone(),
             root: self.root.clone(),
-            derived: self.derived.clone(),
+            derived: Arc::new(Mutex::new(self.lock_derived().clone())),
             reports: Mutex::new(self.lock_reports().clone()),
             budget: self.budget,
         }
@@ -189,9 +189,14 @@ impl GraphStore {
     }
 
     /// Forgets a derived asset (after `RegenReport::released_assets` named
-    /// it). A later generation that uses it again stores it again.
+    /// it), and the heightfield collider of a released terrain mesh. A later
+    /// generation that uses it again stores it again.
     pub fn release(&self, name: &str) -> bool {
-        self.lock_derived().remove(name).is_some()
+        let mut d = self.lock_derived();
+        if let Some(collider) = crate::value::collider_name(name) {
+            d.remove(&collider);
+        }
+        d.remove(name).is_some()
     }
 
     /// The number of derived assets held.

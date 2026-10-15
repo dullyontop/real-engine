@@ -23,7 +23,7 @@
 //! Values are [`Field`]s (square grids of heights in metres, or weights),
 //! meshes, [`Points`] and fragments (entities to create). Each node has one
 //! output port named after its type (`field`, `mesh`, `points`,
-//! `fragment`), and named inputs; `mesh.merge` and `fragment.merge` take
+//! `fragment`; an edge may also name it `out`), and named inputs; `mesh.merge` and `fragment.merge` take
 //! inputs on any port names. The graph's output is the fragment of every
 //! node that no edge leaves (a mesh there becomes one entity), in document
 //! order.
@@ -62,7 +62,7 @@ pub use eval::{
 pub use generator::{
     GENERATOR, ParamOverrides, apply_overrides, overrides_text, parse_overrides, register_generator,
 };
-pub use graph::{Edge, GraphId, Node, NodeId, PortName, ProcGraph};
+pub use graph::{Edge, GraphId, Node, NodeId, OUT_ALIAS, PortName, ProcGraph};
 pub use nodes::{NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef};
 pub use store::{Budget, GraphStore};
 pub use value::{

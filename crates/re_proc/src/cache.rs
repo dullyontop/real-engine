@@ -64,9 +64,19 @@ impl DiskCache {
         }
         let stored: Stored = postcard::from_bytes(&bytes[12..])
             .map_err(|e| format!("cache entry is damaged: {e}"))?;
+        // An entry that parses but breaks an invariant is damaged too.
         Ok(Some(match stored {
-            Stored::Field(f) => Output::Field(Arc::new(f)),
-            Stored::Mesh(m) => Output::Mesh(Arc::new(m)),
+            Stored::Field(f) => {
+                f.0.validate()
+                    .map_err(|e| format!("cache entry is damaged: {e}"))?;
+                Output::Field(Arc::new(f))
+            }
+            Stored::Mesh(m) => {
+                if !m.mesh.is_well_formed() {
+                    return Err("cache entry is damaged: malformed mesh".into());
+                }
+                Output::Mesh(Arc::new(m))
+            }
             Stored::Points(p) => Output::Points(Arc::new(p)),
         }))
     }
@@ -88,7 +98,11 @@ impl DiskCache {
         fs::create_dir_all(&self.dir)
             .map_err(|e| format!("cache directory could not be created: {e}"))?;
         let path = self.path(key);
-        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+        // Unique per process and write, so threads storing the same key do
+        // not share a temporary file.
+        static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = path.with_extension(format!("tmp{}-{n}", std::process::id()));
         fs::write(&tmp, &bytes).map_err(|e| format!("cache entry could not be written: {e}"))?;
         fs::rename(&tmp, &path).map_err(|e| {
             let _ = fs::remove_file(&tmp);

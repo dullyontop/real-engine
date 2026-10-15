@@ -94,6 +94,14 @@ fn a_new_seed_keeps_surviving_entities_overrides_and_deletions() {
     let old_ground = asset(&st.world, "island/ground/terrain");
     let old_box = asset(&st.world, "island/painted/mesh");
     let old_y = st.world.get(&kept, "Transform", "translation").unwrap();
+    let old_collider = match st
+        .world
+        .get("island/ground/terrain", "Collider", "source")
+        .unwrap()
+    {
+        Value::Str(s) => s,
+        other => panic!("{other:?}"),
+    };
 
     let out = call(
         &mut st,
@@ -135,6 +143,10 @@ fn a_new_seed_keeps_surviving_entities_overrides_and_deletions() {
     assert!(store.mesh(&old_ground).is_none());
     assert!(store.mesh(&new_ground).is_some());
     assert!(store.mesh(&old_box).is_some());
+    assert!(
+        store.heightfield(&old_collider).is_none(),
+        "the terrain's collider goes with its mesh"
+    );
 
     // Undo restores the seed; regenerating restores the old terrain.
     st.history.undo(&mut st.world).unwrap();
@@ -283,6 +295,49 @@ fn set_param_refuses_unknown_targets_and_bad_values() {
     }
     assert_eq!(st.world.state_hash(), hash);
     assert!(st.history.log().is_empty());
+}
+
+#[test]
+fn set_param_checks_values_against_the_current_overrides() {
+    let mut st = world(island(1), json!([]));
+    let set = |st: &mut EditState, param: &str, value: f64| {
+        call(
+            st,
+            "graph.set_param",
+            json!({ "source": "island", "node": "crates", "param": param, "value": value }),
+        )
+    };
+    assert!(set(&mut st, "scale_max", 3.0).ok);
+    assert!(set(&mut st, "scale_min", 2.5).ok);
+    let out = set(&mut st, "scale_max", 2.0);
+    assert!(!out.ok, "scale_max below the overridden scale_min");
+    assert_eq!(codes(&out)[0], "RE4005");
+    assert!(set(&mut st, "scale_max", 4.0).ok);
+    assert!(st.world.regenerate_changed().diagnostics.is_empty());
+}
+
+#[test]
+fn unparseable_params_are_never_overwritten_silently() {
+    let mut st = world(island(1), json!([]));
+    st.world
+        .set(
+            "island",
+            "GraphSource",
+            "params",
+            Value::Str("{oops".into()),
+        )
+        .unwrap();
+    let out = call(
+        &mut st,
+        "graph.set_param",
+        json!({ "source": "island", "node": "box", "param": "size", "value": [2.0, 2.0, 2.0] }),
+    );
+    assert!(!out.ok);
+    assert_eq!(codes(&out)[0], "RE4011");
+    assert_eq!(
+        st.world.get("island", "GraphSource", "params").unwrap(),
+        Value::Str("{oops".into())
+    );
 }
 
 #[test]
