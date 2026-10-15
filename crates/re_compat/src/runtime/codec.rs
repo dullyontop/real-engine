@@ -173,19 +173,10 @@ impl ValueCodec {
             Value::Str(s) => LuaValue::String(lua.create_string(&s)?),
             Value::Vec3(v) => LuaValue::Vector(mlua::Vector::new(v.x, v.y, v.z)),
             Value::Entity(None) => LuaValue::Nil,
-            // A keypoint list is a NumberSequence or a ColorSequence.
+            // A list of keypoints of one kind is a NumberSequence or a
+            // ColorSequence.
             Value::List(ref items)
-                if let Some(hook) = items
-                    .first()
-                    .and_then(|first| match first {
-                        Value::Record(id, _) => match id.name() {
-                            "NumberSequenceKeypoint" => Some("NumberSequence"),
-                            "ColorSequenceKeypoint" => Some("ColorSequence"),
-                            _ => None,
-                        },
-                        _ => None,
-                    })
-                    .and_then(|ty| self.to_lua.get(ty)) =>
+                if let Some(hook) = sequence_of(items).and_then(|ty| self.to_lua.get(ty)) =>
             {
                 hook(lua, &v)?
             }
@@ -241,6 +232,24 @@ impl ValueCodec {
             other => return Err(format!("an attribute cannot hold {}", kind_of(&other))),
         }))
     }
+}
+
+/// The sequence datatype a list of keypoint records forms, if every item is
+/// a keypoint of the same kind.
+fn sequence_of(items: &[Value]) -> Option<&'static str> {
+    let kind = |v: &Value| match v {
+        Value::Record(id, _) => match id.name() {
+            "NumberSequenceKeypoint" => Some("NumberSequence"),
+            "ColorSequenceKeypoint" => Some("ColorSequence"),
+            _ => None,
+        },
+        _ => None,
+    };
+    let first = kind(items.first()?)?;
+    items
+        .iter()
+        .all(|v| kind(v) == Some(first))
+        .then_some(first)
 }
 
 /// Roblox writes whole numbers without a fraction when it turns them into text.
