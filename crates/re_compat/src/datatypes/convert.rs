@@ -444,9 +444,14 @@ pub fn datatype_of(ud: &AnyUserData) -> Option<&'static str> {
 /// `Ok(None)` for userdata that is not one (an instance, a signal).
 pub fn userdata_to_value(lua: &Lua, ud: &AnyUserData) -> Result<Option<Value>> {
     if ud.is::<EnumItem>() {
-        return Ok(Some(Value::Enum(
-            ud.borrow::<EnumItem>()?.name().to_string(),
-        )));
+        // Untyped values (attributes) keep the enum type with the item:
+        // `Material.Plastic`.
+        let item = *ud.borrow::<EnumItem>()?;
+        return Ok(Some(Value::Enum(format!(
+            "{}.{}",
+            item.enum_name(),
+            item.name()
+        ))));
     }
     match datatype_of(ud) {
         Some(ty) => from_lua(lua, ty, LuaValue::UserData(ud.clone())).map(Some),

@@ -165,9 +165,30 @@ impl ValueCodec {
             Value::Bool(b) => LuaValue::Boolean(b),
             Value::Int(i) => LuaValue::Number(i as f64),
             Value::Float(f) => LuaValue::Number(f),
-            Value::Str(s) | Value::Enum(s) => LuaValue::String(lua.create_string(&s)?),
+            // An untyped enum value names its type: `Material.Plastic`.
+            Value::Enum(s) => match (&self.enum_to_lua, s.split_once('.')) {
+                (Some(hook), Some((ty, item))) => hook(lua, ty, item)?,
+                _ => LuaValue::String(lua.create_string(&s)?),
+            },
+            Value::Str(s) => LuaValue::String(lua.create_string(&s)?),
             Value::Vec3(v) => LuaValue::Vector(mlua::Vector::new(v.x, v.y, v.z)),
             Value::Entity(None) => LuaValue::Nil,
+            // A keypoint list is a NumberSequence or a ColorSequence.
+            Value::List(ref items)
+                if let Some(hook) = items
+                    .first()
+                    .and_then(|first| match first {
+                        Value::Record(id, _) => match id.name() {
+                            "NumberSequenceKeypoint" => Some("NumberSequence"),
+                            "ColorSequenceKeypoint" => Some("ColorSequence"),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .and_then(|ty| self.to_lua.get(ty)) =>
+            {
+                hook(lua, &v)?
+            }
             Value::Entity(Some(e)) => instance::push(lua, e)?,
             Value::Color(c) => match self.to_lua.get("Color3") {
                 Some(hook) => hook(lua, &Value::Color(c))?,
