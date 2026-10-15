@@ -7,6 +7,10 @@
 mod place;
 
 mod character {
+    #[path = "../character/anim.rs"]
+    mod anim;
+    #[path = "../character/humanoid.rs"]
+    mod humanoid;
     #[path = "../character/input.rs"]
     mod input;
 }

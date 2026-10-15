@@ -94,7 +94,8 @@ pub fn cframe_value(c: &CFrame) -> Value {
     Value::Record(id, fields)
 }
 
-/// The CFrame of a `CFrame` record.
+/// The CFrame of a `CFrame` record. A record whose rotation is all zeros (an
+/// unset property) reads as unrotated.
 pub fn value_cframe(v: &Value) -> Option<CFrame> {
     let Value::Record(id, values) = v else {
         return None;
@@ -115,6 +116,10 @@ pub fn value_cframe(v: &Value) -> Option<CFrame> {
         parts[i] = v.to_array();
     }
     let [p, x, y, z] = parts;
+    if [x, y, z].iter().flatten().all(|c| *c == 0.0) {
+        // An unset CFrame property stores zeros: it reads as no rotation.
+        return Some(CFrame::from_position(p));
+    }
     Some(CFrame::from_parts(
         p,
         [[x[0], y[0], z[0]], [x[1], y[1], z[1]], [x[2], y[2], z[2]]],
@@ -362,7 +367,7 @@ fn load_clip(lua: &Lua, classes: &ClassRegistry, animation: Entity) -> Result<Ar
     })
 }
 
-fn load_animation(lua: &Lua, animator: Entity, a: MultiValue) -> Result<MultiValue> {
+pub(crate) fn load_animation(lua: &Lua, animator: Entity, a: MultiValue) -> Result<MultiValue> {
     let v: LuaValue = args(lua, a, "LoadAnimation")?;
     let animation = arg_instance(&v, "LoadAnimation")?;
     let classes = state(lua)?.setup.classes.clone();
@@ -405,7 +410,7 @@ fn load_animation(lua: &Lua, animator: Entity, a: MultiValue) -> Result<MultiVal
     ret(lua, push(lua, track)?)
 }
 
-fn playing_tracks(lua: &Lua, animator: Entity, _: MultiValue) -> Result<MultiValue> {
+pub(crate) fn playing_tracks(lua: &Lua, animator: Entity, _: MultiValue) -> Result<MultiValue> {
     let list: Vec<Entity> = with_world(lua, |w| {
         let Some(st) = w.ecs.get::<AnimatorState>(animator) else {
             return Vec::new();

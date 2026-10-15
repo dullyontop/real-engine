@@ -2,9 +2,9 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1016,
-    "partial": 23,
-    "stub-error": 2,
+    "implemented": 1107,
+    "partial": 27,
+    "stub-error": 6,
     "missing": 9
   },
   "classes": [
@@ -321,6 +321,513 @@
       "creatable": true,
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "Humanoid",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "ApplyDescription",
+          "kind": "method",
+          "status": "partial",
+          "note": "Applies body colours, scales and animation ids; accessories, clothing and faces are kept on the description but not applied."
+        },
+        {
+          "name": "AutoRotate",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AutomaticScalingEnabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BreakJointsOnDeath",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CameraOffset",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ChangeState",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Climbing",
+          "kind": "event",
+          "status": "stub-error",
+          "note": "Climbing is not supported; it never fires."
+        },
+        {
+          "name": "Died",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "DisplayDistanceType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DisplayName",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "EquipTool",
+          "kind": "method",
+          "status": "stub-error",
+          "note": "Tools are not supported yet."
+        },
+        {
+          "name": "EvaluateStateMachine",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FallingDown",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "FloorMaterial",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FreeFalling",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "GetAppliedDescription",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetBodyPartR15",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetLimb",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPlayingAnimationTracks",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetState",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetStateEnabled",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GettingUp",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Health",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HealthChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "HealthDisplayDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HealthDisplayType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HipHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Jump",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "JumpHeight",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "JumpPower",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Jumping",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "LoadAnimation",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxHealth",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxSlopeAngle",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Move",
+          "kind": "method",
+          "status": "partial",
+          "note": "relativeToCamera turns the direction by the current camera's yaw only when a camera exists; otherwise it is ignored."
+        },
+        {
+          "name": "MoveDirection",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MoveTo",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "MoveToFinished",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "NameDisplayDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "NameOcclusion",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlatformStand",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PlatformStanding",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Ragdoll",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "RequiresNeck",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RigType",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RootPart",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Running",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "SeatPart",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Seated",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "SetStateEnabled",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Sit",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "StateChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "StateEnabledChanged",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Swimming",
+          "kind": "event",
+          "status": "stub-error",
+          "note": "Swimming is not supported; it never fires."
+        },
+        {
+          "name": "TakeDamage",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "UnequipTools",
+          "kind": "method",
+          "status": "stub-error",
+          "note": "Tools are not supported yet."
+        },
+        {
+          "name": "UseJumpPower",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WalkSpeed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WalkToPart",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WalkToPoint",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "HumanoidDescription",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "BackAccessory",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "BodyTypeScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClimbAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "DepthScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Face",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FaceAccessory",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FallAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "FrontAccessory",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GraphicTShirt",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HairAccessory",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HatAccessory",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Head",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HeadColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HeadScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "HeightScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IdleAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "JumpAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LeftArm",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LeftArmColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LeftLeg",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LeftLegColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "NeckAccessory",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Pants",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ProportionScale",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RightArm",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RightArmColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RightLeg",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RightLegColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RunAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Shirt",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ShouldersAccessory",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SwimAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Torso",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TorsoColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WaistAccessory",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WalkAnimation",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "WidthScale",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "IKControl",

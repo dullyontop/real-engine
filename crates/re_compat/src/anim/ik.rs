@@ -21,25 +21,30 @@ use std::sync::Arc;
 use glam::{Quat, Vec3};
 use mlua::{Lua, Result};
 use re_reflect::Value;
-use re_scene::ecs as bevy_ecs;
 use re_scene::{Entity, World};
 
 use super::pose::{self, Joint};
-use super::{AnimatorState, cframe_value, rig_of};
-use crate::class::ClassRegistry;
+use super::{cframe_value, rig_of};
+use crate::class::{ClassMarker, ClassRegistry};
 use crate::datatypes::CFrame;
 use crate::instance::tree;
 use crate::runtime::with_world;
 
-/// Applies the IK controls of every rig an Animator drives.
+/// Applies the IK controls of every rig that has an Animator.
 pub fn apply_all(lua: &Lua, classes: &Arc<ClassRegistry>) -> Result<()> {
     with_world(lua, |w| {
-        let animators: Vec<Entity> = w
+        let mut animators: Vec<Entity> = w
             .ecs
-            .query_filtered::<Entity, bevy_ecs::query::With<AnimatorState>>()
+            .query::<(Entity, &ClassMarker)>()
             .iter(&w.ecs)
+            .filter(|(_, m)| m.class == "Animator")
+            .map(|(e, _)| e)
             .collect();
+        animators.sort();
         for a in animators {
+            if tree::is_destroyed(w, a) {
+                continue;
+            }
             let (Some(holder), Some(rig)) = (tree::parent(w, a), rig_of(w, a)) else {
                 continue;
             };

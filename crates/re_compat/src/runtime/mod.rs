@@ -91,6 +91,7 @@ impl Bindings {
         crate::datatypes::register(&mut b);
         crate::input::register(&mut b);
         crate::anim::register(&mut b);
+        crate::humanoid::register(&mut b);
         Ok(b)
     }
 

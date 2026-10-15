@@ -29,6 +29,7 @@ pub mod data;
 pub mod datatypes;
 pub mod enums;
 pub mod error;
+pub mod humanoid;
 pub mod input;
 pub mod instance;
 pub mod runtime;
