@@ -55,10 +55,11 @@ There is no `eframe`. We own the wgpu device and pass `(&Device, &Queue, &Textur
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| oxijolt | 1.1.0+jolt-5.6.0 (pin `=1.1.0`) | MIT OR Apache-2.0 | 1.88 | Rust bindings to Jolt Physics 5.6.0. Bodies, shapes, constraints, CharacterVirtual, queries, sensors, state save. | `default-features = false`. Later: `cross-platform-deterministic` (M3, D2) | physics spike, 12 scenarios plus a bench; source build about 55 s | Verified |
+| oxijolt | 1.1.0+jolt-5.6.0 (pin `=1.1.0`) | MIT OR Apache-2.0 | 1.88 | Rust bindings to Jolt Physics 5.6.0. Bodies, shapes, constraints, CharacterVirtual, queries, sensors, state save. | `default-features = false`. M3: `cross-platform-deterministic`, always on (ADR-0036, lands with WP18 PR "d2") | physics spike, 12 scenarios plus a bench; source build about 55 s | Verified |
 
 Notes:
 - The available features are `asserts`, `bindgen`, `cross-platform-deterministic`, `debug-renderer`, `double-precision`, `glam032`, `mint` and `prebuilt`. We leave `glam032` off, because it would pull a third glam version. Conversion is a two-line function in `re_physics`.
+- `libm` 0.2.16 (MIT, already in the lockfile through naga and num-traits) becomes a workspace dependency, and glam gets its `libm` feature, with WP18 PR "d2": every transcendental function in the workspace goes through it, and a root `clippy.toml` bans the platform ones (ADR-0036). That PR adds its full row.
 - A source build needs `cmake` and a C++17 compiler (see System packages). It does not need libclang: `oxijolt-sys` ships committed bindings for the Linux, Windows and macOS targets, and `bindgen` is an optional build dependency behind its `bindgen` feature, which we leave off (physics spike §1).
 - The crate has few downloads (464 when checked). We pin it exactly and hide it entirely behind `re_physics` (ADR-0008).
 
@@ -68,6 +69,67 @@ Notes:
 |---|---|---|---|---|---|---|---|
 | mlua | 0.12.2 | MIT | 1.88 | Embeds Luau (vendored Luau 0.740 through mlua-sys 0.13.0 and luau0-src 0.22.0+luau740; no Analysis module) | `luau` only. Not `vendored` (it does nothing for Luau) and not `send`. `luau-jit` only through `re_script`'s opt-in `jit` feature. | scripting spike: 14 feature tests in the default, `send` and `jit` builds, benchmarks, and a corpus compile | Verified |
 | full_moon | 3.0.0 | MPL-2.0 | none | Luau parser for the static API-gap scan (validation tier 2). Tooling only (`re_script_check`). | `luau` | design-phase probe in this container: `parse_fallible(code, LuaVersion::luau())` parsed an external Roblox-style corpus with no failures | Verified; MPL exception (ADR-0019) |
+
+### Place-file import (M3, tooling only)
+
+Used only by `re_import`, a tooling crate, so none of them ships in a packaged game (ADR-0048). Versions checked against crates.io on 2026-10-15.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| lz4_flex | 0.14.0 | MIT | 1.81 | LZ4 block bodies of binary place-file chunks | `default-features = false`, `std`, `safe-decode`, `checked-decode` | WP27 probe in this container (LZ4 block round trip) | Verified (probe); lands with WP27 PR "place files" |
+| ruzstd | 0.9.1 | MIT | 1.87 | ZSTD frame bodies of binary place-file chunks, pure Rust | `default-features = false`, `std` | WP27 probe (ZSTD frame decode) | Verified (probe); lands with WP27 PR "place files" |
+| quick-xml | 0.41.0 | MIT | 1.79 | `.rbxlx`/`.rbxmx` reader | defaults | WP27 probe; already in the lockfile through `wayland-scanner`, so no new duplicate | Verified (probe); lands with WP27 PR "place files" |
+| base64 | 0.23.1 | MIT OR Apache-2.0 | 1.71 | binary and shared strings in XML place files | defaults | WP27 probe; already in the lockfile through `rmcp` | Verified (probe); lands with WP27 PR "place files" |
+
+### Polygon booleans and roads (M3, runtime)
+
+Used only inside `re_geom::polygon`, never in its public types (ADR-0043). Pinned exactly; an upgrade that moves any `re_geom` golden needs node version bumps (ADR-0043, section 1). Checked against crates.io on 2026-10-15. MSRVs are confirmed by the `msrv` job when the PR lands.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| i_overlay | 9.1.0 | MIT OR Apache-2.0 | 1.88 | integer-core polygon booleans, offsets and strokes on a fixed 1 mm grid | `default-features = false` | WP24 `overlay-probe` (road strokes, union and intersection, 5,000-square union; identical hashes across runs) | Verified (probe); lands with WP24 PR "booleans and roads" |
+| i_float, i_shape, i_key_sort, i_tree | 5.0.0, 5.0.0, 0.12.0, 0.20.0 | MIT | ≤ 1.88 | i_overlay's own building blocks (same author) | defaults | WP24 probe (resolved with i_overlay) | Verified (probe); transitive |
+| earcut | 0.4.11 | MIT OR Apache-2.0 | ≤ 1.95 | triangulating road unions, junction caps and shapes | defaults | WP24 probe (240-point road union, area matches) | Verified (probe); lands with WP24 PR "booleans and roads" |
+
+`libm` 0.2.16 and `num-traits` 0.2.19, which these pull, are already in the lockfile.
+
+### Block-compressed textures (M3)
+
+ADR-0047. Checked against crates.io on 2026-10-15; `cargo deny check` passes with no exception.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| block_compression | 0.10.1 | MIT | 1.80 | BC7/BC5 encoder at import (`re_assets`, feature `texture-encode`, turned on by `tooling`; tooling only, forbidden in the runtime build by `check-graph`); dev-dependency of `re_render` for decoder cross-checks | `default-features = false`, `bc15`, `bc7` | WP20 phase-0 bench (encode, decode, GPU round trip on lavapipe and llvmpipe GL) | Verified (probe); lands with WP20 PR "textures" |
+| bcdec_rs | 0.2.0 | MIT | ≤ 1.95 | BC decoder for adapters without `TEXTURE_COMPRESSION_BC` (runtime, `re_render`) | defaults (no dependencies) | WP20 bench (bit-identical to the GPU round trip on both backends) | Verified (probe); lands with WP20 PR "textures" |
+
+### Package archive (M3, runtime)
+
+Used by `re_app::package` to read and write `game.rpak` (ADR-0037). With `default-features = false` it builds the bundled libzstd with `cc` (no pkg-config, no system library) and drops the legacy decoders and the dictionary builder. Checked against crates.io on 2026-10-15.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| zstd | 0.14.2 | BSD-3-Clause | 1.64 | per-entry and index compression in `game.rpak` | `default-features = false` | WP19 measurements (decode 400–700 MB/s at levels 3–9; `ldd` shows only libc and libgcc_s) | Verified (probe); lands with WP19 PR "archive" |
+| zstd-safe, zstd-sys | 8.1.0, 2.1.1+zstd.1.5.7 | BSD-3-Clause | ≤ 1.64 | zstd's bindings and the vendored C library | defaults of `zstd` | WP19 measurements | Verified (probe); transitive |
+
+blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile; `re_cli` takes `image` and `windows-sys` as direct dependencies in WP19's PRs.
+
+### Editor node canvas and docking (M3, tooling only)
+
+Used only by `re_editor`, a tooling crate, so the runtime-only binary does not link them (ADR-0044, ADR-0027). Pinned exactly; an egui-snarl upgrade re-checks its list of direct edits (ADR-0044). Checked against crates.io on 2026-10-15. With them the lockfile gains three transitive crates, all MIT OR Apache-2.0 and none a new duplicate: egui-scale 0.6.1, duplicate 2.0.1 and proc-macro2-diagnostics 0.10.1. ahash, slab, smallvec, paste, heck and thiserror 2 are already in the lockfile. Gizmos are our own code; transform-gizmo-egui is not used (ADR-0044).
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| egui-snarl | 0.12.0 | MIT OR Apache-2.0 | 1.92 | node canvas for ProcGraph (and later AnimGraph), as a read-only view-model | `serde` | WP25 `cratecheck` (built with egui 0.36.2, one egui in the tree) | Verified (probe); lands with WP25's canvas PR |
+| egui_dock | 0.21.1 | MIT | 1.95 | dockable editor panels with floating windows; layout saved as UI state | `serde` | WP25 `cratecheck` | Verified (probe); lands with WP25's docking PR |
+
+### MCP over HTTP (M3, tooling only)
+
+Used only by `re_mcp`, a tooling crate, so the runtime-only binary does not link them (ADR-0046, ADR-0027). rmcp 3.5.1 gains its `transport-streamable-http-server` feature and tokio gains `net`. With them the lockfile gains 13 transitive crates, all under the license allow-list and none a new duplicate: http 1.5.0, http-body 1.1.0, http-body-util 0.1.5, httparse 1.10.1, httpdate 1.0.3, tower-service 0.3.3, sse-stream 0.2.6, tokio-stream 0.1.19, async-trait 0.1.92, rand 0.10.3, rand_core 0.10.1, chacha20 0.10.2 and socket2 0.6.5.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| hyper | 1.12.0 | MIT | ≤ 1.85 | HTTP/1.1 server under rmcp's `StreamableHttpService` for `real mcp --http` | `default-features = false`, `http1`, `server` | WP26 prototype in this container (401, 403, both protocol revisions, policy refusals) | Verified (probe); lands with WP26 PR "http" |
+| hyper-util | 0.1.21 | MIT | ≤ 1.85 | `TowerToHyperService` and the tokio glue | `default-features = false`, `tokio`, `server`, `http1`, `service` | WP26 prototype | Verified (probe); lands with WP26 PR "http" |
 
 ### External tools (not linked, not from crates.io)
 
@@ -174,10 +236,10 @@ Never accepted: a second `wgpu`, `winit`, `egui` or `mlua` version, or a second 
 | profiling 1.0.18 | Pins tracy-client ^0.18, which conflicts with 0.19. We write our own `profile_scope!` macro (ADR-0021). |
 | crossbeam-channel, parking_lot, smallvec | std is enough for M1 |
 | naga_oil 0.23.0 | Our own `#include` preprocessor is enough for a small shader set |
-| egui_dock 0.21.1 | egui panels are enough for editor-lite |
-| transform-gizmo-egui 0.11.0 | Gizmos are cut from M1. It also needs Rust 1.96 and pulls glam 0.32. |
+| egui_dock 0.21.1 | egui panels are enough for editor-lite. Taken in M3 (ADR-0044). |
+| transform-gizmo-egui 0.11.0 | Gizmos are cut from M1. It also needs Rust 1.96 and pulls glam 0.32; M3 writes its own gizmos (ADR-0044). |
 | i_overlay 9.1.0 | Deferred. Published on 2026-10-14, the day we checked, and not needed until polygon boolean nodes (M3). |
-| meshopt 0.6.2, spade, manifold3d, egui-snarl, zstd, libm | Not needed in M1 |
+| meshopt 0.6.2, spade, manifold3d, egui-snarl, zstd, libm | Not needed in M1. egui-snarl (ADR-0044) and zstd (ADR-0037) are taken in M3. |
 | hecs 0.11.2, sparsey 0.13.4, shipyard 0.11.5, flecs_ecs 0.2.2 | Entity storage alternatives measured by the core spike; rejected in ADR-0005 (no hierarchy, hooks or per-component change ticks in hecs and sparsey; no hierarchy in shipyard; flecs is C and segfaulted from safe Rust) |
 | bevy_reflect 0.20.0 (bevy_ecs's default `bevy_reflect` feature) | Reflecting glam types needs bevy_reflect's optional `glam` feature, which ties it to glam 0.33.x (0.33.12 resolved; bevy_ecs's `bevy_reflect` feature does not turn it on by itself); no f64 → f32 coercion, `ReflectComponent::apply` panics on a type mismatch; rejected in ADR-0032 |
 | ron 0.12.2 | Scene format runner-up; its `deserialize_any` path is quadratic (ADR-0016). Used only in the core spike. |

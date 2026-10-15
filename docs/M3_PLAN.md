@@ -39,7 +39,7 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 
 The M1 and M2 ownership rules carry over, with these changes:
 - The maintainer keeps every path it owns at the end of M2: the root files, `.github/`, `tools/`, `README.md`, `docs/`, the WP0 crates, `re_assets`, `re_geom`, `re_proc`, `re_editor`, and `re_compat`'s shared files (`Cargo.toml`, `src/lib.rs`, `src/codes.rs`, `src/class/`, `src/data.rs`, `src/scene.rs`).
-- The maintainer also runs the **entity-core track** (ROADMAP "Entity-core extensions"): a `#[derive]` component macro, undo coalescing for drags, a typed fast path for bulk spawns and scene loads, and comments in scene files. These touch only maintainer crates and frozen WP0 contracts, so they are maintainer PRs reviewed by the WPs that consume the changed contract.
+- The maintainer also runs the **entity-core track** (ROADMAP "Entity-core extensions"): a `#[derive]` component macro, undo coalescing for drags, a typed fast path for bulk spawns and scene loads, comments in scene files, and (for WP25's canvas, ADR-0044) a `set_doc` operation with open documents in the World and an optional `layout` map in `GraphDoc`. These touch only maintainer crates and frozen WP0 contracts, so they are maintainer PRs reviewed by the WPs that consume the changed contract.
 - Crates pass to the M3 WP that changes them most:
   - `.github/workflows/` and `tools/xtask/src/d2.rs` to WP18, for its PRs only; the maintainer reviews each change, and the files return to the maintainer when WP18 is done;
   - `re_cli/src/build/` (new) and the packaging parts of `re_app` to WP19;
@@ -51,10 +51,12 @@ The M1 and M2 ownership rules carry over, with these changes:
   - `re_agent`, `re_mcp`, `re_cli/src/tooling/{mcp,agent}.rs` and `templates/` (new) to WP26;
   - `re_compat` (except its shared files) and `re_import` to WP27;
   - `re_script` (except `src/debug/`) to WP24, for its `generator` context;
+  - `re_script_check` returns to the maintainer;
   - `examples/valley/` to WP28.
 - `re_app` and `re_cli` are shared. WP19 owns `re_app/src/package.rs` and `re_cli/src/build/`; every other change to them, such as WP24's `real migrate-graph` and WP26's new `real new` templates, goes through a small PR that the maintainer reviews, as M2 did for `re_compat`'s shared files.
 - **Planned edits across owners.** Each is a small PR in the owner's paths, reviewed by the owner:
   - WP21's GPU skinning path in `re_render` (WP20 reviews);
+  - WP24's generator versions, the losing-`Procedural` rule and structural overrides in `re_scene` and `re_command` (the maintainer reviews; ADR-0043, section 7);
   - WP23's streaming hooks in `re_scene` (the maintainer reviews), its per-chunk heightfield calls in `re_physics` (WP22 reviews), and its erosion node registered through WP24's `NodeRegistry` (WP24 reviews);
   - WP27's skinned `MeshPart`s on WP21's `re_anim` API and its post effects on WP20's settings, through those WPs' public APIs only.
 
@@ -75,7 +77,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | Contract | Defined in | Defined by | Frozen at | Consumed by |
 |---|---|---|---|---|
 | D2 harness: `cargo xtask d2` input (project, replay, frames) and its JSON report (`state_hash` per platform and frame) | `tools/xtask/src/d2.rs` | WP18 | WP18 PR "d2" | every WP that changes simulation |
-| Package layout: the archive format, its index, the runtime-only binary's lookup order (archive, then project directory) and `real build` options | `crates/re_app/src/package.rs`, `docs/ARCHITECTURE.md` §8 | WP19 | WP19 PR "archive" | WP23, WP28 |
+| Package layout: the archive format, its index, the runtime-only binary's lookup order (archive, then project directory) and `real build` options | `crates/re_app/src/package.rs`, `crates/re_core/src/files.rs` (`ProjectFiles`, maintainer-reviewed, frozen at WP19 PR "files"), `docs/ARCHITECTURE.md` §8 | WP19 | WP19 PR "archive" | WP23, WP28 |
 | Post-processing settings in `RenderSnapshot` (exposure, tone mapping, bloom, colour grading) and the cascade settings of the sun | `crates/re_types/src/render.rs` | WP20 | WP20 PR "post" | WP27 (compat effects), WP28 |
 | Skins: `SkinData` (joints, inverse bind matrices, per-vertex weights) and the skinned draw item | `crates/re_types/src/render.rs` | WP21 | WP21 PR "skins" | WP20 (skinning path), WP22 (ragdolls), WP27, WP28 |
 | Animation graphs: `AnimGraph` (states, transitions, blend nodes) as plain data, and its parameters | `crates/re_types/src/anim.rs` | WP21 | WP21 PR "graphs" | WP25 (editing), WP28 |
@@ -126,6 +128,8 @@ cargo xtask d2 --project examples/plaza --json
 **Owned paths:** `crates/re_cli/src/build/`, `crates/re_app/src/package.rs`, `tests/build/` under `re_cli`.
 
 **Starts after:** ADR-0037 is accepted. It needs WP18 PR "blocking" to test the bundles on all three platforms.
+
+**Build, PR "files"** (added by ADR-0037): every runtime read of a project file goes through `re_core::files::ProjectFiles`, a cross-owner PR the maintainer reviews with each owner asked.
 
 **Build, PR "archive":**
 - ADR-0037: package format. One archive per game with an index (path, offset, size, hash) over the processed assets from `.real/cache`, the scenes, the compiled Luau bytecode and `real.toml`. The runtime reads the archive first, then the project directory, so a development run and a packaged run use one code path.
