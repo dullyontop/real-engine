@@ -31,6 +31,7 @@ re_proc = { path = "crates/re_proc" }
 re_script = { path = "crates/re_script" }
 re_script_check = { path = "crates/re_script_check" }
 re_compat = { path = "crates/re_compat" }
+re_import = { path = "crates/re_import" }
 re_app = { path = "crates/re_app" }
 re_agent = { path = "crates/re_agent" }
 re_mcp = { path = "crates/re_mcp" }

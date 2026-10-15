@@ -3567,6 +3567,7 @@ dependencies = [
  "re_core",
  "re_editor",
  "re_geom",
+ "re_import",
  "re_input",
  "re_mcp",
  "re_physics",
@@ -3607,6 +3608,7 @@ dependencies = [
  "mlua",
  "re_command",
  "re_core",
+ "re_import",
  "re_reflect",
  "re_scene",
  "re_script",
@@ -3663,6 +3665,26 @@ dependencies = [
  "re_types",
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "re_import"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "full_moon",
+ "glam 0.34.1",
+ "indexmap 2.14.2",
+ "re_compat",
+ "re_core",
+ "re_reflect",
+ "re_scene",
+ "re_script",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
