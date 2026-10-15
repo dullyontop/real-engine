@@ -32,6 +32,10 @@ pub fn catalog() -> Vec<&'static DiagInfo> {
         re_script_check::DIAGNOSTICS,
         #[cfg(feature = "tooling")]
         re_editor::DIAGNOSTICS,
+        #[cfg(feature = "tooling")]
+        re_agent::DIAGNOSTICS,
+        #[cfg(feature = "tooling")]
+        re_mcp::DIAGNOSTICS,
     ];
     let mut all: Vec<&'static DiagInfo> = lists.iter().flat_map(|l| l.iter()).collect();
     all.sort_by_key(|d| d.code);

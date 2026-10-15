@@ -109,6 +109,10 @@ enum Command {
     /// --types) the Luau type checker.
     #[cfg(feature = "tooling")]
     Check(tooling::check::CheckArgs),
+    /// Run one engine command against the project (through the editor when it
+    /// has the project open).
+    #[cfg(feature = "tooling")]
+    Do(tooling::do_cmd::DoArgs),
     /// Serve the project's commands to MCP clients over stdio.
     #[cfg(feature = "tooling")]
     Mcp(tooling::mcp::McpArgs),
@@ -447,6 +451,8 @@ fn main() -> ExitCode {
         Command::Graph(command) => graph::run(command, &project),
         #[cfg(feature = "tooling")]
         Command::Check(args) => tooling_exit(tooling::check::run(args, &project)),
+        #[cfg(feature = "tooling")]
+        Command::Do(args) => tooling_exit(tooling::do_cmd::run(args, &project)),
         #[cfg(feature = "tooling")]
         Command::Mcp(args) => tooling_exit(tooling::mcp::run(args, &project)),
         #[cfg(feature = "tooling")]
