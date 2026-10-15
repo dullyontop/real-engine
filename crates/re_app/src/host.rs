@@ -188,3 +188,21 @@ impl HostServices for Host<'_> {
         self.pending.restart = true;
     }
 }
+
+/// The [`ScriptHost`](re_script::ScriptHost) of a running game: the World and
+/// the [`Host`] services. Scripts get no command registry while the game runs.
+pub struct PlayHost<'a> {
+    /// The world scripts read and write.
+    pub world: &'a mut re_scene::World,
+    /// The services.
+    pub services: Host<'a>,
+}
+
+impl re_script::ScriptHost for PlayHost<'_> {
+    fn world(&mut self) -> &mut re_scene::World {
+        self.world
+    }
+    fn services(&mut self) -> &mut dyn HostServices {
+        &mut self.services
+    }
+}
