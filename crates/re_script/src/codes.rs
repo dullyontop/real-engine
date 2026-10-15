@@ -19,3 +19,39 @@ pub const TIMEOUT: Code = Code::new("RE3010");
 
 /// A script context ran out of its memory limit.
 pub const MEMORY: Code = Code::new("RE3011");
+
+/// A script or module file could not be read.
+pub const SCRIPT_READ: Code = Code::new("RE3003");
+
+/// `require` was refused or could not resolve the module.
+pub const REQUIRE: Code = Code::new("RE3004");
+
+/// `task.wait` was called where it cannot yield to the scheduler.
+pub const YIELD: Code = Code::new("RE3005");
+
+/// An engine function got an argument of the wrong type or shape.
+pub const BAD_ARGUMENT: Code = Code::new("RE3006");
+
+/// An entity handle was used after its entity was despawned.
+pub const STALE_HANDLE: Code = Code::new("RE3007");
+
+/// `world.define_component` was given a definition it cannot register.
+pub const COMPONENT_DEFINITION: Code = Code::new("RE3008");
+
+/// `command.run` was called in a context with no command registry.
+pub const COMMANDS_UNAVAILABLE: Code = Code::new("RE3009");
+
+/// A ProcGraph builder script built or returned an invalid graph.
+pub const GRAPH_BUILDER: Code = Code::new("RE3012");
+
+/// More `task.defer` calls ran in one cycle than the scheduler allows.
+pub const DEFER_LIMIT: Code = Code::new("RE3014");
+
+/// An engine service is not available in this context (no game is running).
+pub const SERVICE_UNAVAILABLE: Code = Code::new("RE3015");
+
+/// [`SERVICE_UNAVAILABLE`] as the `&'static str` a `HostError` carries.
+pub const SERVICE_UNAVAILABLE_STR: &str = "RE3015";
+
+/// A script read a member the engine API does not have.
+pub const UNSUPPORTED_MEMBER: Code = Code::new("RE9001");

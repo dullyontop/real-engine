@@ -8,18 +8,35 @@
 //!   `re_script_check` call it.
 //! * [`diag`]: [`ScriptError`], which unwraps mlua errors into the file, line,
 //!   message and traceback, and maps them to `RE3xxx` [`Diagnostic`](re_core::Diagnostic)s.
+//! * [`ScriptRuntime`]: the `game` and `tools` contexts (sandboxed VMs with the
+//!   engine API, a CPU budget `pcall` cannot swallow, a memory limit and
+//!   project-confined `require`), the per-phase entry point and hot reload.
+//!   **Frozen** at WP3's exit; `re_app` drives it through a [`ScriptHost`].
+//! * [`definitions`]: `engine.d.luau`, generated from the API registrations.
 //!
 //! Diagnostic codes: `RE3000`–`RE3079` and the compatibility block `RE9xxx`
 //! (ARCHITECTURE §7); see [`codes`].
 
 #![warn(missing_docs)]
 
+pub mod api;
+mod budget;
 pub mod codes;
 mod compile;
 pub mod diag;
+pub mod host;
+pub mod modules;
+mod runtime;
+mod scheduler;
+pub mod vm;
 
+pub use api::definitions;
 pub use compile::compile_check;
 pub use diag::{ErrorKind, ScriptError};
+pub use host::{CommandHost, NoServices, ScriptHost, WorldHost};
+pub use modules::Reload;
+pub use runtime::{Context, ReloadReport, RuntimeConfig, ScriptRuntime};
+pub use vm::{ContextKind, OutputLine};
 
 use re_core::DiagInfo;
 
@@ -36,6 +53,41 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE3002.md"),
     },
     DiagInfo {
+        code: codes::SCRIPT_READ,
+        title: "Cannot read script",
+        page: include_str!("../explain/RE3003.md"),
+    },
+    DiagInfo {
+        code: codes::REQUIRE,
+        title: "Require refused or not found",
+        page: include_str!("../explain/RE3004.md"),
+    },
+    DiagInfo {
+        code: codes::YIELD,
+        title: "task.wait cannot yield here",
+        page: include_str!("../explain/RE3005.md"),
+    },
+    DiagInfo {
+        code: codes::BAD_ARGUMENT,
+        title: "Bad argument to an engine function",
+        page: include_str!("../explain/RE3006.md"),
+    },
+    DiagInfo {
+        code: codes::STALE_HANDLE,
+        title: "Entity handle is stale",
+        page: include_str!("../explain/RE3007.md"),
+    },
+    DiagInfo {
+        code: codes::COMPONENT_DEFINITION,
+        title: "Invalid component definition",
+        page: include_str!("../explain/RE3008.md"),
+    },
+    DiagInfo {
+        code: codes::COMMANDS_UNAVAILABLE,
+        title: "Commands unavailable",
+        page: include_str!("../explain/RE3009.md"),
+    },
+    DiagInfo {
         code: codes::TIMEOUT,
         title: "Script exceeded its CPU budget",
         page: include_str!("../explain/RE3010.md"),
@@ -44,6 +96,26 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::MEMORY,
         title: "Script memory limit reached",
         page: include_str!("../explain/RE3011.md"),
+    },
+    DiagInfo {
+        code: codes::GRAPH_BUILDER,
+        title: "Invalid ProcGraph builder",
+        page: include_str!("../explain/RE3012.md"),
+    },
+    DiagInfo {
+        code: codes::DEFER_LIMIT,
+        title: "Too many deferred threads",
+        page: include_str!("../explain/RE3014.md"),
+    },
+    DiagInfo {
+        code: codes::SERVICE_UNAVAILABLE,
+        title: "Engine service unavailable",
+        page: include_str!("../explain/RE3015.md"),
+    },
+    DiagInfo {
+        code: codes::UNSUPPORTED_MEMBER,
+        title: "Unsupported API member",
+        page: include_str!("../explain/RE9001.md"),
     },
 ];
 

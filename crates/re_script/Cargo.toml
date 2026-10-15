@@ -12,8 +12,19 @@ publish.workspace = true
 # links full_moon (`cargo xtask check-graph`).
 [dependencies]
 re_core.workspace = true
+re_types.workspace = true
+re_reflect.workspace = true
+re_scene.workspace = true
+re_command.workspace = true
 mlua.workspace = true
+glam.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
 
 [features]
 # Luau native code generation (x64 with AVX, or arm64). Off by default in M1 (ADR-0011).
 jit = ["mlua/luau-jit"]
+
+[dev-dependencies]
+insta.workspace = true
+tempfile.workspace = true
