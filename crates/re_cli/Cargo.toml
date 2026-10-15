@@ -1,0 +1,40 @@
+[package]
+name = "re_cli"
+description = "The `real` command-line tool: run, verify, describe and explain a Real Engine project, and (with `tooling`) edit it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "real"
+path = "src/main.rs"
+
+# ADR-0027: the tooling crates (re_script_check, re_agent, re_mcp, re_editor) are
+# optional and enabled by the default-on `tooling` feature; a runtime-only build
+# (`--no-default-features`) links none of them (`cargo xtask check-graph`).
+# WP7 and WP8 may add their crates' optional lines here (docs/M1_PLAN.md,
+# ownership rule).
+[features]
+default = ["tooling"]
+tooling = []
+
+# Workspace crates without a `[workspace.dependencies]` entry yet are named by path.
+[dependencies]
+re_core.workspace = true
+re_types = { workspace = true, features = ["schemars"] }
+re_reflect.workspace = true
+re_scene.workspace = true
+re_command.workspace = true
+re_app.workspace = true
+re_input.workspace = true
+re_physics.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

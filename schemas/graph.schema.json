@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GraphDoc",
+  "description": "A procedural graph document.",
+  "type": "object",
+  "properties": {
+    "format": {
+      "description": "Always [`GraphDoc::FORMAT`].",
+      "type": "string"
+    },
+    "version": {
+      "description": "The file format version, [`GraphDoc::VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "name": {
+      "description": "The graph's name.",
+      "type": "string"
+    },
+    "seed": {
+      "description": "The default seed. A procedural source's `Procedural.seed` wins over it.",
+      "type": "integer",
+      "format": "int64"
+    },
+    "nodes": {
+      "description": "The nodes, in file order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/NodeDoc"
+      }
+    },
+    "edges": {
+      "description": "The edges between node ports.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EdgeDoc"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "name",
+    "seed",
+    "nodes",
+    "edges"
+  ],
+  "$defs": {
+    "NodeDoc": {
+      "description": "One node of a [`GraphDoc`].",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique within the graph.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "The node type, for example `terrain.heightfield`.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The node type's version (for migrating parameters).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "params": {
+          "description": "The node's parameters, in file order; checked by the node type.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "params"
+      ]
+    },
+    "EdgeDoc": {
+      "description": "An edge from an output port to an input port.\n\nEach end is `(node id, port)`, written as a two-element array.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "The source node and output port.",
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "to": {
+          "description": "The destination node and input port.",
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to"
+      ]
+    }
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReplayDoc",
+  "description": "A replay document.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "An optional JSON Schema reference, kept unchanged.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "version": {
+      "description": "The file format version, [`ReplayDoc::VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "seed": {
+      "description": "The seed the run starts with.",
+      "type": "integer",
+      "format": "int64"
+    },
+    "frames": {
+      "description": "The number of frames to run.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "input": {
+      "description": "Input changes, in frame order. An action keeps its last value until changed.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ReplayInput"
+      },
+      "default": []
+    },
+    "commands": {
+      "description": "Engine commands to dispatch, in frame order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ReplayCommand"
+      },
+      "default": []
+    },
+    "checks": {
+      "description": "Checks to make, in frame order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ReplayCheck"
+      },
+      "default": []
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "seed",
+    "frames"
+  ],
+  "$defs": {
+    "ReplayInput": {
+      "description": "A change of one action's value at a frame.\n\nExactly one of `down` (a button action) and `axis` (an axis action) is set.",
+      "type": "object",
+      "properties": {
+        "frame": {
+          "description": "The frame at which the value changes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "action": {
+          "description": "The action name.",
+          "type": "string"
+        },
+        "down": {
+          "description": "The new button state.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "axis": {
+          "description": "The new axis value.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "action"
+      ]
+    },
+    "ReplayCommand": {
+      "description": "An engine command (from the command registry) dispatched at a frame.",
+      "type": "object",
+      "properties": {
+        "frame": {
+          "description": "The frame at which it is dispatched (before the frame's fixed steps).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "name": {
+          "description": "The command name, for example `graph.regenerate`.",
+          "type": "string"
+        },
+        "args": {
+          "description": "The command's arguments.",
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "name"
+      ]
+    },
+    "ReplayCheck": {
+      "description": "A check made at the end of a frame.",
+      "type": "object",
+      "properties": {
+        "frame": {
+          "description": "The frame after which the check runs.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "screenshot": {
+          "description": "Capture the frame and compare it with this golden image. `{backend}` is\nreplaced by the backend the run uses (`vulkan` or `gl`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame"
+      ]
+    }
+  }
+}
