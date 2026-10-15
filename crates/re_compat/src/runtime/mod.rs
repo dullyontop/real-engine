@@ -252,10 +252,15 @@ pub(crate) struct UnsupportedHits(pub(crate) BTreeMap<String, u32>);
 /// Counts a use of a member the layer does not have and returns its `RE9001`
 /// error.
 pub(crate) fn unsupported(lua: &Lua, key: String, message: impl std::fmt::Display) -> mlua::Error {
+    count_unsupported(lua, key);
+    lua_error(re_script::codes::UNSUPPORTED_MEMBER, message)
+}
+
+/// Counts one hit of `key` in [`UnsupportedHits`].
+pub(crate) fn count_unsupported(lua: &Lua, key: String) {
     if let Some(mut h) = lua.app_data_mut::<UnsupportedHits>() {
         *h.0.entry(key).or_default() += 1;
     }
-    lua_error(re_script::codes::UNSUPPORTED_MEMBER, message)
 }
 
 /// A [`CompatError`] as a Luau error carrying its code.
@@ -555,7 +560,8 @@ impl CompatVm {
 
     /// How often scripts reached each member the layer does not have (an
     /// `RE9001` raised), by `Class.Member`, `GetService(Name)` or
-    /// `Instance.new(Class)`; caught errors count too.
+    /// `Instance.new(Class)`, and each online-only method they called (an
+    /// `RE9002` raised), by `Class.Member (RE9002)`; caught errors count too.
     pub fn unsupported(&self) -> BTreeMap<String, u32> {
         self.ctx
             .lua()

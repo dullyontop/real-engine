@@ -824,6 +824,17 @@ mod net {
             "{s:?}"
         );
         assert_eq!(s[7], "true");
+        let hits = t.server.unsupported();
+        assert_eq!(
+            hits.get("HttpService.GetAsync (RE9002)"),
+            Some(&1),
+            "{hits:?}"
+        );
+        assert_eq!(
+            hits.get("DataStoreService.GetDataStore (RE9002)"),
+            Some(&1),
+            "{hits:?}"
+        );
         assert_eq!(c[0], "58\t0");
         assert_eq!(c[1], "false\ttrue");
         assert!(c[2].starts_with("false\tfalse\t"), "{c:?}");

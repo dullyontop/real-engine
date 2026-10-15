@@ -1021,7 +1021,10 @@ fn has_appearance_loaded(lua: &Lua, e: Entity, _: MultiValue) -> Result<MultiVal
 
 /// The implementation of an offline stub: raises `RE9002` naming the member.
 pub(crate) fn offline(class: &'static str, member: &'static str) -> Arc<crate::runtime::MethodFn> {
-    Arc::new(move |_, _, _| {
+    Arc::new(move |lua, _, _| {
+        // Counted with the unsupported members (caught calls too), so a boot
+        // report shows what a game needs from online services.
+        crate::runtime::count_unsupported(lua, format!("{class}.{member} (RE9002)"));
         Err(compat_error(CompatError::NotAvailableOffline {
             member: format!("{class}.{member}"),
         }))
