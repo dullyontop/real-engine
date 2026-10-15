@@ -80,6 +80,15 @@ Used only by `re_import`, a tooling crate, so none of them ships in a packaged g
 | quick-xml | 0.41.0 | MIT | 1.79 | `.rbxlx`/`.rbxmx` reader | defaults | WP27 probe; already in the lockfile through `wayland-scanner`, so no new duplicate | Verified (probe); lands with WP27 PR "place files" |
 | base64 | 0.23.1 | MIT OR Apache-2.0 | 1.71 | binary and shared strings in XML place files | defaults | WP27 probe; already in the lockfile through `rmcp` | Verified (probe); lands with WP27 PR "place files" |
 
+### MCP over HTTP (M3, tooling only)
+
+Used only by `re_mcp`, a tooling crate, so the runtime-only binary does not link them (ADR-0046, ADR-0027). rmcp 3.5.1 gains its `transport-streamable-http-server` feature and tokio gains `net`. With them the lockfile gains 13 transitive crates, all under the license allow-list and none a new duplicate: http 1.5.0, http-body 1.1.0, http-body-util 0.1.5, httparse 1.10.1, httpdate 1.0.3, tower-service 0.3.3, sse-stream 0.2.6, tokio-stream 0.1.19, async-trait 0.1.92, rand 0.10.3, rand_core 0.10.1, chacha20 0.10.2 and socket2 0.6.5.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| hyper | 1.12.0 | MIT | ≤ 1.85 | HTTP/1.1 server under rmcp's `StreamableHttpService` for `real mcp --http` | `default-features = false`, `http1`, `server` | WP26 prototype in this container (401, 403, both protocol revisions, policy refusals) | Verified (probe); lands with WP26 PR "http" |
+| hyper-util | 0.1.21 | MIT | ≤ 1.85 | `TowerToHyperService` and the tokio glue | `default-features = false`, `tokio`, `server`, `http1`, `service` | WP26 prototype | Verified (probe); lands with WP26 PR "http" |
+
 ### External tools (not linked, not from crates.io)
 
 | Tool | Version | License | Role | Verified by | Status |

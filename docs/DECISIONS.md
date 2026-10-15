@@ -901,6 +901,184 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ---
 
+## ADR-0039: Skins from glTF, GPU skinning, and animation graphs as data
+
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP21). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: the WP21 probe (`research/m3/wp21/`): the skinned vertex layout and the vertex-stage palette run on wgpu 30.0.1 on Vulkan (lavapipe) and GL (llvmpipe through EGL) and match the CPU to 4.8e-7; pose evaluation costs 20.8 µs for a 65-joint character with three clips; f32 evaluation stays within 8.5e-6 of an f64 reference even on a 63-deep joint chain.
+
+**Context.** ADR-0030 limited `re_anim` in M1 to sampling glTF node clips onto entity transforms, plus tweens; M2 WP14 added keyframe tracks, a priority mixer and a two-bone solver for jointed rigs. There is no skinning: `re_assets` ignores glTF skins, `JOINTS_n` and `WEIGHTS_n`, and `re_render` has one vertex layout (`Vertex`, 48 bytes, locations 0–3) plus the instance stream (locations 4–11). M3 needs skinned characters driven by an animation graph that scripts, the editor and agents can change (M3 plan, WP21). The graph must be plain data, like the ProcGraph (`*.graph.json`, ADR-0016), so commands can edit it. Facts checked for this ADR:
+- **gltf 1.4.1** (the pinned version, MIT OR Apache-2.0) exposes everything needed: `Document::skins()`, `Skin::joints()`, `Skin::skeleton()`, `Skin::reader(..).read_inverse_bind_matrices()`, `Node::skin()`, and `Reader::read_joints(set)` / `read_weights(set)` with `into_u16()` and `into_f32()` casts over the U8, U16 and F32 encodings glTF allows. No new dependency is needed.
+- **wgpu 30.0.1.** WebGPU default limits allow 16 vertex attributes and 8 storage buffers per stage; the downlevel defaults allow 4. Storage buffers in the vertex stage need `DownlevelFlags::VERTEX_STORAGE`. Measured: lavapipe reports it with 48 storage buffers per stage and 32 attributes; GL (llvmpipe, OpenGL 4.5 / ES 3.2) reports it with 16 and 16. DX12 (WARP) and Metal support vertex storage buffers; WebGL2 does not, and the web is not an M3 target.
+- **Cost** (probe `eval`, one core of a 2.1 GHz Xeon): sampling one clip's translation, rotation and scale for 65 joints is 4.5 µs; the hierarchy walk and palette for 65 joints is 1.0 µs; a full evaluation (three clips, a 1D blend, an additive layer, palette) is 20.8 µs, 32.2 µs with 301 keys per channel, and 84.4 µs for 256 joints.
+
+**Decision.**
+
+*Skins in the contract layer (`re_types`, frozen at PR "skins").*
+- `re_types::anim` gains `SkinData`: the skin's name, its joints in an order where every parent comes before its children (`JointDesc { name, parent: Option<u16>, rest: Trs }`), one inverse bind matrix per joint, and per-joint bind-space bounds of the vertices that joint influences (for skinned bounds and picking). At most 65,535 joints per skin, the range of a `u16` joint index; glTF sets no lower limit, so neither do we.
+- `re_types::mesh` gains `SkinWeights { joints: Vec<[u16; 4]>, weights: Vec<[u16; 4]> }`, one entry per vertex of the `MeshData` it goes with. Weights are unorm16 and sum to 65,535. `MeshData` and `Vertex` do not change, so static meshes pay nothing and the 14 existing `MeshData { .. }` literals keep compiling.
+- `re_types::render` gains `SkinnedDrawItem { entity, mesh, material, world, flags, palette: u32, joints: u32, bounds: Aabb }` and two `RenderSnapshot` fields with serde defaults: `skinned: Vec<SkinnedDrawItem>` and `joint_palette: Vec<Mat4>`. `palette` is the item's first matrix in `joint_palette`, so one buffer holds every character's palette and `DrawItem` stays `Copy` and unchanged. A palette matrix is `joint_model * inverse_bind` in the mesh's model space; `world` places the mesh as for a static item. The snapshot literals in `re_render`, `re_app`, `re_compat` and the `re_types` tests that do not end in `..Default::default()` get it in the "skins" PR; WP20's "post" PR adds fields to the same struct, so whichever lands first converts them.
+
+*glTF import (`re_assets`, maintainer-reviewed).*
+- The importer reads every skin into `SkinData`, and `JOINTS_0`/`WEIGHTS_0` (plus `JOINTS_1`/`WEIGHTS_1` when present) into `SkinWeights`. More than four influences keep the four largest. Weights are renormalised to sum to one before quantising, and the rounding remainder goes to the largest weight. A vertex with all-zero weights binds to the skin's first joint.
+- Joint names are the node names the clip importer already uses for targets, so the existing `ClipData` animates joints with no format change. Within one skin, a duplicate joint name is renamed `<name>#<node index>` with a warning; clips from the same file follow the rename.
+- Clips from another file (an animation library) bind to a skin by joint name. Unmatched clip targets are ignored, with one warning per clip and skin.
+- A skinned primitive is imported as an `ImportedMesh` with `skin: Option<(usize, SkinWeights)>`. `GLTF_IMPORTER_VERSION` goes to 2, so cached imports rebuild.
+- Diagnostics are a new `re_assets` block, `RE7060`–`RE7069`, reserved by the maintainer: malformed skin (joint count against inverse bind matrices, a joint outside the skin's tree, joints and weights of different lengths), more than four influences (warning), and duplicate joint names (warning).
+- The plan names the skin parts as `re_assets/src/gltf/`. Today the importer is one file, `gltf_import.rs`. The "skins" PR first splits it into `gltf/{mod,skin}.rs` as a mechanical move the maintainer reviews; WP21 owns only `gltf/skin.rs`.
+
+*GPU skinning (`re_render`, reviewed by WP20).*
+- A vertex-shader path with four weights per vertex (linear blend skinning). Skinned meshes upload with `Renderer::upload_skinned_mesh(&MeshData, &SkinWeights) -> Result<MeshHandle, Diagnostic>`, which adds a second vertex buffer of 16 bytes per vertex: joints `Uint16x4` at location 12 and weights `Unorm16x4` at location 13. A skinned instance stream adds the palette base as `Uint32` at location 14. That is 15 attributes, within the 16 GL allows; the probe ran this exact layout on Vulkan and GL.
+- The frame's `joint_palette` is uploaded once per frame into one read-only storage buffer, bound in the vertex stage of the skinned pipelines. The shader skins the position with the weighted sum of four palette matrices, and the normal with its upper 3×3. Joints with non-uniform scale therefore shade slightly wrong, which is the usual trade-off of linear blend skinning.
+- Every pipeline that draws meshes gets a skinned variant: forward (opaque and blended), shadow, and the selection mask. They share the existing shaders through `#include` and a skinned entry point, so lighting and materials stay one code path.
+- When the adapter lacks `VERTEX_STORAGE`, the renderer warns once with a new `re_render` code. It then draws skinned items in their bind pose (palette set to identity). It does not fake animation. No M3 target lacks the flag.
+- Skinned bounds are the union of each joint's bind-space bounds moved by its palette matrix, computed in `re_anim`. They are conservative, and nothing culls on them yet.
+
+*Pose evaluation and the animation graph (`re_anim`, `re_types::anim`, frozen at PR "graphs").*
+- `re_anim` gains `Skeleton` (from `SkinData`), `Pose` (local translation, rotation and scale per joint, indexed, not named), and `BoundClip`: a `ClipData` resolved once against a skeleton into per-joint channel indices, with a cached key cursor per channel. The existing name-based `Sampler` and the keyframe `Mixer` stay for entity rigs and the compat layer.
+- `AnimGraph` is plain data in `re_types::anim`, saved as `*.animgraph.json` with `"format": "real-engine/animgraph"`, `"version": 1` and unknown keys refused, and a JSON Schema exported like `graph.schema.json`. Every element has an `id` unique within its kind, which commands address:
+  - `params`: `float`, `bool` or `trigger`, each with a default.
+  - `nodes`, the blend tree:
+    - `clip`: a clip reference `<model path>#<clip name>`, with speed, looping and `root_motion`.
+    - `blend1d`: a float parameter, and children at sorted thresholds, blended piecewise linearly and clamped at the ends.
+    - `blend2d`: two float parameters, and children at points, weighted with gradient-band (freeform cartesian) interpolation, which needs no triangulation and is easy to check against a reference.
+    - `additive`: a base node plus an additive child with a weight or a weight parameter.
+    Blend spaces keep their children in phase by normalised time (`sync`, on by default), so walk and run cycles line up.
+  - `layers`: each has a state machine, a blend mode (`override` or `additive`), a weight, and an optional mask. An additive layer applies its delta from the clip's first frame, or a named reference clip.
+  - A state machine has `states` (each with one node), an `entry` state, and `transitions`. A transition has `from` (a state or `any`), `to`, a crossfade `duration`, an optional normalised `exit_time`, `conditions`, and `interruptible`. A condition compares a float parameter (`<`, `<=`, `>`, `>=`), tests a bool, or consumes a trigger. Transitions are checked in file order and the first that passes wins. An interrupted crossfade freezes the blended pose and fades from it.
+  - `masks`: per-joint weights given by joint name, with `subtree: true` to cover a joint's descendants. A name the skeleton lacks is a warning when the graph binds, not an error, so one mask fits several skeletons.
+- Blending is per joint: translation and scale interpolate linearly, and rotation uses normalised lerp with a hemisphere fix. glTF's own linear rotation keys stay spherical. With nlerp, a blend needs no `acos` or `sin`, so blending uses no platform maths function. Sampling follows the maths rules of ADR-0036 (D2) for simulated paths once it is accepted.
+- **Root motion** is an option per clip node. The root joint is the skin's `skeleton` node, or else its first joint. The root's horizontal translation and yaw since the previous step are taken out of the pose, blended with the same weights as the pose, and wrapped correctly when a clip loops. The delta moves the entity: through `move_character` when it has a `CharacterController`, otherwise by writing its `Transform`. Vertical motion stays in the pose.
+- **When evaluation runs.** The graph advances (parameters, transitions, times, root motion) and the pose is evaluated in the PreAnimation phase of every fixed step, so poses are deterministic and replayable like every simulated path. Joints are not entities: a 65-joint character is one pose array, not 65 transforms in the World. The state hash covers the entity transform and the graph state (active states and normalised times), not the joint array. Characters evaluate in parallel on the shared worker pool. At the measured 20.8 µs, 100 three-clip characters cost about 2.1 ms on one core. The render snapshot uses the latest step's pose, not an interpolation between steps; that may look stepped above 60 Hz, and interpolating local poses is the follow-up if the valley shows it.
+- **Seams for other WPs.**
+  - WP22's ragdolls read and write the model-space pose through `re_anim::ModelPose`, with per-joint blend weights, after graph evaluation and before the palette is built.
+  - A `BoneAttachment { joint }` component on a child entity puts that child at the joint each step, for weapons, props and cameras.
+  - WP27's skinned `MeshPart`s use `Skeleton`, `Pose` and the palette builder; they do not use the graph.
+
+*Scene, scripts and commands (cross-owner, small PRs).*
+- `re_scene` (maintainer) gains two components:
+  - `SkinnedMesh { asset }`, where `asset` is `<model path>#<skin name>`. It draws every glTF primitive bound to that skin, with the materials from the file.
+  - `Animator { graph, playing, speed }`, where `graph` is an `*.animgraph.json` path. Without a graph, `AnimPlayer`'s single clip also drives a `SkinnedMesh`.
+  `re_app/src/sync/` gets an `anim_skin` module next to `anim.rs`.
+- The Luau library `anim` lives in `re_script` (WP24 reviews), through new `HostServices` methods in `re_types::host` (maintainer). It has `anim.set(entity, name, value)`, `anim.get(entity, name)`, `anim.trigger(entity, name)`, `anim.state(entity, layer?) -> string` and `anim.joint(entity, joint) -> (vector, quat)` in world space. An unknown parameter, or a value of the wrong type, raises a coded error that lists the graph's parameters.
+- Commands (registered by `re_app`, maintainer-reviewed):
+  - `animgraph.create`.
+  - `animgraph.edit { path, ops }`, where each op is `upsert` or `remove` of one `param`, `node`, `state`, `transition`, `layer` or `mask` by id. The whole batch is validated and journalled as one undo step, like `graph.set_param`.
+  - `animgraph.validate`.
+  - `anim.set_param`, for a running play session.
+  The CLI, the editor (WP25's canvas) and MCP agents all reach these through the one registry (ADR-0003).
+- `re_anim` diagnostics continue in `RE7606`–`RE7699`: an invalid graph (with the path of the bad element), a missing clip, an unknown or mistyped parameter, a mask joint the skeleton lacks (warning), and a cycle in the blend tree.
+
+*Tests (WP21 acceptance).*
+- An f64 reference evaluator in `re_anim/tests`. Sampling, 1D and 2D blending, additive layers, masks, crossfades and root motion are checked against it on synthetic skeletons, to 1e-5 absolute in model-space matrices with positions within 10 m. The probe measured at most 8.5e-6 for a 63-deep chain and 2.3e-6 for a humanoid-sized tree.
+- The skinned golden fixture is a small `.glb` that a test helper generates (a two-bone bar and a 20-joint figure). No third-party model is committed, so no asset licence is involved. The golden shows the figure in three poses on lavapipe and GL, with the existing goldens' tolerance.
+- Import tests cover each `RE7060`–`RE7069` case, U8, U16 and F32 weights, more than four influences, and clip binding by name across files.
+
+**Alternatives.**
+- **Joints as entities** (one `Transform` per bone, as with M1 node clips). Attaching things, and scripting individual bones, falls out naturally. But a 65-joint character becomes 65 entities with change tracking, hierarchy propagation and scene-file noise, and joint transforms enter the state hash. Rejected; `BoneAttachment` and `anim.joint` cover attaching and reading a bone.
+- **CPU skinning**, or skinning in a compute pre-pass. CPU skinning re-uploads every vertex every frame. A compute pre-pass adds a storage-buffer write and a second vertex buffer per character, and pays off only with many passes per mesh or with morph targets. Neither is in M3. The vertex path can move to compute later behind `upload_skinned_mesh`.
+- **Palette in a uniform buffer, or in a float texture.** A uniform array fits only 256 joints in the 16 KiB downlevel binding, and needs a binding per character or dynamic offsets aligned to 256 bytes. A texture works without `VERTEX_STORAGE`, but costs four texel fetches per matrix and texture-size juggling. Every M3 target has vertex storage, so one storage buffer is the simplest choice. The texture path is the fallback if the web returns.
+- **Dual-quaternion skinning.** It avoids the volume loss of linear blending at twisted joints, but handles scale badly and is not what glTF content is authored for. It can become a per-material option later.
+- **2D blend by Delaunay triangulation.** It is standard and exact on the hull, but it needs triangulation code, and it changes discontinuously when points move. Gradient band is smooth, simple, and fast enough for the 4 to 16 points a blend space has.
+- **A graph format in Luau or TOML.** Luau graphs are code, which commands and agents cannot edit as data. TOML handles deep nesting poorly. JSON with a schema matches `*.graph.json` and the MCP tools.
+
+**Consequences.**
+- One new vertex buffer and three pipeline variants in `re_render`, owned by WP20 and reviewed there. Static meshes are unchanged.
+- No new dependency and no `DEPENDENCIES.md` row.
+- The contract grows in four places: `SkinData`, `SkinWeights`, `SkinnedDrawItem` with the snapshot fields, and `AnimGraph`. `RenderSnapshot` literals across four crates gain `..Default::default()` once.
+- Cross-owner work is small but spread out: `re_scene` components and `HostServices` methods (maintainer), the `anim` Luau library (WP24), the commands and sync module in `re_app` (maintainer), and the skinned pipelines (WP20). WP21 writes each change and its owner reviews it.
+- Not in M3: morph targets, inverse kinematics beyond the two-bone solver, facial animation, retargeting between differently named skeletons, more than four influences per vertex, GPU-driven culling of skinned items, and interpolating poses between fixed steps.
+
+## ADR-0046: The M3 AI track: templates and recipes as data, an evaluation harness that never calls a model, and MCP over streamable HTTP on localhost
+
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP26). The code waits for M2's definition of done (M3_PLAN, "How M3 starts").
+
+**Context.** ROADMAP's AI track gives M3 three items: natural-language starting points for beginners (project templates and generator recipes that an agent fills in through ordinary commands), an evaluation harness that runs scripted agent tasks against sample projects and scores them with `real verify`, and the HTTP MCP transport. ADR-0020 (tiers, policy, no shell tier), ADR-0025 (rmcp over stdio, schema hygiene, client configs) and ADR-0026 (one writer, error shape, protocol revisions) stay in force; this ADR adds to them and supersedes nothing.
+
+What was checked for this ADR (2026-10-15, on `main` at 69ed909):
+- **rmcp 3.5.1** (the version the workspace pins, Apache-2.0) has the feature `transport-streamable-http-server` = `transport-streamable-http-server-session` + `server-side-http` + `transport-worker`. It provides `StreamableHttpService`, a `tower_service::Service<http::Request<B>>`, configured by `StreamableHttpServerConfig`. It does not open a socket: an HTTP server crate must drive it.
+- That config validates the `Host` header against `allowed_hosts`, which defaults to `localhost`, `127.0.0.1` and `::1` (DNS-rebinding protection), and validates `Origin` once `enforce_origin_validation()` is called (an empty list then refuses every request that carries an `Origin`). It caps POST bodies at 4 MiB by default (413 above that). `legacy_session_mode` (default on) keeps `Mcp-Session-Id` sessions for revisions before 2026-07-28; 2026-07-28 requests are always served statelessly.
+- A prototype (scratch only, not committed) put `RealEngineServer` behind `StreamableHttpService`, `LocalSessionManager`, hyper 1.12 `http1` and hyper-util 0.1.21 `TowerToHyperService`, with a bearer-token check in front. Driven with curl:
+  - no token: 401; wrong `Host`: 403; `Origin: http://evil.example`: 403;
+  - 2025-11-25: `initialize` returned a session id, `notifications/initialized` 202, `tools/list` and `tools/call` answered as SSE;
+  - 2026-07-28: `server/discover` and `tools/call` answered as plain `application/json`, with no session. rmcp requires the `Mcp-Method` header on every request and `Mcp-Name` on `tools/call` for this revision (it answers -32020 otherwise), so tests must send them;
+  - the policy applied unchanged: `entity_spawn` under the default read-only policy returned the `RE8001` `isError` result, as over stdio.
+- **New crates.** Enabling the feature and adding the two server crates locks 15 new packages, all inside `deny.toml`'s license allow-list:
+
+  | Crate | Version | License | Brought by |
+  |---|---|---|---|
+  | hyper | 1.12.0 | MIT | us (`http1`, `server`) |
+  | hyper-util | 0.1.21 | MIT | us (`tokio`, `server`, `http1`, `service`) |
+  | http | 1.5.0 | MIT OR Apache-2.0 | rmcp, hyper |
+  | http-body | 1.1.0 | MIT | rmcp, hyper |
+  | http-body-util | 0.1.5 | MIT | rmcp |
+  | httparse | 1.10.1 | MIT OR Apache-2.0 | hyper |
+  | httpdate | 1.0.3 | MIT OR Apache-2.0 | hyper |
+  | tower-service | 0.3.3 | MIT | rmcp, hyper-util |
+  | sse-stream | 0.2.6 | MIT OR Apache-2.0 | rmcp |
+  | tokio-stream | 0.1.19 | MIT | rmcp |
+  | async-trait | 0.1.92 | MIT OR Apache-2.0 | rmcp |
+  | rand | 0.10.3 | MIT OR Apache-2.0 | rmcp (`server-side-http`) |
+  | rand_core | 0.10.1 | MIT OR Apache-2.0 | rand |
+  | chacha20 | 0.10.2 | MIT OR Apache-2.0 | rand |
+  | socket2 | 0.6.5 | MIT OR Apache-2.0 | tokio `net` |
+
+  With them, `cargo deny --locked check` (0.20.2) prints "advisories ok, bans ok, licenses ok, sources ok" with the same two duplicate warnings as `main`; `cargo xtask dupes` is ok on all three targets (no new duplicate versions), and `cargo xtask check-graph` is ok. Every crate that declares a `rust-version` declares 1.85 or lower, under our 1.95.
+- axum 0.8.9 would also drive the service, but it adds a router, `tower` with its layers, `matchit`, `serde_urlencoded` and more for one route. hyper with hyper-util's `TowerToHyperService` is the smallest server rmcp's service runs on.
+- Claude Code's documentation (code.claude.com/docs/en/mcp) gives `.mcp.json` entries `{ "type": "http", "url", "headers" }`, with `${VAR}` and `${VAR:-default}` expanded in `url` and `headers`, and `claude mcp add --transport http NAME URL --header "Authorization: Bearer ..."`. Other clients' HTTP formats are taken from their documentation and not run, as ADR-0025 does for stdio.
+- `real new --template` already exists, with a closed enum `native|roblox` in `re_cli/src/new.rs`; the native scene and materials are Rust string constants.
+
+**Decision.**
+
+*1. Templates and recipes are data.*
+- **Templates** live in `templates/<name>/`: a `template.toml` and the files to copy. `template.toml` has `name`, `summary`, `params` (each with `name`, `type` of `string|int|float|bool|color`, `default`, `doc` and, for numbers, `min`/`max`), `recipes` (recipe applications run after the copy, with arguments) and `checks` (below). Text files are copied with `{{param}}` replaced; nothing else is evaluated, so a template cannot run code. Scenes are stored in canonical form, and a test loads and saves each one to prove it.
+- The existing `native` and `roblox` templates move into `templates/` with byte-identical output (a test compares them with the current `real new`). `real new DIR --template NAME [--set k=v ...]` keeps its current flags; `--template` now takes any built-in name or a path to a template directory. `real new --list-templates` prints names, summaries and parameters, with `--json`.
+- **Recipes** live in `templates/recipes/<name>.toml`: `name`, `summary`, `params` (as above), `steps` and `checks`. A step is one registered command with arguments: `{ command = "graph.set_param", args = { ... } }`. `{{param}}` in a string is replaced; a string that is exactly `"{{param}}"` takes the parameter's typed value. Steps can only name registered commands, so a recipe can do nothing an agent or `real do` could not, and the policy checks each step at its own tier.
+- **Checks** are shared by templates, recipes and evaluation tasks, and are read-only:
+  - `{ verify = "ok" }`: `real verify` passes with every stage ok; `{ verify_stage = "NAME" }`: that stage passes;
+  - `{ command = "query", args = {...}, pointer = "/data/total", equals = 3 }` (or `at_least`, `at_most`, `contains`): a **read-tier** command's outcome at a JSON pointer. A check that names a non-read command is refused when the file loads (`RE8019`);
+  - `{ diff_stage = "NAME", changed = true }` and `{ no_regressions = true }`: the `verify.diff` against the state before the steps ran.
+- The data types and loaders are `re_agent::templates` (no new dependency: `toml` and `serde` are already used). The built-in files are embedded in the `real` binary by a `re_agent` build script that writes an `include_bytes!` table for `templates/`; no `include_dir` crate.
+- **MCP and CLI.** Three registered commands, so they are MCP tools and `real do` commands at once:
+  - `recipe.list` (read): recipes with summaries and parameter schemas; `template.list` (read): the same for templates, so an agent can tell a person which `real new` to run (creating a project writes outside the open project, so it is not a tool);
+  - `recipe.apply` (edit, `dry_run`): takes a checkpoint, runs the steps in order through the same dispatch as every other command, then the checks. If a step is refused or fails, or a check fails, it restores the checkpoint and returns the step's or check's diagnostic, so it is all or nothing. A dry run returns each step's dry-run changes; steps that depend on earlier steps' results report that their preview is partial.
+- Codes: `RE8019`–`RE8029` in `re_agent`'s range (invalid template or recipe, unknown parameter, value out of range, check failed, step failed).
+
+*2. The evaluation harness never calls a model.*
+- `real agent eval SUITE [--agent NAME] [--runs N] [--out DIR] [--transport http|stdio]` in `re_cli/src/tooling/agent.rs`. It is a CLI subcommand for people and CI, **not a registered command**, so no agent can start it, and ADR-0020's "no command runs arbitrary processes" still holds for everything an agent can call.
+- A **task** is a TOML file: `project` (an example directory, or a template with parameters), `prompt` (the natural-language request), `budget` (tool calls, wall-clock seconds), `checks` (as above, usually including `no_regressions`) and an optional `reference` (a list of tool calls that solves the task). A suite is a directory of tasks. The built-in suites live in `crates/re_agent/evals/` and use `examples/island`, and the plaza once it is in `examples/`.
+- For each task and run, the harness copies the project into a fresh directory under `--out`, writes `real agent init`'s policy there, takes the baseline verify report, and serves MCP on that copy in-process. Then one of two **drivers** acts:
+  - `reference`: replays the task's `reference` calls as an MCP client over the chosen transport. It needs no model, runs in CI, and proves each task can be solved and the harness scores it.
+  - `command`: runs the agent the person configured, as a child process, in the copy's directory. The configuration is a user-level or project-level `eval.toml` (`[agents.NAME] command = [...]`, optional `env`, `timeout_s`), never part of a task file. The harness gives the agent the prompt (as `{prompt}` in the arguments and as `REAL_EVAL_PROMPT`), the MCP endpoint (`REAL_MCP_URL`, `REAL_MCP_TOKEN`) and a generated client config in Claude Code's `.mcp.json` format, which is also what `{mcp_config}` names. Model, keys and provider all belong to that command; the engine does not know them.
+- **Recording.** `RealEngineServer` gets an optional recorder that writes one JSON line per tool call (time, tool, arguments, outcome code, `isError`, duration). It is on for every eval run and available to people as `real mcp --record FILE`. The transcript therefore comes from the server, the same for every client. The agent's own stdout and stderr are kept as files, uninterpreted.
+- **Scoring.** After the driver ends (or its budget runs out, which kills the child), the harness runs `real verify` on the copy, `verify.diff` against the baseline and the task's checks. It writes per run `transcript.jsonl`, `agent.stdout`, `agent.stderr`, `verify.json`, `verify-diff.json` and `score.json` (`passed`, each check's result, tool calls, refused calls by code, errors, wall time), plus `summary.json` and a short table for the suite. A task passes when every check passes; `--runs N` repeats each task and reports how many passed, because model agents are not deterministic.
+- Nothing is uploaded and no network address other than the loopback endpoint is opened by the engine.
+
+*3. MCP over streamable HTTP, on localhost, with a token.*
+- `real mcp --http [ADDR]` serves rmcp's `StreamableHttpService` at `/mcp`, driven by hyper 1 (`http1`, `server`) and hyper-util 0.1 (`TowerToHyperService`), on the same tokio runtime and the same `RealEngineServer` as stdio. Without `--http`, `real mcp` serves stdio as today. `ADDR` defaults to `127.0.0.1:0`.
+- **Loopback only in M3.** An address that is not loopback is refused (`RE8502`), because there is no TLS. A remote transport needs its own ADR.
+- **Token.** Every request needs `Authorization: Bearer <token>`; otherwise 401, before rmcp sees it. The comparison is constant time. The token is read from `REAL_MCP_TOKEN` when set (at least 32 characters, else `RE8503`); otherwise it is generated from two v4 UUIDs (OS randomness through `uuid`, already a workspace dependency, 244 random bits). The URL and token are written to `.real/mcp-http.json` (mode 0600 on Unix; `.real/` is local state) and the URL to stderr; the token is never printed.
+- **Browsers and rebinding.** `allowed_hosts` is the loopback names with the bound port; `enforce_origin_validation()` with no allowed origins refuses every request with an `Origin` header (403). Bodies stay capped at rmcp's 4 MiB default.
+- **Same rules as stdio.** The server holds the same lock (`open_writer`), opens the same headless app or proxies to the running editor, uses the same `.real/agent-policy.toml` and tiers, and starts one agent session. Several HTTP sessions may connect; they share that one engine, policy and agent session, and calls still reach the engine one at a time through the existing `order` mutex. `legacy_session_mode` stays on for 2025-11-25, and 2026-07-28 is stateless, as rmcp serves it. The server runs until it is interrupted or its stdin closes (the harness closes it). Edits are saved by each command, as with stdio.
+- `real agent init --http` adds the Claude Code entry `{ "type": "http", "url": "http://127.0.0.1:PORT/mcp", "headers": { "Authorization": "Bearer ${REAL_MCP_TOKEN}" } }` to `.mcp.json` and prints the other clients' HTTP snippets. Stdio stays the default in generated configs.
+- Codes in `re_mcp`'s range: `RE8502` (address not loopback), `RE8503` (token too short), `RE8504` (cannot bind).
+- **Tests.** The M1 and M2 MCP end-to-end tests (`re_cli/tests/mcp_e2e.rs`) and `re_mcp`'s wire tests run over both transports. The HTTP side uses a small blocking HTTP/1.1 client over `std::net` in the test code (POST, read JSON or SSE `data:` lines, keep `Mcp-Session-Id`, send `Mcp-Method`/`Mcp-Name` for 2026-07-28), so the tests add no client crate, and they still write the protocol exactly as a client does. Extra HTTP tests: missing or wrong token is 401, a foreign `Host` or any `Origin` is 403, a non-loopback address is `RE8502`.
+
+*Dependencies.* rmcp gains the `transport-streamable-http-server` feature; hyper and hyper-util are new direct dependencies of `re_mcp` (a tooling crate, ADR-0027: the runtime-only binary does not link them), with `default-features = false`; tokio gains `net`. DEPENDENCIES.md gets rows for hyper and hyper-util and a note on the transitive crates in the table above.
+
+**Alternatives.**
+- **axum** for the HTTP server. Rejected: a router and tower middleware for one route and one header check.
+- **No token, loopback only.** Rejected: any local process or user could drive the project, and the browser protections only stop browsers.
+- **Binding beyond loopback with a token.** Deferred: without TLS the token travels in clear text.
+- **Templates in code** (extending the enum). Rejected: adding one would need a Rust change, and agents could not list or read them.
+- **Recipes as Luau.** Rejected for M3: a recipe would then be code that must be read to know what it does. Steps as commands are checked by the policy and dry-runnable. Luau `tools` commands (M2) remain the way to write logic, and a recipe step can call one.
+- **The harness calls model APIs.** Rejected: the roadmap says the engine never calls a model, and provider keys would enter the engine.
+- **An rmcp client (with reqwest) in the harness and tests.** Rejected: reqwest and its TLS stack for loopback calls the tests can write directly.
+
+**Consequences.**
+- People can start from a template, agents can list and apply recipes as ordinary undoable edits, and a suite can compare agents on the same tasks with the same scores, with transcripts as files.
+- The `reference` driver keeps every built-in task solvable in CI without any model; scores for real agents are produced by whoever runs them, on their own account.
+- The HTTP transport adds 15 crates to tooling builds only. Each `rmcp` upgrade must recheck the HTTP header rules, since the prototype found rmcp enforcing `Mcp-Method`/`Mcp-Name` for 2026-07-28.
+- Shared files outside WP26's paths, changed through maintainer-reviewed PRs: `Cargo.toml` and `Cargo.lock` (feature and two crates), `docs/DEPENDENCIES.md`, `crates/re_cli/src/new.rs` and `main.rs` (`--template` path, `--set`, `--list-templates`), `crates/re_cli/tests/mcp_e2e.rs` (both transports), `docs/ARCHITECTURE.md` §6 and AGENTS generation for the three new commands.
+
 ## ADR-0048: Compat follow-ups: local data services, surfaces and viewports, script reload, skins and effects, and our own place-file reader
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP27). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: the formats and limits below were checked on 2026-10-15 against the vendor's current reference pages and the rbx-dom project's format notes (MIT); the four crates were resolved from crates.io and built and exercised together in a probe crate on the reference container (LZ4 block and ZSTD frame round trips, an XML read, a base64 decode). Nothing here is copied prose: facts are restated for this repository (ADR-0034).
