@@ -31,6 +31,7 @@ pub mod data;
 pub mod datatypes;
 pub mod enums;
 pub mod error;
+pub mod gui;
 pub mod humanoid;
 pub mod input;
 pub mod instance;

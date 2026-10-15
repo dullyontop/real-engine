@@ -3605,6 +3605,7 @@ dependencies = [
 name = "re_compat"
 version = "0.1.0"
 dependencies = [
+ "egui",
  "glam 0.34.1",
  "indexmap 2.14.2",
  "mlua",
@@ -3615,6 +3616,7 @@ dependencies = [
  "re_input",
  "re_physics",
  "re_reflect",
+ "re_render",
  "re_scene",
  "re_script",
  "re_types",

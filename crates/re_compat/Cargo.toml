@@ -31,6 +31,9 @@ serde_json.workspace = true
 schemars.workspace = true
 toml.workspace = true
 thiserror.workspace = true
+# WP15: text layout and the UI's shapes; painting goes through re_render's
+# UiFrame in the host.
+egui.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -38,3 +41,5 @@ tempfile.workspace = true
 re_input.workspace = true
 # The sample runner (tests/samples.rs) imports each sample (WP16).
 re_import.workspace = true
+# WP15: the UI golden images paint through re_render.
+re_render.workspace = true

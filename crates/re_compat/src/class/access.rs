@@ -181,7 +181,7 @@ impl ClassRegistry {
                 }
             }
             Storage::Own { .. } => {
-                read_field(world, entity, &own_component_name(&class.name), &p.name)
+                read_field(world, entity, &own_component_name(&class.name), &p.name).map(unsaturate)
             }
             Storage::Builtin => match self.accessor(&class.name, &p.name) {
                 Some(a) => (a.get)(world, entity),
@@ -229,7 +229,7 @@ impl ClassRegistry {
                 entity,
                 &own_component_name(&class.name),
                 &p.name,
-                value,
+                saturate(value),
             ),
             Storage::Builtin => match self.accessor(&class.name, &p.name) {
                 Some(a) => match &a.set {
@@ -281,6 +281,45 @@ fn read_field(
             }
             .into()
         })
+}
+
+/// `value` with every infinite number held to the largest finite `f32`, so
+/// the common `math.huge` (a `MaxSize`, a `MaxDistance`) is stored rather
+/// than refused ([`unsaturate`] reads it back as infinity); NaN still is.
+fn saturate(value: Value) -> Value {
+    const MAX: f64 = f32::MAX as f64;
+    match value {
+        Value::Float(f) if f.is_infinite() => Value::Float(MAX.copysign(f)),
+        Value::Vec3(v) if !v.is_finite() && !v.is_nan() => {
+            Value::Vec3(v.clamp(glam::Vec3::splat(-f32::MAX), glam::Vec3::splat(f32::MAX)))
+        }
+        Value::Record(id, fields) => Value::Record(id, fields.into_iter().map(saturate).collect()),
+        Value::List(items) => Value::List(items.into_iter().map(saturate).collect()),
+        other => other,
+    }
+}
+
+/// The inverse of [`saturate`]: the largest finite `f32` reads back as
+/// infinity, so `x.MaxDistance == math.huge` holds after a write of it.
+fn unsaturate(value: Value) -> Value {
+    const MAX: f64 = f32::MAX as f64;
+    match value {
+        Value::Float(f) if f.abs() == MAX => Value::Float(f64::INFINITY.copysign(f)),
+        Value::Vec3(v) if v.abs().max_element() == f32::MAX => {
+            Value::Vec3(glam::Vec3::from_array(v.to_array().map(|x| {
+                if x.abs() == f32::MAX {
+                    f32::INFINITY.copysign(x)
+                } else {
+                    x
+                }
+            })))
+        }
+        Value::Record(id, fields) => {
+            Value::Record(id, fields.into_iter().map(unsaturate).collect())
+        }
+        Value::List(items) => Value::List(items.into_iter().map(unsaturate).collect()),
+        other => other,
+    }
 }
 
 fn write_field(
