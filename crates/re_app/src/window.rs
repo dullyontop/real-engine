@@ -1,0 +1,259 @@
+//! [`run_windowed`]: plays an [`App`] in a window, with keyboard, mouse and
+//! gamepad input, the audio device and the HUD.
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use re_core::Diagnostic;
+use re_input::Gamepads;
+use re_render::{Gpu, wgpu};
+use winit::application::ApplicationHandler;
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::window::{Window, WindowId};
+
+use crate::app::App;
+use crate::codes;
+use crate::gfx::{self, Graphics};
+
+/// How [`run_windowed`] runs.
+#[derive(Clone, Debug)]
+pub struct WindowOptions {
+    /// Stop after this many presented frames (`None`: until the window closes).
+    pub frames: Option<u64>,
+    /// Give up when no frame is presented for this long (a stuck display).
+    pub stall_timeout: Duration,
+}
+
+impl Default for WindowOptions {
+    fn default() -> Self {
+        WindowOptions {
+            frames: None,
+            stall_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
+/// What [`run_windowed`] returns.
+#[derive(Debug, Default)]
+pub struct WindowReport {
+    /// Frames simulated and presented.
+    pub frames: u64,
+    /// Frames the surface could not give a texture for (resizes, occlusion).
+    pub skipped: u64,
+    /// The adapter line (`name (backend, type, driver)`).
+    pub adapter: String,
+    /// Everything reported during the run.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl WindowReport {
+    /// True when no error was reported.
+    pub fn ok(&self) -> bool {
+        !self.diagnostics.iter().any(Diagnostic::is_error)
+    }
+}
+
+struct Surface {
+    // Field order is drop order: the surface goes before the window.
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    window: Arc<Window>,
+}
+
+struct Runner<'a> {
+    app: &'a mut App,
+    options: WindowOptions,
+    surface: Option<Surface>,
+    gamepads: Gamepads,
+    last: Option<Instant>,
+    last_present: Instant,
+    report: WindowReport,
+    fatal: Option<Diagnostic>,
+}
+
+fn window_failed(message: impl Into<String>) -> Diagnostic {
+    Diagnostic::error(codes::WINDOW_FAILED, message).with_hint(
+        "run with --headless, or under a virtual display: xvfb-run -a -s \"-screen 0 1280x720x24\" real run",
+    )
+}
+
+impl Runner<'_> {
+    fn init(&mut self, event_loop: &ActiveEventLoop) -> Result<(), Diagnostic> {
+        let config = self.app.config();
+        let attrs = Window::default_attributes()
+            .with_title(format!("{} - Real Engine", config.project.name))
+            .with_inner_size(winit::dpi::PhysicalSize::new(
+                config.render.width,
+                config.render.height,
+            ));
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .map_err(|e| window_failed(format!("cannot create the window: {e}")))?,
+        );
+        let backends = gfx::backends(&config.render.backends)?;
+        let (gpu, surface) = Gpu::for_surface(window.clone(), backends).map_err(|d| {
+            window_failed("cannot open a GPU surface for the window").with_related(d)
+        })?;
+        let size = window.inner_size();
+        let surface_config = gpu.surface_config(&surface, size.width.max(1), size.height.max(1))?;
+        surface.configure(&gpu.device, &surface_config);
+        self.report.adapter = gpu.adapter_line();
+        tracing::info!(adapter = %self.report.adapter, "window opened");
+        self.app
+            .set_graphics(Graphics::new(gpu, surface_config.format));
+        window.request_redraw();
+        self.surface = Some(Surface {
+            surface,
+            config: surface_config,
+            window,
+        });
+        self.last_present = Instant::now();
+        Ok(())
+    }
+
+    fn reconfigure(&mut self, width: u32, height: u32) {
+        let (Some(s), Some(gfx)) = (self.surface.as_mut(), self.app.graphics()) else {
+            return;
+        };
+        s.config.width = width.max(1);
+        s.config.height = height.max(1);
+        s.surface.configure(&gfx.gpu().device, &s.config);
+    }
+
+    fn redraw(&mut self) {
+        let now = Instant::now();
+        // A long pause (a dragged window, a breakpoint) is not simulated time.
+        let dt = self.last.map_or(self.app.step(), |l| {
+            (now - l).min(Duration::from_millis(250))
+        });
+        self.last = Some(now);
+        self.gamepads.poll(self.app.raw_input_mut());
+        self.app.frame(dt);
+
+        let Some(s) = &self.surface else {
+            return;
+        };
+        let frame = match s.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(f)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                self.report.skipped += 1;
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.report.skipped += 1;
+                let size = s.window.inner_size();
+                self.reconfigure(size.width, size.height);
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                self.fatal = Some(window_failed(
+                    "the window surface reported a validation error",
+                ));
+                return;
+            }
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let size = [s.config.width, s.config.height];
+        let scale = s.window.scale_factor() as f32;
+        let window = s.window.clone();
+        if let Err(d) = self.app.draw_into(&view, size, scale) {
+            self.fatal = Some(d);
+            return;
+        }
+        window.pre_present_notify();
+        if let Some(gfx) = self.app.graphics() {
+            gfx.gpu().queue.present(frame);
+        }
+        self.report.frames += 1;
+        self.last_present = Instant::now();
+    }
+
+    fn done(&self) -> bool {
+        self.fatal.is_some() || self.options.frames.is_some_and(|n| self.report.frames >= n)
+    }
+}
+
+impl ApplicationHandler for Runner<'_> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.surface.is_some() {
+            return;
+        }
+        if let Err(d) = self.init(event_loop) {
+            self.fatal = Some(d);
+            event_loop.exit();
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        self.app.raw_input_mut().on_window_event(&event);
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => self.reconfigure(size.width, size.height),
+            WindowEvent::RedrawRequested => {
+                self.redraw();
+                if self.done() {
+                    event_loop.exit();
+                } else if let Some(s) = &self.surface {
+                    s.window.request_redraw();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn device_event(&mut self, _el: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+        self.app.raw_input_mut().on_device_event(&event);
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.last_present.elapsed() > self.options.stall_timeout {
+            self.fatal = Some(window_failed(format!(
+                "no frame was presented for {:?} (after {} frames)",
+                self.options.stall_timeout, self.report.frames
+            )));
+            event_loop.exit();
+        }
+    }
+}
+
+/// Plays `app` in a window until it closes or `options.frames` frames were
+/// presented. Opens the audio device (falling back to silence) and drives the
+/// frame loop from the display's refresh, with real frame times.
+///
+/// # Errors
+///
+/// `RE0521` when the event loop, the window or its GPU surface cannot be
+/// created, or the surface fails while running. Errors reported by the frames
+/// themselves are in the report instead.
+pub fn run_windowed(app: &mut App, options: WindowOptions) -> Result<WindowReport, Diagnostic> {
+    let event_loop = EventLoop::new()
+        .map_err(|e| window_failed(format!("cannot create the event loop (no display?): {e}")))?;
+    event_loop.set_control_flow(ControlFlow::Poll);
+    app.set_audio(re_audio::Audio::new_or_headless());
+    let mut runner = Runner {
+        app,
+        options,
+        surface: None,
+        gamepads: Gamepads::new(),
+        last: None,
+        last_present: Instant::now(),
+        report: WindowReport::default(),
+        fatal: None,
+    };
+    event_loop
+        .run_app(&mut runner)
+        .map_err(|e| window_failed(format!("the event loop failed: {e}")))?;
+    if let Some(d) = runner.fatal.take() {
+        return Err(d);
+    }
+    // The surface must go before the device that the app's graphics own.
+    runner.surface = None;
+    let mut report = std::mem::take(&mut runner.report);
+    report.diagnostics = runner.app.take_diagnostics();
+    Ok(report)
+}

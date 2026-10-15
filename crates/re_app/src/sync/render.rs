@@ -26,6 +26,9 @@ use super::physics::PhysicsSync;
 pub struct RenderAssets {
     meshes: HashMap<String, MeshHandle>,
     materials: HashMap<String, MaterialHandle>,
+    /// The material a mesh file brings (a glTF's own), for entities without a
+    /// `MaterialRef`.
+    mesh_materials: HashMap<String, MaterialHandle>,
     /// The material for entities without a `MaterialRef` (or whose material is
     /// not loaded).
     pub default_material: Option<MaterialHandle>,
@@ -40,6 +43,16 @@ impl RenderAssets {
     /// Records the handle of an uploaded material.
     pub fn insert_material(&mut self, asset: impl Into<String>, handle: MaterialHandle) {
         self.materials.insert(asset.into(), handle);
+    }
+
+    /// Records the material a mesh file brings.
+    pub fn insert_mesh_material(&mut self, mesh: impl Into<String>, handle: MaterialHandle) {
+        self.mesh_materials.insert(mesh.into(), handle);
+    }
+
+    /// Forgets a mesh file's own material, returning its handle.
+    pub fn remove_mesh_material(&mut self, mesh: &str) -> Option<MaterialHandle> {
+        self.mesh_materials.remove(mesh)
     }
 
     /// Forgets a mesh, returning its handle (to release it).
@@ -161,18 +174,19 @@ pub fn build(world: &mut World, inputs: &RenderInputs<'_>) -> RenderSnapshot {
         .collect();
     drawn.sort_by_key(|(e, _, _)| e.to_bits());
     for (entity, mesh, material) in drawn {
-        let Some(mesh) = inputs.assets.mesh(&mesh) else {
+        let Some(handle) = inputs.assets.mesh(&mesh) else {
             continue;
         };
         let material = material
             .and_then(|m| inputs.assets.material(&m))
+            .or_else(|| inputs.assets.mesh_materials.get(&mesh).copied())
             .or(inputs.assets.default_material);
         let Some(material) = material else {
             continue;
         };
         items.push(DrawItem {
             entity: entity_id(entity),
-            mesh,
+            mesh: handle,
             material,
             world: Mat4::from(global(world, inputs, entity)),
             flags: DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS,

@@ -77,6 +77,9 @@ enum Command {
         /// Print the JSON report.
         #[arg(long)]
         json: bool,
+        /// Write missing or differing golden images from this run instead of failing.
+        #[arg(long)]
+        update_goldens: bool,
     },
     /// Explain a diagnostic code (or list every code).
     Explain {
@@ -105,7 +108,8 @@ struct RunArgs {
     /// Run without a window.
     #[arg(long)]
     headless: bool,
-    /// Frames to run (default: the replay's length, or 60 headless).
+    /// Frames to run (default: the replay's length; 60 headless, or until the
+    /// window closes).
     #[arg(long)]
     frames: Option<u64>,
     /// Drive the run with a replay file.
@@ -138,19 +142,6 @@ fn open(project: &Path) -> Result<App, Diagnostic> {
 }
 
 fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
-    if !args.headless {
-        eprintln!(
-            "real run: this build has no windowed runner yet; pass --headless \
-             (the window joins when the renderer is integrated)"
-        );
-        return ExitCode::from(2);
-    }
-    if args.screenshot.is_some() {
-        eprintln!(
-            "real run: --screenshot needs the renderer, which this build does not include yet"
-        );
-        return ExitCode::from(2);
-    }
     let mut app = match open(project) {
         Ok(a) => a,
         Err(d) => return fail(d),
@@ -162,19 +153,63 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         },
         None => None,
     };
-    let report = match app.run_headless(args.frames, replay) {
-        Ok(r) => r,
-        Err(d) => return fail(d),
+    let (frames, mut diagnostics, mut report) = if args.headless {
+        match app.run_headless(args.frames, replay) {
+            Ok(r) => (
+                r.frames,
+                r.diagnostics.clone(),
+                serde_json::to_value(&r).unwrap_or_default(),
+            ),
+            Err(d) => return fail(d),
+        }
+    } else {
+        let frames = args.frames.or(replay.as_ref().map(|r| r.frames));
+        if let Some(doc) = replay
+            && let Err(d) = app.play_replay(doc)
+        {
+            return fail(d);
+        }
+        let options = re_app::WindowOptions {
+            frames,
+            ..re_app::WindowOptions::default()
+        };
+        match re_app::run_windowed(&mut app, options) {
+            Ok(r) => {
+                let json = serde_json::json!({
+                    "frames": r.frames,
+                    "skipped": r.skipped,
+                    "adapter": r.adapter,
+                    "state_hash": app.world().state_hash().to_hex().to_string(),
+                    "diagnostics": r.diagnostics,
+                    "perf": app.perf_report(),
+                });
+                (r.frames, r.diagnostics, json)
+            }
+            Err(d) => return fail(d),
+        }
     };
+    if let Some(path) = &args.screenshot {
+        let path = std::env::current_dir().unwrap_or_default().join(path);
+        match app.screenshot(Some(&path)) {
+            Ok(_) => report["screenshot"] = serde_json::json!(path.display().to_string()),
+            Err(d) => diagnostics.push(d),
+        }
+        diagnostics.extend(
+            app.take_diagnostics()
+                .into_iter()
+                .filter(Diagnostic::is_error),
+        );
+        report["diagnostics"] = serde_json::to_value(&diagnostics).unwrap_or_default();
+    }
     if args.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&report).unwrap_or_default()
         );
     } else {
-        print_diagnostics(&report.diagnostics);
+        print_diagnostics(&diagnostics);
     }
-    let errors = report.diagnostics.iter().filter(|d| d.is_error()).count();
+    let errors = diagnostics.iter().filter(|d| d.is_error()).count();
     if errors > 0 {
         if !args.json {
             print_diagnostics(&[Diagnostic::error(
@@ -196,8 +231,8 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         }
     } else if !args.json {
         println!(
-            "ran {} frames; state hash {}",
-            report.frames, report.state_hash
+            "ran {frames} frames; state hash {}",
+            app.world().state_hash().to_hex()
         );
     }
     ExitCode::SUCCESS
@@ -253,9 +288,13 @@ fn cmd_describe(project: &Path, json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_verify(project: &Path, json: bool) -> ExitCode {
+fn cmd_verify(project: &Path, json: bool, update_goldens: bool) -> ExitCode {
+    let options = VerifyOptions {
+        update_goldens,
+        ..VerifyOptions::default()
+    };
     let report = match AppConfig::load(project) {
-        Ok(config) => re_app::verify::run_project(project, &config, &VerifyOptions::default(), &[]),
+        Ok(config) => re_app::verify::run_project(project, &config, &options, &[]),
         // Without `--json` this is a plain error; with it, still a report
         // (a failed schema stage), so tools always get one JSON document.
         Err(d) if !json => return fail(d),
@@ -362,7 +401,10 @@ fn main() -> ExitCode {
         },
         Command::Run(args) => cmd_run(&project, args),
         Command::Describe { json } => cmd_describe(&project, json),
-        Command::Verify { json } => cmd_verify(&project, json),
+        Command::Verify {
+            json,
+            update_goldens,
+        } => cmd_verify(&project, json, update_goldens),
         Command::Explain { code } => cmd_explain(code),
         Command::Schema { out } => cmd_schema(&out),
         #[cfg(feature = "tooling")]

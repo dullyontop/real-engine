@@ -3237,11 +3237,15 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "glam 0.34.1",
+ "re_anim",
+ "re_assets",
+ "re_audio",
  "re_command",
  "re_core",
  "re_input",
  "re_physics",
  "re_reflect",
+ "re_render",
  "re_scene",
  "re_types",
  "schemars",
@@ -3250,6 +3254,7 @@ dependencies = [
  "tempfile",
  "toml",
  "tracing",
+ "winit",
 ]
 
 [[package]]
@@ -3293,12 +3298,16 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "re_anim",
  "re_app",
+ "re_assets",
+ "re_audio",
  "re_command",
  "re_core",
  "re_input",
  "re_physics",
  "re_reflect",
+ "re_render",
  "re_scene",
  "re_types",
  "schemars",

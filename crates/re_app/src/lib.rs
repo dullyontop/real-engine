@@ -23,16 +23,23 @@ pub mod app;
 pub mod codes;
 pub mod commands;
 pub mod config;
+pub mod gfx;
 pub mod host;
+pub mod hud;
+pub mod media;
 pub mod perf;
 pub mod sync;
 pub mod verify;
+pub mod window;
 
 pub use app::{App, RunReport, ScreenshotRequest};
 pub use config::{AppConfig, CONFIG_FILE};
+pub use gfx::Graphics;
 pub use host::{Host, Pending};
+pub use media::Media;
 pub use perf::{PerfReport, TimeStats};
 pub use verify::{StageReport, VerifyOptions, VerifyReport, VerifyStage};
+pub use window::{WindowOptions, WindowReport, run_windowed};
 
 use re_core::DiagInfo;
 
@@ -124,6 +131,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE0516.md"),
     },
     DiagInfo {
+        code: codes::ASSET_IMPORT_FAILED,
+        title: "Asset import failed",
+        page: include_str!("../explain/RE0517.md"),
+    },
+    DiagInfo {
         code: codes::SCENE_SAVE_FAILED,
         title: "Scene could not be saved",
         page: include_str!("../explain/RE0518.md"),
@@ -132,6 +144,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::RUN_ERRORS,
         title: "Run reported errors",
         page: include_str!("../explain/RE0519.md"),
+    },
+    DiagInfo {
+        code: codes::ASSET_UNAVAILABLE,
+        title: "Asset not available",
+        page: include_str!("../explain/RE0520.md"),
+    },
+    DiagInfo {
+        code: codes::WINDOW_FAILED,
+        title: "Window failed",
+        page: include_str!("../explain/RE0521.md"),
+    },
+    DiagInfo {
+        code: codes::ANIM_TARGET_MISSING,
+        title: "Animation target missing",
+        page: include_str!("../explain/RE0522.md"),
     },
 ];
 
