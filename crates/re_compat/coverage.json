@@ -2,8 +2,9 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 931,
-    "partial": 9,
+    "implemented": 966,
+    "partial": 11,
+    "stub-error": 2,
     "missing": 9
   },
   "classes": [
@@ -415,6 +416,141 @@
       ]
     },
     {
+      "name": "Sound",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "DidLoop",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Ended",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "IsLoaded",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IsPaused",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "IsPlaying",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Looped",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Pause",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Paused",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Play",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PlayOnRemove",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: removing the sound does not play it."
+        },
+        {
+          "name": "PlaybackLoudness",
+          "kind": "property",
+          "status": "partial",
+          "note": "Always 0: the layer does not meter the mix."
+        },
+        {
+          "name": "PlaybackSpeed",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Played",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Playing",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Resume",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Resumed",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "RollOffMaxDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RollOffMinDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "RollOffMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "SoundId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Stop",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Stopped",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "TimeLength",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TimePosition",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Volume",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "StarterCharacterScripts",
       "superclass": "StarterPlayerScripts",
       "status": "implemented",
@@ -439,6 +575,78 @@
       "superclass": "Instance",
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "Tween",
+      "superclass": "TweenBase",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Instance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TweenInfo",
+          "kind": "property",
+          "status": "stub-error"
+        }
+      ]
+    },
+    {
+      "name": "TweenBase",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Cancel",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Completed",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "Pause",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "Play",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PlaybackState",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "TweenService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Create",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetValue",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "SmoothDamp",
+          "kind": "method",
+          "status": "stub-error"
+        }
+      ]
     },
     {
       "name": "Workspace",

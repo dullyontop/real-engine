@@ -1,0 +1,116 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "TweenService",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "Makes tweens: animations of instance properties over time.",
+      "methods": [
+        {
+          "name": "Create",
+          "params": [
+            { "name": "instance", "type": "Instance" },
+            { "name": "tweenInfo", "type": "TweenInfo" },
+            { "name": "propertyTable", "type": "table" }
+          ],
+          "returns": ["Tween"],
+          "status": "implemented",
+          "doc": "A new tween that animates the named properties of the instance to the given goal values. Numbers, booleans, Vector3, Vector2, CFrame, Color3, UDim, UDim2, Rect and NumberRange properties can be tweened; any other type raises RE9352."
+        },
+        {
+          "name": "GetValue",
+          "params": [
+            { "name": "alpha", "type": "number" },
+            { "name": "easingStyle", "type": "Enum.EasingStyle" },
+            { "name": "easingDirection", "type": "Enum.EasingDirection" }
+          ],
+          "returns": ["number"],
+          "status": "implemented",
+          "doc": "The eased value of alpha (clamped to 0..1) for this style and direction."
+        },
+        {
+          "name": "SmoothDamp",
+          "params": [
+            { "name": "current", "type": "any" },
+            { "name": "target", "type": "any" },
+            { "name": "velocity", "type": "any" },
+            { "name": "smoothTime", "type": "number" }
+          ],
+          "returns": ["any", "any"],
+          "status": "stub-error",
+          "doc": "Not available: raises RE9001."
+        }
+      ]
+    },
+    {
+      "name": "TweenBase",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "What every tween can do: play, pause and cancel, with its playback state.",
+      "properties": [
+        {
+          "name": "PlaybackState",
+          "type": "Enum.PlaybackState",
+          "storage": { "kind": "own" },
+          "default": "Begin",
+          "read_only": true,
+          "status": "implemented",
+          "doc": "Where the tween is: Begin, Delayed, Playing, Paused, Completed or Cancelled."
+        }
+      ],
+      "methods": [
+        {
+          "name": "Play",
+          "status": "implemented",
+          "doc": "Starts the tween from the current property values, or resumes it when paused. Cancels other running tweens of the same instance that animate one of the same properties."
+        },
+        {
+          "name": "Pause",
+          "status": "implemented",
+          "doc": "Stops the tween where it is; Play resumes it."
+        },
+        {
+          "name": "Cancel",
+          "status": "implemented",
+          "doc": "Stops the tween where it is and fires Completed with Cancelled; the next Play starts over."
+        }
+      ],
+      "events": [
+        {
+          "name": "Completed",
+          "params": [{ "name": "playbackState", "type": "Enum.PlaybackState" }],
+          "status": "implemented",
+          "doc": "Fires when the tween finishes (Completed) or is cancelled (Cancelled)."
+        }
+      ]
+    },
+    {
+      "name": "Tween",
+      "superclass": "TweenBase",
+      "status": "implemented",
+      "doc": "A property animation made by TweenService:Create.",
+      "properties": [
+        {
+          "name": "Instance",
+          "type": "Instance",
+          "storage": { "kind": "own" },
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The instance whose properties the tween animates."
+        },
+        {
+          "name": "TweenInfo",
+          "type": "TweenInfo",
+          "storage": { "kind": "builtin" },
+          "read_only": true,
+          "status": "stub-error",
+          "doc": "Not readable here: keep the TweenInfo you passed to Create. Raises RE9001."
+        }
+      ]
+    }
+  ]
+}

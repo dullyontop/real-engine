@@ -1,0 +1,206 @@
+{
+  "$schema": "../../../schemas/compat-classes.schema.json",
+  "format": "real-engine/compat-classes",
+  "version": 1,
+  "classes": [
+    {
+      "name": "Sound",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A sound clip that plays everywhere, or from its parent's position when the parent is a part or an attachment.",
+      "properties": [
+        {
+          "name": "SoundId",
+          "type": "string",
+          "storage": { "kind": "own" },
+          "default": "",
+          "status": "implemented",
+          "doc": "The clip's asset id. It resolves through the [compat.assets] table of real.toml; an id that is not there is silent and warns once with RE9350."
+        },
+        {
+          "name": "Volume",
+          "type": "number",
+          "storage": { "kind": "own" },
+          "default": 0.5,
+          "status": "implemented",
+          "doc": "Loudness, 0 to 10 (values outside are clamped when played); 1 plays the clip as recorded."
+        },
+        {
+          "name": "PlaybackSpeed",
+          "type": "number",
+          "storage": { "kind": "own" },
+          "default": 1,
+          "status": "implemented",
+          "doc": "Speed and pitch multiplier; 2 plays twice as fast and an octave higher."
+        },
+        {
+          "name": "Looped",
+          "type": "bool",
+          "storage": { "kind": "own" },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, the sound starts over at its end (firing DidLoop) instead of ending."
+        },
+        {
+          "name": "Playing",
+          "type": "bool",
+          "storage": { "kind": "own" },
+          "default": false,
+          "status": "implemented",
+          "doc": "True while the sound plays. Setting it to true starts the sound from its TimePosition; setting it to false stops it where it is."
+        },
+        {
+          "name": "TimePosition",
+          "type": "number",
+          "storage": { "kind": "own" },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Seconds into the clip. Setting it seeks; Play starts from the last value a script set."
+        },
+        {
+          "name": "TimeLength",
+          "type": "number",
+          "storage": { "kind": "own" },
+          "default": 0,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "The clip's length in seconds once it has been played, 0 for an unknown id."
+        },
+        {
+          "name": "IsPlaying",
+          "type": "bool",
+          "storage": { "kind": "own" },
+          "default": false,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True while the sound plays."
+        },
+        {
+          "name": "IsPaused",
+          "type": "bool",
+          "storage": { "kind": "own" },
+          "default": false,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True when the sound is stopped part-way (by Pause, or Playing set to false)."
+        },
+        {
+          "name": "IsLoaded",
+          "type": "bool",
+          "storage": { "kind": "own" },
+          "default": false,
+          "read_only": true,
+          "status": "implemented",
+          "doc": "True once the sound has been played with an id that resolves to a clip."
+        },
+        {
+          "name": "RollOffMode",
+          "type": "Enum.RollOffMode",
+          "storage": { "kind": "own" },
+          "default": "Inverse",
+          "status": "implemented",
+          "doc": "How a 3D sound fades with distance from the listener: Inverse (min/distance), Linear, LinearSquare or InverseTapered (the smaller of Inverse and LinearSquare). All are silent beyond RollOffMaxDistance."
+        },
+        {
+          "name": "RollOffMinDistance",
+          "type": "number",
+          "storage": { "kind": "own" },
+          "default": 10,
+          "status": "implemented",
+          "doc": "Studs within which a 3D sound plays at full volume."
+        },
+        {
+          "name": "RollOffMaxDistance",
+          "type": "number",
+          "storage": { "kind": "own" },
+          "default": 10000,
+          "status": "implemented",
+          "doc": "Studs beyond which a 3D sound is silent."
+        },
+        {
+          "name": "PlayOnRemove",
+          "type": "bool",
+          "storage": { "kind": "own" },
+          "default": false,
+          "status": "partial",
+          "note": "Stored only: removing the sound does not play it.",
+          "doc": "When true, the sound plays once as it is removed."
+        },
+        {
+          "name": "PlaybackLoudness",
+          "type": "number",
+          "storage": { "kind": "own" },
+          "default": 0,
+          "read_only": true,
+          "status": "partial",
+          "note": "Always 0: the layer does not meter the mix.",
+          "doc": "The sound's current loudness, 0 to 1000."
+        }
+      ],
+      "methods": [
+        {
+          "name": "Play",
+          "status": "implemented",
+          "doc": "Starts the sound from the last TimePosition a script set (0 by default), firing Played."
+        },
+        {
+          "name": "Stop",
+          "status": "implemented",
+          "doc": "Stops the sound and rewinds it to 0, firing Stopped."
+        },
+        {
+          "name": "Pause",
+          "status": "implemented",
+          "doc": "Stops the sound where it is, firing Paused; Resume continues from there."
+        },
+        {
+          "name": "Resume",
+          "status": "implemented",
+          "doc": "Continues a paused sound, firing Resumed."
+        }
+      ],
+      "events": [
+        {
+          "name": "Played",
+          "params": [{ "name": "soundId", "type": "string" }],
+          "status": "implemented",
+          "doc": "Fires when the sound starts."
+        },
+        {
+          "name": "Paused",
+          "params": [{ "name": "soundId", "type": "string" }],
+          "status": "implemented",
+          "doc": "Fires when the sound is paused."
+        },
+        {
+          "name": "Resumed",
+          "params": [{ "name": "soundId", "type": "string" }],
+          "status": "implemented",
+          "doc": "Fires when a paused sound continues."
+        },
+        {
+          "name": "Stopped",
+          "params": [{ "name": "soundId", "type": "string" }],
+          "status": "implemented",
+          "doc": "Fires when a script stops the sound."
+        },
+        {
+          "name": "Ended",
+          "params": [{ "name": "soundId", "type": "string" }],
+          "status": "implemented",
+          "doc": "Fires when a sound that is not looped reaches its end."
+        },
+        {
+          "name": "DidLoop",
+          "params": [
+            { "name": "soundId", "type": "string" },
+            { "name": "numOfTimesLooped", "type": "int" }
+          ],
+          "status": "implemented",
+          "doc": "Fires each time a looped sound starts over, with the number of times it has."
+        }
+      ]
+    }
+  ]
+}
