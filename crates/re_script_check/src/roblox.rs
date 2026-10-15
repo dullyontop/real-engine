@@ -208,7 +208,9 @@ fn is_datatype(l: &LibraryDoc) -> bool {
 pub fn definitions(reg: &ClassRegistry) -> String {
     let datatypes: HashSet<&str> = reg
         .libraries()
-        .filter(|l| is_datatype(l) && is_name(&l.name))
+        // `EnumItem` is declared with the enums below; its library entry only
+        // carries the record attributes store items as.
+        .filter(|l| is_datatype(l) && is_name(&l.name) && l.name != "EnumItem")
         .map(|l| l.name.as_str())
         .collect();
     let types = Types { reg, datatypes };
