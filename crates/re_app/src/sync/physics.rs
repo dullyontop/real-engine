@@ -11,7 +11,8 @@
 //!   [`ShapeLibrary`] by the collider's `source` (`RE0506` when missing);
 //! - a `CharacterController` wins over a `Collider` on the same entity.
 //!
-//! Shapes are in the entity's local space and scaled by its world scale. A body's
+//! Shapes are in the entity's local space and scaled by its world scale (the
+//! product of its and its ancestors' `Transform` scales). A body's
 //! pose is the entity's world pose; a character's pose is its capsule's centre.
 //! Any change to a body's description replaces the body (remove, then add at the
 //! current pose); a `Transform` written by anything other than [`pull`] (a
@@ -208,9 +209,26 @@ fn parent_affine(world: &World, entity: Entity) -> Affine3A {
         .map_or(Affine3A::IDENTITY, |g| g.0)
 }
 
-fn decompose(a: &Affine3A) -> (Vec3, Quat, Vec3) {
-    let (s, r, t) = a.to_scale_rotation_translation();
-    (t, r.normalize(), s)
+/// The entity's world pose, with the scale taken from the `Transform`s (each
+/// ancestor's scale times the entity's own) rather than from the matrix: the
+/// matrix's column lengths round differently as the body turns, which would
+/// change its shape's fingerprint and replace the body every few steps.
+fn world_pose(world: &World, entity: Entity) -> (Vec3, Quat, Vec3) {
+    let (_, r, t) = world_affine(world, entity).to_scale_rotation_translation();
+    (t, r.normalize(), world_scale(world, entity))
+}
+
+/// The product of the `Transform` scales from the root down to `entity`.
+pub(crate) fn world_scale(world: &World, entity: Entity) -> Vec3 {
+    let mut scale = Vec3::ONE;
+    let mut at = Some(entity);
+    while let Some(e) = at {
+        if let Some(t) = world.ecs.get::<Transform>(e) {
+            scale *= t.scale;
+        }
+        at = hierarchy::parent(&world.ecs, e);
+    }
+    scale
 }
 
 fn layer_of(value: i32, id: &str, component: &str) -> Result<Layer, Diagnostic> {
@@ -443,7 +461,7 @@ pub fn push(
     let mut seen: BTreeSet<EntityId> = BTreeSet::new();
     for entity in candidates {
         let id = entity_id(entity);
-        let world_pose = decompose(&world_affine(world, entity));
+        let world_pose = world_pose(world, entity);
         let wanted = match wanted(world, entity, shapes, world_pose) {
             Ok(w) => w,
             Err(d) => {
@@ -545,6 +563,50 @@ pub fn pull(world: &mut World, sync: &mut PhysicsSync, poses: &[BodyPose]) {
                 rotation: rot,
                 ..Default::default()
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A turning body keeps its shape: the scale comes from the `Transform`s, not
+    /// from the decomposed world matrix, whose column lengths round differently at
+    /// each rotation (0.3 becomes 0.29999998) and would replace the body.
+    #[test]
+    fn a_rotation_moves_a_scaled_body_without_replacing_it() {
+        let mut world = World::new();
+        let e = world
+            .ecs
+            .spawn((
+                Transform {
+                    scale: Vec3::new(0.3, 0.7, 1.1),
+                    ..Default::default()
+                },
+                RigidBody {
+                    kind: SceneBodyKind::Dynamic,
+                    ..Default::default()
+                },
+                Collider::default(),
+            ))
+            .id();
+        let mut sync = PhysicsSync::default();
+        let shapes = ShapeLibrary::default();
+        let (mut cmds, mut diagnostics) = (Vec::new(), Vec::new());
+        push(&mut world, &mut sync, &shapes, &mut cmds, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(cmds.len(), 1, "{cmds:?}");
+        for i in 1..=64 {
+            let angle = i as f32 * 0.37;
+            world.ecs.get_mut::<Transform>(e).unwrap().rotation =
+                Quat::from_euler(glam::EulerRot::XYZ, angle, angle * 0.5, angle * 0.25);
+            cmds.clear();
+            push(&mut world, &mut sync, &shapes, &mut cmds, &mut diagnostics);
+            assert!(
+                matches!(cmds[..], [PhysicsCmd::SetTransform { .. }]),
+                "step {i}: {cmds:?}"
+            );
         }
     }
 }
