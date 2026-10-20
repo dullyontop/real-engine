@@ -53,6 +53,18 @@ pub use modules::Reload;
 pub use runtime::{Context, ReloadReport, RuntimeConfig, ScriptRuntime};
 pub use vm::{ContextKind, OutputLine};
 
+/// An mlua integer as an `i64`.
+///
+/// `mlua::Integer` is `i64` on 64-bit targets and `i32` on wasm32 (ADR-0049), so code that
+/// reads one converts through this to compile on both.
+#[allow(
+    clippy::useless_conversion,
+    reason = "mlua::Integer is i64 here but i32 on wasm32"
+)]
+pub fn lua_int(i: mlua::Integer) -> i64 {
+    i64::from(i)
+}
+
 use re_core::DiagInfo;
 
 /// Every diagnostic code `re_script` owns, with its title and explain page.
