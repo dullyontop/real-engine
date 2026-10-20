@@ -1,5 +1,7 @@
 # M2 plan
 
+**Status:** done (2026-10-20). Every item of the definition of done below holds on main; the private sample checks pass (ADR-0033).
+
 M2 is the Roblox-style compatibility layer. When it is done, Roblox-style projects run on Real Engine through a new crate, `re_compat`, which maps Roblox-style globals, services, instances, datatypes, enums and events onto the native engine of M1 ([ARCHITECTURE.md §4](ARCHITECTURE.md#m2-roblox-style-compatibility-layer-re_compat), ADR-0012). The owner chose "Demo first": M1 shipped the island demo on the native API, and M2's goal is the owner's two sample projects running through this layer. A new public example, `examples/plaza`, is written for this repository in the Roblox style, so CI can check the layer without the private samples.
 
 This plan splits M2 into nine work packages: WP9 to WP17. Numbering continues from M1, so a WP number always means one thing.

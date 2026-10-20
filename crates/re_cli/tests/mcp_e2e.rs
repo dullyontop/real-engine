@@ -74,6 +74,10 @@ fn snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/");
+                // Held by `real mcp`; Windows refuses to read a locked file.
+                if rel == ".real/editor.lock" {
+                    continue;
+                }
                 out.insert(rel, std::fs::read(entry.path()).unwrap());
             }
         }
