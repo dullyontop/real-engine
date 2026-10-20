@@ -211,17 +211,27 @@ impl World {
     /// Writes every authored entity into a [`SceneDoc`], in the deterministic
     /// order described in the module docs.
     pub fn save(&mut self, opts: SaveOptions) -> SceneDoc {
-        let mut roots: Vec<(String, Entity)> = self
+        let roots: Vec<(String, Entity)> = self
             .ecs
             .query_filtered::<(Entity, &StableId), Without<ChildOf>>()
             .iter(&self.ecs)
             .map(|(e, id)| (id.0.clone(), e))
             .collect();
-        roots.sort();
-        let mut entities = Vec::new();
-        for (_, root) in roots {
-            entities.extend(self.subtree_docs(root, opts));
+        // Authored roots of unloaded stream cells are written where they
+        // would be if their cell were loaded (ADR-0042).
+        let mut docs: Vec<(String, Vec<EntityDoc>)> = roots
+            .into_iter()
+            .map(|(id, root)| (id, self.subtree_docs(root, opts)))
+            .collect();
+        if let Some(stash) = self.stashed() {
+            docs.extend(
+                stash
+                    .iter()
+                    .map(|(_, r)| (r.id.clone(), self.stashed_docs(r, opts))),
+            );
         }
+        docs.sort_by(|a, b| a.0.cmp(&b.0));
+        let entities: Vec<EntityDoc> = docs.into_iter().flat_map(|(_, d)| d).collect();
         // Every script component the world knows (declared by the loaded scene
         // or registered since), not only those authored entities use: generated
         // entities (a prefab's) may use one, and the saved file must still load

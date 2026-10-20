@@ -339,7 +339,8 @@ impl World {
     /// entities (with their keys), overrides, `GlobalTransform` and the
     /// session's suppressions. Ids, child order and [`World::state_hash`] are
     /// identical. ECS resources are not copied, except `IdIndex` and
-    /// `TagIndex` (rebuilt by hooks) and the suppressions; change feeds are
+    /// `TagIndex` (rebuilt by hooks), the suppressions and the stream stash
+    /// of unloaded authored roots; change feeds are
     /// not copied either; a caller that needs one of its own
     /// resources in the copy clones it in. Undo history is not part of the
     /// world and is not copied. Components that are not in the registry
@@ -407,6 +408,12 @@ impl World {
                     key: g.key.clone(),
                 });
             }
+            if let Some(c) = self.ecs.get::<crate::stream::LoadedCell>(old) {
+                e.insert(c.clone());
+            }
+        }
+        if let Some(stash) = self.stashed() {
+            out.ecs.insert_resource(stash.clone());
         }
         out
     }

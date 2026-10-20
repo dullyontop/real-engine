@@ -298,6 +298,8 @@ pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<HudText>(world);
     registry.register::<Procedural>(world);
     registry.register::<GraphSource>(world);
+    registry.register::<crate::stream::Streamed>(world);
+    registry.register::<crate::stream::StreamFocus>(world);
     registry.register::<crate::Attributes>(world);
     registry.register::<crate::Tags>(world);
     // Added in M3, after the M2 set, so earlier registration order is kept.
