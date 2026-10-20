@@ -4,8 +4,11 @@
 //! ([`wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`]); [`read_texture`] strips the padding, so
 //! callers always get tightly packed rows.
 
+use std::future::Future;
 use std::path::Path;
-use std::sync::mpsc;
+use std::pin::Pin;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use re_core::{Diagnostic, Location};
@@ -29,80 +32,179 @@ fn readback_error(message: impl Into<String>) -> Diagnostic {
 /// Reads one aspect of mip 0 of a 2D texture back to the CPU as tightly packed rows.
 ///
 /// The texture needs `COPY_SRC` usage. Depth aspects need
-/// `DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES`, which GL lacks.
+/// `DownlevelFlags::DEPTH_TEXTURE_AND_BUFFER_COPIES`, which GL lacks. It blocks until the
+/// GPU is done, which a browser never allows: use [`read_texture_async`] there.
 pub fn read_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
     aspect: wgpu::TextureAspect,
 ) -> Result<Vec<u8>, Diagnostic> {
-    let format = texture.format();
-    let bpp = format.block_copy_size(Some(aspect)).ok_or_else(|| {
-        readback_error(format!(
-            "the {aspect:?} aspect of a {format:?} texture cannot be copied"
-        ))
-    })?;
-    let (width, height) = (texture.width(), texture.height());
-    let padded = padded_bytes_per_row(width, bpp);
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("re_render readback"),
-        size: u64::from(padded) * u64::from(height),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("re_render readback"),
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded),
-                rows_per_image: Some(height),
-            },
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
-    let (tx, rx) = mpsc::channel();
-    encoder.map_buffer_on_submit(&buffer, wgpu::MapMode::Read, .., move |result| {
-        let _ = tx.send(result);
-    });
-    let index = queue.submit([encoder.finish()]);
+    let pending = Readback::start(device, queue, texture, aspect)?;
     // Native wgpu runs map callbacks from poll; the timeout keeps a broken driver
     // from hanging CI.
     device
         .poll(wgpu::PollType::Wait {
-            submission_index: Some(index),
+            submission_index: Some(pending.index.clone()),
             timeout: Some(READBACK_TIMEOUT),
         })
         .map_err(|e| readback_error(format!("waiting for the GPU failed: {e}")))?;
-    rx.recv_timeout(READBACK_TIMEOUT)
-        .map_err(|_| readback_error("the buffer map callback never ran"))?
-        .map_err(|e| readback_error(format!("mapping the readback buffer failed: {e}")))?;
+    let (lock, ready) = &*pending.state;
+    let state = lock.lock().unwrap_or_else(PoisonError::into_inner);
+    let (mut state, _) = ready
+        .wait_timeout_while(state, READBACK_TIMEOUT, |s| s.result.is_none())
+        .unwrap_or_else(PoisonError::into_inner);
+    let result = state
+        .result
+        .take()
+        .ok_or_else(|| readback_error("the buffer map callback never ran"))?;
+    drop(state);
+    pending.finish(result)
+}
 
-    let row = (width * bpp) as usize;
-    let mut out = Vec::with_capacity(row * height as usize);
-    {
-        let view = buffer
-            .get_mapped_range(..)
-            .map_err(|e| readback_error(format!("reading the mapped buffer failed: {e}")))?;
-        for chunk in view.chunks(padded as usize).take(height as usize) {
-            out.extend_from_slice(&chunk[..row]);
+/// [`read_texture`] without blocking, for the browser (ADR-0049 §3).
+///
+/// The returned future owns the staging buffer until the map completes: on WebGPU,
+/// dropping a buffer destroys it and fails a pending map. In a browser the page's event
+/// loop completes the map; on native, someone has to call `device.poll` (for example
+/// once a frame) before the future can finish.
+pub fn read_texture_async(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    aspect: wgpu::TextureAspect,
+) -> impl Future<Output = Result<Vec<u8>, Diagnostic>> + use<> {
+    let started = Readback::start(device, queue, texture, aspect);
+    async move {
+        let pending = started?;
+        let result = MapDone(pending.state.clone()).await;
+        pending.finish(result)
+    }
+}
+
+/// What the map callback writes and the reader waits for.
+#[derive(Default)]
+struct MapState {
+    result: Option<Result<(), wgpu::BufferAsyncError>>,
+    waker: Option<Waker>,
+}
+
+type Shared = Arc<(Mutex<MapState>, Condvar)>;
+
+/// A copy into a mappable buffer, submitted, whose map is pending.
+struct Readback {
+    buffer: wgpu::Buffer,
+    index: wgpu::SubmissionIndex,
+    state: Shared,
+    width: u32,
+    height: u32,
+    bpp: u32,
+    padded: u32,
+}
+
+impl Readback {
+    fn start(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        aspect: wgpu::TextureAspect,
+    ) -> Result<Readback, Diagnostic> {
+        let format = texture.format();
+        let bpp = format.block_copy_size(Some(aspect)).ok_or_else(|| {
+            readback_error(format!(
+                "the {aspect:?} aspect of a {format:?} texture cannot be copied"
+            ))
+        })?;
+        let (width, height) = (texture.width(), texture.height());
+        let padded = padded_bytes_per_row(width, bpp);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("re_render readback"),
+            size: u64::from(padded) * u64::from(height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("re_render readback"),
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let state: Shared = Arc::default();
+        let callback_state = state.clone();
+        encoder.map_buffer_on_submit(&buffer, wgpu::MapMode::Read, .., move |result| {
+            let (lock, ready) = &*callback_state;
+            let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
+            state.result = Some(result);
+            if let Some(waker) = state.waker.take() {
+                waker.wake();
+            }
+            ready.notify_all();
+        });
+        let index = queue.submit([encoder.finish()]);
+        Ok(Readback {
+            buffer,
+            index,
+            state,
+            width,
+            height,
+            bpp,
+            padded,
+        })
+    }
+
+    /// Copies the mapped rows out without their padding.
+    fn finish(self, result: Result<(), wgpu::BufferAsyncError>) -> Result<Vec<u8>, Diagnostic> {
+        result.map_err(|e| readback_error(format!("mapping the readback buffer failed: {e}")))?;
+        let row = (self.width * self.bpp) as usize;
+        let mut out = Vec::with_capacity(row * self.height as usize);
+        {
+            let view = self
+                .buffer
+                .get_mapped_range(..)
+                .map_err(|e| readback_error(format!("reading the mapped buffer failed: {e}")))?;
+            for chunk in view.chunks(self.padded as usize).take(self.height as usize) {
+                out.extend_from_slice(&chunk[..row]);
+            }
+        }
+        self.buffer.unmap();
+        Ok(out)
+    }
+}
+
+/// Resolves when the map callback has run.
+struct MapDone(Shared);
+
+impl Future for MapDone {
+    type Output = Result<(), wgpu::BufferAsyncError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut state = self.0.0.lock().unwrap_or_else(PoisonError::into_inner);
+        match state.result.take() {
+            Some(result) => Poll::Ready(result),
+            None => {
+                state.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
         }
     }
-    buffer.unmap();
-    Ok(out)
 }
 
 /// An RGBA8 image with tightly packed rows, top row first.
@@ -396,15 +498,35 @@ impl Capture {
     pub fn read(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Image, Diagnostic> {
         let mut rgba = read_texture(device, queue, &self.texture, wgpu::TextureAspect::All)?;
         if self.texture.format().remove_srgb_suffix() == wgpu::TextureFormat::Bgra8Unorm {
-            for px in rgba.as_chunks_mut::<4>().0 {
-                px.swap(0, 2);
-            }
+            swap_red_blue(&mut rgba);
         }
         Ok(Image {
             width: self.width(),
             height: self.height(),
             rgba,
         })
+    }
+
+    /// [`Capture::read`] without blocking, for the browser (see [`read_texture_async`]).
+    pub fn read_async(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> impl Future<Output = Result<Image, Diagnostic>> + use<> {
+        let pending = read_texture_async(device, queue, &self.texture, wgpu::TextureAspect::All);
+        let (width, height) = (self.width(), self.height());
+        let bgra = self.texture.format().remove_srgb_suffix() == wgpu::TextureFormat::Bgra8Unorm;
+        async move {
+            let mut rgba = pending.await?;
+            if bgra {
+                swap_red_blue(&mut rgba);
+            }
+            Ok(Image {
+                width,
+                height,
+                rgba,
+            })
+        }
     }
 
     /// Reads the capture back and writes it to `path` as a PNG.
@@ -417,6 +539,13 @@ impl Capture {
         let image = self.read(device, queue)?;
         image.save_png(path)?;
         Ok(image)
+    }
+}
+
+/// BGRA to RGBA, in place.
+fn swap_red_blue(pixels: &mut [u8]) {
+    for px in pixels.as_chunks_mut::<4>().0 {
+        px.swap(0, 2);
     }
 }
 

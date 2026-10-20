@@ -63,8 +63,8 @@ impl RawValue {
         Ok(match v {
             LuaValue::Nil => RawValue::Nil,
             LuaValue::Boolean(b) => RawValue::Bool(b),
-            LuaValue::Integer(i) => RawValue::Int(i),
-            LuaValue::Number(n) => RawValue::Num(n),
+            LuaValue::Integer(i) => RawValue::Int(crate::lua_int(i)),
+            LuaValue::Number(n) => number(n),
             LuaValue::Vector(v) => RawValue::Vec3(glam::Vec3::new(v.x(), v.y(), v.z())),
             LuaValue::String(s) => RawValue::Str(s.to_str()?.to_string()),
             LuaValue::UserData(ud) => {
@@ -112,7 +112,7 @@ impl RawValue {
             let v = Self::read(v, depth + 1, at)?;
             match k {
                 LuaValue::String(s) => strings.push((s.to_str()?.to_string(), v)),
-                LuaValue::Integer(i) => ints.push((i, v)),
+                LuaValue::Integer(i) => ints.push((crate::lua_int(i), v)),
                 LuaValue::Number(n) if n.fract() == 0.0 && n >= 1.0 && n <= 2f64.powi(53) => {
                     ints.push((n as i64, v))
                 }
@@ -367,4 +367,38 @@ pub fn lua_to_field(v: LuaValue, ty: &FieldType) -> Result<Value> {
 /// frozen tables, entity references as native handles).
 pub fn value_to_lua(lua: &Lua, v: Value) -> Result<LuaValue> {
     field_to_lua(lua, v)
+}
+
+/// A Luau number that mlua did not hand over as an integer.
+///
+/// mlua's `Integer` is `i64` on 64-bit targets and `i32` on wasm32, and it gives an integral
+/// number as an `Integer` only when it fits. Making every number an `i64` exactly here gives
+/// one representation on every target, so `state_hash` does not depend on the pointer width
+/// (ADR-0049 §5 consequences).
+fn number(n: f64) -> RawValue {
+    // `i64::MIN` is exact as an f64; `2^63` is the first value out of range.
+    if (-(2f64.powi(63))..2f64.powi(63)).contains(&n)
+        && (n as i64) as f64 == n
+        && n.to_bits() != (-0.0f64).to_bits()
+    {
+        RawValue::Int(n as i64)
+    } else {
+        RawValue::Num(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integral_numbers_become_ints_as_mlua_does_on_64_bit() {
+        assert!(matches!(number(3e9), RawValue::Int(3_000_000_000)));
+        assert!(matches!(number(-(2f64.powi(63))), RawValue::Int(i64::MIN)));
+        assert!(matches!(number(2f64.powi(63)), RawValue::Num(_)));
+        assert!(matches!(number(0.5), RawValue::Num(_)));
+        assert!(matches!(number(-0.0), RawValue::Num(_)));
+        assert!(matches!(number(f64::NAN), RawValue::Num(_)));
+        assert!(matches!(number(f64::INFINITY), RawValue::Num(_)));
+    }
 }

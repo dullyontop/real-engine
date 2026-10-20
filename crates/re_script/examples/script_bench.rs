@@ -7,9 +7,10 @@
 //! Each figure is the best of 5 runs, in nanoseconds per operation. Compare with
 //! the spike's numbers in `docs/research/scripting.md` §6.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use re_core::Phase;
+use re_core::time::Instant;
 use re_scene::World;
 use re_script::{ContextKind, NoServices, RuntimeConfig, ScriptRuntime, WorldHost};
 
