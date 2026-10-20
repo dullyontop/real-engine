@@ -1,8 +1,7 @@
 //! The services beyond the core ones: `HttpService`, `Debris`,
 //! `ProximityPromptService` ([`prompts`]), `GuiService`, the `StarterGui`
 //! core calls, and the services that need Roblox's online backend
-//! (`DataStoreService`, `MemoryStoreService`, `TeleportService`,
-//! `TextService` filtering, `MarketplaceService`, `BadgeService`,
+//! (`TeleportService`, `TextService` filtering, `MarketplaceService`, `BadgeService`,
 //! `MessagingService`), whose methods raise `RE9002` at once so a script's
 //! `pcall` sees the failure.
 
@@ -470,14 +469,6 @@ const OFFLINE: &[(&str, &str)] = &[
     ("HttpService", "GetAsync"),
     ("HttpService", "PostAsync"),
     ("HttpService", "RequestAsync"),
-    ("DataStoreService", "GetDataStore"),
-    ("DataStoreService", "GetGlobalDataStore"),
-    ("DataStoreService", "GetOrderedDataStore"),
-    ("DataStoreService", "GetRequestBudgetForRequestType"),
-    ("DataStoreService", "ListDataStoresAsync"),
-    ("MemoryStoreService", "GetSortedMap"),
-    ("MemoryStoreService", "GetQueue"),
-    ("MemoryStoreService", "GetHashMap"),
     ("TeleportService", "Teleport"),
     ("TeleportService", "TeleportAsync"),
     ("TeleportService", "TeleportToPlaceInstance"),

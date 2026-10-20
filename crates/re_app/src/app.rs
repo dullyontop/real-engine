@@ -144,6 +144,9 @@ pub struct App {
     compat_config: Option<re_compat::CompatConfig>,
     compat: Option<crate::compat::CompatPlay>,
     compat_failed: bool,
+    /// Whether the compat data services keep their data in `.real/data/`
+    /// ([`App::persist_data`]).
+    persist_data: bool,
     /// A compat game's 3D view and UI on the renderer.
     compat_view: crate::compat_view::CompatView,
     /// The size (physical pixels) and scale of the last window draw.
@@ -269,6 +272,7 @@ impl App {
             compat_config,
             compat: None,
             compat_failed: false,
+            persist_data: false,
             compat_view: Default::default(),
             view_size: [config.render.width, config.render.height],
             view_ppp: 1.0,
@@ -629,6 +633,15 @@ impl App {
             AssetWatcher::DEFAULT_DEBOUNCE,
         )?);
         Ok(())
+    }
+
+    /// Makes a compat game's `DataStoreService` and `MemoryStoreService`
+    /// keep their data in the project's `.real/data/` with the wall clock, as
+    /// `real run` does (ADR-0048). Without it, each run starts from
+    /// `data/seed/` on a fixed clock so it repeats. Call it before the first
+    /// frame.
+    pub fn persist_data(&mut self) {
+        self.persist_data = true;
     }
 
     /// Scripts under `scripts/` that changed on disk since the last call.
@@ -1678,6 +1691,7 @@ impl App {
             &cfg,
             &mut self.world,
             clips,
+            self.persist_data,
         ) {
             Ok(play) => self.compat = Some(play),
             Err(d) => {
