@@ -10,11 +10,12 @@
 //! round trip is not byte-identical.
 
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use glam::Vec3;
 use indexmap::IndexMap;
 use re_command::{History, Op, Origin, Transaction};
+use re_core::time::Instant;
 use re_reflect::{Color, Doc, Value, component};
 use re_scene::ecs as bevy_ecs;
 use re_scene::scene::{self, SaveOptions};

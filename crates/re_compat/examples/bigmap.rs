@@ -20,9 +20,10 @@
 #[path = "../tests/fixtures/physics/bigmap.rs"]
 mod bigmap;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use re_compat::{CompatSetup, physics};
+use re_core::time::Instant;
 use re_scene::World;
 
 const LOAD_BUDGET_S: f64 = 30.0;
