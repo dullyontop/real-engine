@@ -618,7 +618,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0023: CI: Linux with lavapipe blocks merges; Windows and macOS are reported only
 
-**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16).
+**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16). Amended in M3 (WP18 PR "blocking"): `build-windows` and `build-macos` are required.
 
 **Context.** Development containers are Linux with lavapipe, llvmpipe and Xvfb, and no audio device. Nothing has been verified on Windows or macOS.
 
@@ -639,6 +639,11 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Alternatives.** All three operating systems blocking merges from day one. That is unverified, and it would stop every PR on platform issues we cannot reproduce.
 
 **Consequences.** Making Windows and macOS block merges is an M3 exit item.
+
+**Amendment (M3, WP18 PR "blocking"; accepted by the maintainer, 2026-10-20).** `build-windows` and `build-macos` are required, with no `continue-on-error`. Each runs the whole test suite: the non-GPU crates, then the GPU crates on DX12 (WARP) or Metal with `--test-threads=1`. Each then runs `real verify` on the island and the plaza.
+- Golden images are blessed on Linux only until WP18 PR "d2" adds the dx12 and metal sets. Until then, a platform verify passes when every stage but goldens is ok and the goldens stage's only problems are missing images for that backend (`RE0510`), reported as a warning. A golden that exists and differs still fails, and so does a run with no adapter.
+- A text file with CRLF line endings fails `fmt` (`.gitattributes` checks text out with LF everywhere, ADR-0036).
+- `main` has no branch protection, so "required" means the merge rule: a PR is squash-merged only when every required job is green.
 
 ## ADR-0024: Validation suite contract for external script corpora
 
