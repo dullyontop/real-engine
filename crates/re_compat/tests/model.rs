@@ -195,6 +195,9 @@ mod model {
             print(gs.SavedQualityLevel == Enum.SavedQualitySetting.Automatic)
             print(pcall(function() return game:GetService("UserGameSettings") end))
             print(pcall(function() return us:GetService("Workspace") end))
+            print(pcall(function() us.Parent = workspace end))
+            print(pcall(function() us:Destroy() end))
+            assert(UserSettings() == us and us.Parent == nil)
             "#,
         );
         let out = p.out();

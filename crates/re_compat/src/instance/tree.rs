@@ -28,10 +28,12 @@ pub fn is_destroyed(w: &World, e: Entity) -> bool {
     !alive(w, e) || w.ecs.get::<Destroyed>(e).is_some()
 }
 
-/// True for the `game` root and the services, whose `Parent` never changes.
+/// True for the `game` root, the `UserSettings()` root and the services,
+/// whose `Parent` never changes.
 pub fn is_locked(w: &World, e: Entity) -> bool {
     w.ecs.get::<ServiceTag>(e).is_some()
         || (w.id_of(e) == Some(GAME_ID) && class(w, e) == Some(ROOT_CLASS))
+        || (class(w, e) == Some("UserSettings") && parent(w, e).is_none())
 }
 
 /// True if `e` is `game` or one of its descendants.
