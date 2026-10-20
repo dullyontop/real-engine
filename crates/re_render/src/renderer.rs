@@ -2209,7 +2209,13 @@ impl Renderer {
                     layout: &skinning.palette_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: skinning.palette.buffer.as_entire_binding(),
+                        // Only the frame's palette, so the binding stays within
+                        // the storage binding limit whatever the buffer grew to.
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &skinning.palette.buffer,
+                            offset: 0,
+                            size: NonZeroU64::new((palette_len.max(1) * size_of::<Mat4>()) as u64),
+                        }),
                     }],
                 }))
             }
