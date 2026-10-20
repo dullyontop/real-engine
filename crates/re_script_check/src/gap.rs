@@ -237,6 +237,15 @@ impl GapReport {
         r
     }
 
+    /// Drops the `Service.Child` names that are the project's own instances
+    /// (`ReplicatedStorage.Shared` reads a child, not an API member), so the
+    /// report lists only API the engine lacks. Returns how many were dropped.
+    pub fn drop_children(&mut self, children: &BTreeSet<String>) -> usize {
+        let before = self.missing.len();
+        self.missing.retain(|name, _| !children.contains(name));
+        before - self.missing.len()
+    }
+
     /// The missing names, most used first (ties by name).
     pub fn ranked(&self) -> Vec<(&str, usize)> {
         let mut v: Vec<(&str, usize)> =
@@ -324,6 +333,23 @@ mod tests {
         assert!(!g.missing.contains_key("Enum.KeyCode"), "{g:?}");
         assert!(!g.missing.contains_key("Enum.KeyCode.A"), "{g:?}");
         assert!(g.partial.contains_key("GetService(Players)"), "{g:?}");
+    }
+
+    #[test]
+    fn project_children_are_not_gaps() {
+        let mut c = Coverage::native();
+        c.add_compat(&CoverageFile::parse(re_compat::COVERAGE_JSON).unwrap());
+        let u = scan_source(
+            "local RS = game:GetService('ReplicatedStorage')\nlocal _ = RS.Shared\nlocal _ = RS.Nope",
+            "t.luau",
+        )
+        .unwrap();
+        let mut g = GapReport::new(&u, &c);
+        assert!(g.missing.contains_key("ReplicatedStorage.Shared"), "{g:?}");
+        let children = BTreeSet::from(["ReplicatedStorage.Shared".to_string()]);
+        assert_eq!(g.drop_children(&children), 1);
+        assert!(!g.missing.contains_key("ReplicatedStorage.Shared"), "{g:?}");
+        assert!(g.missing.contains_key("ReplicatedStorage.Nope"), "{g:?}");
     }
 
     #[test]

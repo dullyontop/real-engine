@@ -1003,6 +1003,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - **The folder layer keeps today's checks.** It refuses a path whose canonical form leaves the folder (the symlink check `ProjectRequirer` does today, now for every read), and `real build` refuses to pack a symlink that leaves the project. Callers that build paths from other paths (a glTF's external URIs) normalise them against the referring file and get `ProjectPath`'s refusal if the result leaves the project. `material.rs`'s walk up to `real.toml` is replaced by the `ProjectFiles` it is given.
 - **Only development runs write project files.** Creating a missing sidecar, following a rename and `save_scene` happen only when the directory layer is a project (`ProjectFiles::project_dir()` is `Some`). In a packaged game a loose asset without a sidecar is an error (`RE0606`), not a write, and `save_scene` returns `RE0606`. `real build` creates missing sidecars in the project before packing, as a development run already does, and lists them in its report so they get committed.
 - **Writable folders.** `ProjectFiles::writable(Cache | Data | Crash | Out)`. In a development run they are `<project>/.real/cache`, `.real/data`, `.real/crash` and `.real/out`, unchanged; `Out` holds the captures runtime commands write. In a packaged game they are per user, under the package `identifier`: cache in `$XDG_CACHE_HOME` (default `~/.cache`), `~/Library/Caches` or `%LOCALAPPDATA%`; data, crash reports and `out` in `$XDG_DATA_HOME` (default `~/.local/share`), `~/Library/Application Support` or `%APPDATA%`. They come from environment variables with the standard defaults; no crate is added. `--data-dir DIR` overrides both, for portable installs and tests. ADR-0048's `.real/data/` maps to `Data`.
+  - **Amendment (ADR-0049 §6, 2026-10-20).** `writable(kind)` returns a `WritableDir` handle (`read`, `write`, `remove`, `list` on project-style relative paths) instead of a `Path`. On desktop it wraps the folders above and `WritableDir::path()` gives the `Path` to tools; on the web it is backed by IndexedDB or memory and `path()` is `None`. It freezes at WP29 PR "portable".
 - **Bytecode only from the archive.** The folder layer never returns `Bytecode`, and loaders set `ChunkMode` from the form instead of letting mlua sniff the bytes: `Text` for `Source`, `Binary` for `Bytecode`. A `.luau` file that holds bytecode is then a syntax error everywhere, which also closes that door in development runs.
 - **Converting the read sites is one PR**, WP19 PR "files", before PR "archive". Most of it is mechanical (`std::fs::read(root.join(p))` becomes `files.read(p)`); the exceptions are the ones above (the require symlink check, glTF URIs, the material root walk, sidecar creation and renames), plus `re_compat`'s `read_to_string` becoming a byte read so bytecode can reach `load_chunk`. The maintainer reviews it with each owner asked: `re_assets`, `re_app` and `re_core` (maintainer), `re_script` and `re_proc` (WP24), `re_audio` (WP22) and `re_compat` (WP27).
 - **One compiler.** `re_script` gains a public `compile_bytecode(source, chunk_name)` and `COMPILER_ID` (`"o1d1"`), today's `pub(crate) compiler()` behind them (WP24 reviews). `re_compat::runtime::load_chunk` sets that compiler explicitly instead of relying on mlua's default (WP27 reviews), so native and compat bytecode cannot drift apart. The hot-reload watcher keeps watching the directory layer only. Replay files and screenshots stay plain paths: they are inputs and outputs of a run, not project content.
@@ -2317,6 +2318,117 @@ The engine already has what these need underneath: the scheduler's `park`/`wake`
     - WP27 writes the hook in its "incremental render" PR, and the maintainer reviews that part.
   - Maintainer conditions: the `ChangeJournal` type lives in `re_scene` beside `World`, and `re_reflect` reaches it as an optional sink, so `re_reflect` learns no compat concepts; the PR shows `set_field` costs the same without the resource; and any write that bypasses the registry (native systems on `Transform`, `re_anim` poses) either feeds the journal or is caught by the randomized equivalence test and `REAL_RENDER_VERIFY`, listed in the PR description.
 
+## ADR-0049: Browser builds: `wasm32-unknown-unknown` with wasi-sdk for Luau and Jolt, WebGPU first, the archive in memory, one thread
+
+**Status:** Accepted (maintainer, 2026-10-20), except §2's in-workspace copies and upstream submissions, which wait for the owner's decision; until then PR "toolchain" cannot merge. §11 is a recommendation to ADR-0036, which WP18 decides in PR "d2". Evidence: a spike on 2026-10-15 in the reference container that ran Luau, Jolt, `re_render`, egui and `re_audio` in one wasm module in headless Chromium 141, plus type-checking all of `re_app` for wasm. Numbers are in `research/m3/wp29/measurements.md`; sources, the build environment and every patch are in `research/m3/wp29/spike/`. crates.io was checked the same day: mlua 0.12.2 and oxijolt 1.1.0 are the newest releases.
+
+**Context.** The owner chose to add browser builds to M3 ("Both", 2026-10-15). This reverses the M3 plan's default "The web (wasm with WebGPU) and consoles are not in M3" and WP19's non-goal "the web". A game made with Real Engine must also run in a browser, from a folder a static web server can host.
+
+The runtime has four parts that do not port for free:
+- **Luau** (mlua's vendored C++) and **Jolt** (oxijolt-sys, C++ built by CMake) need a C and C++ toolchain and C library for wasm. The crates.io-only rule (DEPENDENCIES.md: no git dependencies, no path dependencies outside the workspace, no build scripts that download things) still applies.
+- **wgpu 30** has a WebGPU backend and a WebGL2 backend, and winit 0.30 has a web event loop, but the engine's GPU setup blocks on futures (`pollster::block_on`), which deadlocks a browser's only thread.
+- **Files.** ADR-0037 puts every runtime read behind `ProjectFiles` with synchronous `FileLayer::read`; a browser has no file system and fetches asynchronously.
+- **Threads, clocks, audio.** `re_core::TaskPool` is a rayon pool; `std::time::Instant` panics on `wasm32-unknown-unknown`; browsers start audio only after a user gesture.
+
+ADR-0010 (the frame loop is ours) and ADR-0036 (D2 determinism, which asked the web WP to measure glam) constrain the answers.
+
+**Decision.**
+
+**1. Target: `wasm32-unknown-unknown`, with wasi-sdk compiling the C and C++.**
+- **Rust target.** `wasm32-unknown-unknown`, with wasm-bindgen for the JavaScript glue. wgpu's WebGPU backend is behind `cfg(webgpu)`, which wgpu sets only when the target is not Emscripten, and winit's web platform needs `target_os = "unknown"`; so Emscripten (which mlua supports officially) cannot host the renderer.
+- **C and C++.** wasi-sdk 34's clang with `--target=wasm32-wasip1 --sysroot=<wasi-sysroot>` compiles Luau and Jolt for that target, and the link takes wasi-libc and wasi-sdk's exception-enabled libc++, libc++abi and libunwind (`lib/wasm32-wasip1/eh`). The `cc` crate reads `CXX_wasm32_unknown_unknown` and `CXXSTDLIB_wasm32_unknown_unknown=c++`; mlua reads `LUAU_CXXFLAGS`; the link flags go in `.cargo/config.toml` under `[target.wasm32-unknown-unknown]`.
+- **Exceptions.** Luau throws C++ exceptions, so it is built with `-fwasm-exceptions -mllvm -wasm-use-legacy-eh=false` (the new exnref encoding). Chromium refuses a module that mixes the legacy and new encodings, and Rust code itself is built with `panic = "abort"` on wasm, so it adds neither.
+- **WASI imports.** The C side imports 12 WASI preview1 functions (clocks, `fd_write` for stdout and stderr, and stubs). A 60-line JavaScript shim provides them; stdout and stderr go to the browser console. No file system is emulated.
+- **Static constructors.** The web entry point calls wasm-ld's `__wasm_call_ctors` once at start. Without an explicit reference, wasm-ld runs the constructors before every export call, and Luau's flag registry loops.
+- **Why not the alternatives.** Emscripten is excluded above. A C++ toolchain other than wasi-sdk would need its own C library for `wasm32-unknown-unknown`; wasi-sdk ships one with exceptions, is a single archive with a published sha256, and its CMake toolchain file builds Jolt unchanged.
+- **The toolchain is a tool, not a dependency.** Like CMake for Jolt on desktop, wasi-sdk is installed on the machine that builds the web runtime. CI installs a pinned release checked by sha256 (`tools/ci/wasi-sdk.sh`). Nothing downloads it during a cargo build. A game developer who uses a prebuilt web runtime (§7) never needs it.
+
+**2. Two small changes in mlua and oxijolt-sys, upstream first.**
+- **mlua 0.12.2** calls `libc::tmpfile` and four stdio functions in `luau/heap_dump.rs`, which the `libc` crate does not define for `wasm32-unknown-unknown`. The change gates them so `heap_dump` returns `None` there (19 lines).
+- **oxijolt-sys 1.1.0** refuses 32-bit targets. The change registers a `wasm32` target family, commits bindings for it (bindgen must run with `-fvisibility=default`, because wasm's default hidden visibility makes it emit no functions), and passes `-DJPH_PLATFORM_WASM` and wasi-sdk's CMake toolchain file to Jolt's build (Jolt's `Core.h` recognises wasm only under `__EMSCRIPTEN__`). 36 lines plus generated bindings.
+- **Upstream first.** Both changes are submitted upstream, which is an outward-facing step the owner approves. When releases carrying them reach crates.io, the workspace bumps to them and nothing else changes.
+- **Until then: in-workspace copies.** If no release has them when WP29 PR "runtime" is ready, the two crates are copied, with their licence files, to `third_party/mlua/` and `third_party/oxijolt-sys/` and used through `[patch.crates-io]`. DEPENDENCIES.md allows path dependencies inside the workspace, but a patched copy of two core crates is a dependency change, so it needs the maintainer's DEPENDENCIES.md rows and the owner's approval. Both changes are `cfg`-gated to wasm32 and change no native code; `cargo xtask d2`'s native hashes prove it. The copies go when the releases arrive.
+
+**3. Async only at the edges: GPU setup and captures.**
+- `re_render::Gpu` gains `headless_async`, `for_surface_async` and `from_instance_async`. The blocking constructors become `pollster::block_on` of these, so desktop behaviour is unchanged (spike diff: 60 lines in `gpu.rs`).
+- `Capture` gains an async readback (`map_async` then a later frame). On WebGPU, dropping a buffer destroys it, so the capture keeps its staging buffer alive until the map resolves. The blocking `read_back` stays for desktop.
+- `re_render`'s limit picker falls back to `wgpu::Limits::downlevel_webgl2_defaults()` when the adapter is WebGL2.
+- Nothing else becomes async. The frame body of ADR-0010 is unchanged and synchronous.
+
+**4. The frame loop: winit's web event loop drives ADR-0010's frame.**
+- `re_app` runs the same `App` frame. On the web, `run_windowed` uses `EventLoop::spawn_app` (winit's non-blocking entry point) instead of `run_app`, and redraws on `requestAnimationFrame` through winit's `RedrawRequested`.
+- Because GPU setup is async (§3), the web window path has one more state: the window exists and the GPU is pending. Frames are not simulated until the GPU is ready, so the first simulated frame is the same as on desktop.
+- The game's canvas is the page's `<canvas id="real">`, sized by CSS and the device pixel ratio. Fullscreen and pointer lock need a user gesture and go through winit's web extensions.
+- The headless runner (CI, §8) drives frames from a JavaScript loop with no canvas and renders into a `Capture`, as `real run --headless` does.
+
+**5. Clocks and threads.**
+- **Clocks.** `std::time::Instant` panics on `wasm32-unknown-unknown`. `re_core::time` re-exports `web_time::{Instant, SystemTime}` (web-time 1.1.0, already in the lockfile through winit and egui; on desktop it re-exports `std::time`). The root `clippy.toml` bans `std::time::Instant::now` and `SystemTime::now` with `disallowed-methods` and the reason "panics on the web; use re_core::time (ADR-0049)". Today's users: `re_script` (budget, scheduler), `re_proc` (evaluation timing), `re_app` (5 files), `re_scene` (`ids.rs`).
+- **One thread.** Wasm threads need nightly `build-std` with atomics and a cross-origin-isolated page (COOP and COEP headers), which many static hosts cannot send. The web build is single-threaded in M3. `TaskPool::new` on wasm creates a pool that runs every task on the calling thread at the next join or scope. The spike checked rayon with `use_current_thread()` and one thread: `scope` and `par_iter` work, a detached `spawn` never runs, so `TaskPool::spawn` on wasm queues the task and the frame's task barrier runs it. Jolt's job system already runs its jobs at its barrier (measured).
+- **Cost.** One thread is what a phone-class web game gets anyway. Jolt runs about 1.6 times slower in wasm than natively (329–371 ms against 217 ms for 300 steps of a 1,000-box pile, deterministic build), and Luau about 1.3 to 1.8 times (`measurements.md` §5). The spike's 64-body scene ran at 0.2–0.3 ms of physics per frame.
+
+**6. Files: the archive in memory, behind ADR-0037's layers.**
+- **Read side.** At boot, the page fetches `game.rpak` whole, showing progress, and hands the bytes to the runtime, which copies them once into wasm memory and opens them with WP19's archive reader over a byte slice (a `FileLayer`). `FileLayer::read` stays synchronous, and every crate reads through `ProjectFiles` exactly as in a packaged desktop game. This works on any static host: no `Range` support and no CORS headers are needed when the archive is on the same origin.
+- **Size.** Wasm32 memory is at most 4 GiB and a browser tab may get less. `real build --target web` warns above 256 MiB of archive (`RE0974`), and the runtime reports a fetch or allocation failure as `RE0622`. Fetching entries on demand with `Range` requests (WP19's notes: header, index, then entries) is the later step for large games; it needs an async read or a prefetch set, which this ADR does not settle.
+- **Writable folders (ADR-0037 left `writable()` open for this ADR).** The browser has no per-user folders. `ProjectFiles::writable(kind)` returns a `WritableDir` handle instead of a `Path`, with `read`, `write`, `remove` and `list` on project-style relative paths:
+  - desktop: a thin wrapper over the same directories as today (`Path` stays reachable through `WritableDir::path()` for tools, returning `None` on the web);
+  - web, `Data`: an in-memory map loaded from IndexedDB before the first frame and written back after each write (write-behind; a write that IndexedDB refuses is `RE0624`, a warning, and the game keeps running with what it has in memory). Keys are prefixed by the package `identifier`;
+  - web, `Cache`: memory only;
+  - web, `Crash`: the report is printed to the console;
+  - web, `Out`: memory, offered as a download when a runtime command writes a capture.
+  IndexedDB is reached through web-sys features, so no crate is added. WP27's persistence (ADR-0048) already writes only through `writable(Data)`.
+
+**7. `real build --target web`.**
+- `real build --project P --out DIR --target web` writes a folder a static server can host:
+  - `index.html` (the canvas, a progress bar, the click-to-start overlay of §9, and the boot script),
+  - `real.js` (wasm-bindgen's glue) and `wasi.js` (§1),
+  - `real_bg.wasm` (the web runtime, optimised with `wasm-opt -O2` and stripped when binaryen is present; without it the build warns `RE0973` and copies the unoptimised module),
+  - `game.rpak` (ADR-0037's archive, unchanged) and `THIRD-PARTY-NOTICES.txt` (WP19's notices, from the web runtime's dependency graph).
+- **The web runtime** is the crate `re_web` (a `cdylib` with wasm-bindgen exports over `re_app`'s runtime features, ADR-0027). As on desktop (ADR-0037 step 3), `real build` builds it with cargo for `wasm32-unknown-unknown` when the toolchain is installed, or takes `--runtime DIR` holding a prebuilt `real_bg.wasm` and `real.js`. Release CI publishes the prebuilt web runtime next to the desktop runtimes, so most developers need neither Rust's wasm target nor wasi-sdk. A missing toolchain is `RE0970`, with the install steps in its explain page; a failed runtime build is `RE0971`; a wasm-bindgen CLI whose version differs from the lockfile's is `RE0972`.
+- **Hosting.** Any static server works. The page needs a secure context for WebGPU (HTTPS, or `localhost`); `application/wasm` as the module's MIME type enables streaming compilation, and the boot script falls back to compiling from an `ArrayBuffer` when a server sends another type. No COOP or COEP headers are needed (§5). Compression is left to the host.
+- **What a web build refuses.** A project whose `[package]` asks for something the web runtime lacks fails the build with `RE0975`: a dedicated-server role (§10), or `[package] web = false`.
+
+**8. Rendering backends and CI.**
+- **WebGPU first, WebGL2 second.** The runtime asks for a WebGPU adapter and falls back to wgpu's WebGL2 backend on an `OffscreenCanvas`-capable or plain canvas surface. With neither, the page shows `RE0620` (no WebGPU or WebGL2 adapter). The spike drew its scene on both (120 frames each). WebGL2 lacks compute, so WP20's compute passes need a fallback or are skipped on it; WP20's ADR-0038 decides which.
+- **Browser support** needs WebGPU or WebGL2, and wasm exnref exception handling. Only Chromium 141 was verified. The boot script checks exnref with a 30-byte probe module and shows `RE0621` with the browser requirements when it is missing, before fetching the archive. Firefox and Safari are reported, not required, in M3.
+- **CI.** A `web` job (through WP18 and the maintainer) installs wasi-sdk and Chromium (Playwright, pinned in `tools/web-test/package-lock.json`), builds the web runtime and the island and plaza with `real build --target web`, serves each folder with a std-only static server in xtask, and runs them in headless Chromium with WebGPU enabled (`--enable-unsafe-webgpu`, SwiftShader on the runner's CPU).
+- **Headless, not windowed.** In this headless Chromium, configuring any canvas makes every later `mapAsync` fail ("A valid external Instance reference no longer exists"); it reproduces in plain JavaScript with no engine code. So CI runs the runtime's headless mode (no canvas, captures read back in wasm), which works, and the windowed path is checked by booting it and counting presented frames without reading pixels. If a runner's Chromium has no WebGPU at all, the job runs the same checks on WebGL2 and says so in its log; that is the documented fallback.
+
+**9. Audio and input.**
+- **Audio.** kira 0.12.5 with cpal's WebAudio backend works unchanged (spike: AudioContext running at 48,000 Hz, one sound playing). Browsers start an AudioContext only after a user gesture, so `index.html` shows a click-to-start overlay and creates the audio device on that click; until then `re_audio` runs its headless backend, so the frame and `state_hash` do not depend on when the player clicks. CI starts Chromium with `--autoplay-policy=no-user-gesture-required`.
+- **Input.** Keyboard and mouse come from winit's web events, pointer lock from winit's web extension. Gamepads go through gilrs 0.11's web backend (the browser Gamepad API), which the spike did not exercise; PR "runtime" tests it with a scripted gamepad in Chromium.
+
+**10. Online play in the browser (with ADR-0050).**
+- ADR-0050's transport seam takes a WebSocket implementation for the browser client, through web-sys's `WebSocket` (no new crate on the client). The native server needs a WebSocket listener beside UDP, which is ADR-0050's conditional PR "web" and its own dependency choice.
+- **This ADR recommends that PR "web" is in M3**, after WP29 PR "runtime": the owner asked for both, and a Roblox-style game in a browser that cannot join its server is half a feature. A browser cannot be a server, so a web build is always a client (`RE0975` for a server role).
+
+**11. Determinism: what the spike measured for ADR-0036.**
+- Jolt's cross-platform-deterministic build gives the same 1,000-box pile hash in wasm as on native x86_64 (`a81d3cf9ef4ee502`).
+- glam's `Vec3` and `Mat3` give the same bits. `Mat4`, `Quat`, `Vec4` and `Affine3A` do not: x86_64 uses SSE2 with a different operation order, wasm uses scalar code. Native x86_64 with glam's `scalar-math` feature matches wasm exactly.
+- `scalar-math` costs little on x86_64 except for `Affine3A` products (8.24 against 3.57 ns) and `Quat` products (7.63 against 5.99 ns); `Mat4` products and `transform_point3` are unchanged (`measurements.md` §7). It also changes the alignment of `Vec4` and `Mat4`, which the render crates upload with bytemuck.
+- **Recommendation to ADR-0036:** turn on glam's `scalar-math` on every target, which also removes glam's NEON fused paths on macOS arm64, and let WP20 check its uploads. Until ADR-0036 is amended, the web is a reported D2 platform, like macOS arm64; once it is, the web's `d2` line is required.
+
+**12. Codes and owned paths.**
+- `re_app` takes `RE0620`–`RE0649` for the web runtime: `RE0620` no WebGPU or WebGL2 adapter, `RE0621` the browser lacks wasm exception handling (reported by the page), `RE0622` the archive could not be fetched or held, `RE0623` the panic hook's report of a runtime panic, `RE0624` browser storage refused a write (warning), `RE0625` a feature the web runtime does not have was used (warning, once per feature). The rest are reserved.
+- `re_cli` takes `RE0970`–`RE0989` for `real build --target web`: `RE0970` wasm toolchain missing, `RE0971` web runtime build failed, `RE0972` wasm-bindgen CLI version mismatch, `RE0973` binaryen missing (warning), `RE0974` archive over 256 MiB (warning), `RE0975` the project asks for something the web cannot do.
+- `re_web` reports through `re_app`'s codes and needs no range.
+- WP29 owns `crates/re_web/` (new), `crates/re_app/src/web/` (new), `crates/re_cli/src/build/web.rs` (inside WP19's `build/`, reviewed by WP19), `tools/web-test/` (new) and `tools/ci/wasi-sdk.sh` (new). Everything else is a small PR in its owner's paths.
+
+**Alternatives considered.**
+- **Emscripten for everything.** mlua supports it and Jolt documents it, but wgpu's WebGPU backend is compiled out for it and winit has no Emscripten platform, so the renderer would need WebGL through a different path. Rejected.
+- **Drop Luau or Jolt in the browser** (an interpreter in Rust, or a Rust physics engine). Scripts and physics would behave differently from desktop, which breaks D2 and the compat layer. Rejected; the spike shows both run.
+- **Threads with SharedArrayBuffer.** Needs nightly Rust and COOP/COEP headers on every host. Deferred until wasm threads work on stable Rust.
+- **Fetch entries on demand (Range requests) from the start.** Needs either an async `FileLayer` or a prefetch set per scene, and a host with `Range` support. Deferred (§6); the archive format already allows it.
+- **Run the editor in the browser.** Out of scope: the editor uses the file system, `notify` and tooling crates that ADR-0027 keeps out of the runtime.
+
+**Consequences.**
+- Every crate that times something uses `re_core::time`, and clippy enforces it.
+- `re_render` keeps two constructor shapes (async, and blocking wrappers) and two readback shapes.
+- `ProjectFiles::writable` changes from `&Path` to `WritableDir` before ADR-0037's "files" contract freezes that part (WP19 and the maintainer decide; this is the one change to their API).
+- mlua's `Integer` is `i32` on wasm32. `re_script` and `re_compat` convert with `i64::from` (9 sites in the spike). `re_script` normalises integral numbers itself so `state_hash` sees the same value on every platform.
+- `uuid` gains its `js` feature (randomness from the browser).
+- CI gains wasi-sdk, wasm-bindgen-cli 0.2.129 (matching the lockfile), binaryen and a pinned Playwright Chromium. The lockfile gains no crate: wasm-bindgen, wasm-bindgen-futures, js-sys, web-sys and web-time are already in it through winit, wgpu and egui; `re_web` takes them as direct dependencies (DEPENDENCIES.md rows through the maintainer).
+- The spike's runner module was 3.96 MB gzipped without `re_app` and `re_compat`. PR "runtime" records the full runtime's size; the plan's budget is 8 MB gzipped for the web runtime, checked in CI as a reported number in M3.
+
 ## ADR-0050: Online play: our own reliable UDP in `re_net`, client-owned characters, and a lockstep check over loopback
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP30). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: a two-process spike of the transport below over loopback with seeded loss and delay, a probe of quinn's dependency graph, and a measurement of the plaza's replication traffic, all on 2026-10-15 in the reference container (`research/m3/wp30/measurements.md`, `research/m3/wp30/spike/`). quinn 0.11.12 and quinn-proto 0.11.19 were checked on crates.io the same day.
@@ -2391,7 +2503,7 @@ WP30 has to put a real transport under that seam, so the same game runs as one s
 **8. Scope in M3.**
 - **In M3:** compat (Roblox-style) projects over UDP, with dedicated, listen and client runs, on the three desktop platforms.
 - **Not in M3:** encryption and authentication; NAT traversal, relays, matchmaking and server lists (players connect to an address); client-side prediction and lag compensation beyond what network ownership gives; interest management (every client gets every replicated container; `StreamingEnabled` stays a stored property); and a **native networking API** for the engine's own `game` scripts. Native scripts have no server and client contexts, and designing them is its own ADR; `re_net`'s Rust API is public and documented, so a Rust game can use the transport directly in the meantime.
-- **Conditional, PR "web":** a WebSocket transport for the browser client and a WebSocket listener on the native server, if WP29's ADR-0049 puts online play in the browser build in M3. It would add one dependency (a WebSocket crate that needs no async runtime, chosen in that PR's ADR amendment), and nothing in §2 to §7 changes.
+- **PR "web"** (in M3: ADR-0049 §10 put online play in the browser build): a WebSocket transport for the browser client and a WebSocket listener on the native server. It would add one dependency (a WebSocket crate that needs no async runtime, chosen in that PR's ADR amendment), and nothing in §2 to §7 changes.
 
 **Consequences.**
 - A Roblox-style game in M3 can be played by several people on different machines, with the server authoritative for everything but each player's own character, as on the vendor's platform, and with the same scripts as a single-process play test.
