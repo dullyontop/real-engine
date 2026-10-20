@@ -271,6 +271,28 @@
           "default": false,
           "status": "implemented",
           "doc": "When true, the UI also covers the top bar inset; otherwise it starts below it."
+        },
+        {
+          "name": "ScreenInsets",
+          "type": "Enum.ScreenInsets",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "CoreUISafeInsets",
+          "status": "partial",
+          "note": "None draws under the top bar like IgnoreGuiInset; the other insets all start below the top bar (no device notches or side insets).",
+          "doc": "Which screen insets the UI keeps clear of."
+        },
+        {
+          "name": "ClipToDeviceSafeArea",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "partial",
+          "note": "Stored; the window has no unsafe area to clip.",
+          "doc": "When true, the UI is clipped to the device's safe area."
         }
       ]
     },

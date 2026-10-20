@@ -917,3 +917,28 @@ fn root_scale_grid_aspect_and_focus_order() {
     assert!(out.text_focus.is_none());
     assert_eq!(u.eval("print(S.b:IsFocused())"), ["false"]);
 }
+
+#[test]
+fn screen_insets_none_draws_under_the_top_bar() {
+    let mut u = ui();
+    u.run(
+        r#"
+        local sg = Instance.new("ScreenGui")
+        sg.Parent = S.pg
+        S.sg = sg
+        print(sg.ScreenInsets, sg.ClipToDeviceSafeArea)
+        "#,
+    );
+    assert_eq!(u.place.out(), ["Enum.ScreenInsets.CoreUISafeInsets\ttrue"]);
+    u.frame();
+    assert_eq!(u.v2("S.sg.AbsoluteSize"), "800,564");
+    u.run("S.sg.ScreenInsets = Enum.ScreenInsets.None");
+    u.frame();
+    assert_eq!(u.v2("S.sg.AbsoluteSize"), "800,600");
+    assert_eq!(u.v2("S.sg.AbsolutePosition"), "0,-36");
+    u.run(
+        "S.sg.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets S.sg.ClipToDeviceSafeArea = false",
+    );
+    u.frame();
+    assert_eq!(u.v2("S.sg.AbsoluteSize"), "800,564");
+}
