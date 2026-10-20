@@ -24,6 +24,7 @@ re_render = { path = "crates/re_render" }
 re_physics = { path = "crates/re_physics" }
 re_assets = { path = "crates/re_assets" }
 re_input = { path = "crates/re_input" }
+re_net = { path = "crates/re_net" }
 re_audio = { path = "crates/re_audio" }
 re_anim = { path = "crates/re_anim" }
 re_geom = { path = "crates/re_geom" }

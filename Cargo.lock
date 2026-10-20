@@ -3574,6 +3574,7 @@ dependencies = [
  "re_import",
  "re_input",
  "re_mcp",
+ "re_net",
  "re_physics",
  "re_proc",
  "re_reflect",
@@ -3727,6 +3728,13 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "re_net"
+version = "0.1.0"
+dependencies = [
+ "re_core",
 ]
 
 [[package]]
