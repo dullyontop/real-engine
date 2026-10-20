@@ -262,7 +262,7 @@ impl Audio {
             Err(e) => {
                 return Err(Diagnostic::error(
                     codes::CLIP_DECODE_FAILED,
-                    format!("cannot decode audio clip `{name}`: {e}"),
+                    format!("cannot read audio clip `{name}`: {e}"),
                 )
                 .at(Location::file(name)));
             }
