@@ -314,15 +314,35 @@ pub async fn serve_http_async(
 pub fn stdin_is_a_pipe() -> bool {
     #[cfg(unix)]
     {
+        use std::os::fd::AsFd;
         use std::os::unix::fs::FileTypeExt;
-        std::fs::metadata("/dev/stdin")
+        // fstat on a duplicate of fd 0, so no `/dev/stdin` is needed.
+        std::io::stdin()
+            .as_fd()
+            .try_clone_to_owned()
+            .and_then(|fd| std::fs::File::from(fd).metadata())
             .map(|m| m.file_type().is_fifo() || m.file_type().is_socket())
             .unwrap_or(false)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        use std::io::IsTerminal;
-        !std::io::stdin().is_terminal()
+        use std::os::windows::io::AsRawHandle;
+        const FILE_TYPE_PIPE: u32 = 0x0003;
+        // kernel32 is always linked on Windows; this saves a dependency.
+        unsafe extern "system" {
+            fn GetFileType(file: *mut std::ffi::c_void) -> u32;
+        }
+        let handle = std::io::stdin().as_raw_handle();
+        if handle.is_null() {
+            return false;
+        }
+        // SAFETY: GetFileType only reads the handle's type; an invalid
+        // handle gives FILE_TYPE_UNKNOWN.
+        unsafe { GetFileType(handle.cast()) == FILE_TYPE_PIPE }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
     }
 }
 
