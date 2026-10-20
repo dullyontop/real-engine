@@ -172,6 +172,9 @@
               },
               "Tags": {
                 "$ref": "#/$defs/Tags"
+              },
+              "SkinnedMesh": {
+                "$ref": "#/$defs/SkinnedMesh"
               }
             },
             "additionalProperties": false
@@ -752,6 +755,18 @@
           },
           "default": [],
           "description": "The tags, each at most once, in the order they were added."
+        }
+      },
+      "additionalProperties": false
+    },
+    "SkinnedMesh": {
+      "type": "object",
+      "description": "A skinned mesh from a glTF asset, posed by its skeleton (ADR-0039).\n\nThe skeleton starts at its rest pose; an [`AnimPlayer`] on the same\nentity plays a clip onto its joints, matched by joint name. Joints are\nnot entities.",
+      "properties": {
+        "asset": {
+          "type": "string",
+          "default": "",
+          "description": "`<model asset path>#<skin name>`, e.g. `assets/models/hero.glb#Armature`;\nthe skin name is `SkinData.name` (the glTF skin name, or `skin_<index>`)."
         }
       },
       "additionalProperties": false
