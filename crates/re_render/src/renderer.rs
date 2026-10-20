@@ -5,12 +5,12 @@ use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
 use std::num::NonZeroU64;
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use re_core::Diagnostic;
 use re_types::mesh::{Aabb, MeshData};
 use re_types::render::{
-    AlphaMode, DrawFlags, MaterialDesc, MaterialHandle, MeshHandle, RenderSnapshot, TextureData,
-    TextureFormat, TextureHandle, TextureRef,
+    AlphaMode, DrawFlags, MaterialDesc, MaterialHandle, MeshHandle, QuadDepth, RenderSnapshot,
+    TextureData, TextureFormat, TextureHandle, TextureRef,
 };
 
 use crate::extras::{self, EffectVertex, MAX_HIGHLIGHTS, SceneExtras};
@@ -18,18 +18,16 @@ use crate::frame::{
     self, FrameUniform, InstanceRaw, LineVertex, MaterialUniform, PointLightRaw, SpotLightRaw,
 };
 use crate::gpu::Gpu;
+use crate::post::{DEPTH_FORMAT, HDR_FORMAT, PostChain, PostFrame};
 use crate::slots::Slots;
 use crate::ui::{UiFrame, UiPainter};
 use crate::{codes, shader};
 
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
 /// The width of a highlight's outline, in pixels.
 const OUTLINE_PX: f32 = 2.0;
 const MSAA_SAMPLES: u32 = 4;
-/// Render-target sets kept for different target sizes and formats.
-const TARGET_CACHE: usize = 4;
 
 /// True for formats that store gamma-encoded colour without hardware sRGB
 /// conversion: shaders encode by hand when drawing into them.
@@ -42,14 +40,10 @@ pub(crate) fn stores_gamma(format: wgpu::TextureFormat) -> bool {
     )
 }
 
-/// Renderer options that are not part of a [`RenderSnapshot`].
+/// Renderer options that are not part of a [`RenderSnapshot`] (exposure and the
+/// post chain are, in [`RenderSnapshot::post`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct RendererSettings {
-    /// Multiplies every light, the ambient terms and emissive colour. Light units
-    /// are lux for directional lights and lumens for point lights; at exposure 1,
-    /// an illuminance of 1 lux makes a white diffuse surface white. For a
-    /// physically sized sun (around 100,000 lux), use an exposure around 1e-5.
-    pub exposure: f32,
     /// Ambient light from above, linear RGB (same units as a directional light).
     pub ambient_sky: [f32; 3],
     /// Ambient light from below, linear RGB.
@@ -65,7 +59,6 @@ pub struct RendererSettings {
 impl Default for RendererSettings {
     fn default() -> Self {
         RendererSettings {
-            exposure: 1.0,
             ambient_sky: [0.16, 0.19, 0.24],
             ambient_ground: [0.08, 0.07, 0.06],
             shadow_map_size: 2048,
@@ -109,6 +102,10 @@ pub struct FrameStats {
     pub highlights: u32,
     /// MSAA sample count of the scene pass.
     pub samples: u32,
+    /// World quads drawn.
+    pub world_quads: u32,
+    /// Passes of the post chain, the final one included.
+    pub post_passes: u32,
 }
 
 /// The result of [`Renderer::render`]: what was drawn and the warnings.
@@ -160,13 +157,15 @@ impl GpuMaterial {
     }
 }
 
-/// Pipelines for one (target format, sample count).
-struct FormatPipelines {
+/// Scene pipelines for one sample count (they draw into the HDR target).
+struct ScenePipelines {
     /// Indexed by `double_sided | blend << 1`.
     forward: [wgpu::RenderPipeline; 4],
     lines: wgpu::RenderPipeline,
     effects: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
+    /// Depth-tested world quads.
+    quads: wgpu::RenderPipeline,
 }
 
 /// The highlight mask's targets for one size.
@@ -185,9 +184,12 @@ struct HighlightUniform {
     params: [f32; 4],
 }
 
-struct FrameTargets {
-    depth: wgpu::TextureView,
-    msaa: Option<wgpu::TextureView>,
+/// `struct Quad` in quad.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct QuadUniform {
+    world: [[f32; 4]; 4],
+    params: [f32; 4],
 }
 
 struct ShadowMap {
@@ -201,7 +203,9 @@ struct Layouts {
     shadow_frame: wgpu::BindGroupLayout,
     material: wgpu::BindGroupLayout,
     highlight: wgpu::BindGroupLayout,
+    quad: wgpu::BindGroupLayout,
     forward: wgpu::PipelineLayout,
+    quad_pipeline: wgpu::PipelineLayout,
     shadow: wgpu::PipelineLayout,
     frame_only: wgpu::PipelineLayout,
     highlight_pipeline: wgpu::PipelineLayout,
@@ -284,22 +288,27 @@ pub struct Renderer {
     effects_shader: wgpu::ShaderModule,
     sky_shader: wgpu::ShaderModule,
     highlight_shader: wgpu::ShaderModule,
+    quad_shader: wgpu::ShaderModule,
     shadow_pipeline: wgpu::RenderPipeline,
     /// The depth-only pass and the numbering mask pipelines.
     mask_pipelines: [wgpu::RenderPipeline; 2],
     highlight_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     mask_targets: Option<MaskTargets>,
     highlight_buffer: wgpu::Buffer,
-    pipelines: HashMap<(wgpu::TextureFormat, u32), FormatPipelines>,
-    targets: HashMap<(u32, u32, wgpu::TextureFormat, u32), FrameTargets>,
+    pipelines: HashMap<u32, ScenePipelines>,
+    /// On-top world quads, by output format.
+    top_quad_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    post: PostChain,
     frame_buffer: wgpu::Buffer,
     shadow_sampler: wgpu::Sampler,
     material_sampler: wgpu::Sampler,
+    quad_sampler: wgpu::Sampler,
     shadow: ShadowMap,
     instances: GrowBuffer,
     lines: GrowBuffer,
     effect_vertices: GrowBuffer,
     effect_indices: GrowBuffer,
+    quad_uniforms: GrowBuffer,
     defaults: Defaults,
     meshes: Slots<GpuMesh>,
     textures: Slots<GpuTexture>,
@@ -491,12 +500,41 @@ fn create_layouts(device: &wgpu::Device) -> Layouts {
         bind_group_layouts: &[Some(&highlight)],
         immediate_size: 0,
     });
+    let quad = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("re_render quad"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: both,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: NonZeroU64::new(size_of::<QuadUniform>() as u64),
+                },
+                count: None,
+            },
+            texture_entry(1),
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let quad_pipeline = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("re_render quad"),
+        bind_group_layouts: &[Some(&frame), Some(&quad)],
+        immediate_size: 0,
+    });
     Layouts {
         frame,
         shadow_frame,
         material,
         highlight,
+        quad,
         forward,
+        quad_pipeline,
         shadow,
         frame_only,
         highlight_pipeline,
@@ -714,6 +752,12 @@ impl Renderer {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
+        let quad_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("re_render quad"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         let material_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("re_render material"),
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -767,6 +811,11 @@ impl Renderer {
                 "re_render effect indices",
                 wgpu::BufferUsages::INDEX,
             ),
+            quad_uniforms: GrowBuffer::new(&device, "re_render quads", wgpu::BufferUsages::UNIFORM),
+            quad_shader: shader::module(&device, "quad.wgsl"),
+            post: PostChain::new(&device),
+            top_quad_pipelines: HashMap::new(),
+            quad_sampler,
             effects_shader: shader::module(&device, "effects.wgsl"),
             sky_shader: shader::module(&device, "sky.wgsl"),
             highlight_shader: shader::module(&device, "highlight.wgsl"),
@@ -784,7 +833,6 @@ impl Renderer {
             lines_shader,
             shadow_pipeline,
             pipelines: HashMap::new(),
-            targets: HashMap::new(),
             frame_buffer,
             shadow_sampler,
             material_sampler,
@@ -795,8 +843,10 @@ impl Renderer {
             materials: Slots::default(),
             last_frame: FrameStats::default(),
         };
-        let samples = renderer.sample_count(format);
-        renderer.pipelines_for(format, samples);
+        let samples = renderer.sample_count();
+        renderer.pipelines_for(samples);
+        // The final pass for `format` is created with the first frame.
+        let _ = format;
         renderer
     }
 
@@ -858,30 +908,30 @@ impl Renderer {
         }
     }
 
-    fn sample_count(&self, format: wgpu::TextureFormat) -> u32 {
+    fn sample_count(&self) -> u32 {
         let supports = |f: wgpu::TextureFormat| {
             self.adapter
                 .get_texture_format_features(f)
                 .flags
                 .sample_count_supported(MSAA_SAMPLES)
         };
-        if self.settings.msaa && supports(format) && supports(DEPTH_FORMAT) {
+        if self.settings.msaa && supports(HDR_FORMAT) && supports(DEPTH_FORMAT) {
             MSAA_SAMPLES
         } else {
             1
         }
     }
 
-    fn pipelines_for(&mut self, format: wgpu::TextureFormat, samples: u32) -> &FormatPipelines {
-        if !self.pipelines.contains_key(&(format, samples)) {
-            let pipelines = self.create_pipelines(format, samples);
-            self.pipelines.insert((format, samples), pipelines);
+    fn pipelines_for(&mut self, samples: u32) -> &ScenePipelines {
+        if !self.pipelines.contains_key(&samples) {
+            let pipelines = self.create_pipelines(samples);
+            self.pipelines.insert(samples, pipelines);
         }
-        &self.pipelines[&(format, samples)]
+        &self.pipelines[&samples]
     }
 
-    fn create_pipelines(&self, format: wgpu::TextureFormat, samples: u32) -> FormatPipelines {
-        let gamma = stores_gamma(format);
+    fn create_pipelines(&self, samples: u32) -> ScenePipelines {
+        let format = HDR_FORMAT;
         let multisample = wgpu::MultisampleState {
             count: samples,
             ..Default::default()
@@ -917,11 +967,7 @@ impl Renderer {
                     multisample,
                     fragment: Some(wgpu::FragmentState {
                         module: &self.forward_shader,
-                        entry_point: Some(if gamma {
-                            "fs_forward_gamma"
-                        } else {
-                            "fs_forward_linear"
-                        }),
+                        entry_point: Some("fs_forward"),
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                         targets: &[Some(wgpu::ColorTargetState {
                             format,
@@ -965,11 +1011,7 @@ impl Renderer {
                 multisample,
                 fragment: Some(wgpu::FragmentState {
                     module: &self.lines_shader,
-                    entry_point: Some(if gamma {
-                        "fs_line_gamma"
-                    } else {
-                        "fs_line_linear"
-                    }),
+                    entry_point: Some("fs_line"),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
@@ -1002,11 +1044,7 @@ impl Renderer {
                 multisample,
                 fragment: Some(wgpu::FragmentState {
                     module: &self.effects_shader,
-                    entry_point: Some(if gamma {
-                        "fs_effect_gamma"
-                    } else {
-                        "fs_effect_linear"
-                    }),
+                    entry_point: Some("fs_effect"),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
@@ -1039,11 +1077,7 @@ impl Renderer {
                 multisample,
                 fragment: Some(wgpu::FragmentState {
                     module: &self.sky_shader,
-                    entry_point: Some(if gamma {
-                        "fs_sky_gamma"
-                    } else {
-                        "fs_sky_linear"
-                    }),
+                    entry_point: Some("fs_sky"),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
@@ -1054,7 +1088,7 @@ impl Renderer {
                 multiview_mask: None,
                 cache: None,
             });
-        FormatPipelines {
+        ScenePipelines {
             forward: [
                 forward(false, false),
                 forward(true, false),
@@ -1064,7 +1098,57 @@ impl Renderer {
             lines,
             effects,
             sky,
+            quads: self.quad_pipeline(format, samples, true),
         }
+    }
+
+    /// World quads into the HDR scene (`tested`, with the depth test) or over
+    /// the finished image in `format`.
+    fn quad_pipeline(
+        &self,
+        format: wgpu::TextureFormat,
+        samples: u32,
+        tested: bool,
+    ) -> wgpu::RenderPipeline {
+        self.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("re_render quad"),
+                layout: Some(&self.layouts.quad_pipeline),
+                vertex: wgpu::VertexState {
+                    module: &self.quad_shader,
+                    entry_point: Some("vs_quad"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: tested.then_some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: samples,
+                    ..Default::default()
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.quad_shader,
+                    entry_point: Some(if stores_gamma(format) {
+                        "fs_quad_gamma"
+                    } else {
+                        "fs_quad_linear"
+                    }),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
     }
 
     fn highlight_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
@@ -1158,45 +1242,6 @@ impl Renderer {
             });
         }
         self.mask_targets.as_ref().expect("created above")
-    }
-
-    fn frame_targets(
-        &mut self,
-        width: u32,
-        height: u32,
-        format: wgpu::TextureFormat,
-        samples: u32,
-    ) -> &FrameTargets {
-        let key = (width, height, format, samples);
-        if !self.targets.contains_key(&key) {
-            if self.targets.len() >= TARGET_CACHE {
-                self.targets.clear();
-            }
-            let make = |label: &str, format: wgpu::TextureFormat| {
-                self.device
-                    .create_texture(&wgpu::TextureDescriptor {
-                        label: Some(label),
-                        size: wgpu::Extent3d {
-                            width,
-                            height,
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: samples,
-                        dimension: wgpu::TextureDimension::D2,
-                        format,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                        view_formats: &[],
-                    })
-                    .create_view(&wgpu::TextureViewDescriptor::default())
-            };
-            let targets = FrameTargets {
-                depth: make("re_render depth", DEPTH_FORMAT),
-                msaa: (samples > 1).then(|| make("re_render msaa colour", format)),
-            };
-            self.targets.insert(key, targets);
-        }
-        &self.targets[&key]
     }
 
     // ----- Resources -----------------------------------------------------------
@@ -1371,6 +1416,22 @@ impl Renderer {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (index, generation) = self.textures.insert(GpuTexture { view, bytes });
         Ok(TextureHandle::new(index, generation))
+    }
+
+    /// A texture handle that samples `capture`, for a material or a
+    /// [`WorldQuad`](re_types::render::WorldQuad) (a GUI painted with
+    /// [`Renderer::paint_ui`] shown on a surface in the world, say).
+    ///
+    /// The handle reads the capture's current contents each frame. Release it
+    /// with [`Renderer::release_texture`] before dropping the capture; its
+    /// memory belongs to the capture, so it counts no bytes in [`RenderStats`].
+    /// A frame must not draw a capture into itself.
+    pub fn capture_texture(&mut self, capture: &crate::Capture) -> TextureHandle {
+        let (index, generation) = self.textures.insert(GpuTexture {
+            view: capture.view().clone(),
+            bytes: 0,
+        });
+        TextureHandle::new(index, generation)
     }
 
     fn texture_view(
@@ -1555,6 +1616,11 @@ impl Renderer {
 
     /// Draws `snapshot` into `target`, clearing it first with `snapshot.clear`.
     ///
+    /// The scene is drawn in linear HDR colour into the renderer's own
+    /// `Rgba16Float` target, then the post chain of `snapshot.post` (sun rays,
+    /// bloom, blur, colour grading, tone mapping) writes the result into
+    /// `target`; on-top world quads and highlights follow, in display colours.
+    ///
     /// `target` must be a view of a single-sample 2D texture with
     /// `RENDER_ATTACHMENT` usage in a colour format the adapter can render to.
     /// sRGB formats store the linear result with hardware encoding; `Rgba8Unorm`,
@@ -1603,7 +1669,7 @@ impl Renderer {
                 self.settings.shadow_map_size.max(1),
             );
         }
-        let samples = self.sample_count(format);
+        let samples = self.sample_count();
         let mut report = FrameReport::default();
         report.stats.samples = samples;
 
@@ -1682,7 +1748,7 @@ impl Renderer {
                 let depth = world_box
                     .map_or(item.world.w_axis.truncate(), |b| b.center())
                     .distance_squared(camera_pos);
-                blended.push((depth, i, key));
+                blended.push((depth, 0u8, i, key));
             } else {
                 opaque.push((key, i));
             }
@@ -1693,9 +1759,61 @@ impl Renderer {
                 casters.push((item.mesh.index, i));
             }
         }
+        // World quads: depth-tested ones are sorted with the blended items.
+        let mut quad_uniforms: Vec<QuadUniform> = Vec::new();
+        let mut quad_textures: Vec<wgpu::TextureView> = Vec::new();
+        let mut top_quads: Vec<usize> = Vec::new();
+        for q in &snapshot.quads {
+            let Some(texture) = self.textures.get(q.texture.index, q.texture.generation) else {
+                report.stats.items_skipped += 1;
+                if reported.insert((2, q.texture.index, q.texture.generation)) {
+                    report.warnings.push(stale_item(
+                        codes::STALE_TEXTURE,
+                        "texture",
+                        q.texture.index,
+                        q.texture.generation,
+                        q.entity.0,
+                    ));
+                }
+                continue;
+            };
+            let bias = match q.depth {
+                QuadDepth::Tested { bias } => Some(bias),
+                QuadDepth::OnTop => None,
+            };
+            let values = [q.light_influence, q.brightness, bias.unwrap_or(0.0)];
+            if !q.world.is_finite() || !q.size.is_finite() || values.iter().any(|v| !v.is_finite())
+            {
+                continue;
+            }
+            let center = q.world.w_axis.truncate();
+            let towards_camera = (camera_pos - center).normalize_or_zero() * bias.unwrap_or(0.0);
+            let world = Mat4::from_translation(towards_camera)
+                * q.world
+                * Mat4::from_scale(q.size.extend(1.0));
+            let n = quad_uniforms.len();
+            quad_uniforms.push(QuadUniform {
+                world: world.to_cols_array_2d(),
+                params: [
+                    q.light_influence,
+                    q.brightness,
+                    f32::from(u8::from(bias.is_some())),
+                    0.0,
+                ],
+            });
+            quad_textures.push(texture.view.clone());
+            if bias.is_some() {
+                let depth = (center + towards_camera).distance_squared(camera_pos);
+                blended.push((depth, 1u8, n, (0, 0, 0)));
+            } else {
+                top_quads.push(n);
+            }
+        }
+        report.stats.world_quads = quad_uniforms.len() as u32;
+
         // Batch by pipeline, material and mesh; draw blended items back to front.
         opaque.sort_by_key(|&(key, i)| (key, i));
-        blended.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        blended.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
         casters.sort_unstable();
 
         let mut instances: Vec<InstanceRaw> =
@@ -1703,13 +1821,21 @@ impl Renderer {
         let mut batches: Vec<Batch> = Vec::new();
         let opaque_count = opaque.len();
         let mut opaque_batches = 0;
+        // Depth-tested quads, each with the batch it is drawn before.
+        let mut tested_quads: Vec<(usize, usize)> = Vec::new();
         let ordered = opaque
             .iter()
-            .map(|&(key, i)| (key, i))
-            .chain(blended.iter().map(|&(_, i, key)| (key, i)));
-        for (n, (key, i)) in ordered.enumerate() {
+            .map(|&(key, i)| (0, key, i))
+            .chain(blended.iter().map(|&(_, kind, i, key)| (kind, key, i)));
+        let mut split = false;
+        for (n, (kind, key, i)) in ordered.enumerate() {
             if n == opaque_count {
                 opaque_batches = batches.len();
+            }
+            if kind == 1 {
+                tested_quads.push((batches.len(), i));
+                split = true;
+                continue;
             }
             let item = &snapshot.items[i];
             instances.push(InstanceRaw::new(
@@ -1720,7 +1846,9 @@ impl Renderer {
             let material = (item.material.index, item.material.generation);
             let mesh = (item.mesh.index, item.mesh.generation);
             match batches.last_mut() {
-                Some(b) if b.variant == key.0 && b.material == material && b.mesh == mesh => {
+                Some(b)
+                    if !split && b.variant == key.0 && b.material == material && b.mesh == mesh =>
+                {
                     b.instances += 1
                 }
                 _ => batches.push(Batch {
@@ -1731,6 +1859,7 @@ impl Renderer {
                     instances: 1,
                 }),
             }
+            split = false;
         }
         if opaque_count == instances.len() {
             opaque_batches = batches.len();
@@ -1777,7 +1906,10 @@ impl Renderer {
         }
 
         // Lights and the shadow fit.
-        let lights = frame::select_lights(&snapshot.lights, camera_pos, self.settings.exposure);
+        let exposure = Some(snapshot.post.exposure)
+            .filter(|e| e.is_finite() && *e >= 0.0)
+            .unwrap_or(1.0);
+        let lights = frame::select_lights(&snapshot.lights, camera_pos, exposure);
         report.warnings.extend(lights.warnings);
         report.stats.point_lights = lights.points.len() as u32;
         let shadow_fit = match (lights.sun, scene_bounds, caster_bounds) {
@@ -1792,7 +1924,6 @@ impl Renderer {
             )),
             _ => None,
         };
-        let exposure = self.settings.exposure;
         let mut points = [PointLightRaw::default(); frame::MAX_POINT_LIGHTS];
         points[..lights.points.len()].copy_from_slice(&lights.points);
         let spot_list = frame::select_spots(
@@ -1811,12 +1942,6 @@ impl Renderer {
         let fog = extras.fog.filter(|f| {
             f.start.is_finite() && f.end.is_finite() && f.color.iter().all(|c| c.is_finite())
         });
-        let grading = extras.grading.filter(|g| {
-            [g.brightness, g.contrast, g.saturation]
-                .iter()
-                .chain(&g.tint)
-                .all(|v| v.is_finite())
-        });
         let sky = extras.sky;
         let sky_sun = sky.and_then(|s| s.sun).filter(|(d, c)| {
             d.is_finite() && d.length_squared() > 1e-12 && c.iter().all(|v| v.is_finite())
@@ -1830,8 +1955,6 @@ impl Renderer {
                 spot_list.len() as f32,
                 0.0,
             ],
-            grading: grading.map_or([0.0; 4], |g| [g.brightness, g.contrast, g.saturation, 1.0]),
-            tint: grading.map_or([1.0; 4], |g| frame::rgb_w(g.tint, 0.0)),
             sky_zenith: sky.map_or([0.0; 4], |s| frame::rgb_w(s.zenith, 1.0)),
             sky_horizon: sky.map_or([0.0; 4], |s| frame::rgb_w(s.horizon, 0.0)),
             sky_ground: sky.map_or([0.0; 4], |s| frame::rgb_w(s.ground, 0.0)),
@@ -1954,22 +2077,55 @@ impl Renderer {
             }
         }
 
-        self.pipelines_for(format, samples);
-        self.frame_targets(width, height, format, samples);
-        let pipelines = &self.pipelines[&(format, samples)];
-        let targets = &self.targets[&(width, height, format, samples)];
-        // The clear colour is linear; a gamma target stores it encoded.
-        let mut clear = snapshot.clear.map(|c| if c.is_finite() { c } else { 0.0 });
-        if stores_gamma(format) {
-            for c in &mut clear[..3] {
-                *c = f32::from(crate::capture::linear_to_srgb_u8(*c)) / 255.0;
-            }
+        // One uniform slot and bind group per world quad.
+        let quad_slot = (size_of::<QuadUniform>() as u64).next_multiple_of(u64::from(
+            device.limits().min_uniform_buffer_offset_alignment,
+        ));
+        let mut quad_bytes = vec![0u8; quad_slot as usize * quad_uniforms.len()];
+        for (n, u) in quad_uniforms.iter().enumerate() {
+            let at = n * quad_slot as usize;
+            quad_bytes[at..at + size_of::<QuadUniform>()].copy_from_slice(bytemuck::bytes_of(u));
         }
-        let [r, g, b, a] = clear.map(f64::from);
+        self.quad_uniforms.write(device, queue, &quad_bytes);
+        let quad_groups: Vec<wgpu::BindGroup> = quad_textures
+            .iter()
+            .map(|view| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("re_render quad"),
+                    layout: &self.layouts.quad,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &self.quad_uniforms.buffer,
+                                offset: 0,
+                                size: NonZeroU64::new(size_of::<QuadUniform>() as u64),
+                            }),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&self.quad_sampler),
+                        },
+                    ],
+                })
+            })
+            .collect();
+        let quad_offset = |n: usize| [(n as u64 * quad_slot) as u32];
+
+        self.pipelines_for(samples);
+        self.post.targets(device, (width, height), samples);
+        let pipelines = &self.pipelines[&samples];
+        let targets = self.post.targets(device, (width, height), samples);
+        // The HDR target is cleared to transparent black; the post chain puts
+        // the clear colour behind it, where nothing covers it.
         {
             let (view, resolve_target) = match &targets.msaa {
-                Some(msaa) => (msaa, Some(target)),
-                None => (target, None),
+                Some(msaa) => (msaa, Some(&targets.scene)),
+                None => (&targets.scene, None),
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("re_render scene"),
@@ -1978,7 +2134,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: if resolve_target.is_some() {
                             wgpu::StoreOp::Discard
                         } else {
@@ -2005,7 +2161,23 @@ impl Renderer {
             }
             // The pipeline, material and mesh currently bound.
             let mut current: (Option<usize>, Option<Slot>, Option<Slot>) = (None, None, None);
-            for batch in &batches {
+            // Draws the depth-tested quads that come before batch `before`;
+            // true if it drew any.
+            let mut next_quad = 0;
+            let mut draw_quads = |pass: &mut wgpu::RenderPass<'_>, before: usize| {
+                let first = next_quad;
+                while let Some(&(_, n)) = tested_quads.get(next_quad).filter(|q| q.0 <= before) {
+                    pass.set_pipeline(&pipelines.quads);
+                    pass.set_bind_group(1, &quad_groups[n], &quad_offset(n));
+                    pass.draw(0..6, 0..1);
+                    next_quad += 1;
+                }
+                next_quad > first
+            };
+            for (b, batch) in batches.iter().enumerate() {
+                if draw_quads(&mut pass, b) {
+                    current = (None, None, None);
+                }
                 if current.0 != Some(batch.variant) {
                     pass.set_pipeline(&pipelines.forward[batch.variant]);
                     current.0 = Some(batch.variant);
@@ -2039,6 +2211,7 @@ impl Renderer {
                 report.stats.triangles +=
                     u64::from(mesh.index_count / 3) * u64::from(batch.instances);
             }
+            draw_quads(&mut pass, usize::MAX);
             if quads > 0 {
                 pass.set_pipeline(&pipelines.effects);
                 pass.set_vertex_buffer(
@@ -2065,6 +2238,31 @@ impl Renderer {
                 pass.draw(0..line_vertices.len() as u32, 0..1);
             }
         }
+
+        // The sun's place on screen, for sun rays: the sky's sun disc, else the
+        // sun light.
+        let to_sun = sky_sun
+            .map(|(d, _)| d.normalize())
+            .or(lights.sun.map(|s| -s.direction));
+        let sun_uv = to_sun.and_then(|d| {
+            let clip = view_proj * Vec4::from((d, 0.0));
+            (clip.w > 1e-6).then(|| {
+                let ndc = clip.truncate().truncate() / clip.w;
+                Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5)
+            })
+        });
+        report.stats.post_passes = self.post.record(
+            device,
+            queue,
+            &mut encoder,
+            &snapshot.post,
+            PostFrame {
+                sun_uv,
+                clear: sky.is_none().then_some(snapshot.clear),
+            },
+            target,
+        );
+
         if !highlight_batches.is_empty() {
             report.stats.highlights = drawn_highlights.len() as u32;
             self.draw_highlights(
@@ -2077,6 +2275,34 @@ impl Renderer {
                 &highlight_batches,
                 drawn_highlights,
             );
+        }
+        if !top_quads.is_empty() {
+            if !self.top_quad_pipelines.contains_key(&format) {
+                let pipeline = self.quad_pipeline(format, 1, false);
+                self.top_quad_pipelines.insert(format, pipeline);
+            }
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("re_render quads on top"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.top_quad_pipelines[&format]);
+            pass.set_bind_group(0, &self.shadow.frame_bind_group, &[]);
+            for &n in &top_quads {
+                pass.set_bind_group(1, &quad_groups[n], &quad_offset(n));
+                pass.draw(0..6, 0..1);
+            }
         }
         queue.submit([encoder.finish()]);
         self.last_frame = report.stats;

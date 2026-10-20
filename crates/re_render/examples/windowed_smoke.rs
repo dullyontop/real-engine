@@ -220,6 +220,7 @@ impl App {
             ],
             debug_lines: Vec::new(),
             clear: [0.02, 0.03, 0.06, 1.0],
+            ..RenderSnapshot::default()
         }
     }
 

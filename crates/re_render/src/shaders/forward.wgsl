@@ -1,12 +1,9 @@
 // Forward PBR-lite pass: base colour, texture, metallic and roughness, a normal
 // map, one shadowed sun, up to eight point and eight spot lights, hemisphere
-// ambient, emissive, distance fog and colour correction.
+// ambient, emissive and distance fog, written as linear HDR colour.
 #include "common.wgsl"
+#include "lighting.wgsl"
 #include "fx.wgsl"
-
-@group(0) @binding(0) var<uniform> frame: Frame;
-@group(0) @binding(1) var shadow_map: texture_depth_2d;
-@group(0) @binding(2) var shadow_sampler: sampler_comparison;
 
 // Must match `MaterialUniform` in src/renderer.rs.
 struct Material {
@@ -99,31 +96,6 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, n_dot_v: f32) -> vec3<f32> {
     return f0 * ab.x + ab.y;
 }
 
-fn hemisphere(dir: vec3<f32>) -> vec3<f32> {
-    return mix(frame.ambient_ground.rgb, frame.ambient_sky.rgb, clamp(dir.y * 0.5 + 0.5, 0.0, 1.0));
-}
-
-fn sun_visibility(world_pos: vec3<f32>, n: vec3<f32>, receives: f32) -> f32 {
-    if (frame.sun_color.w < 0.5 || receives < 0.5) {
-        return 1.0;
-    }
-    let p = frame.light_view_proj * vec4<f32>(world_pos + n * frame.params.y, 1.0);
-    let ndc = p.xyz / p.w;
-    let uv = ndc.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
-    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z > 1.0 || ndc.z < 0.0) {
-        return 1.0;
-    }
-    let texel = frame.params.x;
-    var lit = 0.0;
-    for (var y = -1; y <= 1; y++) {
-        for (var x = -1; x <= 1; x++) {
-            let offset = vec2<f32>(f32(x), f32(y)) * texel;
-            lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, ndc.z);
-        }
-    }
-    return lit / 9.0;
-}
-
 fn shade(in: VsOut, front_facing: bool) -> vec4<f32> {
     // Samples and derivatives first, while control flow is uniform.
     let base_sample = textureSample(base_texture, material_sampler, in.uv);
@@ -141,7 +113,7 @@ fn shade(in: VsOut, front_facing: bool) -> vec4<f32> {
     let alpha = select(1.0, base.a, material.flags.z > 0.5);
     if (material.params.w > 0.5) {
         let unlit = mix(base.rgb, frame.fog_color.rgb, fog_amount(distance(frame.camera_pos.xyz, in.world_pos)));
-        return vec4<f32>(grade(unlit), alpha);
+        return vec4<f32>(unlit, alpha);
     }
 
     var n = normalize(in.normal);
@@ -207,16 +179,10 @@ fn shade(in: VsOut, front_facing: bool) -> vec4<f32> {
         color = mix(color, vec3<f32>(1.0, 0.55, 0.1), 0.35);
     }
     color = mix(color, frame.fog_color.rgb, fog_amount(distance(frame.camera_pos.xyz, in.world_pos)));
-    return vec4<f32>(grade(color), alpha);
+    return vec4<f32>(color, alpha);
 }
 
 @fragment
-fn fs_forward_linear(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+fn fs_forward(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     return shade(in, front_facing);
-}
-
-@fragment
-fn fs_forward_gamma(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
-    let c = shade(in, front_facing);
-    return vec4<f32>(srgb_from_linear(c.rgb), c.a);
 }

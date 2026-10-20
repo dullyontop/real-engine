@@ -22,11 +22,6 @@ fn vs_line(v: VsIn) -> VsOut {
 }
 
 @fragment
-fn fs_line_linear(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_line(in: VsOut) -> @location(0) vec4<f32> {
     return in.color;
-}
-
-@fragment
-fn fs_line_gamma(in: VsOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(srgb_from_linear(in.color.rgb), in.color.a);
 }

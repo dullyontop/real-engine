@@ -11,7 +11,7 @@
 //! handles. A handle carries a generation, so a handle to a released and reused
 //! slot is detected as stale.
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::EntityId;
@@ -29,6 +29,17 @@ pub struct RenderSnapshot {
     pub debug_lines: Vec<DebugLine>,
     /// The clear colour, linear RGBA.
     pub clear: [f32; 4],
+    /// Exposure, tone mapping and the post-processing chain (ADR-0038).
+    #[serde(default)]
+    pub post: PostSettings,
+    /// How the sun's shadow is split into cascades (ADR-0038). Frozen with the
+    /// post settings; the renderer draws cascades from WP20 PR "shadows" on and
+    /// ignores these values until then.
+    #[serde(default)]
+    pub shadows: SunShadows,
+    /// Textured quads in the world, such as GUIs on surfaces (ADR-0038).
+    #[serde(default)]
+    pub quads: Vec<WorldQuad>,
 }
 
 // The snapshot must stay `Send` (ADR-0007): it is the seam for a render thread.
@@ -36,6 +47,199 @@ const _: () = {
     const fn assert_send<T: Send>() {}
     assert_send::<RenderSnapshot>();
 };
+
+/// Exposure and the post-processing chain of a frame (ADR-0038).
+///
+/// The scene is drawn into an HDR target; then sun rays, bloom, blur, colour
+/// grading and tone mapping run in that order. Every step is off by default,
+/// and the default tone mapping is [`ToneMapping::None`], so the default
+/// settings draw what the renderer drew before the chain existed.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PostSettings {
+    /// Multiplies every light, the ambient terms and emissive colour (not the
+    /// sky, fog or clear colours). Light units are lux for directional lights
+    /// and lumens for point lights; at exposure 1, an illuminance of 1 lux makes
+    /// a white diffuse surface white. For a physically sized sun (around
+    /// 100,000 lux), use an exposure around 1e-5.
+    pub exposure: f32,
+    /// How scene values above 1 are brought into the displayable range.
+    pub tone_mapping: ToneMapping,
+    /// Glow around bright areas.
+    pub bloom: Bloom,
+    /// A full-screen Gaussian blur, as its radius in fractions of the target's
+    /// height; 0 is off.
+    pub blur_radius: f32,
+    /// Light shafts from the sun through gaps in the scene.
+    pub sun_rays: SunRays,
+    /// Colour correction of the scene (not of the UI), in scene-linear values,
+    /// before tone mapping.
+    pub grading: Option<ColorGrading>,
+}
+
+impl Default for PostSettings {
+    fn default() -> Self {
+        PostSettings {
+            exposure: 1.0,
+            tone_mapping: ToneMapping::None,
+            bloom: Bloom::default(),
+            blur_radius: 0.0,
+            sun_rays: SunRays::default(),
+            grading: None,
+        }
+    }
+}
+
+/// A tone-mapping operator (ADR-0038).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ToneMapping {
+    /// Values above 1 are clipped: the look of the renderer before HDR.
+    #[default]
+    None,
+    /// Khronos PBR Neutral: keeps authored base colours close to their values
+    /// and compresses only highlights. The recommended operator for new
+    /// projects.
+    PbrNeutral,
+    /// The Stephen Hill fit of the ACES reference rendering and output
+    /// transforms: filmic contrast and hue shifts in highlights.
+    Aces,
+    /// AgX (base look): desaturates very bright colours towards white.
+    AgX,
+}
+
+/// Bloom: bright parts of the scene glow onto their surroundings.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Bloom {
+    /// How much of the blurred light is added; 0 is off.
+    pub intensity: f32,
+    /// Scene-linear value of the brightest channel (after exposure) below
+    /// which nothing blooms; 0 lets all light bloom.
+    pub threshold: f32,
+    /// Width of the soft transition around `threshold`, as a fraction of it
+    /// (0 is a hard cut, 1 the softest).
+    pub knee: f32,
+    /// How far the glow spreads, in fractions of the target's height.
+    pub radius: f32,
+}
+
+impl Default for Bloom {
+    fn default() -> Self {
+        Bloom {
+            intensity: 0.0,
+            threshold: 0.0,
+            knee: 0.5,
+            radius: 0.05,
+        }
+    }
+}
+
+/// Sun rays: shafts of light from the sun where the sky shows through.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SunRays {
+    /// How bright the shafts are; 0 is off.
+    pub intensity: f32,
+    /// How far the shafts reach from the sun (0 to 1): the size of the patch
+    /// of sky around the sun whose light they carry out.
+    pub spread: f32,
+}
+
+impl Default for SunRays {
+    fn default() -> Self {
+        SunRays {
+            intensity: 0.0,
+            spread: 0.5,
+        }
+    }
+}
+
+/// Colour correction applied to the scene before tone mapping.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColorGrading {
+    /// Added to every channel.
+    pub brightness: f32,
+    /// 0 keeps contrast; positive values increase it, -1 removes it.
+    pub contrast: f32,
+    /// 0 keeps saturation; -1 gives grey, positive values saturate.
+    pub saturation: f32,
+    /// Multiplies the result, linear RGB.
+    pub tint: [f32; 3],
+}
+
+impl Default for ColorGrading {
+    fn default() -> Self {
+        ColorGrading {
+            brightness: 0.0,
+            contrast: 0.0,
+            saturation: 0.0,
+            tint: [1.0; 3],
+        }
+    }
+}
+
+/// How the sun's shadow is split into cascades (ADR-0038).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SunShadows {
+    /// The number of cascades, 1 to 4.
+    pub cascades: u8,
+    /// How far from the camera shadows reach, in world units.
+    pub distance: f32,
+    /// The blend between logarithmic (1) and uniform (0) split distances.
+    pub split_lambda: f32,
+    /// The fraction of each cascade's depth over which it fades into the next.
+    pub blend: f32,
+}
+
+impl Default for SunShadows {
+    fn default() -> Self {
+        SunShadows {
+            cascades: 4,
+            distance: 150.0,
+            split_lambda: 0.75,
+            blend: 0.1,
+        }
+    }
+}
+
+/// A textured rectangle in the world, such as a GUI painted into a render
+/// target and shown on a part's face (ADR-0038).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WorldQuad {
+    /// The entity it belongs to (for picking and debugging).
+    pub entity: EntityId,
+    /// Quad-to-world transform. The quad spans −0.5 to 0.5 in its local X and
+    /// Y (scaled by `size`) and faces +Z; texture u runs along +X and v along
+    /// −Y, so the image is upright when +Y is up.
+    pub world: Mat4,
+    /// Width and height in quad units.
+    pub size: Vec2,
+    /// The texture, premultiplied RGBA as egui paints it.
+    pub texture: TextureHandle,
+    /// Depth-tested in the scene, or drawn over everything.
+    pub depth: QuadDepth,
+    /// 0 draws the texture unlit; 1 lights it like a matte surface (lit on
+    /// the side that faces the camera).
+    pub light_influence: f32,
+    /// Multiplies the unlit part of the colour.
+    pub brightness: f32,
+}
+
+/// How a [`WorldQuad`] meets the scene's depth.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum QuadDepth {
+    /// Depth-tested, moved `bias` world units towards the camera to avoid
+    /// fighting with the surface it lies on. Drawn with the scene, so it goes
+    /// through the post chain.
+    Tested {
+        /// World units towards the camera.
+        bias: f32,
+    },
+    /// Drawn after the post chain over everything, in display colours.
+    OnTop,
+}
 
 /// A perspective camera.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

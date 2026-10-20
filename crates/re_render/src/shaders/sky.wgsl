@@ -1,7 +1,6 @@
 // The sky gradient behind the scene, drawn first over the whole target. Its
 // colours are unlit: exposure does not change them.
 #include "common.wgsl"
-#include "fx.wgsl"
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 
@@ -36,15 +35,10 @@ fn sky(in: VsOut) -> vec3<f32> {
         let glow = pow(max(cos_angle, 0.0), 64.0) * 0.25;
         c += frame.sky_sun_color.rgb * (disc + glow);
     }
-    return grade(c);
+    return c;
 }
 
 @fragment
-fn fs_sky_linear(in: VsOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(sky(in), 1.0);
-}
-
-@fragment
-fn fs_sky_gamma(in: VsOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(srgb_from_linear(sky(in)), 1.0);
+fn fs_sky(in: VsOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(sky(in), 0.0);
 }

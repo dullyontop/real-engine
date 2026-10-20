@@ -300,14 +300,9 @@ impl Graphics {
     ) -> Result<(), Diagnostic> {
         let (device, queue) = (&self.gpu.device, &self.gpu.queue);
         match view.prepare(&mut self.renderer)? {
-            Some((snapshot, extras, exposure)) => {
-                let before = self.renderer.settings().exposure;
-                self.renderer.settings_mut().exposure = exposure;
-                let drawn = self
-                    .renderer
-                    .render_with(device, queue, target, &snapshot, &extras);
-                self.renderer.settings_mut().exposure = before;
-                drawn?;
+            Some((snapshot, extras)) => {
+                self.renderer
+                    .render_with(device, queue, target, &snapshot, &extras)?;
             }
             None => {
                 self.renderer
