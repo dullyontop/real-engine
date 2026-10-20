@@ -38,7 +38,7 @@
 mod cache;
 pub mod codes;
 mod fsutil;
-mod gltf_import;
+mod gltf;
 mod id;
 mod image_decode;
 mod material;
@@ -47,7 +47,7 @@ mod server;
 mod watch;
 
 pub use cache::{CACHE_FORMAT_VERSION, CacheOutcome, ProcessedCache, cache_key};
-pub use gltf_import::{
+pub use self::gltf::{
     GLTF_IMPORTER_VERSION, ImportedGltf, ImportedMaterial, ImportedMesh, ImportedNode,
     ImportedTexture, image_id, import_gltf,
 };
