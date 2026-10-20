@@ -8,7 +8,9 @@ Real Engine is an open-source 3D game engine written in Rust. It is built around
 
 ## Status
 
-**M1 done.** All nine M1 work packages have merged, and `examples/island` is a playable demo: walk, push crates, collect items, win and restart, and regenerate the island with a new seed during play. CI runs `real verify` on it headless and a windowed smoke run under Xvfb. An MCP client drives it end to end in CI, and every item of the [definition of done](docs/M1_PLAN.md#definition-of-done-for-m1) is checked there. M2, the Roblox-style compatibility layer (`re_compat`), is planned in [M2_PLAN.md](docs/M2_PLAN.md). Merged so far: container field types, attributes and tags, the `re_compat` class layer and data formats, the Roblox-style datatypes and enums, the instance data model with signals, the script runtime (`require`, `RunService`, `task`) with a headless test harness, server and client worlds with replication, players and remotes, physics for parts with static cells for large maps, characters, animation and input, tweens and sound, the 2D UI and the 3D view, `real import` for Rojo-style projects and Studio loader scripts, and running imported projects with `real run`, `real verify` and `play.run`.
+**M1 done.** All nine M1 work packages have merged, and `examples/island` is a playable demo: walk, push crates, collect items, win and restart, and regenerate the island with a new seed during play. CI runs `real verify` on it headless and a windowed smoke run under Xvfb. An MCP client drives it end to end in CI, and every item of the [definition of done](docs/M1_PLAN.md#definition-of-done-for-m1) is checked there.
+
+**M2 done** (2026-10-20). Roblox-style projects run on Real Engine through `re_compat`, and every item of [M2's definition of done](docs/M2_PLAN.md#definition-of-done-for-m2) holds: the owner's private sample checks pass, `examples/plaza` is verified in CI, and a test reaches every implemented compat member. M2 includes container field types, attributes and tags, the `re_compat` class layer and data formats, the Roblox-style datatypes and enums, the instance data model with signals, the script runtime (`require`, `RunService`, `task`) with a headless test harness, server and client worlds with replication, players and remotes, physics for parts with static cells for large maps, characters, animation and input, tweens and sound, the 2D UI and the 3D view, `real import` for Rojo-style projects and Studio loader scripts, and running imported projects with `real run`, `real verify` and `play.run`. M3 (shipping games, browser builds and online play) is planned in [M3_PLAN.md](docs/M3_PLAN.md).
 
 The workspace holds:
 
@@ -19,7 +21,7 @@ The workspace holds:
 - Scripting: `re_script` (Luau through mlua) and `re_script_check` (the validation suite).
 - The runtime and CLI: `re_app` and `re_cli` (the `real` binary).
 - Tooling: `re_agent`, `re_mcp` (the MCP server) and `re_editor` (editor-lite).
-- Compatibility (M2, in progress): `re_compat`, the Roblox-style layer.
+- Compatibility (M2): `re_compat`, the Roblox-style layer.
 
 Try it with `cargo run --release -p re_cli -- run --project examples/island`, or `real verify --project examples/island --json` for the headless checks.
 
@@ -105,7 +107,7 @@ CI runs the GPU crates' tests separately from the rest of the workspace, with `-
 
 ## Contributing
 
-- Read [ARCHITECTURE.md](docs/ARCHITECTURE.md), then pick a work package in [M2_PLAN.md](docs/M2_PLAN.md) (M1's packages, in [M1_PLAN.md](docs/M1_PLAN.md), are all merged). Each package lists the paths it owns, so parallel work does not collide. Some packages port code from the maintainers' private research spikes, which are not in this repository; ask the maintainer for access.
+- Read [ARCHITECTURE.md](docs/ARCHITECTURE.md), then pick a work package in [M3_PLAN.md](docs/M3_PLAN.md) (M1's and M2's packages, in [M1_PLAN.md](docs/M1_PLAN.md) and [M2_PLAN.md](docs/M2_PLAN.md), are all merged). Each package lists the paths it owns, so parallel work does not collide. Some packages port code from the maintainers' private research spikes, which are not in this repository; ask the maintainer for access.
 - Dependencies come from crates.io only. Adding one needs an entry in [DECISIONS.md](docs/DECISIONS.md) and a row in [DEPENDENCIES.md](docs/DEPENDENCIES.md).
 - Tests must pass headless: software Vulkan, no audio device, and a virtual display only for the windowed smoke test.
 - Do not commit third-party game projects or their scripts. The script validation suite reads them from paths you provide (`REAL_SCENE_SCRIPTS`, or one or more `--scripts-dir`), and skips when none is given.
