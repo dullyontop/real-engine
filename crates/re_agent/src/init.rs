@@ -14,6 +14,9 @@
 //!   (Cursor, `mcpServers`) and `.gemini/settings.json` (Gemini CLI,
 //!   `mcpServers`). Codex and Zed keep their configuration outside the
 //!   project, so [`init`] returns snippets for them instead.
+//! * with [`InitOptions::http`], the Claude Code entry names the
+//!   `real mcp --http` endpoint instead (ADR-0046), sending the token from
+//!   `REAL_MCP_TOKEN`; the other clients keep their stdio entries.
 //!
 //! Existing files are respected: a JSON config gets the `real-engine` entry
 //! merged in (other servers and keys stay), an existing policy is kept unless
@@ -47,6 +50,9 @@ pub struct InitOptions {
     pub program: String,
     /// Replace an existing `.real/agent-policy.toml`.
     pub force: bool,
+    /// The `real mcp --http` URL Claude Code connects to, instead of
+    /// starting `real mcp` over stdio (ADR-0046).
+    pub http: Option<String>,
 }
 
 impl Default for InitOptions {
@@ -54,8 +60,23 @@ impl Default for InitOptions {
         InitOptions {
             program: "real".to_string(),
             force: false,
+            http: None,
         }
     }
+}
+
+/// The environment variable the HTTP client entry reads its token from
+/// (the one `real mcp --http` reads too).
+pub const HTTP_TOKEN_ENV: &str = "REAL_MCP_TOKEN";
+
+/// Claude Code's entry for a `real mcp --http` server at `url`: Claude Code
+/// expands `${REAL_MCP_TOKEN}` in headers when it reads `.mcp.json`.
+pub fn claude_code_http_entry(url: &str) -> Json {
+    json!({
+        "type": "http",
+        "url": url,
+        "headers": { "Authorization": format!("Bearer ${{{HTTP_TOKEN_ENV}}}") },
+    })
 }
 
 /// One client's configuration.
@@ -327,7 +348,12 @@ pub fn init(
         )),
     }
 
-    for config in client_configs(&options.program) {
+    for mut config in client_configs(&options.program) {
+        if let Some(url) = &options.http
+            && config.client == "Claude Code"
+        {
+            config.entry = claude_code_http_entry(url);
+        }
         match merged_config(project, &config) {
             Ok(text) => {
                 write(project, config.path, &text)?;
@@ -350,5 +376,22 @@ pub fn init(
         "Zed's settings.json".to_string(),
         zed_snippet(&options.program, project),
     ));
+    if let Some(url) = &options.http {
+        report.snippets.push((
+            "HTTP".to_string(),
+            "start the server, then connect clients".to_string(),
+            format!(
+                "export {HTTP_TOKEN_ENV}=<a random value of 32 or more characters>\n\
+                 {program} mcp --http {addr} --project {project}\n\
+                 # Claude Code reads .mcp.json; another client needs the URL {url}\n\
+                 # and the header `Authorization: Bearer ${HTTP_TOKEN_ENV}`, in its own config format.\n",
+                program = options.program,
+                addr = url
+                    .trim_start_matches("http://")
+                    .trim_end_matches("/mcp"),
+                project = project.display(),
+            ),
+        ));
+    }
     Ok(report)
 }

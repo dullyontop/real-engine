@@ -1,5 +1,8 @@
 //! `real mcp`: serves the project's commands to MCP clients over stdio
-//! (ADR-0025, ADR-0026; WP7).
+//! (ADR-0025, ADR-0026; WP7), or with `--http` over streamable HTTP on a
+//! loopback address with a bearer token (ADR-0046). The HTTP server writes
+//! its URL and token to `.real/mcp-http.json` (readable by the user only)
+//! and stops when its stdin closes, or when it is interrupted.
 //!
 //! When the editor holds the project, `real mcp` connects to its socket and
 //! serves MCP over that handle, with the agent policy checked here before a
@@ -17,7 +20,7 @@
 //! of `verify`, and last the project's Luau tools
 //! (`scripts/tools/commands/`).
 //!
-//! stdout carries JSON-RPC, so everything else goes to stderr.
+//! Over stdio, stdout carries JSON-RPC, so everything else goes to stderr.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -29,7 +32,7 @@ use re_agent::verify_diff::{DiffOptions, VerifyDiff, diff};
 use re_agent::{Agent, Holder, Policy, Writer, guard, open_writer};
 use re_app::verify::{self, VerifyOptions, VerifyStage};
 use re_app::{App, AppConfig};
-use re_command::{History, Origin, Tier, Transaction, channel};
+use re_command::{EngineHandle, History, Origin, Tier, Transaction, channel};
 use re_core::{Diagnostic, Location};
 use re_mcp::McpOptions;
 use schemars::JsonSchema;
@@ -38,7 +41,100 @@ use serde_json::{Value as Json, json};
 
 /// Arguments of `real mcp`.
 #[derive(Clone, Debug, Default, clap::Args)]
-pub struct McpArgs {}
+pub struct McpArgs {
+    /// Serve streamable HTTP on ADDR instead of stdio: a loopback address,
+    /// 127.0.0.1:0 (any free port) when no ADDR is given. Clients send
+    /// `Authorization: Bearer <token>`; the token comes from REAL_MCP_TOKEN,
+    /// or is generated, and is written with the URL to .real/mcp-http.json.
+    #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = re_mcp::http::DEFAULT_ADDR)]
+    pub http: Option<String>,
+}
+
+/// Where `real mcp --http` writes its URL and token (local state).
+pub const HTTP_STATE: &str = ".real/mcp-http.json";
+
+/// How `real mcp` serves: stdio, or HTTP on a bound listener.
+enum Transport {
+    Stdio,
+    Http(re_mcp::HttpListener),
+}
+
+impl Transport {
+    /// The transport `args` ask for, with the HTTP address checked and the
+    /// token read (`RE8502`, `RE8503`); nothing is bound yet.
+    fn check(args: &McpArgs) -> Result<Option<(std::net::SocketAddr, String)>, Diagnostic> {
+        let Some(addr) = &args.http else {
+            return Ok(None);
+        };
+        let addr = re_mcp::http::parse_addr(addr)?;
+        let token = re_mcp::http::token_from_env()?;
+        Ok(Some((addr, token)))
+    }
+
+    /// Binds the HTTP listener (`RE8504`) and writes the state file.
+    fn open(
+        project: &Path,
+        http: Option<(std::net::SocketAddr, String)>,
+    ) -> Result<Transport, Diagnostic> {
+        let Some((addr, token)) = http else {
+            return Ok(Transport::Stdio);
+        };
+        let listener = re_mcp::HttpListener::bind(addr, &token)?;
+        write_http_state(project, &listener)?;
+        eprintln!(
+            "real mcp: serving MCP at {} (the token is in {HTTP_STATE}); stops when stdin closes",
+            listener.url()
+        );
+        Ok(Transport::Http(listener))
+    }
+
+    /// Serves until the client closes stdin (stdio), or until stdin closes
+    /// (HTTP).
+    fn serve(self, handle: EngineHandle, options: McpOptions) -> anyhow::Result<()> {
+        match self {
+            Transport::Stdio => re_mcp::serve_stdio(handle, options),
+            Transport::Http(listener) => {
+                let project = options.project.clone();
+                let result =
+                    re_mcp::serve_http(handle, options, listener, re_mcp::http::stdin_closed());
+                let _ = std::fs::remove_file(project.join(HTTP_STATE));
+                result
+            }
+        }
+    }
+}
+
+/// Writes `{ url, token, pid }` to [`HTTP_STATE`], readable by the user only
+/// on Unix. A file that cannot be written is `RE8504`, like a port that
+/// cannot be bound: either way no client could connect.
+fn write_http_state(project: &Path, listener: &re_mcp::HttpListener) -> Result<(), Diagnostic> {
+    use std::io::Write as _;
+    let path = project.join(HTTP_STATE);
+    let text = serde_json::to_string_pretty(&json!({
+        "url": listener.url(),
+        "token": listener.token(),
+        "pid": std::process::id(),
+    }))
+    .expect("the state serializes");
+    let fail = |e: std::io::Error| {
+        Diagnostic::error(
+            re_mcp::codes::BIND_FAILED,
+            format!("cannot write {HTTP_STATE}: {e}"),
+        )
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(fail)?;
+    }
+    // Replace any file a previous server left, so the mode below applies.
+    let _ = std::fs::remove_file(&path);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&path).map_err(fail)?;
+    file.write_all(text.as_bytes()).map_err(fail)?;
+    file.write_all(b"\n").map_err(fail)
+}
 
 /// The origin of every MCP call in the history.
 pub const ORIGIN: &str = "mcp";
@@ -274,7 +370,10 @@ fn register_verify_diff(registry: &mut re_command::CommandRegistry<App>, agent: 
 
 /// Runs `real mcp` for the project at `project`.
 pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
-    let McpArgs {} = args;
+    let http = match Transport::check(&args) {
+        Ok(http) => http,
+        Err(d) => return Ok(fail(&d)),
+    };
     let policy = match Policy::load(project) {
         Ok(p) => p,
         Err(d) => return Ok(fail(&d)),
@@ -284,9 +383,13 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Ok(Writer::Local(lock)) => lock,
         Ok(Writer::Remote(handle)) => {
             eprintln!("real mcp: the editor has the project open; serving through it");
+            let transport = match Transport::open(project, http) {
+                Ok(t) => t,
+                Err(d) => return Ok(fail(&d)),
+            };
             let handle = guard::guarded(handle, Arc::new(policy), origin);
             let options = McpOptions::new(project).with_resources(resources());
-            return Ok(finish(re_mcp::serve_stdio(handle, options)));
+            return Ok(finish(transport.serve(handle, options)));
         }
         Err(d) => return Ok(fail(&d)),
     };
@@ -297,6 +400,10 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
         resources,
     } = match open_for_agents(project) {
         Ok(x) => x,
+        Err(d) => return Ok(fail(&d)),
+    };
+    let transport = match Transport::open(project, http) {
+        Ok(t) => t,
         Err(d) => return Ok(fail(&d)),
     };
     let options = McpOptions::new(project).with_resources(resources);
@@ -313,7 +420,7 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
     drop(unnamed);
     let server = std::thread::Builder::new()
         .name("real-mcp".to_string())
-        .spawn(move || re_mcp::serve_stdio(handle, options))?;
+        .spawn(move || transport.serve(handle, options))?;
     // Returns once the server thread drops its handle (the client closed
     // stdin).
     app.serve(receiver, &policy);

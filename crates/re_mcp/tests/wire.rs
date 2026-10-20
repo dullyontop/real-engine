@@ -1,9 +1,12 @@
-//! The MCP wire protocol, ported from the AI spike's stdio tests: raw
-//! newline-delimited JSON-RPC, exactly as a client writes it to the server's
-//! stdin, over an in-memory pipe (`serve_io`; `serve_stdio` binds the same
-//! server to the process's stdin and stdout, which `re_cli`'s end-to-end test
-//! drives). Both protocol revisions are covered: 2025-11-25 (initialize) and
-//! 2026-07-28 (stateless, `_meta` on every request).
+//! The MCP wire protocol, ported from the AI spike's stdio tests, over both
+//! transports (ADR-0046): raw newline-delimited JSON-RPC, exactly as a client
+//! writes it to the server's stdin, over an in-memory pipe (`serve_io`;
+//! `serve_stdio` binds the same server to the process's stdin and stdout,
+//! which `re_cli`'s end-to-end test drives), and streamable HTTP on
+//! 127.0.0.1 with a bearer token (`serve_http_async`, driven by
+//! `re_mcp::client`). Every protocol test runs once per transport. Both
+//! protocol revisions are covered: 2025-11-25 (initialize) and 2026-07-28
+//! (stateless, `_meta` on every request).
 
 use std::path::Path;
 use std::time::Duration;
@@ -105,35 +108,85 @@ fn engine(project: &Path, policy: Policy) -> EngineHandle {
     handle
 }
 
+/// The transport a test runs over: the same server, the same assertions.
+#[derive(Clone, Copy, Debug)]
+enum Transport {
+    /// Newline-delimited JSON-RPC over an in-memory pipe (`serve_io`).
+    Stdio,
+    /// Streamable HTTP on 127.0.0.1 with a bearer token (`serve_http_async`).
+    Http,
+}
+
+enum Wire {
+    Stdio {
+        writer: WriteHalf<DuplexStream>,
+        lines: Lines<BufReader<tokio::io::ReadHalf<DuplexStream>>>,
+        backlog: Vec<Value>,
+    },
+    Http {
+        client: re_mcp::client::HttpClient,
+        url: String,
+        token: String,
+        _stop: tokio::sync::oneshot::Sender<()>,
+    },
+}
+
 struct Client {
     rt: tokio::runtime::Runtime,
-    writer: WriteHalf<DuplexStream>,
-    lines: Lines<BufReader<tokio::io::ReadHalf<DuplexStream>>>,
-    backlog: Vec<Value>,
+    wire: Wire,
     _dir: tempfile::TempDir,
 }
 
 impl Client {
-    fn start(policy: Policy) -> Client {
+    fn start(transport: Transport, policy: Policy) -> Client {
         let dir = tempfile::tempdir().unwrap();
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .unwrap();
-        let (client, server) = tokio::io::duplex(1 << 20);
-        let (server_read, server_write) = tokio::io::split(server);
         let handle = engine(dir.path(), policy);
         let options = re_mcp::McpOptions::new(dir.path()).with_resources(resources());
-        rt.spawn(async move {
-            let _ = re_mcp::serve_io(handle, options, server_read, server_write).await;
-        });
-        let (read, writer) = tokio::io::split(client);
+        let wire = match transport {
+            Transport::Stdio => {
+                let (client, server) = tokio::io::duplex(1 << 20);
+                let (server_read, server_write) = tokio::io::split(server);
+                rt.spawn(async move {
+                    let _ = re_mcp::serve_io(handle, options, server_read, server_write).await;
+                });
+                let (read, writer) = tokio::io::split(client);
+                Wire::Stdio {
+                    writer,
+                    lines: BufReader::new(read).lines(),
+                    backlog: Vec::new(),
+                }
+            }
+            Transport::Http => {
+                let token = re_mcp::http::generate_token();
+                let listener =
+                    re_mcp::HttpListener::bind("127.0.0.1:0".parse().unwrap(), &token).unwrap();
+                let url = listener.url();
+                let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+                rt.spawn(async move {
+                    let stopped = async move {
+                        let _ = stopped.await;
+                    };
+                    let _ = re_mcp::serve_http_async(handle, options, listener, stopped).await;
+                });
+                let client = re_mcp::client::HttpClient::new(&url, Some(&token))
+                    .unwrap()
+                    .with_timeout(TIMEOUT);
+                Wire::Http {
+                    client,
+                    url,
+                    token,
+                    _stop: stop,
+                }
+            }
+        };
         Client {
             rt,
-            writer,
-            lines: BufReader::new(read).lines(),
-            backlog: Vec::new(),
+            wire,
             _dir: dir,
         }
     }
@@ -143,15 +196,15 @@ impl Client {
     }
 
     /// Starts a server and completes the 2025-11-25 handshake.
-    fn initialized(policy: Policy) -> Client {
-        let mut c = Client::start(policy);
+    fn initialized(transport: Transport, policy: Policy) -> Client {
+        let mut c = Client::start(transport, policy);
         let init = c.request(
             0,
             "initialize",
             json!({
                 "protocolVersion": "2025-11-25",
                 "capabilities": {},
-                "clientInfo": { "name": "stdio-test", "version": "0" }
+                "clientInfo": { "name": "wire-test", "version": "0" }
             }),
         );
         assert_eq!(init["result"]["protocolVersion"], "2025-11-25");
@@ -160,8 +213,10 @@ impl Client {
     }
 
     fn send(&mut self, msg: Value) {
+        let Wire::Stdio { writer, .. } = &mut self.wire else {
+            unreachable!("send is for the stdio pipe")
+        };
         let line = format!("{msg}\n");
-        let writer = &mut self.writer;
         self.rt.block_on(async {
             writer.write_all(line.as_bytes()).await.unwrap();
             writer.flush().await.unwrap();
@@ -169,16 +224,23 @@ impl Client {
     }
 
     fn notify(&mut self, method: &str, params: Value) {
-        self.send(json!({ "jsonrpc": "2.0", "method": method, "params": params }));
+        match &mut self.wire {
+            Wire::Stdio { .. } => {
+                self.send(json!({ "jsonrpc": "2.0", "method": method, "params": params }));
+            }
+            Wire::Http { client, .. } => client.notify(method, params).unwrap(),
+        }
     }
 
     /// The response with `id` (responses may arrive out of order).
     fn response(&mut self, id: u64) -> Value {
-        if let Some(i) = self.backlog.iter().position(|m| m["id"] == id) {
-            return self.backlog.remove(i);
+        let Wire::Stdio { lines, backlog, .. } = &mut self.wire else {
+            unreachable!("responses are read from the stdio pipe")
+        };
+        if let Some(i) = backlog.iter().position(|m| m["id"] == id) {
+            return backlog.remove(i);
         }
         loop {
-            let lines = &mut self.lines;
             let line = self
                 .rt
                 .block_on(async { tokio::time::timeout(TIMEOUT, lines.next_line()).await })
@@ -190,13 +252,27 @@ impl Client {
             if msg["id"] == id && msg.get("method").is_none() {
                 return msg;
             }
-            self.backlog.push(msg);
+            backlog.push(msg);
         }
     }
 
+    /// Sends a request and returns its response. Over HTTP, a request the
+    /// transport refuses before any JSON-RPC answer is `{ "http_status": N }`.
     fn request(&mut self, id: u64, method: &str, params: Value) -> Value {
-        self.send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
-        let resp = self.response(id);
+        let msg = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+        let resp = match &mut self.wire {
+            Wire::Stdio { .. } => {
+                self.send(msg);
+                self.response(id)
+            }
+            Wire::Http { client, .. } => {
+                let reply = client.post(&msg, &[]).unwrap();
+                match reply.messages.into_iter().find(|m| m["id"] == id) {
+                    Some(resp) => resp,
+                    None => return json!({ "http_status": reply.status }),
+                }
+            }
+        };
         assert_eq!(resp["jsonrpc"], "2.0");
         resp
     }
@@ -217,9 +293,8 @@ fn text_json(result: &Value) -> Value {
     serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap()
 }
 
-#[test]
-fn initialize_advertises_capabilities_and_identity() {
-    let mut c = Client::start(Policy::read_only());
+fn initialize_advertises_capabilities_and_identity(t: Transport) {
+    let mut c = Client::start(t, Policy::read_only());
     let init = c.request(
         1,
         "initialize",
@@ -239,9 +314,8 @@ fn initialize_advertises_capabilities_and_identity() {
     assert!(instructions.len() < 4096);
 }
 
-#[test]
-fn tools_list_has_28_clean_tools() {
-    let mut c = Client::initialized(Policy::read_only());
+fn tools_list_has_28_clean_tools(t: Transport) {
+    let mut c = Client::initialized(t, Policy::read_only());
     let list = c.request(1, "tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
     assert_eq!(
@@ -327,9 +401,8 @@ fn tools_list_has_28_clean_tools() {
     );
 }
 
-#[test]
-fn edit_call_with_read_policy_is_refused_but_dry_run_works() {
-    let mut c = Client::initialized(Policy::read_only());
+fn edit_call_with_read_policy_is_refused_but_dry_run_works(t: Transport) {
+    let mut c = Client::initialized(t, Policy::read_only());
     let refused = c.call(1, "entity_spawn", json!({ "id": "rock" }));
     assert_eq!(refused["isError"], true);
     let body = text_json(&refused);
@@ -349,9 +422,8 @@ fn edit_call_with_read_policy_is_refused_but_dry_run_works() {
     assert_eq!(get["isError"], true);
 }
 
-#[test]
-fn scene_apply_is_atomic_and_one_undo_reverts_it() {
-    let mut c = Client::initialized(Policy::init_default());
+fn scene_apply_is_atomic_and_one_undo_reverts_it(t: Transport) {
+    let mut c = Client::initialized(t, Policy::init_default());
     let three = json!({ "ops": [
         { "op": "spawn", "id": "a" },
         { "op": "spawn", "id": "b", "parent": "a" },
@@ -381,9 +453,8 @@ fn scene_apply_is_atomic_and_one_undo_reverts_it() {
     assert_eq!(q["data"]["total"], 0, "{q}");
 }
 
-#[test]
-fn script_write_with_a_syntax_error_writes_nothing() {
-    let mut c = Client::initialized(Policy::init_default());
+fn script_write_with_a_syntax_error_writes_nothing(t: Transport) {
+    let mut c = Client::initialized(t, Policy::init_default());
     let out = c.call(
         1,
         "script_write",
@@ -401,9 +472,8 @@ fn script_write_with_a_syntax_error_writes_nothing() {
     assert_eq!(text_json(&out)["code"], "RE8002");
 }
 
-#[test]
-fn screenshot_returns_image_content_and_its_path() {
-    let mut c = Client::initialized(Policy::read_only());
+fn screenshot_returns_image_content_and_its_path(t: Transport) {
+    let mut c = Client::initialized(t, Policy::read_only());
     let out = c.call(1, "screenshot", json!({}));
     assert_eq!(out["isError"], false);
     let content = out["content"].as_array().unwrap();
@@ -425,9 +495,8 @@ fn screenshot_returns_image_content_and_its_path() {
     assert_eq!(text_json(&out)["diagnostics"][0]["code"], "RE8501");
 }
 
-#[test]
-fn bad_input_and_unknown_tools() {
-    let mut c = Client::initialized(Policy::init_default());
+fn bad_input_and_unknown_tools(t: Transport) {
+    let mut c = Client::initialized(t, Policy::init_default());
     // Arguments that don't match the schema are a tool error (RE2005).
     let bad = c.call(1, "entity_spawn", json!({ "id": "x", "colour": "red" }));
     assert_eq!(bad["isError"], true);
@@ -451,9 +520,8 @@ fn bad_input_and_unknown_tools() {
     assert_eq!(describe["result"]["isError"], false);
 }
 
-#[test]
-fn stateless_2026_07_28_requests_carry_meta() {
-    let mut c = Client::start(Policy::read_only());
+fn stateless_2026_07_28_requests_carry_meta(t: Transport) {
+    let mut c = Client::start(t, Policy::read_only());
     let meta = json!({
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientCapabilities": {}
@@ -484,10 +552,17 @@ fn stateless_2026_07_28_requests_carry_meta() {
     assert_eq!(text_json(&refused["result"])["code"], "RE8001");
 
     let no_meta = c.request(5, "tools/list", json!({}));
-    assert_eq!(
-        no_meta["error"]["code"], -32602,
-        "requests without initialize or _meta are rejected"
-    );
+    match t {
+        Transport::Stdio => assert_eq!(
+            no_meta["error"]["code"], -32602,
+            "requests without initialize or _meta are rejected"
+        ),
+        // Over HTTP the transport refuses it first: no session, no revision.
+        Transport::Http => assert!(
+            no_meta["error"].is_object() || no_meta["http_status"].as_u64() >= Some(400),
+            "requests without initialize or _meta are rejected: {no_meta}"
+        ),
+    }
 }
 
 #[test]
@@ -496,9 +571,8 @@ fn diagnostics_catalogue_is_complete() {
     assert!(problems.is_empty(), "{problems:?}");
 }
 
-#[test]
-fn typed_results_come_back_as_structured_content() {
-    let mut c = Client::initialized(Policy::read_only());
+fn typed_results_come_back_as_structured_content(t: Transport) {
+    let mut c = Client::initialized(t, Policy::read_only());
     let list = c.request(1, "tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
     let read = tools.iter().find(|t| t["name"] == "resource_read").unwrap();
@@ -531,9 +605,8 @@ fn typed_results_come_back_as_structured_content() {
     assert_eq!(text_json(&missing)["code"], "RE8014");
 }
 
-#[test]
-fn resources_are_listed_and_read() {
-    let mut c = Client::initialized(Policy::read_only());
+fn resources_are_listed_and_read(t: Transport) {
+    let mut c = Client::initialized(t, Policy::read_only());
     let list = c.request(1, "resources/list", json!({}));
     let uris: Vec<&str> = list["result"]["resources"]
         .as_array()
@@ -552,4 +625,158 @@ fn resources_are_listed_and_read() {
     assert_eq!(contents["mimeType"], "text/x-luau");
     let missing = c.request(3, "resources/read", json!({ "uri": "real://nope" }));
     assert_eq!(missing["error"]["code"], -32002, "{missing}");
+}
+
+/// Each protocol test, once per transport.
+macro_rules! over_both_transports {
+    ($($name:ident),* $(,)?) => {
+        mod stdio {
+            $(#[test] fn $name() { super::$name(super::Transport::Stdio) })*
+        }
+        mod http {
+            $(#[test] fn $name() { super::$name(super::Transport::Http) })*
+        }
+    };
+}
+
+over_both_transports!(
+    initialize_advertises_capabilities_and_identity,
+    tools_list_has_28_clean_tools,
+    edit_call_with_read_policy_is_refused_but_dry_run_works,
+    scene_apply_is_atomic_and_one_undo_reverts_it,
+    script_write_with_a_syntax_error_writes_nothing,
+    screenshot_returns_image_content_and_its_path,
+    bad_input_and_unknown_tools,
+    stateless_2026_07_28_requests_carry_meta,
+    typed_results_come_back_as_structured_content,
+    resources_are_listed_and_read,
+);
+
+fn initialize() -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "wire-test", "version": "0" }
+        }
+    })
+}
+
+/// The HTTP endpoint of a client started with [`Transport::Http`].
+fn endpoint(c: &Client) -> (String, String) {
+    match &c.wire {
+        Wire::Http { url, token, .. } => (url.clone(), token.clone()),
+        Wire::Stdio { .. } => unreachable!(),
+    }
+}
+
+#[test]
+fn http_refuses_a_missing_or_wrong_token() {
+    let c = Client::start(Transport::Http, Policy::read_only());
+    let (url, token) = endpoint(&c);
+    let mut anonymous = re_mcp::client::HttpClient::new(&url, None).unwrap();
+    let reply = anonymous.post(&initialize(), &[]).unwrap();
+    assert_eq!(reply.status, 401);
+    assert!(reply.messages.is_empty());
+
+    let wrong = format!("{}x", &token[..token.len() - 1]);
+    let mut guesser = re_mcp::client::HttpClient::new(&url, Some(&wrong)).unwrap();
+    assert_eq!(guesser.post(&initialize(), &[]).unwrap().status, 401);
+
+    let mut right = re_mcp::client::HttpClient::new(&url, Some(&token)).unwrap();
+    assert_eq!(right.post(&initialize(), &[]).unwrap().status, 200);
+    assert!(right.session().is_some(), "2025-11-25 gets a session");
+}
+
+#[test]
+fn http_refuses_foreign_hosts_browser_origins_and_other_paths() {
+    let c = Client::start(Transport::Http, Policy::read_only());
+    let (url, token) = endpoint(&c);
+    let mut client = re_mcp::client::HttpClient::new(&url, Some(&token)).unwrap();
+    // DNS rebinding: a page on evil.example resolving to 127.0.0.1.
+    let host = client
+        .post(&initialize(), &[("Host", "evil.example:80")])
+        .unwrap();
+    assert_eq!(host.status, 403);
+    // The right host on another port is foreign too.
+    let port = client
+        .post(&initialize(), &[("Host", "127.0.0.1:1")])
+        .unwrap();
+    assert_eq!(port.status, 403);
+    // Any browser origin, even a loopback one.
+    for origin in ["http://evil.example", "http://127.0.0.1:3000", "null"] {
+        let reply = client.post(&initialize(), &[("Origin", origin)]).unwrap();
+        assert_eq!(reply.status, 403, "{origin}");
+    }
+    // `localhost` with the right port is this server.
+    let port = url.rsplit(':').next().unwrap().trim_end_matches("/mcp");
+    let local = client
+        .post(&initialize(), &[("Host", &format!("localhost:{port}"))])
+        .unwrap();
+    assert_eq!(local.status, 200);
+
+    let other = url.replace("/mcp", "/other");
+    let mut elsewhere = re_mcp::client::HttpClient::new(&other, Some(&token)).unwrap();
+    assert_eq!(elsewhere.post(&initialize(), &[]).unwrap().status, 404);
+}
+
+#[test]
+fn http_sessions_share_one_engine() {
+    let mut a = Client::initialized(Transport::Http, Policy::init_default());
+    let (url, token) = endpoint(&a);
+    let mut b = re_mcp::client::HttpClient::new(&url, Some(&token)).unwrap();
+    b.request(1, "initialize", initialize()["params"].clone())
+        .unwrap();
+    b.notify("notifications/initialized", json!({})).unwrap();
+    assert_ne!(
+        b.session(),
+        match &a.wire {
+            Wire::Http { client, .. } => client.session(),
+            Wire::Stdio { .. } => unreachable!(),
+        }
+    );
+
+    let spawned = a.call(1, "entity_spawn", json!({ "id": "shared" }));
+    assert_eq!(spawned["isError"], false, "{spawned}");
+    let seen = b
+        .request(
+            2,
+            "tools/call",
+            json!({ "name": "entity_get", "arguments": { "id": "shared" } }),
+        )
+        .unwrap();
+    assert_eq!(seen["result"]["isError"], false, "{seen}");
+}
+
+#[test]
+fn http_stops_when_asked_and_releases_the_engine() {
+    let token = re_mcp::http::generate_token();
+    let listener = re_mcp::HttpListener::bind("127.0.0.1:0".parse().unwrap(), &token).unwrap();
+    let url = listener.url();
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, receiver) = channel();
+    let reg = registry(dir.path());
+    let engine = std::thread::spawn(move || {
+        let mut state = EditState::new();
+        receiver.serve(&mut state, &reg, &Policy::read_only());
+    });
+    let (stop, stopped) = std::sync::mpsc::channel::<()>();
+    let options = re_mcp::McpOptions::new(dir.path());
+    let server = std::thread::spawn(move || {
+        let stopped = async move {
+            let _ = tokio::task::spawn_blocking(move || stopped.recv()).await;
+        };
+        re_mcp::serve_http(handle, options, listener, stopped)
+    });
+    let mut client = re_mcp::client::HttpClient::new(&url, Some(&token)).unwrap();
+    client
+        .request(1, "initialize", initialize()["params"].clone())
+        .unwrap();
+
+    stop.send(()).unwrap();
+    server.join().unwrap().unwrap();
+    // Every engine handle is gone, so the engine's serve loop has returned.
+    engine.join().unwrap();
+    assert!(client.post(&initialize(), &[]).is_err(), "nothing listens");
 }
