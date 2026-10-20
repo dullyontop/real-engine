@@ -14,8 +14,9 @@
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use re_core::time::Instant;
 use re_core::{Diagnostic, Location, TaskPool};
 use re_noise::Pcg32;
 use re_reflect::Registry;

@@ -244,7 +244,7 @@ fn script(ctx: &mut Ctx, args: &J) -> Result<(), String> {
         if s["realtime"].as_bool() == Some(true) {
             // For code that times itself with `os.clock`: frames at the pace
             // of the wall clock.
-            let start = std::time::Instant::now();
+            let start = re_core::time::Instant::now();
             for i in 0..n {
                 frames(h, 1);
                 let due = std::time::Duration::from_secs_f64(f64::from(i + 1) / 60.0);

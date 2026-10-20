@@ -4,12 +4,13 @@ mod common;
 
 use std::path::Path;
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use re_assets::{
     AssetChange, AssetServer, AssetWatcher, GLTF_IMPORTER_VERSION, LoadedAsset, ProcessedCache,
     cache_key,
 };
+use re_core::time::Instant;
 use re_types::render::{TextureFormat, TextureRef};
 
 fn project() -> tempfile::TempDir {

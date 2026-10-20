@@ -49,7 +49,7 @@ pub(crate) struct RenderSteps {
 
 fn priority_of(v: &LuaValue) -> Option<i64> {
     match v {
-        LuaValue::Integer(i) => Some(*i),
+        LuaValue::Integer(i) => Some(re_script::lua_int(*i)),
         LuaValue::Number(n) if n.is_finite() => Some(n.floor() as i64),
         // An `EnumItem` (`Enum.RenderPriority.Camera`): its `Value`.
         LuaValue::UserData(u) => u.get::<f64>("Value").ok().map(|n| n.floor() as i64),

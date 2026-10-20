@@ -759,7 +759,7 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
         let args = args
             .into_iter()
             .map(|a| match a {
-                Arg::Int(i) => LuaValue::Integer(i),
+                Arg::Int(i) => LuaValue::Number(i as f64),
                 Arg::Bool(b) => LuaValue::Boolean(b),
                 Arg::Nil => LuaValue::Nil,
             })

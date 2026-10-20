@@ -225,7 +225,7 @@ fn bind_action_at_priority(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiV
         "BindActionAtPriority",
     )?;
     let priority = match priority {
-        LuaValue::Integer(i) => i,
+        LuaValue::Integer(i) => re_script::lua_int(i),
         LuaValue::Number(n) => n as i64,
         LuaValue::UserData(ud) => ud
             .borrow::<EnumItem>()

@@ -21,9 +21,9 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use re_command::Op;
+use re_core::time::{SystemTime, UNIX_EPOCH};
 use re_core::{Diagnostic, Location};
 use re_reflect::{Doc, FieldType};
 use re_scene::World;
