@@ -5,8 +5,14 @@
 //! integer nanoseconds, so the accumulator never drifts, and the number of steps
 //! per frame is capped, so one long hitch (a breakpoint, a load) cannot cause a
 //! "spiral of death": whole steps beyond the cap are dropped and reported.
+//!
+//! It also re-exports the wall clocks every crate measures with. `std::time::Instant::now`
+//! panics on `wasm32-unknown-unknown`, so the engine uses web-time's, which is
+//! `std::time`'s on every other target (ADR-0049 §5).
 
 use std::time::Duration;
+
+pub use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// What one call to [`FixedClock::advance`] asks the frame to do.
 #[derive(Debug, Clone, Copy, PartialEq)]

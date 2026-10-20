@@ -1,8 +1,10 @@
 # CI for Real Engine (ADR-0023, docs/M1_PLAN.md WP0).
 #
 # Required for merge: fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke
-# and verify-plaza (all on Ubuntu; verify-plaza by ADR-0023's M2 amendment).
-# build-windows and build-macos are reported only.
+# and verify-plaza (all on Ubuntu; verify-plaza by ADR-0023's M2 amendment), and
+# build-windows and build-macos (the whole suite and `real verify` on the island
+# and the plaza; ADR-0023's M3 amendment, WP18 PR "blocking"), and build-web
+# (ADR-0023's M3 amendment, WP29 PR "portable").
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
@@ -32,6 +34,10 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup toolchain install stable --profile minimal --component rustfmt
       - run: cargo fmt --all --check
+      - name: No CRLF in tracked text files (.gitattributes, ADR-0036)
+        run: |
+          bad=$(git ls-files --eol | awk '$1 ~ /^i\/(crlf|mixed)$/ { print $NF }')
+          if [ -n "$bad" ]; then echo "CRLF line endings in:"; echo "$bad"; exit 1; fi
 
   clippy:
     runs-on: ubuntu-latest
@@ -187,38 +193,140 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --workspace --locked
-      - name: Test (pure-Rust crates)
-        # Runs even when the workspace build failed, so WP0's scope is always reported.
-        if: success() || failure()
+      - name: Install luau-lsp 1.70.1
         shell: bash
         run: |
-          pkgs=""
-          for c in re_core re_noise re_types re_reflect re_scene re_command; do
-            if [ -d "crates/$c" ]; then pkgs="$pkgs -p $c"; fi
+          curl -fsSL -o "$RUNNER_TEMP/luau-lsp.zip" https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-win64.zip
+          echo "64225b9738102a30de6ee09fb28e5a3827edc402ecf2a6364af570312468159f  $RUNNER_TEMP/luau-lsp.zip" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin" && unzip -o "$RUNNER_TEMP/luau-lsp.zip" -d "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Test (non-GPU crates)
+        shell: bash
+        run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
+      - name: Test (GPU crates, DX12 on WARP)
+        if: success() || failure()
+        shell: bash
+        env:
+          RE_BACKENDS: dx12
+        run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1
+      - name: real verify on the island and the plaza
+        if: success() || failure()
+        shell: bash
+        env:
+          RE_BACKENDS: dx12
+        run: |
+          mkdir -p out
+          cargo build --locked --release -p re_cli
+          status=0
+          for project in island plaza; do
+            echo "== $project"
+            report="out/verify-$project.json"
+            target/release/real verify --project "examples/$project" --json > "$report" || true
+            if ! jq -e '.stages' "$report" > /dev/null; then
+              echo "::error::$project: real verify wrote no report"
+              status=1
+              continue
+            fi
+            jq -r '.stages[] | "\(.name): ok=\(.ok)"' "$report"
+            jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' "$report"
+            jq -c '.stages[] | select(.name == "goldens") | .data' "$report"
+            # Goldens are blessed on Linux only (lavapipe and GL). Here every other
+            # stage must pass, and goldens must match where a set for this backend
+            # exists; a backend with no set at all is reported, not failed. WP18's
+            # PR "d2" adds the dx12 and metal sets and removes this rule.
+            jq -r --arg p "$project" '.stages[] | select(.name == "goldens") | select(.data.checks | length > 0 and all(.missing == true)) | "::warning::\($p): no golden set for backend \(.data.backend), \(.data.checks | length) images not compared"' "$report"
+            jq -e '.ok == true or (
+              ([.stages[] | select(.name != "goldens") | .ok] | all) and
+              (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)) and
+                ([.diagnostics[]? | select(.severity == "error") | .code] | all(. == "RE0510")))
+            )' "$report" || status=1
           done
-          cargo test --locked $pkgs
+          exit $status
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: verify-windows
+          path: |
+            out/verify-*.json
+            examples/island/.real/out/goldens/
+            examples/plaza/.real/out/goldens/
+          if-no-files-found: ignore
 
   build-macos:
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --workspace --locked
-      - name: Test (pure-Rust crates)
-        # Runs even when the workspace build failed, so WP0's scope is always reported.
-        if: success() || failure()
-        shell: bash
+      - name: Install luau-lsp 1.70.1
         run: |
-          pkgs=""
-          for c in re_core re_noise re_types re_reflect re_scene re_command; do
-            if [ -d "crates/$c" ]; then pkgs="$pkgs -p $c"; fi
+          curl -fsSL -o "$RUNNER_TEMP/luau-lsp.zip" https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-macos.zip
+          echo "7d3936e8dec6dc77547abd061d2e950da392562a5f94858b880f23dba50d84cd  $RUNNER_TEMP/luau-lsp.zip" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/bin" && unzip -o "$RUNNER_TEMP/luau-lsp.zip" -d "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP/bin/luau-lsp"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Test (non-GPU crates)
+        run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
+      - name: Test (GPU crates, Metal)
+        if: success() || failure()
+        env:
+          RE_BACKENDS: metal
+        run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1
+      - name: real verify on the island and the plaza
+        if: success() || failure()
+        env:
+          RE_BACKENDS: metal
+        run: |
+          mkdir -p out
+          cargo build --locked --release -p re_cli
+          status=0
+          for project in island plaza; do
+            echo "== $project"
+            report="out/verify-$project.json"
+            target/release/real verify --project "examples/$project" --json > "$report" || true
+            if ! jq -e '.stages' "$report" > /dev/null; then
+              echo "::error::$project: real verify wrote no report"
+              status=1
+              continue
+            fi
+            jq -r '.stages[] | "\(.name): ok=\(.ok)"' "$report"
+            jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' "$report"
+            jq -c '.stages[] | select(.name == "goldens") | .data' "$report"
+            # Goldens are blessed on Linux only (lavapipe and GL). Here every other
+            # stage must pass, and goldens must match where a set for this backend
+            # exists; a backend with no set at all is reported, not failed. WP18's
+            # PR "d2" adds the dx12 and metal sets and removes this rule.
+            jq -r --arg p "$project" '.stages[] | select(.name == "goldens") | select(.data.checks | length > 0 and all(.missing == true)) | "::warning::\($p): no golden set for backend \(.data.backend), \(.data.checks | length) images not compared"' "$report"
+            jq -e '.ok == true or (
+              ([.stages[] | select(.name != "goldens") | .ok] | all) and
+              (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)) and
+                ([.diagnostics[]? | select(.severity == "error") | .code] | all(. == "RE0510")))
+            )' "$report" || status=1
           done
-          cargo test --locked $pkgs
+          exit $status
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: verify-macos
+          path: |
+            out/verify-*.json
+            examples/island/.real/out/goldens/
+            examples/plaza/.real/out/goldens/
+          if-no-files-found: ignore
+
+  # ADR-0049 (WP29 PR "portable"): the runtime crates that need no C++ type-check for the
+  # browser. WP29 PR "toolchain" adds wasi-sdk and extends this to re_app and re_web.
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: >-
+          cargo check --locked --target wasm32-unknown-unknown
+          -p re_core -p re_types -p re_geom -p re_noise -p re_reflect -p re_scene
+          -p re_command -p re_anim -p re_proc -p re_input -p re_audio -p re_render

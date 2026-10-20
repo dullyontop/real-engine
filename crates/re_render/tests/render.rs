@@ -335,6 +335,13 @@ fn golden_egui_panel() {
 }
 
 fn egui_panel(gpu: &Gpu) -> re_render::Image {
+    egui_panel_capture(gpu)
+        .read(&gpu.device, &gpu.queue)
+        .unwrap()
+}
+
+/// The demo panel painted into a capture that has not been read back yet.
+fn egui_panel_capture(gpu: &Gpu) -> Capture {
     let (w, h) = (320, 200);
     let mut renderer = Renderer::new(gpu, Capture::FORMAT);
     let capture = Capture::new(&gpu.device, w, h).unwrap();
@@ -359,7 +366,7 @@ fn egui_panel(gpu: &Gpu) -> re_render::Image {
             .unwrap_or_else(|d| panic!("{}", d.render_human()));
     }
     assert_eq!(gpu.errors().count(), 0, "{:?}", gpu.errors().take());
-    capture.read(&gpu.device, &gpu.queue).unwrap()
+    capture
 }
 
 /// The GL panel is not darker than the Vulkan one: egui is composited with a
@@ -370,8 +377,9 @@ fn egui_panel_luminance_matches_across_backends() {
         Gpu::headless(wgpu::Backends::VULKAN),
         Gpu::headless(wgpu::Backends::GL),
     ) else {
+        // Linux CI has lavapipe and llvmpipe; Windows and macOS runners have neither.
         assert!(
-            std::env::var_os("CI").is_none(),
+            std::env::var_os("CI").is_none() || !cfg!(target_os = "linux"),
             "CI must have both a Vulkan and a GL adapter"
         );
         println!("skipped: this machine lacks a Vulkan or a GL adapter");
@@ -553,7 +561,7 @@ fn one_mesh_drawn_a_thousand_times() {
         debug_lines: Vec::new(),
         clear: CLEAR,
     };
-    let start = std::time::Instant::now();
+    let start = re_core::time::Instant::now();
     let image = render_image(&gpu, &mut renderer, &snapshot, 320, 240);
     println!(
         "1000 instances rendered and read back in {:?}",
@@ -840,4 +848,24 @@ fn missing_adapters_are_diagnostics() {
     let err = Gpu::headless(wgpu::Backends::METAL).unwrap_err();
     assert_eq!(err.code, codes::NO_ADAPTER);
     println!("{}", err.render_human());
+}
+
+/// The non-blocking readback (ADR-0049 §3) returns the same pixels as the blocking one,
+/// once the device has been polled.
+#[test]
+fn async_readback_matches_blocking_readback() {
+    let gpu = gpu();
+    let capture = egui_panel_capture(&gpu);
+    let blocking = capture.read(&gpu.device, &gpu.queue).unwrap();
+    let pending = capture.read_async(&gpu.device, &gpu.queue);
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    let read = pollster::block_on(pending).unwrap();
+    assert!(
+        read.stats([0; 4]).distinct_colors > 30,
+        "the panel looks empty"
+    );
+    assert_eq!(read, blocking);
+    assert_eq!(gpu.errors().count(), 0, "{:?}", gpu.errors().take());
 }
