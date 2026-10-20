@@ -73,6 +73,7 @@ pub(crate) fn register(b: &mut Bindings) {
     for (name, f) in plain {
         b.method("Instance", name, Arc::new(*f));
     }
+    b.method("Model", "GetScale", Arc::new(get_scale));
     b.yielding_method("Instance", "WaitForChild", Arc::new(wait_for_child));
     b.global("Instance", Arc::new(|lua, _| instance_global(lua)));
 }
@@ -202,6 +203,12 @@ fn is_ancestor_of(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
     };
     let r = with_world(lua, |w| tree::ancestors(w, other).contains(&e))?;
     ret(lua, r)
+}
+
+/// A model's scale factor: 1, as nothing rescales a model yet (no `ScaleTo`).
+fn get_scale(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
+    let () = args(lua, a, "GetScale")?;
+    ret(lua, 1.0)
 }
 
 fn get_full_name(lua: &Lua, e: Entity, _: MultiValue) -> Result<MultiValue> {
