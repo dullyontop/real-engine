@@ -76,6 +76,8 @@ notify = "=8.2.0"
 notify-debouncer-full = "=0.7.0"
 kira = { version = "=0.12.5", default-features = false, features = ["cpal"] }
 gilrs = "=0.11.2"
+# The wall clock, also on wasm32-unknown-unknown (ADR-0049).
+web-time = "=1.1.0"
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "ansi", "json"] }
 puffin = "=0.20.0"

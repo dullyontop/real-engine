@@ -3,6 +3,10 @@
 //! The engine runs one `rayon::ThreadPool`, shared by ProcGraph evaluation, Jolt's
 //! jobs and asset processing. Its threads are named `re-worker-N` (N from 0), so
 //! they can be told apart from any other thread in the process.
+//!
+//! On wasm without atomics (the browser build, ADR-0049 §5) there are no threads: the pool
+//! has one worker, the calling thread, so `scope`, `install` and parallel iterators run
+//! their jobs inline, and `spawn` runs its job before returning.
 
 use std::sync::OnceLock;
 
@@ -35,18 +39,21 @@ impl TaskPool {
         } else {
             threads
         };
-        rayon::ThreadPoolBuilder::new()
+        #[cfg(not(all(target_family = "wasm", not(target_feature = "atomics"))))]
+        let builder = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
-            .thread_name(|i| format!("re-worker-{i}"))
-            .build()
-            .map(|pool| TaskPool { pool })
-            .map_err(|e| {
-                Diagnostic::error(
-                    codes::TASK_POOL_BUILD_FAILED,
-                    format!("could not start {threads} worker threads: {e}"),
-                )
-                .with_hint("lower the worker count, or check the process thread limit")
-            })
+            .thread_name(|i| format!("re-worker-{i}"));
+        #[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
+        let builder = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .use_current_thread();
+        builder.build().map(|pool| TaskPool { pool }).map_err(|e| {
+            Diagnostic::error(
+                codes::TASK_POOL_BUILD_FAILED,
+                format!("could not start {threads} worker threads: {e}"),
+            )
+            .with_hint("lower the worker count, or check the process thread limit")
+        })
     }
 
     /// The process-wide pool, created with [`default_threads`](Self::default_threads)
@@ -86,11 +93,17 @@ impl TaskPool {
     }
 
     /// Runs `job` on a worker without waiting for it. Never blocks.
+    ///
+    /// On the single-threaded web build the job runs before `spawn` returns: rayon's only
+    /// worker there is the calling thread, which would never pick a detached job up.
     pub fn spawn<F>(&self, job: F)
     where
         F: FnOnce() + Send + 'static,
     {
+        #[cfg(not(all(target_family = "wasm", not(target_feature = "atomics"))))]
         self.pool.spawn(job);
+        #[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
+        job();
     }
 
     /// Runs `op` with a scope in which borrowed jobs can be spawned; returns once
