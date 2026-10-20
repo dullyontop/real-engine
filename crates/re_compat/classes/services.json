@@ -475,6 +475,51 @@
           "doc": "Fires each simulation step after PostSimulation; threads whose task.wait is due resume after it."
         }
       ]
+    },
+    {
+      "name": "UserSettings",
+      "superclass": "ServiceProvider",
+      "status": "partial",
+      "note": "Only UserGameSettings and IsUserFeatureEnabled.",
+      "doc": "The local user's settings, reached with the global function `UserSettings()`. It is a root of its own, not part of `game`.",
+      "methods": [
+        {
+          "name": "IsUserFeatureEnabled",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "status": "partial",
+          "note": "No user features exist offline, so it is always false.",
+          "doc": "Whether the user feature `name` is on."
+        }
+      ]
+    },
+    {
+      "name": "UserGameSettings",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "note": "Only SavedQualityLevel, which is stored and does not change rendering.",
+      "doc": "The local user's game settings, from `UserSettings():GetService(\"UserGameSettings\")`.",
+      "properties": [
+        {
+          "name": "SavedQualityLevel",
+          "type": "Enum.SavedQualitySetting",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Automatic",
+          "status": "partial",
+          "note": "Stored only: rendering quality does not follow it.",
+          "doc": "The graphics quality the user chose; Automatic lets the engine pick."
+        }
+      ]
     }
   ]
 }

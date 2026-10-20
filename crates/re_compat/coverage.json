@@ -3,7 +3,7 @@
   "version": 1,
   "totals": {
     "implemented": 1750,
-    "partial": 215,
+    "partial": 222,
     "stub-error": 53,
     "missing": 3
   },
@@ -4215,6 +4215,12 @@
       "status": "implemented",
       "members": [
         {
+          "name": "ClipToDeviceSafeArea",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the window has no unsafe area to clip."
+        },
+        {
           "name": "DisplayOrder",
           "kind": "property",
           "status": "implemented"
@@ -4223,6 +4229,12 @@
           "name": "IgnoreGuiInset",
           "kind": "property",
           "status": "implemented"
+        },
+        {
+          "name": "ScreenInsets",
+          "kind": "property",
+          "status": "partial",
+          "note": "None draws under the top bar like IgnoreGuiInset; the other insets all start below the top bar (no device notches or side insets)."
         }
       ]
     },
@@ -5839,6 +5851,20 @@
       ]
     },
     {
+      "name": "UserGameSettings",
+      "superclass": "Instance",
+      "service": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "SavedQualityLevel",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: rendering quality does not follow it."
+        }
+      ]
+    },
+    {
       "name": "UserInputService",
       "superclass": "Instance",
       "service": true,
@@ -5994,6 +6020,19 @@
           "name": "TouchEnabled",
           "kind": "property",
           "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "UserSettings",
+      "superclass": "ServiceProvider",
+      "status": "partial",
+      "members": [
+        {
+          "name": "IsUserFeatureEnabled",
+          "kind": "method",
+          "status": "partial",
+          "note": "No user features exist offline, so it is always false."
         }
       ]
     },
@@ -14701,6 +14740,12 @@
           "status": "implemented"
         }
       ]
+    },
+    {
+      "name": "UserSettings",
+      "status": "partial",
+      "note": "Only UserGameSettings and IsUserFeatureEnabled.",
+      "members": []
     },
     {
       "name": "Vector2",

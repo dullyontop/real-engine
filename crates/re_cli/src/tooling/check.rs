@@ -69,6 +69,59 @@ fn gap_warnings(gap: &GapReport) -> Vec<Diagnostic> {
         .collect()
 }
 
+/// The project's own children of services, as `Service.Child`: instances in
+/// its scenes whose parent is a service, and the first folder or script under
+/// each `scripts/<Service>/`. The gap report drops these names, because
+/// `ReplicatedStorage.Shared` reads an instance, not an API member.
+fn service_children(project: &Path) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let scenes = re_app::verify::content_files(project, "scenes", ".scene.json");
+    for file in &scenes {
+        let Ok(text) = std::fs::read_to_string(project.join(file)) else {
+            continue;
+        };
+        let Ok(doc) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        let Some(entities) = doc["entities"].as_array() else {
+            continue;
+        };
+        let services: std::collections::HashMap<&str, &str> = entities
+            .iter()
+            .filter(|e| e["components"].get("ServiceTag").is_some())
+            .filter_map(|e| {
+                Some((
+                    e["id"].as_str()?,
+                    e["components"]["ClassMarker"]["class"].as_str()?,
+                ))
+            })
+            .collect();
+        for e in entities {
+            if let (Some(parent), Some(name)) = (e["parent"].as_str(), e["name"].as_str())
+                && let Some(class) = services.get(parent)
+            {
+                out.insert(format!("{class}.{name}"));
+            }
+        }
+    }
+    if let Ok(services) = std::fs::read_dir(project.join("scripts")) {
+        for service in services.flatten() {
+            let service_name = service.file_name().to_string_lossy().into_owned();
+            let Ok(children) = std::fs::read_dir(service.path()) else {
+                continue;
+            };
+            for child in children.flatten() {
+                let name = child.file_name().to_string_lossy().into_owned();
+                let name = name.split('.').next().unwrap_or_default();
+                if !name.is_empty() {
+                    out.insert(format!("{service_name}.{name}"));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Every diagnostic of a corpus report, errors first.
 fn diagnostics(report: &CorpusReport) -> Vec<Diagnostic> {
     let mut all = report.compile.failed.clone();
@@ -169,7 +222,10 @@ pub fn run(args: CheckArgs, project: &Path) -> anyhow::Result<ExitCode> {
             compat_definitions,
         },
     };
-    let report = corpus::run(&dirs, &options);
+    let mut report = corpus::run(&dirs, &options);
+    if config.as_ref().is_some_and(|c| c.compat.is_some()) {
+        report.scan.gap.drop_children(&service_children(project));
+    }
     let diags = diagnostics(&report);
     let errors = diags.iter().filter(|d| d.is_error()).count();
     if args.json {
@@ -258,7 +314,10 @@ impl VerifyStage for ScanStage {
         } else {
             Coverage::native()
         };
-        let gap = GapReport::new(&usage, &coverage);
+        let mut gap = GapReport::new(&usage, &coverage);
+        if compat {
+            gap.drop_children(&service_children(ctx.project));
+        }
         diags.extend(gap_warnings(&gap));
         StageReport::new(
             "scan",

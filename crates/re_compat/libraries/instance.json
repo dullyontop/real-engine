@@ -28,6 +28,12 @@
       "status": "implemented"
     },
     {
+      "name": "UserSettings",
+      "status": "partial",
+      "note": "Only UserGameSettings and IsUserFeatureEnabled.",
+      "doc": "Global function: the local user's UserSettings, a root of its own outside game."
+    },
+    {
       "name": "Instance",
       "status": "implemented",
       "doc": "Makes instances.",
