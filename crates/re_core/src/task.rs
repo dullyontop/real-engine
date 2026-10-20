@@ -6,9 +6,10 @@
 //!
 //! On wasm without atomics (the browser build, ADR-0049 §5) there are no threads: the pool
 //! has one worker, the calling thread, so `scope`, `install` and parallel iterators run
-//! their jobs inline, and `spawn` runs its job before returning.
+//! their jobs inline, and `spawn` runs its job before returning. Every `TaskPool` there
+//! shares that one rayon pool.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use crate::codes;
 use crate::diag::Diagnostic;
@@ -18,7 +19,7 @@ static GLOBAL: OnceLock<TaskPool> = OnceLock::new();
 /// A wrapper around one `rayon::ThreadPool` with threads named `re-worker-N`.
 #[derive(Debug)]
 pub struct TaskPool {
-    pool: rayon::ThreadPool,
+    pool: Arc<rayon::ThreadPool>,
 }
 
 impl TaskPool {
@@ -40,14 +41,26 @@ impl TaskPool {
             threads
         };
         #[cfg(not(all(target_family = "wasm", not(target_feature = "atomics"))))]
-        let builder = rayon::ThreadPoolBuilder::new()
+        let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
-            .thread_name(|i| format!("re-worker-{i}"));
+            .thread_name(|i| format!("re-worker-{i}"))
+            .build()
+            .map(Arc::new);
+        // The calling thread joins a `use_current_thread` pool for good and cannot join a
+        // second one, so every TaskPool on the web shares one rayon pool.
         #[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
-        let builder = rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .use_current_thread();
-        builder.build().map(|pool| TaskPool { pool }).map_err(|e| {
+        let pool = {
+            static SINGLE: OnceLock<Arc<rayon::ThreadPool>> = OnceLock::new();
+            match SINGLE.get() {
+                Some(pool) => Ok(pool.clone()),
+                None => rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .use_current_thread()
+                    .build()
+                    .map(|pool| SINGLE.get_or_init(|| Arc::new(pool)).clone()),
+            }
+        };
+        pool.map(|pool| TaskPool { pool }).map_err(|e| {
             Diagnostic::error(
                 codes::TASK_POOL_BUILD_FAILED,
                 format!("could not start {threads} worker threads: {e}"),
