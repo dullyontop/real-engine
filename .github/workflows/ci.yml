@@ -225,6 +225,11 @@ jobs:
             echo "== $project"
             report="out/verify-$project.json"
             target/release/real verify --project "examples/$project" --json > "$report" || true
+            if ! jq -e '.stages' "$report" > /dev/null; then
+              echo "::error::$project: real verify wrote no report"
+              status=1
+              continue
+            fi
             jq -r '.stages[] | "\(.name): ok=\(.ok)"' "$report"
             jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' "$report"
             jq -c '.stages[] | select(.name == "goldens") | .data' "$report"
@@ -235,7 +240,8 @@ jobs:
             jq -r --arg p "$project" '.stages[] | select(.name == "goldens") | select(.data.checks | length > 0 and all(.missing == true)) | "::warning::\($p): no golden set for backend \(.data.backend), \(.data.checks | length) images not compared"' "$report"
             jq -e '.ok == true or (
               ([.stages[] | select(.name != "goldens") | .ok] | all) and
-              (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)))
+              (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)) and
+                ([.diagnostics[]? | select(.severity == "error") | .code] | all(. == "RE0510")))
             )' "$report" || status=1
           done
           exit $status
@@ -260,6 +266,7 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/luau-lsp.zip" https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-macos.zip
           echo "7d3936e8dec6dc77547abd061d2e950da392562a5f94858b880f23dba50d84cd  $RUNNER_TEMP/luau-lsp.zip" | shasum -a 256 -c -
           mkdir -p "$RUNNER_TEMP/bin" && unzip -o "$RUNNER_TEMP/luau-lsp.zip" -d "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP/bin/luau-lsp"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Test (non-GPU crates)
         run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
@@ -280,6 +287,11 @@ jobs:
             echo "== $project"
             report="out/verify-$project.json"
             target/release/real verify --project "examples/$project" --json > "$report" || true
+            if ! jq -e '.stages' "$report" > /dev/null; then
+              echo "::error::$project: real verify wrote no report"
+              status=1
+              continue
+            fi
             jq -r '.stages[] | "\(.name): ok=\(.ok)"' "$report"
             jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' "$report"
             jq -c '.stages[] | select(.name == "goldens") | .data' "$report"
@@ -290,7 +302,8 @@ jobs:
             jq -r --arg p "$project" '.stages[] | select(.name == "goldens") | select(.data.checks | length > 0 and all(.missing == true)) | "::warning::\($p): no golden set for backend \(.data.backend), \(.data.checks | length) images not compared"' "$report"
             jq -e '.ok == true or (
               ([.stages[] | select(.name != "goldens") | .ok] | all) and
-              (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)))
+              (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)) and
+                ([.diagnostics[]? | select(.severity == "error") | .code] | all(. == "RE0510")))
             )' "$report" || status=1
           done
           exit $status
