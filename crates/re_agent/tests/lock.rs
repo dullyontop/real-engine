@@ -107,16 +107,18 @@ fn racing_writers_get_exactly_one_lock() {
     for _ in 0..20 {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().to_path_buf();
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
+        let start = std::sync::Arc::new(std::sync::Barrier::new(6));
+        let tried = std::sync::Arc::new(std::sync::Barrier::new(6));
         let threads: Vec<_> = (0..6)
             .map(|i| {
                 let project = project.clone();
-                let barrier = barrier.clone();
+                let (start, tried) = (start.clone(), tried.clone());
                 std::thread::spawn(move || {
-                    barrier.wait();
+                    start.wait();
                     let got = lock::acquire(&project, Holder::headless(format!("w{i}")));
-                    // Hold it until everyone has tried.
-                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    // Hold it until everyone has tried: a sleep is not enough where
+                    // the losers' retries take longer than it (macOS runners).
+                    tried.wait();
                     got.map(drop).map_err(|e| e.code.to_string())
                 })
             })

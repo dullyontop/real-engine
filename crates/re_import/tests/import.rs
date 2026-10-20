@@ -728,6 +728,12 @@ fn names_that_differ_only_in_case_get_their_own_files() {
             ("server/main.server.luau", "print(2)\n"),
         ],
     );
+    // On a case-insensitive file system (macOS and Windows by default) the two
+    // inputs are one file, so there is nothing to tell apart.
+    if std::fs::read_dir(input.join("server")).unwrap().count() < 2 {
+        println!("skipped: this file system folds case");
+        return;
+    }
     let report = import(&input, &project, &registry(), &opts()).unwrap();
     let mut files: Vec<String> = report
         .files
