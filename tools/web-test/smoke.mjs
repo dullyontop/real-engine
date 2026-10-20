@@ -2,7 +2,7 @@
 // run's output (ADR-0049). Usage:
 //   node --experimental-wasm-exnref smoke.mjs [--reported PREFIX]... <wasm-bindgen out dir> <native report file>
 // A line starting with a --reported prefix is printed when it differs but does not fail the
-// run; the pile hash is reported only until Jolt's deterministic build is on (WP18 PR "d2").
+// run, as long as both sides end in a 16-digit hash (an error still fails); the pile hash is reported only until Jolt's deterministic build is on (WP18 PR "d2").
 // The out dir holds wasm-bindgen's `--target web` output for web_test. Its glue imports
 // the WASI functions from the bare module "wasi_snapshot_preview1", which a page maps to
 // ./wasi.js with an import map; here the import is rewritten to this directory's wasi.js.
@@ -43,7 +43,8 @@ const a = got.split('\n'), b = want.split('\n');
 let differ = 0;
 for (let i = 0; i < Math.max(a.length, b.length); i++) {
   if (a[i] !== b[i]) {
-    const onlyReported = reported.some((p) => a[i]?.startsWith(p) && b[i]?.startsWith(p));
+    const hashed = (line, p) => line?.startsWith(p) && /: [0-9a-f]{16}$/.test(line);
+    const onlyReported = reported.some((p) => hashed(a[i], p) && hashed(b[i], p));
     if (!onlyReported) differ++;
     console.error(`${onlyReported ? 'differs (reported only)' : 'differs'} from native:\n  wasm:   ${a[i]}\n  native: ${b[i]}`);
   }

@@ -13,12 +13,20 @@ sha256="b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4"
 
 sdk="${WASI_SDK_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/real-engine/wasi-sdk-${version}.0-x86_64-linux}"
 if [ ! -x "$sdk/bin/clang++" ]; then
+  # Unpacks into a scratch folder and moves it into place, so an interrupted run never
+  # leaves a partial SDK that the next run would take as installed.
   mkdir -p "$(dirname "$sdk")"
-  archive="$(mktemp)"
-  curl -fsSL --retry 3 -o "$archive" "$url"
-  echo "$sha256  $archive" | sha256sum -c - >&2
-  tar -xzf "$archive" -C "$(dirname "$sdk")"
-  rm -f "$archive"
+  tmp="$(mktemp -d "$(dirname "$sdk")/.wasi-sdk.XXXXXX")"
+  trap 'rm -rf "$tmp"' EXIT
+  curl -fsSL --retry 3 -o "$tmp/sdk.tar.gz" "$url"
+  echo "$sha256  $tmp/sdk.tar.gz" | sha256sum -c - >&2
+  tar -xzf "$tmp/sdk.tar.gz" -C "$tmp"
+  rm -rf "$sdk"
+  mv "$tmp/wasi-sdk-${version}.0-x86_64-linux" "$sdk"
+fi
+if [ ! -x "$sdk/bin/clang++" ]; then
+  echo "wasi-sdk.sh: no clang++ in $sdk" >&2
+  exit 1
 fi
 
 sysroot="$sdk/share/wasi-sysroot"
@@ -33,6 +41,7 @@ vars=(
   # (exnref) encodings, so only the new one is emitted.
   "CXXFLAGS_wasm32_unknown_unknown=--target=wasm32-wasip1 --sysroot=$sysroot -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false"
   # The C++ runtime with exceptions, wasi-libc, and the process clocks Luau's os.clock uses.
+  # A RUSTFLAGS or CARGO_ENCODED_RUSTFLAGS in the environment replaces these entirely.
   "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS=-L $lib/eh -L $lib -l static=c++abi -l static=unwind -l static=c -l static=wasi-emulated-process-clocks"
 )
 

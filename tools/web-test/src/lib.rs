@@ -1,7 +1,7 @@
 //! Smoke checks of the C++ the engine links, Luau (through mlua) and Jolt (through
 //! `re_physics`), built for `wasm32-unknown-unknown` with wasi-sdk (ADR-0049 §1, §2).
 //!
-//! The same functions run natively in this crate's tests and in wasm under Node
+//! The same functions run natively (`src/main.rs`) and in wasm under Node
 //! (`tools/web-test/smoke.mjs`), and CI compares their output line by line. Luau's checks
 //! cover what the browser build depends on: C++ exceptions crossing `pcall` and Rust
 //! callbacks, coroutines, vectors, bytecode, and 32-bit integers. The physics check drops a
@@ -192,7 +192,8 @@ mod wasm {
     /// before every export call unless the module calls them itself.
     #[wasm_bindgen]
     pub fn init() {
-        unsafe { __wasm_call_ctors() };
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| unsafe { __wasm_call_ctors() });
     }
 
     /// [`super::report`], for `smoke.mjs`.
