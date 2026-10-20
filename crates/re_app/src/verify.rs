@@ -24,8 +24,8 @@
 //! note saying why. Stages after a failed `boot` are skipped.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
+use re_core::time::Instant;
 use re_core::{Diagnostic, Location, Severity};
 use re_scene::{PrefabFile, World};
 use schemars::JsonSchema;

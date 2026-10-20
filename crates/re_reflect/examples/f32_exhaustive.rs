@@ -14,7 +14,7 @@ use std::thread;
 
 fn main() {
     let threads = thread::available_parallelism().map_or(4, |n| n.get()) as u64;
-    let t0 = std::time::Instant::now();
+    let t0 = re_core::time::Instant::now();
     let handles: Vec<_> = (0..threads)
         .map(|t| {
             thread::spawn(move || {

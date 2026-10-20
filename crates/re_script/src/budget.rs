@@ -19,9 +19,9 @@
 
 use std::cell::Cell;
 use std::os::raw::c_int;
-use std::time::Instant;
 
 use mlua::{Lua, ffi};
+use re_core::time::Instant;
 
 /// How many safepoints pass between two clock reads.
 pub const CHECK_EVERY: u32 = 1024;
