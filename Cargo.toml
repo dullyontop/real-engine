@@ -43,13 +43,13 @@ winit = "=0.30.13"
 egui = "=0.36.2"
 egui-wgpu = "=0.36.2"
 egui-winit = "=0.36.2"
-glam = { version = "=0.34.1", features = ["bytemuck", "mint-05", "serde"] }
+glam = { version = "=0.34.1", features = ["bytemuck", "libm", "mint-05", "scalar-math", "serde"] }
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 pollster = "=1.0.1"
 png = "=0.18.1"
 
 # Physics. Default features off: the default `prebuilt` feature downloads binaries.
-oxijolt = { version = "=1.1.0", default-features = false }
+oxijolt = { version = "=1.1.0", default-features = false, features = ["cross-platform-deterministic"] }
 
 # Scripting and script tooling.
 mlua = { version = "=0.12.2", features = ["luau"] }
@@ -58,6 +58,8 @@ full_moon = { version = "=3.0.0", features = ["luau"] }
 # Core, data and serialization.
 bevy_ecs = { version = "=0.20.0", default-features = false, features = ["std", "multi_threaded"] }
 rayon = "=1.12.0"
+# Portable maths (ADR-0036): the same bits on every platform, instead of the C library.
+libm = "=0.2.16"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order", "float_roundtrip"] }
 schemars = { version = "=1.2.3", features = ["derive"] }

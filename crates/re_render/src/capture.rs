@@ -405,7 +405,7 @@ pub fn linear_to_srgb_u8(c: f32) -> u8 {
     let s = if c <= 0.003_130_8 {
         12.92 * c
     } else {
-        1.055 * c.powf(1.0 / 2.4) - 0.055
+        1.055 * libm::powf(c, 1.0 / 2.4) - 0.055
     };
     (s * 255.0).round() as u8
 }

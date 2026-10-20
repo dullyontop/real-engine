@@ -148,8 +148,8 @@ mod tests {
         for i in -2000..=2000 {
             let x = f64::from(i) * 0.0137;
             let (s, c) = sin_cos(x);
-            assert!((s - x.sin()).abs() < 1e-14, "sin({x})");
-            assert!((c - x.cos()).abs() < 1e-14, "cos({x})");
+            assert!((s - libm::sin(x)).abs() < 1e-14, "sin({x})");
+            assert!((c - libm::cos(x)).abs() < 1e-14, "cos({x})");
         }
     }
 

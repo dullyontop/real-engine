@@ -26,6 +26,7 @@ re_proc.workspace = true
 re_geom.workspace = true
 winit.workspace = true
 glam.workspace = true
+libm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

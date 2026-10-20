@@ -16,3 +16,6 @@ re_types.workspace = true
 glam.workspace = true
 oxijolt.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+libm.workspace = true

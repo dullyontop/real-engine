@@ -556,7 +556,7 @@ pub(crate) fn mip_chain(
                 if c <= 0.04045 {
                     c / 12.92
                 } else {
-                    ((c + 0.055) / 1.055).powf(2.4)
+                    libm::powf((c + 0.055) / 1.055, 2.4)
                 }
             } else {
                 c

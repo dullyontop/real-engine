@@ -269,8 +269,8 @@ pub(crate) fn select_spots(
         .into_iter()
         .map(|l| {
             let half = l.half_angle.min(std::f32::consts::FRAC_PI_2 * 0.999);
-            let outer = half.cos();
-            let inner = (half * 0.8).cos();
+            let outer = libm::cosf(half);
+            let inner = libm::cosf(half * 0.8);
             SpotLightRaw {
                 position_range: l.position.extend(l.range).to_array(),
                 color: (Vec3::from_array(l.color) * l.intensity * lumens_to_candela * exposure)
@@ -352,7 +352,7 @@ pub(crate) fn fit_shadow(
     map_size: u32,
 ) -> ShadowFit {
     let far = camera.far.min(shadow_distance.max(camera.near * 2.0));
-    let tan = (camera.fov_y_radians * 0.5).tan();
+    let tan = libm::tanf(camera.fov_y_radians * 0.5);
     let mut corners = Vec::with_capacity(8);
     for d in [camera.near, far] {
         let (hx, hy) = (d * tan * aspect, d * tan);

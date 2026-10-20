@@ -235,7 +235,7 @@ pub(crate) fn effect_quads(
         {
             continue;
         }
-        let (sin, cos) = s.rotation.sin_cos();
+        let (sin, cos) = libm::sincosf(s.rotation);
         let half = s.size * 0.5;
         let r = (right * cos + up * sin) * half;
         let u = (up * cos - right * sin) * half;

@@ -192,7 +192,7 @@ mod datatypes {
     }
 
     fn rot(axis: usize, t: f64) -> M4 {
-        let (s, c) = t.sin_cos();
+        let (s, c) = libm::sincos(t);
         let mut m = [[0.0; 4]; 4];
         m[3][3] = 1.0;
         let (i, j) = match axis {

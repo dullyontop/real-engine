@@ -429,7 +429,11 @@ fn capsule(radius: f32, cylinder: f32, segments: u32, rings: u32) -> MeshData {
     for &(offset, phi, v) in &rows {
         for s in 0..=segments {
             let theta = TAU * s as f32 / segments as f32;
-            let n = Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin());
+            let n = Vec3::new(
+                libm::sinf(phi) * libm::cosf(theta),
+                libm::cosf(phi),
+                libm::sinf(phi) * libm::sinf(theta),
+            );
             let p = n * radius + Vec3::Y * offset;
             mesh.vertices
                 .push(vertex(p, n, [s as f32 / segments as f32, v]));

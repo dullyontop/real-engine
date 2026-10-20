@@ -13,7 +13,10 @@ use crate::diag::ScriptError;
 /// The compiler every context uses: optimisation level 1 and debug level 1 (line
 /// info and function names, enough for tracebacks). These are Luau's defaults.
 pub(crate) fn compiler() -> Compiler {
-    Compiler::new().set_optimization_level(1).set_debug_level(1)
+    Compiler::new()
+        .set_optimization_level(1)
+        .set_debug_level(1)
+        .set_disabled_builtins(crate::portable_math::DISABLED_BUILTINS)
 }
 
 thread_local! {

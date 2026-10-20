@@ -119,7 +119,7 @@ pub fn assert_near(what: &str, got: f32, want: f32, tol: f32) {
 /// spike's pile scene. Entity 0 is the floor; bodies are 1..=count.
 pub fn pile(count: usize) -> Vec<PhysicsCmd> {
     let mut cmds = vec![floor(0, 0.0, 0.0, 0.0, 60.0)];
-    let side = (count as f64).cbrt().ceil() as usize;
+    let side = libm::cbrt(count as f64).ceil() as usize;
     for i in 0..count {
         let (x, y, z) = (i % side, i / (side * side), (i / side) % side);
         let shape = if i % 2 == 0 { sphere(0.4) } else { cube(0.4) };

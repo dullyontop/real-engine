@@ -85,9 +85,7 @@ fn polyhedron(out: &mut MeshData, geom: &PartGeom, color: [f32; 4]) {
         on.sort_by(|a, b| {
             let pa = *a - centre;
             let pb = *b - centre;
-            pa.dot(v)
-                .atan2(pa.dot(u))
-                .total_cmp(&pb.dot(v).atan2(pb.dot(u)))
+            libm::atan2f(pa.dot(v), pa.dot(u)).total_cmp(&libm::atan2f(pb.dot(v), pb.dot(u)))
         });
         let (ta, tb) = face_axes(n);
         let base = out.vertices.len() as u32;
@@ -114,9 +112,9 @@ fn ball(out: &mut MeshData, size: Vec3, color: [f32; 4]) {
             let u = seg as f32 / SEGMENTS as f32;
             let phi = u * std::f32::consts::TAU;
             let n = Vec3::new(
-                theta.sin() * phi.cos(),
-                theta.cos(),
-                -theta.sin() * phi.sin(),
+                libm::sinf(theta) * libm::cosf(phi),
+                libm::cosf(theta),
+                -libm::sinf(theta) * libm::sinf(phi),
             );
             out.vertices.push(vertex(
                 n * r,
@@ -147,7 +145,7 @@ fn cylinder(out: &mut MeshData, size: Vec3, color: [f32; 4]) {
     for seg in 0..=SEGMENTS {
         let u = seg as f32 / SEGMENTS as f32;
         let a = u * std::f32::consts::TAU;
-        let n = Vec3::new(0.0, a.cos(), a.sin());
+        let n = Vec3::new(0.0, libm::cosf(a), libm::sinf(a));
         for x in [-hx, hx] {
             out.vertices.push(vertex(
                 Vec3::new(x, n.y * r, n.z * r),
@@ -168,7 +166,7 @@ fn cylinder(out: &mut MeshData, size: Vec3, color: [f32; 4]) {
             .push(vertex(Vec3::new(x, 0.0, 0.0), n, Vec2::ZERO, color));
         for seg in 0..=SEGMENTS {
             let a = seg as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
-            let (y, z) = (a.cos() * r, a.sin() * r);
+            let (y, z) = (libm::cosf(a) * r, libm::sinf(a) * r);
             out.vertices
                 .push(vertex(Vec3::new(x, y, z), n, Vec2::new(z, -y), color));
         }
