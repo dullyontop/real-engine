@@ -22,7 +22,9 @@ use crate::image_decode::decode_image;
 use crate::{AssetId, codes};
 
 /// The version of the glTF importer. Bump it whenever its output changes, so
-/// cached imports are rebuilt.
+/// cached imports are rebuilt. This includes new fields: the cache is postcard,
+/// which ignores `#[serde(default)]`, so an old cache never reads into a new
+/// struct.
 pub const GLTF_IMPORTER_VERSION: u32 = 2;
 
 /// Everything imported from one glTF file.

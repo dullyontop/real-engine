@@ -329,3 +329,77 @@ fn two_skins_sharing_a_mesh_get_their_own_copy() {
     );
     assert_eq!(second.joints[0][0], 1);
 }
+
+/// The copy for a second skin starts from the weights as imported, not from the
+/// first skin's remapped ones, and nodes of one skin share its copy.
+#[test]
+fn shared_mesh_copies_start_from_the_imported_weights() {
+    let mut g = Glb::default();
+    let pos = g.positions(&POS[..3]);
+    let j0 = g.joints_u16(&[[0, 0, 0, 0], [1, 0, 0, 0], [1, 0, 0, 0]]);
+    let w0 = g.weights_f32(&[[1.0, 0.0, 0.0, 0.0]; 3]);
+    let ibm = g.mat4s(&[Mat4::IDENTITY; 2]);
+    // Skin 0 lists (b, a), child first: reordered. Skin 1 lists (a2, b2): kept.
+    let body = format!(
+        r#""scene":0,"scenes":[{{"nodes":[0,2,4,5,6]}}],
+"nodes":[{{"name":"a","children":[1]}},{{"name":"b"}},{{"name":"a2","children":[3]}},{{"name":"b2"}},{{"name":"m1","mesh":0,"skin":0}},{{"name":"m2","mesh":0,"skin":1}},{{"name":"m3","mesh":0,"skin":1}}],
+"meshes":[{{"primitives":[{{"attributes":{{"POSITION":{pos},"JOINTS_0":{j0},"WEIGHTS_0":{w0}}}}}]}}],
+"skins":[{{"joints":[1,0],"inverseBindMatrices":{ibm}}},{{"joints":[2,3],"inverseBindMatrices":{ibm}}}]"#
+    );
+    let g = import(&g.finish(&body)).unwrap();
+    assert!(g.warnings.is_empty(), "{:#?}", g.warnings);
+    assert_eq!(
+        g.meshes.len(),
+        2,
+        "one copy for skin 1, shared by m2 and m3"
+    );
+    let first = g.meshes[0].skin_weights.as_ref().unwrap();
+    let second = g.meshes[1].skin_weights.as_ref().unwrap();
+    assert_eq!(
+        (first.joints[0][0], first.joints[1][0]),
+        (1, 0),
+        "skin 0 swaps"
+    );
+    assert_eq!(
+        (second.joints[0][0], second.joints[1][0]),
+        (0, 1),
+        "skin 1 keeps the file's indices"
+    );
+    assert_eq!(g.nodes[5].meshes, g.nodes[6].meshes);
+}
+
+/// gltf accepts cyclic node graphs; a skin over one is an error, not a hang.
+#[test]
+fn cyclic_joint_hierarchies_are_errors() {
+    for (nodes, joints) in [
+        // A joint that is its own child.
+        (
+            r#"{"name":"a","children":[0]},{"name":"m","mesh":0,"skin":0}"#,
+            "[0]",
+        ),
+        // Two joints that are each other's child.
+        (
+            r#"{"name":"a","children":[1]},{"name":"b","children":[0]},{"name":"m","mesh":0,"skin":0}"#,
+            "[0,1]",
+        ),
+        // A cycle through a non-joint node above the joint.
+        (
+            r#"{"name":"x","children":[1]},{"name":"y","children":[0,2]},{"name":"a"},{"name":"m","mesh":0,"skin":0}"#,
+            "[2]",
+        ),
+    ] {
+        let mut g = Glb::default();
+        let pos = g.positions(&POS[..3]);
+        let j0 = g.joints_u16(&[[0, 0, 0, 0]; 3]);
+        let w0 = g.weights_f32(&[[1.0, 0.0, 0.0, 0.0]; 3]);
+        let mesh_node = nodes.matches("\"name\"").count() - 1;
+        let body = format!(
+            r#""scene":0,"scenes":[{{"nodes":[{mesh_node}]}}],"nodes":[{nodes}],
+"meshes":[{{"primitives":[{{"attributes":{{"POSITION":{pos},"JOINTS_0":{j0},"WEIGHTS_0":{w0}}}}}]}}],
+"skins":[{{"joints":{joints}}}]"#
+        );
+        let err = import(&g.finish(&body)).unwrap_err();
+        assert_eq!(err.code, re_assets::codes::SKIN_INVALID, "{nodes}: {err}");
+        assert!(err.message.contains("cycle"), "{nodes}: {err}");
+    }
+}

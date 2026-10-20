@@ -247,17 +247,27 @@ where
         // non-joint nodes on the way to it (or to the scene root).
         let mut parent: Vec<Option<usize>> = Vec::with_capacity(gltf_joints.len());
         let mut offset: Vec<Mat4> = Vec::with_capacity(gltf_joints.len());
-        for &node in &gltf_joints {
+        // gltf does not reject cyclic node graphs, so each walk is bounded.
+        let cyclic = || bad("its joints' node hierarchy has a cycle".into());
+        for (k, &node) in gltf_joints.iter().enumerate() {
             let mut m = Mat4::IDENTITY;
             let mut up = nodes[node].parent;
             let mut found = None;
+            let mut steps = 0;
             while let Some(p) = up {
-                if let Some(&k) = position.get(&p) {
-                    found = Some(k);
+                steps += 1;
+                if steps > nodes.len() {
+                    return Err(cyclic());
+                }
+                if let Some(&j) = position.get(&p) {
+                    found = Some(j);
                     break;
                 }
                 m = local[p] * m;
                 up = nodes[p].parent;
+            }
+            if found == Some(k) {
+                return Err(cyclic());
             }
             parent.push(found);
             offset.push(m);
@@ -271,19 +281,23 @@ where
         let order: Vec<usize> = if ordered {
             (0..gltf_joints.len()).collect()
         } else {
+            // Iterative, as joint chains can be long; a chain longer than the
+            // joint count is a cycle.
             let mut depth = vec![usize::MAX; gltf_joints.len()];
-            fn depth_of(k: usize, parent: &[Option<usize>], depth: &mut [usize]) -> usize {
-                if depth[k] == usize::MAX {
-                    // Joints come from a node tree, so this terminates.
-                    depth[k] = match parent[k] {
-                        None => 0,
-                        Some(p) => depth_of(p, parent, depth) + 1,
-                    };
-                }
-                depth[k]
-            }
             for k in 0..gltf_joints.len() {
-                depth_of(k, &parent, &mut depth);
+                let mut chain = vec![k];
+                while let Some(p) = parent[*chain.last().expect("non-empty")] {
+                    if depth[p] != usize::MAX {
+                        break;
+                    }
+                    if chain.len() > gltf_joints.len() {
+                        return Err(cyclic());
+                    }
+                    chain.push(p);
+                }
+                for &j in chain.iter().rev() {
+                    depth[j] = parent[j].map_or(0, |p| depth[p] + 1);
+                }
             }
             let mut order: Vec<usize> = (0..gltf_joints.len()).collect();
             order.sort_by_key(|&k| depth[k]);
@@ -344,6 +358,11 @@ where
 
     // Bind each skinned node's meshes to its skin.
     let mut owner: Vec<Option<usize>> = vec![None; meshes.len()];
+    // Copies are made from the weights as imported, before any skin's remap.
+    let pristine: Vec<Option<SkinWeights>> =
+        meshes.iter().map(|m| m.skin_weights.clone()).collect();
+    // The copy of mesh `m` made for skin `s`.
+    let mut copies: BTreeMap<(usize, usize), usize> = BTreeMap::new();
     let mut unweighted = BTreeSet::new();
     for node in document.nodes() {
         let Some(skin) = node.skin() else { continue };
@@ -359,10 +378,17 @@ where
             match owner[m] {
                 Some(o) if o == s => continue,
                 Some(_) => {
-                    // Another skin already owns this mesh's weights: copy it.
-                    let copy = meshes[m].clone();
+                    // Another skin already owns this mesh's weights: use or make
+                    // this skin's copy.
+                    if let Some(&c) = copies.get(&(m, s)) {
+                        nodes[i].meshes[slot] = c;
+                        continue;
+                    }
+                    let mut copy = meshes[m].clone();
+                    copy.skin_weights = pristine[m].clone();
                     meshes.push(copy);
                     owner.push(None);
+                    copies.insert((m, s), meshes.len() - 1);
                     m = meshes.len() - 1;
                     nodes[i].meshes[slot] = m;
                 }
