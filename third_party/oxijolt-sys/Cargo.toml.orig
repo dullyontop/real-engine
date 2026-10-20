@@ -1,0 +1,70 @@
+[package]
+name = "oxijolt-sys"
+description = "Unsafe bindings to Jolt Physics through the joltc C wrapper"
+version = "1.1.0+jolt-5.6.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pockerhead/oxijolt"
+edition = "2021"
+rust-version = "1.88"
+links = "joltc"
+keywords = ["physics", "jolt", "ffi", "gamedev"]
+categories = ["external-ffi-bindings", "game-development", "simulation"]
+
+exclude = [
+    "vendor/JoltPhysics/Assets",
+    "vendor/JoltPhysics/Docs",
+    "vendor/JoltPhysics/Samples",
+    "vendor/JoltPhysics/TestFramework",
+    "vendor/JoltPhysics/UnitTests",
+    "vendor/JoltPhysics/PerformanceTest",
+    "vendor/JoltPhysics/HelloWorld",
+    "vendor/JoltPhysics/JoltViewer",
+    "vendor/joltc/samples",
+    "vendor/joltc/tests",
+]
+
+[package.metadata.docs.rs]
+features = ["debug-renderer"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["prebuilt"]
+
+# Downloads the release archive of this exact version with the system `curl`, verified against
+# `prebuilt.txt`, instead of building Jolt; falls back to the source build. See docs/building.md.
+prebuilt = ["dep:sha2", "dep:flate2", "dep:tar", "dep:cc"]
+
+# Builds Jolt with its assertions (`USE_ASSERTS`).
+asserts = []
+
+# Jolt's `DOUBLE_PRECISION`: world positions are f64 (`JPH_DOUBLE_PRECISION`).
+double-precision = []
+
+# Jolt's `CROSS_PLATFORM_DETERMINISTIC` (defines `JPH_CROSS_PLATFORM_DETERMINISTIC`), Jolt's mode
+# for identical results across platforms and compilers. Jolt then compiles without FMA
+# instructions and with strict floating-point flags (MSVC `/fp:precise` instead of `/fp:fast`,
+# `-ffp-contract=off` on GCC and Clang), which costs speed.
+cross-platform-deterministic = []
+
+# Compiles Jolt's debug renderer (`JPH_DEBUG_RENDERER`) into the native libraries and binds joltc's
+# drawing functions (`JPH_DebugRenderer_*`, `JPH_BodyDrawFilter_*`, `JPH_PhysicsSystem_Draw*`,
+# `JPH_Shape_Draw`). Off by default: Jolt notes that the debug renderer costs performance even when
+# nothing is drawn. Changes Jolt's class layouts, so it is part of the native manifest.
+debug-renderer = []
+
+# Generates the raw bindings at build time with libclang instead of using the committed ones.
+# For checking the generator; it does not add supported targets.
+bindgen = ["dep:bindgen"]
+
+[dependencies]
+
+[build-dependencies]
+bindgen = { version = "0.73", optional = true }
+cmake = "0.1.58"
+anyhow = "1"
+sha2 = { version = "0.10", optional = true }
+flate2 = { version = "1.1", optional = true }
+# 0.4.45 and older carry the `unpack_in` advisory GHSA-j4xf-2g29-59ph.
+tar = { version = "0.4.46", optional = true, default-features = false }
+# Only `windows_registry::find_tool`, to read the MSVC toolset; it compiles nothing here.
+cc = { version = "1.4", optional = true }

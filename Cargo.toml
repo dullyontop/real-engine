@@ -1,5 +1,8 @@
 [workspace]
 members = ["crates/*", "tools/*"]
+# third_party/: patched copies of crates.io crates (ADR-0049 §2), used through
+# [patch.crates-io] below. tools/ci/: CI scripts, not a crate.
+exclude = ["third_party", "tools/ci"]
 resolver = "3"
 
 [workspace.package]
@@ -78,6 +81,8 @@ kira = { version = "=0.12.5", default-features = false, features = ["cpal"] }
 gilrs = "=0.11.2"
 # The wall clock, also on wasm32-unknown-unknown (ADR-0049).
 web-time = "=1.1.0"
+# JavaScript bindings of the browser build (ADR-0049).
+wasm-bindgen = "=0.2.129"
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "ansi", "json"] }
 puffin = "=0.20.0"
@@ -91,6 +96,13 @@ tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "io-std"
 # Dev-dependencies.
 insta = { version = "=1.49.0", features = ["json"] }
 tempfile = "=3.27.0"
+
+# Temporary patched copies for wasm32-unknown-unknown (ADR-0049 §2), removed when upstream
+# releases carry the changes. Both are the crates.io sources of the versions pinned above
+# plus research/m3/wp29/upstream/'s diffs; see third_party/README.md.
+[patch.crates-io]
+mlua = { path = "third_party/mlua" }
+oxijolt-sys = { path = "third_party/oxijolt-sys" }
 
 [profile.dev]
 debug = "line-tables-only"
