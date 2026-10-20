@@ -56,8 +56,9 @@ pub struct Config {
     pub keepalive: Duration,
     /// The shortest retransmission timeout; two frame times is right.
     pub rto_min: Duration,
-    /// The most reliable bytes a connection may have queued and unacked; a
-    /// send past it is refused (`RE8908`), so a sender coalesces or waits.
+    /// The most reliable bytes a connection may have queued and unacked,
+    /// each message counting 64 bytes more; a send past it is refused
+    /// (`RE8908`), so a sender coalesces or waits.
     /// A connection whose sent fragments see no ack for [`Config::timeout`]
     /// is closed (`RE8906`).
     pub max_backlog: usize,
@@ -317,9 +318,9 @@ impl<T: Transport> Endpoint<T> {
             return Err(Diagnostic::error(
                 codes::SEND,
                 format!(
-                    "connection {} already has {backlog} reliable bytes waiting, and {} more would pass the {max_backlog}-byte limit",
+                    "connection {} already has {backlog} reliable bytes waiting (64 per message included), and {} more would pass the {max_backlog}-byte limit",
                     peer.0,
-                    bytes.len()
+                    bytes.len() + crate::conn::FRAGMENT_COST
                 ),
             )
             .with_hint("send less at once, or wait until Endpoint::congested is false"));

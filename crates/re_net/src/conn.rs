@@ -72,7 +72,8 @@ pub struct ConnStats {
     /// Packets not acked because their fragments did not fit the receive
     /// buffer; the sender sends them again.
     pub packets_deferred: u64,
-    /// Unreliable messages dropped from a full send queue.
+    /// Unreliable messages dropped: from a full send queue, or received
+    /// in a deferred packet.
     pub unreliable_dropped: u64,
 }
 
