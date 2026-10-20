@@ -43,6 +43,7 @@ winit = "=0.30.13"
 egui = "=0.36.2"
 egui-wgpu = "=0.36.2"
 egui-winit = "=0.36.2"
+egui_dock = { version = "=0.21.1", features = ["serde"] }
 glam = { version = "=0.34.1", features = ["bytemuck", "mint-05", "serde"] }
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 pollster = "=1.0.1"

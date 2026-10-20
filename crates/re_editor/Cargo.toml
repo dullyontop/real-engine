@@ -20,7 +20,9 @@ re_render.workspace = true
 glam.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
+egui_dock.workspace = true
 winit.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 

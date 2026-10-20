@@ -92,6 +92,8 @@ pub fn run_editor(mut app: App, mut options: EditorOptions) -> anyhow::Result<()
     event_loop
         .run_app(&mut host)
         .map_err(|e| no_display(format!("the editor's event loop failed: {e}")))?;
+    // A layout change made while a button was still held is saved here.
+    host.editor.save_layout();
     if let Some(gfx) = host.gfx.as_mut() {
         gfx.view.release(&mut gfx.ui);
     }

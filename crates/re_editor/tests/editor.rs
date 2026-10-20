@@ -585,3 +585,227 @@ fn changing_selection_commits_the_field_being_edited() {
         ed.editor.console()
     );
 }
+
+fn pointer(pos: egui::Pos2, pressed: Option<bool>) -> Vec<egui::Event> {
+    let mut events = vec![egui::Event::PointerMoved(pos)];
+    if let Some(pressed) = pressed {
+        events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    events
+}
+
+fn key(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+fn translation(app: &App, id: &str) -> Vec3 {
+    match app.world().get(id, "Transform", "translation").unwrap() {
+        Value::Vec3(v) => v,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Dragging the gizmo's X arrow moves only the preview while the button is
+/// held; releasing it sends one `scene.apply`, which moves the entity along
+/// X only and is one undo step. Escape during a drag sends nothing.
+#[test]
+fn a_gizmo_drag_is_one_transaction() {
+    use re_editor::gizmo::Handle;
+    let dir = project();
+    let before = scene_text(dir.path());
+    let mut app = open(dir.path(), true);
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    ed.editor.select(Some("box"));
+    for _ in 0..2 {
+        ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    }
+    let log = app.history().log().len();
+    let start = ed
+        .editor
+        .gizmo_handle(&app, Handle::Axis(0))
+        .expect("the X arrow is on screen");
+    let to = start + egui::vec2(120.0, 40.0);
+
+    let drag = |ed: &mut HeadlessEditor, app: &mut App, last: Vec<egui::Event>| {
+        ed.frame(app, &AllowAll, input(pointer(start, Some(true))))
+            .unwrap();
+        for t in [0.25, 0.5, 1.0] {
+            ed.frame(
+                app,
+                &AllowAll,
+                input(pointer(start + (to - start) * t, None)),
+            )
+            .unwrap();
+            assert!(ed.editor.gizmo_dragging());
+            assert_eq!(app.history().log().len(), log, "an edit while dragging");
+        }
+        ed.frame(app, &AllowAll, input(last)).unwrap();
+        ed.frame(app, &AllowAll, input(vec![])).unwrap();
+    };
+
+    // Escape cancels: nothing is sent, nothing moved.
+    drag(&mut ed, &mut app, vec![key(egui::Key::Escape)]);
+    ed.frame(&mut app, &AllowAll, input(pointer(to, Some(false))))
+        .unwrap();
+    assert!(!ed.editor.gizmo_dragging());
+    assert_eq!(app.history().log().len(), log, "{:?}", ed.editor.console());
+    assert_eq!(translation(&app, "box"), Vec3::new(0.0, 4.0, 0.0));
+
+    drag(&mut ed, &mut app, pointer(to, Some(false)));
+    assert!(!ed.editor.gizmo_dragging());
+    assert_eq!(
+        app.history().log().len(),
+        log + 1,
+        "{:?}",
+        ed.editor.console()
+    );
+    let entry = app.history().log().last().unwrap();
+    assert_eq!(entry.label, "move box");
+    assert_eq!(entry.ops.len(), 1, "only the translation: {:?}", entry.ops);
+    let t = translation(&app, "box");
+    assert!(t.x > 0.5, "moved along X: {t}");
+    assert_eq!((t.y, t.z), (4.0, 0.0), "only along X");
+
+    let out = ed.editor.undo(&mut app, &AllowAll);
+    assert!(out.ok, "{:?}", out.diagnostics);
+    assert_eq!(translation(&app, "box"), Vec3::new(0.0, 4.0, 0.0));
+    assert_eq!(scene_text(dir.path()), before);
+}
+
+/// A child's gizmo edit is written in its parent's space: dragging the
+/// crate under `crates` (moved to x = 1) sets the crate's local translation.
+#[test]
+fn a_gizmo_drag_on_a_child_sets_its_local_transform() {
+    use re_editor::gizmo::Handle;
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let out = app.dispatch(
+        "entity.set",
+        json!({ "id": "crates", "component": "Transform", "field": "translation", "value": [1.0, 0.0, 0.0] }),
+        false,
+        &AllowAll,
+        re_command::Origin::User,
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    ed.editor.select(Some("crate_1"));
+    // Up the Y arrow.
+    for _ in 0..2 {
+        ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    }
+    let start = ed
+        .editor
+        .gizmo_handle(&app, Handle::Axis(1))
+        .expect("the Y arrow");
+    let to = start - egui::vec2(0.0, 80.0);
+    ed.frame(&mut app, &AllowAll, input(pointer(start, Some(true))))
+        .unwrap();
+    for t in [0.5, 1.0] {
+        ed.frame(
+            &mut app,
+            &AllowAll,
+            input(pointer(start + (to - start) * t, None)),
+        )
+        .unwrap();
+        assert!(
+            ed.editor.gizmo_dragging(),
+            "{start:?} {:?}",
+            ed.editor.rects()
+        );
+    }
+    ed.frame(&mut app, &AllowAll, input(pointer(to, Some(false))))
+        .unwrap();
+    let t = translation(&app, "crate_1");
+    assert_eq!((t.x, t.z), (2.0, 0.0), "local X is kept: {t}");
+    assert!(t.y > 0.6, "moved up: {t}");
+}
+
+/// The dock layout and gizmo settings are saved per project and read back
+/// by the next editor; an unreadable file gives the default layout and an
+/// `RE8804` warning, and is replaced when the layout changes.
+#[test]
+fn the_layout_is_saved_per_project() {
+    use re_editor::gizmo::GizmoMode;
+    use re_editor::layout::{self, PanelId};
+    let dir = project();
+    let path = layout::layout_path(dir.path());
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{ not json").unwrap();
+
+    let mut app = open(dir.path(), false);
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    assert!(
+        ed.editor
+            .console()
+            .iter()
+            .any(|l| l.text.contains("RE8804")),
+        "{:?}",
+        ed.editor.console()
+    );
+    ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "{ not json",
+        "kept until a change"
+    );
+    assert!(ed.editor.rects().get(Panel::Console).is_some());
+
+    // R picks the scale gizmo; the console moves into the hierarchy's place.
+    ed.frame(&mut app, &AllowAll, input(vec![key(egui::Key::R)]))
+        .unwrap();
+    assert_eq!(ed.editor.gizmo_settings().mode, GizmoMode::Scale);
+    let dock = ed.editor.dock_mut();
+    let at = dock.find_tab(&PanelId::Console).unwrap();
+    dock.remove_tab(at);
+    let hier = dock.find_tab(&PanelId::Hierarchy).unwrap().node_path();
+    dock.set_focused_node_and_surface(hier);
+    dock.push_to_focused_leaf(PanelId::Console);
+    ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"Scale\""), "{text}");
+    drop(ed);
+
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    assert!(
+        !ed.editor
+            .console()
+            .iter()
+            .any(|l| l.text.contains("RE8804"))
+    );
+    assert_eq!(ed.editor.gizmo_settings().mode, GizmoMode::Scale);
+    let dock = ed.editor.dock();
+    let console = dock.find_tab(&PanelId::Console).unwrap().node_path();
+    let hierarchy = dock.find_tab(&PanelId::Hierarchy).unwrap().node_path();
+    assert_eq!(
+        console, hierarchy,
+        "the console shares the hierarchy's leaf"
+    );
+    // One leaf, two tabs: the console is the one shown.
+    assert!(ed.editor.rects().get(Panel::Console).is_some());
+    assert!(ed.editor.rects().get(Panel::Hierarchy).is_none());
+    drop(ed);
+
+    // A small window clamps the splits, but that is not a change to save.
+    let saved = std::fs::read_to_string(&path).unwrap();
+    let mut ed = HeadlessEditor::new(&mut app, 500, 300).expect("a headless GPU");
+    for _ in 0..4 {
+        ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    }
+    ed.frame(&mut app, &AllowAll, input(click(egui::pos2(250.0, 10.0))))
+        .unwrap();
+    ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+}
