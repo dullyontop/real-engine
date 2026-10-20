@@ -8,7 +8,7 @@
 //! Prints `pile_bench mean_ms=<x> p95_ms=<y>` plus a detail line. `--threads 0` (the
 //! default) uses the engine's default worker count.
 
-use std::time::Instant;
+use re_core::time::Instant;
 
 use re_core::TaskPool;
 use re_physics::{Physics, PhysicsConfig};

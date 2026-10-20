@@ -141,7 +141,9 @@ impl EnumItem {
                 let s = s.to_str()?;
                 Self::lookup(ty, &s).ok_or_else(|| bad(format!("{:?}", &*s)))
             }
-            Value::Integer(i) => Self::from_value(ty, *i).ok_or_else(|| bad(i.to_string())),
+            Value::Integer(i) => {
+                Self::from_value(ty, re_script::lua_int(*i)).ok_or_else(|| bad(i.to_string()))
+            }
             Value::Number(n) if n.fract() == 0.0 => {
                 Self::from_value(ty, *n as i64).ok_or_else(|| bad(n.to_string()))
             }
@@ -251,7 +253,7 @@ impl UserData for EnumObject {
         });
         methods.add_method("FromValue", |lua, e, v: Value| {
             let n = match v {
-                Value::Integer(i) => Some(i),
+                Value::Integer(i) => Some(re_script::lua_int(i)),
                 Value::Number(n) if n.fract() == 0.0 => Some(n as i64),
                 _ => None,
             };

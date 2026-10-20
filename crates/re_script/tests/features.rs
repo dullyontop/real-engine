@@ -4,9 +4,10 @@
 
 mod common;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use common::{Rig, STEP, project};
+use re_core::time::Instant;
 use re_core::{Location, Phase};
 use re_scene::{ScriptContext, ScriptRef, StableId};
 use re_script::{ContextKind, Reload, RuntimeConfig, codes};
