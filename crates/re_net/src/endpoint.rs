@@ -26,6 +26,11 @@ use crate::transport::Transport;
 const HANDSHAKE_RESEND: Duration = Duration::from_millis(250);
 /// How often a Disconnect is sent, since it is never acked.
 const DISCONNECT_COPIES: usize = 3;
+/// The most datagrams one poll reads, so a flood cannot hold the frame.
+const MAX_DATAGRAMS_PER_POLL: usize = 4096;
+/// How long a handshake cookie stays valid: it changes every this many
+/// seconds, and the previous one is still accepted.
+const COOKIE_EPOCH_SECS: u64 = 30;
 
 /// A connection, numbered by its endpoint in the order it connected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -51,8 +56,10 @@ pub struct Config {
     pub keepalive: Duration,
     /// The shortest retransmission timeout; two frame times is right.
     pub rto_min: Duration,
-    /// A connection whose unacked reliable backlog passes this is closed
-    /// (`RE8906`): its peer stopped acknowledging.
+    /// The most reliable bytes a connection may have queued and unacked; a
+    /// send past it is refused (`RE8908`), so a sender coalesces or waits.
+    /// A connection whose sent fragments see no ack for [`Config::timeout`]
+    /// is closed (`RE8906`).
     pub max_backlog: usize,
 }
 
@@ -294,6 +301,7 @@ impl<T: Transport> Endpoint<T> {
                 ),
             ));
         }
+        let max_backlog = self.config.max_backlog;
         let conn = self
             .by_id
             .get(&peer)
@@ -301,6 +309,18 @@ impl<T: Transport> Endpoint<T> {
             .ok_or_else(|| {
                 Diagnostic::error(codes::SEND, format!("connection {} is not open", peer.0))
             })?;
+        let backlog = conn.conn.backlog();
+        if channel == Channel::Reliable && backlog + bytes.len() > max_backlog {
+            return Err(Diagnostic::error(
+                codes::SEND,
+                format!(
+                    "connection {} already has {backlog} reliable bytes waiting, and {} more would pass the {max_backlog}-byte limit",
+                    peer.0,
+                    bytes.len()
+                ),
+            )
+            .with_hint("send less at once, or wait until Endpoint::congested is false"));
+        }
         conn.conn.queue(channel, bytes);
         Ok(())
     }
@@ -309,7 +329,7 @@ impl<T: Transport> Endpoint<T> {
     /// connections that timed out. Returns what happened.
     pub fn poll(&mut self, now: Duration) -> Vec<Event> {
         self.transport.advance(now);
-        loop {
+        for _ in 0..MAX_DATAGRAMS_PER_POLL {
             let mut buf = std::mem::take(&mut self.buf);
             let got = self.transport.recv_from(&mut buf);
             match got {
@@ -355,8 +375,9 @@ impl<T: Transport> Endpoint<T> {
         self.flush_handshake(now);
         let addrs: Vec<SocketAddr> = self.peers.keys().copied().collect();
         for a in addrs {
+            let timeout = self.config.timeout;
             let peer = self.peers.get_mut(&a).expect("listed");
-            if peer.conn.backlog() > self.config.max_backlog {
+            if peer.conn.stalled(now, timeout) {
                 let backlog = peer.conn.backlog();
                 self.close(
                     now,
@@ -364,7 +385,8 @@ impl<T: Transport> Endpoint<T> {
                     Some(Diagnostic::error(
                         codes::TIMED_OUT,
                         format!(
-                            "the connection to {a} stopped acknowledging ({backlog} bytes unacked)"
+                            "{a} acknowledged nothing for {} s ({backlog} bytes waiting)",
+                            timeout.as_secs_f64()
                         ),
                     )),
                     "stopped acknowledging",
@@ -416,10 +438,11 @@ impl<T: Transport> Endpoint<T> {
         }
     }
 
-    fn cookie(&self, addr: SocketAddr, salt: u64) -> u64 {
+    fn cookie(&self, addr: SocketAddr, salt: u64, epoch: u64) -> u64 {
         let mut h = self.key.build_hasher();
         addr.hash(&mut h);
         salt.hash(&mut h);
+        epoch.hash(&mut h);
         h.finish()
     }
 
@@ -517,7 +540,9 @@ impl<T: Transport> Endpoint<T> {
         match (self.server, h.kind) {
             (true, Kind::Hello) => {
                 // Unpadded: no answer, so a forged source gets no amplification.
-                if !padded || self.peers.contains_key(&from) {
+                // A Hello from a connected address is a resend unless its salt
+                // is new (the client restarted on the same address).
+                if !padded || self.peers.get(&from).is_some_and(|p| p.conn.salt == h.salt) {
                     return;
                 }
                 let (Some(protocol), Some(game)) = (r.u32(), r.u64()) else {
@@ -528,7 +553,8 @@ impl<T: Transport> Endpoint<T> {
                     return;
                 }
                 let mut p = packet::begin(Kind::Challenge, h.salt);
-                p.extend_from_slice(&self.cookie(from, h.salt).to_le_bytes());
+                let epoch = now.as_secs() / COOKIE_EPOCH_SECS;
+                p.extend_from_slice(&self.cookie(from, h.salt, epoch).to_le_bytes());
                 let _ = self.transport.send_to(from, &packet::seal(p));
             }
             (true, Kind::Response) => {
@@ -538,9 +564,24 @@ impl<T: Transport> Endpoint<T> {
                 let (Some(cookie), Some(protocol), Some(game)) = (r.u64(), r.u32(), r.u64()) else {
                     return;
                 };
-                if cookie != self.cookie(from, h.salt) {
+                let epoch = now.as_secs() / COOKIE_EPOCH_SECS;
+                let fresh = cookie == self.cookie(from, h.salt, epoch)
+                    || (epoch > 0 && cookie == self.cookie(from, h.salt, epoch - 1));
+                if !fresh {
                     self.stray += 1;
                     return;
+                }
+                // The same address with a new salt: the old client is gone.
+                if self.peers.get(&from).is_some_and(|p| p.conn.salt != h.salt) {
+                    self.close(
+                        now,
+                        from,
+                        Some(Diagnostic::error(
+                            codes::CLOSED,
+                            format!("the client at {from} connected again"),
+                        )),
+                        "replaced by a new connection",
+                    );
                 }
                 if !self.peers.contains_key(&from) {
                     if let Some(reason) = self.refuse(protocol, game, true) {
@@ -610,8 +651,13 @@ impl<T: Transport> Endpoint<T> {
                 }
                 peer.conn.stats.packets_received += 1;
                 peer.conn.stats.bytes_received += datagram.len() as u64;
-                if let Received::Messages(m) = peer.conn.receive(now, &d[HEADER..]) {
-                    let id = peer.id;
+                let received = peer.conn.receive(now, &d[HEADER..]);
+                if peer.conn.ack_due() {
+                    let ack = peer.conn.ack(now);
+                    let _ = self.transport.send_to(from, &ack);
+                }
+                if let Received::Messages(m) = received {
+                    let id = self.peers[&from].id;
                     self.events
                         .extend(m.into_iter().map(|(channel, bytes)| Event::Message {
                             peer: id,

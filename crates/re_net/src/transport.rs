@@ -157,10 +157,27 @@ impl MemoryNet {
 
     /// A transport on a fresh address (`127.0.0.1:1`, `:2`, ...).
     pub fn bind(&self) -> MemoryTransport {
-        let mut port = self.next_port.borrow_mut();
-        *port += 1;
-        let addr = SocketAddr::from(([127, 0, 0, 1], *port));
-        self.inboxes.borrow_mut().insert(addr, VecDeque::new());
+        let addr = {
+            let mut port = self.next_port.borrow_mut();
+            *port += 1;
+            SocketAddr::from(([127, 0, 0, 1], *port))
+        };
+        self.bind_at(addr)
+    }
+
+    /// A transport on `addr`, which must be free: a restarted process that
+    /// gets its old address back, as behind a NAT.
+    ///
+    /// # Panics
+    ///
+    /// When `addr` is bound already.
+    pub fn bind_at(&self, addr: SocketAddr) -> MemoryTransport {
+        let fresh = self
+            .inboxes
+            .borrow_mut()
+            .insert(addr, VecDeque::new())
+            .is_none();
+        assert!(fresh, "{addr} is bound already");
         MemoryTransport {
             net: self.clone(),
             addr,

@@ -100,6 +100,8 @@ fn two_processes_over_udp() {
     let dir = std::env::temp_dir().join(format!("re_net_loopback_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let port_file = dir.join("port");
+    // A leftover from an earlier run with the same process id.
+    let _ = std::fs::remove_file(&port_file);
     let mut child = Reap(
         Command::new(std::env::current_exe().unwrap())
             .args(["server_process", "--exact", "--ignored", "--test-threads=1"])

@@ -375,20 +375,79 @@ fn a_backlog_marks_the_connection_congested_and_drains() {
 }
 
 #[test]
-fn a_peer_that_stops_acking_is_cut_off_at_the_backlog_limit() {
+fn a_send_past_the_backlog_limit_is_refused_and_the_connection_stays() {
     let (mut s, c) = configs(1);
     s.max_backlog = 200_000;
     let mut sim = Sim::new(s, c, LinkConditions::default());
     sim.run(5);
-    let gone = sim.clients.remove(0);
+    let mut refused = None;
     for _ in 0..250 {
-        sim.server()
-            .send(PeerId(0), Channel::Reliable, &[2; 1000])
-            .unwrap();
+        if let Err(e) = sim.server().send(PeerId(0), Channel::Reliable, &[2; 1000]) {
+            refused = Some(e);
+            break;
+        }
     }
-    sim.run(1);
-    assert_eq!(sim.disconnects(0), vec![codes::TIMED_OUT]);
-    drop(gone);
+    assert_eq!(refused.unwrap().code, codes::SEND);
+    sim.run(120);
+    assert!(sim.disconnects(0).is_empty());
+    assert_eq!(sim.messages(1, Channel::Reliable).len(), 200);
+}
+
+#[test]
+fn a_client_restarting_on_the_same_address_replaces_its_old_connection() {
+    let net = MemoryNet::new();
+    let mut server = Endpoint::server(net.bind(), Config::server(1, 1));
+    let addr = server.local_addr();
+    let old = Endpoint::client(net.bind(), addr, Config::client(1, 1));
+    let client_addr = old.local_addr();
+    let mut old = old;
+    let mut now = Duration::ZERO;
+    let mut server_events = Vec::new();
+    for _ in 0..5 {
+        now += TICK;
+        old.poll(now);
+        server_events.extend(server.poll(now));
+        old.flush(now);
+        server.flush(now);
+    }
+    assert!(old.is_connected());
+    // The old process dies; a new one gets the same address (as a NAT
+    // mapping would give it).
+    drop(old);
+    let transport = net.bind_at(client_addr);
+    let mut new = Endpoint::client(transport, addr, Config::client(1, 1));
+    for _ in 0..10 {
+        now += TICK;
+        new.poll(now);
+        server_events.extend(server.poll(now));
+        new.flush(now);
+        server.flush(now);
+    }
+    assert!(
+        new.is_connected(),
+        "connected without waiting for the timeout"
+    );
+    assert_eq!(server.peers(), vec![PeerId(1)]);
+    assert!(server_events.iter().any(|e| matches!(e,
+        Event::Disconnected { peer: PeerId(0), reason } if reason.code == codes::CLOSED)));
+}
+
+#[test]
+fn odd_configurations_do_not_hang() {
+    let mut s = Config::server(1, 1);
+    s.keepalive = Duration::ZERO;
+    s.rto_min = Duration::from_secs(3);
+    s.send_rate = 0.0;
+    let mut c = Config::client(1, 1);
+    c.keepalive = Duration::ZERO;
+    let mut sim = Sim::new(s, vec![c], LinkConditions::default());
+    sim.run(5);
+    // A rate of zero counts as the floor, 1 KiB/s: this takes about a second.
+    sim.server()
+        .send(PeerId(0), Channel::Reliable, &[1; 5000])
+        .unwrap();
+    sim.run(300);
+    assert_eq!(sim.messages(1, Channel::Reliable).len(), 1);
 }
 
 #[test]

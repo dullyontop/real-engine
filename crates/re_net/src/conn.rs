@@ -13,9 +13,18 @@ use crate::packet::{
 /// How far past the oldest unacked reliable message a sender may go, and how
 /// far ahead of the next expected one a receiver keeps fragments.
 const WINDOW: u32 = 1024;
-/// The most reliable bytes a receiver holds waiting for earlier fragments;
-/// fragments past it are dropped and come again.
+/// The most reliable bytes a receiver holds waiting for earlier fragments
+/// (each fragment counts [`FRAGMENT_COST`] more). A packet whose fragments
+/// would pass it is not acked, so they all come again; the next expected
+/// message's fragments always fit.
 const MAX_BUFFERED: usize = 8 * MAX_MESSAGE;
+/// What a buffered fragment costs beyond its bytes (its map entry).
+const FRAGMENT_COST: usize = 64;
+/// The most unreliable messages queued; the oldest are dropped past it.
+const MAX_UNRELIABLE: usize = 1024;
+/// Packets with chunks received without an ack going back: at this many the
+/// receiver acks at once, because one ack covers only 33 packets.
+const ACK_EVERY: u32 = 32;
 /// The smallest backlog window ([`Conn::window`]).
 const MIN_WINDOW: usize = 64 * 1024;
 /// Sent packets remembered for acks; older ones count as lost.
@@ -60,6 +69,11 @@ pub struct ConnStats {
     pub malformed: u64,
     /// Messages delivered to the caller.
     pub messages_received: u64,
+    /// Packets not acked because their fragments did not fit the receive
+    /// buffer; the sender sends them again.
+    pub packets_deferred: u64,
+    /// Unreliable messages dropped from a full send queue.
+    pub unreliable_dropped: u64,
 }
 
 struct OutFragment {
@@ -110,6 +124,9 @@ pub(crate) struct Conn {
     pub(crate) last_recv: Duration,
     last_send: Duration,
     need_ack: bool,
+    unacked_received: u32,
+    /// Since when sent reliable fragments have waited with no ack progress.
+    waiting_since: Option<Duration>,
     tokens: f64,
     last_refill: Duration,
     pub(crate) rate: f64,
@@ -126,10 +143,15 @@ impl Conn {
         rto_min: Duration,
         keepalive: Duration,
     ) -> Conn {
+        // A rate that is not a positive number would never send.
+        let rate = rate.max(1024.0);
         Conn {
             salt,
             local_seq: 0,
-            remote_seq: 0,
+            // Until the peer's first packet arrives, acks name a sequence
+            // number the peer has not used (it starts at 0), so they ack
+            // nothing.
+            remote_seq: u16::MAX,
             recv_bits: 0,
             any_received: false,
             sent: HashMap::new(),
@@ -145,11 +167,13 @@ impl Conn {
             last_recv: now,
             last_send: now,
             need_ack: false,
+            unacked_received: 0,
+            waiting_since: None,
             tokens: burst(rate),
             last_refill: now,
             rate,
             rto_min,
-            keepalive,
+            keepalive: keepalive.max(Duration::from_millis(1)),
             stats: ConnStats::default(),
         }
     }
@@ -176,13 +200,20 @@ impl Conn {
             None => Duration::from_millis(200),
             Some(s) => Duration::from_secs_f64(s + 4.0 * self.rttvar),
         };
-        rto.clamp(self.rto_min, Duration::from_secs(1))
+        rto.max(self.rto_min)
+            .min(Duration::from_secs(1).max(self.rto_min))
     }
 
     /// Queues a message. The caller checked its size.
     pub(crate) fn queue(&mut self, channel: Channel, bytes: &[u8]) {
         match channel {
-            Channel::Unreliable => self.unreliable.push_back(bytes.to_vec()),
+            Channel::Unreliable => {
+                if self.unreliable.len() >= MAX_UNRELIABLE {
+                    self.unreliable.pop_front();
+                    self.stats.unreliable_dropped += 1;
+                }
+                self.unreliable.push_back(bytes.to_vec());
+            }
             Channel::Reliable => {
                 let fragments: Vec<OutFragment> = if bytes.is_empty() {
                     vec![OutFragment {
@@ -230,37 +261,56 @@ impl Conn {
         let ack_bits = r.u32()?;
         // Check every chunk before acting on any, so a malformed packet
         // changes nothing.
-        let chunks = {
-            let mut chunks = Vec::new();
-            while !r.is_empty() {
-                let channel = r.u8()?;
-                let id = r.u32()?;
-                let index = r.u16()?;
-                let count = r.u16()?;
-                let len = r.u16()? as usize;
-                let bytes = r.take(len)?;
-                let channel = match channel {
-                    0 => Channel::Unreliable,
-                    1 => Channel::Reliable,
-                    _ => return None,
-                };
-                if channel == Channel::Reliable
-                    && (count == 0
-                        || index >= count
-                        || count as usize > MAX_FRAGMENTS
-                        || len > FRAGMENT)
-                {
-                    return None;
-                }
-                chunks.push((channel, id, index, count, bytes));
+        let mut chunks = Vec::new();
+        while !r.is_empty() {
+            let channel = r.u8()?;
+            let id = r.u32()?;
+            let index = r.u16()?;
+            let count = r.u16()?;
+            let len = r.u16()? as usize;
+            let bytes = r.take(len)?;
+            let channel = match channel {
+                0 => Channel::Unreliable,
+                1 => Channel::Reliable,
+                _ => return None,
+            };
+            // Every fragment but the last is full, so a message's fragments
+            // cannot be made to cost more than its bytes.
+            if channel == Channel::Reliable
+                && (count == 0
+                    || index >= count
+                    || count as usize > MAX_FRAGMENTS
+                    || len > FRAGMENT
+                    || (index + 1 < count && len != FRAGMENT))
+            {
+                return None;
             }
-            chunks
-        };
+            chunks.push((channel, id, index, count, bytes));
+        }
         self.last_recv = now;
-        self.note_received(seq);
         self.note_acks(now, ack, ack_bits);
+        // Fragments that would overflow the receive buffer: the packet is
+        // not acked, so the sender sends all of it again later.
+        let cost: usize = chunks
+            .iter()
+            .filter(|c| c.0 == Channel::Reliable && self.would_buffer(c.1, c.2))
+            .map(|c| c.4.len() + FRAGMENT_COST)
+            .sum();
+        if self.buffered + cost > MAX_BUFFERED {
+            self.stats.packets_deferred += 1;
+            return Some(Vec::new());
+        }
+        if !self.note_received(seq) {
+            // A duplicate: its reliable fragments were taken already, and its
+            // unreliable messages must not arrive twice.
+            if !chunks.is_empty() {
+                self.need_ack = true;
+            }
+            return Some(Vec::new());
+        }
         if !chunks.is_empty() {
             self.need_ack = true;
+            self.unacked_received += 1;
         }
         let mut delivered = Vec::new();
         for (channel, id, index, count, bytes) in chunks {
@@ -272,11 +322,24 @@ impl Conn {
         Some(delivered)
     }
 
-    fn note_received(&mut self, seq: u16) {
+    /// True when a fragment would wait in the buffer: it is in the window,
+    /// not of the next expected message (whose fragments always fit) and new.
+    fn would_buffer(&self, id: u32, index: u16) -> bool {
+        id > self.next_in
+            && id - self.next_in < WINDOW
+            && !self
+                .inbox
+                .get(&id)
+                .is_some_and(|m| m.fragments.contains_key(&index))
+    }
+
+    /// Records a received sequence number; false when it was received before.
+    fn note_received(&mut self, seq: u16) -> bool {
         if !self.any_received {
             self.any_received = true;
             self.remote_seq = seq;
             self.recv_bits = 0;
+            true
         } else if seq_newer(seq, self.remote_seq) {
             let shift = seq.wrapping_sub(self.remote_seq) as u32;
             self.recv_bits = if shift > 32 {
@@ -290,12 +353,55 @@ impl Conn {
                 moved | (1 << (shift - 1))
             };
             self.remote_seq = seq;
+            true
         } else {
             let back = self.remote_seq.wrapping_sub(seq) as u32;
-            if (1..=32).contains(&back) {
-                self.recv_bits |= 1 << (back - 1);
+            match back {
+                0 => false,
+                1..=32 => {
+                    let bit = 1 << (back - 1);
+                    let new = self.recv_bits & bit == 0;
+                    self.recv_bits |= bit;
+                    new
+                }
+                // Too old to tell; reliable fragments are filtered by id.
+                _ => true,
             }
         }
+    }
+
+    /// True when so many packets arrived unacked that an ack must go now
+    /// ([`Conn::ack`]), before the next flush.
+    pub(crate) fn ack_due(&self) -> bool {
+        self.unacked_received >= ACK_EVERY
+    }
+
+    /// An ack-only packet, sent at once.
+    pub(crate) fn ack(&mut self, now: Duration) -> Vec<u8> {
+        let p = self.data_packet(now, Vec::new(), packet::begin(Kind::Data, self.salt));
+        self.stats.packets_sent += 1;
+        self.stats.bytes_sent += p.len() as u64;
+        p
+    }
+
+    /// True when sent reliable fragments have had no ack progress for
+    /// `timeout`: the peer stopped acknowledging.
+    pub(crate) fn stalled(&mut self, now: Duration, timeout: Duration) -> bool {
+        let Some(since) = self.waiting_since else {
+            return false;
+        };
+        if now.saturating_sub(since) <= timeout {
+            return false;
+        }
+        let waiting = self
+            .out
+            .values()
+            .flat_map(|m| m.fragments.iter())
+            .any(|f| !f.acked && f.last_sent.is_some());
+        if !waiting {
+            self.waiting_since = None;
+        }
+        waiting
     }
 
     fn note_acks(&mut self, now: Duration, ack: u16, bits: u32) {
@@ -326,6 +432,7 @@ impl Conn {
                     frag.acked = true;
                     m.left -= 1;
                     self.backlog -= frag.data.len();
+                    self.waiting_since = Some(now);
                 }
                 if m.left == 0 {
                     self.out.remove(&id);
@@ -346,9 +453,6 @@ impl Conn {
         if id < self.next_in || id - self.next_in >= WINDOW {
             return;
         }
-        if self.buffered + bytes.len() > MAX_BUFFERED {
-            return;
-        }
         let m = self.inbox.entry(id).or_insert_with(|| InMessage {
             count,
             fragments: HashMap::new(),
@@ -357,7 +461,7 @@ impl Conn {
             return;
         }
         m.fragments.insert(index, bytes.to_vec());
-        self.buffered += bytes.len();
+        self.buffered += bytes.len() + FRAGMENT_COST;
         while let Some(m) = self.inbox.get(&self.next_in) {
             if m.fragments.len() != m.count as usize {
                 break;
@@ -367,7 +471,7 @@ impl Conn {
             for i in 0..m.count {
                 msg.extend_from_slice(&m.fragments.remove(&i).expect("complete"));
             }
-            self.buffered -= msg.len();
+            self.buffered -= msg.len() + m.count as usize * FRAGMENT_COST;
             delivered.push((Channel::Reliable, msg));
             self.next_in += 1;
         }
@@ -397,19 +501,18 @@ impl Conn {
             }
         }
         let mut datagrams = Vec::new();
+        let mut keepalive = now.saturating_sub(self.last_send) >= self.keepalive;
         loop {
             let work = !self.unreliable.is_empty() || !due.is_empty();
-            let keepalive = now.saturating_sub(self.last_send) >= self.keepalive;
             let can_send = self.tokens >= MTU as f64;
             if !(work && can_send) && !self.need_ack && !keepalive {
                 break;
             }
+            keepalive = false;
             let mut p = packet::begin(Kind::Data, self.salt);
-            let seq = self.local_seq;
-            self.local_seq = self.local_seq.wrapping_add(1);
-            p.extend_from_slice(&seq.to_le_bytes());
-            p.extend_from_slice(&self.remote_seq.to_le_bytes());
-            p.extend_from_slice(&self.recv_bits.to_le_bytes());
+            // The data header goes in by `data_packet`, after the chunks are
+            // chosen; reserve its bytes.
+            p.extend_from_slice(&[0; packet::DATA_HEADER]);
             let mut fragments = Vec::new();
             if can_send {
                 while let Some(u) = self.unreliable.front() {
@@ -440,16 +543,16 @@ impl Conn {
                     m.fragments[f as usize].last_sent = Some(now);
                 }
             }
-            self.sent.insert(seq, SentPacket { at: now, fragments });
-            if self.sent.len() > MAX_SENT {
-                // Packets this old are lost; their fragments resend by timeout.
-                let cut = self.local_seq.wrapping_sub(MAX_SENT as u16 / 2);
-                self.sent.retain(|s, _| seq_newer(*s, cut));
+            if !fragments.is_empty() && self.waiting_since.is_none() {
+                self.waiting_since = Some(now);
             }
-            let p = packet::seal(p);
-            self.tokens -= p.len() as f64;
-            self.need_ack = false;
-            self.last_send = now;
+            let empty = p.len() == packet::HEADER + packet::DATA_HEADER;
+            let p = self.data_packet(now, fragments, p);
+            // Acks and keepalives are small and must flow even when the
+            // bucket is empty; only packets with data spend tokens.
+            if !empty {
+                self.tokens -= p.len() as f64;
+            }
             self.stats.packets_sent += 1;
             self.stats.bytes_sent += p.len() as u64;
             datagrams.push(p);
@@ -458,6 +561,38 @@ impl Conn {
             }
         }
         datagrams
+    }
+
+    /// Finishes a data packet: its sequence number and acks go into the
+    /// reserved header bytes (or are appended when `p` is only the packet
+    /// header), the packet is remembered for acks, and sealed.
+    fn data_packet(
+        &mut self,
+        now: Duration,
+        fragments: Vec<(u32, u16)>,
+        mut p: Vec<u8>,
+    ) -> Vec<u8> {
+        let seq = self.local_seq;
+        self.local_seq = self.local_seq.wrapping_add(1);
+        let mut head = [0u8; packet::DATA_HEADER];
+        head[0..2].copy_from_slice(&seq.to_le_bytes());
+        head[2..4].copy_from_slice(&self.remote_seq.to_le_bytes());
+        head[4..8].copy_from_slice(&self.recv_bits.to_le_bytes());
+        if p.len() == packet::HEADER {
+            p.extend_from_slice(&head);
+        } else {
+            p[packet::HEADER..packet::HEADER + packet::DATA_HEADER].copy_from_slice(&head);
+        }
+        self.sent.insert(seq, SentPacket { at: now, fragments });
+        if self.sent.len() > MAX_SENT {
+            // Packets this old are lost; their fragments resend by timeout.
+            let cut = self.local_seq.wrapping_sub(MAX_SENT as u16 / 2);
+            self.sent.retain(|s, _| seq_newer(*s, cut));
+        }
+        self.need_ack = false;
+        self.unacked_received = 0;
+        self.last_send = now;
+        packet::seal(p)
     }
 }
 
@@ -569,6 +704,142 @@ mod tests {
             panic!()
         };
         assert_eq!(m.len(), 1);
+    }
+
+    /// Delivers datagrams to `to`, acking at once when `to` says an ack is
+    /// due (the endpoint's behaviour); returns delivered messages and the
+    /// immediate acks.
+    fn deliver(
+        to: &mut Conn,
+        now: Duration,
+        datagrams: &[Vec<u8>],
+    ) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+        let (mut got, mut acks) = (Vec::new(), Vec::new());
+        for d in datagrams {
+            if let Received::Messages(m) =
+                to.receive(now, &packet::open(d).unwrap()[packet::HEADER..])
+            {
+                got.extend(m.into_iter().map(|(_, b)| b));
+            }
+            if to.ack_due() {
+                acks.push(to.ack(now));
+            }
+        }
+        (got, acks)
+    }
+
+    #[test]
+    fn a_peer_that_has_received_nothing_acks_nothing() {
+        let (mut a, mut b) = pair();
+        a.queue(Channel::Reliable, b"hello");
+        let lost = a.flush(MS); // seq 0, lost
+        assert_eq!(lost.len(), 1);
+        // b sends before anything of a's arrived (a keepalive).
+        let keepalive = b.flush(MS * 200);
+        assert_eq!(keepalive.len(), 1);
+        deliver(&mut a, MS * 201, &keepalive);
+        assert_eq!(a.backlog(), 5, "the lost packet was not taken as acked");
+        let (got, _) = deliver(&mut b, MS * 400, &a.flush(MS * 400));
+        assert_eq!(got, vec![b"hello".to_vec()]);
+        assert_eq!(a.stats.fragments_resent, 1);
+    }
+
+    #[test]
+    fn a_full_receive_buffer_defers_packets_instead_of_losing_them() {
+        let (mut a, mut b) = pair();
+        let big: Vec<Vec<u8>> = (0..12u8).map(|i| vec![i; MAX_MESSAGE]).collect();
+        for m in &big {
+            a.queue(Channel::Reliable, m);
+        }
+        let mut now = MS;
+        let first = a.flush(now);
+        // Lose the datagram with message 0's sixth fragment; deliver the rest.
+        let (mut got, acks) = deliver(&mut b, now, &[&first[..5], &first[6..]].concat());
+        assert!(got.is_empty());
+        assert!(b.stats.packets_deferred > 0, "the buffer filled");
+        deliver(&mut a, now, &acks);
+        for _ in 0..200 {
+            now += MS * 50;
+            let (g, acks) = deliver(&mut b, now, &a.flush(now));
+            got.extend(g);
+            deliver(&mut a, now, &acks);
+            deliver(&mut a, now, &b.flush(now));
+            if a.backlog() == 0 {
+                break;
+            }
+        }
+        assert!(got == big, "all twelve arrive, in order");
+        assert_eq!(a.backlog(), 0);
+    }
+
+    #[test]
+    fn a_burst_of_packets_is_acked_in_full() {
+        let (mut a, mut b) = pair();
+        for i in 0..100u8 {
+            a.queue(Channel::Reliable, &[i; 1000]);
+        }
+        let burst = a.flush(MS);
+        assert!(burst.len() > 60, "{}", burst.len());
+        let (got, acks) = deliver(&mut b, MS, &burst);
+        assert_eq!(got.len(), 100);
+        deliver(&mut a, MS * 2, &acks);
+        deliver(&mut a, MS * 3, &b.flush(MS * 3));
+        assert_eq!(a.backlog(), 0, "every packet acked, none to resend");
+        a.flush(MS * 500);
+        assert_eq!(a.stats.fragments_resent, 0);
+    }
+
+    #[test]
+    fn a_duplicated_datagram_delivers_its_unreliable_message_once() {
+        let (mut a, mut b) = pair();
+        a.queue(Channel::Unreliable, b"u");
+        let d = a.flush(MS);
+        let (got, _) = deliver(&mut b, MS, &[d[0].clone(), d[0].clone()]);
+        assert_eq!(got, vec![b"u".to_vec()]);
+    }
+
+    #[test]
+    fn a_peer_that_never_acks_is_stalled_after_the_timeout() {
+        let (mut a, mut b) = pair();
+        let timeout = Duration::from_secs(10);
+        a.queue(Channel::Reliable, b"x");
+        a.flush(MS);
+        assert!(!a.stalled(Duration::from_secs(5), timeout));
+        assert!(a.stalled(Duration::from_secs(11), timeout));
+        // Once acked, nothing waits.
+        let (mut c, _) = pair();
+        c.queue(Channel::Reliable, b"y");
+        let d = c.flush(MS);
+        deliver(&mut b, MS, &d);
+        deliver(&mut c, MS * 2, &b.flush(MS * 2));
+        assert!(!c.stalled(Duration::from_secs(60), timeout));
+    }
+
+    #[test]
+    fn odd_settings_neither_hang_nor_panic() {
+        let mut a = Conn::new(
+            1,
+            Duration::ZERO,
+            f64::NAN,
+            Duration::from_secs(5),
+            Duration::ZERO,
+        );
+        for _ in 0..50 {
+            a.queue(Channel::Reliable, &[0; 1000]);
+        }
+        for t in 0..10 {
+            a.flush(Duration::from_secs(t));
+        }
+        assert!(a.rto() >= Duration::from_secs(5));
+    }
+
+    #[test]
+    fn the_unreliable_queue_is_bounded() {
+        let mut a = Conn::new(1, Duration::ZERO, 1e9, MS, MS * 100);
+        for _ in 0..MAX_UNRELIABLE + 10 {
+            a.queue(Channel::Unreliable, b"z");
+        }
+        assert_eq!(a.stats.unreliable_dropped, 10);
     }
 
     #[test]
