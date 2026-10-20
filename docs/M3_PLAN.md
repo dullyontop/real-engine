@@ -1,6 +1,6 @@
 # M3 plan (draft)
 
-**Status:** draft. No M3 work package has started. M3 runs in two phases ("How M3 starts" below): ADR drafts, the debugger spike and the maintainer's entity-core track may start now, beside the end of M2; WP code waits until M2's definition of done holds. The owner's decisions in "Defaults this plan picks" may change the WP list.
+**Status:** phase 1. M2's definition of done held on 2026-10-20, so WP code may start once its ADR is accepted, in the order in "How M3 starts" below. The owner's decisions in "Defaults this plan picks" may change the WP list.
 
 M3 turns Real Engine from an engine that runs games from a project directory into one that ships them. When it is done, a developer can build a large procedural world that streams in as the player moves, put skinned characters and vehicles in it, light it with post-processing and cascaded shadows, debug its scripts, edit its graphs on a node canvas, and package it as a standalone game for Windows, macOS and Linux. Every platform blocks merges in CI, and runs repeat bit for bit across machines (D2). A new public example, `examples/valley`, exercises all of it, and `real verify` checks it in CI like the island and the plaza.
 
@@ -427,7 +427,7 @@ real build --project examples/valley --out out/valley-build
 - Root `Cargo.toml`: `uuid`'s `js` feature (maintainer).
 - A `build-web` CI job: `cargo check --target wasm32-unknown-unknown` of the runtime crates, required.
 
-**Build, PR "toolchain":** (its `third_party/` fallback and upstream submissions wait for the owner's decision, ADR-0049 §2)
+**Build, PR "toolchain":** (the owner approved the `third_party/` copies and upstream submissions on 2026-10-20, ADR-0049 §2)
 - mlua and oxijolt-sys on wasm32 (ADR-0049 §2): bump to upstream releases if they carry the changes, otherwise the in-workspace copies in `third_party/` with `[patch.crates-io]` and their DEPENDENCIES.md rows (owner approval; maintainer).
 - `tools/ci/wasi-sdk.sh` (wasi-sdk 34, sha256-checked), the `[target.wasm32-unknown-unknown]` settings in `.cargo/config.toml`, and Jolt's wasm CMake build through oxijolt-sys.
 - `build-web` becomes a full link: Luau and Jolt smoke tests run in wasm under Node (the spike's script, call and 1,000-box pile checks), and the deterministic pile hash equals native's.

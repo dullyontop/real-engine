@@ -167,15 +167,19 @@ function M.setup()
 	local hub = Instance.new("Part")
 	hub.Name = "Hub"
 	hub.Anchored = true
+	hub.Size = Vector3.new(1, 1, 1)
 	hub.Position = Vector3.new(40, 30, -40)
 	hub.Parent = workspace
+	-- The pivot is 1.5 studs off the hub, so the paddle clears it at every
+	-- angle: a paddle pressed into the hub breaks free at a frame that
+	-- differs between platforms.
 	local paddle = Instance.new("Part")
 	paddle.Name = "Paddle"
 	paddle.Size = Vector3.new(1, 1, 4)
-	paddle.Position = Vector3.new(40, 30, -38)
+	paddle.Position = Vector3.new(40, 30, -36.5)
 	paddle.Parent = workspace
 	local h = Instance.new("HingeConstraint")
-	h.Attachment0 = attach(hub)
+	h.Attachment0 = attach(hub, Vector3.new(0, 0, 1.5))
 	h.Attachment1 = attach(paddle, Vector3.new(0, 0, -2))
 	h.ActuatorType = Enum.ActuatorType.Servo
 	h.AngularSpeed = 4
