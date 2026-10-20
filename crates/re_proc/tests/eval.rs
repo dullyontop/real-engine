@@ -4,8 +4,9 @@
 mod support;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use re_core::time::Instant;
 use re_proc::{CacheState, EvalOptions, Evaluator, NodeRegistry, ProcGraph, fragment_hash_hex};
 use re_reflect::Value;
 use re_types::graph::GraphDoc;

@@ -170,9 +170,10 @@ mod imp {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use re_command::{CommandOutcome, EngineHandle, EngineReceiver, EngineRequest, channel};
+    use re_core::time::Instant;
     use re_core::{Diagnostic, Location};
     use serde_json::Value as Json;
 

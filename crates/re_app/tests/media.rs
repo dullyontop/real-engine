@@ -329,10 +329,10 @@ fn a_changed_material_file_is_uploaded_again() {
         r#"{ "base_color": [0.0, 0.0, 1.0, 1.0], "unlit": true }"#,
     )
     .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = re_core::time::Instant::now() + std::time::Duration::from_secs(10);
     while app.snapshot().items[0].material == before {
         assert!(
-            std::time::Instant::now() < deadline,
+            re_core::time::Instant::now() < deadline,
             "the change never arrived"
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
