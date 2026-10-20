@@ -103,6 +103,7 @@ fn main() -> ExitCode {
     let opts = EvalOptions {
         seed: args.seed,
         root: Some(root),
+        files: None,
         deadline: None,
     };
     let world = re_scene::World::new();

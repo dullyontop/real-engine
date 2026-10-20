@@ -1,7 +1,7 @@
 //! `Audio`: the kira manager, the listener, and the sounds started by commands.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,6 +11,7 @@ use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::track::{SpatialTrackBuilder, SpatialTrackHandle};
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Tween};
+use re_core::files::{FileError, ProjectFiles};
 use re_core::{Diagnostic, Location};
 use re_types::audio::AudioCmd;
 use re_types::ids::EntityId;
@@ -126,7 +127,7 @@ macro_rules! with_mixer {
 pub struct Audio {
     output: Output,
     sample_rate: u32,
-    root: Option<PathBuf>,
+    files: Option<ProjectFiles>,
     clips: HashMap<String, StaticSoundData>,
 }
 
@@ -175,7 +176,7 @@ impl Audio {
         Audio {
             output,
             sample_rate,
-            root: None,
+            files: None,
             clips: HashMap::new(),
         }
     }
@@ -202,7 +203,13 @@ impl Audio {
     /// Sets the directory clip paths are relative to (the project root). Without
     /// one, only clips registered with [`Audio::insert_clip`] play.
     pub fn set_asset_root(&mut self, root: impl Into<PathBuf>) {
-        self.root = Some(root.into());
+        self.set_files(ProjectFiles::project(root));
+    }
+
+    /// Reads clips through the project's files (ADR-0037); clip names are
+    /// project paths.
+    pub fn set_files(&mut self, files: ProjectFiles) {
+        self.files = Some(files);
     }
 
     /// Registers sound data under a clip name, replacing any earlier clip of that
@@ -242,17 +249,24 @@ impl Audio {
             )
             .at(Location::file(name))
         };
-        let Some(root) = &self.root else {
+        let Some(files) = &self.files else {
             return Err(not_found("it is not registered and no asset root is set"));
         };
-        let path = root.join(name);
-        if !path.is_file() {
-            return Err(
-                not_found(&format!("no file at {}", slash(&path))).with_hint(
-                    "clip names are project-relative paths such as `assets/sfx/pickup.wav`",
-                ),
-            );
-        }
+        let hint = "clip names are project-relative paths such as `assets/sfx/pickup.wav`";
+        let file = match files.read_source(name) {
+            Ok(bytes) => bytes,
+            Err(e) if e.is_not_found() => return Err(not_found("no such file").with_hint(hint)),
+            Err(e @ FileError::InvalidPath { .. }) => {
+                return Err(not_found(&e.to_string()).with_hint(hint));
+            }
+            Err(e) => {
+                return Err(Diagnostic::error(
+                    codes::CLIP_DECODE_FAILED,
+                    format!("cannot decode audio clip `{name}`: {e}"),
+                )
+                .at(Location::file(name)));
+            }
+        };
         let decode_failed = |why: String| {
             Diagnostic::error(
                 codes::CLIP_DECODE_FAILED,
@@ -261,8 +275,7 @@ impl Audio {
             .at(Location::file(name))
             .with_hint("M1 plays WAV files (PCM or float, mono or stereo)")
         };
-        let bytes = std::fs::read(&path).map_err(|e| decode_failed(e.to_string()))?;
-        let data = crate::wav::decode(&bytes).map_err(|e| decode_failed(e.to_string()))?;
+        let data = crate::wav::decode(&file).map_err(|e| decode_failed(e.to_string()))?;
         self.clips.insert(name.to_owned(), data.clone());
         Ok(data)
     }
@@ -429,10 +442,6 @@ pub fn linear_to_decibels(volume: f32) -> Decibels {
     } else {
         Decibels((20.0 * volume.log10()).max(Decibels::SILENCE.0))
     }
-}
-
-fn slash(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 /// A generated sine tone as kira sound data: procedural audio needs no files.

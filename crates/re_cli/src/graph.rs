@@ -82,6 +82,7 @@ pub fn run(command: GraphCommand, project: &Path) -> ExitCode {
         &EvalOptions {
             seed,
             root: Some(project.to_path_buf()),
+            files: None,
             deadline: None,
         },
     );

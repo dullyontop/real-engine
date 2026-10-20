@@ -215,6 +215,7 @@ fn run(ctx: &GenContext) -> Result<SceneFragment, Diagnostic> {
     let opts = EvalOptions {
         seed: Some(ctx.seed() as u64),
         root: store.root().map(Into::into),
+        files: store.files().cloned(),
         deadline: budget
             .max_ms
             .map(|ms| Instant::now() + Duration::from_millis(ms)),

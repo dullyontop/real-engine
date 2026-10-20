@@ -36,6 +36,7 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
 
+use mlua::chunk::ChunkMode;
 use mlua::{Function, Lua, MultiValue, RegistryKey, Result, Thread, Value as LuaValue};
 use re_core::Code;
 use re_scene::{Entity, ScriptRef, World};
@@ -157,9 +158,10 @@ pub fn startable(
         .collect()
 }
 
-/// The chunk name (the instance's full name) and source of a script instance.
-fn source_of(lua: &Lua, e: Entity) -> Result<(String, String)> {
-    let root = state(lua)?.project_root.clone();
+/// The chunk name (the instance's full name), bytes and load mode of a script
+/// instance's source.
+fn source_of(lua: &Lua, e: Entity) -> Result<(String, Vec<u8>, ChunkMode)> {
+    let files = state(lua)?.files.clone();
     let (name, path) = with_world(lua, |w| {
         (
             tree::full_name(w, e),
@@ -172,22 +174,27 @@ fn source_of(lua: &Lua, e: Entity) -> Result<(String, String)> {
             format!("{name} has no source: it has no ScriptRef"),
         ));
     };
-    let file = root.join(&path);
-    let text = std::fs::read_to_string(&file).map_err(|err| {
+    let data = files.read(&path).map_err(|err| {
         lua_error(
             SCRIPT_READ,
             format!("cannot read {path} (the source of {name}): {err}"),
         )
     })?;
-    Ok((name, text))
+    let mode = re_script::chunk_mode(&data.form).map_err(|err| {
+        lua_error(
+            SCRIPT_READ,
+            format!("cannot load {path} (the source of {name}): {err}"),
+        )
+    })?;
+    Ok((name, data.bytes.to_vec(), mode))
 }
 
 /// Compiles script instance `e` with its own environment (`script` is its
 /// handle).
 fn compile(lua: &Lua, e: Entity) -> Result<(String, Function)> {
-    let (name, text) = source_of(lua, e)?;
+    let (name, bytes, mode) = source_of(lua, e)?;
     let env = re_script::vm::environment(lua, instance::push(lua, e)?)?;
-    let f = super::load_chunk(lua, &name, &text, env)?;
+    let f = super::load_chunk(lua, &name, &bytes, mode, env)?;
     Ok((name, f))
 }
 

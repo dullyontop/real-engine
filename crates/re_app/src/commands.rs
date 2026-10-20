@@ -112,7 +112,7 @@ fn play(app: &mut App, args: PlayArgs) -> Result<serde_json::Value, Diagnostic> 
     let replay = match &args.replay {
         Some(path) => {
             let rel = project_path(path, "the replay", codes::REPLAY_FAILED)?;
-            let text = std::fs::read_to_string(app.project().join(&rel)).map_err(|e| {
+            let text = app.files().read_str(&rel).map_err(|e| {
                 Diagnostic::error(codes::REPLAY_FAILED, format!("cannot read {rel}: {e}"))
                     .at(Location::file(&rel))
             })?;
@@ -138,7 +138,7 @@ fn play(app: &mut App, args: PlayArgs) -> Result<serde_json::Value, Diagnostic> 
     let screenshot = match image {
         Some(image) => {
             let rel = format!(".real/out/play/play-{}.png", app.frame_count());
-            crate::gfx::save_png(&image, &app.project().join(&rel))?;
+            crate::gfx::save_png(&image, &app.output_path(&rel)?)?;
             Some(rel)
         }
         None => None,
@@ -164,11 +164,18 @@ fn play(app: &mut App, args: PlayArgs) -> Result<serde_json::Value, Diagnostic> 
 
 fn import(app: &mut App, args: ImportArgs, dry_run: bool) -> Result<serde_json::Value, Diagnostic> {
     let fail = |msg: String| Diagnostic::error(codes::ASSET_IMPORT_FAILED, msg);
+    // Importing writes into the project: only a development run can.
+    let Some(project) = app.files().project_dir().map(Path::to_path_buf) else {
+        return Err(fail(format!(
+            "cannot import {}: this run has no project directory",
+            args.source
+        )));
+    };
     let source = PathBuf::from(&args.source);
     let source = if source.is_absolute() {
         source
     } else {
-        app.project().join(source)
+        project.join(source)
     };
     if !source.is_file() {
         return Err(fail(format!("cannot import {}: no such file", args.source)));
@@ -192,7 +199,7 @@ fn import(app: &mut App, args: ImportArgs, dry_run: bool) -> Result<serde_json::
         return Err(fail(format!("no importer for {dest}"))
             .with_hint("supported files are .gltf, .glb, .png, .jpg, .jpeg and .material.json"));
     }
-    let target = app.project().join(&dest);
+    let target = project.join(&dest);
     if target.exists() && !args.overwrite {
         return Err(fail(format!("{dest} already exists"))
             .at(Location::file(&dest))
@@ -232,9 +239,11 @@ fn describe(app: &mut App, specs: &[re_command::CommandSpec]) -> serde_json::Val
         || re_proc::NodeRegistry::m1().describe(),
         |store| store.evaluator().registry().describe(),
     );
-    let scripts: Vec<serde_json::Value> = verify::content_files(app.project(), "scripts", ".luau")
+    let scripts: Vec<serde_json::Value> = app
+        .files()
+        .list("scripts", ".luau")
         .into_iter()
-        .map(|path| json!({ "path": path }))
+        .map(|path| json!({ "path": path.as_str() }))
         .collect();
     if let Some(obj) = d.as_object_mut() {
         obj.insert("nodes".into(), nodes);

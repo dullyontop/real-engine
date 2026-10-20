@@ -19,7 +19,6 @@
 //! compat project: its scripts are the instances' `ScriptRef`s.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
 use std::sync::Arc;
 
 use glam::{Quat, Vec3};
@@ -114,7 +113,7 @@ impl CompatPlay {
     ///
     /// The scene breaks the compat conventions, or a VM cannot be made.
     pub fn new(
-        project: &Path,
+        files: &re_core::files::ProjectFiles,
         config: &AppConfig,
         compat: &CompatConfig,
         world: &mut World,
@@ -129,7 +128,7 @@ impl CompatPlay {
         server
             .ecs
             .insert_resource(re_scene::IdGen::seeded(SERVER_ID_SEED));
-        install_default_scripts(project, &mut server, &setup.classes)?;
+        install_default_scripts(&mut server, &setup.classes)?;
         let worlds = CompatWorlds::new(&setup, server)?;
         let CompatWorlds {
             server,
@@ -137,7 +136,7 @@ impl CompatPlay {
             set,
         } = worlds;
         *world = server;
-        let runtime = RuntimeConfig::new(project).with_limits(
+        let runtime = RuntimeConfig::with_files(files.clone()).with_limits(
             config.scripts.cpu_budget_ms.max(0.0).ceil() as u64,
             config.scripts.memory_limit_mb as usize,
         );
@@ -263,9 +262,9 @@ pub fn client_sounds(vm: &CompatVm, listener: Option<(Vec3, Quat)>) -> Vec<re_ty
 /// ([`re_compat::humanoid::scripts::DEFAULT_SCRIPTS`]) that the place does
 /// not replace with its own (a child of the same name in the same
 /// container), once the class layer has parts and `Workspace.CurrentCamera`.
-/// Their sources are written under `.real/defaults/`.
+/// Their `ScriptRef`s name `.real/defaults/`, which the engine layer serves
+/// ([`crate::package::engine_layer`]); nothing is written to the project.
 pub fn install_default_scripts(
-    project: &Path,
     world: &mut World,
     classes: &re_compat::ClassRegistry,
 ) -> Result<(), Diagnostic> {
@@ -302,15 +301,7 @@ pub fn install_default_scripts(
         if tree::find_child(world, container, script.name, false).is_some() {
             continue;
         }
-        let rel = format!(".real/defaults/{}/{}.luau", script.container, script.name);
-        let path = project.join(&rel);
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| fail(format!("cannot write {rel}: {e}")))?;
-        }
-        if std::fs::read_to_string(&path).ok().as_deref() != Some(script.source) {
-            std::fs::write(&path, script.source)
-                .map_err(|e| fail(format!("cannot write {rel}: {e}")))?;
-        }
+        let rel = crate::package::default_script_path(script.container, script.name);
         let e = re_compat::scene::spawn_instance(
             world,
             classes,
