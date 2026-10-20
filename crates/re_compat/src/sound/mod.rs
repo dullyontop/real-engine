@@ -557,7 +557,7 @@ fn flush(lua: &Lua) -> mlua::Result<()> {
                 SoundEventKind::Resumed => ("Resumed", vec![id]),
                 SoundEventKind::Stopped => ("Stopped", vec![id]),
                 SoundEventKind::Ended => ("Ended", vec![id]),
-                SoundEventKind::Looped => ("DidLoop", vec![id, LuaValue::Integer(loops)]),
+                SoundEventKind::Looped => ("DidLoop", vec![id, LuaValue::Number(loops as f64)]),
                 SoundEventKind::Loaded => ("Loaded", vec![id]),
             };
             signal::fire(lua, e, name, MultiValue::from_vec(args))?;

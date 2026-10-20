@@ -2,8 +2,9 @@
 //! sources (ADR-0015, ADR-0017).
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use re_core::time::Instant;
 use re_core::{Diagnostic, Location};
 use re_scene::{GenContext, GeneratorInfo, Generators, SceneFragment};
 use re_types::graph::GraphDoc;

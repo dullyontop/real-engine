@@ -767,9 +767,9 @@ fn a_second_headless_writer_is_refused() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + TIMEOUT;
+    let deadline = re_core::time::Instant::now() + TIMEOUT;
     while second.try_wait().unwrap().is_none() {
-        if std::time::Instant::now() > deadline {
+        if re_core::time::Instant::now() > deadline {
             let _ = second.kill();
             panic!("a second real mcp did not exit");
         }

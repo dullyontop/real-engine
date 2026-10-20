@@ -4,10 +4,11 @@
 
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use re_app::{App, AppConfig};
 use re_command::AllowAll;
+use re_core::time::Instant;
 use re_editor::EditorSocket;
 
 fn real(args: &[&str], cwd: &Path) -> Output {

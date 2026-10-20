@@ -7,13 +7,15 @@
 
 use std::path::Path;
 #[cfg(unix)]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use glam::Vec3;
 #[cfg(unix)]
 use re_agent::lock::{self, Holder, LockState};
 use re_app::{App, AppConfig};
 use re_command::AllowAll;
+#[cfg(unix)]
+use re_core::time::Instant;
 #[cfg(unix)]
 use re_editor::EditorSocket;
 use re_editor::{Editor, HeadlessEditor, Panel};
