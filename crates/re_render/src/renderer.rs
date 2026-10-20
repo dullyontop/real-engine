@@ -1425,7 +1425,10 @@ impl Renderer {
     /// The handle reads the capture's current contents each frame. Release it
     /// with [`Renderer::release_texture`] before dropping the capture; its
     /// memory belongs to the capture, so it counts no bytes in [`RenderStats`].
-    /// A frame must not draw a capture into itself.
+    /// A frame must not draw a capture into itself. Use an sRGB capture
+    /// ([`Capture::new`](crate::Capture::new)): a non-sRGB one holds
+    /// gamma-encoded colour, which would be sampled as linear and look washed
+    /// out.
     pub fn capture_texture(&mut self, capture: &crate::Capture) -> TextureHandle {
         let (index, generation) = self.textures.insert(GpuTexture {
             view: capture.view().clone(),

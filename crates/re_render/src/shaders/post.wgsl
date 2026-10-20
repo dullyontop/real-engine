@@ -46,7 +46,10 @@ fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
 
 // The scene is drawn over transparent black, so the clear colour is exact
 // (Rgba16Float would round it); it goes behind the image here.
-fn behind(c: vec4<f32>) -> vec4<f32> {
+// Infinite values (above Rgba16Float's 65504) and NaN become finite first, so
+// tone mapping and the blurs cannot turn one hot pixel into NaN.
+fn behind(c_in: vec4<f32>) -> vec4<f32> {
+    let c = min(select(c_in, vec4<f32>(0.0), c_in != c_in), vec4<f32>(65504.0));
     return vec4<f32>(c.rgb + post.background.rgb * (1.0 - clamp(c.a, 0.0, 1.0)), c.a);
 }
 
@@ -75,8 +78,10 @@ fn fs_sun_rays(in: VsOut) -> @location(0) vec4<f32> {
     var rays = vec3<f32>(0.0);
     for (var i = 0; i < samples; i++) {
         let p = in.uv + to_sun * ((f32(i) + 0.5) / f32(samples));
+        // Past the edge the sampler repeats edge texels, which are not sky.
+        let inside = all(p >= vec2<f32>(0.0)) && all(p <= vec2<f32>(1.0));
         let s = sample_source(p);
-        let near = 1.0 - smoothstep(0.0, radius, length((p - sun) * aspect));
+        let near = select(0.0, 1.0 - smoothstep(0.0, radius, length((p - sun) * aspect)), inside);
         rays += s.rgb * (1.0 - clamp(s.a, 0.0, 1.0)) * near;
     }
     return vec4<f32>(base.rgb + rays / f32(samples) * post.params.z, base.a);

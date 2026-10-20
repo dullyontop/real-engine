@@ -5,7 +5,7 @@
 #include "lighting.wgsl"
 #include "fx.wgsl"
 
-// Must match `QuadUniform` in src/post.rs.
+// Must match `QuadUniform` in src/renderer.rs.
 struct Quad {
     // Local -0.5..0.5 in X and Y (scaled to the quad's size) to world.
     world: mat4x4<f32>,
