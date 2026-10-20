@@ -12,7 +12,7 @@ use serde::Serialize;
 
 use crate::ids::EntityId;
 use crate::input::{ActionFrame, MouseLock, RawInputFrame};
-use crate::physics::{CharacterState, GroupMask, RayHit};
+use crate::physics::{CharacterState, GroupMask, RayHit, VehicleInput, VehicleState};
 
 /// Why a [`HostServices`] call failed.
 ///
@@ -75,6 +75,13 @@ pub trait HostServices {
 
     /// A body's velocities after the last step: `(linear, angular)`.
     fn body_velocity(&self, entity: EntityId) -> HostResult<(Vec3, Vec3)>;
+
+    /// Sets the driver input of the vehicle on `entity` from the next step
+    /// until the next call (ADR-0040).
+    fn vehicle_drive(&mut self, entity: EntityId, input: VehicleInput) -> HostResult<()>;
+
+    /// The state of the vehicle on `entity` after the last step.
+    fn vehicle_state(&self, entity: EntityId) -> HostResult<VehicleState>;
 
     /// Plays a sound clip (an asset path) once, at a world position or non-spatially.
     fn play_sound(&mut self, clip: &str, at: Option<Vec3>, volume: f32) -> HostResult<()>;

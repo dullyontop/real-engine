@@ -131,6 +131,10 @@ component! {
         pub linear_damping: f32 = 0.05,
         /// Angular velocity damping per second.
         pub angular_damping: f32 = 0.05,
+        /// Moves the centre of mass from the shape's own, in the body's local
+        /// space, in metres (dynamic bodies only). A vehicle chassis lowers it to
+        /// stay upright.
+        pub center_of_mass_offset: Vec3 = Vec3::ZERO,
     }
 }
 
@@ -265,10 +269,83 @@ component! {
     }
 }
 
+field_enum! {
+    /// The vehicle model a [`Vehicle`] uses.
+    pub enum VehicleKind { Wheeled, Motorcycle }
+}
+
+field_enum! {
+    /// How a [`Vehicle`]'s wheels find the ground (ADR-0040).
+    pub enum WheelTester { Ray, CastSphere, CastCylinder }
+}
+
+component! {
+    /// Makes a dynamic [`RigidBody`] a wheeled vehicle chassis (ADR-0040). Its
+    /// wheels are the child entities with a [`VehicleWheel`], in child order;
+    /// each wheel's [`Transform`] when the vehicle is created is its attachment
+    /// point, and `re_app` writes the simulated wheel pose back to it. Scripts
+    /// drive it with `physics.drive`.
+    pub struct Vehicle {
+        /// Wheeled (any number of wheels) or motorcycle (two wheels that lean).
+        pub kind: VehicleKind = VehicleKind::Wheeled,
+        /// Engine torque at full throttle, in newton metres.
+        pub max_torque: f32 = 500.0,
+        /// Idle engine speed, in revolutions per minute.
+        pub min_rpm: f32 = 1000.0,
+        /// Highest engine speed, in revolutions per minute.
+        pub max_rpm: f32 = 6000.0,
+        /// Forward gear ratios, first gear first.
+        pub gears: Vec<f32> = vec![2.66, 1.78, 1.3, 1.0, 0.74],
+        /// Reverse gear ratios (negative).
+        pub reverse_gears: Vec<f32> = vec![-2.9],
+        /// Engine speed that shifts up, in revolutions per minute.
+        pub shift_up_rpm: f32 = 4000.0,
+        /// Engine speed that shifts down, in revolutions per minute.
+        pub shift_down_rpm: f32 = 2000.0,
+        /// Ratio between gearbox and driven wheels.
+        pub differential_ratio: f32 = 3.42,
+        /// Anti-roll bar stiffness on each two-wheel axle; 0 adds none.
+        pub anti_roll_stiffness: f32 = 1000.0,
+        /// Steepest pitch or roll the chassis may reach, in degrees; 180 is free.
+        pub max_pitch_roll_deg: f32 = 180.0,
+        /// How the wheels find the ground.
+        pub tester: WheelTester = WheelTester::Ray,
+        /// Sphere radius of the `CastSphere` tester, in metres.
+        pub tester_radius: f32 = 0.3,
+    }
+}
+
+component! {
+    /// One wheel of the [`Vehicle`] on the entity's parent.
+    pub struct VehicleWheel {
+        /// Radius, in metres.
+        pub radius: f32 = 0.3,
+        /// Width, in metres.
+        pub width: f32 = 0.1,
+        /// Shortest suspension length, in metres.
+        pub suspension_min: f32 = 0.3,
+        /// Longest suspension length, in metres.
+        pub suspension_max: f32 = 0.5,
+        /// Suspension spring frequency, in hertz.
+        pub suspension_frequency: f32 = 1.5,
+        /// Suspension damping ratio.
+        pub suspension_damping: f32 = 0.5,
+        /// Steering angle at full steer, in degrees; 0 does not steer.
+        pub max_steer_deg: f32 = 0.0,
+        /// Brake torque at full brake, in newton metres.
+        pub max_brake_torque: f32 = 1500.0,
+        /// Hand brake torque, in newton metres; 0 has no hand brake.
+        pub max_hand_brake_torque: f32 = 0.0,
+        /// True if the engine drives this wheel.
+        pub driven: bool = false,
+    }
+}
+
 /// Registers every built-in component, in a fixed order: `Transform`,
 /// `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light`, `RigidBody`,
 /// `Collider`, `CharacterController`, `ScriptRef`, `AudioSource`, `AnimPlayer`,
-/// `HudText`, `Procedural`, `GraphSource`.
+/// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `Vehicle`,
+/// `VehicleWheel`.
 pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<Transform>(world);
     registry.register::<MeshRef>(world);
@@ -287,4 +364,6 @@ pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<GraphSource>(world);
     registry.register::<crate::Attributes>(world);
     registry.register::<crate::Tags>(world);
+    registry.register::<Vehicle>(world);
+    registry.register::<VehicleWheel>(world);
 }

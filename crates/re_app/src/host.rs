@@ -4,7 +4,7 @@
 //! a script callback runs (the World itself goes to the script runtime
 //! separately). Calls that change something are queued and take effect at a
 //! fixed point of the frame:
-//! - impulses and character moves are physics commands for the next physics
+//! - impulses, character moves and vehicle input are physics commands for the next physics
 //!   phase (the current fixed step's, when called from a fixed-step callback);
 //! - sounds go to the frame's audio commands;
 //! - HUD text, screenshots, regeneration and restart are applied in EndFrame.
@@ -14,6 +14,7 @@ use re_physics::{Physics, QueryFilter};
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::{
     ActionFrame, AudioCmd, BodyKind, CharacterState, EntityId, GroupMask, PhysicsCmd, RayHit,
+    VehicleInput, VehicleState,
 };
 
 use crate::codes::{HOST_INVALID_ARGUMENT_STR, HOST_NO_SUCH_THING_STR};
@@ -142,6 +143,30 @@ impl HostServices for Host<'_> {
         self.physics
             .velocity(entity)
             .ok_or_else(|| no_such(format!("entity {} has no physics body", entity.0)))
+    }
+
+    fn vehicle_drive(&mut self, entity: EntityId, input: VehicleInput) -> HostResult<()> {
+        if !self.links.is_vehicle(entity) {
+            return Err(no_such(format!(
+                "entity {} has no vehicle (add a Vehicle to a dynamic body, with VehicleWheel children)",
+                entity.0
+            )));
+        }
+        if !input.is_valid() {
+            return Err(invalid(format!(
+                "vehicle input {input:?} is out of range: throttle and steer are -1 to 1, \
+                 brake and handbrake 0 to 1"
+            )));
+        }
+        self.physics_cmds
+            .push(PhysicsCmd::SetVehicleInput { id: entity, input });
+        Ok(())
+    }
+
+    fn vehicle_state(&self, entity: EntityId) -> HostResult<VehicleState> {
+        self.physics
+            .vehicle(entity)
+            .ok_or_else(|| no_such(format!("entity {} has no vehicle", entity.0)))
     }
 
     fn play_sound(&mut self, clip: &str, at: Option<Vec3>, volume: f32) -> HostResult<()> {

@@ -20,7 +20,7 @@
 //! | [`render`] | [`RenderSnapshot`], [`Camera`], [`Light`], [`DrawItem`], [`DrawFlags`], [`DebugLine`], [`MeshHandle`], [`MaterialHandle`], [`TextureHandle`], [`TextureRef`], [`MaterialDesc`], [`TextureData`] |
 //! | [`mesh`] | [`MeshData`], [`Vertex`], [`Aabb`] |
 //! | [`anim`] | [`ClipData`], [`TargetChannels`], [`Channel`] |
-//! | [`physics`] | [`PhysicsCmd`], [`BodyDesc`], [`BodyKind`], [`ShapeDesc`], [`Layer`], [`GroupMask`], [`BodyPose`], [`ContactEvent`], [`RayHit`], [`CharacterDesc`], [`CharacterState`], [`ConstraintDesc`], [`ConstraintKind`] |
+//! | [`physics`] | [`PhysicsCmd`], [`BodyDesc`], [`BodyKind`], [`ShapeDesc`], [`Layer`], [`GroupMask`], [`BodyPose`], [`ContactEvent`], [`RayHit`], [`CharacterDesc`], [`CharacterState`], [`ConstraintDesc`], [`ConstraintKind`], [`VehicleDesc`], [`VehicleKind`], [`WheelDesc`], [`WheelTester`], [`EngineDesc`], [`TransmissionDesc`], [`VehicleInput`], [`VehicleState`], [`WheelState`], [`WheelPose`] |
 //! | [`audio`] | [`AudioCmd`] |
 //! | [`input`] | [`ActionFrame`], [`ButtonState`], [`RawInputFrame`], [`InputEvent`], [`InputKind`], [`InputPhase`], [`MouseLock`] |
 //! | [`graph`] | [`GraphDoc`], [`NodeDoc`], [`EdgeDoc`] |
@@ -55,7 +55,9 @@ pub use input::{
 pub use mesh::{Aabb, MeshData, Vertex};
 pub use physics::{
     BodyDesc, BodyKind, BodyPose, CharacterDesc, CharacterState, ConstraintDesc, ConstraintKind,
-    ContactEvent, GroundState, GroupMask, Layer, PhysicsCmd, RayHit, ShapeDesc,
+    ContactEvent, EngineDesc, GroundState, GroupMask, Layer, PhysicsCmd, RayHit, ShapeDesc,
+    TransmissionDesc, VehicleDesc, VehicleInput, VehicleKind, VehicleState, WheelDesc, WheelPose,
+    WheelState, WheelTester,
 };
 pub use render::{
     AlphaMode, Camera, DebugLine, DrawFlags, DrawItem, Light, LightKind, MaterialDesc,

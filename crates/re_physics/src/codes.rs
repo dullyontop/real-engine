@@ -57,3 +57,7 @@ pub const INVALID_ARGUMENT: Code = Code::new("RE5016");
 
 /// An assembly's part list is empty or malformed, or Jolt refused its shape.
 pub const ASSEMBLY_INVALID: Code = Code::new("RE5017");
+
+/// A vehicle could not be created or driven: no dynamic chassis body, no wheels or
+/// driven wheels, an input or setting out of range.
+pub const VEHICLE_INVALID: Code = Code::new("RE5018");

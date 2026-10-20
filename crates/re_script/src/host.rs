@@ -15,7 +15,7 @@ use re_command::{CommandOutcome, CommandRegistry, EditTarget, Origin, PolicyChec
 use re_scene::World;
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::input::ActionFrame;
-use re_types::physics::{CharacterState, GroupMask, RayHit};
+use re_types::physics::{CharacterState, GroupMask, RayHit, VehicleInput, VehicleState};
 use re_types::{EntityId, glam::Vec3};
 use serde_json::Value as Json;
 
@@ -130,6 +130,12 @@ impl HostServices for NoServices {
     }
     fn body_velocity(&self, _: EntityId) -> HostResult<(Vec3, Vec3)> {
         Self::unavailable("physics.velocity")
+    }
+    fn vehicle_drive(&mut self, _: EntityId, _: VehicleInput) -> HostResult<()> {
+        Self::unavailable("physics.drive")
+    }
+    fn vehicle_state(&self, _: EntityId) -> HostResult<VehicleState> {
+        Self::unavailable("physics.vehicle")
     }
     fn play_sound(&mut self, _: &str, _: Option<Vec3>, _: f32) -> HostResult<()> {
         Self::unavailable("audio.play")

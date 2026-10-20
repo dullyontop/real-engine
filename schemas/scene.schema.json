@@ -172,6 +172,12 @@
               },
               "Tags": {
                 "$ref": "#/$defs/Tags"
+              },
+              "Vehicle": {
+                "$ref": "#/$defs/Vehicle"
+              },
+              "VehicleWheel": {
+                "$ref": "#/$defs/VehicleWheel"
               }
             },
             "additionalProperties": false
@@ -421,6 +427,20 @@
           "type": "number",
           "default": 0.05000000074505806,
           "description": "Angular velocity damping per second."
+        },
+        "center_of_mass_offset": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Moves the centre of mass from the shape's own, in the body's local\nspace, in metres (dynamic bodies only). A vehicle chassis lowers it to\nstay upright."
         }
       },
       "additionalProperties": false
@@ -752,6 +772,156 @@
           },
           "default": [],
           "description": "The tags, each at most once, in the order they were added."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Vehicle": {
+      "type": "object",
+      "description": "Makes a dynamic [`RigidBody`] a wheeled vehicle chassis (ADR-0040). Its\nwheels are the child entities with a [`VehicleWheel`], in child order;\neach wheel's [`Transform`] when the vehicle is created is its attachment\npoint, and `re_app` writes the simulated wheel pose back to it. Scripts\ndrive it with `physics.drive`.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "Wheeled",
+            "Motorcycle"
+          ],
+          "default": "Wheeled",
+          "description": "Wheeled (any number of wheels) or motorcycle (two wheels that lean)."
+        },
+        "max_torque": {
+          "type": "number",
+          "default": 500.0,
+          "description": "Engine torque at full throttle, in newton metres."
+        },
+        "min_rpm": {
+          "type": "number",
+          "default": 1000.0,
+          "description": "Idle engine speed, in revolutions per minute."
+        },
+        "max_rpm": {
+          "type": "number",
+          "default": 6000.0,
+          "description": "Highest engine speed, in revolutions per minute."
+        },
+        "gears": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": [
+            2.6600000858306885,
+            1.7799999713897705,
+            1.2999999523162842,
+            1.0,
+            0.7400000095367432
+          ],
+          "description": "Forward gear ratios, first gear first."
+        },
+        "reverse_gears": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": [
+            -2.9000000953674316
+          ],
+          "description": "Reverse gear ratios (negative)."
+        },
+        "shift_up_rpm": {
+          "type": "number",
+          "default": 4000.0,
+          "description": "Engine speed that shifts up, in revolutions per minute."
+        },
+        "shift_down_rpm": {
+          "type": "number",
+          "default": 2000.0,
+          "description": "Engine speed that shifts down, in revolutions per minute."
+        },
+        "differential_ratio": {
+          "type": "number",
+          "default": 3.4200000762939453,
+          "description": "Ratio between gearbox and driven wheels."
+        },
+        "anti_roll_stiffness": {
+          "type": "number",
+          "default": 1000.0,
+          "description": "Anti-roll bar stiffness on each two-wheel axle; 0 adds none."
+        },
+        "max_pitch_roll_deg": {
+          "type": "number",
+          "default": 180.0,
+          "description": "Steepest pitch or roll the chassis may reach, in degrees; 180 is free."
+        },
+        "tester": {
+          "enum": [
+            "Ray",
+            "CastSphere",
+            "CastCylinder"
+          ],
+          "default": "Ray",
+          "description": "How the wheels find the ground."
+        },
+        "tester_radius": {
+          "type": "number",
+          "default": 0.30000001192092896,
+          "description": "Sphere radius of the `CastSphere` tester, in metres."
+        }
+      },
+      "additionalProperties": false
+    },
+    "VehicleWheel": {
+      "type": "object",
+      "description": "One wheel of the [`Vehicle`] on the entity's parent.",
+      "properties": {
+        "radius": {
+          "type": "number",
+          "default": 0.30000001192092896,
+          "description": "Radius, in metres."
+        },
+        "width": {
+          "type": "number",
+          "default": 0.10000000149011612,
+          "description": "Width, in metres."
+        },
+        "suspension_min": {
+          "type": "number",
+          "default": 0.30000001192092896,
+          "description": "Shortest suspension length, in metres."
+        },
+        "suspension_max": {
+          "type": "number",
+          "default": 0.5,
+          "description": "Longest suspension length, in metres."
+        },
+        "suspension_frequency": {
+          "type": "number",
+          "default": 1.5,
+          "description": "Suspension spring frequency, in hertz."
+        },
+        "suspension_damping": {
+          "type": "number",
+          "default": 0.5,
+          "description": "Suspension damping ratio."
+        },
+        "max_steer_deg": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Steering angle at full steer, in degrees; 0 does not steer."
+        },
+        "max_brake_torque": {
+          "type": "number",
+          "default": 1500.0,
+          "description": "Brake torque at full brake, in newton metres."
+        },
+        "max_hand_brake_torque": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Hand brake torque, in newton metres; 0 has no hand brake."
+        },
+        "driven": {
+          "type": "boolean",
+          "default": false,
+          "description": "True if the engine drives this wheel."
         }
       },
       "additionalProperties": false
