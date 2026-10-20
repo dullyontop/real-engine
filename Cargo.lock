@@ -3643,6 +3643,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracy-client",
+ "web-time",
 ]
 
 [[package]]

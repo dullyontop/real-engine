@@ -51,15 +51,18 @@ pub fn backends_from_env() -> Result<wgpu::Backends, Diagnostic> {
 }
 
 /// The limits to request: the WebGPU defaults when the adapter meets them,
-/// otherwise the downlevel defaults (some GL drivers), always with the adapter's
-/// largest texture size.
+/// otherwise the downlevel defaults (some GL drivers), or WebGL2's when even those do not
+/// fit, always with the adapter's largest texture size.
 pub fn pick_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
     let supported = adapter.limits();
     let wanted = wgpu::Limits::default();
     let base = if wanted.check_limits(&supported) {
         wanted
-    } else {
+    } else if wgpu::Limits::downlevel_defaults().check_limits(&supported) {
         wgpu::Limits::downlevel_defaults()
+    } else {
+        // WebGL2 (the browser fallback, ADR-0049 §8) has no compute and fewer bindings.
+        wgpu::Limits::downlevel_webgl2_defaults()
     };
     base.using_resolution(supported)
 }
@@ -162,10 +165,16 @@ impl Gpu {
     /// A device with no surface, for offscreen rendering, tests and CI.
     ///
     /// Fails with `RE6002` when no adapter matches `backends` and `RE6003` when the
-    /// adapter refuses the device.
+    /// adapter refuses the device. It blocks until the device exists, which a browser
+    /// never allows: use [`Gpu::headless_async`] there.
     pub fn headless(backends: wgpu::Backends) -> Result<Gpu, Diagnostic> {
-        let instance = headless_instance(backends);
-        Self::from_instance(instance, None, backends)
+        pollster::block_on(Self::headless_async(backends))
+    }
+
+    /// [`Gpu::headless`] without blocking, for the browser, where the adapter and the
+    /// device arrive only after control returns to the page's event loop (ADR-0049 §3).
+    pub async fn headless_async(backends: wgpu::Backends) -> Result<Gpu, Diagnostic> {
+        Self::from_instance(headless_instance(backends), None, backends).await
     }
 
     /// A device that can present to `window`, and the window's surface.
@@ -174,8 +183,25 @@ impl Gpu {
     /// clone of it as its display handle (needed by GL on Wayland), and the surface
     /// keeps another, so both outlive any other reference to the window.
     ///
-    /// Configure the surface with [`Gpu::surface_config`].
+    /// Configure the surface with [`Gpu::surface_config`]. It blocks like
+    /// [`Gpu::headless`]; use [`Gpu::for_surface_async`] in a browser.
     pub fn for_surface<W>(
+        window: Arc<W>,
+        backends: wgpu::Backends,
+    ) -> Result<(Gpu, wgpu::Surface<'static>), Diagnostic>
+    where
+        W: wgpu::rwh::HasWindowHandle
+            + wgpu::rwh::HasDisplayHandle
+            + fmt::Debug
+            + Send
+            + Sync
+            + 'static,
+    {
+        pollster::block_on(Self::for_surface_async(window, backends))
+    }
+
+    /// [`Gpu::for_surface`] without blocking, for the browser.
+    pub async fn for_surface_async<W>(
         window: Arc<W>,
         backends: wgpu::Backends,
     ) -> Result<(Gpu, wgpu::Surface<'static>), Diagnostic>
@@ -197,49 +223,53 @@ impl Gpu {
                 format!("could not create a window surface: {e}"),
             )
         })?;
-        let gpu = Self::from_instance(instance, Some(&surface), backends)?;
+        let gpu = Self::from_instance(instance, Some(&surface), backends).await?;
         Ok((gpu, surface))
     }
 
-    fn from_instance(
+    async fn from_instance(
         instance: wgpu::Instance,
         surface: Option<&wgpu::Surface<'_>>,
         backends: wgpu::Backends,
     ) -> Result<Gpu, Diagnostic> {
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: surface,
-            apply_limit_buckets: false,
-        }))
-        .map_err(|e| {
-            Diagnostic::error(
-                codes::NO_ADAPTER,
-                format!("no GPU adapter for backends {backends:?}: {e}"),
-            )
-            .with_hint(
-                "install a Vulkan or GL driver (Mesa's lavapipe or llvmpipe work without a GPU), \
-                 or choose other backends with RE_BACKENDS",
-            )
-        })?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: surface,
+                apply_limit_buckets: false,
+            })
+            .await
+            .map_err(|e| {
+                Diagnostic::error(
+                    codes::NO_ADAPTER,
+                    format!("no GPU adapter for backends {backends:?}: {e}"),
+                )
+                .with_hint(
+                    "install a Vulkan or GL driver (Mesa's lavapipe or llvmpipe work without a GPU), \
+                     or choose other backends with RE_BACKENDS",
+                )
+            })?;
         let info = adapter.get_info();
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("re_render"),
-            required_features: wgpu::Features::empty(),
-            required_limits: pick_limits(&adapter),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            trace: wgpu::Trace::Off,
-        }))
-        .map_err(|e| {
-            Diagnostic::error(
-                codes::DEVICE_FAILED,
-                format!(
-                    "the adapter `{}` refused to create a device: {e}",
-                    info.name
-                ),
-            )
-        })?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("re_render"),
+                required_features: wgpu::Features::empty(),
+                required_limits: pick_limits(&adapter),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+            })
+            .await
+            .map_err(|e| {
+                Diagnostic::error(
+                    codes::DEVICE_FAILED,
+                    format!(
+                        "the adapter `{}` refused to create a device: {e}",
+                        info.name
+                    ),
+                )
+            })?;
         let errors = install_error_logger(&device);
         tracing::info!(
             adapter = %info.name,
