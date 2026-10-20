@@ -16,9 +16,10 @@
 
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use glam::{Mat4, Quat, Vec3};
+use re_core::time::Instant;
 use re_render::{Gpu, Renderer, UiFrame};
 use re_types::EntityId;
 use re_types::mesh::{MeshData, Vertex};

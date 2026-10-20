@@ -7,8 +7,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::time::Instant;
 
+use re_core::time::Instant;
 use re_core::{Diagnostic, Location};
 use re_render::{Capture, Gpu, Image, Renderer, UiFrame, egui, wgpu};
 use re_scene::World;

@@ -12,13 +12,13 @@
 //! (`<source id>/<key>`, ADR-0017).
 
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::DeferredWorld;
+use re_core::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::SceneError;
 
