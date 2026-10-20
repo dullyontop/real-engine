@@ -146,7 +146,7 @@ impl HostServices for Host<'_> {
     }
 
     fn vehicle_drive(&mut self, entity: EntityId, input: VehicleInput) -> HostResult<()> {
-        if !self.links.is_vehicle(entity) {
+        if !self.physics.has_vehicle(entity) {
             return Err(no_such(format!(
                 "entity {} has no vehicle (add a Vehicle to a dynamic body, with VehicleWheel children)",
                 entity.0

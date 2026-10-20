@@ -123,3 +123,44 @@ fn vehicle_runs_are_deterministic() {
     assert!(a.ok(), "{:?}", a.diagnostics);
     assert_eq!(a.state_hash, b.state_hash);
 }
+
+#[test]
+fn a_chassis_that_loses_its_body_for_a_while_keeps_its_wheel_mounts() {
+    let dir = project();
+    let mut app = open(dir.path());
+    app.run_headless(Some(60), None).unwrap();
+    let before = vec3(&app, "fl", "translation").y;
+    app.world_mut()
+        .set("car", "Collider", "enabled", Value::Bool(false))
+        .unwrap();
+    app.run_headless(Some(1), None).unwrap();
+    app.world_mut()
+        .set("car", "Collider", "enabled", Value::Bool(true))
+        .unwrap();
+    app.run_headless(Some(60), None).unwrap();
+    // Mounted at the authored points again, not at the pulled wheel centres
+    // (which would sink each wheel by a suspension length).
+    let after = vec3(&app, "fl", "translation").y;
+    assert!((after - before).abs() < 0.05, "fl y {before} then {after}");
+}
+
+#[test]
+fn a_vehicle_on_a_kinematic_body_is_reported_once_and_cannot_be_driven() {
+    let dir = project();
+    let scene = scene().replace(r#""kind": "Dynamic""#, r#""kind": "Kinematic""#);
+    std::fs::write(dir.path().join("scenes/main.scene.json"), scene).unwrap();
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(40), None).unwrap();
+    let codes: Vec<String> = report
+        .diagnostics
+        .iter()
+        .map(|d| d.code.to_string())
+        .collect();
+    assert_eq!(
+        codes.iter().filter(|c| *c == "RE5018").count(),
+        1,
+        "{codes:?}"
+    );
+    // The script's physics.drive is refused (no such vehicle).
+    assert!(codes.iter().any(|c| c == "RE0503"), "{codes:?}");
+}

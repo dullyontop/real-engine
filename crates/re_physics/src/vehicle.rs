@@ -233,6 +233,11 @@ impl Physics {
         }
         .map_err(|e| vehicle_invalid(id, e))?;
         self.vehicles.insert(id, vehicle);
+        // A vehicle replaced in this apply (a changed description, a replaced
+        // chassis body) keeps its driver's input.
+        if let Some(input) = self.dropped_inputs.remove(&id) {
+            self.set_vehicle_input(id, input)?;
+        }
         Ok(())
     }
 
@@ -241,6 +246,9 @@ impl Physics {
         let Some(entry) = self.vehicles.remove(&id) else {
             return false;
         };
+        if let Some(input) = with_vehicle!(self.world, entry, |v| vehicle_input(v.driver_input())) {
+            self.dropped_inputs.insert(id, input);
+        }
         // The entry names a vehicle of this world, so this cannot fail.
         let _ = match entry {
             VehicleEntry::Wheeled(v) => self.world.remove_vehicle(v),
@@ -249,12 +257,11 @@ impl Physics {
         true
     }
 
+    /// Removes `id`'s vehicle. Without one (it went with its chassis body, or its
+    /// description was refused) this is a no-op (ADR-0040).
     pub(crate) fn remove_vehicle(&mut self, id: EntityId) -> Result<(), Diagnostic> {
-        if self.drop_vehicle(id) {
-            Ok(())
-        } else {
-            Err(unknown(id, "vehicle"))
-        }
+        self.drop_vehicle(id);
+        Ok(())
     }
 
     pub(crate) fn set_vehicle_input(
@@ -356,6 +363,11 @@ impl Physics {
                 }
             });
         }
+    }
+
+    /// True when `id` has a vehicle.
+    pub fn has_vehicle(&self, id: EntityId) -> bool {
+        self.vehicles.contains_key(&id)
     }
 
     /// The number of vehicles.

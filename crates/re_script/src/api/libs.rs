@@ -262,7 +262,7 @@ fn physics_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         lua,
         "drive",
         "(e: Entity, input: { throttle: number?, steer: number?, brake: number?, handbrake: number? }) -> ()",
-        "Sets a vehicle's driver input from the next step until the next call: `throttle` and `steer` -1 to 1 (negative reverses or steers left), `brake` and `handbrake` 0 to 1; missing fields are 0.",
+        "Sets a vehicle's driver input from the next step until the next call: `throttle` and `steer` -1 to 1 (negative reverses or steers left), `brake` and `handbrake` 0 to 1; missing fields are 0, and a value out of range or not finite is an error.",
         |lua, (e, input): (Value, Table)| {
             let e = entity_arg(&e, "physics.drive")?;
             let field = |name: &str| -> Result<f32> { Ok(input.get::<Option<f32>>(name)?.unwrap_or(0.0)) };

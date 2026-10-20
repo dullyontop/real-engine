@@ -219,10 +219,30 @@ fn removing_the_chassis_removes_the_vehicle_and_remove_vehicle_keeps_the_body() 
             PhysicsCmd::RemoveBody { id: CAR },
         ],
     );
-    // RemoveBody (rank 1) removes the vehicle first; the RemoveVehicle after it finds
-    // nothing.
-    assert_eq!(left.len(), 1, "{left:?}");
-    assert!(left[0].starts_with("RE5004"), "{left:?}");
+    // RemoveBody (rank 1) removes the vehicle first; the RemoveVehicle after it is a
+    // no-op (ADR-0040).
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(p.vehicle_count(), 0);
+}
+
+#[test]
+fn a_vehicle_replaced_in_one_apply_keeps_its_input() {
+    let mut p = flat(1);
+    apply(&mut p, vec![input(1.0, 0.0, 0.0)]);
+    steps(&mut p, 10);
+    // A changed description: remove and add again.
+    apply(
+        &mut p,
+        vec![
+            PhysicsCmd::RemoveVehicle { id: CAR },
+            add_car(CAR, car_desc(WheelTester::Ray)),
+        ],
+    );
+    assert_eq!(p.vehicle(CAR).unwrap().input.throttle, 1.0);
+    // Removed in one apply and added in a later one: the input starts at zero.
+    apply(&mut p, vec![PhysicsCmd::RemoveVehicle { id: CAR }]);
+    apply(&mut p, vec![add_car(CAR, car_desc(WheelTester::Ray))]);
+    assert_eq!(p.vehicle(CAR).unwrap().input.throttle, 0.0);
 }
 
 #[test]

@@ -22,7 +22,7 @@ use re_core::{Diagnostic, Location, Severity, TaskPool};
 use re_types::EntityId;
 use re_types::physics::{
     BodyDesc, BodyKind, BodyPose, CharacterDesc, CharacterState, ConstraintDesc, ConstraintKind,
-    ContactEvent, GroundState, GroupMask, Layer, PhysicsCmd,
+    ContactEvent, GroundState, GroupMask, Layer, PhysicsCmd, VehicleInput,
 };
 
 use crate::codes;
@@ -59,6 +59,9 @@ pub struct Physics {
     pub(crate) characters: BTreeMap<EntityId, CharacterEntry>,
     constraints: BTreeMap<EntityId, ConstraintEntry>,
     pub(crate) vehicles: BTreeMap<EntityId, VehicleEntry>,
+    /// The driver input of vehicles removed during the current `apply`, so a
+    /// vehicle added again in the same `apply` keeps it.
+    pub(crate) dropped_inputs: BTreeMap<EntityId, VehicleInput>,
     gate: Arc<GroupGate>,
     state: StepState,
     removed: Vec<BodyId>,
@@ -359,6 +362,7 @@ impl Physics {
             characters: BTreeMap::new(),
             constraints: BTreeMap::new(),
             vehicles: BTreeMap::new(),
+            dropped_inputs: BTreeMap::new(),
             gate,
             state: StepState::default(),
             removed: Vec::new(),
@@ -386,6 +390,7 @@ impl Physics {
                 self.diagnostics.push(d);
             }
         }
+        self.dropped_inputs.clear();
     }
 
     fn apply_one(&mut self, cmd: PhysicsCmd) -> Result<(), Diagnostic> {

@@ -26,7 +26,7 @@ use re_scene::ecs::query::{Or, With};
 use re_scene::{
     BodyKind as SceneBodyKind, CharacterController, Collider, ColliderShape, Entity,
     GlobalTransform, RigidBody, Transform, Vehicle, VehicleKind as SceneVehicleKind, VehicleWheel,
-    WheelTester as SceneWheelTester, World, entity_id, hierarchy,
+    WheelTester as SceneWheelTester, World, entity_from_id, entity_id, hierarchy,
 };
 use re_types::{
     BodyDesc, BodyKind, BodyPose, CharacterDesc, EngineDesc, EntityId, GroupMask, Layer, MeshData,
@@ -140,11 +140,18 @@ struct VehicleLink {
     fingerprint: blake3::Hash,
     /// The wheel entities, in wheel order.
     wheels: Vec<Entity>,
-    /// Each wheel's attachment point, in the chassis entity's local space.
-    attach: Vec<Vec3>,
-    /// Each wheel's local translation and rotation last written by
-    /// [`pull_wheels`] or seen by [`push`].
-    written: Vec<(Vec3, Quat)>,
+}
+
+/// Where a `VehicleWheel` entity is attached. Kept for as long as the entity has
+/// the component, whatever happens to its vehicle, because [`pull_wheels`]
+/// overwrites the wheel's `Transform` with the simulated pose.
+#[derive(Clone, Copy, Debug)]
+struct WheelMount {
+    /// The attachment point, in the chassis entity's local space.
+    attach: Vec3,
+    /// The local translation and rotation last written by [`pull_wheels`] or
+    /// seen by [`push`]; a different value moves the attachment point.
+    written: (Vec3, Quat),
 }
 
 /// The physics side of the World: which entity has which body, and their poses.
@@ -152,6 +159,7 @@ struct VehicleLink {
 pub struct PhysicsSync {
     links: BTreeMap<EntityId, Link>,
     vehicles: BTreeMap<EntityId, VehicleLink>,
+    mounts: BTreeMap<EntityId, WheelMount>,
     /// (entity, fingerprint) pairs already reported as failing, so a broken
     /// collider is reported once, not every step.
     reported: BTreeSet<(EntityId, [u8; 32])>,
@@ -628,6 +636,9 @@ fn push_vehicles(
     added: &BTreeSet<EntityId>,
     cmds: &mut Vec<PhysicsCmd>,
 ) {
+    sync.mounts.retain(|&wheel, _| {
+        entity_from_id(wheel).is_some_and(|e| world.ecs.get::<VehicleWheel>(e).is_some())
+    });
     let mut chassis: Vec<Entity> = world
         .ecs
         .iter_entities()
@@ -638,58 +649,67 @@ fn push_vehicles(
     let mut seen: BTreeSet<EntityId> = BTreeSet::new();
     for entity in chassis {
         let id = entity_id(entity);
-        // A vehicle needs a body; `re_physics` refuses one on a body that is not
-        // dynamic (RE5018).
-        if !matches!(sync.links.get(&id), Some(l) if l.entity == entity && matches!(l.kind, LinkKind::Body(_)))
-        {
+        // A vehicle needs a body.
+        let Some(kind) = sync
+            .links
+            .get(&id)
+            .filter(|l| l.entity == entity)
+            .map(|l| l.kind)
+        else {
             continue;
-        }
+        };
         let Some(v) = world.ecs.get::<Vehicle>(entity) else {
             continue;
         };
-        seen.insert(id);
-        let old = sync.vehicles.get(&id);
         let mut wheel_entities = Vec::new();
         let mut wheels = Vec::new();
-        let mut written = Vec::new();
         for &child in hierarchy::children(&world.ecs, entity) {
             let Some(w) = world.ecs.get::<VehicleWheel>(child) else {
                 continue;
             };
             let local = local_tr(world, child);
-            let i = wheel_entities.len();
-            // Keep the attachment point while the wheel's Transform is the pose
-            // last written to it.
-            let attach = match old {
-                Some(o) if o.wheels.get(i) == Some(&child) && o.written[i] == local => o.attach[i],
-                _ => local.0,
-            };
+            let mount = sync
+                .mounts
+                .entry(entity_id(child))
+                .and_modify(|m| {
+                    if m.written != local {
+                        m.attach = local.0;
+                        m.written = local;
+                    }
+                })
+                .or_insert(WheelMount {
+                    attach: local.0,
+                    written: local,
+                });
             wheel_entities.push(child);
-            wheels.push((w, attach));
-            written.push(local);
+            wheels.push((w, mount.attach));
         }
         let desc = vehicle_desc(v, &wheels, world_scale(world, entity).abs());
         let fp = blake3::hash(serde_json::to_string(&desc).unwrap_or_default().as_bytes());
+        if kind != LinkKind::Body(BodyKind::Dynamic) {
+            // `re_physics` refuses it (RE5018): send it once per description so the
+            // problem is reported, and record no vehicle.
+            if sync.reported.insert((id, *fp.as_bytes())) {
+                cmds.push(PhysicsCmd::AddVehicle { id, desc });
+            }
+            continue;
+        }
+        seen.insert(id);
         let replaced = added.contains(&id);
+        let old = sync.vehicles.get(&id);
         let unchanged = old.is_some_and(|o| o.fingerprint == fp && o.wheels == wheel_entities);
         if unchanged && !replaced {
-            if let Some(link) = sync.vehicles.get_mut(&id) {
-                link.written = written;
-            }
             continue;
         }
         if old.is_some() && !replaced {
             cmds.push(PhysicsCmd::RemoveVehicle { id });
         }
-        let attach = wheels.iter().map(|(_, a)| *a).collect();
         cmds.push(PhysicsCmd::AddVehicle { id, desc });
         sync.vehicles.insert(
             id,
             VehicleLink {
                 fingerprint: fp,
                 wheels: wheel_entities,
-                attach,
-                written,
             },
         );
     }
@@ -701,10 +721,8 @@ fn push_vehicles(
         .collect();
     for id in gone {
         sync.vehicles.remove(&id);
-        // A removed or replaced body took its vehicle with it.
-        if sync.links.contains_key(&id) && !added.contains(&id) {
-            cmds.push(PhysicsCmd::RemoveVehicle { id });
-        }
+        // A RemoveVehicle after its body went is a no-op in `re_physics`.
+        cmds.push(PhysicsCmd::RemoveVehicle { id });
     }
 }
 
@@ -748,18 +766,19 @@ pub fn pull_wheels(world: &mut World, sync: &mut PhysicsSync, poses: &[WheelPose
         let Some(chassis) = sync.links.get(&pose.id).map(|l| l.entity) else {
             continue;
         };
-        let Some(link) = sync.vehicles.get_mut(&pose.id) else {
+        let Some(link) = sync.vehicles.get(&pose.id) else {
             continue;
         };
-        let i = pose.wheel as usize;
-        let Some(&entity) = link.wheels.get(i) else {
+        let Some(&entity) = link.wheels.get(pose.wheel as usize) else {
             continue;
         };
         let parent = world_affine(world, chassis);
         let local = parent.inverse() * Affine3A::from_rotation_translation(pose.rot, pose.pos);
         let (_, rot, t) = local.to_scale_rotation_translation();
         let rot = rot.normalize();
-        link.written[i] = (t, rot);
+        if let Some(m) = sync.mounts.get_mut(&entity_id(entity)) {
+            m.written = (t, rot);
+        }
         if let Some(mut tr) = world.ecs.get_mut::<Transform>(entity) {
             if tr.translation != t || tr.rotation != rot {
                 tr.translation = t;
