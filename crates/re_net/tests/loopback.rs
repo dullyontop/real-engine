@@ -5,7 +5,9 @@
 //! order, at 60 Hz in real time.
 
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use re_core::time::Instant;
 
 use re_net::{Channel, Config, Endpoint, Event, UdpTransport};
 

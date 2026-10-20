@@ -381,16 +381,22 @@ fn a_send_past_the_backlog_limit_is_refused_and_the_connection_stays() {
     let mut sim = Sim::new(s, c, LinkConditions::default());
     sim.run(5);
     let mut refused = None;
+    let mut accepted = 0;
     for _ in 0..250 {
-        if let Err(e) = sim.server().send(PeerId(0), Channel::Reliable, &[2; 1000]) {
-            refused = Some(e);
-            break;
+        match sim.server().send(PeerId(0), Channel::Reliable, &[2; 1000]) {
+            Ok(()) => accepted += 1,
+            Err(e) => {
+                refused = Some(e);
+                break;
+            }
         }
     }
     assert_eq!(refused.unwrap().code, codes::SEND);
+    // Each message counts its bytes plus a fixed cost.
+    assert!((150..200).contains(&accepted), "{accepted}");
     sim.run(120);
     assert!(sim.disconnects(0).is_empty());
-    assert_eq!(sim.messages(1, Channel::Reliable).len(), 200);
+    assert_eq!(sim.messages(1, Channel::Reliable).len(), accepted);
 }
 
 #[test]
