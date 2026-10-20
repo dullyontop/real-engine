@@ -453,6 +453,35 @@ fn state_hash_treats_every_nan_as_one() {
 }
 
 #[test]
+fn a_new_defaulted_field_leaves_state_hash_unchanged() {
+    // The same world, with Health declared as today and with one more field.
+    let with = |extra: Option<FieldSchema>, armor: Option<Value>| {
+        let mut w = grid_world(2, 2);
+        let mut schema = health_schema();
+        schema.fields.extend(extra);
+        let key = w.registry.register_script(&mut w.ecs, schema).unwrap();
+        let e = w.entity("crate").unwrap();
+        let mut values = w.registry.schema(key).defaults();
+        values[0] = Value::Float(42.0);
+        if let Some(armor) = armor {
+            values[2] = armor;
+        }
+        w.registry.insert(&mut w.ecs, e, key, values).unwrap();
+        w.update();
+        w.state_hash()
+    };
+    let armor = || FieldSchema {
+        name: "armor".into(),
+        ty: FieldType::F32,
+        doc: String::new(),
+        default: Value::Float(0.0),
+    };
+    let today = with(None, None);
+    assert_eq!(with(Some(armor()), None), today);
+    assert_ne!(with(Some(armor()), Some(Value::Float(5.0))), today);
+}
+
+#[test]
 fn fork_copies_everything_and_is_independent() {
     let mut original = built();
     assert!(original.ids().get("grid/pillar_0_0").is_some());
