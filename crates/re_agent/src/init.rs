@@ -382,13 +382,12 @@ pub fn init(
             "start the server, then connect clients".to_string(),
             format!(
                 "export {HTTP_TOKEN_ENV}=<a random value of 32 or more characters>\n\
-                 {program} mcp --http {addr} --project {project}\n\
+                 # (PowerShell: $env:{HTTP_TOKEN_ENV} = \"...\")\n\
+                 {program} mcp --http {addr} --project \"{project}\"\n\
                  # Claude Code reads .mcp.json; another client needs the URL {url}\n\
                  # and the header `Authorization: Bearer ${HTTP_TOKEN_ENV}`, in its own config format.\n",
                 program = options.program,
-                addr = url
-                    .trim_start_matches("http://")
-                    .trim_end_matches("/mcp"),
+                addr = url.trim_start_matches("http://").trim_end_matches("/mcp"),
                 project = project.display(),
             ),
         ));

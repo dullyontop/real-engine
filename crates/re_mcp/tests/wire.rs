@@ -780,3 +780,54 @@ fn http_stops_when_asked_and_releases_the_engine() {
     engine.join().unwrap();
     assert!(client.post(&initialize(), &[]).is_err(), "nothing listens");
 }
+
+#[test]
+fn http_stop_releases_the_engine_while_the_runtime_lives() {
+    // A caller on a long-lived runtime (the eval harness) must get the
+    // engine back as soon as the server stops, not after rmcp's idle
+    // timeout: every open session is closed on stop.
+    let token = re_mcp::http::generate_token();
+    let listener = re_mcp::HttpListener::bind("127.0.0.1:0".parse().unwrap(), &token).unwrap();
+    let url = listener.url();
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, receiver) = channel();
+    let reg = registry(dir.path());
+    let (engine_done, engine_exited) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut state = EditState::new();
+        receiver.serve(&mut state, &reg, &Policy::read_only());
+        let _ = engine_done.send(());
+    });
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let options = re_mcp::McpOptions::new(dir.path());
+    let server = rt.spawn(async move {
+        let stopped = async move {
+            let _ = stopped.await;
+        };
+        re_mcp::serve_http_async(handle, options, listener, stopped).await
+    });
+    // Two sessions with a call each, so both hold engine handles.
+    for id in 0..2 {
+        let mut client = re_mcp::client::HttpClient::new(&url, Some(&token)).unwrap();
+        client
+            .request(id, "initialize", initialize()["params"].clone())
+            .unwrap();
+        client
+            .notify("notifications/initialized", json!({}))
+            .unwrap();
+        let listed = client.request(10 + id, "tools/list", json!({})).unwrap();
+        assert!(listed["result"]["tools"].is_array());
+    }
+
+    stop.send(()).unwrap();
+    rt.block_on(server).unwrap().unwrap();
+    engine_exited
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the engine stops once the server has stopped, with the runtime still running");
+    drop(rt);
+}

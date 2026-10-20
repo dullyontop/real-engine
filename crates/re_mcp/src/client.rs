@@ -6,7 +6,9 @@
 //! `data:` lines.
 //!
 //! It speaks plain HTTP/1.1 over `std::net`, so it reaches only `http://`
-//! URLs; that is all `real mcp --http` serves.
+//! URLs; that is all `real mcp --http` serves. It never answers requests the
+//! server sends inside a response stream (sampling, roots, elicitation);
+//! `RealEngineServer` sends none.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;

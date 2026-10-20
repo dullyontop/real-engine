@@ -2,7 +2,9 @@
 //! (ADR-0025, ADR-0026; WP7), or with `--http` over streamable HTTP on a
 //! loopback address with a bearer token (ADR-0046). The HTTP server writes
 //! its URL and token to `.real/mcp-http.json` (readable by the user only)
-//! and stops when its stdin closes, or when it is interrupted.
+//! and stops when its stdin closes (when stdin is a pipe: a parent process
+//! such as a test or the eval harness) or when it is interrupted. A killed
+//! server leaves the file behind; the next server replaces it.
 //!
 //! When the editor holds the project, `real mcp` connects to its socket and
 //! serves MCP over that handle, with the agent policy checked here before a
@@ -81,8 +83,13 @@ impl Transport {
         };
         let listener = re_mcp::HttpListener::bind(addr, &token)?;
         write_http_state(project, &listener)?;
+        let stops = if re_mcp::http::stdin_is_a_pipe() {
+            "stops when stdin closes"
+        } else {
+            "Ctrl-C stops it"
+        };
         eprintln!(
-            "real mcp: serving MCP at {} (the token is in {HTTP_STATE}); stops when stdin closes",
+            "real mcp: serving MCP at {} (the token is in {HTTP_STATE}); {stops}",
             listener.url()
         );
         Ok(Transport::Http(listener))
@@ -97,10 +104,23 @@ impl Transport {
                 let project = options.project.clone();
                 let result =
                     re_mcp::serve_http(handle, options, listener, re_mcp::http::stdin_closed());
-                let _ = std::fs::remove_file(project.join(HTTP_STATE));
+                remove_http_state(&project);
                 result
             }
         }
+    }
+}
+
+/// Removes [`HTTP_STATE`] if this process wrote it (another `real mcp
+/// --http` serving through the editor may have replaced it since).
+fn remove_http_state(project: &Path) {
+    let path = project.join(HTTP_STATE);
+    let ours = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Json>(&t).ok())
+        .is_some_and(|v| v["pid"] == std::process::id());
+    if ours {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -402,10 +422,6 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Ok(x) => x,
         Err(d) => return Ok(fail(&d)),
     };
-    let transport = match Transport::open(project, http) {
-        Ok(t) => t,
-        Err(d) => return Ok(fail(&d)),
-    };
     let options = McpOptions::new(project).with_resources(resources);
     match agent.start_session(app.world()) {
         Ok(id) => eprintln!(
@@ -413,6 +429,11 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
         ),
         Err(d) => return Ok(fail(&d)),
     }
+    // Last, so no error after it leaves the state file (and its token) behind.
+    let transport = match Transport::open(project, http) {
+        Ok(t) => t,
+        Err(d) => return Ok(fail(&d)),
+    };
     let (unnamed, receiver) = channel();
     let handle = unnamed.with_origin(origin);
     // `serve` returns when every handle is gone, so keep only the one the

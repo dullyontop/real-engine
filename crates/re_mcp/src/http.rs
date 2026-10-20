@@ -78,7 +78,14 @@ pub fn parse_addr(text: &str) -> Result<SocketAddr, Diagnostic> {
 pub fn token_from_env() -> Result<String, Diagnostic> {
     match std::env::var(TOKEN_ENV) {
         Ok(token) => check_token(&token).map(|()| token),
-        Err(_) => Ok(generate_token()),
+        Err(std::env::VarError::NotPresent) => Ok(generate_token()),
+        Err(std::env::VarError::NotUnicode(_)) => Err(Diagnostic::error(
+            codes::WEAK_TOKEN,
+            format!("{TOKEN_ENV} is set but is not valid text"),
+        )
+        .with_hint(format!(
+            "unset {TOKEN_ENV} to have real mcp generate a token, or set it to printable ASCII"
+        ))),
     }
 }
 
@@ -113,12 +120,21 @@ pub fn generate_token() -> String {
 }
 
 /// A bound, not yet serving, HTTP listener: the port is known before the
-/// server starts, so callers can write it where clients find it.
-#[derive(Debug)]
+/// server starts, so callers can write it where clients find it. Its
+/// `Debug` leaves the token out.
 pub struct HttpListener {
     listener: std::net::TcpListener,
     addr: SocketAddr,
     token: Arc<str>,
+}
+
+impl std::fmt::Debug for HttpListener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpListener")
+            .field("addr", &self.addr)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 impl HttpListener {
@@ -182,11 +198,14 @@ fn allowed_hosts(addr: SocketAddr) -> Vec<String> {
     hosts
 }
 
-/// True when `header` is `Bearer <token>`, compared in constant time.
+/// True when `header` is `Bearer <token>` (the scheme in any case, RFC
+/// 7235), the token compared in constant time.
 fn authorized(header: Option<&hyper::header::HeaderValue>, token: &str) -> bool {
     let Some(given) = header
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
+        .and_then(|v| v.split_once(' '))
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+        .map(|(_, given)| given.trim())
     else {
         return false;
     };
@@ -231,11 +250,8 @@ pub async fn serve_http_async(
         .with_allowed_hosts(allowed_hosts(addr))
         .enforce_origin_validation();
     let cancel = config.cancellation_token.clone();
-    let mcp = StreamableHttpService::new(
-        move || Ok(server.clone()),
-        Arc::new(LocalSessionManager::default()),
-        config,
-    );
+    let sessions = Arc::new(LocalSessionManager::default());
+    let mcp = StreamableHttpService::new(move || Ok(server.clone()), Arc::clone(&sessions), config);
     let mut connections = tokio::task::JoinSet::new();
     let mut stop = std::pin::pin!(stop);
     loop {
@@ -244,9 +260,11 @@ pub async fn serve_http_async(
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => stream,
                 // A connection that failed before it was accepted (reset by the
-                // peer, out of file descriptors) ends only itself.
+                // peer, out of file descriptors) ends only itself; pause so a
+                // persistent error does not spin.
                 Err(e) => {
                     eprintln!("real mcp: accept failed: {e}");
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     continue;
                 }
             },
@@ -275,23 +293,54 @@ pub async fn serve_http_async(
         // Forget finished connections as we go.
         while connections.try_join_next().is_some() {}
     }
-    // Ends every session's streams, then every connection (each holds a clone
-    // of the engine handle, which must go for the engine to stop).
+    // Every session's server holds a clone of the engine handle, which must
+    // go for the engine to stop. The token ends the SSE streams; closing each
+    // session ends its worker and its server (a session left alone would
+    // live until rmcp's idle timeout); then the connections go.
     cancel.cancel();
+    let open = std::mem::take(&mut *sessions.sessions.write().await);
+    for (_, session) in open {
+        let _ = session.close().await;
+    }
     connections.abort_all();
     while connections.join_next().await.is_some() {}
     Ok(())
 }
 
-/// Completes when this process's stdin reaches its end (the terminal's
-/// Ctrl-D, or a parent process closing the pipe): `real mcp --http` stops
-/// then, as `real mcp` over stdio does. The read runs on its own thread.
+/// True when stdin is a pipe or socket a parent process holds, so its end
+/// means "stop". A terminal is not watched (reading it from a background
+/// job would stop the process), nor is a file such as `/dev/null` (it ends
+/// at once); those servers run until they are interrupted.
+pub fn stdin_is_a_pipe() -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        std::fs::metadata("/dev/stdin")
+            .map(|m| m.file_type().is_fifo() || m.file_type().is_socket())
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        use std::io::IsTerminal;
+        !std::io::stdin().is_terminal()
+    }
+}
+
+/// Completes when this process's stdin reaches its end, if stdin is a pipe
+/// ([`stdin_is_a_pipe`]); otherwise never. `real mcp --http` stops then, as
+/// `real mcp` over stdio does when its client closes the pipe. The read runs
+/// on its own thread.
 pub fn stdin_closed() -> impl Future<Output = ()> + Send {
     let (closed, wait) = tokio::sync::oneshot::channel::<()>();
-    std::thread::spawn(move || {
-        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
-        let _ = closed.send(());
-    });
+    if stdin_is_a_pipe() {
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+            let _ = closed.send(());
+        });
+    } else {
+        // Never sent: the server runs until the process is interrupted.
+        std::mem::forget(closed);
+    }
     async move {
         let _ = wait.await;
     }
@@ -369,8 +418,12 @@ mod tests {
             Some(&header(&format!("Bearer {token}x"))),
             &token
         ));
-        assert!(!authorized(
+        assert!(authorized(
             Some(&header(&format!("bearer {token}"))),
+            &token
+        ));
+        assert!(!authorized(
+            Some(&header(&format!("Basic {token}"))),
             &token
         ));
         assert!(!authorized(Some(&header(&token)), &token));
