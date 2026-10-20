@@ -9,7 +9,7 @@ use re_scene::{GenContext, GeneratorInfo, Generators, SceneFragment};
 use re_types::graph::GraphDoc;
 use serde_json::{Map, Value as Json};
 
-use crate::canon::{canonical_json, doc_hash, sorted};
+use crate::canon::{canonical_json, doc_hash, sorted, version_stamp};
 use crate::codes;
 use crate::eval::{EvalOptions, fragment_hash_hex};
 use crate::graph::ProcGraph;
@@ -18,6 +18,12 @@ use crate::store::GraphStore;
 
 /// The generator's name (`Procedural.generator`).
 pub const GENERATOR: &str = "graph";
+
+/// The `graph` generator's version (ADR-0043). It covers how the output
+/// fragment is assembled from the nodes' outputs: keys `<node id>/<local
+/// key>`, sink order, and `<node>/mesh` entities for mesh sinks. It is part
+/// of every graph's [version stamp](crate::version_stamp).
+pub const GENERATOR_VERSION: u32 = 1;
 
 /// Per-node parameter overrides, as stored in `GraphSource.params`:
 /// `{"<node id>": {"<param>": <value>}}`.
@@ -53,33 +59,60 @@ pub fn overrides_text(overrides: &ParamOverrides) -> String {
     }
 }
 
-/// Why one override cannot apply to a document.
-fn check_override(
+/// Why one override cannot apply to a document: `RE4011` (unknown node or
+/// parameter, or an override with no effect) or `RE4005` (a refused value).
+pub(crate) fn check_override(
     doc: &GraphDoc,
     registry: &NodeRegistry,
     node: &str,
     param: &str,
     value: &Json,
-) -> Result<(), String> {
+) -> Result<(), (re_core::Code, String)> {
+    check_override_inner(doc, registry, node, param, value)
+}
+
+fn unknown(message: String) -> (re_core::Code, String) {
+    (codes::UNKNOWN_OVERRIDE, message)
+}
+
+fn refused(message: String) -> (re_core::Code, String) {
+    (codes::INVALID_PARAMS, message)
+}
+
+fn check_override_inner(
+    doc: &GraphDoc,
+    registry: &NodeRegistry,
+    node: &str,
+    param: &str,
+    value: &Json,
+) -> Result<(), (re_core::Code, String)> {
     let Some(n) = doc.node(node) else {
         let ids = doc.nodes.iter().map(|n| n.id.as_str());
         let hint = re_reflect::suggest(node, ids)
             .map(|s| format!(" (did you mean `{s}`?)"))
             .unwrap_or_default();
-        return Err(format!("the graph has no node `{node}`{hint}"));
+        return Err(unknown(format!("the graph has no node `{node}`{hint}")));
     };
     let Some(def) = registry.get(&n.kind) else {
-        return Err(format!("node `{node}` has unknown kind `{}`", n.kind));
+        return Err(unknown(format!(
+            "node `{node}` has unknown kind `{}`",
+            n.kind
+        )));
     };
+    // A node written for an older version takes overrides in that
+    // version's shape: they are checked after its migrations run, so an old
+    // name that a migration renames is accepted, and one the migrations
+    // overwrite or drop (a newer name) is refused as having no effect.
+    let old = n.version >= 1 && n.version < def.version;
     let names = def.param_names();
-    if !names.iter().any(|p| p == param) {
+    if !old && !names.iter().any(|p| p == param) {
         let hint = re_reflect::suggest(param, names.iter().map(String::as_str))
             .map(|s| format!(" (did you mean `{s}`?)"))
             .unwrap_or_default();
-        return Err(format!(
+        return Err(unknown(format!(
             "node `{node}` ({}) has no parameter `{param}`{hint}",
             n.kind
-        ));
+        )));
     }
     let mut params = n.params.clone();
     if value.is_null() {
@@ -87,8 +120,41 @@ fn check_override(
     } else {
         params.insert(param.to_string(), value.clone());
     }
-    def.check(&Json::Object(params))
-        .map_err(|e| format!("node `{node}` ({}): {e}", n.kind))
+    let params = Json::Object(params);
+    let params = if old {
+        let migrate = |p: &Json| {
+            def.migrate(n.version, p)
+                .map(std::borrow::Cow::into_owned)
+                .map_err(|(from, e)| {
+                    refused(format!(
+                        "node `{node}` ({}): the migration from version {from} failed: {e}",
+                        n.kind
+                    ))
+                })
+        };
+        let migrated = migrate(&params)?;
+        if !names.iter().any(|p| p == param) && migrated.get(param).is_some() {
+            let hint = re_reflect::suggest(param, names.iter().map(String::as_str))
+                .map(|s| format!(" (did you mean `{s}`?)"))
+                .unwrap_or_default();
+            return Err(unknown(format!(
+                "node `{node}` ({}) has no parameter `{param}`{hint}",
+                n.kind
+            )));
+        }
+        let changes_doc = n.params.get(param) != Some(value) && !value.is_null();
+        if changes_doc && migrate(&Json::Object(n.params.clone())).ok() == Some(migrated.clone()) {
+            return Err(unknown(format!(
+                "node `{node}` ({}) is written for version {}, where `{param}` has no effect",
+                n.kind, n.version
+            )));
+        }
+        migrated
+    } else {
+        params
+    };
+    def.check(&params)
+        .map_err(|e| refused(format!("node `{node}` ({}): {e}", n.kind)))
 }
 
 /// `doc` with `overrides` applied on top of its node parameters. An override
@@ -122,7 +188,7 @@ pub fn apply_overrides(
                         }
                     }
                 }
-                Err(e) => warnings.push(
+                Err((_, e)) => warnings.push(
                     Diagnostic::warning(
                         codes::UNKNOWN_OVERRIDE,
                         format!("{source_id}: override of `{node}.{param}` ignored: {e}"),
@@ -147,18 +213,8 @@ pub(crate) fn validate_override(
     param: &str,
     value: &Json,
 ) -> Result<(), Diagnostic> {
-    check_override(doc, registry, node, param, value).map_err(|e| {
-        let known = doc
-            .node(node)
-            .and_then(|n| registry.get(&n.kind))
-            .is_some_and(|d| d.param_names().iter().any(|p| p == param));
-        let code = if known {
-            codes::INVALID_PARAMS
-        } else {
-            codes::UNKNOWN_OVERRIDE
-        };
-        Diagnostic::error(code, e)
-    })
+    check_override(doc, registry, node, param, value)
+        .map_err(|(code, e)| Diagnostic::error(code, e))
 }
 
 fn no_graph(source_id: &str, why: &str) -> Diagnostic {
@@ -218,10 +274,19 @@ fn run(ctx: &GenContext) -> Result<SceneFragment, Diagnostic> {
         deadline: budget
             .max_ms
             .map(|ms| Instant::now() + Duration::from_millis(ms)),
+        domain: None,
     };
     let evaluation = store.evaluator().evaluate(&graph, &opts);
     let mut report = evaluation.report.clone();
     report.diagnostics.append(&mut warnings);
+    // Nodes written for an older version still evaluate as that version;
+    // the report says so (RE4019) so `graph.report` and the editor show it.
+    report.diagnostics.extend(
+        graph
+            .outdated(registry)
+            .into_iter()
+            .map(|d| d.at(Location::entity(source.to_string()))),
+    );
     let result = evaluation
         .scene_fragment(&ctx.world().registry)
         .and_then(|(fragment, assets)| {
@@ -262,13 +327,16 @@ fn run(ctx: &GenContext) -> Result<SceneFragment, Diagnostic> {
 }
 
 fn fingerprint(ctx: &GenContext) -> u64 {
-    let Some(doc) = ctx
-        .resource::<GraphStore>()
-        .and_then(|s| s.graph(ctx.source_id()))
-    else {
+    let Some(store) = ctx.resource::<GraphStore>() else {
         return 0;
     };
-    let h = doc_hash(doc);
+    let Some(doc) = store.graph(ctx.source_id()) else {
+        return 0;
+    };
+    let mut h = blake3::Hasher::new();
+    h.update(doc_hash(doc).as_bytes());
+    h.update(version_stamp(doc, store.evaluator().registry()).as_bytes());
+    let h = h.finalize();
     let mut b = [0u8; 8];
     b.copy_from_slice(&h.as_bytes()[..8]);
     u64::from_le_bytes(b)
@@ -278,8 +346,10 @@ fn fingerprint(ctx: &GenContext) -> u64 {
 /// `GraphSource`; it evaluates the source's graph from the world's
 /// [`GraphStore`] with the source's `Procedural.seed` and its
 /// `GraphSource.params` overrides, and returns the graph's output fragment
-/// (StableKeys `<node id>/<local key>`). The graph document's hash is part of
-/// the source's fingerprint, so storing a changed document regenerates it.
+/// (StableKeys `<node id>/<local key>`). The graph document's hash and its
+/// [version stamp](crate::version_stamp) are part of the source's
+/// fingerprint, so storing a changed document, or changing the implementation
+/// of a kind it uses, regenerates it.
 pub fn register_generator(generators: &mut Generators) {
     generators.register(GeneratorInfo {
         name: GENERATOR.to_string(),
@@ -287,5 +357,7 @@ pub fn register_generator(generators: &mut Generators) {
         params_component: "GraphSource".to_string(),
         run: Arc::new(run),
         fingerprint_extra: Some(fingerprint),
+        version: GENERATOR_VERSION,
+        oldest: 1,
     });
 }

@@ -61,3 +61,16 @@ pub const BUDGET_EXCEEDED: Code = Code::new("RE4016");
 
 /// A command's `source` is not a procedural source of the `graph` generator.
 pub const NOT_A_GRAPH_SOURCE: Code = Code::new("RE4017");
+
+/// A node's version is older than the oldest version its kind still evaluates.
+pub const RETIRED_NODE_VERSION: Code = Code::new("RE4018");
+
+/// A node is written for an older version of its kind than the current one
+/// (warning; it still evaluates at its own version).
+pub const OUTDATED_NODE_VERSION: Code = Code::new("RE4019");
+
+/// A node's parameters could not be migrated to its kind's current version.
+pub const MIGRATION_FAILED: Code = Code::new("RE4020");
+/// A source's open graph differs from its graph file, which a migration
+/// reads and rewrites.
+pub const OPEN_GRAPH_DIFFERS: Code = Code::new("RE4022");
