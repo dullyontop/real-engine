@@ -3,7 +3,8 @@
 //! * [`AssetId`]: stable ids. Source files get a UUID in a `.meta.json` sidecar
 //!   ([`AssetMeta`]); parts of files (the images in a glTF) get derived ids.
 //! * [`import_gltf`]: glTF 2.0 meshes ([`MeshData`]), materials
-//!   ([`MaterialDesc`]), images, the node tree and node animations ([`ClipData`]).
+//!   ([`MaterialDesc`]), images, the node tree, node animations ([`ClipData`])
+//!   and skins ([`SkinData`]).
 //! * [`load_material`]: `materials/*.material.json` files, with textures as
 //!   [`TextureRef::Asset`] ids that `re_app` uploads and swaps for handles.
 //! * [`ProcessedCache`]: engine-ready imports keyed by a hash of the importer
@@ -30,6 +31,7 @@
 //! [`MeshData`]: re_types::MeshData
 //! [`MaterialDesc`]: re_types::MaterialDesc
 //! [`ClipData`]: re_types::ClipData
+//! [`SkinData`]: re_types::SkinData
 //! [`TextureRef::Asset`]: re_types::TextureRef::Asset
 
 #![forbid(unsafe_code)]
@@ -87,6 +89,10 @@ catalogue! {
     UNKNOWN_ASSET, "Unknown asset", "../explain/RE7041.md";
     UNSUPPORTED_ASSET, "Unsupported asset type", "../explain/RE7042.md";
     RELOAD_FAILED, "Hot reload failed", "../explain/RE7050.md";
+    SKIN_INVALID, "Malformed glTF skin", "../explain/RE7060.md";
+    SKIN_TOO_MANY_INFLUENCES, "More than four joint influences", "../explain/RE7061.md";
+    SKIN_DUPLICATE_JOINT_NAME, "Joint names are not unique", "../explain/RE7062.md";
+    SKIN_UNWEIGHTED_MESH, "Skinned mesh without weights", "../explain/RE7063.md";
 }
 
 #[cfg(test)]
