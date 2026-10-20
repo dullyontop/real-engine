@@ -3,13 +3,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use re_command::{
     CommandOutcome, CommandRegistry, EditTarget, EngineReceiver, EngineRequest, History, Origin,
     PolicyCheck,
 };
 use re_core::files::{ProjectFiles, Writable};
+use re_core::time::Instant;
 use re_core::{Diagnostic, FixedClock, Location, Phase, TaskPool};
 use re_input::{ActionMap, RawInput, Replay};
 use re_physics::{Physics, PhysicsConfig};

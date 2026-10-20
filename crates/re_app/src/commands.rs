@@ -3,9 +3,9 @@
 //! procedural node kinds and the project's scripts to the built-in one.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use re_command::{CommandRegistry, NoArgs, Tier};
+use re_core::time::Instant;
 use re_core::{Diagnostic, Location};
 use schemars::JsonSchema;
 use serde::Deserialize;

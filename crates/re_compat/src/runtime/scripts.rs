@@ -483,7 +483,7 @@ fn finish(lua: &Lua, args: MultiValue) -> Result<(bool, LuaValue)> {
     };
     let ok = matches!(it.next(), Some(LuaValue::Boolean(true)));
     let n = match it.next() {
-        Some(LuaValue::Integer(n)) => n,
+        Some(LuaValue::Integer(n)) => re_script::lua_int(n),
         Some(LuaValue::Number(n)) => n as i64,
         _ => 0,
     };

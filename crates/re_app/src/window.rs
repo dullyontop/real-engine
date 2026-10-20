@@ -2,9 +2,10 @@
 //! gamepad input, the audio device and the HUD.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use re_core::Diagnostic;
+use re_core::time::Instant;
 use re_input::Gamepads;
 use re_render::{Gpu, wgpu};
 use winit::application::ApplicationHandler;

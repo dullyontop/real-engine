@@ -431,8 +431,8 @@ fn install_crash_hook(crash: re_core::files::WritableDir) {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default(info);
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let stamp = re_core::time::SystemTime::now()
+            .duration_since(re_core::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or_default();
         let report = format!(
