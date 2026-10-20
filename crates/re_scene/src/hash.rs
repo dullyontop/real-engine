@@ -25,8 +25,28 @@ impl Writer {
     }
     fn f32s(&mut self, v: &[f32]) {
         for x in v {
-            self.0.update(&x.to_bits().to_le_bytes());
+            self.0.update(&f32_bits(*x).to_le_bytes());
         }
+    }
+}
+
+/// A float's bits, with every NaN as the one canonical quiet NaN: which NaN an
+/// operation returns differs between x86, arm64 and wasm (ADR-0036), and no
+/// script or system can tell NaNs apart by their payload.
+fn f32_bits(x: f32) -> u32 {
+    if x.is_nan() {
+        f32::NAN.to_bits()
+    } else {
+        x.to_bits()
+    }
+}
+
+/// [`f32_bits`] for `f64`.
+fn f64_bits(x: f64) -> u64 {
+    if x.is_nan() {
+        f64::NAN.to_bits()
+    } else {
+        x.to_bits()
     }
 }
 
@@ -34,8 +54,8 @@ impl World {
     /// A hash of the scene state: every entity with a stable id (generated
     /// ones included), in id order, with its name, parent, position among its
     /// siblings, generated key, registered components and field values (floats
-    /// by their exact bits, entity references by id) and overrides, followed
-    /// by the session's suppressions. Runtime handles (`Entity` bits), derived
+    /// by their exact bits with every NaN as one, entity references by id) and
+    /// overrides, followed by the session's suppressions. Runtime handles (`Entity` bits), derived
     /// data (`GlobalTransform`) and resources are not included, so two worlds
     /// built the same way, or a world and its [`fork`](World::fork), hash the same.
     pub fn state_hash(&self) -> blake3::Hash {
@@ -98,7 +118,7 @@ impl World {
             }
             Value::Float(f) => {
                 w.tag(3);
-                w.u64(f.to_bits());
+                w.u64(f64_bits(*f));
             }
             Value::Vec3(v) => {
                 w.tag(4);

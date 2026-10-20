@@ -430,6 +430,28 @@ fn state_hash_is_deterministic_and_bit_sensitive() {
     assert_eq!(a.state_hash(), c.state_hash());
 }
 
+/// Every NaN hashes as one: which NaN an operation returns differs between
+/// x86, arm64 and wasm (ADR-0036). Reflected writes refuse NaN, so this goes
+/// through the component, as a physics write-back could.
+#[test]
+fn state_hash_treats_every_nan_as_one() {
+    let quiet = f32::NAN;
+    let other = f32::from_bits(quiet.to_bits() | 1 | (1 << 31));
+    assert!(other.is_nan() && other.to_bits() != quiet.to_bits());
+    let with_x = |x: f32| {
+        let mut w = built();
+        let e = w.entity("crate").unwrap();
+        w.ecs
+            .get_mut::<re_scene::Transform>(e)
+            .unwrap()
+            .translation
+            .x = x;
+        w.state_hash()
+    };
+    assert_eq!(with_x(quiet), with_x(other));
+    assert_ne!(with_x(quiet), with_x(0.0));
+}
+
 #[test]
 fn fork_copies_everything_and_is_independent() {
     let mut original = built();
