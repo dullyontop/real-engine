@@ -618,7 +618,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0023: CI: Linux with lavapipe blocks merges; Windows and macOS are reported only
 
-**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16).
+**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16). Amended in M3: `build-web` is required (WP29 PR "portable", #89), and `build-windows` and `build-macos` are required (WP18 PR "blocking").
 
 **Context.** Development containers are Linux with lavapipe, llvmpipe and Xvfb, and no audio device. Nothing has been verified on Windows or macOS.
 
@@ -639,6 +639,12 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Alternatives.** All three operating systems blocking merges from day one. That is unverified, and it would stop every PR on platform issues we cannot reproduce.
 
 **Consequences.** Making Windows and macOS block merges is an M3 exit item.
+
+**Amendment (M3, WP18 PR "blocking"; accepted by the maintainer, 2026-10-20).** `build-windows` and `build-macos` are required, with no `continue-on-error`. Each runs the whole test suite: the non-GPU crates, then the GPU crates on DX12 (WARP) or Metal with `--test-threads=1`. Each then runs `real verify` on the island and the plaza.
+- Golden images are blessed on Linux only until WP18 PR "d2" adds the dx12 and metal sets. Until then, a platform verify passes when every stage but goldens is ok and the goldens stage's only problems are missing images for that backend (`RE0510`), reported as a warning. A golden that exists and differs still fails, and so does a run with no adapter.
+- A text file with CRLF line endings fails `fmt` (`.gitattributes` checks text out with LF everywhere, ADR-0036).
+- `build-web` (WP29 PR "portable"): `cargo check --target wasm32-unknown-unknown` of the runtime crates that need no C++; WP29 PR "toolchain" extends it to a full link with Luau and Jolt.
+- `main` has no branch protection, so "required" means the merge rule: a PR is squash-merged only when every required job is green.
 
 ## ADR-0024: Validation suite contract for external script corpora
 
@@ -2320,7 +2326,7 @@ The engine already has what these need underneath: the scheduler's `park`/`wake`
 
 ## ADR-0049: Browser builds: `wasm32-unknown-unknown` with wasi-sdk for Luau and Jolt, WebGPU first, the archive in memory, one thread
 
-**Status:** Accepted (maintainer, 2026-10-20), except §2's in-workspace copies and upstream submissions, which wait for the owner's decision; until then PR "toolchain" cannot merge. §11 is a recommendation to ADR-0036, which WP18 decides in PR "d2". Evidence: a spike on 2026-10-15 in the reference container that ran Luau, Jolt, `re_render`, egui and `re_audio` in one wasm module in headless Chromium 141, plus type-checking all of `re_app` for wasm. Numbers are in `research/m3/wp29/measurements.md`; sources, the build environment and every patch are in `research/m3/wp29/spike/`. crates.io was checked the same day: mlua 0.12.2 and oxijolt 1.1.0 are the newest releases.
+**Status:** Accepted (maintainer, 2026-10-20). §2 approved by the owner on 2026-10-20 ("Copies plus upstream"): the patched copies go in `third_party/` until releases carry the changes, and the owner submits the patches upstream. §11 is a recommendation to ADR-0036, which WP18 decides in PR "d2". Evidence: a spike on 2026-10-15 in the reference container that ran Luau, Jolt, `re_render`, egui and `re_audio` in one wasm module in headless Chromium 141, plus type-checking all of `re_app` for wasm. Numbers are in `research/m3/wp29/measurements.md`; sources, the build environment and every patch are in `research/m3/wp29/spike/`. crates.io was checked the same day: mlua 0.12.2 and oxijolt 1.1.0 are the newest releases.
 
 **Context.** The owner chose to add browser builds to M3 ("Both", 2026-10-15). This reverses the M3 plan's default "The web (wasm with WebGPU) and consoles are not in M3" and WP19's non-goal "the web". A game made with Real Engine must also run in a browser, from a folder a static web server can host.
 
@@ -2363,7 +2369,7 @@ ADR-0010 (the frame loop is ours) and ADR-0036 (D2 determinism, which asked the 
 
 **5. Clocks and threads.**
 - **Clocks.** `std::time::Instant` panics on `wasm32-unknown-unknown`. `re_core::time` re-exports `web_time::{Instant, SystemTime}` (web-time 1.1.0, already in the lockfile through winit and egui; on desktop it re-exports `std::time`). The root `clippy.toml` bans `std::time::Instant::now` and `SystemTime::now` with `disallowed-methods` and the reason "panics on the web; use re_core::time (ADR-0049)". Today's users: `re_script` (budget, scheduler), `re_proc` (evaluation timing), `re_app` (5 files), `re_scene` (`ids.rs`).
-- **One thread.** Wasm threads need nightly `build-std` with atomics and a cross-origin-isolated page (COOP and COEP headers), which many static hosts cannot send. The web build is single-threaded in M3. `TaskPool::new` on wasm creates a pool that runs every task on the calling thread at the next join or scope. The spike checked rayon with `use_current_thread()` and one thread: `scope` and `par_iter` work, a detached `spawn` never runs, so `TaskPool::spawn` on wasm queues the task and the frame's task barrier runs it. Jolt's job system already runs its jobs at its barrier (measured).
+- **One thread.** Wasm threads need nightly `build-std` with atomics and a cross-origin-isolated page (COOP and COEP headers), which many static hosts cannot send. The web build is single-threaded in M3. `TaskPool::new` on wasm creates a pool that runs every task on the calling thread at the next join or scope. The spike checked rayon with `use_current_thread()` and one thread: `scope` and `par_iter` work, a detached `spawn` never runs, so `TaskPool::spawn` on wasm runs the task before it returns (as built in PR "portable", #89; the draft said the frame's task barrier would run it, and running it at once is simpler with the same result for the frame). Jolt's job system already runs its jobs at its barrier (measured).
 - **Cost.** One thread is what a phone-class web game gets anyway. Jolt runs about 1.6 times slower in wasm than natively (329–371 ms against 217 ms for 300 steps of a 1,000-box pile, deterministic build), and Luau about 1.3 to 1.8 times (`measurements.md` §5). The spike's 64-body scene ran at 0.2–0.3 ms of physics per frame.
 
 **6. Files: the archive in memory, behind ADR-0037's layers.**
