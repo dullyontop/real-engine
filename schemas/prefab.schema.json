@@ -167,6 +167,12 @@
               "GraphSource": {
                 "$ref": "#/$defs/GraphSource"
               },
+              "Streamed": {
+                "$ref": "#/$defs/Streamed"
+              },
+              "StreamFocus": {
+                "$ref": "#/$defs/StreamFocus"
+              },
               "Attributes": {
                 "$ref": "#/$defs/Attributes"
               },
@@ -701,6 +707,18 @@
           "description": "Per-node parameter overrides as canonical JSON:\n`{\"<node id>\": {\"<param>\": <value>}}`."
         }
       },
+      "additionalProperties": false
+    },
+    "Streamed": {
+      "type": "object",
+      "description": "Streams this entity by cell (ADR-0042). On a procedural source (which\nmust have an identity transform), its generator's output is applied\nper cell; on an authored root entity, the entity and its subtree are\nunloaded with the cell holding its translation.",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "StreamFocus": {
+      "type": "object",
+      "description": "A point the streamed world loads around: the player, a vehicle, the\neditor camera. With none, the active camera is the focus.",
+      "properties": {},
       "additionalProperties": false
     },
     "Attributes": {
