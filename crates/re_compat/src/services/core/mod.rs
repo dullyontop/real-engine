@@ -1,5 +1,6 @@
 //! The core services: `game:GetService` and `FindService`, the `game` and
-//! `workspace` globals, `CollectionService` and `RunService`.
+//! `workspace` globals, `CollectionService` and `RunService`, and the
+//! `UserSettings()` global.
 //!
 //! A service is the one instance of a service class under `game`, with a
 //! `ServiceTag`, named and identified by its class name. `GetService` makes a
@@ -70,6 +71,12 @@ pub fn ensure_service(
     Ok(s)
 }
 
+/// Whether a provider of class `provider` has the service `service`:
+/// `UserSettings` has only `UserGameSettings`, which only it has.
+fn provides(provider: &str, service: &str) -> bool {
+    (provider == "UserSettings") == (service == "UserGameSettings")
+}
+
 /// `game.<Service>` for a service the place does not have yet: when `class`
 /// is a service provider and `key` names a declared service class, the
 /// service (made if missing); otherwise `None`.
@@ -81,7 +88,9 @@ pub(crate) fn service_by_index(
 ) -> Result<Option<LuaValue>> {
     let st = state(lua)?;
     let classes = &st.setup.classes;
-    if !classes.is_a(class, "ServiceProvider") || !classes.try_class(key).is_some_and(|c| c.service)
+    if !classes.is_a(class, "ServiceProvider")
+        || !classes.try_class(key).is_some_and(|c| c.service)
+        || !provides(class, key)
     {
         return Ok(None);
     }
@@ -94,7 +103,10 @@ fn get_service(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
     let name: String = args(lua, a, "GetService")?;
     let st = state(lua)?;
     let classes = &st.setup.classes;
-    if !classes.try_class(&name).is_some_and(|c| c.service) {
+    let provider = with_world(lua, |w| tree::class(w, e).map(str::to_string))?;
+    if !classes.try_class(&name).is_some_and(|c| c.service)
+        || !provides(provider.as_deref().unwrap_or_default(), &name)
+    {
         return Err(crate::runtime::unsupported(
             lua,
             format!("GetService({name})"),
@@ -202,10 +214,40 @@ fn cs_removed_signal(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> 
     )
 }
 
+/// The stable id of the `UserSettings` root.
+const USER_SETTINGS: &str = "UserSettings";
+
+/// `UserSettings()`: the user's settings, a root of its own outside `game`,
+/// made on first use. Its services (`UserGameSettings`) are its children.
+fn user_settings(lua: &Lua) -> Result<LuaValue> {
+    let st = state(lua)?;
+    let classes = &st.setup.classes;
+    let e = with_world(lua, |w| {
+        if let Ok(e) = w.entity(USER_SETTINGS)
+            && tree::alive(w, e)
+            && tree::class(w, e) == Some("UserSettings")
+        {
+            return Ok(e);
+        }
+        let id = w.entity(USER_SETTINGS).is_err().then_some(USER_SETTINGS);
+        spawn_instance(w, classes, "UserSettings", id, "UserSettings", None)
+    })?
+    .map_err(compat_error)?;
+    events::after_write(lua)?;
+    push(lua, e)
+}
+
+/// No user features exist offline.
+fn is_user_feature_enabled(lua: &Lua, _: Entity, a: MultiValue) -> Result<MultiValue> {
+    let _name: String = args(lua, a, "IsUserFeatureEnabled")?;
+    ret(lua, false)
+}
+
 type Imp = fn(&Lua, Entity, MultiValue) -> Result<MultiValue>;
 
 /// Registers `GetService`, `FindService`, the `CollectionService` methods and
-/// the `game` and `workspace` globals.
+/// the `game`, `workspace` and `UserSettings` globals, and `UserSettings`'s
+/// method.
 pub fn register(b: &mut Bindings) {
     b.method("ServiceProvider", "GetService", Arc::new(get_service));
     b.method(
@@ -226,7 +268,20 @@ pub fn register(b: &mut Bindings) {
     for (name, f) in cs {
         b.method("CollectionService", name, Arc::new(*f));
     }
+    b.method(
+        "UserSettings",
+        "IsUserFeatureEnabled",
+        Arc::new(is_user_feature_enabled),
+    );
     run_service::register(b);
+    b.global(
+        "UserSettings",
+        Arc::new(|lua, _| {
+            Ok(LuaValue::Function(
+                lua.create_function(|lua, ()| user_settings(lua))?,
+            ))
+        }),
+    );
     b.global("game", Arc::new(|lua, env| push(lua, env.game)));
     b.global("workspace", Arc::new(|lua, env| push(lua, env.workspace)));
     b.global("Game", Arc::new(|lua, env| push(lua, env.game)));

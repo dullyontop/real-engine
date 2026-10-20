@@ -183,6 +183,36 @@ mod model {
     }
 
     #[test]
+    fn user_settings_has_its_own_game_settings() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local us = UserSettings()
+            assert(us == UserSettings() and us.ClassName == "UserSettings" and us.Parent == nil)
+            print(us:IsUserFeatureEnabled("SomeFeature"))
+            local gs = us:GetService("UserGameSettings")
+            assert(gs == us:GetService("UserGameSettings") and gs.Parent == us)
+            print(gs.SavedQualityLevel == Enum.SavedQualitySetting.Automatic)
+            print(pcall(function() return game:GetService("UserGameSettings") end))
+            print(pcall(function() return us:GetService("Workspace") end))
+            print(pcall(function() us.Parent = workspace end))
+            print(pcall(function() us:Destroy() end))
+            assert(UserSettings() == us and us.Parent == nil)
+            "#,
+        );
+        let out = p.out();
+        assert_eq!(out[..2], ["false", "true"], "{out:?}");
+        assert!(
+            out[2].starts_with("false") && out[2].contains("[RE9001]"),
+            "{out:?}"
+        );
+        assert!(
+            out[3].starts_with("false") && out[3].contains("[RE9001]"),
+            "{out:?}"
+        );
+    }
+
+    #[test]
     fn deferred_signals_run_after_the_writing_code() {
         let mut p = place(SignalBehavior::Deferred);
         p.run(
