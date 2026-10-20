@@ -229,14 +229,19 @@ fn parent_affine(world: &World, entity: Entity) -> Affine3A {
         .map_or(Affine3A::IDENTITY, |g| g.0)
 }
 
-/// The world scale of `entity`: its parent's times its own, taken from the
-/// `Transform` rather than from the rotated world matrix.
-fn world_scale(world: &World, entity: Entity) -> Vec3 {
-    let local = world
-        .ecs
-        .get::<Transform>(entity)
-        .map_or(Vec3::ONE, |t| t.scale);
-    decompose(&parent_affine(world, entity)).2 * local
+/// The world scale of `entity`: the product of the `Transform` scales from the
+/// entity up through its parents, rather than the scale of the rotated world
+/// matrix.
+pub(crate) fn world_scale(world: &World, entity: Entity) -> Vec3 {
+    let mut scale = Vec3::ONE;
+    let mut at = Some(entity);
+    while let Some(e) = at {
+        if let Some(t) = world.ecs.get::<Transform>(e) {
+            scale *= t.scale;
+        }
+        at = hierarchy::parent(&world.ecs, e);
+    }
+    scale
 }
 
 fn decompose(a: &Affine3A) -> (Vec3, Quat, Vec3) {
