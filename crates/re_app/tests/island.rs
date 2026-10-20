@@ -469,6 +469,11 @@ fn nearest(app: &mut App, suffix: &str) -> Option<(String, glam::Vec3)> {
 }
 
 #[test]
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    ignore = "the replay's inputs were recorded on Linux x86_64 and run open-loop; until D2 \
+              (ADR-0036, WP18 PR \"d2\") other platforms simulate differently and reach other gems"
+)]
 fn the_full_game_replay_pushes_wins_and_restarts() {
     let project = island();
     let mut app = App::open(&project, AppConfig::load(&project).unwrap()).unwrap();
