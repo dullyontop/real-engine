@@ -57,8 +57,18 @@ impl Default for Options {
 fn bar(o: &Options) -> Vec<u8> {
     let mut g = Glb::default();
     let pos = g.positions(&POS);
-    let idx: Vec<u8> = [0u16, 1, 2, 2, 1, 3].iter().flat_map(|i| i.to_le_bytes()).collect();
-    let idx = g.accessor(&idx, common::skin_glb::UNSIGNED_SHORT, 6, "SCALAR", false, "");
+    let idx: Vec<u8> = [0u16, 1, 2, 2, 1, 3]
+        .iter()
+        .flat_map(|i| i.to_le_bytes())
+        .collect();
+    let idx = g.accessor(
+        &idx,
+        common::skin_glb::UNSIGNED_SHORT,
+        6,
+        "SCALAR",
+        false,
+        "",
+    );
     // File joint order: 0 = Tip, 1 = Root.
     let mut joints: Vec<[u16; 4]> = vec![[1, 0, 0, 0], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0]];
     if let Some(j) = o.bad_joint {

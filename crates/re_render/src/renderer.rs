@@ -7,7 +7,7 @@ use std::num::NonZeroU64;
 
 use glam::{Mat4, Vec3};
 use re_core::Diagnostic;
-use re_types::mesh::{Aabb, MeshData};
+use re_types::mesh::{Aabb, MeshData, SkinWeights};
 use re_types::render::{
     AlphaMode, DrawFlags, MaterialDesc, MaterialHandle, MeshHandle, RenderSnapshot, TextureData,
     TextureFormat, TextureHandle, TextureRef,
@@ -109,6 +109,8 @@ pub struct FrameStats {
     pub highlights: u32,
     /// MSAA sample count of the scene pass.
     pub samples: u32,
+    /// Skinned draw items drawn (also counted in `items_drawn`).
+    pub skinned_items: u32,
 }
 
 /// The result of [`Renderer::render`]: what was drawn and the warnings.
@@ -140,6 +142,15 @@ struct GpuMesh {
     index_count: u32,
     aabb: Option<Aabb>,
     bytes: u64,
+    /// The skin stream of a mesh from [`Renderer::upload_skinned_mesh`].
+    skin: Option<GpuSkin>,
+}
+
+struct GpuSkin {
+    /// Four u16 joints and four unorm16 weights per vertex (see [`skin_layout`]).
+    buffer: wgpu::Buffer,
+    /// One more than the highest weighted joint index.
+    joints_used: u32,
 }
 
 struct GpuTexture {
@@ -162,8 +173,9 @@ impl GpuMaterial {
 
 /// Pipelines for one (target format, sample count).
 struct FormatPipelines {
-    /// Indexed by `double_sided | blend << 1`.
-    forward: [wgpu::RenderPipeline; 4],
+    /// Indexed by `double_sided | blend << 1`, then the same four skinned
+    /// (`| SKINNED`) when the renderer can skin.
+    forward: Vec<wgpu::RenderPipeline>,
     lines: wgpu::RenderPipeline,
     effects: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
@@ -206,6 +218,27 @@ struct Layouts {
     frame_only: wgpu::PipelineLayout,
     highlight_pipeline: wgpu::PipelineLayout,
 }
+
+/// GPU skinning (ADR-0039), present when the adapter can read storage buffers
+/// in vertex shaders.
+struct Skinning {
+    /// The joint palette: a read-only storage buffer of the vertex stage.
+    palette_layout: wgpu::BindGroupLayout,
+    /// frame, material, palette.
+    forward_layout: wgpu::PipelineLayout,
+    forward_shader: wgpu::ShaderModule,
+    shadow_pipeline: wgpu::RenderPipeline,
+    /// The skinned variants of [`Renderer::mask_pipelines`].
+    mask_pipelines: [wgpu::RenderPipeline; 2],
+    palette: GrowBuffer,
+}
+
+/// The bit of [`Batch::variant`] that marks a skinned batch.
+const SKINNED: usize = 4;
+
+/// The largest joint palette: palette indices travel in an instance's f32
+/// `flags.w`, which holds every integer up to 2^24 exactly.
+const MAX_PALETTE: usize = 1 << 24;
 
 struct GrowBuffer {
     buffer: wgpu::Buffer,
@@ -260,11 +293,25 @@ type Slot = (u32, u32);
 
 /// One batch of the scene pass: consecutive instances of one mesh and material.
 struct Batch {
+    /// The forward pipeline (`double_sided | blend << 1 | SKINNED`); the shadow
+    /// and mask batches use only `SKINNED`.
     variant: usize,
     material: Slot,
     mesh: Slot,
     first_instance: u32,
     instances: u32,
+}
+
+/// A draw item or a skinned draw item, as the frame resolves them.
+#[derive(Clone, Copy)]
+struct Draw {
+    entity: u64,
+    mesh: MeshHandle,
+    material: MaterialHandle,
+    world: Mat4,
+    flags: DrawFlags,
+    /// A skinned item's palette start, joint count and world bounds.
+    skinned: Option<(u32, u32, Aabb)>,
 }
 
 /// The forward renderer (ADR-0010).
@@ -287,6 +334,9 @@ pub struct Renderer {
     shadow_pipeline: wgpu::RenderPipeline,
     /// The depth-only pass and the numbering mask pipelines.
     mask_pipelines: [wgpu::RenderPipeline; 2],
+    skinning: Option<Skinning>,
+    /// Whether `RE6040` was given.
+    warned_no_skinning: bool,
     highlight_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     mask_targets: Option<MaskTargets>,
     highlight_buffer: wgpu::Buffer,
@@ -345,6 +395,17 @@ fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: size_of::<InstanceRaw>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &ATTRIBUTES,
+    }
+}
+
+/// The skin stream: joint indices at location 12, weights at 13.
+fn skin_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+        wgpu::vertex_attr_array![12 => Uint16x4, 13 => Unorm16x4];
+    wgpu::VertexBufferLayout {
+        array_stride: 16,
+        step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &ATTRIBUTES,
     }
 }
@@ -503,6 +564,16 @@ fn create_layouts(device: &wgpu::Device) -> Layouts {
     }
 }
 
+/// True when skinned meshes can be posed on the GPU: the vertex stage can read a
+/// storage buffer.
+fn supports_skinning(adapter: &wgpu::Adapter, device: &wgpu::Device) -> bool {
+    adapter
+        .get_downlevel_capabilities()
+        .flags
+        .contains(wgpu::DownlevelFlags::VERTEX_STORAGE)
+        && device.limits().max_storage_buffers_per_shader_stage > 0
+}
+
 fn solid_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -621,86 +692,163 @@ impl Renderer {
         let lines_shader = shader::module(&device, "lines.wgsl");
         let shadow_shader = shader::module(&device, "shadow.wgsl");
         let mask_shader = shader::module(&device, "mask.wgsl");
-        let mask_pipelines = [None, Some(wgpu::CompareFunction::LessEqual)]
-            .into_iter()
-            .enumerate()
-            .map(|(i, compare)| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("re_render highlight mask"),
-                    layout: Some(&layouts.shadow),
-                    vertex: wgpu::VertexState {
-                        module: &mask_shader,
-                        entry_point: Some("vs_mask"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[Some(position_only_layout()), Some(instance_layout())],
-                    },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: DEPTH_FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(compare.unwrap_or(wgpu::CompareFunction::Less)),
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &mask_shader,
-                        entry_point: Some("fs_mask"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: MASK_FORMAT,
-                            blend: None,
-                            // The depth-only pass (index 0) writes no number.
-                            write_mask: if i == 0 {
-                                wgpu::ColorWrites::empty()
-                            } else {
-                                wgpu::ColorWrites::ALL
+        let mask_pipelines =
+            |layout: &wgpu::PipelineLayout, mask_shader: &wgpu::ShaderModule, skinned: bool| {
+                let buffers = [
+                    Some(position_only_layout()),
+                    Some(instance_layout()),
+                    Some(skin_layout()),
+                ];
+                let buffers = if skinned { &buffers[..] } else { &buffers[..2] };
+                [None, Some(wgpu::CompareFunction::LessEqual)]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, compare)| {
+                        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                            label: Some("re_render highlight mask"),
+                            layout: Some(layout),
+                            vertex: wgpu::VertexState {
+                                module: mask_shader,
+                                entry_point: Some(if skinned {
+                                    "vs_mask_skinned"
+                                } else {
+                                    "vs_mask"
+                                }),
+                                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                                buffers,
                             },
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            })
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap_or_else(|_| unreachable!("two mask pipelines"));
+                            primitive: wgpu::PrimitiveState::default(),
+                            depth_stencil: Some(wgpu::DepthStencilState {
+                                format: DEPTH_FORMAT,
+                                depth_write_enabled: Some(true),
+                                depth_compare: Some(compare.unwrap_or(wgpu::CompareFunction::Less)),
+                                stencil: wgpu::StencilState::default(),
+                                bias: wgpu::DepthBiasState::default(),
+                            }),
+                            multisample: wgpu::MultisampleState::default(),
+                            fragment: Some(wgpu::FragmentState {
+                                module: mask_shader,
+                                entry_point: Some("fs_mask"),
+                                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                                targets: &[Some(wgpu::ColorTargetState {
+                                    format: MASK_FORMAT,
+                                    blend: None,
+                                    // The depth-only pass (index 0) writes no number.
+                                    write_mask: if i == 0 {
+                                        wgpu::ColorWrites::empty()
+                                    } else {
+                                        wgpu::ColorWrites::ALL
+                                    },
+                                })],
+                            }),
+                            multiview_mask: None,
+                            cache: None,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap_or_else(|_| unreachable!("two mask pipelines"))
+            };
         let highlight_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("re_render highlights"),
             size: size_of::<HighlightUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("re_render shadow"),
-            layout: Some(&layouts.shadow),
-            vertex: wgpu::VertexState {
-                module: &shadow_shader,
-                entry_point: Some("vs_shadow"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[Some(position_only_layout()), Some(instance_layout())],
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: SHADOW_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: wgpu::StencilState::default(),
-                // No clamp: GL lacks DownlevelFlags::DEPTH_BIAS_CLAMP.
-                bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
-                    clamp: 0.0,
-                },
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: None,
-            multiview_mask: None,
-            cache: None,
+        let shadow_pipeline =
+            |layout: &wgpu::PipelineLayout, shadow_shader: &wgpu::ShaderModule, skinned: bool| {
+                let buffers = [
+                    Some(position_only_layout()),
+                    Some(instance_layout()),
+                    Some(skin_layout()),
+                ];
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("re_render shadow"),
+                    layout: Some(layout),
+                    vertex: wgpu::VertexState {
+                        module: shadow_shader,
+                        entry_point: Some(if skinned {
+                            "vs_shadow_skinned"
+                        } else {
+                            "vs_shadow"
+                        }),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: if skinned { &buffers[..] } else { &buffers[..2] },
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: SHADOW_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                        stencil: wgpu::StencilState::default(),
+                        // No clamp: GL lacks DownlevelFlags::DEPTH_BIAS_CLAMP.
+                        bias: wgpu::DepthBiasState {
+                            constant: 2,
+                            slope_scale: 2.0,
+                            clamp: 0.0,
+                        },
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: None,
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+        let skinning = supports_skinning(&gpu.adapter, &device).then(|| {
+            let palette_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("re_render joint palette"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(size_of::<Mat4>() as u64),
+                        },
+                        count: None,
+                    }],
+                });
+            let forward_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("re_render forward skinned"),
+                bind_group_layouts: &[
+                    Some(&layouts.frame),
+                    Some(&layouts.material),
+                    Some(&palette_layout),
+                ],
+                immediate_size: 0,
+            });
+            let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("re_render shadow skinned"),
+                bind_group_layouts: &[Some(&layouts.shadow_frame), Some(&palette_layout)],
+                immediate_size: 0,
+            });
+            Skinning {
+                shadow_pipeline: shadow_pipeline(
+                    &shadow_layout,
+                    &shader::module(&device, "shadow_skinned.wgsl"),
+                    true,
+                ),
+                mask_pipelines: mask_pipelines(
+                    &shadow_layout,
+                    &shader::module(&device, "mask_skinned.wgsl"),
+                    true,
+                ),
+                forward_shader: shader::module(&device, "forward_skinned.wgsl"),
+                palette: GrowBuffer::new(
+                    &device,
+                    "re_render joint palette",
+                    wgpu::BufferUsages::STORAGE,
+                ),
+                palette_layout,
+                forward_layout,
+            }
         });
+        let mask_pipelines = mask_pipelines(&layouts.shadow, &mask_shader, false);
+        let shadow_pipeline = shadow_pipeline(&layouts.shadow, &shadow_shader, false);
         let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("re_render frame"),
             size: size_of::<FrameUniform>() as u64,
@@ -771,6 +919,8 @@ impl Renderer {
             sky_shader: shader::module(&device, "sky.wgsl"),
             highlight_shader: shader::module(&device, "highlight.wgsl"),
             mask_pipelines,
+            skinning,
+            warned_no_skinning: false,
             highlight_pipelines: HashMap::new(),
             mask_targets: None,
             highlight_buffer,
@@ -798,6 +948,12 @@ impl Renderer {
         let samples = renderer.sample_count(format);
         renderer.pipelines_for(format, samples);
         renderer
+    }
+
+    /// True when skinned items are posed on the GPU. Otherwise (`RE6040`) they
+    /// are drawn in their bind pose.
+    pub fn supports_skinning(&self) -> bool {
+        self.skinning.is_some()
     }
 
     /// The settings.
@@ -886,16 +1042,35 @@ impl Renderer {
             count: samples,
             ..Default::default()
         };
-        let forward = |double_sided: bool, blend: bool| {
+        let forward = |variant: usize| {
+            let (double_sided, blend) = (variant & 1 != 0, variant & 2 != 0);
+            let skinning = self.skinning.as_ref().filter(|_| variant & SKINNED != 0);
+            let (layout, module) = match skinning {
+                Some(s) => (&s.forward_layout, &s.forward_shader),
+                None => (&self.layouts.forward, &self.forward_shader),
+            };
+            let buffers = [
+                Some(mesh_vertex_layout()),
+                Some(instance_layout()),
+                Some(skin_layout()),
+            ];
             self.device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("re_render forward"),
-                    layout: Some(&self.layouts.forward),
+                    layout: Some(layout),
                     vertex: wgpu::VertexState {
-                        module: &self.forward_shader,
-                        entry_point: Some("vs_forward"),
+                        module,
+                        entry_point: Some(if skinning.is_some() {
+                            "vs_forward_skinned"
+                        } else {
+                            "vs_forward"
+                        }),
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[Some(mesh_vertex_layout()), Some(instance_layout())],
+                        buffers: if skinning.is_some() {
+                            &buffers[..]
+                        } else {
+                            &buffers[..2]
+                        },
                     },
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleList,
@@ -916,7 +1091,7 @@ impl Renderer {
                     }),
                     multisample,
                     fragment: Some(wgpu::FragmentState {
-                        module: &self.forward_shader,
+                        module,
                         entry_point: Some(if gamma {
                             "fs_forward_gamma"
                         } else {
@@ -1055,12 +1230,13 @@ impl Renderer {
                 cache: None,
             });
         FormatPipelines {
-            forward: [
-                forward(false, false),
-                forward(true, false),
-                forward(false, true),
-                forward(true, true),
-            ],
+            forward: (0..if self.skinning.is_some() {
+                2 * SKINNED
+            } else {
+                SKINNED
+            })
+                .map(forward)
+                .collect(),
             lines,
             effects,
             sky,
@@ -1204,7 +1380,40 @@ impl Renderer {
     /// Uploads a mesh. Fails with `RE6014` when the data is malformed. An empty mesh
     /// is accepted and draws nothing.
     pub fn upload_mesh(&mut self, mesh: &MeshData) -> Result<MeshHandle, Diagnostic> {
+        self.create_mesh(mesh, None)
+    }
+
+    /// Uploads a skinned mesh: a mesh with four joints and weights per vertex
+    /// (ADR-0039), drawn by [`SkinnedDrawItem`](re_types::render::SkinnedDrawItem)s.
+    /// Fails with `RE6014` when the mesh or the weights are malformed (one entry
+    /// per vertex, each vertex's weights summing to 65,535).
+    ///
+    /// The mesh can also be drawn by a plain draw item, in its bind pose.
+    pub fn upload_skinned_mesh(
+        &mut self,
+        mesh: &MeshData,
+        weights: &SkinWeights,
+    ) -> Result<MeshHandle, Diagnostic> {
+        self.create_mesh(mesh, Some(weights))
+    }
+
+    fn create_mesh(
+        &mut self,
+        mesh: &MeshData,
+        weights: Option<&SkinWeights>,
+    ) -> Result<MeshHandle, Diagnostic> {
         let bad = |message: String| Diagnostic::error(codes::BAD_MESH, message);
+        if let Some(w) = weights
+            && !w.is_well_formed(mesh, usize::from(u16::MAX) + 1)
+        {
+            return Err(bad(format!(
+                "the skin weights do not fit the mesh: {} vertices, {} joint and {} weight \
+                 entries, and each vertex's weights must sum to 65535",
+                mesh.vertices.len(),
+                w.joints.len(),
+                w.weights.len()
+            )));
+        }
         if !mesh.indices.len().is_multiple_of(3) {
             return Err(bad(format!(
                 "{} indices is not a whole number of triangles",
@@ -1290,13 +1499,43 @@ impl Renderer {
             wgpu::BufferUsages::INDEX,
             index_bytes,
         );
-        let bytes = vertices.size() + indices.size();
+        let skin = weights.map(|w| {
+            // Unweighted slots point at joint 0, so the shader never reads past
+            // the item's palette run.
+            let mut joints_used = 0;
+            let skin_bytes: Vec<u8> = w
+                .joints
+                .iter()
+                .zip(&w.weights)
+                .flat_map(|(j, w)| {
+                    let mut out = [0u16; 8];
+                    for k in 0..4 {
+                        if w[k] > 0 {
+                            out[k] = j[k];
+                            joints_used = joints_used.max(u32::from(j[k]) + 1);
+                        }
+                        out[4 + k] = w[k];
+                    }
+                    bytemuck::cast::<[u16; 8], [u8; 16]>(out)
+                })
+                .collect();
+            GpuSkin {
+                buffer: buffer(
+                    "re_render mesh skin",
+                    wgpu::BufferUsages::VERTEX,
+                    &skin_bytes,
+                ),
+                joints_used,
+            }
+        });
+        let bytes = vertices.size() + indices.size() + skin.as_ref().map_or(0, |s| s.buffer.size());
         let (index, generation) = self.meshes.insert(GpuMesh {
             vertices,
             indices,
             index_count,
             aabb: mesh.aabb(),
             bytes,
+            skin,
         });
         Ok(MeshHandle::new(index, generation))
     }
@@ -1627,7 +1866,7 @@ impl Renderer {
                 highlight_of.entry(e.0).or_insert(n as u8 + 1);
             }
         }
-        let mut highlighted: Vec<(bool, u8, u32, usize)> = Vec::new();
+        let mut highlighted: Vec<(bool, u8, usize, u32, usize)> = Vec::new();
 
         // Resolve every item; skip (and report once) the ones with stale handles.
         let mut reported = HashSet::new();
@@ -1636,7 +1875,35 @@ impl Renderer {
         let mut casters = Vec::new();
         let mut scene_bounds: Option<Aabb> = None;
         let mut caster_bounds: Option<Aabb> = None;
-        for (i, item) in snapshot.items.iter().enumerate() {
+        let draws: Vec<Draw> = snapshot
+            .items
+            .iter()
+            .map(|item| Draw {
+                entity: item.entity.0,
+                mesh: item.mesh,
+                material: item.material,
+                world: item.world,
+                flags: item.flags,
+                skinned: None,
+            })
+            .chain(snapshot.skinned.iter().map(|item| Draw {
+                entity: item.entity.0,
+                mesh: item.mesh,
+                material: item.material,
+                world: item.world,
+                flags: item.flags,
+                skinned: Some((item.palette, item.joints, item.bounds)),
+            }))
+            .collect();
+        // The palette the skinned items index, when the renderer can skin.
+        let palette_limit = self.skinning.as_ref().map(|_| {
+            let binding = device.limits().max_storage_buffer_binding_size;
+            MAX_PALETTE.min((binding / size_of::<Mat4>() as u64) as usize)
+        });
+        let palette_len = snapshot.joint_palette.len();
+        // The instance's palette start, per draw; `None` draws unskinned.
+        let mut palettes: Vec<Option<u32>> = vec![None; draws.len()];
+        for (i, item) in draws.iter().enumerate() {
             let mesh = self.meshes.get(item.mesh.index, item.mesh.generation);
             let material = self
                 .materials
@@ -1649,7 +1916,7 @@ impl Renderer {
                         "mesh",
                         item.mesh.index,
                         item.mesh.generation,
-                        item.entity.0,
+                        item.entity,
                     ));
                 }
                 if material.is_none()
@@ -1660,24 +1927,82 @@ impl Renderer {
                         "material",
                         item.material.index,
                         item.material.generation,
-                        item.entity.0,
+                        item.entity,
                     ));
                 }
                 continue;
             };
+            let mut world_box = mesh.aabb.map(|b| frame::transform_aabb(&b, &item.world));
+            if let Some((first, joints, bounds)) = item.skinned {
+                match palette_limit {
+                    None if !self.warned_no_skinning => {
+                        self.warned_no_skinning = true;
+                        report.warnings.push(
+                            Diagnostic::warning(
+                                codes::SKINNING_UNSUPPORTED,
+                                "this adapter cannot read storage buffers in vertex shaders; \
+                                 skinned meshes are drawn in their bind pose",
+                            )
+                            .with_hint("use Vulkan, Metal, DirectX 12 or desktop GL 4.3+"),
+                        );
+                    }
+                    None => {}
+                    Some(limit) => {
+                        let end = u64::from(first) + u64::from(joints);
+                        let problem = match &mesh.skin {
+                            None => Some(
+                                "its mesh has no skin (upload it with upload_skinned_mesh)"
+                                    .to_string(),
+                            ),
+                            Some(_) if palette_len > limit => Some(format!(
+                                "the joint palette has {palette_len} matrices, more than \
+                                 the {limit} this renderer can bind"
+                            )),
+                            Some(_) if end > palette_len as u64 => Some(format!(
+                                "it uses palette {first}..{end}, but the joint palette has \
+                                 {palette_len} matrices"
+                            )),
+                            Some(skin) if joints < skin.joints_used => Some(format!(
+                                "it has {joints} joints, but its mesh's weights use {}",
+                                skin.joints_used
+                            )),
+                            Some(_) => None,
+                        };
+                        if let Some(problem) = problem {
+                            report.stats.items_skipped += 1;
+                            report.warnings.push(Diagnostic::warning(
+                                codes::BAD_SKINNED_ITEM,
+                                format!(
+                                    "skinned item of entity {} is not drawn: {problem}",
+                                    item.entity
+                                ),
+                            ));
+                            continue;
+                        }
+                        palettes[i] = Some(first);
+                        let finite = bounds.min.is_finite() && bounds.max.is_finite();
+                        world_box = finite.then_some(bounds);
+                    }
+                }
+                report.stats.skinned_items += u32::from(palettes[i].is_some());
+            }
             report.stats.items_drawn += 1;
             if mesh.index_count == 0 {
                 continue;
             }
-            let world_box = mesh.aabb.map(|b| frame::transform_aabb(&b, &item.world));
+            let skinned = if palettes[i].is_some() { SKINNED } else { 0 };
             if let Some(b) = world_box {
                 scene_bounds = Some(scene_bounds.map_or(b, |s| s.union(&b)));
             }
-            if let Some(&n) = highlight_of.get(&item.entity.0) {
+            if let Some(&n) = highlight_of.get(&item.entity) {
                 let on_top = drawn_highlights[usize::from(n - 1)].always_on_top;
-                highlighted.push((on_top, n, item.mesh.index, i));
+                highlighted.push((on_top, n, skinned, item.mesh.index, i));
             }
-            let key = (material.variant(), item.material.index, item.mesh.index);
+            let key = (
+                material.variant() | skinned,
+                item.material.index,
+                item.mesh.index,
+            );
             if material.blend {
                 let depth = world_box
                     .map_or(item.world.w_axis.truncate(), |b| b.center())
@@ -1690,7 +2015,7 @@ impl Renderer {
                 if let Some(b) = world_box {
                     caster_bounds = Some(caster_bounds.map_or(b, |s| s.union(&b)));
                 }
-                casters.push((item.mesh.index, i));
+                casters.push((skinned, item.mesh.index, i));
             }
         }
         // Batch by pipeline, material and mesh; draw blended items back to front.
@@ -1711,12 +2036,15 @@ impl Renderer {
             if n == opaque_count {
                 opaque_batches = batches.len();
             }
-            let item = &snapshot.items[i];
-            instances.push(InstanceRaw::new(
-                item.world,
-                item.flags.contains(DrawFlags::RECEIVE_SHADOWS),
-                item.flags.contains(DrawFlags::SELECTED),
-            ));
+            let item = &draws[i];
+            instances.push(
+                InstanceRaw::new(
+                    item.world,
+                    item.flags.contains(DrawFlags::RECEIVE_SHADOWS),
+                    item.flags.contains(DrawFlags::SELECTED),
+                )
+                .with_palette(palettes[i]),
+            );
             let material = (item.material.index, item.material.generation);
             let mesh = (item.mesh.index, item.mesh.generation);
             match batches.last_mut() {
@@ -1736,14 +2064,14 @@ impl Renderer {
             opaque_batches = batches.len();
         }
         let mut shadow_batches: Vec<Batch> = Vec::new();
-        for &(_, i) in &casters {
-            let item = &snapshot.items[i];
-            instances.push(InstanceRaw::new(item.world, false, false));
+        for &(skinned, _, i) in &casters {
+            let item = &draws[i];
+            instances.push(InstanceRaw::new(item.world, false, false).with_palette(palettes[i]));
             let mesh = (item.mesh.index, item.mesh.generation);
             match shadow_batches.last_mut() {
-                Some(b) if b.mesh == mesh => b.instances += 1,
+                Some(b) if b.variant == skinned && b.mesh == mesh => b.instances += 1,
                 _ => shadow_batches.push(Batch {
-                    variant: 0,
+                    variant: skinned,
                     material: (0, 0),
                     mesh,
                     first_instance: instances.len() as u32 - 1,
@@ -1755,18 +2083,20 @@ impl Renderer {
         // Highlighted items, the occluded ones first, batched by mesh.
         highlighted.sort_unstable();
         let mut highlight_batches: Vec<(bool, Batch)> = Vec::new();
-        for &(on_top, n, _, i) in &highlighted {
-            let item = &snapshot.items[i];
-            let mut raw = InstanceRaw::new(item.world, false, false);
+        for &(on_top, n, skinned, _, i) in &highlighted {
+            let item = &draws[i];
+            let mut raw = InstanceRaw::new(item.world, false, false).with_palette(palettes[i]);
             raw.flags[2] = f32::from(n);
             instances.push(raw);
             let mesh = (item.mesh.index, item.mesh.generation);
             match highlight_batches.last_mut() {
-                Some((top, b)) if *top == on_top && b.mesh == mesh => b.instances += 1,
+                Some((top, b)) if *top == on_top && b.variant == skinned && b.mesh == mesh => {
+                    b.instances += 1
+                }
                 _ => highlight_batches.push((
                     on_top,
                     Batch {
-                        variant: 0,
+                        variant: skinned,
                         material: (0, 0),
                         mesh,
                         first_instance: instances.len() as u32 - 1,
@@ -1867,6 +2197,24 @@ impl Renderer {
         queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&uniform));
         self.instances
             .write(device, queue, bytemuck::cast_slice(&instances));
+        let palette_group = match &mut self.skinning {
+            Some(skinning) if palettes.iter().any(Option::is_some) => {
+                skinning.palette.write(
+                    device,
+                    queue,
+                    bytemuck::cast_slice(&snapshot.joint_palette),
+                );
+                Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("re_render joint palette"),
+                    layout: &skinning.palette_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: skinning.palette.buffer.as_entire_binding(),
+                    }],
+                }))
+            }
+            _ => None,
+        };
         let line_vertices: Vec<LineVertex> = snapshot
             .debug_lines
             .iter()
@@ -1933,13 +2281,26 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(0, &shadow_frame, &[]);
+            let mut current = None;
             for batch in &shadow_batches {
                 let mesh = self
                     .meshes
                     .get(batch.mesh.0, batch.mesh.1)
                     .expect("resolved above");
+                if current != Some(batch.variant) {
+                    current = Some(batch.variant);
+                    match self.skinned_parts(batch.variant, palette_group.as_ref()) {
+                        Some((skinning, palette)) => {
+                            pass.set_pipeline(&skinning.shadow_pipeline);
+                            pass.set_bind_group(1, palette, &[]);
+                        }
+                        None => pass.set_pipeline(&self.shadow_pipeline),
+                    }
+                }
+                if let Some(skin) = mesh.skin.as_ref().filter(|_| batch.variant & SKINNED != 0) {
+                    pass.set_vertex_buffer(2, skin.buffer.slice(..));
+                }
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 let start = u64::from(batch.first_instance) * instance_stride;
@@ -2009,6 +2370,12 @@ impl Renderer {
                 if current.0 != Some(batch.variant) {
                     pass.set_pipeline(&pipelines.forward[batch.variant]);
                     current.0 = Some(batch.variant);
+                    if let Some(palette) = palette_group
+                        .as_ref()
+                        .filter(|_| batch.variant & SKINNED != 0)
+                    {
+                        pass.set_bind_group(2, palette, &[]);
+                    }
                 }
                 if current.1 != Some(batch.material) {
                     let material = self
@@ -2026,6 +2393,9 @@ impl Renderer {
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     current.2 = Some(batch.mesh);
+                }
+                if let Some(skin) = mesh.skin.as_ref().filter(|_| batch.variant & SKINNED != 0) {
+                    pass.set_vertex_buffer(2, skin.buffer.slice(..));
                 }
                 let start = u64::from(batch.first_instance) * instance_stride;
                 pass.set_vertex_buffer(
@@ -2076,6 +2446,7 @@ impl Renderer {
                 &batches[..opaque_batches],
                 &highlight_batches,
                 drawn_highlights,
+                palette_group.as_ref(),
             );
         }
         queue.submit([encoder.finish()]);
@@ -2097,6 +2468,7 @@ impl Renderer {
         opaque: &[Batch],
         highlighted: &[(bool, Batch)],
         highlights: &[extras::Highlight],
+        palette: Option<&wgpu::BindGroup>,
     ) {
         let mut uniform = HighlightUniform {
             colors: [[0.0; 4]; 2 * MAX_HIGHLIGHTS],
@@ -2128,11 +2500,22 @@ impl Renderer {
             }],
         });
         let stride = size_of::<InstanceRaw>() as u64;
-        let draw = |pass: &mut wgpu::RenderPass<'_>, batch: &Batch| {
+        // Draws a batch with mask pipeline `n` (0 depth only, 1 numbering).
+        let draw = |pass: &mut wgpu::RenderPass<'_>, n: usize, batch: &Batch| {
             let mesh = self
                 .meshes
                 .get(batch.mesh.0, batch.mesh.1)
                 .expect("resolved above");
+            match self.skinned_parts(batch.variant, palette) {
+                Some((skinning, palette)) => {
+                    pass.set_pipeline(&skinning.mask_pipelines[n]);
+                    pass.set_bind_group(1, palette, &[]);
+                    if let Some(skin) = &mesh.skin {
+                        pass.set_vertex_buffer(2, skin.buffer.slice(..));
+                    }
+                }
+                None => pass.set_pipeline(&self.mask_pipelines[n]),
+            }
             pass.set_vertex_buffer(0, mesh.vertices.slice(..));
             pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
             let start = u64::from(batch.first_instance) * stride;
@@ -2174,14 +2557,12 @@ impl Renderer {
             });
             pass.set_bind_group(0, &shadow_frame, &[]);
             if !on_top {
-                pass.set_pipeline(&self.mask_pipelines[0]);
                 for batch in opaque {
-                    draw(&mut pass, batch);
+                    draw(&mut pass, 0, batch);
                 }
             }
-            pass.set_pipeline(&self.mask_pipelines[1]);
             for (_, batch) in highlighted.iter().filter(|(top, _)| *top == on_top) {
-                draw(&mut pass, batch);
+                draw(&mut pass, 1, batch);
             }
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2203,6 +2584,19 @@ impl Renderer {
         pass.set_pipeline(&self.highlight_pipelines[&target.texture().format()]);
         pass.set_bind_group(0, &targets.bind_group, &[]);
         pass.draw(0..3, 0..1);
+    }
+
+    /// The skinning pipelines and the frame's palette bind group, for a skinned
+    /// batch `variant`.
+    fn skinned_parts<'a>(
+        &'a self,
+        variant: usize,
+        palette: Option<&'a wgpu::BindGroup>,
+    ) -> Option<(&'a Skinning, &'a wgpu::BindGroup)> {
+        if variant & SKINNED == 0 {
+            return None;
+        }
+        self.skinning.as_ref().zip(palette)
     }
 
     fn check_target(&self, texture: &wgpu::Texture) -> Result<(), Diagnostic> {
