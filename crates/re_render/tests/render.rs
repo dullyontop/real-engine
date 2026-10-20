@@ -377,8 +377,9 @@ fn egui_panel_luminance_matches_across_backends() {
         Gpu::headless(wgpu::Backends::VULKAN),
         Gpu::headless(wgpu::Backends::GL),
     ) else {
+        // Linux CI has lavapipe and llvmpipe; Windows and macOS runners have neither.
         assert!(
-            std::env::var_os("CI").is_none(),
+            std::env::var_os("CI").is_none() || !cfg!(target_os = "linux"),
             "CI must have both a Vulkan and a GL adapter"
         );
         println!("skipped: this machine lacks a Vulkan or a GL adapter");
