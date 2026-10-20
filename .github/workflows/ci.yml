@@ -1,8 +1,9 @@
 # CI for Real Engine (ADR-0023, docs/M1_PLAN.md WP0).
 #
 # Required for merge: fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke
-# and verify-plaza (all on Ubuntu; verify-plaza by ADR-0023's M2 amendment).
-# build-windows and build-macos are reported only.
+# and verify-plaza (all on Ubuntu; verify-plaza by ADR-0023's M2 amendment), and
+# build-windows and build-macos (the whole suite and `real verify` on the island
+# and the plaza; ADR-0023's M3 amendment, WP18 PR "blocking").
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
@@ -12,8 +13,7 @@ name: CI
 on:
   pull_request:
   push:
-    # TEMPORARY (WP18 exploration): run on this branch's pushes; removed before the PR opens.
-    branches: [main, claude/m3-wp18-platforms-d2-d8ecfk]
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
