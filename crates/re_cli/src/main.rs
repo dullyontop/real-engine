@@ -65,14 +65,30 @@ enum Command {
     /// Create a new project in DIR.
     New {
         /// The directory to create.
-        dir: PathBuf,
+        #[arg(required_unless_present = "list_templates")]
+        dir: Option<PathBuf>,
         /// The project name (default: the directory name).
         #[arg(long)]
         name: Option<String>,
-        /// The kind of project: `native` (the engine's own API) or `roblox`
-        /// (an empty Roblox-style place; tooling build).
+        /// The template: `native` (the engine's own API), `roblox` (an empty
+        /// Roblox-style place), `terrain`, or a template directory.
+        /// `--list-templates` lists them; all but `native` need the tooling
+        /// build.
         #[arg(long, default_value = "native")]
-        template: new::Template,
+        template: String,
+        /// A template parameter, `KEY=VALUE` (repeatable).
+        #[arg(long = "set", value_name = "KEY=VALUE")]
+        set: Vec<String>,
+        /// Run the template's checks (`real verify` and the rest) on the new
+        /// project.
+        #[arg(long)]
+        check: bool,
+        /// List the templates and their parameters instead.
+        #[arg(long, conflicts_with_all = ["dir", "set", "check"])]
+        list_templates: bool,
+        /// With `--list-templates`: print JSON.
+        #[arg(long, requires = "list_templates")]
+        json: bool,
     },
     /// Run the project.
     Run(RunArgs),
@@ -466,16 +482,39 @@ fn main() -> ExitCode {
     let project = cli.project;
     match cli.command {
         Command::New {
-            dir,
-            name,
-            template,
-        } => match new::create_from(&dir, name.as_deref(), template) {
-            Ok(files) => {
-                println!("created {} ({})", dir.display(), files.join(", "));
+            list_templates: true,
+            json,
+            ..
+        } => match new::list_templates(json) {
+            Ok(text) => {
+                print!("{text}");
                 ExitCode::SUCCESS
             }
             Err(d) => fail(d),
         },
+        Command::New {
+            dir,
+            name,
+            template,
+            set,
+            check,
+            ..
+        } => {
+            let dir = dir.expect("clap requires DIR without --list-templates");
+            let options = new::NewOptions {
+                name: name.as_deref(),
+                template: &template,
+                set: &set,
+                check,
+            };
+            match new::create_from(&dir, options) {
+                Ok(files) => {
+                    println!("created {} ({})", dir.display(), files.join(", "));
+                    ExitCode::SUCCESS
+                }
+                Err(d) => fail(d),
+            }
+        }
         Command::Run(args) => cmd_run(&project, args),
         Command::Describe { json, luau_defs } => cmd_describe(&project, json, luau_defs),
         Command::Verify {
