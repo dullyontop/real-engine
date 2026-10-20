@@ -1,10 +1,11 @@
 //! [`run_editor`]: the windowed editor (winit, a wgpu surface, egui).
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use re_app::{App, Graphics};
 use re_core::Diagnostic;
+use re_core::time::Instant;
 use re_render::{Capture, Gpu, Renderer, UiFrame, wgpu};
 
 use winit::application::ApplicationHandler;

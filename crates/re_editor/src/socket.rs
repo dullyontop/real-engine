@@ -107,8 +107,8 @@ impl Drop for EditorSocket {
             // `stop` wakes the server by connecting to the socket file; if
             // that file was removed (`git clean`, a moved project), the
             // server thread cannot be woken: leave it rather than hang.
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-            while !thread.is_finished() && std::time::Instant::now() < deadline {
+            let deadline = re_core::time::Instant::now() + std::time::Duration::from_secs(1);
+            while !thread.is_finished() && re_core::time::Instant::now() < deadline {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
             if thread.is_finished() {
