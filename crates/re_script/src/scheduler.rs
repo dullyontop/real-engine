@@ -29,13 +29,14 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashSet, VecDeque};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use mlua::thread::ThreadStatus;
 use mlua::{
     Function, Lua, MultiValue, RegistryKey, Result, Table, Thread, UserData, UserDataFields,
     UserDataMethods, Value,
 };
+use re_core::time::Instant;
 use re_scene::Entity;
 
 use crate::api::{self, Lib};

@@ -222,3 +222,16 @@ jobs:
             if [ -d "crates/$c" ]; then pkgs="$pkgs -p $c"; fi
           done
           cargo test --locked $pkgs
+
+  # ADR-0049 (WP29 PR "portable"): the runtime crates that need no C++ type-check for the
+  # browser. WP29 PR "toolchain" adds wasi-sdk and extends this to re_app and re_web.
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: >-
+          cargo check --locked --target wasm32-unknown-unknown
+          -p re_core -p re_types -p re_geom -p re_noise -p re_reflect -p re_scene
+          -p re_command -p re_anim -p re_proc -p re_input -p re_audio -p re_render
