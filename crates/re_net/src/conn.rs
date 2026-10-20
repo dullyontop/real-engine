@@ -19,7 +19,7 @@ const WINDOW: u32 = 1024;
 /// message's fragments always fit.
 const MAX_BUFFERED: usize = 8 * MAX_MESSAGE;
 /// What a buffered fragment costs beyond its bytes (its map entry).
-const FRAGMENT_COST: usize = 64;
+pub(crate) const FRAGMENT_COST: usize = 64;
 /// The most unreliable messages queued; the oldest are dropped past it.
 const MAX_UNRELIABLE: usize = 1024;
 /// Packets with chunks received without an ack going back: at this many the
@@ -127,6 +127,8 @@ pub(crate) struct Conn {
     unacked_received: u32,
     /// Since when sent reliable fragments have waited with no ack progress.
     waiting_since: Option<Duration>,
+    /// Reliable fragments sent at least once and not yet acked.
+    in_flight: usize,
     tokens: f64,
     last_refill: Duration,
     pub(crate) rate: f64,
@@ -169,6 +171,7 @@ impl Conn {
             need_ack: false,
             unacked_received: 0,
             waiting_since: None,
+            in_flight: 0,
             tokens: burst(rate),
             last_refill: now,
             rate,
@@ -186,6 +189,12 @@ impl Conn {
     /// Reliable bytes queued and not yet acked.
     pub(crate) fn backlog(&self) -> usize {
         self.backlog
+    }
+
+    /// The backlog with a fixed cost per queued message, so empty and tiny
+    /// messages still count against a limit.
+    pub(crate) fn queued_cost(&self) -> usize {
+        self.backlog + self.out.len() * FRAGMENT_COST
     }
 
     /// The backlog a sender should stay under: the bandwidth-delay product,
@@ -296,9 +305,27 @@ impl Conn {
             .filter(|c| c.0 == Channel::Reliable && self.would_buffer(c.1, c.2))
             .map(|c| c.4.len() + FRAGMENT_COST)
             .sum();
+        let mut delivered = Vec::new();
         if self.buffered + cost > MAX_BUFFERED {
-            self.stats.packets_deferred += 1;
-            return Some(Vec::new());
+            // Fragments that need no room are still taken: the next expected
+            // message may complete and drain the buffer, which a resend of
+            // this same mix could otherwise never do.
+            for &(channel, id, index, count, bytes) in &chunks {
+                if channel == Channel::Reliable && !self.would_buffer(id, index) {
+                    self.take_fragment(id, index, count, bytes, &mut delivered);
+                }
+            }
+            let cost: usize = chunks
+                .iter()
+                .filter(|c| c.0 == Channel::Reliable && self.would_buffer(c.1, c.2))
+                .map(|c| c.4.len() + FRAGMENT_COST)
+                .sum();
+            if self.buffered + cost > MAX_BUFFERED {
+                self.stats.packets_deferred += 1;
+                self.stats.unreliable_dropped +=
+                    chunks.iter().filter(|c| c.0 == Channel::Unreliable).count() as u64;
+                return Some(delivered);
+            }
         }
         if !self.note_received(seq) {
             // A duplicate: its reliable fragments were taken already, and its
@@ -306,13 +333,12 @@ impl Conn {
             if !chunks.is_empty() {
                 self.need_ack = true;
             }
-            return Some(Vec::new());
+            return Some(delivered);
         }
         if !chunks.is_empty() {
             self.need_ack = true;
             self.unacked_received += 1;
         }
-        let mut delivered = Vec::new();
         for (channel, id, index, count, bytes) in chunks {
             match channel {
                 Channel::Unreliable => delivered.push((Channel::Unreliable, bytes.to_vec())),
@@ -393,15 +419,7 @@ impl Conn {
         if now.saturating_sub(since) <= timeout {
             return false;
         }
-        let waiting = self
-            .out
-            .values()
-            .flat_map(|m| m.fragments.iter())
-            .any(|f| !f.acked && f.last_sent.is_some());
-        if !waiting {
-            self.waiting_since = None;
-        }
-        waiting
+        self.in_flight > 0
     }
 
     fn note_acks(&mut self, now: Duration, ack: u16, bits: u32) {
@@ -432,7 +450,10 @@ impl Conn {
                     frag.acked = true;
                     m.left -= 1;
                     self.backlog -= frag.data.len();
-                    self.waiting_since = Some(now);
+                    self.in_flight -= 1;
+                    // Progress; with nothing left in flight there is nothing
+                    // to wait for until the next send.
+                    self.waiting_since = (self.in_flight > 0).then_some(now);
                 }
                 if m.left == 0 {
                     self.out.remove(&id);
@@ -540,7 +561,11 @@ impl Conn {
             }
             for &(id, f) in &fragments {
                 if let Some(m) = self.out.get_mut(&id) {
-                    m.fragments[f as usize].last_sent = Some(now);
+                    let frag = &mut m.fragments[f as usize];
+                    if frag.last_sent.is_none() {
+                        self.in_flight += 1;
+                    }
+                    frag.last_sent = Some(now);
                 }
             }
             if !fragments.is_empty() && self.waiting_since.is_none() {
@@ -770,6 +795,57 @@ mod tests {
         }
         assert!(got == big, "all twelve arrive, in order");
         assert_eq!(a.backlog(), 0);
+    }
+
+    #[test]
+    fn a_lost_short_fragment_still_completes_when_the_buffer_is_full() {
+        // The small messages share their resend packet with a later
+        // message's short last fragment, which never fits while the buffer
+        // is full.
+        let (mut a, mut b) = pair();
+        let mut sent = vec![vec![1; 10], vec![2; 1141]];
+        sent.extend((0..10u8).map(|i| vec![i + 3; MAX_MESSAGE]));
+        for m in &sent {
+            a.queue(Channel::Reliable, m);
+        }
+        let mut now = MS;
+        let first = a.flush(now);
+        let (mut got, acks) = deliver(&mut b, now, &first[1..]);
+        assert!(b.stats.packets_deferred > 0, "the buffer filled");
+        deliver(&mut a, now, &acks);
+        for _ in 0..400 {
+            now += MS * 50;
+            let (g, acks) = deliver(&mut b, now, &a.flush(now));
+            got.extend(g);
+            deliver(&mut a, now, &acks);
+            deliver(&mut a, now, &b.flush(now));
+            if a.backlog() == 0 {
+                break;
+            }
+        }
+        assert!(got == sent, "{} of {} arrived", got.len(), sent.len());
+    }
+
+    #[test]
+    fn a_send_after_a_quiet_spell_is_not_stalled() {
+        let (mut a, mut b) = pair();
+        let timeout = Duration::from_secs(10);
+        a.queue(Channel::Reliable, b"x");
+        deliver(&mut b, MS, &a.flush(MS));
+        deliver(&mut a, MS * 50, &b.flush(MS * 50));
+        let mut now = MS * 50;
+        while now < MS * 10_040 {
+            now += MS * 16;
+            a.flush(now);
+            assert!(!a.stalled(now, timeout));
+        }
+        a.queue(Channel::Reliable, b"y");
+        a.flush(now);
+        assert!(
+            !a.stalled(now + MS * 16, timeout),
+            "the ack is one round trip away"
+        );
+        assert!(a.stalled(now + timeout + MS, timeout), "but never coming");
     }
 
     #[test]

@@ -309,8 +309,11 @@ impl<T: Transport> Endpoint<T> {
             .ok_or_else(|| {
                 Diagnostic::error(codes::SEND, format!("connection {} is not open", peer.0))
             })?;
-        let backlog = conn.conn.backlog();
-        if channel == Channel::Reliable && backlog + bytes.len() > max_backlog {
+        // Each message counts a fixed cost too, so many tiny ones stay bounded.
+        let backlog = conn.conn.queued_cost();
+        if channel == Channel::Reliable
+            && backlog + bytes.len() + crate::conn::FRAGMENT_COST > max_backlog
+        {
             return Err(Diagnostic::error(
                 codes::SEND,
                 format!(
