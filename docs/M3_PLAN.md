@@ -427,7 +427,7 @@ real build --project examples/valley --out out/valley-build
 - Root `Cargo.toml`: `uuid`'s `js` feature (maintainer).
 - A `build-web` CI job: `cargo check --target wasm32-unknown-unknown` of the runtime crates, required.
 
-**Build, PR "toolchain":** (its `third_party/` fallback and upstream submissions wait for the owner's decision, ADR-0049 §2)
+**Build, PR "toolchain":** (the owner approved the `third_party/` copies and upstream submissions on 2026-10-20, ADR-0049 §2)
 - mlua and oxijolt-sys on wasm32 (ADR-0049 §2): bump to upstream releases if they carry the changes, otherwise the in-workspace copies in `third_party/` with `[patch.crates-io]` and their DEPENDENCIES.md rows (owner approval; maintainer).
 - `tools/ci/wasi-sdk.sh` (wasi-sdk 34, sha256-checked), the `[target.wasm32-unknown-unknown]` settings in `.cargo/config.toml`, and Jolt's wasm CMake build through oxijolt-sys.
 - `build-web` becomes a full link: Luau and Jolt smoke tests run in wasm under Node (the spike's script, call and 1,000-box pile checks), and the deterministic pile hash equals native's.
