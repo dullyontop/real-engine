@@ -7,16 +7,24 @@
 //! the app has no GPU side (or has lent it to a `play.run` copy) still draws
 //! once one is there. The UI is one egui pass with the client's `ScreenGui`s
 //! and the HUD lines, kept until it is drawn.
+//!
+//! `SurfaceGui`s and `ViewportFrame`s render to textures (ADR-0048 §2): each
+//! has an offscreen capture, a surface's painted with its UI shapes when
+//! [`SurfaceRedraws`] plans it and shown on its part as a world quad, a
+//! viewport's drawn with its parts when they or its size changed and shown in
+//! the UI as an egui texture.
 
 use std::collections::HashMap;
 
-use re_compat::render::{MaterialKey, MeshKey, RenderFrame};
+use re_compat::gui::{MAX_VIEWPORT, SurfaceDraw, SurfaceRedraws, ViewportDraw};
+use re_compat::render::{FrameItem, MaterialKey, MeshKey, RenderFrame, ViewportScene};
 use re_core::Diagnostic;
-use re_render::{Renderer, SceneExtras, egui};
+use re_render::{Capture, Renderer, SceneExtras, UiFrame, egui, wgpu};
+use re_scene::Entity;
 use re_types::mesh::MeshData;
 use re_types::render::{
     DrawFlags, DrawItem, MaterialDesc, MaterialHandle, MeshHandle, PostSettings, RenderSnapshot,
-    SunShadows, TextureData, TextureHandle, TextureRef,
+    SunShadows, TextureData, TextureHandle, TextureRef, WorldQuad,
 };
 
 /// A resource the view keeps: its data, and its handle once uploaded.
@@ -50,6 +58,29 @@ pub struct CompatView {
     /// place's own exposure and grading.
     post: PostSettings,
     shadows: SunShadows,
+    /// The surfaces and viewports of the last UI pass.
+    surfaces: Vec<SurfaceDraw>,
+    viewports: Vec<ViewportDraw>,
+    /// The surfaces' textures, and what each holds.
+    surface_targets: HashMap<Entity, SurfaceTarget>,
+    redraws: SurfaceRedraws,
+    /// `[compat.gui] surface_redraws_per_frame`.
+    pub(crate) surface_budget: usize,
+    /// The viewports' textures.
+    viewport_targets: HashMap<Entity, ViewportTarget>,
+}
+
+/// A surface's texture.
+struct SurfaceTarget {
+    capture: Capture,
+    texture: TextureHandle,
+}
+
+/// A viewport's texture, and the scene it last drew.
+struct ViewportTarget {
+    capture: Capture,
+    id: egui::TextureId,
+    drawn: Option<ViewportScene>,
 }
 
 impl CompatView {
@@ -85,6 +116,63 @@ impl CompatView {
             }
         }
         self.frame = Some(frame);
+    }
+
+    /// Keeps the surfaces and viewports of a UI pass.
+    pub fn set_textured(&mut self, surfaces: Vec<SurfaceDraw>, viewports: Vec<ViewportDraw>) {
+        self.surfaces = surfaces;
+        self.viewports = viewports;
+    }
+
+    /// The texture of each viewport, for the UI pass to show
+    /// ([`GuiFrame::images`](re_compat::gui::GuiFrame)).
+    pub fn images(&self) -> HashMap<Entity, egui::TextureId> {
+        self.viewport_targets
+            .iter()
+            .map(|(e, t)| (*e, t.id))
+            .collect()
+    }
+
+    /// Gives each `ViewportFrame` of the last frame a texture (a pixel
+    /// until its size is known), so the next UI pass can show it, and frees
+    /// those of viewports gone from it.
+    ///
+    /// # Errors
+    ///
+    /// A capture cannot be made.
+    pub fn prepare_images(
+        &mut self,
+        device: &wgpu::Device,
+        r: &mut Renderer,
+    ) -> Result<(), Diagnostic> {
+        let Some(f) = &self.frame else {
+            return Ok(());
+        };
+        let gone: Vec<Entity> = self
+            .viewport_targets
+            .keys()
+            .filter(|e| !f.viewports.iter().any(|v| v.entity == **e))
+            .copied()
+            .collect();
+        for e in gone {
+            if let Some(t) = self.viewport_targets.remove(&e) {
+                r.free_ui_texture(t.id);
+            }
+        }
+        for v in &f.viewports {
+            if let std::collections::hash_map::Entry::Vacant(slot) =
+                self.viewport_targets.entry(v.entity)
+            {
+                let capture = viewport_capture(device, [1, 1])?;
+                let id = r.register_ui_texture(capture.view());
+                slot.insert(ViewportTarget {
+                    capture,
+                    id,
+                    drawn: None,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Keeps a UI pass to draw; the texture changes of a pass that was not
@@ -187,23 +275,7 @@ impl CompatView {
                 m.handle = Some(r.create_material(&desc)?);
             }
         }
-        let items = f
-            .items
-            .iter()
-            .filter_map(|i| {
-                Some(DrawItem {
-                    entity: i.entity,
-                    mesh: self.meshes.get(&i.mesh)?.handle?,
-                    material: self.materials.get(&i.material)?.handle?,
-                    world: i.world,
-                    flags: if i.cast_shadow {
-                        DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS
-                    } else {
-                        DrawFlags::RECEIVE_SHADOWS
-                    },
-                })
-            })
-            .collect();
+        let items = self.draw_items(&f.items);
         let mut snapshot = RenderSnapshot {
             camera: f.camera,
             lights: f.lights.clone(),
@@ -221,6 +293,173 @@ impl CompatView {
             tint: g.tint,
         });
         Ok(Some((snapshot, extras(f))))
+    }
+
+    /// The renderer's items of `items`, skipping any whose mesh or material
+    /// is not uploaded.
+    fn draw_items(&self, items: &[FrameItem]) -> Vec<DrawItem> {
+        items
+            .iter()
+            .filter_map(|i| {
+                Some(DrawItem {
+                    entity: i.entity,
+                    mesh: self.meshes.get(&i.mesh)?.handle?,
+                    material: self.materials.get(&i.material)?.handle?,
+                    world: i.world,
+                    flags: if i.cast_shadow {
+                        DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS
+                    } else {
+                        DrawFlags::RECEIVE_SHADOWS
+                    },
+                })
+            })
+            .collect()
+    }
+
+    /// The world quads of the surfaces that have a texture.
+    pub fn quads(&self) -> Vec<WorldQuad> {
+        self.surfaces
+            .iter()
+            .filter_map(|s| {
+                let t = self.surface_targets.get(&s.entity)?;
+                Some(WorldQuad {
+                    entity: re_scene::entity_id(s.entity),
+                    world: s.world,
+                    size: s.size,
+                    texture: t.texture,
+                    depth: s.depth,
+                    light_influence: s.light_influence,
+                    brightness: s.brightness,
+                })
+            })
+            .collect()
+    }
+
+    /// Draws the viewports whose scene or size changed, then paints the
+    /// surfaces [`SurfaceRedraws`] plans (with `ui`'s texture changes, the
+    /// font atlas, applied first), before the frame that shows them.
+    /// `pixels_per_point` is the screen UI's. Call it after
+    /// [`prepare`](Self::prepare), which uploads the viewports' meshes.
+    ///
+    /// # Errors
+    ///
+    /// The renderer's errors.
+    pub fn draw_textured(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        r: &mut Renderer,
+        ctx: &egui::Context,
+        ui: Option<&mut egui::FullOutput>,
+        pixels_per_point: f32,
+    ) -> Result<(), Diagnostic> {
+        let Some(f) = &self.frame else {
+            return Ok(());
+        };
+        // Viewports first: a surface may show one.
+        let mut repaint = Vec::new();
+        for v in &self.viewports {
+            let Some(scene) = f.viewports.iter().find(|s| s.entity == v.entity) else {
+                continue;
+            };
+            let Some(t) = self.viewport_targets.get(&v.entity) else {
+                continue;
+            };
+            let ppp = match v.surface {
+                Some(s) => self
+                    .surfaces
+                    .iter()
+                    .find(|d| d.entity == s)
+                    .map_or(1.0, |d| d.pixels_per_point),
+                None => pixels_per_point,
+            };
+            let px = (v.size * ppp)
+                .ceil()
+                .clamp(glam::Vec2::ONE, glam::Vec2::splat(MAX_VIEWPORT));
+            let px = [px.x as u32, px.y as u32];
+            let resized = [t.capture.width(), t.capture.height()] != px;
+            if !resized && t.drawn.as_ref() == Some(scene) {
+                continue;
+            }
+            let snapshot = RenderSnapshot {
+                camera: scene.camera.unwrap_or_default(),
+                lights: vec![scene.light],
+                items: if scene.camera.is_some() {
+                    self.draw_items(&scene.items)
+                } else {
+                    Vec::new()
+                },
+                clear: [0.0; 4],
+                ..RenderSnapshot::default()
+            };
+            let extras = SceneExtras {
+                ambient: Some(re_render::Ambient {
+                    sky: scene.ambient,
+                    ground: scene.ambient,
+                }),
+                ..SceneExtras::default()
+            };
+            let t = self
+                .viewport_targets
+                .get_mut(&v.entity)
+                .expect("looked up above");
+            if resized {
+                t.capture = viewport_capture(device, px)?;
+                r.update_ui_texture(t.id, t.capture.view());
+            }
+            r.render_with(device, queue, t.capture.view(), &snapshot, &extras)?;
+            t.drawn = Some(scene.clone());
+            if let Some(s) = v.surface {
+                repaint.push(s);
+            }
+        }
+        for s in repaint {
+            self.redraws.invalidate(s);
+        }
+
+        let plan = self.redraws.plan(&self.surfaces, self.surface_budget);
+        for e in &plan.gone {
+            if let Some(t) = self.surface_targets.remove(e) {
+                r.release_texture(t.texture)?;
+            }
+        }
+        let mut ui = ui;
+        let mut delta = ui.as_mut().map(|o| std::mem::take(&mut o.textures_delta));
+        for &i in &plan.redraw {
+            let s = &self.surfaces[i];
+            let fits = self
+                .surface_targets
+                .get(&s.entity)
+                .is_some_and(|t| [t.capture.width(), t.capture.height()] == s.texture_px);
+            if !fits {
+                if let Some(old) = self.surface_targets.remove(&s.entity) {
+                    r.release_texture(old.texture)?;
+                }
+                let capture = Capture::new(device, s.texture_px[0], s.texture_px[1])?;
+                let texture = r.capture_texture(&capture);
+                self.surface_targets
+                    .insert(s.entity, SurfaceTarget { capture, texture });
+            }
+            let t = &self.surface_targets[&s.entity];
+            // Cleared to transparent, then the UI over it.
+            let clear = RenderSnapshot {
+                clear: [0.0; 4],
+                ..RenderSnapshot::default()
+            };
+            r.render(device, queue, t.capture.view(), &clear)?;
+            let frame = UiFrame {
+                primitives: ctx.tessellate(s.shapes.clone(), s.pixels_per_point),
+                textures_delta: delta.take().unwrap_or_default(),
+                size_px: s.texture_px,
+                pixels_per_point: s.pixels_per_point,
+            };
+            r.paint_ui(device, queue, t.capture.view(), &frame)?;
+        }
+        // Texture changes no surface took go back to the UI pass.
+        if let (Some(d), Some(o)) = (delta, ui) {
+            o.textures_delta = d;
+        }
+        Ok(())
     }
 
     /// Frees everything on the GPU and forgets it (a restart, whose new VM
@@ -241,6 +480,15 @@ impl CompatView {
                 let _ = r.release_texture(h);
             }
         }
+        for (_, t) in self.surface_targets.drain() {
+            let _ = r.release_texture(t.texture);
+        }
+        for (_, t) in self.viewport_targets.drain() {
+            r.free_ui_texture(t.id);
+        }
+        self.redraws.clear();
+        self.surfaces.clear();
+        self.viewports.clear();
         self.frame = None;
         // The texture changes are kept: the egui context outlives the view.
         let kept = self.take_textures();
@@ -255,6 +503,12 @@ impl Drop for CompatView {
             o.textures_delta.clear();
         }
     }
+}
+
+/// A viewport's texture: not sRGB, so egui samples the gamma-encoded
+/// colour it expects.
+fn viewport_capture(device: &wgpu::Device, px: [u32; 2]) -> Result<Capture, Diagnostic> {
+    Capture::with_format(device, px[0], px[1], wgpu::TextureFormat::Rgba8Unorm)
 }
 
 /// The renderer's extras of a frame.

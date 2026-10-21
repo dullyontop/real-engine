@@ -2,9 +2,9 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1785,
-    "partial": 232,
-    "stub-error": 43,
+    "implemented": 1803,
+    "partial": 237,
+    "stub-error": 50,
     "missing": 3
   },
   "classes": [
@@ -5028,8 +5028,81 @@
       "name": "SurfaceGui",
       "superclass": "LayerCollector",
       "creatable": true,
-      "status": "stub-error",
-      "members": []
+      "status": "partial",
+      "members": [
+        {
+          "name": "Active",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Adornee",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AlwaysOnTop",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Brightness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanvasSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClipsDescendants",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Face",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightInfluence",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PixelsPerStud",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Shape",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the canvas is always flat."
+        },
+        {
+          "name": "SizingMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ToolPunchThroughDistance",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: there are no tools."
+        },
+        {
+          "name": "ZOffset",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "SurfaceLight",
@@ -6333,8 +6406,39 @@
       "name": "ViewportFrame",
       "superclass": "GuiObject",
       "creatable": true,
-      "status": "stub-error",
-      "members": []
+      "status": "partial",
+      "members": [
+        {
+          "name": "Ambient",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CurrentCamera",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ImageColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ImageTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightDirection",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "WedgePart",
@@ -6404,6 +6508,59 @@
           "name": "Terrain",
           "kind": "property",
           "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "WorldModel",
+      "superclass": "WorldRoot",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Blockcast",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "BulkMoveTo",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "FindPartOnRay",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetPartBoundsInBox",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetPartBoundsInRadius",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetPartsInPart",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "Raycast",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "Shapecast",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "Spherecast",
+          "kind": "method",
+          "status": "stub-error"
         }
       ]
     },

@@ -161,6 +161,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE9403.md"),
     },
     DiagInfo {
+        code: codes::SURFACE,
+        title: "Surface or viewport cannot be drawn as asked",
+        page: include_str!("../explain/RE9410.md"),
+    },
+    DiagInfo {
         code: codes::RELOAD_COMPILE,
         title: "Changed script did not compile",
         page: include_str!("../explain/RE9420.md"),

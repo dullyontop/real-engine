@@ -2,12 +2,15 @@
 //!
 //! Backgrounds are rectangles (rounded by `UICorner`, outlined by the border
 //! or a `UIStroke`), or a mesh when a `UIGradient` colours them. Text is the
-//! laid-out galley, with its stroke drawn as offset copies under it. The
+//! laid-out galley, with its stroke drawn as offset copies under it. A
+//! `ViewportFrame` shows the texture the host drew its parts into. The
 //! shapes rotate with `Rotation`; a rotated element draws unclipped.
 
 use egui::epaint::{
     ClippedShape, CornerRadius, Mesh, RectShape, Shape, Stroke, StrokeKind, TextShape, Vertex,
 };
+use std::collections::HashMap;
+
 use egui::{Pos2, Rect};
 use glam::{Affine2, Vec2};
 
@@ -29,6 +32,8 @@ pub(crate) struct Painter<'a> {
     pub s: &'a Scope<'a>,
     pub screen: Rect,
     pub shapes: Vec<ClippedShape>,
+    /// The texture each `ViewportFrame` was drawn into.
+    pub images: &'a HashMap<Entity, egui::TextureId>,
 }
 
 fn pos(p: Vec2) -> Pos2 {
@@ -226,6 +231,28 @@ impl<'a> Painter<'a> {
                         .with_angle(angle),
                     ),
                 );
+            }
+        }
+        if it.kind == Kind::Viewport
+            && let Some(&texture) = self.images.get(&it.e)
+        {
+            let c = p
+                .color("ImageColor3", Rgba::WHITE)
+                .with_transparency(p.f32("ImageTransparency", 0.0));
+            if c.0[3] > 0.0 {
+                // The picture turns with the frame.
+                let mut mesh = Mesh::with_texture(texture);
+                let corners = [Vec2::ZERO, Vec2::X, Vec2::ONE, Vec2::Y];
+                for uv in corners {
+                    let at = it.rot.transform_point2(it.min + it.size * uv);
+                    mesh.vertices.push(Vertex {
+                        pos: pos(at),
+                        uv: Pos2::new(uv.x, uv.y),
+                        color: c.egui(),
+                    });
+                }
+                mesh.indices.extend([0, 1, 2, 0, 2, 3]);
+                self.push(it.clip, Shape::Mesh(mesh.into()));
             }
         }
         if let Some((style, laid, inner)) = &it.text {

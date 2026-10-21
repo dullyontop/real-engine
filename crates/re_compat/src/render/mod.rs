@@ -11,6 +11,8 @@
 //! table from [`MeshKey`], [`MaterialKey`] and texture names to its
 //! handles.
 //!
+//! Each `ViewportFrame`'s parts come as a [`ViewportScene`] of their own.
+//!
 //! Anchored parts that `re_compat::physics` groups into a static cell
 //! (ADR-0031) are drawn as one mesh per cell and material, with their colour
 //! in the vertices; transparent, `Neon`, `ForceField` and highlighted parts
@@ -22,6 +24,7 @@ mod lighting;
 mod looks;
 mod mesh;
 mod parts;
+mod viewport;
 
 use std::collections::HashSet;
 
@@ -36,6 +39,7 @@ use re_types::render::{Camera, Light, MaterialDesc, TextureData};
 pub use lighting::sun_direction;
 pub use looks::{MaterialKey, TEXTURE_SIZE};
 pub use mesh::UV_STUDS;
+pub use viewport::ViewportScene;
 
 use crate::class::Accessor;
 use crate::gui::props::{FxMap, Scope};
@@ -321,6 +325,10 @@ pub struct RenderFrame {
     pub ribbons: Vec<Ribbon>,
     /// Highlights.
     pub highlights: Vec<Highlight>,
+    /// What each `ViewportFrame` shows, for the host to draw into the
+    /// texture the UI shows it with
+    /// ([`GuiOutput::viewports`](crate::gui::GuiOutput)).
+    pub viewports: Vec<ViewportScene>,
     /// Effect pieces drawn and dropped.
     pub effects: EffectStats,
     /// Meshes to upload before drawing.
@@ -613,6 +621,7 @@ fn build_in(
         HashSet::new()
     };
     let light_list = instances_of(w, "Light");
+    let viewport_list = instances_of(w, "ViewportFrame");
     let effect_lists = effects::Lists::find(w);
 
     let s = Scope::new(w, classes);
@@ -643,6 +652,7 @@ fn build_in(
         sprites: Vec::new(),
         ribbons: Vec::new(),
         highlights: Vec::new(),
+        viewports: Vec::new(),
         effects: EffectStats::default(),
         new_meshes: Vec::new(),
         released_meshes: Vec::new(),
@@ -688,6 +698,7 @@ fn build_in(
         input.dt,
         &mut out,
     );
+    viewport::draw(&s, hub, &viewport_list, &mut out);
     hub.collect(&mut out);
     for k in &out.released_meshes {
         hub.mesh_sigs.remove(k);

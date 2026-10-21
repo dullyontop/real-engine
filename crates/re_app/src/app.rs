@@ -1596,28 +1596,43 @@ impl App {
         let time = self.clock.tick() as f64 * f64::from(self.clock.dt_secs());
         let raw = hud::raw_input(size_px, pixels_per_point, time);
         let hud_lines = self.hud.clone();
-        let last_camera = self.compat_view.frame().map(|f| f.gui_camera);
-        let mut built = None;
+        if let Some(cfg) = &self.compat_config {
+            self.compat_view.surface_budget = cfg.gui.surface_redraws_per_frame as usize;
+        }
+        // Building advances effects and the camera's viewport, so it happens
+        // once a frame unless the size changes.
+        if build {
+            let mut built = None;
+            self.compat_call(ContextKind::Client, |vm, h| {
+                vm.run(h, |lua| {
+                    built = Some(re_compat::render::build(lua, &input)?);
+                    Ok(())
+                })
+            });
+            if let Some(mut frame) = built {
+                self.diagnostics.append(&mut frame.diagnostics);
+                self.compat_view.take(frame);
+            }
+        }
+        let camera = self.compat_view.frame().map(|f| f.gui_camera);
+        // The viewports need their textures before the UI pass shows them.
+        if let Some(gfx) = self.graphics.as_mut()
+            && let Err(d) = gfx.compat_images(&mut self.compat_view)
+        {
+            self.diagnostics.push(d);
+        }
+        let gui = re_compat::gui::GuiFrame {
+            viewport: input.viewport / pixels_per_point,
+            top_inset: 0.0,
+            roots,
+            camera,
+            input: re_compat::gui::GuiInput::default(),
+            images: self.compat_view.images(),
+        };
         let mut ui = Vec::new();
+        let mut textured = None;
         self.compat_call(ContextKind::Client, |vm, h| {
             vm.run(h, |lua| {
-                // Building advances effects and the camera's viewport, so it
-                // happens once a frame unless the size changes.
-                let camera = if build {
-                    let frame = re_compat::render::build(lua, &input)?;
-                    let camera = frame.gui_camera;
-                    built = Some(frame);
-                    Some(camera)
-                } else {
-                    last_camera
-                };
-                let gui = re_compat::gui::GuiFrame {
-                    viewport: input.viewport / pixels_per_point,
-                    top_inset: 0.0,
-                    roots,
-                    camera,
-                    input: re_compat::gui::GuiInput::default(),
-                };
                 for _ in 0..passes {
                     let mut failed = None;
                     let out = ctx.run_ui(raw.clone(), |ui| {
@@ -1625,6 +1640,7 @@ impl App {
                             Ok(o) => {
                                 re_compat::gui::paint(ui.ctx(), o.shapes);
                                 hud::draw(ui.ctx(), &hud_lines);
+                                textured = Some((o.surfaces, o.viewports, o.diagnostics));
                             }
                             Err(e) => failed = Some(e),
                         }
@@ -1637,9 +1653,9 @@ impl App {
                 Ok(())
             })
         });
-        if let Some(mut frame) = built {
-            self.diagnostics.append(&mut frame.diagnostics);
-            self.compat_view.take(frame);
+        if let Some((surfaces, viewports, mut diagnostics)) = textured {
+            self.diagnostics.append(&mut diagnostics);
+            self.compat_view.set_textured(surfaces, viewports);
         }
         for out in ui {
             self.compat_view.set_ui(out);
