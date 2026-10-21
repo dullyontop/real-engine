@@ -243,7 +243,7 @@ fn run(ctx: &GenContext) -> Result<SceneFragment, Diagnostic> {
         .ok_or_else(|| no_graph(source, "the world has no GraphStore resource"))?;
     let doc = store
         .current(ctx.world(), source)
-        .ok_or_else(|| no_graph(source, "the GraphStore has no entry for it"))?;
+        .ok_or_else(|| no_graph(source, "the GraphStore has no entry for it"))??;
     let registry = store.evaluator().registry();
     let text: String = ctx.param("params")?;
     let (doc, mut warnings) = match parse_overrides(&text) {
@@ -340,8 +340,12 @@ fn fingerprint(ctx: &GenContext) -> u64 {
     let Some(store) = ctx.resource::<GraphStore>() else {
         return 0;
     };
-    let Some(doc) = store.current(ctx.world(), ctx.source_id()) else {
-        return 0;
+    let doc = match store.current(ctx.world(), ctx.source_id()) {
+        None => return 0,
+        Some(Ok(doc)) => doc,
+        // An invalid open graph: changing it (or fixing it) runs the
+        // generator, which reports it.
+        Some(Err(d)) => return crate::canon::hash64(&d.message),
     };
     let mut h = blake3::Hasher::new();
     h.update(doc_hash(&doc).as_bytes());

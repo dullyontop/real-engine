@@ -133,7 +133,7 @@ fn the_generator_reads_the_open_document() {
     assert!(after < before, "{after} < {before}");
     {
         let store = st.world.ecs.resource::<GraphStore>();
-        let current = store.current(&st.world, "island").unwrap();
+        let current = store.current(&st.world, "island").unwrap().unwrap();
         assert!(matches!(current, CurrentGraph::Open(_)));
         assert_eq!(current.node("grid").unwrap().params["spacing"], 24.0);
         assert_eq!(current.layout["h"], [1.0, 2.0]);
@@ -171,7 +171,7 @@ fn the_generator_reads_the_open_document() {
     let store = st.world.ecs.resource::<GraphStore>();
     assert!(matches!(
         store.current(&st.world, "island"),
-        Some(CurrentGraph::Stored(_))
+        Some(Ok(CurrentGraph::Stored(_)))
     ));
 }
 
@@ -188,4 +188,63 @@ fn graph_documents_are_validated_by_suffix() {
     w.open_doc("notes/a.json", json!({"anything": true}))
         .unwrap();
     assert_eq!(w.validate_doc("notes/a.json"), Some(Ok(())));
+}
+
+#[test]
+fn a_graph_file_of_any_name_is_validated_and_an_invalid_one_is_reported() {
+    const OTHER: &str = "graphs/island.json";
+    let mut st = world(island(7), json!([]));
+    st.world
+        .set("island", "GraphSource", "graph", Value::Str(OTHER.into()))
+        .unwrap();
+    st.world.regenerate_changed();
+
+    // Opened before any validator knows it is a graph: an invalid open
+    // document is an error, not a silent fall back to the stored graph.
+    let mut bad = serde_json::to_value(island(7)).unwrap();
+    bad["edges"][0]["from"][0] = json!("nobody");
+    st.world.open_doc(OTHER, bad).unwrap();
+    {
+        let store = st.world.ecs.resource::<GraphStore>();
+        let err = store.current(&st.world, "island").unwrap().unwrap_err();
+        assert_eq!(err.code.to_string(), "RE4000");
+        assert!(err.message.contains("graphs/island.json"), "{err:?}");
+    }
+    let report = st.world.regenerate_changed();
+    assert_eq!(report.sources, ["island"]);
+    assert!(!report.diagnostics.is_empty());
+
+    // Registering validators covers every source's graph file, whatever
+    // its name: a breaking edit is refused.
+    register_doc_validators(&mut st.world);
+    st.world
+        .open_doc(OTHER, serde_json::to_value(island(7)).unwrap())
+        .unwrap();
+    let mut h = History::default();
+    let breaking = Transaction::new(
+        "edit graph",
+        Origin::User,
+        vec![Op::SetDoc {
+            doc: OTHER.into(),
+            pointer: "/nodes/0".into(),
+            value: None,
+        }],
+    );
+    let err = h.execute(&mut st.world, breaking).unwrap_err();
+    assert_eq!(err.error.code().to_string(), "RE2008");
+}
+
+#[test]
+fn layout_positions_must_be_finite() {
+    let mut w = World::new();
+    register_doc_validators(&mut w);
+    w.open_doc(PATH, serde_json::to_value(island(1)).unwrap())
+        .unwrap();
+    let mut h = History::default();
+    let err = h
+        .execute(&mut w, set_doc("/layout", Some(json!({"h": [1e300, 0.0]}))))
+        .unwrap_err();
+    assert_eq!(err.error.code().to_string(), "RE2008");
+    assert!(err.to_string().contains("not a finite pair"), "{err}");
+    assert!(re_proc::validate_graph_json(&w.doc(PATH).unwrap().value).is_ok());
 }

@@ -455,6 +455,44 @@ fn saving_writes_open_documents_and_status_reports_them() {
     );
     app.save_scene().unwrap();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+
+    // The watcher seeing our own save changes nothing (undo still works).
+    let changed =
+        |app: &mut App| app.apply_file_changes(&[re_assets::AssetChange::Modified(path.into())]);
+    let epoch = app.world().doc_epoch(path).unwrap();
+    assert!(changed(&mut app).is_empty());
+    assert_eq!(app.world().doc_epoch(path), Some(epoch));
+    assert!(app.history().can_redo());
+
+    // A clean document whose file changed is reloaded: new epoch and
+    // revision, and the old history no longer applies.
+    let revision = app.world().doc(path).unwrap().revision;
+    let other = re_types::graph::GraphDoc::new("other", 4).to_json();
+    std::fs::write(&file, &other).unwrap();
+    assert!(changed(&mut app).is_empty());
+    let doc = app.world().doc(path).unwrap();
+    assert_eq!(doc.value["name"], "other");
+    assert!(doc.revision > revision && doc.epoch > epoch && !doc.dirty);
+    let redo = app.dispatch("redo", json!({}), false, &AllowAll, Origin::User);
+    assert!(!redo.ok);
+    assert_eq!(redo.diagnostics[0].code.to_string(), "RE2007");
+    assert_eq!(app.world().doc(path).unwrap().value["name"], "other");
+
+    // A document with unsaved edits is kept, with a warning.
+    let out = edit(
+        &mut app,
+        json!([{ "op": "set_doc", "doc": path, "pointer": "/seed", "value": 9 }]),
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    std::fs::write(&file, &original).unwrap();
+    let problems = changed(&mut app);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].code.to_string(), "RE0528");
+    assert!(
+        problems[0].message.contains("unsaved edits"),
+        "{problems:?}"
+    );
+    assert_eq!(app.world().doc(path).unwrap().value["seed"], 9);
 }
 
 #[test]

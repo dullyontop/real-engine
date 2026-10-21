@@ -28,7 +28,8 @@ pub const INVALID_ARGUMENTS: Code = Code::new("RE2005");
 pub const ENGINE_UNAVAILABLE: Code = Code::new("RE2006");
 
 /// An undo or redo, or the rollback of a rejected transaction or a dry run,
-/// could not be applied (the world changed underneath the history).
+/// could not be applied (the world changed underneath the history, or an
+/// open document it edited was reopened).
 pub const UNDO_FAILED: Code = Code::new("RE2007");
 
 /// A transaction left an open document in a state its kind's validator

@@ -151,14 +151,14 @@ fn graph_source(world: &World, id: &str) -> Result<Source, Diagnostic> {
     })?;
     let doc = store
         .current(world, id)
-        .map(|d| GraphDoc::clone(&d))
         .ok_or_else(|| {
             Diagnostic::error(
                 codes::NO_GRAPH,
                 format!("no graph is stored for procedural source `{id}`"),
             )
             .at(Location::entity(id.to_string()))
-        })?;
+        })?
+        .map(|d| GraphDoc::clone(&d))?;
     let overrides = parse_overrides(&text);
     Ok(Source {
         entity,

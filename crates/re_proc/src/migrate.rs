@@ -322,19 +322,31 @@ pub fn migration_report(world: &World, root: Option<&Path>) -> MigrationReport {
             continue;
         }
         entry.nodes = nodes;
-        if let (Some(file), Some(path)) = (&on_disk, &entry.file)
-            && doc_hash(file) != doc_hash(store.graph(id).expect("listed above"))
-        {
-            entry.diagnostics.push(
-                Diagnostic::warning(
-                    codes::OPEN_GRAPH_DIFFERS,
-                    format!(
-                        "{id}: the open graph differs from {path}; the migration reads and rewrites the file, not the open graph"
-                    ),
-                )
-                .at(Location::file(path.clone()))
-                .with_hint("save or discard the open edits, then migrate again"),
-            );
+        if let (Some(file), Some(path)) = (&on_disk, &entry.file) {
+            // The graph generation uses: the open document if there is one
+            // (ADR-0044), else the stored graph.
+            let current = match store.current(world, id) {
+                Some(Ok(c)) => doc_hash(&c),
+                _ => doc_hash(store.graph(id).expect("listed above")),
+            };
+            let unsaved = world.doc(path).is_some_and(|d| d.dirty);
+            if unsaved || doc_hash(file) != current {
+                let message = format!(
+                    "{id}: the open graph differs from {path}; the migration reads and rewrites the file, not the open graph"
+                );
+                // Rewriting the file under unsaved edits would lose one or
+                // the other on the next save: refused.
+                let d = if unsaved {
+                    report.ok = false;
+                    Diagnostic::error(codes::OPEN_GRAPH_DIFFERS, message)
+                } else {
+                    Diagnostic::warning(codes::OPEN_GRAPH_DIFFERS, message)
+                };
+                entry.diagnostics.push(
+                    d.at(Location::file(path.clone()))
+                        .with_hint("save or discard the open edits, then migrate again"),
+                );
+            }
         }
         let overrides = parse_overrides(&text_field(world, id, "params")).unwrap_or_default();
         entry.overrides_orphaned = applying(doc, registry, &overrides)

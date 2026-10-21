@@ -161,6 +161,9 @@ fn load_where(
             Err(d) => diags.push(d),
         }
     }
+    // Every source's graph file is checked as a graph when open, whatever
+    // its name (ADR-0044).
+    re_proc::register_doc_validators(world);
     diags
 }
 

@@ -302,3 +302,75 @@ fn dry_runs_leave_the_document_untouched() {
         t
     });
 }
+
+#[test]
+fn undo_after_a_reopen_is_refused_and_drops_that_documents_history() {
+    let mut w = world();
+    w.open_doc("other.json", json!({"a": 1})).unwrap();
+    let mut h = History::default();
+    let other = Op::SetDoc {
+        doc: "other.json".into(),
+        pointer: "/a".into(),
+        value: Some(json!(2)),
+    };
+    h.execute(&mut w, tx(vec![other])).unwrap();
+    // Rename, remove node 1 (no edge names it) and undo that, then reopen
+    // the file with different nodes.
+    h.execute(&mut w, tx(vec![set("/name", json!("b"))]))
+        .unwrap();
+    h.execute(&mut w, tx(vec![remove("/nodes/1")])).unwrap();
+    h.undo(&mut w).unwrap();
+    assert!(h.can_redo());
+    let reopened =
+        json!({"name": "c", "nodes": [{"id": "h"}, {"id": "q"}, {"id": "r"}], "edges": []});
+    w.open_doc(DOC, reopened.clone()).unwrap();
+    let before = w.doc(DOC).unwrap().clone();
+
+    // Redo would remove `/nodes/1` of a different array: refused.
+    let err = h.redo(&mut w).unwrap_err();
+    assert!(
+        matches!(&err.error, OpError::StaleDocument { doc } if doc == DOC),
+        "{err}"
+    );
+    assert_eq!(err.error.code().to_string(), "RE2007");
+    assert_eq!(
+        err.to_string(),
+        "command 0: graphs/a.graph.json was reopened or closed since this edit, so its undo history was dropped"
+    );
+    assert_eq!(w.doc(DOC).unwrap(), &before);
+    assert!(!h.can_redo());
+
+    // The rename's entry was dropped with it; the other document's history
+    // is kept.
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(w.doc("other.json").unwrap().value, json!({"a": 1}));
+    assert_eq!(w.doc(DOC).unwrap().value, reopened);
+    assert!(!h.undo(&mut w).unwrap());
+
+    // Closing a document refuses its history the same way.
+    h.execute(&mut w, tx(vec![set("/name", json!("d"))]))
+        .unwrap();
+    w.close_doc(DOC);
+    assert!(matches!(
+        h.undo(&mut w).unwrap_err().error,
+        OpError::StaleDocument { .. }
+    ));
+    assert!(!h.can_undo());
+}
+
+#[test]
+fn undo_back_to_the_saved_content_clears_the_dirty_flag() {
+    let mut w = world();
+    let mut h = History::default();
+    h.execute(&mut w, tx(vec![remove("/layout/h")])).unwrap();
+    assert_eq!(w.unsaved_docs(), [DOC]);
+    h.undo(&mut w).unwrap();
+    assert!(w.unsaved_docs().is_empty());
+    h.redo(&mut w).unwrap();
+    assert_eq!(w.unsaved_docs(), [DOC]);
+    w.mark_doc_saved(DOC);
+    h.undo(&mut w).unwrap();
+    assert_eq!(w.unsaved_docs(), [DOC]);
+    h.redo(&mut w).unwrap();
+    assert!(w.unsaved_docs().is_empty());
+}

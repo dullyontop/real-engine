@@ -170,6 +170,12 @@ pub enum Op {
     /// document. Without `value`, the value at `pointer` is removed. The
     /// document must be open (`World::open_doc`). A transaction whose
     /// resulting document fails its kind's validator is rejected.
+    ///
+    /// Adding at an existing array index inserts before that element, as in
+    /// JSON Patch: setting `/layout/h/0` on a `[x, y]` position makes it
+    /// three numbers. To move a node, set `/layout/h` to the whole `[x, y]`.
+    /// The parent of `pointer` must exist (adding `/layout/h` to a graph
+    /// without `layout` fails; add `/layout` as `{"h": [x, y]}` instead).
     SetDoc {
         /// The document's project-relative path (`graphs/island.graph.json`).
         doc: String,

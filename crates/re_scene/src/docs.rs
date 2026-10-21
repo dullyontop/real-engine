@@ -32,8 +32,23 @@ pub struct OpenDoc {
     /// Bumped on every change (opening counts); unique among the World's
     /// documents, so a view compares it to know when to rebuild.
     pub revision: u64,
-    /// True when the document changed since it was opened or saved.
+    /// True when the document differs from what it was when it was opened
+    /// or last saved (an undo back to that content clears it again).
     pub dirty: bool,
+    /// Which opening of this path the document is: bumped every time
+    /// [`World::open_doc`] opens or replaces the path, and never reused for
+    /// it (closing does not reset it). Undo history recorded against one
+    /// epoch does not apply to another.
+    pub epoch: u64,
+    /// The hash of the content when it was opened or last saved.
+    saved: [u8; 32],
+}
+
+/// The hash `OpenDoc::saved` compares against: of the compact JSON text, so
+/// a change of key order counts as a change.
+fn content_hash(value: &Json) -> [u8; 32] {
+    let text = serde_json::to_string(value).unwrap_or_default();
+    *blake3::hash(text.as_bytes()).as_bytes()
 }
 
 /// The World's open documents by project-relative path, and the validators
@@ -43,6 +58,8 @@ pub struct OpenDocs {
     docs: BTreeMap<String, OpenDoc>,
     validators: Vec<(String, DocValidator)>,
     revisions: u64,
+    /// The last epoch of every path ever opened.
+    epochs: BTreeMap<String, u64>,
 }
 
 /// The revision and dirty flag of every open document, taken by
@@ -59,11 +76,19 @@ impl OpenDocs {
         self.revisions
     }
 
-    /// The validator for `path`: the one with the longest matching suffix.
+    /// The validator for `path`: the one with the longest matching suffix. A
+    /// suffix that does not start with `.` is a path and matches whole path
+    /// segments only (`graphs/a.json` matches `graphs/a.json`, not
+    /// `oldgraphs/a.json`).
     fn validator(&self, path: &str) -> Option<DocValidator> {
+        let matches = |suffix: &str| {
+            path.strip_suffix(suffix).is_some_and(|rest| {
+                suffix.starts_with('.') || rest.is_empty() || rest.ends_with('/')
+            })
+        };
         self.validators
             .iter()
-            .filter(|(suffix, _)| path.ends_with(suffix.as_str()))
+            .filter(|(suffix, _)| matches(suffix))
             .max_by_key(|(suffix, _)| suffix.len())
             .map(|(_, v)| *v)
     }
@@ -102,8 +127,10 @@ impl World {
     }
 
     /// Registers the validator of the documents whose path ends with
-    /// `suffix` (for example `.graph.json`), replacing an earlier one for the
-    /// same suffix. When several suffixes match, the longest wins.
+    /// `suffix` (for example `.graph.json`), or of one document when `suffix`
+    /// is a project-relative path (`graphs/island.json`, matched by whole
+    /// segments), replacing an earlier one for the same suffix. When several
+    /// match, the longest wins.
     pub fn register_doc_validator(&mut self, suffix: impl Into<String>, validator: DocValidator) {
         let suffix = suffix.into();
         let mut docs = self.open_docs_mut();
@@ -122,9 +149,9 @@ impl World {
     }
 
     /// Opens the document at the project-relative `path` with `value` (what
-    /// the file holds), not dirty. An open document of that path is
-    /// replaced, which drops its unsaved changes; undo history recorded
-    /// against them may no longer apply.
+    /// the file holds), not dirty, with a new [epoch](OpenDoc::epoch). An
+    /// open document of that path is replaced, which drops its unsaved
+    /// changes; undo history recorded against the old epoch is refused.
     ///
     /// # Errors
     ///
@@ -138,12 +165,17 @@ impl World {
         }
         let mut docs = self.open_docs_mut();
         let revision = docs.next_revision();
+        let epoch = docs.epochs.get(&path).map_or(1, |e| e + 1);
+        docs.epochs.insert(path.clone(), epoch);
+        let saved = content_hash(&value);
         docs.docs.insert(
             path,
             OpenDoc {
                 value,
                 revision,
                 dirty: false,
+                epoch,
+                saved,
             },
         );
         Ok(())
@@ -153,6 +185,11 @@ impl World {
     pub fn close_doc(&mut self, path: &str) -> Option<OpenDoc> {
         let path = doc_path(path).ok()?;
         self.open_docs_mut().docs.remove(&path)
+    }
+
+    /// The [epoch](OpenDoc::epoch) of the open document at `path`, if it is open.
+    pub fn doc_epoch(&self, path: &str) -> Option<u64> {
+        self.doc(path).map(|d| d.epoch)
     }
 
     /// The open document at `path`, if any.
@@ -175,7 +212,8 @@ impl World {
     }
 
     /// Edits the open document at `path` in place with `edit`. When `edit`
-    /// returns `Ok`, the document is marked dirty and its revision bumped;
+    /// returns `Ok`, its revision is bumped and it is dirty unless its
+    /// content is back to what was opened or last saved;
     /// when it returns `Err`, it must have left the value unchanged, and the
     /// document is left as it was. `None` when the document is not open.
     pub fn edit_doc<R, E>(
@@ -191,7 +229,7 @@ impl World {
         if result.is_ok() {
             docs.revisions += 1;
             doc.revision = docs.revisions;
-            doc.dirty = true;
+            doc.dirty = content_hash(&doc.value) != doc.saved;
         }
         Some(result)
     }
@@ -212,6 +250,7 @@ impl World {
             && let Some(doc) = self.open_docs_mut().docs.get_mut(&path)
         {
             doc.dirty = false;
+            doc.saved = content_hash(&doc.value);
         }
     }
 
@@ -319,11 +358,43 @@ mod tests {
         w.mark_doc_saved("x.t.json");
         assert!(w.unsaved_docs().is_empty());
 
+        // Editing back to the saved content clears the dirty flag.
+        let _: Option<Result<(), ()>> = w.edit_doc("x.t.json", |v| {
+            v["c"] = json!(2);
+            Ok(())
+        });
+        assert_eq!(w.unsaved_docs(), ["x.t.json"]);
+        let _: Option<Result<(), ()>> = w.edit_doc("x.t.json", |v| {
+            v["c"] = json!([1.5]);
+            Ok(())
+        });
+        assert!(w.unsaved_docs().is_empty());
+
+        // Every opening of a path has a new epoch, even after a close.
+        let e = w.doc_epoch("x.t.json").unwrap();
+        w.open_doc("x.t.json", json!({"a": 2})).unwrap();
+        assert_eq!(w.doc_epoch("x.t.json"), Some(e + 1));
+        w.close_doc("x.t.json");
+        assert_eq!(w.doc_epoch("x.t.json"), None);
+        w.open_doc("x.t.json", json!({"a": 1, "c": [1.5]})).unwrap();
+        assert_eq!(w.doc_epoch("x.t.json"), Some(e + 2));
+
         // A world copy carries the open documents and validators.
         let copy = w.fork();
         assert_eq!(copy.doc("x.t.json"), w.doc("x.t.json"));
         assert!(copy.open_docs().validator("y.t.json").is_some());
         assert!(w.close_doc("x.t.json").is_some());
         assert!(w.doc("x.t.json").is_none());
+    }
+
+    #[test]
+    fn a_path_validator_matches_whole_segments() {
+        let mut w = World::new();
+        w.register_doc_validator("graphs/a.json", no_b);
+        let docs = w.open_docs();
+        assert!(docs.validator("graphs/a.json").is_some());
+        assert!(docs.validator("x/graphs/a.json").is_some());
+        assert!(docs.validator("oldgraphs/a.json").is_none());
+        assert!(docs.validator("graphs/b.json").is_none());
     }
 }
