@@ -424,7 +424,7 @@ fn main() -> ExitCode {
             // gated (ADR-0042). Without a thread CPU clock it is reported only.
             match w["cpu_ms"]["max"].as_f64() {
                 Some(max) => out.push(json!({ "run": name, "check": format!("tick CPU max <= {MAX_MS} ms"), "value": max, "ok": max <= MAX_MS })),
-                None => out.push(json!({ "run": name, "check": format!("tick wall max (not gated: no thread CPU clock)"), "value": w["tick_ms"]["max"], "ok": true })),
+                None => out.push(json!({ "run": name, "check": "tick wall max (not gated: no thread CPU clock)", "value": w["tick_ms"]["max"], "ok": true })),
             }
             let mem = w["peak_memory_mib"].as_f64().unwrap_or(f64::MAX);
             out.push(json!({ "run": name, "check": format!("accounted memory <= {} MiB", config.memory_mb), "value": mem, "ok": mem <= f64::from(config.memory_mb) }));
