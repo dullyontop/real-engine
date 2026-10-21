@@ -470,10 +470,10 @@ fn drive_path(threads: usize) -> ((Vec3, Quat), Vec<u32>, f32) {
 }
 
 /// The end pose of the path, recorded in the reference container (Linux x86_64) with
-/// Jolt's default build. Jolt's cross-platform-deterministic build (WP18's PR "d2")
-/// ends 4 cm from it; re-record it then (the test prints the pose).
-const REFERENCE_POS: Vec3 = Vec3::new(-50.13417, 4.995464, 59.87319);
-const REFERENCE_ROT: Quat = Quat::from_xyzw(3.212139e-5, -0.7627902, 3.7909456e-5, 0.6466461);
+/// Jolt's cross-platform-deterministic build (WP18's PR "d2"; the test prints the
+/// pose).
+const REFERENCE_POS: Vec3 = Vec3::new(-50.152733, 4.995464, 59.908962);
+const REFERENCE_ROT: Quat = Quat::from_xyzw(3.0249626e-5, -0.76230896, 3.5547266e-5, 0.64721334);
 
 /// Position and rotation tolerance before D2 (ADR-0040). Measured on this path with
 /// the ray tester: the cross-platform-deterministic build moves the end 4 cm, a start
