@@ -62,6 +62,7 @@ impl World {
         ecs.init_resource::<TagIndex>();
         ecs.init_resource::<IdGen>();
         ecs.init_resource::<Suppressions>();
+        ecs.init_resource::<crate::docs::OpenDocs>();
         let mut changed = single_threaded_schedule();
         changed.add_systems(propagate_changed);
         let mut all = single_threaded_schedule();
@@ -236,6 +237,21 @@ impl World {
             .collect();
         sources.sort();
         let mut report = RegenReport::default();
+        // A source that lost `Procedural` (baked, or the component removed)
+        // keeps no generated output.
+        let mut orphaned: Vec<(String, Entity)> = self
+            .ecs
+            .query_filtered::<(Entity, &StableId), (
+                bevy_ecs::query::With<GeneratedFingerprint>,
+                bevy_ecs::query::Without<procedural::Procedural>,
+            )>()
+            .iter(&self.ecs)
+            .map(|(e, id)| (id.0.clone(), e))
+            .collect();
+        orphaned.sort();
+        for (_, source) in orphaned {
+            report.merge(procedural::clear_output(self, source));
+        }
         for (_, source) in sources {
             let Some(fp) = procedural::fingerprint(self, source) else {
                 continue;
@@ -350,8 +366,9 @@ impl World {
     /// entities (with their keys), overrides, `GlobalTransform` and the
     /// session's suppressions. Ids, child order and [`World::state_hash`] are
     /// identical. ECS resources are not copied, except `IdIndex` and
-    /// `TagIndex` (rebuilt by hooks), the suppressions and the stream stash
-    /// of unloaded authored roots; change feeds are
+    /// `TagIndex` (rebuilt by hooks), the suppressions, the stream stash
+    /// of unloaded authored roots and the open documents (with their
+    /// validators); change feeds are
     /// not copied either; a caller that needs one of its own
     /// resources in the copy clones it in. Undo history is not part of the
     /// world and is not copied. Components that are not in the registry
@@ -361,6 +378,8 @@ impl World {
         let registry = self.registry.rebuild_for(&mut ecs);
         let mut out = World::from_parts(ecs, registry, self.generators.clone());
         out.ecs.insert_resource(self.suppressions().clone());
+        out.ecs
+            .insert_resource(self.ecs.resource::<crate::docs::OpenDocs>().clone());
 
         // Every entity with an id, roots in id order, then depth-first.
         let mut roots: Vec<(&str, Entity)> = self

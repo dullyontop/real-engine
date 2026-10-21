@@ -24,7 +24,7 @@ use serde::Serialize;
 use re_assets::AssetWatcher;
 use re_audio::Audio;
 use re_render::Image;
-use re_script::{ContextKind, RuntimeConfig, ScriptRuntime};
+use re_script::{ContextKind, RuntimeConfig, ScriptError, ScriptRuntime};
 
 use crate::codes;
 use crate::config::AppConfig;
@@ -145,6 +145,8 @@ pub struct App {
 
     scripts: Option<ScriptRuntime>,
     scripts_failed: bool,
+    /// The script debugger the game context is attached to (ADR-0045).
+    debugger: Option<re_script::debug::Debugger>,
     /// `[compat]`, when the project is a compat project; its scripts then run
     /// in [`CompatPlay`](crate::compat::CompatPlay) instead of `scripts`.
     compat_config: Option<re_compat::CompatConfig>,
@@ -301,6 +303,7 @@ impl App {
             link_tried: Default::default(),
             scripts: None,
             scripts_failed: false,
+            debugger: None,
             compat_config,
             compat: None,
             compat_failed: false,
@@ -890,17 +893,21 @@ impl App {
         }
     }
 
-    /// Writes the World's authored entities back to the entry scene file.
+    /// Writes the World's authored entities back to the entry scene file,
+    /// and each open document with unsaved changes back to its file
+    /// (ADR-0044), which clears its dirty flag; the procedural sources that
+    /// read a saved file reload their stored graph from it, so it stays the
+    /// file's content once the document is closed.
     ///
     /// # Errors
     ///
-    /// `RE0518` when the file cannot be written.
+    /// `RE0518` when a file cannot be written.
     pub fn save_scene(&mut self) -> Result<(), Diagnostic> {
         let doc = self.world.save(SaveOptions::default());
         let text = re_scene::scene::to_json(&doc);
         let rel_path = self.config.project.entry_scene.clone();
         // Only a development run writes project files (ADR-0037).
-        let Some(dir) = self.files.project_dir() else {
+        let Some(dir) = self.files.project_dir().map(Path::to_path_buf) else {
             return Err(Diagnostic::error(
                 codes::SCENE_SAVE_FAILED,
                 format!(
@@ -908,14 +915,28 @@ impl App {
                 ),
             ));
         };
-        let path = dir.join(&rel_path);
-        std::fs::write(&path, text).map_err(|e| {
+        let failed = |what: &str, rel_path: &str, e: std::io::Error| {
             Diagnostic::error(
                 codes::SCENE_SAVE_FAILED,
-                format!("cannot write the scene back to {rel_path}: {e}"),
+                format!("cannot write {what} back to {rel_path}: {e}"),
             )
-            .at(rel(&rel_path))
-        })
+            .at(rel(rel_path))
+        };
+        std::fs::write(dir.join(&rel_path), text).map_err(|e| failed("the scene", &rel_path, e))?;
+        let saved = self.world.unsaved_docs();
+        for path in &saved {
+            let Some(text) = self.world.doc_text(path) else {
+                continue;
+            };
+            std::fs::write(dir.join(path), text)
+                .map_err(|e| failed("the open document", path, e))?;
+            self.world.mark_doc_saved(path);
+        }
+        if !saved.is_empty() {
+            let problems = procedural::load_graphs(&mut self.world, &self.files, Some(&saved));
+            self.diagnostics.extend(problems);
+        }
+        Ok(())
     }
 
     /// The work an edit needs outside the simulation: regenerate procedural
@@ -1055,6 +1076,11 @@ impl App {
     pub fn frame(&mut self, frame_time: Duration) {
         let frame_start = Instant::now();
         let f = self.frame;
+        if self.debugger.is_some()
+            && let Some(scripts) = &self.scripts
+        {
+            re_script::debug::service(scripts.context(ContextKind::Game).lua());
+        }
 
         // Input.
         let t = Instant::now();
@@ -1671,6 +1697,12 @@ impl App {
             self.diagnostics.extend(declared.iter().cloned());
             problems.extend(declared);
         }
+        for p in paths.iter().filter(|p| p.ends_with(".heightfield")) {
+            procedural::heightfield_changed(&mut self.world, p);
+        }
+        let doc_problems = self.reload_open_docs(&paths);
+        self.diagnostics.extend(doc_problems.iter().cloned());
+        problems.extend(doc_problems);
         let graphs: Vec<String> = paths
             .iter()
             .filter(|p| procedural::is_graph_input(&mut self.world, p))
@@ -1703,6 +1735,47 @@ impl App {
         problems
     }
 
+    /// Reloads the open documents (ADR-0044) among the changed project files
+    /// `paths`. A document without unsaved edits is reopened from its file
+    /// (a new epoch, so its undo history is dropped, and a new revision, so
+    /// views rebuild), unless the file holds exactly the open content (as
+    /// after a save). A document with unsaved edits is kept, and so is one
+    /// whose file is gone or invalid; each gives an `RE0528` warning.
+    fn reload_open_docs(&mut self, paths: &[String]) -> Vec<Diagnostic> {
+        let mut problems = Vec::new();
+        for path in paths {
+            let Some(doc) = self.world.doc(path) else {
+                continue;
+            };
+            let path = re_scene::doc_path(path).unwrap_or_else(|_| path.clone());
+            let warn = |message: String| {
+                Diagnostic::warning(codes::OPEN_DOC_CHANGED_ON_DISK, message).at(rel(&path))
+            };
+            let read = std::fs::read_to_string(self.project.join(&path))
+                .map_err(|e| e.to_string())
+                .and_then(|t| {
+                    serde_json::from_str::<serde_json::Value>(&t).map_err(|e| e.to_string())
+                });
+            match open_doc_reload(doc.dirty, &doc.value, read, |v| doc.matches_saved(v)) {
+                DocReload::Keep => {}
+                DocReload::Conflict => problems.push(warn(format!(
+                    "{path} changed on disk while it has unsaved edits; saving will overwrite the file"
+                ))),
+                DocReload::Unreadable(e) => problems.push(warn(format!(
+                    "{path} changed on disk but cannot be reloaded ({e}); the open document is kept"
+                ))),
+                DocReload::Reopen(value) => {
+                    if let Err(e) = self.world.open_doc(&path, value) {
+                        problems.push(warn(format!(
+                            "{path} changed on disk but cannot be reloaded ({e}); the open document is kept"
+                        )));
+                    }
+                }
+            }
+        }
+        problems
+    }
+
     /// The script runtime, created on first use (so editing never starts a VM).
     fn script_runtime(&mut self) -> Option<&mut ScriptRuntime> {
         if self.scripts.is_none() {
@@ -1714,7 +1787,10 @@ impl App {
                 self.config.scripts.memory_limit_mb as usize,
             );
             match ScriptRuntime::new(config) {
-                Ok(r) => self.scripts = Some(r),
+                Ok(r) => {
+                    self.scripts = Some(r);
+                    self.attach_debugger();
+                }
                 Err(e) => {
                     // Reported once; the game runs on without scripts.
                     self.scripts_failed = true;
@@ -1729,6 +1805,34 @@ impl App {
     /// The script runtime, once the game has run a frame.
     pub fn scripts(&self) -> Option<&ScriptRuntime> {
         self.scripts.as_ref()
+    }
+
+    /// Attaches the game context's VM to `debugger` (ADR-0045), now if the
+    /// scripts are running and again whenever the VM is replaced; `None`
+    /// detaches it. Breakpoint changes and commands for a parked script are
+    /// carried out at the start of each frame.
+    pub fn set_debugger(&mut self, debugger: Option<re_script::debug::Debugger>) {
+        if let (Some(old), Some(scripts)) = (&self.debugger, &self.scripts) {
+            old.detach(scripts.context(ContextKind::Game).lua());
+        }
+        self.debugger = debugger;
+        self.attach_debugger();
+    }
+
+    /// The debugger set with [`App::set_debugger`].
+    pub fn debugger(&self) -> Option<&re_script::debug::Debugger> {
+        self.debugger.as_ref()
+    }
+
+    fn attach_debugger(&mut self) {
+        let (Some(debugger), Some(scripts)) = (&self.debugger, &self.scripts) else {
+            return;
+        };
+        let lua = scripts.context(ContextKind::Game).lua();
+        if let Err(e) = debugger.attach(lua, ContextKind::Game.name(), None) {
+            self.diagnostics
+                .push(ScriptError::from_mlua(ContextKind::Game.name(), &e).to_diagnostic());
+        }
     }
 
     /// Calls `f` with the script runtime (created on first use) and a host over
@@ -2177,6 +2281,8 @@ impl App {
                 {
                     self.diagnostics.push(e.to_diagnostic());
                 }
+                // The fresh game VM is attached in place of the old one.
+                self.attach_debugger();
                 self.clock.reset();
                 self.edit_frame();
             }
@@ -2256,4 +2362,86 @@ fn load_world(
     world.propagate_all();
     problems.extend(procedural::load_graphs(&mut world, files, None));
     Ok((world, problems))
+}
+
+/// What to do with an open document whose file changed on disk.
+#[derive(Debug, PartialEq)]
+enum DocReload {
+    /// The file holds the open content, or the content last saved (our own
+    /// save, seen after later edits).
+    Keep,
+    /// Reopen the document with the file's content.
+    Reopen(serde_json::Value),
+    /// The document has unsaved edits: keep them and warn.
+    Conflict,
+    /// The file is gone or not JSON: keep the document and warn.
+    Unreadable(String),
+}
+
+/// Decides what a change on disk does to an open document: `dirty` and
+/// `open` are the document's state, `file` what reading the file gave, and
+/// `saved` tells whether a content is what the document was last saved as.
+fn open_doc_reload(
+    dirty: bool,
+    open: &serde_json::Value,
+    file: Result<serde_json::Value, String>,
+    saved: impl Fn(&serde_json::Value) -> bool,
+) -> DocReload {
+    match file {
+        Ok(value) if value == *open || saved(&value) => DocReload::Keep,
+        _ if dirty => DocReload::Conflict,
+        Ok(value) => DocReload::Reopen(value),
+        Err(e) => DocReload::Unreadable(e),
+    }
+}
+
+#[cfg(test)]
+mod doc_reload_tests {
+    use super::{DocReload, open_doc_reload};
+    use serde_json::json;
+
+    #[test]
+    fn a_change_on_disk_reopens_clean_documents_only() {
+        let open = json!({"a": 1});
+        assert_eq!(
+            open_doc_reload(false, &open, Ok(json!({"a": 1})), |_| false),
+            DocReload::Keep
+        );
+        assert_eq!(
+            open_doc_reload(true, &open, Ok(json!({"a": 1})), |_| false),
+            DocReload::Keep
+        );
+        assert_eq!(
+            open_doc_reload(false, &open, Ok(json!({"a": 2})), |_| false),
+            DocReload::Reopen(json!({"a": 2}))
+        );
+        assert_eq!(
+            open_doc_reload(true, &open, Ok(json!({"a": 2})), |_| false),
+            DocReload::Conflict
+        );
+        assert_eq!(
+            open_doc_reload(true, &open, Err("gone".into()), |_| false),
+            DocReload::Conflict
+        );
+        assert_eq!(
+            open_doc_reload(false, &open, Err("gone".into()), |_| false),
+            DocReload::Unreadable("gone".into())
+        );
+    }
+
+    /// A save followed by an edit before the watcher reports the save: the
+    /// file holds the saved content, which is not a conflict.
+    #[test]
+    fn our_own_save_seen_after_an_edit_is_kept() {
+        let saved = json!({"a": 1});
+        let edited = json!({"a": 2});
+        assert_eq!(
+            open_doc_reload(true, &edited, Ok(saved.clone()), |v| *v == saved),
+            DocReload::Keep
+        );
+        assert_eq!(
+            open_doc_reload(true, &edited, Ok(json!({"a": 3})), |v| *v == saved),
+            DocReload::Conflict
+        );
+    }
 }

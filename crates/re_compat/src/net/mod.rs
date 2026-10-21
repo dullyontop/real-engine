@@ -12,6 +12,10 @@
 //!   stable id. Entities are never compared across worlds.
 //! * The two VMs talk through remotes ([`remotes`]): messages queue in the
 //!   [`NetLink`] both worlds share and are delivered by [`pump`].
+//! * Both directions go through the wire forms a network uses ([`wire`]):
+//!   replication is a server half and a client half that exchange encoded
+//!   frames ([`Conn`], [`Replica`]), and remote messages queue as their
+//!   encoded bytes. So the in-process run exercises the network code.
 //!
 //! A frame of a two-world run is:
 //!
@@ -26,12 +30,16 @@
 //! client phases      PreRender .. PostSimulation, then render from the client
 //! ```
 //!
-//! M2 has no real network: there is one client world, the local player's.
-//! Other players are simulated on the server only (`players::add_player`).
+//! In-process, there is one client world, the local player's. Other players
+//! are simulated on the server only (`players::add_player`).
 
 pub mod remotes;
 mod replicate;
 pub mod value;
+pub mod wire;
+
+#[cfg(test)]
+mod tests;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -44,8 +52,8 @@ use re_scene::{Entity, IdGen, World, hierarchy};
 use re_script::{ScriptHost, sched};
 
 pub use replicate::{
-    NetworkOwner, Replica, ReplicationReport, UPSTREAM_ALL, network_owner, replicate,
-    set_network_owner,
+    Conn, NetworkOwner, Replica, ReplicationReport, ServerReplica, UPSTREAM_ALL, network_owner,
+    replicate, set_network_owner,
 };
 
 use crate::error::CompatError;
@@ -142,7 +150,7 @@ pub(crate) enum Msg {
 }
 
 /// What a player did with a proximity prompt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum PromptAction {
     HoldBegan,
     HoldEnded,
@@ -150,11 +158,31 @@ pub(crate) enum PromptAction {
     TriggerEnded,
 }
 
+/// Messages on their way to one side, as their wire bytes
+/// ([`wire::encode_msg`]), so the in-process run sends what a network would.
+#[derive(Debug, Default)]
+pub(crate) struct MsgQueue(VecDeque<Vec<u8>>);
+
+impl MsgQueue {
+    /// Queues `m`.
+    pub(crate) fn push_back(&mut self, m: Msg) {
+        self.0.push_back(wire::encode_msg(&m));
+    }
+
+    /// Takes every queued message, in order.
+    pub(crate) fn take_all(&mut self) -> Vec<Msg> {
+        self.0
+            .drain(..)
+            .map(|b| wire::decode_msg(&b).expect("a message this build encoded decodes"))
+            .collect()
+    }
+}
+
 /// The state both worlds share.
 #[derive(Debug, Default)]
 pub(crate) struct Shared {
-    pub(crate) to_server: VecDeque<Msg>,
-    pub(crate) to_client: VecDeque<Msg>,
+    pub(crate) to_server: MsgQueue,
+    pub(crate) to_client: MsgQueue,
     /// The stable id of the local player's `Player`.
     pub(crate) local_player: Option<String>,
     pub(crate) next_call: u64,

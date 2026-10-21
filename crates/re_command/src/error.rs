@@ -35,6 +35,23 @@ pub enum OpError {
     /// not apply, so the world may be partly changed.
     #[error("rollback failed, the world may be partly changed: {0}")]
     RollbackFailed(String),
+    /// A transaction left an open document in a state its kind's validator
+    /// refuses (ADR-0044).
+    #[error("{doc} is not valid: {message}")]
+    InvalidDocument {
+        /// The document's project-relative path.
+        doc: String,
+        /// What the validator found.
+        message: String,
+    },
+    /// An undo or redo of edits to an open document that was reopened or
+    /// closed since (ADR-0044); the history entries that edited it are
+    /// dropped.
+    #[error("{doc} was reopened or closed since this edit, so its undo history was dropped")]
+    StaleDocument {
+        /// The document's project-relative path.
+        doc: String,
+    },
 }
 
 impl From<ReflectError> for OpError {
@@ -52,6 +69,8 @@ impl OpError {
             OpError::GeneratedEntity { .. } => codes::GENERATED_ENTITY,
             OpError::Invalid(_) => codes::INVALID_ARGUMENTS,
             OpError::RollbackFailed(_) => codes::UNDO_FAILED,
+            OpError::InvalidDocument { .. } => codes::INVALID_DOCUMENT,
+            OpError::StaleDocument { .. } => codes::UNDO_FAILED,
         }
     }
 
@@ -61,6 +80,9 @@ impl OpError {
             OpError::Scene(e) => e.to_diagnostic(),
             OpError::GeneratedEntity { id, .. } => {
                 Diagnostic::error(self.code(), self.to_string()).at(Location::entity(id.clone()))
+            }
+            OpError::InvalidDocument { doc, .. } | OpError::StaleDocument { doc } => {
+                Diagnostic::error(self.code(), self.to_string()).at(Location::file(doc.clone()))
             }
             _ => Diagnostic::error(self.code(), self.to_string()),
         }

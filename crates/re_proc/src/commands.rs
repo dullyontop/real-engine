@@ -182,13 +182,16 @@ fn graph_source(world: &World, id: &str) -> Result<Source, Diagnostic> {
         Diagnostic::error(codes::NO_GRAPH, "the world has no GraphStore resource")
             .at(Location::entity(id.to_string()))
     })?;
-    let doc = store.graph(id).cloned().ok_or_else(|| {
-        Diagnostic::error(
-            codes::NO_GRAPH,
-            format!("no graph is stored for procedural source `{id}`"),
-        )
-        .at(Location::entity(id.to_string()))
-    })?;
+    let doc = store
+        .current(world, id)
+        .ok_or_else(|| {
+            Diagnostic::error(
+                codes::NO_GRAPH,
+                format!("no graph is stored for procedural source `{id}`"),
+            )
+            .at(Location::entity(id.to_string()))
+        })?
+        .map(|d| GraphDoc::clone(&d))?;
     let overrides = parse_overrides(&text);
     Ok(Source {
         entity,
@@ -759,6 +762,13 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
         Tier::Read,
         true,
         report::<C>,
+    );
+    registry.register_typed::<crate::bake::BakeArgs, _>(
+        "proc.bake",
+        "Turn a procedural source's generated entities into authored ones (ids `<source>.<key>`, a `Baked` record each, derived meshes and heightfields written under assets/baked/), as one undoable transaction. By default the source stops generating; with `keys` or `keep_source` it keeps generating the rest.",
+        Tier::Edit,
+        false,
+        crate::bake::bake::<C>,
     );
     registry.register_typed::<MigrationReportArgs, _>(
         "graph.migration_report",

@@ -14,6 +14,8 @@
 //!   [`TagChanged`] events;
 //! * [`scene`]: [`SceneDoc`] load and save, JSON text, `migrate`;
 //! * [`prefab`]: [`PrefabFile`] and its instantiation into a fragment;
+//! * [`docs`]: open documents (project files edited in memory by `set_doc`),
+//!   their revisions, dirty flags and validators (ADR-0044);
 //! * [`procedural`]: procedural sources, generated entities, overrides,
 //!   suppression and the regeneration diff (ADR-0017);
 //! * [`error`]: [`SceneError`], with codes `RE1200`–`RE1999`.
@@ -45,6 +47,7 @@
 pub mod attributes;
 pub mod codes;
 pub mod components;
+pub mod docs;
 pub mod error;
 mod hash;
 pub mod hierarchy;
@@ -70,6 +73,7 @@ pub use components::{
     ScriptContext, ScriptRef, SkinnedMesh, Transform, Vehicle, VehicleKind, VehicleWheel, Visible,
     WheelTester, register_builtins,
 };
+pub use docs::{DocMarks, DocValidator, OpenDoc, OpenDocs, doc_path};
 pub use error::SceneError;
 pub use ids::{IdGen, IdIndex, StableId, validate_id};
 pub use prefab::{PREFAB_FORMAT, PrefabFile};

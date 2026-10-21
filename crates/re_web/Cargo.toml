@@ -1,0 +1,26 @@
+[package]
+name = "re_web"
+description = "Real Engine in the browser: the wasm32 entry points the boot script calls (ADR-0049)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Runtime crate (ADR-0027): no tokio, rmcp or full_moon (`cargo xtask check-graph`).
+[dependencies]
+re_core.workspace = true
+re_types.workspace = true
+re_app.workspace = true
+re_render.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true

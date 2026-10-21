@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use re_core::{Diagnostic, Location};
 use re_proc::GraphStore;
+use re_scene::ecs as bevy_ecs;
 use re_scene::{Collider, ColliderShape, GraphSource, MeshRef, World};
 use re_script::{NoServices, RuntimeConfig, ScriptRuntime, WorldHost};
 use re_types::ShapeDesc;
@@ -18,10 +19,14 @@ use crate::codes;
 use crate::media::{DERIVED, Media};
 use crate::sync::physics::{HeightfieldData, ShapeLibrary};
 
-/// Registers the `graph` generator and gives the World an empty store for the
-/// project read through `files`.
+/// Registers the `graph` generator and the validator of open graph documents,
+/// and gives the World an empty store for the project read through `files`.
 pub fn install(world: &mut World, files: &ProjectFiles) {
     re_proc::register_generator(&mut world.generators);
+    re_proc::register_doc_validators(world);
+    world
+        .registry
+        .register::<re_proc::bake::Baked>(&mut world.ecs);
     world
         .ecs
         .insert_resource(GraphStore::for_files(files.clone()));
@@ -188,6 +193,9 @@ fn load_where(
             Err(d) => diags.push(d),
         }
     }
+    // Every source's graph file is checked as a graph when open, whatever
+    // its name (ADR-0044).
+    re_proc::register_doc_validators(world);
     diags
 }
 
@@ -237,6 +245,19 @@ pub fn is_graph_input(world: &mut World, path: &str) -> bool {
     sources(world).iter().any(|s| reads(s, path))
 }
 
+/// Baked `.heightfield` files that failed to load: read again only after
+/// they change ([`heightfield_changed`]) or disappear.
+#[derive(Default, bevy_ecs::resource::Resource)]
+struct FailedHeightfields(BTreeSet<String>);
+
+/// Forgets that the `.heightfield` file at `path` failed to load, so the
+/// next [`sync_derived`] reads it again (the project watcher saw it change).
+pub fn heightfield_changed(world: &mut World, path: &str) {
+    if let Some(mut failed) = world.ecs.get_resource_mut::<FailedHeightfields>() {
+        failed.0.remove(path);
+    }
+}
+
 /// Gives `media` the derived meshes that `MeshRef`s name, and `shapes` the
 /// derived meshes and heightfields that colliders name, from the World's store,
 /// and forgets the derived ones nothing names any more (whatever released them:
@@ -258,9 +279,67 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
         .collect();
     media.retain_derived_meshes(|name| meshes.contains(name));
     shapes.retain(|name| !name.starts_with(DERIVED) || colliders.iter().any(|(_, c)| c == name));
+    let baked: Vec<String> = world
+        .ecs
+        .query::<&Collider>()
+        .iter(&world.ecs)
+        .filter(|c| c.shape == ColliderShape::Heightfield && c.source.ends_with(".heightfield"))
+        .map(|c| c.source.clone())
+        .collect();
+    let mut failed = world
+        .ecs
+        .remove_resource::<FailedHeightfields>()
+        .unwrap_or_default()
+        .0;
+    failed.retain(|name| baked.contains(name));
     let Some(store) = world.ecs.get_resource::<GraphStore>() else {
+        world.ecs.insert_resource(FailedHeightfields(failed));
         return;
     };
+    // Baked heightfields (ADR-0043): `.heightfield` files in the project.
+    for name in baked {
+        if shapes.heightfield(&name).is_some() {
+            continue;
+        }
+        let Some(files) = store.files() else {
+            continue;
+        };
+        // A file that cannot be read stays missing; physics reports it. A
+        // file that failed is read again once it changes, or is removed and
+        // comes back.
+        if !files.is_file(&name) {
+            failed.remove(&name);
+            continue;
+        }
+        if failed.contains(&name) {
+            continue;
+        }
+        let shape = files
+            .read(&name)
+            .ok()
+            .and_then(|data| re_proc::bake::read_heightfield(&data.bytes).ok())
+            .map(|h| h.to_shape());
+        let Some(ShapeDesc::Heightfield {
+            n,
+            samples,
+            spacing,
+            offset,
+        }) = shape
+        else {
+            failed.insert(name);
+            continue;
+        };
+        failed.remove(&name);
+        shapes.insert_heightfield(
+            name,
+            std::sync::Arc::new(HeightfieldData {
+                n,
+                spacing,
+                offset,
+                samples,
+            }),
+        );
+    }
     for name in meshes {
         if !media.has_derived_mesh(&name)
             && let Some(mesh) = store.mesh(&name)
@@ -301,6 +380,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
             _ => {}
         }
     }
+    world.ecs.insert_resource(FailedHeightfields(failed));
 }
 
 /// Forgets derived assets a regeneration released: from the store (which also

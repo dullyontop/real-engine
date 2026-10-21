@@ -19,6 +19,10 @@ pub struct EditorArgs {
     /// until its window is closed.
     #[arg(long)]
     pub frames: Option<u64>,
+    /// Also serve the editor's script debugger over DAP on 127.0.0.1
+    /// (default port 4711).
+    #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "4711")]
+    pub debug: Option<u16>,
 }
 
 /// Runs `real editor` for the project at `project`: takes the project lock as
@@ -45,10 +49,25 @@ pub fn run(args: EditorArgs, project: &Path) -> anyhow::Result<ExitCode> {
     if let Err(d) = app.enable_hot_reload() {
         eprint!("{}", d.render_human());
     }
+    let debugger = re_script::debug::Debugger::new();
+    // Kept while the editor runs; dropping it closes the client's connection.
+    let _dap = match args.debug {
+        Some(port) => {
+            match re_script::debug::dap::DapServer::listen(debugger.clone(), port, project) {
+                Ok(server) => {
+                    eprintln!("debugger: DAP on {}", server.addr());
+                    Some(server)
+                }
+                Err(d) => return Ok(fail(&d)),
+            }
+        }
+        None => None,
+    };
     let options = EditorOptions {
         max_frames: args.frames,
         socket: Some(socket),
         agent: Some(agent),
+        debugger: Some(debugger),
         ..EditorOptions::default()
     };
     match re_editor::run_editor(app, options) {
