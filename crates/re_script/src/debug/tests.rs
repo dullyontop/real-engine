@@ -784,3 +784,59 @@ fn debug_a_dap_client_that_drops_its_connection_leaves_no_breakpoints() {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+
+#[test]
+fn debug_a_chunk_named_like_a_compat_script_stops_under_its_path() {
+    let debugger = Debugger::new();
+    let lua = Lua::new();
+    debugger.attach(&lua, "server", None).unwrap();
+    let bytecode = mlua::chunk::Compiler::new()
+        .set_debug_level(2)
+        .compile(SCRIPT)
+        .unwrap();
+    let chunk = lua
+        .load(&bytecode[..])
+        .set_name("=ServerScriptService.Counter")
+        .into_function()
+        .unwrap();
+    register_chunk(&lua, "scripts/counter.luau", &chunk);
+    chunk.call::<()>(()).unwrap();
+    debugger.set_breakpoints("scripts/counter.luau", &[4]);
+    service(&lua);
+    let _: (i64, String) = lua
+        .globals()
+        .get::<Function>("run")
+        .unwrap()
+        .call(())
+        .unwrap();
+    let s = debugger.last_unpaused().expect("the breakpoint was hit");
+    let top = s.top().unwrap();
+    assert_eq!(
+        (top.source.as_deref(), top.line),
+        (Some("scripts/counter.luau"), Some(4))
+    );
+
+    // Reloaded: the new chunk replaces the old one under the same name.
+    unregister_chunk(&lua, &chunk);
+    let again = lua
+        .load(&bytecode[..])
+        .set_name("=ServerScriptService.Counter")
+        .into_function()
+        .unwrap();
+    register_chunk(&lua, "scripts/counter.luau", &again);
+    again.call::<()>(()).unwrap();
+    service(&lua);
+    let before = debugger.last_unpaused().map(|s| s.frames.len());
+    let _: (i64, String) = lua
+        .globals()
+        .get::<Function>("run")
+        .unwrap()
+        .call(())
+        .unwrap();
+    assert!(before.is_some());
+    let s = debugger.last_unpaused().unwrap();
+    assert_eq!(
+        s.top().unwrap().source.as_deref(),
+        Some("scripts/counter.luau")
+    );
+}

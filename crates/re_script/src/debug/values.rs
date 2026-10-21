@@ -31,9 +31,16 @@ pub(super) struct Arena {
     /// Tables already read, by address: a table shown twice (or a cycle) is
     /// read once.
     tables: HashMap<usize, usize>,
+    /// Chunk names that are not `@path` (a compat script's `=Service.Name`),
+    /// with the project-relative path each was registered under.
+    pub aliases: HashMap<String, String>,
 }
 
 impl Arena {
+    fn source(&self, chunk: &str) -> Option<String> {
+        source_of(&self.aliases, chunk)
+    }
+
     fn push(&mut self, list: Vec<Variable>) -> usize {
         self.lists.push(list);
         self.lists.len() - 1
@@ -44,6 +51,11 @@ impl Arena {
 /// for a chunk loaded from a string (`=...` or source text).
 pub(super) fn source_path(source: &str) -> Option<String> {
     source.strip_prefix('@').map(str::to_string)
+}
+
+/// The path a chunk named `chunk` was registered under, else [`source_path`].
+pub(super) fn source_of(aliases: &HashMap<String, String>, chunk: &str) -> Option<String> {
+    aliases.get(chunk).cloned().or_else(|| source_path(chunk))
 }
 
 /// Reads the stack of `l`, innermost frame first, with every frame's locals
@@ -118,7 +130,7 @@ pub(super) unsafe fn read_stack(l: *mut ffi::lua_State, arena: &mut Arena) -> Ve
                         "?".into()
                     }
                 }),
-                source: if is_c { None } else { source_path(&source) },
+                source: if is_c { None } else { arena.source(&source) },
                 line: if is_c {
                     None
                 } else {
