@@ -44,6 +44,15 @@ pub struct OpenDoc {
     saved: [u8; 32],
 }
 
+impl OpenDoc {
+    /// True if `value` is the content the document was opened with or last
+    /// saved as: a file holding it was written by that save, not changed
+    /// by someone else.
+    pub fn matches_saved(&self, value: &Json) -> bool {
+        content_hash(value) == self.saved
+    }
+}
+
 /// The hash `OpenDoc::saved` compares against: of the compact JSON text, so
 /// a change of key order counts as a change.
 fn content_hash(value: &Json) -> [u8; 32] {

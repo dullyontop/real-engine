@@ -1664,7 +1664,7 @@ impl App {
                 .and_then(|t| {
                     serde_json::from_str::<serde_json::Value>(&t).map_err(|e| e.to_string())
                 });
-            match open_doc_reload(doc.dirty, &doc.value, read) {
+            match open_doc_reload(doc.dirty, &doc.value, read, |v| doc.matches_saved(v)) {
                 DocReload::Keep => {}
                 DocReload::Conflict => problems.push(warn(format!(
                     "{path} changed on disk while it has unsaved edits; saving will overwrite the file"
@@ -2238,7 +2238,8 @@ fn load_world(project: &Path, config: &AppConfig) -> Result<(World, Vec<Diagnost
 /// What to do with an open document whose file changed on disk.
 #[derive(Debug, PartialEq)]
 enum DocReload {
-    /// The file holds the open content already (as after a save).
+    /// The file holds the open content, or the content last saved (our own
+    /// save, seen after later edits).
     Keep,
     /// Reopen the document with the file's content.
     Reopen(serde_json::Value),
@@ -2249,14 +2250,16 @@ enum DocReload {
 }
 
 /// Decides what a change on disk does to an open document: `dirty` and
-/// `open` are the document's state, `file` what reading the file gave.
+/// `open` are the document's state, `file` what reading the file gave, and
+/// `saved` tells whether a content is what the document was last saved as.
 fn open_doc_reload(
     dirty: bool,
     open: &serde_json::Value,
     file: Result<serde_json::Value, String>,
+    saved: impl Fn(&serde_json::Value) -> bool,
 ) -> DocReload {
     match file {
-        Ok(value) if value == *open => DocReload::Keep,
+        Ok(value) if value == *open || saved(&value) => DocReload::Keep,
         _ if dirty => DocReload::Conflict,
         Ok(value) => DocReload::Reopen(value),
         Err(e) => DocReload::Unreadable(e),
@@ -2272,28 +2275,44 @@ mod doc_reload_tests {
     fn a_change_on_disk_reopens_clean_documents_only() {
         let open = json!({"a": 1});
         assert_eq!(
-            open_doc_reload(false, &open, Ok(json!({"a": 1}))),
+            open_doc_reload(false, &open, Ok(json!({"a": 1})), |_| false),
             DocReload::Keep
         );
         assert_eq!(
-            open_doc_reload(true, &open, Ok(json!({"a": 1}))),
+            open_doc_reload(true, &open, Ok(json!({"a": 1})), |_| false),
             DocReload::Keep
         );
         assert_eq!(
-            open_doc_reload(false, &open, Ok(json!({"a": 2}))),
+            open_doc_reload(false, &open, Ok(json!({"a": 2})), |_| false),
             DocReload::Reopen(json!({"a": 2}))
         );
         assert_eq!(
-            open_doc_reload(true, &open, Ok(json!({"a": 2}))),
+            open_doc_reload(true, &open, Ok(json!({"a": 2})), |_| false),
             DocReload::Conflict
         );
         assert_eq!(
-            open_doc_reload(true, &open, Err("gone".into())),
+            open_doc_reload(true, &open, Err("gone".into()), |_| false),
             DocReload::Conflict
         );
         assert_eq!(
-            open_doc_reload(false, &open, Err("gone".into())),
+            open_doc_reload(false, &open, Err("gone".into()), |_| false),
             DocReload::Unreadable("gone".into())
+        );
+    }
+
+    /// A save followed by an edit before the watcher reports the save: the
+    /// file holds the saved content, which is not a conflict.
+    #[test]
+    fn our_own_save_seen_after_an_edit_is_kept() {
+        let saved = json!({"a": 1});
+        let edited = json!({"a": 2});
+        assert_eq!(
+            open_doc_reload(true, &edited, Ok(saved.clone()), |v| *v == saved),
+            DocReload::Keep
+        );
+        assert_eq!(
+            open_doc_reload(true, &edited, Ok(json!({"a": 3})), |v| *v == saved),
+            DocReload::Conflict
         );
     }
 }
