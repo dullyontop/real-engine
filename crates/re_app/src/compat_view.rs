@@ -15,8 +15,8 @@ use re_core::Diagnostic;
 use re_render::{Renderer, SceneExtras, egui};
 use re_types::mesh::MeshData;
 use re_types::render::{
-    DrawFlags, DrawItem, MaterialDesc, MaterialHandle, MeshHandle, RenderSnapshot, TextureData,
-    TextureHandle, TextureRef,
+    DrawFlags, DrawItem, MaterialDesc, MaterialHandle, MeshHandle, PostSettings, RenderSnapshot,
+    SunShadows, TextureData, TextureHandle, TextureRef,
 };
 
 /// A resource the view keeps: its data, and its handle once uploaded.
@@ -46,9 +46,22 @@ pub struct CompatView {
     ui: Option<egui::FullOutput>,
     /// True once the bundled fonts are in the egui context.
     pub(crate) fonts: bool,
+    /// The project's `[render.post]` and `[render.shadows]`, under the
+    /// place's own exposure and grading.
+    post: PostSettings,
+    shadows: SunShadows,
 }
 
 impl CompatView {
+    /// A view whose frames start from the project's `[render]` post and
+    /// shadow settings.
+    pub fn new(render: &crate::config::RenderConfig) -> CompatView {
+        let mut view = CompatView::default();
+        view.post = render.post;
+        view.shadows = render.shadows;
+        view
+    }
+
     /// Takes a frame from the client VM: keeps its new resources, marks its
     /// released ones and remembers what it draws.
     pub fn take(&mut self, mut frame: RenderFrame) {
@@ -131,8 +144,9 @@ impl CompatView {
     }
 
     /// Frees what was released, uploads what is missing and returns the
-    /// frame to draw: the snapshot (with the exposure and colour grading in
-    /// its post settings) and the extras. `None` before the first frame.
+    /// frame to draw: the snapshot (the project's post and shadow settings,
+    /// with the place's exposure and colour grading over them) and the
+    /// extras. `None` before the first frame.
     ///
     /// # Errors
     ///
@@ -195,6 +209,8 @@ impl CompatView {
             lights: f.lights.clone(),
             items,
             clear: f.clear,
+            post: self.post,
+            shadows: self.shadows,
             ..RenderSnapshot::default()
         };
         snapshot.post.exposure = f.exposure;

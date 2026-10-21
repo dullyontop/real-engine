@@ -1,6 +1,7 @@
 //! `DataStoreService` and `MemoryStoreService` over local files (ADR-0048).
 //!
-//! Stores live in a [`DataBackend`]: `.real/data/` in `real run`, or memory
+//! Stores live in a [`DataBackend`]: the run's saved data folder
+//! (`ProjectFiles::writable(Data)`, `.real/data/` in `real run`), or memory
 //! seeded from the project's `data/seed/` everywhere else (`real verify`,
 //! replays, `play.run`, tests), so those runs repeat and never change what a
 //! play saved. The host picks with [`configure`]; a VM nobody configured
@@ -38,7 +39,7 @@ use re_scene::Entity;
 use re_script::sched::{self, WakeMode, YieldToken};
 use serde_json::Value as J;
 
-pub use backend::{DataBackend, DirBackend, MemoryBackend, decode, encode};
+pub use backend::{DataBackend, DirBackend, MemoryBackend, WritableBackend, decode, encode};
 pub use clock::{Clock, DEFAULT_EPOCH_MS, parse_epoch};
 
 use crate::codes;
@@ -90,8 +91,8 @@ impl DataSettings {
 
     /// As [`from_config`](Self::from_config), for the project `files`
     /// (ADR-0037): the seed is read through them and saved data goes to
-    /// their [`Writable::Data`] folder. A run whose data folder is not on
-    /// disk keeps nothing, as without `persist`.
+    /// their [`Writable::Data`] folder, wherever the host put it (a folder in
+    /// memory keeps nothing past the run).
     ///
     /// # Errors
     ///
@@ -109,16 +110,18 @@ impl DataSettings {
             )
         })?;
         let latency = f64::from(config.latency_frames) * step;
-        let saved = files.writable(Writable::Data).path();
-        let (clock, backend): (Clock, Box<dyn DataBackend>) = match saved {
-            Some(dir) if persist && config.mode == DataMode::Persist => {
-                (Clock::Wall, Box::new(DirBackend::new(dir)))
-            }
-            _ => (
-                Clock::Fixed { epoch_ms },
-                Box::new(MemoryBackend::seeded_from(files, "data/seed")?),
-            ),
-        };
+        let (clock, backend): (Clock, Box<dyn DataBackend>) =
+            if persist && config.mode == DataMode::Persist {
+                (
+                    Clock::Wall,
+                    Box::new(WritableBackend::new(files.writable(Writable::Data).clone())),
+                )
+            } else {
+                (
+                    Clock::Fixed { epoch_ms },
+                    Box::new(MemoryBackend::seeded_from(files, "data/seed")?),
+                )
+            };
         Ok(DataSettings {
             enabled: config.enabled,
             latency,
@@ -559,5 +562,32 @@ fn add(b: &mut Bindings, class: &str, name: &str, f: Imp, yields: bool) {
         b.yielding_method(class, name, Arc::new(f));
     } else {
         b.method(class, name, Arc::new(f));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use re_core::files::{LayerKind, MemLayer};
+
+    use super::*;
+
+    #[test]
+    fn a_persisting_run_writes_its_data_folder_wherever_the_host_put_it() {
+        let files = ProjectFiles::for_tests(MemLayer::new(LayerKind::Project));
+        let config = DataConfig::default();
+        let mut s = DataSettings::from_config_in(&config, &files, 1.0 / 60.0, true).unwrap();
+        assert_eq!(s.clock, Clock::Wall);
+        s.backend.write("datastore/_a/_k.json", b"1").unwrap();
+        let data = files.writable(Writable::Data);
+        assert_eq!(
+            data.read("datastore/_a/_k.json").unwrap().as_deref(),
+            Some(&b"1"[..])
+        );
+        // A run that does not persist starts from the seed and leaves the
+        // folder alone.
+        let mut s = DataSettings::from_config_in(&config, &files, 1.0 / 60.0, false).unwrap();
+        assert_eq!(s.backend.read("datastore/_a/_k.json").unwrap(), None);
+        s.backend.write("datastore/_b/_k.json", b"2").unwrap();
+        assert_eq!(data.list("").unwrap(), vec!["datastore/_a/_k.json"]);
     }
 }

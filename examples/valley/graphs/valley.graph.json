@@ -113,10 +113,11 @@
       "kind": "scatter.poisson",
       "version": 1,
       "params": {
-        "radius": 11.0,
-        "height_min": 1.0,
+        "radius": 18.0,
+        "height_min": 6.0,
         "height_max": 40.0,
-        "slope_max": 0.45
+        "slope_max": 0.45,
+        "slope_min": 0.12
       }
     },
     {
@@ -135,9 +136,9 @@
       "kind": "scatter.grid_jitter",
       "version": 1,
       "params": {
-        "spacing": 26.0,
+        "spacing": 40.0,
         "jitter": 0.9,
-        "height_min": 0.5,
+        "height_min": 5.0,
         "slope_min": 0.2,
         "slope_max": 1.5
       }
