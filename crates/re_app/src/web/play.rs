@@ -202,12 +202,19 @@ impl ApplicationHandler for Runner {
         // The adapter and the device arrive on later turns of the page's event
         // loop, so they are awaited, never blocked on.
         wasm_bindgen_futures::spawn_local(async move {
-            let gpu = Gpu::for_surface_async(window.clone(), wgpu::Backends::BROWSER_WEBGPU)
+            // WebGPU when the browser has it, else WebGL2. A canvas keeps the first
+            // kind of context it gives, so the choice comes before the surface.
+            let backends = if wgpu::util::is_browser_webgpu_supported().await {
+                wgpu::Backends::BROWSER_WEBGPU
+            } else {
+                wgpu::Backends::GL
+            };
+            let gpu = Gpu::for_surface_async(window.clone(), backends)
                 .await
                 .map_err(|d| {
                     Diagnostic::error(
                         codes::WEB_NO_GPU,
-                        "the browser gave no WebGPU device for the canvas",
+                        format!("the browser gave no {backends:?} device for the canvas"),
                     )
                     .with_hint("use a current Chrome or Edge, served over HTTPS or from localhost")
                     .with_related(d)

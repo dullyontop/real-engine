@@ -11,7 +11,8 @@
 //!
 //! The archive is opened once and read with positional reads, so threads read
 //! it concurrently and a truncated file is an error rather than a fault. Every
-//! read checks the entry's hash.
+//! read checks the entry's hash. The browser runtime opens one already held in
+//! memory ([`Archive::from_bytes`], ADR-0049 §6).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -327,12 +328,13 @@ impl PackageWriter {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(ARCHIVE_NAME);
-        let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+        let tmp = dir.join(format!(".{name}.{}.tmp", re_core::process_id()));
         let result = (|| {
-            let mut file = File::create(&tmp)?;
-            file.write_all(&bytes)?;
-            file.sync_all()?;
-            drop(file);
+            {
+                let mut file = File::create(&tmp)?;
+                file.write_all(&bytes)?;
+                file.sync_all()?;
+            }
             std::fs::rename(&tmp, path)
         })();
         if result.is_err() {
@@ -369,13 +371,44 @@ pub fn compressed_size(bytes: &[u8]) -> u64 {
 /// An open `game.rpak`: a [`FileLayer`] over its entries.
 #[derive(Debug)]
 pub struct Archive {
-    file: File,
+    source: Source,
     path: PathBuf,
     index: PackageIndex,
     /// Lower-cased paths that name exactly one entry.
     folded: HashMap<String, usize>,
     /// Case-only matches served so far: (asked, stored).
     case_matches: Mutex<Vec<(String, String)>>,
+}
+
+/// Where an archive's bytes are.
+#[derive(Debug)]
+enum Source {
+    File(File),
+    Bytes(Vec<u8>),
+}
+
+impl Source {
+    fn len(&self) -> io::Result<u64> {
+        match self {
+            Source::File(f) => Ok(f.metadata()?.len()),
+            Source::Bytes(b) => Ok(b.len() as u64),
+        }
+    }
+
+    /// Reads exactly `buf.len()` bytes at `offset`.
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+        match self {
+            Source::File(f) => read_at(f, buf, offset),
+            Source::Bytes(b) => {
+                let at = usize::try_from(offset).ok();
+                let src = at
+                    .and_then(|at| b.get(at..at.checked_add(buf.len())?))
+                    .ok_or(io::ErrorKind::UnexpectedEof)?;
+                buf.copy_from_slice(src);
+                Ok(())
+            }
+        }
+    }
 }
 
 fn corrupt(path: &Path, detail: impl std::fmt::Display) -> Diagnostic {
@@ -413,9 +446,27 @@ impl Archive {
     /// `RE0600` for a file that is not a readable archive.
     pub fn open_unchecked(path: &Path) -> Result<Archive, Diagnostic> {
         let file = File::open(path).map_err(|e| corrupt(path, e))?;
-        let len = file.metadata().map_err(|e| corrupt(path, e))?.len();
+        Archive::from_source(Source::File(file), path)
+    }
+
+    /// Opens the archive held in `bytes` (the browser runtime fetches it whole,
+    /// ADR-0049 §6) and checks that this engine can read it. `name` stands for
+    /// its path in diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// As [`Archive::open`].
+    pub fn from_bytes(name: &str, bytes: Vec<u8>) -> Result<Archive, Diagnostic> {
+        let archive = Archive::from_source(Source::Bytes(bytes), Path::new(name))?;
+        archive.check_versions(&RuntimeVersions::current())?;
+        Ok(archive)
+    }
+
+    fn from_source(source: Source, path: &Path) -> Result<Archive, Diagnostic> {
+        let len = source.len().map_err(|e| corrupt(path, e))?;
         let mut header = [0u8; HEADER_LEN as usize];
-        read_at(&file, &mut header, 0)
+        source
+            .read_at(&mut header, 0)
             .map_err(|_| corrupt(path, "it is shorter than its header"))?;
         if &header[..8] != MAGIC {
             return Err(corrupt(path, "it does not start with the archive magic"));
@@ -443,7 +494,9 @@ impl Archive {
             ));
         }
         let mut stored = vec![0u8; usize::try_from(index_stored).map_err(|e| corrupt(path, e))?];
-        read_at(&file, &mut stored, index_offset).map_err(|e| corrupt(path, e))?;
+        source
+            .read_at(&mut stored, index_offset)
+            .map_err(|e| corrupt(path, e))?;
         if blake3::hash(&stored).as_bytes()[..] != header[40..72] {
             return Err(corrupt(path, "its index does not match its hash"));
         }
@@ -479,7 +532,7 @@ impl Archive {
                 .or_insert(Some(i));
         }
         Ok(Archive {
-            file,
+            source,
             path: path.to_owned(),
             index,
             folded: folded
@@ -552,7 +605,9 @@ impl Archive {
     fn read_entry(&self, i: usize) -> Result<Vec<u8>, String> {
         let e = &self.index.entries[i];
         let mut stored = vec![0u8; usize::try_from(e.stored_size).map_err(|x| x.to_string())?];
-        read_at(&self.file, &mut stored, e.offset).map_err(|x| format!("cannot read it: {x}"))?;
+        self.source
+            .read_at(&mut stored, e.offset)
+            .map_err(|x| format!("cannot read it: {x}"))?;
         let size = usize::try_from(e.size).map_err(|x| x.to_string())?;
         let bytes = match e.compression {
             Compression::None => stored,
@@ -737,12 +792,13 @@ fn read_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()> {
     Ok(())
 }
 
-/// Positional reads exist only on Unix and Windows.
+/// Positional reads exist only on Unix and Windows; elsewhere archives are
+/// read from memory ([`Archive::from_bytes`]).
 #[cfg(not(any(unix, windows)))]
 fn read_at(_file: &File, _buf: &mut [u8], _offset: u64) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "game archives are read on desktop platforms only",
+        "game archives are read from files on desktop platforms only",
     ))
 }
 
@@ -820,6 +876,25 @@ mod tests {
             vec![p("scripts/main.luau")]
         );
         assert_eq!(a.list(&ProjectDir::root(), "").len(), 3);
+    }
+
+    #[test]
+    fn an_archive_in_memory_reads_as_the_file_does() {
+        let bytes = sample().to_bytes().0;
+        let a = Archive::from_bytes(ARCHIVE_NAME, bytes.clone()).unwrap();
+        let rock = a.read(&p("assets/Rock.glb")).unwrap().unwrap();
+        assert_eq!(&*rock.bytes, &[7u8; 4096][..]);
+        assert!(matches!(
+            a.read(&p("scripts/main.luau")).unwrap().unwrap().form,
+            Form::Bytecode { .. }
+        ));
+        assert_eq!(a.list(&ProjectDir::root(), "").len(), 3);
+        assert!(a.check_all().is_ok());
+        let cut = bytes[..bytes.len() - 10].to_vec();
+        assert_eq!(
+            Archive::from_bytes(ARCHIVE_NAME, cut).unwrap_err().code,
+            codes::PACKAGE_UNREADABLE
+        );
     }
 
     #[test]
