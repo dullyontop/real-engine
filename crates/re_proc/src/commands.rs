@@ -516,6 +516,13 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
         true,
         report::<C>,
     );
+    registry.register_typed::<crate::bake::BakeArgs, _>(
+        "proc.bake",
+        "Turn a procedural source's generated entities into authored ones (ids `<source>.<key>`, a `Baked` record each, derived meshes and heightfields written under assets/baked/), as one undoable transaction. By default the source stops generating; with `keys` or `keep_source` it keeps generating the rest.",
+        Tier::Edit,
+        false,
+        crate::bake::bake::<C>,
+    );
     registry.register_typed::<MigrationReportArgs, _>(
         "graph.migration_report",
         "What upgrading every node to its kind's current version would change, per procedural source: nodes, output, keys added and removed, orphaned overrides. Changes nothing; `real migrate-graph` writes it.",
