@@ -4064,10 +4064,13 @@ version = "0.1.0"
 dependencies = [
  "pollster",
  "re_app",
+ "re_compat",
  "re_core",
+ "re_import",
  "re_render",
  "re_types",
  "serde_json",
+ "tempfile",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
