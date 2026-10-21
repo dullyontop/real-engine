@@ -398,8 +398,10 @@ fn parts_answer_queries_as_the_ragdoll_and_report_no_poses_or_contacts() {
         .unwrap()
         .expect("the ray hits the ragdoll");
     assert_eq!(hit.entity, MAN);
-    let mut excluded = QueryFilter::default();
-    excluded.groups = re_types::physics::GroupMask::NONE;
+    let excluded = QueryFilter {
+        groups: re_types::physics::GroupMask::NONE,
+        ..QueryFilter::default()
+    };
     assert!(
         p.raycast(hips + Vec3::Y * 3.0, -Vec3::Y, 10.0, &excluded)
             .unwrap()
