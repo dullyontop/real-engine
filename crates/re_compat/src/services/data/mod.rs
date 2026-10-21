@@ -33,6 +33,7 @@ use std::sync::Arc;
 
 use mlua::{Function, Lua, MultiValue, RegistryKey, Result, Table, Value as LuaValue};
 use re_core::Code;
+use re_core::files::{ProjectFiles, Writable};
 use re_scene::Entity;
 use re_script::sched::{self, WakeMode, YieldToken};
 use serde_json::Value as J;
@@ -84,6 +85,23 @@ impl DataSettings {
         step: f64,
         persist: bool,
     ) -> std::result::Result<DataSettings, String> {
+        DataSettings::from_config_in(config, &ProjectFiles::project(project), step, persist)
+    }
+
+    /// As [`from_config`](Self::from_config), for the project `files`
+    /// (ADR-0037): the seed is read through them and saved data goes to
+    /// their [`Writable::Data`] folder. A run whose data folder is not on
+    /// disk keeps nothing, as without `persist`.
+    ///
+    /// # Errors
+    ///
+    /// As [`from_config`](Self::from_config).
+    pub fn from_config_in(
+        config: &DataConfig,
+        files: &ProjectFiles,
+        step: f64,
+        persist: bool,
+    ) -> std::result::Result<DataSettings, String> {
         let epoch_ms = parse_epoch(&config.epoch).ok_or_else(|| {
             format!(
                 "real.toml [compat.data] epoch {:?} is not of the form 2026-01-01T00:00:00Z",
@@ -91,18 +109,16 @@ impl DataSettings {
             )
         })?;
         let latency = f64::from(config.latency_frames) * step;
-        let (clock, backend): (Clock, Box<dyn DataBackend>) =
-            if persist && config.mode == DataMode::Persist {
-                (
-                    Clock::Wall,
-                    Box::new(DirBackend::new(project.join(".real").join("data"))),
-                )
-            } else {
-                let seed = project.join("data").join("seed");
-                let m = MemoryBackend::seeded(&seed)
-                    .map_err(|e| format!("cannot read {}: {e}", seed.display()))?;
-                (Clock::Fixed { epoch_ms }, Box::new(m))
-            };
+        let saved = files.writable(Writable::Data).path();
+        let (clock, backend): (Clock, Box<dyn DataBackend>) = match saved {
+            Some(dir) if persist && config.mode == DataMode::Persist => {
+                (Clock::Wall, Box::new(DirBackend::new(dir)))
+            }
+            _ => (
+                Clock::Fixed { epoch_ms },
+                Box::new(MemoryBackend::seeded_from(files, "data/seed")?),
+            ),
+        };
         Ok(DataSettings {
             enabled: config.enabled,
             latency,

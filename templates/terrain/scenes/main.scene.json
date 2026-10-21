@@ -1,0 +1,63 @@
+{
+  "$schema": "../schemas/scene.schema.json",
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    {
+      "id": "camera",
+      "name": "Camera",
+      "components": {
+        "Camera": {
+          "fov_y_deg": 60.0,
+          "near": 0.1,
+          "far": 1000.0,
+          "active": true
+        },
+        "Transform": {
+          "translation": [0.0, 60.0, 110.0],
+          "rotation": [-0.25881904, 0.0, 0.0, 0.9659259],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    },
+    {
+      "id": "sun",
+      "name": "Sun",
+      "components": {
+        "Light": {
+          "kind": "Directional",
+          "color": [1.0, 1.0, 1.0, 1.0],
+          "intensity": 1.2,
+          "range": 20.0,
+          "shadows": true
+        },
+        "Transform": {
+          "translation": [0.0, 0.0, 0.0],
+          "rotation": [-0.5025189, 0.30151135, 0.10050379, 0.8040303],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    },
+    {
+      "id": "terrain",
+      "name": "Terrain",
+      "components": {
+        "GraphSource": {
+          "graph": "",
+          "builder": "scripts/tools/terrain_graph.luau",
+          "params": ""
+        },
+        "Procedural": {
+          "generator": "graph",
+          "seed": {{seed}},
+          "version": 1
+        },
+        "Transform": {
+          "translation": [0.0, 0.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    }
+  ]
+}

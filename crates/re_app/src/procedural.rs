@@ -4,8 +4,8 @@
 //! derived meshes and heightfields it makes are handed to [`Media`] and the
 //! physics [`ShapeLibrary`], and released when nothing uses them any more.
 
+use re_core::files::ProjectFiles;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
 use re_core::{Diagnostic, Location};
 use re_proc::GraphStore;
@@ -19,12 +19,12 @@ use crate::media::{DERIVED, Media};
 use crate::sync::physics::{HeightfieldData, ShapeLibrary};
 
 /// Registers the `graph` generator and gives the World an empty store for the
-/// project at `project`.
-pub fn install(world: &mut World, project: &Path) {
+/// project read through `files`.
+pub fn install(world: &mut World, files: &ProjectFiles) {
     re_proc::register_generator(&mut world.generators);
     world
         .ecs
-        .insert_resource(GraphStore::for_project(project.to_path_buf()));
+        .insert_resource(GraphStore::for_files(files.clone()));
 }
 
 /// Every procedural source with a `GraphSource`: `(stable id, graph, builder)`.
@@ -51,14 +51,15 @@ fn failed(source: &str, file: &str, message: String) -> Diagnostic {
 /// The graph of one source: its `graph` file, else what its `builder` returns.
 fn graph_of(
     world: &mut World,
-    project: &Path,
+    project: &ProjectFiles,
     builders: &mut Option<ScriptRuntime>,
     (id, graph, builder): &(String, String, String),
 ) -> Result<GraphDoc, Diagnostic> {
     if !graph.is_empty() {
         let path =
             crate::commands::project_path(graph, "the graph file", codes::GRAPH_SOURCE_FAILED)?;
-        let text = std::fs::read_to_string(project.join(&path))
+        let text = project
+            .read_str(&path)
             .map_err(|e| failed(id, &path, format!("cannot read the graph {path}: {e}")))?;
         return GraphDoc::from_json(&text)
             .map_err(|e| failed(id, &path, format!("{path} is not a valid graph: {e}")));
@@ -71,14 +72,15 @@ fn graph_of(
         .at(Location::entity(id.clone())));
     }
     if builders.is_none() {
-        let runtime = ScriptRuntime::new(RuntimeConfig::new(project)).map_err(|e| {
-            failed(
-                id,
-                builder,
-                "cannot start a script context for the builder".into(),
-            )
-            .with_related(e.to_diagnostic())
-        })?;
+        let runtime =
+            ScriptRuntime::new(RuntimeConfig::with_files(project.clone())).map_err(|e| {
+                failed(
+                    id,
+                    builder,
+                    "cannot start a script context for the builder".into(),
+                )
+                .with_related(e.to_diagnostic())
+            })?;
         *builders = Some(runtime);
     }
     let runtime = builders.as_mut().expect("created above");
@@ -142,7 +144,7 @@ pub fn inputs(world: &mut World) -> GraphInputs {
 
 fn load_where(
     world: &mut World,
-    project: &Path,
+    project: &ProjectFiles,
     wanted: impl Fn(&(String, String, String)) -> bool,
 ) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
@@ -167,7 +169,11 @@ fn load_where(
 /// sources that read one of the changed project files in `only`, when given). A
 /// source whose graph cannot be made keeps its previous graph, if any, and is
 /// reported.
-pub fn load_graphs(world: &mut World, project: &Path, only: Option<&[String]>) -> Vec<Diagnostic> {
+pub fn load_graphs(
+    world: &mut World,
+    project: &ProjectFiles,
+    only: Option<&[String]>,
+) -> Vec<Diagnostic> {
     match only {
         None => load_where(world, project, |_| true),
         Some(paths) => load_where(world, project, |s| paths.iter().any(|p| reads(s, p))),
@@ -180,7 +186,7 @@ pub fn load_graphs(world: &mut World, project: &Path, only: Option<&[String]>) -
 /// its inputs or files change again.
 pub fn refresh_graphs(
     world: &mut World,
-    project: &Path,
+    project: &ProjectFiles,
     known: &mut GraphInputs,
 ) -> Vec<Diagnostic> {
     let now = inputs(world);

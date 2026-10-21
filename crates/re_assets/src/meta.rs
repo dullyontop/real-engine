@@ -5,10 +5,13 @@
 //! ```
 //!
 //! The sidecar of `assets/models/tree.glb` is `assets/models/tree.glb.meta.json`.
-//! It is created on first import and should be committed with the file.
+//! It is created on first import and should be committed with the file. Only a
+//! development run creates sidecars; a run without a project directory (a
+//! packaged game) reports a missing one instead (ADR-0037).
 
 use std::path::{Path, PathBuf};
 
+use re_core::files::{FileError, ProjectFiles};
 use re_core::{Diagnostic, Location};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -80,31 +83,9 @@ impl AssetMeta {
         let path = Self::path_for(file);
         let shown_meta = format!("{shown}.meta.json");
         match std::fs::read_to_string(&path) {
-            Ok(text) => {
-                let meta: AssetMeta = serde_json::from_str(&text).map_err(|e| {
-                    Diagnostic::error(codes::META_INVALID, format!("invalid asset sidecar: {e}"))
-                        .at(Location::file_at(&shown_meta, e.line() as u32, e.column() as u32))
-                        .with_hint("fix the JSON, or delete the sidecar to give the asset a new id (references to the old id break)")
-                })?;
-                if meta.version != Self::VERSION {
-                    return Err(Diagnostic::error(
-                        codes::META_INVALID,
-                        format!(
-                            "asset sidecar version {} is not supported (expected {})",
-                            meta.version,
-                            Self::VERSION
-                        ),
-                    )
-                    .at(Location::file(&shown_meta)));
-                }
-                Ok(meta)
-            }
+            Ok(text) => Self::parse(&text, &shown_meta),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let meta = AssetMeta::new(default_settings);
-                meta.write(file)
-                    .map_err(|e| fsutil::write_failed(&shown_meta, &e))?;
-                tracing::debug!(file = shown, id = %meta.id(), "created asset sidecar");
-                Ok(meta)
+                Self::create(file, shown, default_settings)
             }
             Err(e) => Err(Diagnostic::error(
                 codes::READ_FAILED,
@@ -112,6 +93,72 @@ impl AssetMeta {
             )
             .at(Location::file(&shown_meta))),
         }
+    }
+
+    /// Reads the sidecar of the project file `rel` through `files`, or, in a
+    /// development run, writes a new one with `default_settings` when there is
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// As [`read_or_create`](Self::read_or_create), plus
+    /// [`codes::WRITE_FAILED`] for a missing sidecar when `files` has no project
+    /// directory to write it in.
+    pub fn read_or_create_in(
+        files: &ProjectFiles,
+        rel: &str,
+        default_settings: serde_json::Value,
+    ) -> Result<AssetMeta, Diagnostic> {
+        let shown_meta = format!("{rel}.meta.json");
+        match files.read_str(&shown_meta) {
+            Ok(text) => Self::parse(&text, &shown_meta),
+            Err(FileError::NotFound { .. }) => match files.project_dir() {
+                Some(dir) => Self::create(&dir.join(rel), rel, default_settings),
+                None => Err(Diagnostic::error(
+                    codes::WRITE_FAILED,
+                    format!("`{rel}` has no sidecar, and this run cannot create one"),
+                )
+                .at(Location::file(&shown_meta))
+                .with_hint("a packaged game reads sidecars from its package; `real build` creates missing ones in the project")),
+            },
+            Err(e) => Err(Diagnostic::error(
+                codes::READ_FAILED,
+                format!("cannot read `{shown_meta}`: {e}"),
+            )
+            .at(Location::file(&shown_meta))),
+        }
+    }
+
+    fn parse(text: &str, shown_meta: &str) -> Result<AssetMeta, Diagnostic> {
+        let meta: AssetMeta = serde_json::from_str(text).map_err(|e| {
+            Diagnostic::error(codes::META_INVALID, format!("invalid asset sidecar: {e}"))
+                .at(Location::file_at(shown_meta, e.line() as u32, e.column() as u32))
+                .with_hint("fix the JSON, or delete the sidecar to give the asset a new id (references to the old id break)")
+        })?;
+        if meta.version != Self::VERSION {
+            return Err(Diagnostic::error(
+                codes::META_INVALID,
+                format!(
+                    "asset sidecar version {} is not supported (expected {})",
+                    meta.version,
+                    Self::VERSION
+                ),
+            )
+            .at(Location::file(shown_meta)));
+        }
+        Ok(meta)
+    }
+
+    fn create(
+        file: &Path,
+        shown: &str,
+        default_settings: serde_json::Value,
+    ) -> Result<AssetMeta, Diagnostic> {
+        let meta = AssetMeta::new(default_settings);
+        meta.write(file)
+            .map_err(|e| fsutil::write_failed(&format!("{shown}.meta.json"), &e))?;
+        tracing::debug!(file = shown, id = %meta.id(), "created asset sidecar");
+        Ok(meta)
     }
 
     /// Writes this sidecar next to `file`, atomically, as pretty JSON.

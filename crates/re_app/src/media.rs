@@ -74,8 +74,13 @@ pub struct Media {
 impl Media {
     /// Media for the project at `root` (asset cache in `<root>/.real/cache/assets`).
     pub fn new(root: &Path) -> Media {
+        Media::with_files(re_core::files::ProjectFiles::project(root))
+    }
+
+    /// Media read through `files` (ADR-0037).
+    pub fn with_files(files: re_core::files::ProjectFiles) -> Media {
         Media {
-            server: AssetServer::new(root),
+            server: AssetServer::with_files(files),
             meshes: HashMap::new(),
             derived: HashMap::new(),
             materials: HashMap::new(),

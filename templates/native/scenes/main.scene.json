@@ -1,0 +1,106 @@
+{
+  "$schema": "../schemas/scene.schema.json",
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    {
+      "id": "box",
+      "name": "Box",
+      "components": {
+        "Collider": {
+          "shape": "Box",
+          "half_extents": [0.5, 0.5, 0.5],
+          "radius": 0.5,
+          "half_height": 0.5,
+          "source": "",
+          "layer": 0,
+          "groups": 1,
+          "sensor": false,
+          "enabled": true
+        },
+        "MaterialRef": {
+          "asset": "materials/box.material.json"
+        },
+        "MeshRef": {
+          "asset": "builtin:cube"
+        },
+        "RigidBody": {
+          "kind": "Dynamic",
+          "mass": 10.0,
+          "friction": 0.5,
+          "restitution": 0.0,
+          "linear_damping": 0.05,
+          "angular_damping": 0.05
+        },
+        "Transform": {
+          "translation": [0.0, 4.0, 0.0],
+          "rotation": [0.1995118, 0.2992677, 0.0997559, 0.92772985],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    },
+    {
+      "id": "camera",
+      "name": "Camera",
+      "components": {
+        "Camera": {
+          "fov_y_deg": 60.0,
+          "near": 0.1,
+          "far": 1000.0,
+          "active": true
+        },
+        "Transform": {
+          "translation": [0.0, 5.0, 12.0],
+          "rotation": [-0.19509034, 0.0, 0.0, 0.9807853],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    },
+    {
+      "id": "ground",
+      "name": "Ground",
+      "components": {
+        "Collider": {
+          "shape": "Box",
+          "half_extents": [0.5, 0.5, 0.5],
+          "radius": 0.5,
+          "half_height": 0.5,
+          "source": "",
+          "layer": 0,
+          "groups": 1,
+          "sensor": false,
+          "enabled": true
+        },
+        "MaterialRef": {
+          "asset": "materials/ground.material.json"
+        },
+        "MeshRef": {
+          "asset": "builtin:cube"
+        },
+        "Transform": {
+          "translation": [0.0, -0.5, 0.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [40.0, 1.0, 40.0]
+        }
+      }
+    },
+    {
+      "id": "sun",
+      "name": "Sun",
+      "components": {
+        "Light": {
+          "kind": "Directional",
+          "color": [1.0, 1.0, 1.0, 1.0],
+          "intensity": 1.0,
+          "range": 20.0,
+          "shadows": true
+        },
+        "Transform": {
+          "translation": [0.0, 0.0, 0.0],
+          "rotation": [-0.5025189, 0.30151135, 0.10050379, 0.8040303],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    }
+  ]
+}
