@@ -58,6 +58,7 @@ pub const MAX_REMOTE_MESSAGE: usize = 64 * 1024;
 pub const PROTOCOL: u32 = wire::WIRE_VERSION;
 
 /// How often a lockstep side looks for what it waits for.
+#[cfg(not(target_arch = "wasm32"))]
 const WAIT_STEP: Duration = Duration::from_millis(1);
 
 /// A reliable message of a session.
