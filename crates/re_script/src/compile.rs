@@ -27,6 +27,23 @@ pub fn compiler() -> Compiler {
 /// whenever the options do.
 pub const COMPILER_ID: &str = "o1d1-m";
 
+/// The version of the Luau the engine links, such as `"0.740"`, stored with
+/// packaged bytecode (ADR-0037). `"unknown"` when mlua was built without it,
+/// so two such builds compare equal.
+pub fn luau_version() -> &'static str {
+    mlua::ffi::luau_version().unwrap_or("unknown")
+}
+
+/// The bytecode format version [`compiler`] writes (its output's first byte),
+/// stored with packaged bytecode (ADR-0037). Computed once.
+pub fn bytecode_version() -> u8 {
+    static VERSION: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    *VERSION.get_or_init(|| {
+        let code = compiler().compile("").expect("the empty chunk compiles");
+        code[0]
+    })
+}
+
 /// Compiles `source` to Luau bytecode with [`compiler`], for `real build`.
 /// The output is deterministic.
 ///
@@ -142,6 +159,14 @@ mod tests {
             .unwrap();
         assert_eq!(COMPILER_ID, "o1d1-m");
         assert_eq!(compile_bytecode(probe, "scripts/p.luau").unwrap(), expected);
+    }
+
+    #[test]
+    fn the_luau_and_bytecode_versions_are_known() {
+        assert!(luau_version().starts_with("0."), "{}", luau_version());
+        let v = bytecode_version();
+        assert!((3..=11).contains(&v), "{v}");
+        assert_eq!(compile_bytecode("return 1", "a").unwrap()[0], v);
     }
 
     #[test]

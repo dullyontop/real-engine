@@ -23,6 +23,7 @@ pub(crate) mod json;
 pub(crate) mod libs;
 pub mod math;
 pub mod proc;
+pub(crate) mod stream;
 pub mod value;
 pub(crate) mod world;
 
