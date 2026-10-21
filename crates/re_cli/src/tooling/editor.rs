@@ -39,8 +39,12 @@ pub fn run(args: EditorArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Ok(x) => x,
         Err(d) => return Ok(fail(&d)),
     };
-    // Play in the editor keeps saved data, as `real run` does (ADR-0048).
+    // Play in the editor keeps saved data and reloads changed files, as
+    // `real run` does (ADR-0048). Without a watcher it goes on, without reload.
     app.persist_data();
+    if let Err(d) = app.enable_hot_reload() {
+        eprint!("{}", d.render_human());
+    }
     let options = EditorOptions {
         max_frames: args.frames,
         socket: Some(socket),

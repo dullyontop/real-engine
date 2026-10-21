@@ -100,3 +100,7 @@ pub const DATA_FILE: Code = Code::new("RE9402");
 /// A memory store request was refused: over the request units or the memory
 /// quota, a value or structure too large, or a bad argument.
 pub const MEMORY_REQUEST: Code = Code::new("RE9403");
+
+/// A compat script changed on disk during play but does not compile; the
+/// running version stays until a save that compiles (ADR-0048 §3).
+pub const RELOAD_COMPILE: Code = Code::new("RE9420");
