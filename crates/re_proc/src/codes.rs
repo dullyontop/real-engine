@@ -74,3 +74,36 @@ pub const MIGRATION_FAILED: Code = Code::new("RE4020");
 /// A source's open graph differs from its graph file, which a migration
 /// reads and rewrites.
 pub const OPEN_GRAPH_DIFFERS: Code = Code::new("RE4022");
+
+/// The `[stream]` section of `real.toml` has an unknown key or a bad value.
+pub const STREAM_CONFIG: Code = Code::new("RE4300");
+
+/// A streamed source's graph uses a node that cannot be evaluated per cell.
+pub const NOT_STREAMABLE: Code = Code::new("RE4301");
+
+/// A streamed procedural source does not have an identity transform.
+pub const STREAMED_SOURCE_MOVED: Code = Code::new("RE4302");
+
+/// Entities outside a streamed subtree reference into it while its cell is
+/// unloaded (warning; the references read as empty until it loads).
+pub const REFERENCE_INTO_UNLOADED: Code = Code::new("RE4303");
+
+/// An entity was named that lies in an unloaded cell.
+pub const IN_UNLOADED_CELL: Code = Code::new("RE4304");
+
+/// A cell's content was not ready at its apply tick and was applied late
+/// (warning, in play).
+pub const LATE_CELL: Code = Code::new("RE4305");
+
+/// The streaming memory budget cannot hold every cell within `radius`; the
+/// load radius shrinks (warning).
+pub const STREAM_MEMORY: Code = Code::new("RE4306");
+
+/// Generating a cell failed; the cell stays empty until its inputs change.
+pub const CELL_FAILED: Code = Code::new("RE4307");
+
+/// The floating origin cannot keep every focus within physics range.
+pub const ORIGIN_RANGE: Code = Code::new("RE4308");
+
+/// Content lies beyond the precision limit of world-space positions (warning).
+pub const PRECISION_LIMIT: Code = Code::new("RE4309");

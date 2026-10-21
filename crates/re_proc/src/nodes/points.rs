@@ -311,7 +311,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
+            streaming: super::Streaming::Cell,
             doc: "Keeps the points within height and slope limits, above `mask_min` on an optional mask field, and with probability `density`.",
             inputs: &[
                 PortDef {
@@ -340,7 +340,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
+            streaming: super::Streaming::Cell,
             doc: "Gives each point a tag chosen at random by weight (stable per point id).",
             inputs: &[PortDef {
                 name: "points",
@@ -361,7 +361,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
+            streaming: super::Streaming::Cell,
             doc: "Places a prefab file at each point: one entity `<node>/<point id>` per point, with the prefab's entities under it.",
             inputs: &[PortDef {
                 name: "points",

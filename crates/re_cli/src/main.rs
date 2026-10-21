@@ -65,14 +65,30 @@ enum Command {
     /// Create a new project in DIR.
     New {
         /// The directory to create.
-        dir: PathBuf,
+        #[arg(required_unless_present = "list_templates")]
+        dir: Option<PathBuf>,
         /// The project name (default: the directory name).
         #[arg(long)]
         name: Option<String>,
-        /// The kind of project: `native` (the engine's own API) or `roblox`
-        /// (an empty Roblox-style place; tooling build).
+        /// The template: `native` (the engine's own API), `roblox` (an empty
+        /// Roblox-style place), `terrain`, or a template directory.
+        /// `--list-templates` lists them; all but `native` need the tooling
+        /// build.
         #[arg(long, default_value = "native")]
-        template: new::Template,
+        template: String,
+        /// A template parameter, `KEY=VALUE` (repeatable).
+        #[arg(long = "set", value_name = "KEY=VALUE")]
+        set: Vec<String>,
+        /// Run the template's checks (`real verify` and the rest) on the new
+        /// project.
+        #[arg(long)]
+        check: bool,
+        /// List the templates and their parameters instead.
+        #[arg(long, conflicts_with_all = ["dir", "set", "check"])]
+        list_templates: bool,
+        /// With `--list-templates`: print JSON.
+        #[arg(long, requires = "list_templates")]
+        json: bool,
     },
     /// Run the project.
     Run(RunArgs),
@@ -157,6 +173,9 @@ struct RunArgs {
     /// Print the run report as JSON.
     #[arg(long)]
     json: bool,
+    /// Serve the script debugger over DAP on 127.0.0.1 (default port 4711).
+    #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "4711")]
+    debug: Option<u16>,
 }
 
 fn print_diagnostics(diagnostics: &[Diagnostic]) {
@@ -191,6 +210,21 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         Ok(a) => a,
         Err(d) => return fail(d),
     };
+    // Kept until the run ends; dropping it closes the client's connection.
+    let _dap = match args.debug {
+        Some(port) => {
+            let debugger = re_script::debug::Debugger::new();
+            match re_script::debug::dap::DapServer::listen(debugger.clone(), port, project) {
+                Ok(server) => {
+                    eprintln!("debugger: DAP on {}", server.addr());
+                    app.set_debugger(Some(debugger));
+                    Some(server)
+                }
+                Err(d) => return fail(d),
+            }
+        }
+        None => None,
+    };
     let replay = match &args.replay {
         Some(path) => match re_input::load_replay(path) {
             Ok(doc) => Some(doc),
@@ -198,9 +232,13 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         },
         None => None,
     };
-    // A replay must repeat its recording, so only a live run keeps data.
+    // A replay must repeat its recording, so only a live run keeps data and
+    // reloads changed files. A watcher that cannot start is reported; the
+    // run goes on without reload.
+    let mut watch_problem = None;
     if replay.is_none() {
         app.persist_data();
+        watch_problem = app.enable_hot_reload().err();
     }
     let (frames, mut diagnostics, mut report) = if args.headless {
         match app.run_headless(args.frames, replay) {
@@ -237,6 +275,7 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
             Err(d) => return fail(d),
         }
     };
+    diagnostics.extend(watch_problem);
     if let Some(path) = &args.screenshot {
         let path = std::env::current_dir().unwrap_or_default().join(path);
         match app.screenshot(Some(&path)) {
@@ -432,12 +471,12 @@ fn cmd_schema(out: &Path) -> ExitCode {
     }
 }
 
-/// Writes a crash report to `<project>/.real/crash/` on a panic (ARCHITECTURE §7).
-fn install_crash_hook(project: PathBuf) {
+/// Writes a crash report to the run's crash folder (`<project>/.real/crash/`)
+/// on a panic (ARCHITECTURE §7).
+fn install_crash_hook(crash: re_core::files::WritableDir) {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default(info);
-        let dir = project.join(".real/crash");
         let stamp = re_core::time::SystemTime::now()
             .duration_since(re_core::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
@@ -447,10 +486,14 @@ fn install_crash_hook(project: PathBuf) {
             env!("CARGO_PKG_VERSION"),
             std::backtrace::Backtrace::force_capture()
         );
-        if std::fs::create_dir_all(&dir).is_ok() {
-            let path = dir.join(format!("crash-{stamp}.txt"));
-            if std::fs::write(&path, report).is_ok() {
-                eprintln!("a crash report was written to {}", path.display());
+        let name = format!("crash-{stamp}.txt");
+        if crash.write(&name, report.as_bytes()).is_ok() {
+            match crash.path() {
+                Some(dir) => eprintln!(
+                    "a crash report was written to {}",
+                    dir.join(&name).display()
+                ),
+                None => eprintln!("a crash report was written ({name})"),
             }
         }
     }));
@@ -458,7 +501,7 @@ fn install_crash_hook(project: PathBuf) {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    install_crash_hook(cli.project.clone());
+    install_crash_hook(re_core::files::WritableDirs::in_project(&cli.project).crash);
     // Warnings, plus what scripts `print`, on standard error (stdout stays for
     // results and JSON); `RUST_LOG` replaces this.
     if let Err(d) = re_core::init_logging(re_core::LogConfig {
@@ -470,16 +513,39 @@ fn main() -> ExitCode {
     let project = cli.project;
     match cli.command {
         Command::New {
-            dir,
-            name,
-            template,
-        } => match new::create_from(&dir, name.as_deref(), template) {
-            Ok(files) => {
-                println!("created {} ({})", dir.display(), files.join(", "));
+            list_templates: true,
+            json,
+            ..
+        } => match new::list_templates(json) {
+            Ok(text) => {
+                print!("{text}");
                 ExitCode::SUCCESS
             }
             Err(d) => fail(d),
         },
+        Command::New {
+            dir,
+            name,
+            template,
+            set,
+            check,
+            ..
+        } => {
+            let dir = dir.expect("clap requires DIR without --list-templates");
+            let options = new::NewOptions {
+                name: name.as_deref(),
+                template: &template,
+                set: &set,
+                check,
+            };
+            match new::create_from(&dir, options) {
+                Ok(files) => {
+                    println!("created {} ({})", dir.display(), files.join(", "));
+                    ExitCode::SUCCESS
+                }
+                Err(d) => fail(d),
+            }
+        }
         Command::Run(args) => cmd_run(&project, args),
         Command::Describe { json, luau_defs } => cmd_describe(&project, json, luau_defs),
         Command::Verify {

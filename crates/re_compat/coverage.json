@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1780,
-    "partial": 235,
+    "implemented": 1785,
+    "partial": 232,
     "stub-error": 43,
     "missing": 3
   },
@@ -758,8 +758,18 @@
     {
       "name": "BaseScript",
       "superclass": "LuaSourceContainer",
-      "status": "partial",
+      "status": "implemented",
       "members": [
+        {
+          "name": "Disabled",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Enabled",
+          "kind": "property",
+          "status": "implemented"
+        },
         {
           "name": "RunContext",
           "kind": "property",
@@ -3132,7 +3142,7 @@
       "name": "LocalScript",
       "superclass": "Script",
       "creatable": true,
-      "status": "partial",
+      "status": "implemented",
       "members": []
     },
     {
@@ -4435,7 +4445,7 @@
       "name": "Script",
       "superclass": "BaseScript",
       "creatable": true,
-      "status": "partial",
+      "status": "implemented",
       "members": []
     },
     {

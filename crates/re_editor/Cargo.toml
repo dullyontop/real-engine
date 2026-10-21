@@ -17,6 +17,7 @@ re_command.workspace = true
 re_app.workspace = true
 re_agent.workspace = true
 re_render.workspace = true
+re_script.workspace = true
 glam.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
@@ -28,3 +29,4 @@ anyhow.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+mlua.workspace = true

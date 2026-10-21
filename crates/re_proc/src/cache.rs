@@ -1,12 +1,12 @@
-//! The disk cache of node outputs: `<dir>/<key hex>.bin`, postcard with a
+//! The disk cache of node outputs: `<dir>/<key hex>.bin` in a [`WritableDir`]
+//! (the run's cache folder), postcard with a
 //! `(magic, format_version)` header (ARCHITECTURE §8, "Caches"). Fields,
 //! meshes and points are stored; fragments are cheap to rebuild from them
 //! and stay in memory only. Every entry is safe to delete.
 
-use std::fs;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use re_core::files::WritableDir;
 use serde::{Deserialize, Serialize};
 
 use crate::value::{Field, MeshValue, Output, Points};
@@ -25,21 +25,20 @@ enum Stored {
 /// A directory of cached node outputs.
 #[derive(Clone, Debug)]
 pub(crate) struct DiskCache {
-    dir: PathBuf,
+    dir: WritableDir,
 }
 
 impl DiskCache {
-    pub(crate) fn new(dir: PathBuf) -> Self {
+    pub(crate) fn new(dir: WritableDir) -> Self {
         DiskCache { dir }
     }
 
-    pub(crate) fn dir(&self) -> &Path {
+    pub(crate) fn dir(&self) -> &WritableDir {
         &self.dir
     }
 
-    fn path(&self, key: &[u8; 32]) -> PathBuf {
-        self.dir
-            .join(format!("{}.bin", blake3::Hash::from_bytes(*key).to_hex()))
+    fn path(key: &[u8; 32]) -> String {
+        format!("{}.bin", blake3::Hash::from_bytes(*key).to_hex())
     }
 
     /// True for the output types that are stored.
@@ -50,9 +49,9 @@ impl DiskCache {
     /// The cached output for `key`: `Ok(None)` when there is none, `Err` when
     /// the entry is unreadable or damaged.
     pub(crate) fn load(&self, key: &[u8; 32]) -> Result<Option<Output>, String> {
-        let bytes = match fs::read(self.path(key)) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        let bytes = match self.dir.read(&Self::path(key)) {
+            Ok(Some(b)) => b,
+            Ok(None) => return Ok(None),
             Err(e) => return Err(format!("cache entry could not be read: {e}")),
         };
         if bytes.len() < 12 || bytes[..8] != MAGIC {
@@ -95,18 +94,9 @@ impl DiskCache {
         let body = postcard::to_stdvec(&stored)
             .map_err(|e| format!("cache entry could not be encoded: {e}"))?;
         bytes.extend_from_slice(&body);
-        fs::create_dir_all(&self.dir)
-            .map_err(|e| format!("cache directory could not be created: {e}"))?;
-        let path = self.path(key);
-        // Unique per process and write, so threads storing the same key do
-        // not share a temporary file.
-        static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let tmp = path.with_extension(format!("tmp{}-{n}", std::process::id()));
-        fs::write(&tmp, &bytes).map_err(|e| format!("cache entry could not be written: {e}"))?;
-        fs::rename(&tmp, &path).map_err(|e| {
-            let _ = fs::remove_file(&tmp);
-            format!("cache entry could not be written: {e}")
-        })
+        // Written through a temporary file and a rename.
+        self.dir
+            .write(&Self::path(key), &bytes)
+            .map_err(|e| format!("cache entry could not be written: {e}"))
     }
 }

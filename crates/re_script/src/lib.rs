@@ -24,6 +24,7 @@ pub mod api;
 mod budget;
 pub mod codes;
 mod compile;
+pub mod debug;
 pub mod diag;
 pub mod host;
 pub mod modules;
@@ -46,7 +47,7 @@ pub mod sched {
 
 pub use api::{DEFINITIONS_PATH, definitions, write_definitions};
 pub use budget::untimed;
-pub use compile::compile_check;
+pub use compile::{COMPILER_ID, chunk_mode, compile_bytecode, compile_check, compiler};
 pub use diag::{ErrorKind, ScriptError};
 pub use host::{CommandHost, NoServices, ScriptHost, WorldHost};
 pub use modules::Reload;
@@ -138,6 +139,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::SERVICE_UNAVAILABLE,
         title: "Engine service unavailable",
         page: include_str!("../explain/RE3015.md"),
+    },
+    DiagInfo {
+        code: debug::NOT_PAUSED,
+        title: "Breakpoint reached where the script cannot pause",
+        page: include_str!("../explain/RE3070.md"),
+    },
+    DiagInfo {
+        code: debug::DAP,
+        title: "Debugger DAP server failed",
+        page: include_str!("../explain/RE3071.md"),
     },
     DiagInfo {
         code: codes::UNSUPPORTED_MEMBER,

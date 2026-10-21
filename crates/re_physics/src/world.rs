@@ -22,7 +22,7 @@ use re_core::{Diagnostic, Location, Severity, TaskPool};
 use re_types::EntityId;
 use re_types::physics::{
     BodyDesc, BodyKind, BodyPose, CharacterDesc, CharacterState, ConstraintDesc, ConstraintKind,
-    ContactEvent, GroundState, GroupMask, Layer, PhysicsCmd,
+    ContactEvent, GroundState, GroupMask, Layer, PhysicsCmd, VehicleInput,
 };
 
 use crate::codes;
@@ -31,6 +31,7 @@ use crate::convert::{gq, grv, gv, jq, jv, rv, unit_rotation};
 use crate::jobs::JoltRayonJobs;
 use crate::parts::{PartGate, PartListener, PartsState};
 use crate::shapes;
+use crate::vehicle::VehicleEntry;
 
 /// The engine's physics world: Jolt behind a command-buffer API.
 ///
@@ -57,6 +58,10 @@ pub struct Physics {
     pub(crate) entity_of: HashMap<BodyId, EntityId>,
     pub(crate) characters: BTreeMap<EntityId, CharacterEntry>,
     constraints: BTreeMap<EntityId, ConstraintEntry>,
+    pub(crate) vehicles: BTreeMap<EntityId, VehicleEntry>,
+    /// The driver input of vehicles removed during the current `apply`, so a
+    /// vehicle added again in the same `apply` keeps it.
+    pub(crate) dropped_inputs: BTreeMap<EntityId, VehicleInput>,
     gate: Arc<GroupGate>,
     state: StepState,
     removed: Vec<BodyId>,
@@ -73,6 +78,9 @@ pub(crate) struct BodyEntry {
     pub(crate) mass: f32,
     pub(crate) groups: GroupMask,
     pub(crate) sensor: bool,
+    pub(crate) layer: Layer,
+    /// `BodyDesc::center_of_mass_offset`, kept for `SetShape`.
+    pub(crate) mass_offset: Vec3,
 }
 
 pub(crate) struct CharacterEntry {
@@ -278,7 +286,7 @@ pub(crate) fn in_world(p: Vec3) -> bool {
     p.is_finite() && p.abs().max_element() <= max_position()
 }
 
-fn at(id: EntityId) -> Location {
+pub(crate) fn at(id: EntityId) -> Location {
     Location::entity(id.to_string())
 }
 
@@ -294,7 +302,7 @@ pub(crate) fn outside_world(id: EntityId, what: &str, p: Vec3) -> Diagnostic {
     .with_hint("keep the world within 5 km of the origin, or move the origin with the world")
 }
 
-fn unknown(id: EntityId, what: &str) -> Diagnostic {
+pub(crate) fn unknown(id: EntityId, what: &str) -> Diagnostic {
     Diagnostic::error(codes::UNKNOWN_ENTITY, format!("entity {id} has no {what}"))
         .at(at(id))
         .with_hint("add the body or character before sending commands to it")
@@ -353,6 +361,8 @@ impl Physics {
             entity_of: HashMap::new(),
             characters: BTreeMap::new(),
             constraints: BTreeMap::new(),
+            vehicles: BTreeMap::new(),
+            dropped_inputs: BTreeMap::new(),
             gate,
             state: StepState::default(),
             removed: Vec::new(),
@@ -380,6 +390,7 @@ impl Physics {
                 self.diagnostics.push(d);
             }
         }
+        self.dropped_inputs.clear();
     }
 
     fn apply_one(&mut self, cmd: PhysicsCmd) -> Result<(), Diagnostic> {
@@ -481,6 +492,9 @@ impl Physics {
                     .remove_constraint(entry.id)
                     .map_err(|e| constraint_invalid(id, e.to_string()))
             }
+            PhysicsCmd::RemoveVehicle { id } => self.remove_vehicle(id),
+            PhysicsCmd::AddVehicle { id, desc } => self.add_vehicle(id, &desc),
+            PhysicsCmd::SetVehicleInput { id, input } => self.set_vehicle_input(id, input),
         }
     }
 
@@ -524,6 +538,7 @@ impl Physics {
         if let Some(w) = built.warning {
             self.diagnostics.push(w.at(at(id)));
         }
+        let shape = with_mass_offset(id, built.shape, desc.kind, desc.center_of_mass_offset)?;
         let moving = desc.kind != BodyKind::Static;
         let settings = match desc.kind {
             BodyKind::Static => BodySettings::new_static(),
@@ -541,7 +556,7 @@ impl Physics {
         .user_data(id.to_bits());
         let body = self
             .world
-            .create_body(&built.shape, &settings)
+            .create_body(&shape, &settings)
             .map_err(|e| body_invalid(id, e))?;
         self.entity_of.insert(body, id);
         self.gate.set(body, desc.groups);
@@ -553,6 +568,8 @@ impl Physics {
                 mass: desc.mass,
                 groups: desc.groups,
                 sensor: desc.sensor,
+                layer: desc.layer,
+                mass_offset: desc.center_of_mass_offset,
             },
         );
         Ok(())
@@ -561,6 +578,8 @@ impl Physics {
     fn remove_body(&mut self, id: EntityId) -> Result<(), Diagnostic> {
         let entry = self.bodies.get(&id).ok_or_else(|| unknown(id, "body"))?;
         let body = entry.id;
+        // Jolt refuses to remove a vehicle's chassis: the vehicle goes with it.
+        self.drop_vehicle(id);
         // Jolt refuses to remove a body a constraint holds: remove those constraints first.
         let attached: Vec<EntityId> = self
             .constraints
@@ -663,11 +682,12 @@ impl Physics {
         if entry.kind != BodyKind::Static && shapes::is_static_only(shape) {
             return Err(static_only(id, shape, entry.kind));
         }
-        let (body, kind, mass) = (entry.id, entry.kind, entry.mass);
+        let (body, kind, mass, offset) = (entry.id, entry.kind, entry.mass, entry.mass_offset);
         let built = shapes::build(shape).map_err(|d| d.at(at(id)))?;
         if let Some(w) = built.warning {
             self.diagnostics.push(w.at(at(id)));
         }
+        let shape = with_mass_offset(id, built.shape, kind, offset)?;
         let (mass, activation) = match kind {
             BodyKind::Dynamic => (Some(mass), Activation::Activate),
             BodyKind::Kinematic => (None, Activation::Activate),
@@ -675,7 +695,7 @@ impl Physics {
         };
         self.world
             .body_mut(body)
-            .and_then(|mut b| b.set_shape(&built.shape, mass, activation))
+            .and_then(|mut b| b.set_shape(&shape, mass, activation))
             .map_err(|e| body_invalid(id, e))
     }
 
@@ -1423,6 +1443,33 @@ impl Physics {
             }
         }
     }
+}
+
+/// `shape` with its centre of mass moved by `offset`, for a dynamic body; other kinds
+/// have no mass to move.
+fn with_mass_offset(
+    id: EntityId,
+    shape: Shape,
+    kind: BodyKind,
+    offset: Vec3,
+) -> Result<Shape, Diagnostic> {
+    if kind != BodyKind::Dynamic || offset == Vec3::ZERO {
+        return Ok(shape);
+    }
+    if !in_world(offset) {
+        return Err(Diagnostic::error(
+            codes::SHAPE_INVALID,
+            format!("body {id}: centre of mass offset {offset} is not finite or too large"),
+        )
+        .at(at(id)));
+    }
+    Shape::new_offset_center_of_mass(&shape, jv(offset)).map_err(|e| {
+        Diagnostic::error(
+            codes::SHAPE_INVALID,
+            format!("body {id}: the centre of mass offset {offset} was refused: {e}"),
+        )
+        .at(at(id))
+    })
 }
 
 fn as_warning(mut d: Diagnostic) -> Diagnostic {

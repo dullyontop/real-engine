@@ -196,6 +196,15 @@ pub struct BodyDesc {
     pub groups: GroupMask,
     /// A sensor reports contacts but does not collide.
     pub sensor: bool,
+    /// Moves the centre of mass away from the shape's own, in the body's local space
+    /// (dynamic bodies; ignored otherwise). A vehicle chassis with its centre of mass
+    /// lowered toward the wheels does not roll over (ADR-0040).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub center_of_mass_offset: Vec3,
+}
+
+fn is_zero(v: &Vec3) -> bool {
+    *v == Vec3::ZERO
 }
 
 impl Default for BodyDesc {
@@ -216,6 +225,7 @@ impl Default for BodyDesc {
             layer: Layer(0),
             groups: GroupMask::default(),
             sensor: false,
+            center_of_mass_offset: Vec3::ZERO,
         }
     }
 }
@@ -342,6 +352,292 @@ impl ConstraintDesc {
     }
 }
 
+/// The kind of a vehicle: the controller Jolt runs on it (ADR-0040).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VehicleKind {
+    /// A wheeled vehicle: any number of wheels, driven through differentials.
+    #[default]
+    Wheeled,
+    /// A motorcycle: exactly two wheels (front first) and a lean controller that
+    /// keeps it upright and leans it into turns.
+    Motorcycle,
+}
+
+/// How a vehicle's wheels find the ground. Each wheel casts along its suspension at
+/// the start of every step, against the bodies the chassis' layer collides with.
+///
+/// Serialized with a `tester` tag, for example `{"tester": "ray"}`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "tester", rename_all = "snake_case")]
+pub enum WheelTester {
+    /// A ray from the attachment point: cheapest and the steadiest (the default). It
+    /// misses steps and edges narrower than the tire.
+    #[default]
+    Ray,
+    /// A sphere of `radius` metres cast from the attachment point; the radius must be
+    /// smaller than every wheel's `suspension_max + radius`.
+    CastSphere {
+        /// The sphere's radius, metres.
+        radius: f32,
+    },
+    /// A cylinder of the wheel's radius and width cast along the suspension: closest
+    /// to the tire's shape, but a run reacts far more to tiny differences, at seams
+    /// between bodies most (ADR-0040's measurements).
+    CastCylinder,
+}
+
+/// One wheel of a [`VehicleDesc`]. Lengths are metres, torques N·m, in the chassis'
+/// local space, where up is +Y, forward +Z and the vehicle's left +X (Jolt's frame).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WheelDesc {
+    /// Where the suspension is attached to the chassis. The wheel's centre hangs
+    /// below it by the suspension length.
+    pub pos: Vec3,
+    /// Wheel radius.
+    pub radius: f32,
+    /// Wheel width.
+    pub width: f32,
+    /// Shortest suspension length (fully compressed).
+    pub suspension_min: f32,
+    /// Longest suspension length (fully extended).
+    pub suspension_max: f32,
+    /// Suspension spring frequency, Hz.
+    pub suspension_frequency: f32,
+    /// Suspension damping ratio (0 is undamped, 1 critically damped).
+    pub suspension_damping: f32,
+    /// How far the wheel steers at full steering input, degrees; 0 does not steer.
+    pub max_steer_deg: f32,
+    /// Brake torque at full brake.
+    pub max_brake_torque: f32,
+    /// Hand-brake torque at full hand brake; 0 for wheels the hand brake leaves free.
+    pub max_hand_brake_torque: f32,
+    /// True when the engine drives this wheel.
+    pub driven: bool,
+}
+
+impl Default for WheelDesc {
+    /// Jolt's wheel defaults, at the chassis origin, not steering and not driven.
+    fn default() -> Self {
+        WheelDesc {
+            pos: Vec3::ZERO,
+            radius: 0.3,
+            width: 0.1,
+            suspension_min: 0.3,
+            suspension_max: 0.5,
+            suspension_frequency: 1.5,
+            suspension_damping: 0.5,
+            max_steer_deg: 0.0,
+            max_brake_torque: 1500.0,
+            max_hand_brake_torque: 0.0,
+            driven: false,
+        }
+    }
+}
+
+/// A vehicle's engine. The defaults are Jolt's.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EngineDesc {
+    /// Peak torque, N·m.
+    pub max_torque: f32,
+    /// Idle speed, rpm.
+    pub min_rpm: f32,
+    /// Highest speed, rpm.
+    pub max_rpm: f32,
+}
+
+impl Default for EngineDesc {
+    fn default() -> Self {
+        EngineDesc {
+            max_torque: 500.0,
+            min_rpm: 1000.0,
+            max_rpm: 6000.0,
+        }
+    }
+}
+
+/// A vehicle's automatic transmission. The defaults are Jolt's.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TransmissionDesc {
+    /// Forward gear ratios, first gear first; at least one, each positive.
+    pub gears: Vec<f32>,
+    /// Reverse gear ratios; at least one, each negative.
+    pub reverse_gears: Vec<f32>,
+    /// Engine speed at which it shifts up, rpm.
+    pub shift_up_rpm: f32,
+    /// Engine speed at which it shifts down, rpm.
+    pub shift_down_rpm: f32,
+    /// Ratio of the final drive (each differential), above 0.
+    pub differential_ratio: f32,
+}
+
+impl Default for TransmissionDesc {
+    fn default() -> Self {
+        TransmissionDesc {
+            gears: vec![2.66, 1.78, 1.3, 1.0, 0.74],
+            reverse_gears: vec![-2.9],
+            shift_up_rpm: 4000.0,
+            shift_down_rpm: 2000.0,
+            differential_ratio: 3.42,
+        }
+    }
+}
+
+/// Everything needed to put a vehicle on a dynamic body (its chassis), from
+/// [`PhysicsCmd::AddVehicle`].
+///
+/// Differentials are derived from the driven wheels: driven wheels with the same
+/// local `z` (within 1 cm) form an axle, the wheel at larger `x` being its left
+/// wheel; a lone driven wheel is an axle of its own. Each axle with two wheels
+/// also gets an anti-roll bar of `anti_roll_stiffness` (0 turns them off).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VehicleDesc {
+    /// The controller kind.
+    pub kind: VehicleKind,
+    /// The wheels, in the order [`VehicleState::wheels`] and [`WheelPose::wheel`]
+    /// report them. A motorcycle has exactly two, front first.
+    pub wheels: Vec<WheelDesc>,
+    /// The engine.
+    pub engine: EngineDesc,
+    /// The transmission.
+    pub transmission: TransmissionDesc,
+    /// Anti-roll bar stiffness between the two wheels of each axle, N/m.
+    pub anti_roll_stiffness: f32,
+    /// Largest pitch or roll before a constraint stops the vehicle tipping further,
+    /// degrees; 180 turns the limit off.
+    pub max_pitch_roll_deg: f32,
+    /// How the wheels find the ground.
+    pub tester: WheelTester,
+}
+
+impl Default for VehicleDesc {
+    /// A wheeled vehicle without wheels (which [`PhysicsCmd::AddVehicle`] refuses);
+    /// see [`VehicleDesc::car`] for a working one.
+    fn default() -> Self {
+        VehicleDesc {
+            kind: VehicleKind::Wheeled,
+            wheels: Vec::new(),
+            engine: EngineDesc::default(),
+            transmission: TransmissionDesc::default(),
+            anti_roll_stiffness: 1000.0,
+            max_pitch_roll_deg: 180.0,
+            tester: WheelTester::default(),
+        }
+    }
+}
+
+impl VehicleDesc {
+    /// A four-wheeled front-wheel-drive car: the front wheels at `front_left` and
+    /// `(-x, y, z)`, the rear ones mirrored at `-z`, all of `wheel_radius` and width
+    /// 0.2, with suspension travel 0.05 to 0.5 m. The front wheels steer up to 30°
+    /// and are driven; the hand brake holds the rear wheels.
+    ///
+    /// It suits a chassis like a 1500 kg box of half extents (0.9, 0.3, 2.0) with
+    /// wheels at (±0.9, −0.1, ±1.4) of radius 0.35.
+    pub fn car(front_left: Vec3, wheel_radius: f32) -> VehicleDesc {
+        let wheel = |x: f32, z: f32, front: bool| WheelDesc {
+            pos: Vec3::new(x, front_left.y, z),
+            radius: wheel_radius,
+            width: 0.2,
+            suspension_min: 0.05,
+            suspension_max: 0.5,
+            max_steer_deg: if front { 30.0 } else { 0.0 },
+            max_hand_brake_torque: if front { 0.0 } else { 4000.0 },
+            driven: front,
+            ..WheelDesc::default()
+        };
+        let (x, z) = (front_left.x, front_left.z);
+        VehicleDesc {
+            wheels: vec![
+                wheel(x, z, true),
+                wheel(-x, z, true),
+                wheel(x, -z, false),
+                wheel(-x, -z, false),
+            ],
+            ..VehicleDesc::default()
+        }
+    }
+}
+
+/// What the driver asks of a vehicle, from [`PhysicsCmd::SetVehicleInput`]. It
+/// holds until the next one. The default is no input.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VehicleInput {
+    /// Throttle in `[-1, 1]`; negative drives backwards (braking first when moving
+    /// forward).
+    pub throttle: f32,
+    /// Steering in `[-1, 1]`; positive steers right.
+    pub steer: f32,
+    /// Brake in `[0, 1]`.
+    pub brake: f32,
+    /// Hand brake in `[0, 1]`.
+    pub handbrake: f32,
+}
+
+impl VehicleInput {
+    /// True when every value is finite and in its range.
+    pub fn is_valid(&self) -> bool {
+        let within = |v: f32, lo: f32| v.is_finite() && (lo..=1.0).contains(&v);
+        within(self.throttle, -1.0)
+            && within(self.steer, -1.0)
+            && within(self.brake, 0.0)
+            && within(self.handbrake, 0.0)
+    }
+}
+
+/// One wheel of a [`VehicleState`], after the last step.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct WheelState {
+    /// The entity the wheel touches, if it touches a body that belongs to one.
+    pub contact: Option<EntityId>,
+    /// True when the wheel touches the ground (any body).
+    pub on_ground: bool,
+    /// The contact point in world space (meaningful when `on_ground`).
+    pub contact_point: Vec3,
+    /// Current suspension length, metres.
+    pub suspension_length: f32,
+    /// Spin speed, rad/s.
+    pub angular_velocity: f32,
+    /// Steering angle, degrees; positive is right.
+    pub steer_deg: f32,
+}
+
+/// A vehicle's state after the last step, from `re_physics::Physics::vehicle`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct VehicleState {
+    /// Speed along the chassis' forward axis, m/s; negative when reversing.
+    pub speed: f32,
+    /// Engine speed, rpm.
+    pub rpm: f32,
+    /// Current gear: positive forward, negative reverse, 0 neutral.
+    pub gear: i32,
+    /// The input last set.
+    pub input: VehicleInput,
+    /// The wheels, in [`VehicleDesc::wheels`] order.
+    pub wheels: Vec<WheelState>,
+}
+
+/// The world pose of one vehicle wheel after a step, for drawing it.
+///
+/// `rot` turns a wheel model built in the chassis' frame (axle along X) into the
+/// wheel: at rest, unsteered and unrolled, it equals the chassis' rotation.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WheelPose {
+    /// The vehicle's (chassis') entity.
+    pub id: EntityId,
+    /// The wheel's index in [`VehicleDesc::wheels`].
+    pub wheel: u32,
+    /// The wheel's centre, world space.
+    pub pos: Vec3,
+    /// The wheel's rotation, world space.
+    pub rot: Quat,
+}
+
 /// One change to the physics world.
 ///
 /// Serialized with a `cmd` tag, for example `{"cmd": "remove_body", "id": 7}`.
@@ -439,6 +735,26 @@ pub enum PhysicsCmd {
         /// The constraint's entity.
         id: EntityId,
     },
+    /// Remove an entity's vehicle; its chassis body stays. Removing the chassis body
+    /// removes its vehicle too.
+    RemoveVehicle {
+        /// The chassis entity.
+        id: EntityId,
+    },
+    /// Put a vehicle on an entity's dynamic body, its chassis (ADR-0040).
+    AddVehicle {
+        /// The chassis entity, which must have a dynamic body.
+        id: EntityId,
+        /// The vehicle.
+        desc: VehicleDesc,
+    },
+    /// Set what the driver asks of a vehicle; it holds until the next input.
+    SetVehicleInput {
+        /// The chassis entity.
+        id: EntityId,
+        /// The input.
+        input: VehicleInput,
+    },
 }
 
 impl PhysicsCmd {
@@ -456,14 +772,19 @@ impl PhysicsCmd {
             | PhysicsCmd::RemoveCharacter { id }
             | PhysicsCmd::MoveCharacter { id, .. }
             | PhysicsCmd::AddConstraint { id, .. }
-            | PhysicsCmd::RemoveConstraint { id } => *id,
+            | PhysicsCmd::RemoveConstraint { id }
+            | PhysicsCmd::RemoveVehicle { id }
+            | PhysicsCmd::AddVehicle { id, .. }
+            | PhysicsCmd::SetVehicleInput { id, .. } => *id,
         }
     }
 
     /// The rank of the command's kind in the apply order: removals first
     /// (constraints before the bodies they join), then creations (constraints after
     /// their bodies), shape changes, teleports, targets, velocities, impulses and
-    /// character moves.
+    /// character moves; then the vehicle commands (ADR-0040), ranked after every
+    /// earlier kind so those ranks never change: removals, creations (after the
+    /// chassis body) and inputs.
     pub fn kind_rank(&self) -> u8 {
         match self {
             PhysicsCmd::RemoveConstraint { .. } => 0,
@@ -478,6 +799,9 @@ impl PhysicsCmd {
             PhysicsCmd::SetVelocity { .. } => 9,
             PhysicsCmd::ApplyImpulse { .. } => 10,
             PhysicsCmd::MoveCharacter { .. } => 11,
+            PhysicsCmd::RemoveVehicle { .. } => 12,
+            PhysicsCmd::AddVehicle { .. } => 13,
+            PhysicsCmd::SetVehicleInput { .. } => 14,
         }
     }
 

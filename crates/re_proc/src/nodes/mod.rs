@@ -101,6 +101,35 @@ pub struct Domain {
     pub spacing: f32,
 }
 
+impl Domain {
+    /// The world position (metres) of global sample index `i` on one axis:
+    /// `i as f32 * spacing`, so every window agrees on shared samples.
+    pub fn position(&self, i: i64) -> f32 {
+        i as f32 * self.spacing
+    }
+
+    /// The world X and Z of the window's first sample.
+    pub fn min(&self) -> [f32; 2] {
+        [self.position(self.origin[0]), self.position(self.origin[1])]
+    }
+
+    /// The world X and Z of the window's last sample.
+    pub fn max(&self) -> [f32; 2] {
+        let last = i64::from(self.n.saturating_sub(1));
+        [
+            self.position(self.origin[0] + last),
+            self.position(self.origin[1] + last),
+        ]
+    }
+
+    /// True if `(x, z)` lies in the window's half-open square
+    /// `[min, max)`: a point on a border between two windows belongs to one.
+    pub fn owns(&self, x: f32, z: f32) -> bool {
+        let (lo, hi) = (self.min(), self.max());
+        x >= lo[0] && x < hi[0] && z >= lo[1] && z < hi[1]
+    }
+}
+
 /// One step of a kind's parameter migration, from version `from` to
 /// `from + 1` (ADR-0043). Steps run in memory before a node is checked and
 /// evaluated, so a kind's function sees one parameter shape whatever version
@@ -563,8 +592,23 @@ impl NodeCtx<'_> {
 
     /// A deterministic number in `[0, 1)` for `id` and `salt`, from the node's seed.
     pub fn random01(&self, id: u64, salt: u64) -> f32 {
-        let h = re_noise::mix64(self.seed ^ re_noise::mix64(id ^ salt.rotate_left(29)));
+        let h = re_noise::mix64(self.window_seed() ^ re_noise::mix64(id ^ salt.rotate_left(29)));
         (h >> 40) as f32 * (1.0 / 16_777_216.0)
+    }
+
+    /// The seed for drawing per-window random numbers: [`NodeCtx::seed`]
+    /// without a domain; with one, the seed forked by the window's origin, so
+    /// a cell-local node draws different numbers in each cell (ADR-0042).
+    /// Pointwise nodes use `seed` itself, so windows agree on shared samples.
+    pub fn window_seed(&self) -> u64 {
+        match self.domain {
+            None => self.seed,
+            Some(d) => re_noise::mix64(
+                self.seed
+                    ^ re_noise::mix64(d.origin[0] as u64)
+                    ^ re_noise::mix64(d.origin[1] as u64).rotate_left(17),
+            ),
+        }
     }
 
     /// Fills `out` (rows of `row_len` values) in parallel on the pool:

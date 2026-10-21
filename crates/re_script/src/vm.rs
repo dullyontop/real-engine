@@ -14,7 +14,6 @@
 //! one script sets is `nil` in another; the table is marked `safeenv`, so builtin
 //! fastcalls and import caching stay on.
 
-use std::path::Path;
 use std::time::Duration;
 
 use mlua::{Function, Lua, LuaOptions, Result, StdLib, Table, Value};
@@ -154,7 +153,7 @@ pub(crate) fn install_engine(
 
 /// Creates the VM of one context.
 pub(crate) fn create(
-    root: &Path,
+    files: &re_core::files::ProjectFiles,
     kind: ContextKind,
     budget: Duration,
     memory_limit: usize,
@@ -162,8 +161,7 @@ pub(crate) fn create(
 ) -> Result<Lua> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
     install_engine(&lua, kind, budget)?;
-    let require =
-        lua.create_require_function(ProjectRequirer::new(root.to_path_buf(), kind, loaded))?;
+    let require = lua.create_require_function(ProjectRequirer::new(files.clone(), kind, loaded))?;
     lua.globals().raw_set("require", require)?;
     // Freezes the globals and every library table, and turns safeenv on.
     lua.sandbox(true)?;
