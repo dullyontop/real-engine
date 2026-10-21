@@ -106,7 +106,7 @@ function readAll(db) {
 /// `onReport(kind, message)` receives "running" with the GPU adapter once the first
 /// frame is drawn, "warning" and "problem" with a diagnostic while it runs, and
 /// "error" with a message when the game stops.
-export async function play(session, { gameId = session.projectName(), onReport = () => {} } = {}) {
+export async function play(session, { gameId = session.projectName() || 'game', onReport = () => {} } = {}) {
   const db = await openDb(gameId);
   if (db) for (const [key, bytes] of await readAll(db)) session.addSaved(key, bytes);
   globalThis.realEngine = {

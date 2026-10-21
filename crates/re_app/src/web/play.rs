@@ -59,6 +59,7 @@ struct Runner {
 impl Runner {
     fn stop(&mut self, event_loop: &ActiveEventLoop, d: &Diagnostic) {
         if !self.stopped {
+            self.report_diagnostics();
             self.stopped = true;
             (self.report)("error", &d.to_string());
         }
@@ -120,6 +121,7 @@ impl Runner {
             | wgpu::CurrentSurfaceTexture::Lost => {
                 let size = s.window.inner_size();
                 self.reconfigure(size.width, size.height);
+                self.report_diagnostics();
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Validation => {
@@ -144,6 +146,12 @@ impl Runner {
                 (self.report)("running", &gfx.gpu().adapter_line());
             }
         }
+        self.report_diagnostics();
+        Ok(())
+    }
+
+    /// Sends the game's and the GPU's diagnostics so far to the page.
+    fn report_diagnostics(&mut self) {
         let gpu_errors = self.app.graphics().map(Graphics::take_errors);
         for d in self
             .app
@@ -154,7 +162,6 @@ impl Runner {
             let kind = if d.is_error() { "problem" } else { "warning" };
             (self.report)(kind, &d.to_string());
         }
-        Ok(())
     }
 
     /// Opens the audio device on the first user gesture.

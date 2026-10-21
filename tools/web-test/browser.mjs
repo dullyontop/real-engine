@@ -31,9 +31,10 @@ const page = `<!doctype html><meta charset="utf-8"><title>web-test</title>
 <script type="importmap">{"imports":{"wasi_snapshot_preview1":"/engine/wasi.js"}}</script>
 <script>Error.stackTraceLimit = 60; console.trace = (m) => console.error(m + ' STACK ' + new Error().stack);</script>
 <script type="module">
-import { boot, missingFeatures } from '/engine/boot.js';
 const replays = ${JSON.stringify(replays)};
 try {
+  // Imported here so a module that fails to load lands in __result.
+  const { boot, missingFeatures } = await import('/engine/boot.js');
   const missing = missingFeatures();
   if (missing.length) throw new Error('missing: ' + missing.join('; '));
   const { session } = await boot({ project: '/project/' });
@@ -58,8 +59,8 @@ const browser = await chromium.launch({ args: ['--enable-unsafe-webgpu'] });
 const tab = await browser.newPage();
 tab.on('console', (m) => console.error(`[${m.type()}] ${m.text()}`));
 let result;
-// A page that fails before setting __result (a missing module, a bad import map)
-// would otherwise keep CI waiting for the whole timeout.
+// An uncaught page error before __result is set would otherwise keep CI waiting
+// for the whole timeout.
 const pageFailed = new Promise((resolve) => tab.on('pageerror', (e) => {
   console.error(`[pageerror] ${e.message}`);
   resolve({ error: `page error: ${e.message}` });
