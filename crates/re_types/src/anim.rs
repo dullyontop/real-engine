@@ -156,3 +156,429 @@ impl SkinData {
         self.joints.iter().position(|j| j.name == name)
     }
 }
+
+/// An animation graph: parameters, a blend tree of nodes, layered state
+/// machines and joint masks, saved as `*.animgraph.json` (ADR-0039).
+///
+/// ```json
+/// { "format": "real-engine/animgraph", "version": 1,
+///   "params": [{ "id": "speed", "type": "float", "default": 0.0 }],
+///   "nodes": [{ "id": "walk", "kind": "clip", "clip": "assets/hero.glb#walk" }],
+///   "layers": [{ "id": "base", "entry": "move",
+///                "states": [{ "id": "move", "node": "walk" }] }] }
+/// ```
+///
+/// Every element has an `id` unique within its kind, which `animgraph.edit`
+/// addresses. Lists keep file order and unknown keys are errors. `re_anim`
+/// validates the references between elements when the graph binds.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct AnimGraph {
+    /// Always [`AnimGraph::FORMAT`].
+    pub format: String,
+    /// The file format version, [`AnimGraph::VERSION`].
+    pub version: u32,
+    /// The parameters scripts and transitions read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<GraphParam>,
+    /// The blend tree's nodes. States and other nodes refer to them by id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nodes: Vec<GraphNode>,
+    /// The layers, bottom first. The first layer gives the base pose.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<GraphLayer>,
+    /// Joint masks that layers refer to by id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub masks: Vec<JointMask>,
+}
+
+impl AnimGraph {
+    /// The value of the `format` key.
+    pub const FORMAT: &'static str = "real-engine/animgraph";
+    /// The current file format version.
+    pub const VERSION: u32 = 1;
+
+    /// An empty graph with the current format and version.
+    pub fn new() -> AnimGraph {
+        AnimGraph {
+            format: Self::FORMAT.to_string(),
+            version: Self::VERSION,
+            params: Vec::new(),
+            nodes: Vec::new(),
+            layers: Vec::new(),
+            masks: Vec::new(),
+        }
+    }
+
+    /// The parameter `id`.
+    pub fn param(&self, id: &str) -> Option<&GraphParam> {
+        self.params.iter().find(|p| p.id == id)
+    }
+
+    /// The node `id`.
+    pub fn node(&self, id: &str) -> Option<&GraphNode> {
+        self.nodes.iter().find(|n| n.id == id)
+    }
+
+    /// The layer `id`.
+    pub fn layer(&self, id: &str) -> Option<&GraphLayer> {
+        self.layers.iter().find(|l| l.id == id)
+    }
+
+    /// The mask `id`.
+    pub fn mask(&self, id: &str) -> Option<&JointMask> {
+        self.masks.iter().find(|m| m.id == id)
+    }
+}
+
+impl Default for AnimGraph {
+    fn default() -> Self {
+        AnimGraph::new()
+    }
+}
+
+/// A graph parameter with its default value.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GraphParam {
+    /// Unique among the parameters; scripts use it (`anim.set(e, "speed", 3)`).
+    pub id: String,
+    /// The type and default.
+    #[serde(flatten)]
+    pub value: ParamValue,
+}
+
+/// A parameter's type and value.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ParamValue {
+    /// A number, compared by transitions and read by blend spaces.
+    Float {
+        /// The value at start.
+        #[serde(default)]
+        default: f32,
+    },
+    /// A flag.
+    Bool {
+        /// The value at start.
+        #[serde(default)]
+        default: bool,
+    },
+    /// Set by `anim.trigger` and cleared when a transition consumes it.
+    Trigger,
+}
+
+impl ParamValue {
+    /// The type's name as written in files: `float`, `bool` or `trigger`.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            ParamValue::Float { .. } => "float",
+            ParamValue::Bool { .. } => "bool",
+            ParamValue::Trigger => "trigger",
+        }
+    }
+}
+
+/// One node of the blend tree.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GraphNode {
+    /// Unique among the nodes.
+    pub id: String,
+    /// What the node computes.
+    #[serde(flatten)]
+    pub kind: NodeKind,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+/// The kinds of blend tree node.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NodeKind {
+    /// Plays one clip.
+    Clip {
+        /// `<model path>#<clip name>`.
+        clip: String,
+        /// Playback speed; the node lasts `duration / speed`.
+        #[serde(default = "one", skip_serializing_if = "is_one")]
+        speed: f32,
+        /// Wraps at the end (otherwise holds the last frame).
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        looping: bool,
+        /// Takes the root joint's horizontal motion out of the pose and moves
+        /// the entity with it.
+        #[serde(default, skip_serializing_if = "is_false")]
+        root_motion: bool,
+    },
+    /// Blends children placed along one float parameter, piecewise linearly
+    /// and clamped at the ends.
+    Blend1d {
+        /// The float parameter.
+        param: String,
+        /// The children, sorted by threshold.
+        children: Vec<Blend1dChild>,
+        /// Keeps the children in phase by normalised time.
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        sync: bool,
+    },
+    /// Blends children placed at points over two float parameters, by
+    /// gradient-band (freeform cartesian) interpolation.
+    Blend2d {
+        /// The parameter on the first axis.
+        x: String,
+        /// The parameter on the second axis.
+        y: String,
+        /// The children at their points.
+        children: Vec<Blend2dChild>,
+        /// Keeps the children in phase by normalised time.
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        sync: bool,
+    },
+    /// Adds an additive child's motion, relative to its first frame, onto a
+    /// base node.
+    Additive {
+        /// The base node.
+        base: String,
+        /// The node whose motion is added.
+        additive: String,
+        /// The weight of the added motion, when `weight_param` is not set.
+        #[serde(default = "one", skip_serializing_if = "is_one")]
+        weight: f32,
+        /// A float parameter giving the weight.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weight_param: Option<String>,
+    },
+}
+
+/// A child of a [`NodeKind::Blend1d`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Blend1dChild {
+    /// The child node.
+    pub node: String,
+    /// The parameter value at which the child has full weight.
+    pub threshold: f32,
+}
+
+/// A child of a [`NodeKind::Blend2d`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Blend2dChild {
+    /// The child node.
+    pub node: String,
+    /// The `[x, y]` parameter values at which the child has full weight.
+    pub point: [f32; 2],
+}
+
+/// One layer: a state machine whose pose is laid over the layers below it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GraphLayer {
+    /// Unique among the layers; `anim.state(e, layer)` names it.
+    pub id: String,
+    /// How the pose combines with the layers below. The first layer's blend is
+    /// ignored.
+    #[serde(default, skip_serializing_if = "LayerBlend::is_override")]
+    pub blend: LayerBlend,
+    /// How much of the layer applies, from 0 to 1.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub weight: f32,
+    /// A mask limiting the joints the layer affects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<String>,
+    /// For an additive layer: a clip (`<model>#<clip>`) whose first frame the
+    /// motion is measured from. Without it, each state's node at time 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    /// The state entered at start.
+    pub entry: String,
+    /// The states.
+    pub states: Vec<GraphState>,
+    /// The transitions, checked in order; the first that passes wins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transitions: Vec<Transition>,
+}
+
+/// How a layer combines with the layers below it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum LayerBlend {
+    /// Blends toward the layer's pose by its weight.
+    #[default]
+    Override,
+    /// Adds the layer's motion, relative to its reference, scaled by its weight.
+    Additive,
+}
+
+impl LayerBlend {
+    fn is_override(&self) -> bool {
+        *self == LayerBlend::Override
+    }
+}
+
+/// A state of a layer's state machine.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GraphState {
+    /// Unique within the layer. `any` is reserved for transitions.
+    pub id: String,
+    /// The node the state plays.
+    pub node: String,
+}
+
+/// A transition between two states of a layer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Transition {
+    /// Unique within the layer.
+    pub id: String,
+    /// The state it leaves, or [`Transition::ANY`] for every other state.
+    pub from: String,
+    /// The state it enters.
+    pub to: String,
+    /// The crossfade time in seconds.
+    #[serde(default)]
+    pub duration: f32,
+    /// The normalised time of the `from` state (1 is one pass through its
+    /// node) the transition waits for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_time: Option<f32>,
+    /// All of them must hold.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<Condition>,
+    /// Whether another transition may interrupt its crossfade.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub interruptible: bool,
+}
+
+impl Transition {
+    /// The `from` value that matches every state but the target.
+    pub const ANY: &'static str = "any";
+}
+
+/// A test on a parameter.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(tag = "test", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Condition {
+    /// Compares a float parameter with a value.
+    Compare {
+        /// The float parameter.
+        param: String,
+        /// The comparison.
+        op: CompareOp,
+        /// The value compared with.
+        value: f32,
+    },
+    /// Tests a bool parameter.
+    Bool {
+        /// The bool parameter.
+        param: String,
+        /// The value it must have.
+        value: bool,
+    },
+    /// Passes when the trigger is set, and clears it when the transition fires.
+    Trigger {
+        /// The trigger parameter.
+        param: String,
+    },
+}
+
+impl Condition {
+    /// The parameter the condition reads.
+    pub fn param(&self) -> &str {
+        match self {
+            Condition::Compare { param, .. }
+            | Condition::Bool { param, .. }
+            | Condition::Trigger { param } => param,
+        }
+    }
+}
+
+/// A comparison of a float parameter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub enum CompareOp {
+    /// Less than.
+    #[serde(rename = "<")]
+    Lt,
+    /// Less than or equal.
+    #[serde(rename = "<=")]
+    Le,
+    /// Greater than.
+    #[serde(rename = ">")]
+    Gt,
+    /// Greater than or equal.
+    #[serde(rename = ">=")]
+    Ge,
+}
+
+impl CompareOp {
+    /// `a op b`.
+    pub fn test(self, a: f32, b: f32) -> bool {
+        match self {
+            CompareOp::Lt => a < b,
+            CompareOp::Le => a <= b,
+            CompareOp::Gt => a > b,
+            CompareOp::Ge => a >= b,
+        }
+    }
+}
+
+/// Per-joint weights for a layer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct JointMask {
+    /// Unique among the masks.
+    pub id: String,
+    /// The joints, by name. A later entry overrides an earlier one for the
+    /// joints both cover. Joints no entry covers have weight 0.
+    pub joints: Vec<MaskJoint>,
+}
+
+/// One entry of a [`JointMask`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct MaskJoint {
+    /// The joint's name. A name the skeleton lacks is a warning when the graph
+    /// binds, so one mask fits several skeletons.
+    pub joint: String,
+    /// The weight, from 0 to 1.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub weight: f32,
+    /// Also covers the joint's descendants.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub subtree: bool,
+}
