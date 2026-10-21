@@ -7,12 +7,12 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use re_core::files::{ProjectFiles, ProjectPath, Writable};
+use re_core::files::{FileData, Form, ProjectFiles, ProjectPath, Writable};
 use re_core::{Diagnostic, Location};
 use re_types::anim::ClipData;
 use re_types::render::{MaterialDesc, TextureData, TextureFormat, TextureRef};
 
-use crate::cache::{ProcessedCache, cache_key};
+use crate::cache::{ProcessedCache, cache_key, decode_entry, encode_entry};
 use crate::gltf::{
     CachedGltf, GLTF_IMPORTER_VERSION, ImportedGltf, external_uris, import_gltf_with,
 };
@@ -20,10 +20,31 @@ use crate::image_decode::decode_image;
 use crate::material::load_material_from;
 use crate::meta::AssetMeta;
 use crate::watch::AssetChange;
-use crate::{AssetId, codes, fsutil, id};
+use crate::{AssetId, codes, id};
 
 /// The version of the texture importer. Bump it whenever its output changes.
 pub const TEXTURE_IMPORTER_VERSION: u32 = 1;
+
+/// The importer name stored with processed glTF files (ADR-0037).
+pub const GLTF_IMPORTER: &str = "gltf";
+
+/// The importer name stored with processed textures (ADR-0037).
+pub const TEXTURE_IMPORTER: &str = "texture";
+
+/// An asset's processed form, as `real build` stores it in a packaged archive
+/// (ADR-0037).
+#[derive(Clone, Debug)]
+pub struct ProcessedAsset {
+    /// The importer ([`GLTF_IMPORTER`] or [`TEXTURE_IMPORTER`]).
+    pub importer: &'static str,
+    /// The importer's version.
+    pub version: u32,
+    /// The processed value, encoded as a cache entry ([`encode_entry`]).
+    pub bytes: Vec<u8>,
+    /// The project files the source pulls in (a glTF's external buffers and
+    /// images).
+    pub dependencies: Vec<String>,
+}
 
 /// A reference to a loaded asset of type `T`.
 ///
@@ -277,6 +298,38 @@ impl AssetServer {
             .at(Location::file(&rel))
             .with_hint("supported files are .gltf, .glb, .png, .jpg, .jpeg and .material.json")),
         }
+    }
+
+    /// The processed form of the asset at `path`, imported through the cache;
+    /// `None` for a file that has no processed form (materials and files the
+    /// server does not import).
+    ///
+    /// # Errors
+    ///
+    /// The errors of the importer.
+    pub fn processed(&mut self, path: &str) -> Result<Option<ProcessedAsset>, Diagnostic> {
+        let rel = id::normalize_path(path)?;
+        Ok(match Kind::of(&rel) {
+            Some(Kind::Gltf) => {
+                let (imported, _, dependencies) = self.import_gltf_file(&rel)?;
+                Some(ProcessedAsset {
+                    importer: GLTF_IMPORTER,
+                    version: GLTF_IMPORTER_VERSION,
+                    bytes: encode_entry(&CachedGltf::from_imported(&imported)),
+                    dependencies,
+                })
+            }
+            Some(Kind::Texture) => {
+                let (data, _) = self.import_texture_file(&rel)?;
+                Some(ProcessedAsset {
+                    importer: TEXTURE_IMPORTER,
+                    version: TEXTURE_IMPORTER_VERSION,
+                    bytes: encode_entry(&data),
+                    dependencies: Vec::new(),
+                })
+            }
+            Some(Kind::Material) | None => None,
+        })
     }
 
     /// Loads a glTF file (`.gltf` or `.glb`).
@@ -636,10 +689,23 @@ impl AssetServer {
         &mut self,
         rel: &str,
     ) -> Result<(ImportedGltf, AssetId, Vec<String>), Diagnostic> {
-        let bytes = fsutil::read_in(&self.files, rel)?;
+        let data = self.read_asset(rel)?;
         let meta = AssetMeta::read_or_create_in(&self.files, rel, serde_json::json!({}))?;
         let id = meta.id();
         self.id_paths.insert(id, rel.to_owned());
+        if matches!(data.form, Form::Processed { .. }) {
+            let cached: CachedGltf =
+                processed_value(rel, &data, GLTF_IMPORTER, GLTF_IMPORTER_VERSION)?;
+            let imported = cached.into_imported(rel).ok_or_else(|| {
+                Diagnostic::error(
+                    codes::READ_FAILED,
+                    format!("the processed copy of `{rel}` does not decode"),
+                )
+                .at(Location::file(rel))
+            })?;
+            return Ok((imported, id, Vec::new()));
+        }
+        let bytes = source_bytes(rel, data)?;
         let gltf_path = ProjectPath::new(rel).ok();
         // External files resolve against the glTF's folder and may not leave
         // the project.
@@ -690,10 +756,15 @@ impl AssetServer {
     }
 
     fn import_texture_file(&mut self, rel: &str) -> Result<(TextureData, AssetId), Diagnostic> {
-        let bytes = fsutil::read_in(&self.files, rel)?;
+        let data = self.read_asset(rel)?;
         let meta = AssetMeta::read_or_create_in(&self.files, rel, serde_json::json!({}))?;
         let id = meta.id();
         self.id_paths.insert(id, rel.to_owned());
+        if matches!(data.form, Form::Processed { .. }) {
+            let texture = processed_value(rel, &data, TEXTURE_IMPORTER, TEXTURE_IMPORTER_VERSION)?;
+            return Ok((texture, id));
+        }
+        let bytes = source_bytes(rel, data)?;
         let format = match meta.settings.get("color_space").and_then(|v| v.as_str()) {
             None | Some("srgb") => TextureFormat::Rgba8Srgb,
             Some("linear") => TextureFormat::Rgba8Unorm,
@@ -718,6 +789,15 @@ impl AssetServer {
             decode_image(&bytes, format, &format!("`{rel}`"), rel)
         })?;
         Ok((data, id))
+    }
+
+    /// The file at `rel` in whatever form it is stored, as
+    /// [`codes::READ_FAILED`] on error.
+    fn read_asset(&self, rel: &str) -> Result<FileData, Diagnostic> {
+        self.files.read(rel).map_err(|e| {
+            Diagnostic::error(codes::READ_FAILED, format!("cannot read `{rel}`: {e}"))
+                .at(Location::file(rel))
+        })
     }
 
     fn import_material_file(&mut self, rel: &str) -> Result<MaterialDesc, Diagnostic> {
@@ -757,6 +837,48 @@ impl From<Handle<TextureData>> for LoadedAsset {
 impl From<Handle<MaterialDesc>> for LoadedAsset {
     fn from(h: Handle<MaterialDesc>) -> Self {
         LoadedAsset::Material(h)
+    }
+}
+
+/// The source bytes of `data`, or an error for another form.
+fn source_bytes(rel: &str, data: FileData) -> Result<std::sync::Arc<[u8]>, Diagnostic> {
+    match data.form {
+        Form::Source => Ok(data.bytes),
+        other => Err(Diagnostic::error(
+            codes::READ_FAILED,
+            format!("cannot import `{rel}`: it is stored as {other:?}"),
+        )
+        .at(Location::file(rel))),
+    }
+}
+
+/// The value of a processed entry from `importer` at `version`.
+fn processed_value<T: serde::de::DeserializeOwned>(
+    rel: &str,
+    data: &FileData,
+    importer: &str,
+    version: u32,
+) -> Result<T, Diagnostic> {
+    let failed = |why: String| {
+        Diagnostic::error(
+            codes::READ_FAILED,
+            format!("cannot use the processed copy of `{rel}`: {why}"),
+        )
+        .at(Location::file(rel))
+        .with_hint("rebuild the package with this engine's `real build`")
+    };
+    match &data.form {
+        Form::Processed {
+            importer: i,
+            version: v,
+        } if &**i == importer && *v == version => decode_entry(&data.bytes).map_err(failed),
+        Form::Processed {
+            importer: i,
+            version: v,
+        } => Err(failed(format!(
+            "it was made by importer `{i}` version {v}; this engine has `{importer}` version {version}"
+        ))),
+        other => Err(failed(format!("it is stored as {other:?}"))),
     }
 }
 

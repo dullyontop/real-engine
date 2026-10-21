@@ -4,11 +4,20 @@
 //! explains a project; the default `tooling` build adds the subcommands that
 //! edit it or connect tools to it (ADR-0027).
 //!
+//! With the `game` feature (ADR-0037) the binary is a packaged game's executable
+//! instead: it runs the game in the `game.rpak` beside it ([`game`]).
+//!
 //! Exit codes (ADR-0022): 0 success, 1 errors were reported, 2 usage errors,
 //! 101 a crash (a report is written to `.real/crash/`).
 
+// A packaged game opens no console window when double-clicked (ADR-0037).
+#![cfg_attr(all(windows, feature = "game"), windows_subsystem = "windows")]
+
+#[cfg(feature = "tooling")]
+mod build;
 mod codes;
 mod explain;
+mod game;
 mod graph;
 mod new;
 mod schema;
@@ -43,6 +52,41 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::SCRIPT_API_GAP,
         title: "Script uses an API the engine does not provide",
         page: include_str!("../explain/RE0903.md"),
+    },
+    DiagInfo {
+        code: codes::PACKAGE_CONFIG,
+        title: "Invalid [package] section",
+        page: include_str!("../explain/RE0950.md"),
+    },
+    DiagInfo {
+        code: codes::BUILD_STOPPED,
+        title: "real build stopped on errors",
+        page: include_str!("../explain/RE0951.md"),
+    },
+    DiagInfo {
+        code: codes::CASE_COLLISION,
+        title: "Two project paths differ only by case",
+        page: include_str!("../explain/RE0952.md"),
+    },
+    DiagInfo {
+        code: codes::RUNTIME_FAILED,
+        title: "Game runtime build or check failed",
+        page: include_str!("../explain/RE0953.md"),
+    },
+    DiagInfo {
+        code: codes::NOTICES_FAILED,
+        title: "Third-party notices could not be written",
+        page: include_str!("../explain/RE0954.md"),
+    },
+    DiagInfo {
+        code: codes::BUNDLE_FAILED,
+        title: "A game folder step failed",
+        page: include_str!("../explain/RE0955.md"),
+    },
+    DiagInfo {
+        code: codes::PACKAGE_DIFFERS,
+        title: "Packaged run differs from the project",
+        page: include_str!("../explain/RE0956.md"),
     },
 ];
 
@@ -111,6 +155,12 @@ enum Command {
         /// Write missing or differing golden images from this run instead of failing.
         #[arg(long)]
         update_goldens: bool,
+        /// Check the game `real build` wrote in DIR instead: run it as a
+        /// child process (a boot and each replay) and compare its state hashes
+        /// with the project's.
+        #[cfg(feature = "tooling")]
+        #[arg(long, value_name = "DIR", conflicts_with = "update_goldens")]
+        package: Option<PathBuf>,
     },
     /// Explain a diagnostic code (or list every code).
     Explain {
@@ -146,6 +196,10 @@ enum Command {
     /// Open the editor.
     #[cfg(feature = "tooling")]
     Editor(tooling::editor::EditorArgs),
+    /// Build a standalone game: `game.rpak`, the game runtime and the
+    /// platform's layout.
+    #[cfg(feature = "tooling")]
+    Build(build::BuildArgs),
     /// Import a Rojo-style project or a Studio loader script into a
     /// Roblox-style project (created when --project is new or empty).
     #[cfg(feature = "tooling")]
@@ -178,7 +232,7 @@ struct RunArgs {
     debug: Option<u16>,
 }
 
-fn print_diagnostics(diagnostics: &[Diagnostic]) {
+pub(crate) fn print_diagnostics(diagnostics: &[Diagnostic]) {
     if !diagnostics.is_empty() {
         eprint!("{}", re_core::render_human_all(diagnostics));
     }
@@ -225,28 +279,76 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         }
         None => None,
     };
-    let replay = match &args.replay {
+    let options = PlayOptions {
+        headless: args.headless,
+        frames: args.frames,
+        replay: args.replay,
+        screenshot: args.screenshot,
+        exit_after: args.exit_after,
+        json: args.json,
+        // A replay must repeat its recording, so only a live run keeps data
+        // and reloads changed files.
+        live: Live::Development,
+    };
+    play(app, options, &mut Vec::new)
+}
+
+/// What a live run (no replay) does beyond playing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Live {
+    /// `real run`: keep data and reload changed files.
+    Development,
+    /// A packaged game: keep data only in a window; never reload (a packaged
+    /// game reads its archive, which does not change while it runs).
+    Packaged,
+}
+
+/// How [`play`] runs an open app.
+struct PlayOptions {
+    headless: bool,
+    frames: Option<u64>,
+    replay: Option<PathBuf>,
+    screenshot: Option<PathBuf>,
+    exit_after: bool,
+    json: bool,
+    live: Live,
+}
+
+/// Runs `app` (headless or in a window), prints the report and returns the
+/// exit code. `late` gives diagnostics to add once the run is over (a packaged
+/// game's case-only matches).
+fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagnostic>) -> ExitCode {
+    let replay = match &options.replay {
         Some(path) => match re_input::load_replay(path) {
             Ok(doc) => Some(doc),
             Err(d) => return fail(d),
         },
         None => None,
     };
-    // A replay must repeat its recording, so only a live run keeps data and
-    // reloads changed files. A watcher that cannot start is reported; the
-    // run goes on without reload.
+    // A watcher that cannot start is reported; the run goes on without reload.
     let mut watch_problem = None;
     if replay.is_none() {
-        app.persist_data();
-        watch_problem = app.enable_hot_reload().err();
+        match options.live {
+            Live::Development => {
+                app.persist_data();
+                // A game build never links the watcher in (ADR-0037).
+                if !cfg!(feature = "game") {
+                    watch_problem = app.enable_hot_reload().err();
+                }
+            }
+            // Headless packaged runs are checks (`real verify --package`),
+            // which must repeat; a played game keeps its data.
+            Live::Packaged if !options.headless => app.persist_data(),
+            Live::Packaged => {}
+        }
         // A live window never stalls a frame on a streamed cell; headless
         // runs wait for it, so they repeat (ADR-0042).
-        if !args.headless {
+        if !options.headless {
             app.set_stream_lateness(re_proc::stream::Lateness::Late);
         }
     }
-    let (frames, mut diagnostics, mut report) = if args.headless {
-        match app.run_headless(args.frames, replay) {
+    let (frames, mut diagnostics, mut report) = if options.headless {
+        match app.run_headless(options.frames, replay) {
             Ok(r) => (
                 r.frames,
                 r.diagnostics.clone(),
@@ -255,17 +357,17 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
             Err(d) => return fail(d),
         }
     } else {
-        let frames = args.frames.or(replay.as_ref().map(|r| r.frames));
+        let frames = options.frames.or(replay.as_ref().map(|r| r.frames));
         if let Some(doc) = replay
             && let Err(d) = app.play_replay(doc)
         {
             return fail(d);
         }
-        let options = re_app::WindowOptions {
+        let window = re_app::WindowOptions {
             frames,
             ..re_app::WindowOptions::default()
         };
-        match re_app::run_windowed(&mut app, options) {
+        match re_app::run_windowed(&mut app, window) {
             Ok(r) => {
                 let json = serde_json::json!({
                     "frames": r.frames,
@@ -281,7 +383,7 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         }
     };
     diagnostics.extend(watch_problem);
-    if let Some(path) = &args.screenshot {
+    if let Some(path) = &options.screenshot {
         let path = std::env::current_dir().unwrap_or_default().join(path);
         match app.screenshot(Some(&path)) {
             Ok(_) => report["screenshot"] = serde_json::json!(path.display().to_string()),
@@ -292,9 +394,13 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
                 .into_iter()
                 .filter(Diagnostic::is_error),
         );
+    }
+    let extra = late();
+    if options.screenshot.is_some() || !extra.is_empty() {
+        diagnostics.extend(extra);
         report["diagnostics"] = serde_json::to_value(&diagnostics).unwrap_or_default();
     }
-    if args.json {
+    if options.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&report).unwrap_or_default()
@@ -304,7 +410,7 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
     }
     let errors = diagnostics.iter().filter(|d| d.is_error()).count();
     if errors > 0 {
-        if !args.json {
+        if !options.json {
             print_diagnostics(&[Diagnostic::error(
                 re_app::codes::RUN_ERRORS,
                 format!(
@@ -315,14 +421,14 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         }
         return ExitCode::from(1);
     }
-    if args.exit_after {
+    if options.exit_after {
         // After `--json` output, stdout stays one JSON document.
-        if args.json {
+        if options.json {
             eprintln!("RUN OK");
         } else {
             println!("RUN OK");
         }
-    } else if !args.json {
+    } else if !options.json {
         println!(
             "ran {frames} frames; state hash {}",
             app.world().state_hash().to_hex()
@@ -505,6 +611,15 @@ fn install_crash_hook(crash: re_core::files::WritableDir) {
 }
 
 fn main() -> ExitCode {
+    if cfg!(feature = "game") {
+        game::main()
+    } else {
+        development_main()
+    }
+}
+
+/// `main` of the `real` tool.
+fn development_main() -> ExitCode {
     let cli = Cli::parse();
     install_crash_hook(re_core::files::WritableDirs::in_project(&cli.project).crash);
     // Warnings, plus what scripts `print`, on standard error (stdout stays for
@@ -553,9 +668,16 @@ fn main() -> ExitCode {
         }
         Command::Run(args) => cmd_run(&project, args),
         Command::Describe { json, luau_defs } => cmd_describe(&project, json, luau_defs),
+        #[cfg(feature = "tooling")]
+        Command::Verify {
+            json,
+            package: Some(dir),
+            ..
+        } => build::verify::run(&dir, &project, json),
         Command::Verify {
             json,
             update_goldens,
+            ..
         } => cmd_verify(&project, json, update_goldens),
         Command::Explain { code } => cmd_explain(code),
         Command::Schema { out } => cmd_schema(&out),
@@ -573,6 +695,8 @@ fn main() -> ExitCode {
         Command::Editor(args) => tooling_exit(tooling::editor::run(args, &project)),
         #[cfg(feature = "tooling")]
         Command::Import(args) => tooling_exit(tooling::import::run(args, &project)),
+        #[cfg(feature = "tooling")]
+        Command::Build(args) => build::run(args, &project),
     }
 }
 

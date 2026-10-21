@@ -908,13 +908,14 @@ pub fn run(app: &App, options: &VerifyOptions, extra: &[&dyn VerifyStage]) -> Ve
     run_project(app.project(), app.config(), options, extra)
 }
 
-/// [`run`] for a project that is not open.
-pub fn run_project(
+/// The stages that check the project's files without running it: `schema`,
+/// `compile` and the `extra` stages (`scan`). `real build` runs these before
+/// packing (ADR-0037).
+pub fn content_stages(
     project: &Path,
     config: &AppConfig,
-    options: &VerifyOptions,
     extra: &[&dyn VerifyStage],
-) -> VerifyReport {
+) -> Vec<StageReport> {
     let ctx = VerifyContext { project, config };
     let mut stages = Vec::new();
     stages.push(timed(|| stage_schema(project, config)));
@@ -928,6 +929,17 @@ pub fn run_project(
             "the static API scan needs a `real` built with the `tooling` feature",
         ));
     }
+    stages
+}
+
+/// [`run`] for a project that is not open.
+pub fn run_project(
+    project: &Path,
+    config: &AppConfig,
+    options: &VerifyOptions,
+    extra: &[&dyn VerifyStage],
+) -> VerifyReport {
+    let mut stages = content_stages(project, config, extra);
 
     let mut perf = None;
     let boot = timed(|| stage_boot(project, config, options, &mut perf));

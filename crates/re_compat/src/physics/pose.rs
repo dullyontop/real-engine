@@ -76,6 +76,7 @@ pub fn set_world_pose(w: &mut World, e: Entity, pose: Pose) -> Result<(), Compat
         t.translation = local.pos;
         t.rotation = local.rot.normalize();
     }
+    re_scene::note_moved(&mut w.ecs, e);
     if !kids.is_empty() {
         super::sim::write_world_poses(w, &kids);
     }

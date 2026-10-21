@@ -950,7 +950,7 @@ impl App {
         // Only a development run writes project files (ADR-0037).
         let Some(dir) = self.files.project_dir().map(Path::to_path_buf) else {
             return Err(Diagnostic::error(
-                codes::SCENE_SAVE_FAILED,
+                codes::PACKAGED_WRITE,
                 format!(
                     "cannot write the scene back to {rel_path}: this run has no project directory"
                 ),
