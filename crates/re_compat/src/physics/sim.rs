@@ -196,7 +196,7 @@ pub(crate) struct PartSnap {
 fn replicated(w: &World, e: Entity) -> bool {
     w.ecs
         .get_resource::<crate::net::Replica>()
-        .is_some_and(|r| r.server_of(e).is_some())
+        .is_some_and(|r| r.handle_of(e).is_some())
 }
 
 /// The character model `e` belongs to: the nearest `Model` above it, when

@@ -345,7 +345,7 @@ pub(crate) fn deliver(lua: &Lua, l: &NetLink) -> Result<()> {
             Side::Server => &mut s.to_server,
             Side::Client => &mut s.to_client,
         };
-        msgs.extend(q.drain(..));
+        msgs.extend(q.take_all());
     }
     let mut waiting = Vec::new();
     for m in msgs {
