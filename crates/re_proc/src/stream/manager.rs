@@ -165,6 +165,21 @@ impl Streamer {
         self.radius
     }
 
+    /// This manager for `to`, a fork of `from` ([`World::fork`]): the same
+    /// state, with the source entities it holds content of found again in
+    /// `to` by id (a fork gives every entity a new handle).
+    pub fn forked(&self, from: &World, to: &World) -> Streamer {
+        let mut out = self.clone();
+        for l in out.loaded.values_mut() {
+            l.sources = l
+                .sources
+                .iter()
+                .filter_map(|e| to.entity(from.id_of(*e)?).ok())
+                .collect();
+        }
+        out
+    }
+
     /// Keeps cell `key` wanted whatever the focuses (the editor and tools'
     /// `stream.load`); it loads at the next step's request tick.
     pub fn pin(&mut self, key: &str) -> bool {

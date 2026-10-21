@@ -378,7 +378,9 @@ impl App {
         if !restarted
             && let Some(streamer) = self.world.ecs.get_resource::<re_proc::stream::Streamer>()
         {
-            world.ecs.insert_resource(streamer.clone());
+            world
+                .ecs
+                .insert_resource(streamer.forked(&self.world, &world));
         }
         let mut copy = App::with_world(
             self.files.clone(),
