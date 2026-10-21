@@ -53,6 +53,9 @@ jobs:
       # Each test process records the compat members its scripts reach
       # (re_compat's class layer); the last step checks the union.
       REAL_COMPAT_MEMBER_TRACE: ${{ github.workspace }}/target/member-trace
+      # Every 60th frame of the compat 3D view is also rebuilt from scratch and
+      # compared, so a write that skips the change journal fails a test.
+      REAL_RENDER_VERIFY: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup

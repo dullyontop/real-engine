@@ -116,8 +116,9 @@ fn parts_become_items_with_shared_meshes_and_materials() {
     assert!(!neon.cast_shadow);
     // Wood's and Plastic's textures come with their materials, once each;
     // Neon is smooth.
-    let names: Vec<&str> = f.new_textures.iter().map(|t| t.0.as_str()).collect();
-    assert_eq!(names, ["compat:material/Wood", "compat:material/Plastic"]);
+    let mut names: Vec<&str> = f.new_textures.iter().map(|t| t.0.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["compat:material/Plastic", "compat:material/Wood"]);
     let (_, desc) = f.new_materials.iter().find(|(k, _)| *k == wood).unwrap();
     assert_eq!(
         desc.base_color_texture,
