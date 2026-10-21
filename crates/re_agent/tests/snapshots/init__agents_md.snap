@@ -160,6 +160,7 @@ The MCP tool of each is its name with `_` for `.` (`entity.spawn` is `entity_spa
 | `command.describe` | `name` | Describe one command: summary, tier, input schema and annotations. |
 | `describe` | none | Describe what exists: every component (fields, types, defaults, docs), every generator and every command. |
 | `entity.get` | `id`, `components`? | Read one entity: name, parent, children, generated source and key, components and overrides. |
+| `project.status` | none | Report unsaved work: every open document (ADR-0044) with its revision and dirty flag, and the paths of those with unsaved changes (the next scene save writes them). |
 | `query` | `with`?, `name`?, `parent`?, `generated`?, `limit`?, `offset`? | List entities by components, name, parent or generated state, sorted by id. |
 
 ### Edit: needs `max_tier = "edit"`

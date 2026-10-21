@@ -1,4 +1,4 @@
-//! Per-frame GPU data and the CPU-side light and shadow set-up.
+//! Per-frame GPU data and the CPU-side light, culling and shadow set-up.
 //!
 //! The `#[repr(C)]` structs here must match the WGSL declarations in
 //! `shaders/common.wgsl` and `shaders/forward.wgsl`.
@@ -7,12 +7,15 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat3, Mat4, Vec3, Vec4};
 use re_core::Diagnostic;
 use re_types::mesh::Aabb;
-use re_types::render::{Camera, Light, LightKind};
+use re_types::render::{Camera, Light, LightKind, SunShadows};
 
 use crate::codes;
 
 /// The most point lights one frame draws.
 pub const MAX_POINT_LIGHTS: usize = 8;
+
+/// The most shadow cascades (ADR-0038).
+pub const MAX_CASCADES: usize = 4;
 
 /// `struct PointLight` in common.wgsl.
 #[repr(C)]
@@ -38,14 +41,23 @@ pub(crate) struct SpotLightRaw {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(crate) struct FrameUniform {
     pub view_proj: [[f32; 4]; 4],
-    pub light_view_proj: [[f32; 4]; 4],
+    /// World to each cascade's shadow clip space.
+    pub cascades: [[[f32; 4]; 4]; MAX_CASCADES],
     pub inv_view_proj: [[f32; 4]; 4],
     pub camera_pos: [f32; 4],
+    /// xyz: the camera's forward direction.
+    pub camera_forward: [f32; 4],
     pub sun_dir: [f32; 4],
     pub sun_color: [f32; 4],
     pub ambient_sky: [f32; 4],
     pub ambient_ground: [f32; 4],
     pub params: [f32; 4],
+    /// The view depth where each cascade ends.
+    pub cascade_far: [f32; 4],
+    /// Each cascade's normal offset, in world units.
+    pub cascade_offset: [f32; 4],
+    /// x: cascade count (0 without shadows), y: blend fraction.
+    pub shadow_params: [f32; 4],
     /// rgb: fog colour, w: fog start.
     pub fog_color: [f32; 4],
     /// x: fog end, y: 1 with fog, z: spot light count.
@@ -332,83 +344,177 @@ pub(crate) fn transform_aabb(aabb: &Aabb, world: &Mat4) -> Aabb {
     Aabb::from_points(corners).expect("eight corners")
 }
 
-/// The sun's shadow projection for one frame.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct ShadowFit {
-    /// World to shadow clip space.
-    pub light_view_proj: Mat4,
-    /// One shadow-map texel in world units.
-    pub texel_world: f32,
+/// The planes of a view frustum, for culling: `dot(plane.xyz, p) + plane.w >= 0`
+/// inside.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Frustum([Vec4; 6]);
+
+impl Frustum {
+    /// The frustum of a DirectX-depth (0..1) `view_proj`.
+    pub fn new(view_proj: &Mat4) -> Frustum {
+        let r = view_proj.transpose();
+        let (x, y, z, w) = (r.x_axis, r.y_axis, r.z_axis, r.w_axis);
+        Frustum([w + x, w - x, w + y, w - y, z, w - z])
+    }
+
+    /// False only when `aabb` is wholly outside one plane.
+    pub fn intersects(&self, aabb: &Aabb) -> bool {
+        self.0.iter().all(|p| {
+            let n = p.truncate();
+            // The corner furthest along the plane's normal.
+            let corner = Vec3::select(n.cmpge(Vec3::ZERO), aabb.max, aabb.min);
+            n.dot(corner) + p.w >= 0.0
+        })
+    }
 }
 
-/// Fits the shadow map of a sun travelling along `direction`.
-///
-/// The covered region is a sphere: the one around the camera frustum up to
-/// `shadow_distance`, or the one around the drawn scene when that is smaller. Its
-/// centre is snapped to whole texels in light space, so the shadow does not
-/// shimmer when the camera moves. The depth range reaches back to every caster.
-pub(crate) fn fit_shadow(
-    direction: Vec3,
-    camera: &Camera,
-    aspect: f32,
-    shadow_distance: f32,
-    scene: &Aabb,
-    casters: &Aabb,
-    map_size: u32,
-) -> ShadowFit {
-    let far = camera.far.min(shadow_distance.max(camera.near * 2.0));
-    let tan = (camera.fov_y_radians * 0.5).tan();
-    let mut corners = Vec::with_capacity(8);
-    for d in [camera.near, far] {
-        let (hx, hy) = (d * tan * aspect, d * tan);
-        for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-            corners.push(
-                camera
-                    .world
-                    .transform_point3(Vec3::new(sx * hx, sy * hy, -d)),
-            );
+/// The view depths where the cascades end: the practical split scheme (Zhang et
+/// al. 2006), `lambda` of the logarithmic split plus `1 - lambda` of the uniform
+/// one, between `near` and `far`. Entries past `count` repeat `far`.
+pub(crate) fn cascade_splits(
+    near: f32,
+    far: f32,
+    count: usize,
+    lambda: f32,
+) -> [f32; MAX_CASCADES] {
+    let count = count.clamp(1, MAX_CASCADES);
+    let mut splits = [far; MAX_CASCADES];
+    // The logarithmic split as products of one ratio, so it needs no platform
+    // maths (ADR-0036): near * ratio^i, with ratio^count = far / near.
+    let ratio = nth_root(far / near, count as u32);
+    let mut log = near;
+    for (i, split) in splits.iter_mut().enumerate().take(count - 1) {
+        log *= ratio;
+        let uniform = near + (far - near) * (i + 1) as f32 / count as f32;
+        *split = lambda * log + (1.0 - lambda) * uniform;
+    }
+    splits
+}
+
+/// `x^(1/n)` for `x >= 1`, by bisection: `+ - * /` only, so it is the same
+/// on every platform (ADR-0036).
+fn nth_root(x: f32, n: u32) -> f32 {
+    let (mut lo, mut hi) = (1.0f32, x.max(1.0));
+    for _ in 0..64 {
+        let mid = 0.5 * (lo + hi);
+        if (0..n).fold(1.0f32, |p, _| p * mid) > x {
+            hi = mid;
+        } else {
+            lo = mid;
         }
     }
-    let frustum_center = corners.iter().copied().sum::<Vec3>() / corners.len() as f32;
-    let frustum_radius = corners
-        .iter()
-        .map(|c| c.distance(frustum_center))
-        .fold(0.0, f32::max);
-    let scene_center = scene.center();
-    let scene_radius = scene.half_extents().length();
-    let (center, radius) = if scene_radius < frustum_radius {
-        (scene_center, scene_radius)
-    } else {
-        (frustum_center, frustum_radius)
-    };
-    let radius = radius.max(1e-3);
+    lo
+}
 
+/// The sun's direction as a light view (looking down -Z) and the depth along it.
+pub(crate) fn light_view(direction: Vec3) -> Mat4 {
     let up = if direction.y.abs() > 0.99 {
         Vec3::Z
     } else {
         Vec3::Y
     };
-    let view = glam::camera::rh::view::look_to_mat4(Vec3::ZERO, direction, up);
+    glam::camera::rh::view::look_to_mat4(Vec3::ZERO, direction, up)
+}
+
+/// One cascade's square in light space, before its depth range is known.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CascadeBox {
+    /// The light-space centre; x and y are snapped to whole texels.
+    pub center: Vec3,
+    /// Half the side of the square, in world units.
+    pub radius: f32,
+    /// One shadow-map texel in world units.
+    pub texel_world: f32,
+}
+
+/// Fits the cascade that covers view depths `near..far` of `camera`, whose
+/// projection is `projection`, for the light view `view` and a `map_size`
+/// square map.
+///
+/// The square holds the slice's bounding sphere, whose radius depends only on
+/// the field of view, the aspect and the depths, so it keeps its size when the
+/// camera turns; its centre is snapped to whole texels, so it does not shimmer
+/// when the camera moves (ADR-0038).
+pub(crate) fn fit_cascade(
+    view: &Mat4,
+    camera: &Camera,
+    projection: &Mat4,
+    near: f32,
+    far: f32,
+    map_size: u32,
+) -> CascadeBox {
+    // The squared tangent of the half diagonal field of view, from the
+    // projection's scales (1 / tan(fov_y / 2) and that over the aspect).
+    let (tx, ty) = (projection.x_axis.x.recip(), projection.y_axis.y.recip());
+    let k2 = tx * tx + ty * ty;
+    // The smallest sphere through the slice's near and far corners has its
+    // centre on the view axis, where both are equally far; past the far plane,
+    // the far corners alone decide.
+    let along = (0.5 * (far + near) * (1.0 + k2)).min(far);
+    let radius = ((far - along) * (far - along) + far * far * k2).sqrt();
+    // Rounded up to 1/64 of a unit, so rounding never changes the size.
+    let radius = ((radius * 64.0).ceil() / 64.0).max(1.0 / 64.0);
+    let center = camera.world.transform_point3(Vec3::new(0.0, 0.0, -along));
     let texel_world = 2.0 * radius / map_size as f32;
     let mut c = view.transform_point3(center);
     c.x = (c.x / texel_world).floor() * texel_world;
     c.y = (c.y / texel_world).floor() * texel_world;
-
-    // Light space looks down -Z: depth along the light is -z.
-    let caster_corners = transform_aabb(casters, &view);
-    let near = (-c.z - radius).min(-caster_corners.max.z) - texel_world;
-    let far = -c.z + radius + texel_world;
-    let proj = glam::camera::rh::proj::directx::orthographic(
-        c.x - radius,
-        c.x + radius,
-        c.y - radius,
-        c.y + radius,
-        near,
-        far,
-    );
-    ShadowFit {
-        light_view_proj: proj * view,
+    CascadeBox {
+        center: c,
+        radius,
         texel_world,
+    }
+}
+
+impl CascadeBox {
+    /// True when a caster with light-space bounds `ls` can shadow the slice:
+    /// it overlaps the square and is not wholly beyond the far end.
+    pub fn takes_caster(&self, ls: &Aabb) -> bool {
+        let c = self.center;
+        ls.max.x >= c.x - self.radius
+            && ls.min.x <= c.x + self.radius
+            && ls.max.y >= c.y - self.radius
+            && ls.min.y <= c.y + self.radius
+            // Depth along the light is -z.
+            && -ls.max.z <= -c.z + self.radius
+    }
+
+    /// The light's projection with the depth range reaching back towards the
+    /// sun to `caster_depth` (the nearest depth of the cascade's casters).
+    /// Both ends are snapped to steps of an eighth of the radius, so the range
+    /// moves in whole steps and depths keep their values in between.
+    pub fn light_view_proj(&self, view: &Mat4, caster_depth: Option<f32>) -> Mat4 {
+        let c = self.center;
+        let step = self.radius * 0.125;
+        let near = (-c.z - self.radius).min(caster_depth.unwrap_or(f32::INFINITY));
+        let near = (near / step).floor() * step - step;
+        let far = ((-c.z + self.radius) / step).ceil() * step + step;
+        let proj = glam::camera::rh::proj::directx::orthographic(
+            c.x - self.radius,
+            c.x + self.radius,
+            c.y - self.radius,
+            c.y + self.radius,
+            near,
+            far,
+        );
+        proj * *view
+    }
+}
+
+/// The frame's shadow settings with unusable values replaced by the defaults
+/// and the rest clamped to their ranges.
+pub(crate) fn sanitize_shadows(s: &SunShadows) -> SunShadows {
+    let d = SunShadows::default();
+    let finite_or = |v: f32, or: f32| if v.is_finite() { v } else { or };
+    SunShadows {
+        cascades: s.cascades.clamp(1, MAX_CASCADES as u8),
+        distance: if s.distance.is_finite() && s.distance > 0.0 {
+            s.distance
+        } else {
+            d.distance
+        },
+        split_lambda: finite_or(s.split_lambda, d.split_lambda).clamp(0.0, 1.0),
+        blend: finite_or(s.blend, d.blend).clamp(0.0, 0.5),
     }
 }
 
@@ -437,7 +543,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<SpotLightRaw>(), 48);
         assert_eq!(
             std::mem::size_of::<FrameUniform>(),
-            192 + 13 * 16 + 8 * 32 + 8 * 48
+            6 * 64 + 17 * 16 + 8 * 32 + 8 * 48
         );
         assert_eq!(std::mem::size_of::<InstanceRaw>(), 128);
         assert_eq!(std::mem::size_of::<MaterialUniform>(), 64);
@@ -493,40 +599,142 @@ mod tests {
         );
     }
 
-    #[test]
-    fn shadow_fit_covers_the_scene() {
-        let camera = Camera {
-            world: glam::camera::rh::view::look_at_mat4(
-                Vec3::new(4.0, 4.0, 6.0),
-                Vec3::ZERO,
-                Vec3::Y,
-            )
-            .inverse(),
+    fn camera_at(eye: Vec3, target: Vec3) -> Camera {
+        Camera {
+            world: glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y).inverse(),
             ..Camera::default()
-        };
-        let scene = Aabb::new(Vec3::new(-3.0, 0.0, -3.0), Vec3::new(3.0, 2.0, 3.0));
-        let fit = fit_shadow(
-            Vec3::new(-0.3, -1.0, -0.2).normalize(),
-            &camera,
-            1.5,
-            50.0,
-            &scene,
-            &scene,
-            1024,
-        );
-        for i in 0..8 {
-            let p = Vec3::new(
-                if i & 1 == 0 { -3.0 } else { 3.0 },
-                if i & 2 == 0 { 0.0 } else { 2.0 },
-                if i & 4 == 0 { -3.0 } else { 3.0 },
-            );
-            let clip = fit.light_view_proj.project_point3(p);
-            assert!(clip.x.abs() <= 1.0 && clip.y.abs() <= 1.0, "{p} -> {clip}");
-            assert!((0.0..=1.0).contains(&clip.z), "{p} -> depth {}", clip.z);
         }
-        // Higher points are nearer the sun: smaller depth.
-        let low = fit.light_view_proj.project_point3(Vec3::ZERO).z;
-        let high = fit.light_view_proj.project_point3(Vec3::Y * 2.0).z;
-        assert!(high < low);
+    }
+
+    /// The eight corners of view depths `near..far` of `camera`.
+    fn slice_corners(camera: &Camera, projection: &Mat4, near: f32, far: f32) -> Vec<Vec3> {
+        let (tx, ty) = (projection.x_axis.x.recip(), projection.y_axis.y.recip());
+        let mut corners = Vec::new();
+        for d in [near, far] {
+            for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                corners.push(camera.world.transform_point3(Vec3::new(
+                    sx * tx * d,
+                    sy * ty * d,
+                    -d,
+                )));
+            }
+        }
+        corners
+    }
+
+    #[test]
+    fn splits_blend_logarithmic_and_uniform() {
+        let uniform = cascade_splits(1.0, 101.0, 4, 0.0);
+        assert_eq!(uniform, [26.0, 51.0, 76.0, 101.0]);
+        let log = cascade_splits(1.0, 16.0, 4, 1.0);
+        for (got, want) in log.iter().zip([2.0, 4.0, 8.0, 16.0]) {
+            assert!((got - want).abs() < 1e-4, "{log:?}");
+        }
+        let practical = cascade_splits(0.1, 150.0, 4, 0.75);
+        assert!(practical.windows(2).all(|w| w[0] < w[1]), "{practical:?}");
+        assert_eq!(practical[3], 150.0);
+        // Fewer cascades: the rest repeat the far end.
+        assert_eq!(cascade_splits(0.1, 50.0, 2, 0.5)[1..], [50.0; 3]);
+    }
+
+    #[test]
+    fn cascades_cover_their_slices_and_casters_towards_the_sun() {
+        let camera = camera_at(Vec3::new(4.0, 4.0, 6.0), Vec3::ZERO);
+        let projection = projection(&camera, 1.5).unwrap();
+        let direction = Vec3::new(-0.3, -1.0, -0.2).normalize();
+        let view = light_view(direction);
+        let splits = cascade_splits(camera.near, 60.0, 4, 0.75);
+        let mut near = camera.near;
+        for far in splits {
+            let fit = fit_cascade(&view, &camera, &projection, near, far, 1024);
+            // A caster 40 units up the sun's direction from the slice's centre.
+            let above = camera
+                .world
+                .transform_point3(Vec3::new(0.0, 0.0, -0.5 * (near + far)))
+                - direction * 40.0;
+            let ls = transform_aabb(&Aabb::new(above, above), &view);
+            assert!(fit.takes_caster(&ls));
+            let m = fit.light_view_proj(&view, Some(-ls.max.z));
+            for p in slice_corners(&camera, &projection, near, far)
+                .into_iter()
+                .chain([above])
+            {
+                let clip = m.project_point3(p);
+                assert!(clip.x.abs() <= 1.0 && clip.y.abs() <= 1.0, "{p} -> {clip}");
+                assert!((0.0..=1.0).contains(&clip.z), "{p} -> depth {}", clip.z);
+            }
+            // A caster beyond the far end of the slice cannot shadow it.
+            let below = camera.world.transform_point3(Vec3::new(0.0, 0.0, -far))
+                + direction * (3.0 * far + 10.0);
+            assert!(!fit.takes_caster(&transform_aabb(&Aabb::new(below, below), &view)));
+            near = far;
+        }
+    }
+
+    #[test]
+    fn cascades_keep_their_size_and_snap_to_texels() {
+        let direction = Vec3::new(0.4, -1.0, 0.3).normalize();
+        let view = light_view(direction);
+        let mut sizes = Vec::new();
+        for i in 0..24 {
+            let t = i as f32 * 0.37;
+            let eye = Vec3::new(3.0 * t, 2.0 + 0.1 * t, 5.0 - t);
+            let target = eye + Vec3::new(t - 2.0, -0.3, 1.5 - 0.2 * t);
+            let camera = camera_at(eye, target);
+            let projection = projection(&camera, 16.0 / 9.0).unwrap();
+            let fit = fit_cascade(&view, &camera, &projection, 0.1, 12.0, 2048);
+            sizes.push(fit.radius);
+            for v in [fit.center.x, fit.center.y] {
+                let texels = v / fit.texel_world;
+                assert_eq!(texels, texels.round(), "{v} is not on the texel grid");
+            }
+        }
+        assert!(sizes.windows(2).all(|w| w[0] == w[1]), "{sizes:?}");
+    }
+
+    #[test]
+    fn frustum_culls_boxes_outside_the_view() {
+        let camera = camera_at(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO);
+        let view_proj = projection(&camera, 1.0).unwrap() * camera.view();
+        let frustum = Frustum::new(&view_proj);
+        let unit = |c: Vec3| Aabb::new(c - Vec3::splat(0.5), c + Vec3::splat(0.5));
+        assert!(frustum.intersects(&unit(Vec3::ZERO)));
+        assert!(
+            !frustum.intersects(&unit(Vec3::new(0.0, 0.0, 20.0))),
+            "behind"
+        );
+        assert!(
+            !frustum.intersects(&unit(Vec3::new(40.0, 0.0, 0.0))),
+            "to the side"
+        );
+        assert!(
+            !frustum.intersects(&unit(Vec3::new(0.0, 0.0, -2000.0))),
+            "past far"
+        );
+        // A big box around the camera is in view.
+        assert!(frustum.intersects(&Aabb::new(Vec3::splat(-100.0), Vec3::splat(100.0))));
+    }
+
+    #[test]
+    fn bad_shadow_settings_fall_back() {
+        let s = sanitize_shadows(&SunShadows {
+            cascades: 9,
+            distance: f32::NAN,
+            split_lambda: 3.0,
+            blend: -1.0,
+        });
+        assert_eq!(
+            s,
+            SunShadows {
+                cascades: 4,
+                distance: 150.0,
+                split_lambda: 1.0,
+                blend: 0.0
+            }
+        );
+        assert_eq!(
+            sanitize_shadows(&SunShadows { cascades: 0, ..s }).cascades,
+            1
+        );
     }
 }

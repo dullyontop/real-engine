@@ -35,6 +35,7 @@ pub mod play;
 pub mod procedural;
 pub mod sync;
 pub mod verify;
+pub mod web;
 pub mod window;
 
 pub use app::{App, RunReport, ScreenshotRequest};
@@ -191,6 +192,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE0527.md"),
     },
     DiagInfo {
+        code: codes::OPEN_DOC_CHANGED_ON_DISK,
+        title: "Open document changed on disk",
+        page: include_str!("../explain/RE0528.md"),
+    },
+    DiagInfo {
         code: codes::PACKAGE_UNREADABLE,
         title: "Unreadable game archive",
         page: include_str!("../explain/RE0600.md"),
@@ -224,6 +230,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::PACKAGED_WRITE,
         title: "A packaged game cannot write project files",
         page: include_str!("../explain/RE0606.md"),
+    },
+    DiagInfo {
+        code: codes::WEB_NO_GPU,
+        title: "No WebGPU in this browser",
+        page: include_str!("../explain/RE0620.md"),
+    },
+    DiagInfo {
+        code: codes::WEB_CANVAS_FAILED,
+        title: "The canvas stopped drawing",
+        page: include_str!("../explain/RE0621.md"),
+    },
+    DiagInfo {
+        code: codes::WEB_PANIC,
+        title: "The engine panicked in the browser",
+        page: include_str!("../explain/RE0622.md"),
     },
 ];
 
