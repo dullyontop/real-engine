@@ -891,10 +891,10 @@ mod tests {
     }
 
     #[test]
-    fn m1_has_sixteen_kinds() {
+    fn m1_has_seventeen_kinds() {
         let r = NodeRegistry::m1();
-        assert_eq!(r.len(), 16);
+        assert_eq!(r.len(), 17);
         let schema = r.graph_json_schema();
-        assert!(schema.pointer("/$defs/NodeDoc/allOf/15").is_some());
+        assert!(schema.pointer("/$defs/NodeDoc/allOf/16").is_some());
     }
 }

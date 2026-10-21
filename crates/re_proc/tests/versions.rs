@@ -22,6 +22,21 @@ fn example() -> GraphDoc {
     GraphDoc::from_json(include_str!("../examples/island.graph.json")).unwrap()
 }
 
+/// The example island with the kinds it has no use for added as extra sinks:
+/// `terrain.chunks` (world streaming's terrain) on the shore field.
+fn example_with_every_kind() -> GraphDoc {
+    let mut doc: Json =
+        serde_json::from_str(include_str!("../examples/island.graph.json")).unwrap();
+    doc["nodes"].as_array_mut().unwrap().push(json!({
+        "id": "lod", "kind": "terrain.chunks", "version": 1, "params": { "name": "Terrain" },
+    }));
+    doc["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "from": ["shore", "field"], "to": ["lod", "field"] }));
+    GraphDoc::from_json(&doc.to_string()).unwrap()
+}
+
 fn example_opts() -> EvalOptions {
     EvalOptions {
         root: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples")),
@@ -30,7 +45,7 @@ fn example_opts() -> EvalOptions {
 }
 
 /// One golden output hash per (kind, version) the engine evaluates, from the
-/// example island's node of that kind. Entries are only ever added: a kind
+/// example island's node of that kind ([`example_with_every_kind`]). Entries are only ever added: a kind
 /// that changes its output gets a new version (and a new entry here), and the
 /// old version keeps its output.
 const GOLDEN: &[(&str, u32, &str, &str)] = &[
@@ -50,6 +65,7 @@ const GOLDEN: &[(&str, u32, &str, &str)] = &[
     ("mesh.merge", 1, "dock_mesh", "5b7e614dde008b92"),
     ("material.assign", 1, "dock", "d80ce6803193eae7"),
     ("fragment.merge", 1, "out", "3e333807edeff974"),
+    ("terrain.chunks", 1, "lod", "8fed4ae29c80e636"),
 ];
 
 #[test]
@@ -65,7 +81,7 @@ fn every_supported_kind_version_has_a_golden_output() {
         }
     }
     for (version, entries) in [(1u32, GOLDEN)] {
-        let mut doc = example();
+        let mut doc = example_with_every_kind();
         for n in &mut doc.nodes {
             n.version = version;
         }

@@ -76,6 +76,7 @@
             "terrain.heightfield",
             "terrain.island_mask",
             "terrain.mesh",
+            "terrain.chunks",
             "terrain.water_plane",
             "field.combine",
             "field.remap",
@@ -291,6 +292,46 @@
                   }
                 },
                 "description": "Parameters of `terrain.mesh`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "terrain.chunks"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "material": {
+                    "description": "A material file (`materials/grass.material.json`), or empty.",
+                    "type": "string",
+                    "default": ""
+                  },
+                  "max_level": {
+                    "description": "The coarsest level of detail (0 to 8): root tiles are 64 × 2^max_level\nsamples of the field's spacing.",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 5
+                  },
+                  "name": {
+                    "description": "The entity's name when the graph is not streamed.",
+                    "type": "string",
+                    "default": "Terrain"
+                  }
+                },
+                "description": "Parameters of `terrain.chunks`.",
                 "type": "object"
               }
             }
