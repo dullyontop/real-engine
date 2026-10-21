@@ -390,6 +390,9 @@ impl CompatView {
                     Vec::new()
                 },
                 clear: [0.0; 4],
+                // The main frame's cascades, so the shadow map is not
+                // reallocated between the two.
+                shadows: self.shadows,
                 ..RenderSnapshot::default()
             };
             let extras = SceneExtras {
@@ -444,6 +447,7 @@ impl CompatView {
             // Cleared to transparent, then the UI over it.
             let clear = RenderSnapshot {
                 clear: [0.0; 4],
+                shadows: self.shadows,
                 ..RenderSnapshot::default()
             };
             r.render(device, queue, t.capture.view(), &clear)?;
