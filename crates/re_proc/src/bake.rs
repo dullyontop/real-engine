@@ -389,6 +389,16 @@ pub(crate) fn bake<C: re_command::EditTarget>(
             format!("`{}` is not a procedural source", a.source),
         )
     })?;
+    if world.ecs.get::<re_scene::Streamed>(src).is_some() {
+        return Err(bake_error(
+            &a.source,
+            format!(
+                "`{}` is streamed: only its loaded cells exist to bake",
+                a.source
+            ),
+        )
+        .with_hint("remove `Streamed` from the source first, so it generates whole"));
+    }
     let info = world.generators.get(&p.generator).ok_or_else(|| {
         bake_error(
             &a.source,

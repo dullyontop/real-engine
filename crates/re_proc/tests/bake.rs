@@ -339,3 +339,17 @@ fn an_empty_key_list_is_refused() {
     assert_eq!(codes(&out), ["RE4021"]);
     assert_eq!(st.world.state_hash(), before);
 }
+
+#[test]
+fn a_streamed_source_is_not_baked() {
+    let (_dir, mut st) = world(json!([]));
+    let src = st.world.entity("island").unwrap();
+    st.world
+        .ecs
+        .entity_mut(src)
+        .insert(re_scene::Streamed { bounds: 0.0 });
+    let before = st.world.state_hash();
+    let out = bake(&mut st, json!({ "source": "island" }));
+    assert_eq!(codes(&out), ["RE4021"], "{:#?}", out.diagnostics);
+    assert_eq!(st.world.state_hash(), before);
+}
