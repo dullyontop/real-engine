@@ -99,13 +99,13 @@ pub(crate) fn describe(
         )
         .at(Location::entity(id.clone()))
     })?;
-    let doc = store.graph(&id).ok_or_else(|| {
+    let doc = store.current(world, &id).ok_or_else(|| {
         Diagnostic::error(
             codes::NO_GRAPH,
             format!("no graph is stored for streamed source `{id}`"),
         )
         .at(Location::entity(id.clone()))
-    })?;
+    })??;
     let registry = store.evaluator().registry();
     let params = world
         .ecs
@@ -113,8 +113,8 @@ pub(crate) fn describe(
         .map(|g| g.params.clone())
         .unwrap_or_default();
     let doc = match parse_overrides(&params) {
-        Ok(o) => apply_overrides(doc, &o, registry, &id).0,
-        Err(_) => doc.clone(),
+        Ok(o) => apply_overrides(&doc, &o, registry, &id).0,
+        Err(_) => GraphDoc::clone(&doc),
     };
     for node in &doc.nodes {
         if let Some(def) = registry.get(&node.kind)
