@@ -180,8 +180,8 @@ jobs:
           grep -qx 'RUN OK' out/run.log
 
   verify-valley:
-    # The M3 example (M3_PLAN WP28). Not required yet: ADR-0023's WP28 amendment
-    # makes it required once the valley streams.
+    # The M3 example (M3_PLAN WP28): a streamed world (ADR-0042). ADR-0023's
+    # WP28 amendment makes it required.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -203,19 +203,20 @@ jobs:
           mkdir -p out
           target/release/real verify --project examples/valley --json > out/verify.json
       - name: Check the verify report (M3_PLAN WP28)
-        # Every stage ran and passed, the walk and drive replays each ran twice
-        # with the same state_hash, and at least four goldens match.
+        # Every stage ran and passed, the walk, drive and cross-cell replays each
+        # ran twice with the same state_hash, and at least six goldens match.
         run: |
           jq -e '
             .ok == true
             and ([.stages[].name] | contains(["schema", "compile", "scan", "boot", "replays", "goldens", "perf"]))
             and all(.stages[]; .ok and ((.data | type) != "object" or (.data | has("skipped") | not)))
             and ([.stages[] | select(.name == "replays") | .data.runs[]] as $r
-                 | ($r | length) >= 2 and all($r[]; .deterministic)
+                 | ($r | length) >= 3 and all($r[]; .deterministic)
                    and any($r[]; .file | endswith("walk.replay.json"))
-                   and any($r[]; .file | endswith("drive.replay.json")))
+                   and any($r[]; .file | endswith("drive.replay.json"))
+                   and any($r[]; .file | endswith("cross.replay.json")))
             and ([.stages[] | select(.name == "goldens") | .data.checks[]] as $g
-                 | ($g | length) >= 4 and all($g[]; .matches))
+                 | ($g | length) >= 6 and all($g[]; .matches))
             and (.perf | type == "object")
           ' out/verify.json
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
@@ -226,7 +227,7 @@ jobs:
           RE_BACKENDS: gl
         run: |
           target/release/real verify --project examples/valley --json > out/verify-gl.json
-          jq -e '.ok == true and ([.stages[] | select(.name == "goldens") | .data.checks[]] | length >= 4 and all(.[]; .matches))' out/verify-gl.json
+          jq -e '.ok == true and ([.stages[] | select(.name == "goldens") | .data.checks[]] | length >= 6 and all(.[]; .matches))' out/verify-gl.json
       - name: Windowed run under Xvfb (must print RUN OK)
         run: |
           xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/valley --frames 300 --exit-after | tee out/run.log

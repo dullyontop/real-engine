@@ -8,6 +8,9 @@ local rig = require("./lib/rig")
 local car = script.entity :: Entity
 
 time.on_step(function(_dt)
+	if not rig.ready then
+		return
+	end
 	if not rig.driving then
 		physics.drive(car, { handbrake = 1 })
 		return
