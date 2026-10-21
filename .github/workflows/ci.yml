@@ -62,11 +62,11 @@ jobs:
           sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
       - name: Test (non-GPU crates)
         # cargo only warns about excluded packages that do not exist yet.
-        run: cargo test --workspace --locked --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
+        run: cargo test --workspace --locked --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor --exclude re_web
       - name: Test (GPU crates, lavapipe and GL)
         run: |
           pkgs=""
-          for c in re_render re_app re_cli re_editor; do
+          for c in re_render re_app re_cli re_editor re_web; do
             if [ -d "crates/$c" ]; then pkgs="$pkgs -p $c"; fi
           done
           if [ -z "$pkgs" ]; then echo "no GPU crates yet"; exit 0; fi
@@ -206,13 +206,13 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Test (non-GPU crates)
         shell: bash
-        run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
+        run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor --exclude re_web
       - name: Test (GPU crates, DX12 on WARP)
         if: success() || failure()
         shell: bash
         env:
           RE_BACKENDS: dx12
-        run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1
+        run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -p re_web -- --test-threads=1
       - name: real verify on the island and the plaza
         if: success() || failure()
         shell: bash
@@ -270,12 +270,12 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/luau-lsp"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Test (non-GPU crates)
-        run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
+        run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor --exclude re_web
       - name: Test (GPU crates, Metal)
         if: success() || failure()
         env:
           RE_BACKENDS: metal
-        run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1
+        run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -p re_web -- --test-threads=1
       - name: real verify on the island and the plaza
         if: success() || failure()
         env:
@@ -321,34 +321,72 @@ jobs:
   # ADR-0049 (WP29): the browser build. Type-checks and lints the runtime for
   # wasm32-unknown-unknown (the std::time ban runs only here, ADR-0049 §5), then links
   # tools/web-test with Luau and Jolt built by wasi-sdk and compares its report under
-  # Node with the native one. The pile hash is reported only until WP18 PR "d2".
+  # Node with the native one. Then it builds the browser runtime (re_web, profile
+  # `web` and wasm-opt, failing above 8 MB gzipped) and, in
+  # headless Chromium with WebGPU, plays the island's and the plaza's replays (no
+  # error, a drawn last frame) and starts the island's game page. The pile hash and
+  # the replays' state_hash against native are reported only until WP18 PR "d2".
   # actions/setup-node v7 (949feb24) verified with `git ls-remote` on 2026-10-20.
   build-web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown --component clippy
-      - uses: Swatinem/rust-cache@v2
+      # The native replay runner below links ALSA and udev, like every native build.
+      - uses: ./.github/actions/linux-setup
+      - run: rustup target add wasm32-unknown-unknown
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: tools/web-test/package-lock.json
       - name: Install wasi-sdk 34
         run: tools/ci/wasi-sdk.sh
       - name: Install wasm-bindgen-cli 0.2.129
         run: cargo install --locked wasm-bindgen-cli --version 0.2.129
-      - run: >-
-          cargo check --locked --target wasm32-unknown-unknown
-          -p re_core -p re_types -p re_geom -p re_noise -p re_reflect -p re_scene
-          -p re_command -p re_anim -p re_proc -p re_input -p re_audio -p re_render
-          -p re_script -p re_physics -p re_compat -p re_app -p web-test
-      - name: Clippy for wasm32 (web clippy.toml)
+      - name: Clippy for wasm32 (web clippy.toml), which also type-checks the runtime
         run: >-
           CLIPPY_CONF_DIR=$PWD/tools/ci/clippy-web
           cargo clippy --locked --target wasm32-unknown-unknown
-          -p re_app -p re_compat -p web-test -- -D warnings
+          -p re_core -p re_types -p re_geom -p re_noise -p re_reflect -p re_scene
+          -p re_command -p re_anim -p re_proc -p re_input -p re_audio -p re_render
+          -p re_script -p re_physics -p re_compat -p re_net -p re_app -p re_web
+          -p web-test -- -D warnings
       - name: Luau and Jolt in wasm match native
         run: |
           cargo build --locked --release --target wasm32-unknown-unknown -p web-test
           wasm-bindgen --target web --out-dir target/web-test target/wasm32-unknown-unknown/release/web_test.wasm
           cargo run --locked --release -p web-test > target/web-test/native.txt
           node --experimental-wasm-exnref tools/web-test/smoke.mjs --reported "pile " target/web-test target/web-test/native.txt
+      - name: Install binaryen 133
+        run: tools/ci/binaryen.sh
+      - name: Build the browser runtime, within the 8 MB gzip budget
+        run: |
+          cargo build --locked --profile web --target wasm32-unknown-unknown -p re_web
+          wasm-bindgen --target web --out-name real --out-dir target/re-web target/wasm32-unknown-unknown/web/re_web.wasm
+          wasm-opt -Oz --strip-debug --strip-producers --enable-exception-handling \
+            --enable-reference-types --enable-bulk-memory --enable-nontrapping-float-to-int \
+            --enable-sign-ext --enable-mutable-globals --enable-multivalue \
+            target/re-web/real_bg.wasm -o target/re-web/real_bg.wasm
+          size=$(gzip -9 -c target/re-web/real_bg.wasm | wc -c)
+          echo "real_bg.wasm: $(wc -c < target/re-web/real_bg.wasm) bytes, $size gzipped"
+          if [ "$size" -gt 8000000 ]; then
+            echo "::error::real_bg.wasm is $size bytes gzipped, over the 8 MB budget (ADR-0049)"
+            exit 1
+          fi
+      - name: Install Playwright's Chromium
+        working-directory: tools/web-test
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: The island and the plaza in headless Chromium with WebGPU
+        run: |
+          cargo run --locked --release -p re_web --example replay -- examples/island \
+            tests/replays/walk_collect.replay.json tests/replays/full_game.replay.json \
+            tests/replays/regenerate.replay.json > target/re-web/island.jsonl
+          cargo run --locked --release -p re_web --example replay -- examples/plaza \
+            tests/replays/idle.replay.json tests/replays/walk.replay.json > target/re-web/plaza.jsonl
+          node tools/web-test/browser.mjs --expect target/re-web/island.jsonl --reported target/re-web examples/island \
+            tests/replays/walk_collect.replay.json tests/replays/full_game.replay.json tests/replays/regenerate.replay.json
+          node tools/web-test/browser.mjs --expect target/re-web/plaza.jsonl --reported target/re-web examples/plaza \
+            tests/replays/idle.replay.json tests/replays/walk.replay.json
+          node tools/web-test/play.mjs target/re-web examples/island

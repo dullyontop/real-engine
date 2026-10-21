@@ -43,7 +43,7 @@ fn open() -> Option<Mutex<Trace>> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join(format!("{}.txt", std::process::id())))
+        .open(dir.join(format!("{}.txt", re_core::process_id())))
         .ok()?;
     Some(Mutex::new(Trace {
         seen: HashSet::new(),
