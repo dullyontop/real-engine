@@ -16,6 +16,7 @@ use re_types::graph::GraphDoc;
 use re_types::mesh::MeshData;
 use serde::Deserialize;
 
+use crate::NodeRegistry;
 use crate::codes;
 use crate::eval::{EvalReport, Evaluator};
 use crate::value::DerivedAsset;
@@ -196,6 +197,14 @@ impl GraphStore {
             budget: Budget::default(),
             open: Mutex::default(),
         }
+    }
+
+    /// Evaluates with `registry` from now on (the M1 kinds plus a project's
+    /// Luau kinds, ADR-0043 §4), keeping the disk cache. A source whose
+    /// graph uses a kind that changed gets a new version stamp, so it
+    /// regenerates at the next `regenerate_changed`.
+    pub fn set_registry(&mut self, registry: Arc<NodeRegistry>) {
+        self.evaluator = Arc::new(self.evaluator.with_registry(registry));
     }
 
     /// Stores (or replaces) the graph of procedural source `source_id`.

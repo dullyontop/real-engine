@@ -143,6 +143,28 @@ impl Context {
         &self.lua
     }
 
+    /// Attaches the script debugger to this context (ADR-0045) under its
+    /// name, with the scheduler parking the threads it stops so the rest of
+    /// the context keeps running, and registers the scripts and modules
+    /// already loaded. Chunks loaded later register as they load. Call
+    /// [`debug::service`](crate::debug::service) once per frame.
+    ///
+    /// # Errors
+    ///
+    /// When the debugger's callbacks cannot be installed.
+    pub fn attach_debugger(
+        &self,
+        debugger: &crate::debug::Debugger,
+    ) -> mlua::Result<crate::debug::ContextInfo> {
+        let info = debugger.attach(
+            &self.lua,
+            self.kind.name(),
+            Some(Box::new(scheduler::DebugParking)),
+        )?;
+        scheduler::register_live_chunks(&self.lua)?;
+        Ok(info)
+    }
+
     /// Binds `host`, runs `f`, then runs deferred threads and the settle hook
     /// until no work is left, and returns the diagnostics of every error raised
     /// meanwhile (in `f` itself or in any thread that ran).
@@ -525,6 +547,7 @@ impl ScriptRuntime {
                 .set_compiler(crate::compile::compiler())
                 .set_environment(env)
                 .into_function()?;
+            scheduler::register_owned_chunk(lua, owner, path, &f)?;
             scheduler::start_owned(lua, f, MultiValue::new(), path.to_string(), Some(owner))?;
             Ok(())
         })
@@ -585,7 +608,11 @@ impl ScriptRuntime {
                 .set_compiler(crate::compile::compiler())
                 .set_environment(env)
                 .into_function()?;
-            let out: Value = scheduler::call_budgeted(lua, || f.call(()))?;
+            // A builder's chunk is only live while it runs.
+            crate::debug::register_chunk(lua, path, &f);
+            let out = scheduler::call_budgeted(lua, || f.call::<Value>(()));
+            crate::debug::unregister_chunk(lua, &f);
+            let out = out?;
             graph = Some(
                 api::proc::graph_from_value(&out)
                     .map_err(|m| api::error(codes::GRAPH_BUILDER, m))?,

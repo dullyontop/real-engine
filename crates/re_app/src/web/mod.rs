@@ -6,10 +6,8 @@
 //! boot script reads them back and passes them to [`browser_dirs`]. Caches and
 //! command outputs stay in memory only.
 //!
-//! Nothing writes to them on the web yet: the data service persists only to a
-//! folder on disk ([`WritableStore::path`] is `None` here), and the crash hook is
-//! re_cli's. Until a data backend writes through a [`WritableDir`], a game's saves
-//! last only as long as its page.
+//! A compat game's data services write saved data through the `data` folder.
+//! Nothing writes crash reports on the web yet: the crash hook is re_cli's.
 //!
 //! [`play`] (wasm32 only) runs an [`App`](crate::App) in the page. The rest does
 //! not depend on the browser, so it is tested natively.

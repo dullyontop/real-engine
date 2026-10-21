@@ -4046,11 +4046,15 @@ dependencies = [
 name = "re_script"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "glam 0.34.1",
  "insta",
  "mlua",
  "re_command",
  "re_core",
+ "re_geom",
+ "re_noise",
+ "re_proc",
  "re_reflect",
  "re_scene",
  "re_types",
@@ -4089,10 +4093,13 @@ version = "0.1.0"
 dependencies = [
  "pollster",
  "re_app",
+ "re_compat",
  "re_core",
+ "re_import",
  "re_render",
  "re_types",
  "serde_json",
+ "tempfile",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
