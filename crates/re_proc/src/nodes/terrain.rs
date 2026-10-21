@@ -116,16 +116,11 @@ impl Params for HeightfieldParams {
 }
 
 fn heightfield(ctx: &super::NodeCtx, p: &HeightfieldParams) -> Result<Output, String> {
+    if let Some(d) = ctx.domain {
+        return heightfield_window(ctx, p, &d);
+    }
     let n = p.size as usize;
-    let f = Fractal {
-        basis: match p.basis {
-            BasisKind::Perlin => Basis::Perlin,
-            BasisKind::Simplex => Basis::Simplex,
-        },
-        octaves: p.octaves,
-        lacunarity: p.lacunarity,
-        gain: p.gain,
-    };
+    let f = fractal(p);
     let half = Heightfield::half_extent(p.size, p.cell);
     let seed = ctx.seed;
     let mut values = vec![0.0f32; n * n];
@@ -133,18 +128,56 @@ fn heightfield(ctx: &super::NodeCtx, p: &HeightfieldParams) -> Result<Output, St
         let wz = z as f32 * p.cell - half + p.offset[1];
         for (x, out) in row.iter_mut().enumerate() {
             let wx = x as f32 * p.cell - half + p.offset[0];
-            let (sx, sz) = (wx * p.scale, wz * p.scale);
-            let unit = match p.noise {
-                NoiseKind::Fbm => fbm2(seed, &f, sx, sz) * 0.5 + 0.5,
-                NoiseKind::Ridged => ridged2(seed, &f, sx, sz),
-                NoiseKind::Warped => warped_fbm2(seed, &f, p.warp, sx, sz) * 0.5 + 0.5,
-            };
-            *out = unit.clamp(0.0, 1.0) * p.height;
+            *out = noise_height(p, &f, seed, wx, wz);
         }
     });
     Ok(Output::Field(Arc::new(crate::value::Field::new(
         p.size, p.cell, values,
     )?)))
+}
+
+fn fractal(p: &HeightfieldParams) -> Fractal {
+    Fractal {
+        basis: match p.basis {
+            BasisKind::Perlin => Basis::Perlin,
+            BasisKind::Simplex => Basis::Simplex,
+        },
+        octaves: p.octaves,
+        lacunarity: p.lacunarity,
+        gain: p.gain,
+    }
+}
+
+/// `terrain.heightfield` over a streamed window (ADR-0042): the window gives
+/// the samples and spacing (`size` and `cell` are not used), and each sample
+/// sits at its global position, so windows agree on the samples they share.
+fn heightfield_window(
+    ctx: &super::NodeCtx,
+    p: &HeightfieldParams,
+    d: &super::Domain,
+) -> Result<Output, String> {
+    let n = d.n as usize;
+    let f = fractal(p);
+    let seed = ctx.seed;
+    let mut values = vec![0.0f32; n * n];
+    ctx.par_rows(&mut values, n, |z, row| {
+        let wz = d.position(d.origin[1] + z as i64) + p.offset[1];
+        for (x, out) in row.iter_mut().enumerate() {
+            let wx = d.position(d.origin[0] + x as i64) + p.offset[0];
+            *out = noise_height(p, &f, seed, wx, wz);
+        }
+    });
+    Ok(Output::Field(Arc::new(crate::value::Field::at(d, values)?)))
+}
+
+fn noise_height(p: &HeightfieldParams, f: &Fractal, seed: u64, wx: f32, wz: f32) -> f32 {
+    let (sx, sz) = (wx * p.scale, wz * p.scale);
+    let unit = match p.noise {
+        NoiseKind::Fbm => fbm2(seed, f, sx, sz) * 0.5 + 0.5,
+        NoiseKind::Ridged => ridged2(seed, f, sx, sz),
+        NoiseKind::Warped => warped_fbm2(seed, f, p.warp, sx, sz) * 0.5 + 0.5,
+    };
+    unit.clamp(0.0, 1.0) * p.height
 }
 
 /// The outline of a [`MaskParams`].
@@ -328,7 +361,18 @@ impl Params for WaterParams {
 }
 
 fn water_plane(ctx: &super::NodeCtx, p: &WaterParams) -> Result<Output, String> {
-    let plane = re_geom::plane(p.size, p.size, p.subdivisions).map_err(|e| e.to_string())?;
+    // In a streamed window the plane covers the window (`size` is not used).
+    let (size, centre) = match ctx.domain {
+        Some(d) => {
+            let (lo, hi) = (d.min(), d.max());
+            (
+                hi[0] - lo[0],
+                Vec3::new((lo[0] + hi[0]) * 0.5, p.level, (lo[1] + hi[1]) * 0.5),
+            )
+        }
+        None => (p.size, Vec3::new(0.0, p.level, 0.0)),
+    };
+    let plane = re_geom::plane(size, size, p.subdivisions).map_err(|e| e.to_string())?;
     let mesh = MeshValue {
         mesh: plane,
         material: p.material.clone(),
@@ -336,10 +380,7 @@ fn water_plane(ctx: &super::NodeCtx, p: &WaterParams) -> Result<Output, String> 
     };
     let mut item =
         super::fragment::mesh_item(format!("{}/water", ctx.node_id), p.name.clone(), &mesh);
-    item.0.components[0].1 = vec![(
-        "translation".into(),
-        Value::Vec3(Vec3::new(0.0, p.level, 0.0)),
-    )];
+    item.0.components[0].1 = vec![("translation".into(), Value::Vec3(centre))];
     Ok(Output::Fragment(Arc::new(Fragment {
         items: vec![item.0],
         assets: vec![item.1],
@@ -355,8 +396,8 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
-            doc: "A noise heightfield (fbm, ridged or warped), centred on the source, with heights from 0 to `height` metres.",
+            streaming: super::Streaming::Pointwise,
+            doc: "A noise heightfield (fbm, ridged or warped), centred on the source, with heights from 0 to `height` metres. Streamed: pointwise, over the window at global positions (`size` and `cell` come from the window).",
             inputs: &[],
             variadic: None,
             output: PortType::Field,
@@ -372,7 +413,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
             oldest: 1,
             migrations: &[],
             streaming: super::Streaming::Whole,
-            doc: "A radial falloff from 1 in the middle to 0 at the edges; multiply a heightfield by it to make an island.",
+            doc: "A radial falloff from 1 in the middle to 0 at the edges; multiply a heightfield by it to make an island. Not streamable: it is relative to the field's size.",
             inputs: &[],
             variadic: None,
             output: PortType::Field,
@@ -387,7 +428,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
+            streaming: super::Streaming::Cell,
             doc: "Turns a field into a terrain entity: a derived mesh, an optional material and an optional heightfield collider.",
             inputs: &[PortDef {
                 name: "field",
@@ -408,8 +449,8 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
-            doc: "A flat square water entity at a height.",
+            streaming: super::Streaming::Cell,
+            doc: "A flat square water entity at a height. Streamed: one plane per cell, covering it.",
             inputs: &[],
             variadic: None,
             output: PortType::Fragment,

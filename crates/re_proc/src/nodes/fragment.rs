@@ -120,7 +120,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
+            streaming: super::Streaming::Cell,
             doc: "Gathers fragments and meshes (inputs on any port names, in natural name order) into one fragment, optionally under a group entity.",
             inputs: &[],
             variadic: Some(&[PortType::Fragment, PortType::Mesh]),
