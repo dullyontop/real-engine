@@ -1300,6 +1300,7 @@ impl App {
         );
         ragdoll::push(
             &mut self.world,
+            &self.physics,
             &self.skin_sync,
             &mut self.ragdoll_sync,
             &mut self.physics_cmds,

@@ -612,6 +612,20 @@ fn saved_state_replays_a_ragdoll_bit_for_bit() {
     q.apply_motion_state(&motion);
     assert!(q.take_diagnostics().is_empty());
     assert_eq!(q.ragdoll_parts(MAN), p.ragdoll_parts(MAN));
+
+    // A copy that adds the ragdoll after the motion gets it then, with its mode.
+    let mut r = world(2);
+    apply(&mut r, vec![floor(0, 0.0, 0.0, 0.0, 20.0)]);
+    r.apply_motion_state(&motion);
+    assert!(r.take_diagnostics().is_empty());
+    assert_eq!(r.pending_ragdoll_mode(MAN), Some(RagdollMode::Simulated));
+    apply(
+        &mut r,
+        vec![add_man(MAN, Vec3::new(0.0, 0.5, 0.0), Quat::IDENTITY)],
+    );
+    assert_eq!(r.pending_ragdoll_mode(MAN), None);
+    assert_eq!(state(&r, MAN).mode, RagdollMode::Simulated);
+    assert_eq!(r.ragdoll_parts(MAN), p.ragdoll_parts(MAN));
 }
 
 #[test]

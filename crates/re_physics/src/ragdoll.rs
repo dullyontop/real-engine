@@ -74,6 +74,7 @@ pub(crate) struct RagdollEntry {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RagdollMotion {
     pub(crate) id: EntityId,
+    pub(crate) mode: RagdollMode,
     /// Per part: position, rotation, linear and angular velocity, awake.
     pub(crate) parts: Vec<(Vec3, Quat, Vec3, Vec3, bool)>,
 }
@@ -866,6 +867,7 @@ impl Physics {
             .iter()
             .map(|(&id, r)| RagdollMotion {
                 id,
+                mode: r.mode,
                 parts: r
                     .bodies
                     .iter()
@@ -885,42 +887,69 @@ impl Physics {
     }
 
     /// Gives each ragdoll of `motion` that this world also has, with as many parts, the
-    /// parts' poses, velocities and sleep states.
+    /// mode and the parts' poses, velocities and sleep states. A ragdoll this world
+    /// does not have yet gets them when it is added (a copied world adds its ragdolls
+    /// once its skins are posed).
     pub(crate) fn apply_ragdoll_motion(&mut self, motion: &[RagdollMotion]) {
-        let mut skipped = Vec::new();
+        self.pending_ragdolls.clear();
         for m in motion {
-            let Some(r) = self.ragdolls.get(&m.id) else {
-                skipped.push(unknown(m.id, "ragdoll"));
-                continue;
-            };
-            if r.bodies.len() != m.parts.len() {
-                skipped.push(ragdoll_invalid(
-                    m.id,
-                    format!(
-                        "its motion has {} parts; this world's ragdoll has {}",
-                        m.parts.len(),
-                        r.bodies.len()
-                    ),
-                ));
-                continue;
-            }
-            for (&b, &(pos, rot, linear, angular, awake)) in r.bodies.iter().zip(&m.parts) {
-                let Ok(mut body) = self.world.body_mut(b) else {
-                    continue;
-                };
-                let _ = body.set_position_and_rotation(rv(pos), jq(rot), Activation::DontActivate);
-                if awake {
-                    let _ = body.set_linear_velocity(jv(linear));
-                    let _ = body.set_angular_velocity(jv(angular));
-                    body.activate();
-                } else {
-                    let _ = body.deactivate();
-                }
+            if self.ragdolls.contains_key(&m.id) {
+                self.apply_one_ragdoll_motion(m);
+            } else {
+                self.pending_ragdolls.insert(m.id, m.clone());
             }
         }
-        for mut d in skipped {
+    }
+
+    /// Applies the motion held for `id` since [`Physics::apply_motion_state`], if any.
+    pub(crate) fn apply_pending_ragdoll(&mut self, id: EntityId) {
+        if let Some(m) = self.pending_ragdolls.remove(&id) {
+            self.apply_one_ragdoll_motion(&m);
+        }
+    }
+
+    /// The mode of the motion from [`Physics::apply_motion_state`] waiting for `id`'s
+    /// ragdoll, which gets that mode when it is added.
+    pub fn pending_ragdoll_mode(&self, id: EntityId) -> Option<RagdollMode> {
+        self.pending_ragdolls.get(&id).map(|m| m.mode)
+    }
+
+    fn apply_one_ragdoll_motion(&mut self, m: &RagdollMotion) {
+        let warn = |mut d: Diagnostic| {
             d.severity = re_core::Severity::Warning;
-            self.push_diagnostic(d);
+            d
+        };
+        let parts = self.ragdolls.get(&m.id).map_or(0, |r| r.bodies.len());
+        if parts != m.parts.len() {
+            let d = ragdoll_invalid(
+                m.id,
+                format!(
+                    "its motion has {} parts; this world's ragdoll has {parts}",
+                    m.parts.len()
+                ),
+            );
+            self.push_diagnostic(warn(d));
+            return;
+        }
+        if let Err(d) = self.set_ragdoll_mode(m.id, m.mode) {
+            self.push_diagnostic(warn(d));
+        }
+        // A rebuild for the mode's strength replaced the bodies.
+        let Some(r) = self.ragdolls.get(&m.id) else {
+            return;
+        };
+        for (&b, &(pos, rot, linear, angular, awake)) in r.bodies.iter().zip(&m.parts) {
+            let Ok(mut body) = self.world.body_mut(b) else {
+                continue;
+            };
+            let _ = body.set_position_and_rotation(rv(pos), jq(rot), Activation::DontActivate);
+            if awake {
+                let _ = body.set_linear_velocity(jv(linear));
+                let _ = body.set_angular_velocity(jv(angular));
+                body.activate();
+            } else {
+                let _ = body.deactivate();
+            }
         }
     }
 }

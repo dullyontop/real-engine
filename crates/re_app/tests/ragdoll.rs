@@ -315,3 +315,59 @@ fn a_skeleton_without_humanoid_names_is_reported_once() {
     assert!(report.ok(), "{:?}", report.diagnostics);
     assert_eq!(app.physics().ragdoll_parts(man(&app)).unwrap().len(), 4);
 }
+
+#[test]
+fn a_turning_ragdoll_is_not_rebuilt() {
+    let dir = project(r#"{ "mode": "Simulated" }"#, None, false);
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(240), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    let id = man(&app);
+    for i in 0..24 {
+        let turn = glam::Quat::from_rotation_y(0.27 * i as f32);
+        app.world_mut()
+            .set(
+                "man",
+                "Transform",
+                "rotation",
+                re_reflect::Value::Quat(turn),
+            )
+            .unwrap();
+        let report = app.run_headless(Some(1), None).unwrap();
+        assert!(report.ok(), "{:?}", report.diagnostics);
+        // A rebuild would start animated again, blended out.
+        assert_eq!(app.ragdoll_sync().weight(id), Some(1.0), "turn {i}");
+    }
+    // Still lying on the ground: a rebuilt ragdoll would stand up first.
+    let hips = app.physics().ragdoll_parts(id).unwrap()[0].1.pos.y;
+    assert!(hips < 0.4, "hips at {hips}");
+}
+
+#[test]
+fn a_ragdoll_physics_refuses_is_not_retried_every_step() {
+    // A body already holds the entity, so the ragdoll is refused once.
+    let dir = project(
+        r#"{}, "RigidBody": { "kind": "Static" }, "Collider": {}"#,
+        None,
+        false,
+    );
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(30), None).unwrap();
+    let ragdoll_errors = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("ragdoll"))
+        .count();
+    assert_eq!(ragdoll_errors, 1, "{:?}", report.diagnostics);
+    assert!(!app.ragdoll_sync().has(man(&app)));
+}
+
+#[test]
+fn a_copy_of_the_game_keeps_a_fallen_ragdoll() {
+    let dir = project(r#"{ "mode": "Simulated" }"#, None, false);
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(240), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    let (report, _, _) = app.play_copy(5, None, &[], false).unwrap();
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+}

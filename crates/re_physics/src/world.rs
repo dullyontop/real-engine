@@ -61,6 +61,8 @@ pub struct Physics {
     constraints: BTreeMap<EntityId, ConstraintEntry>,
     pub(crate) vehicles: BTreeMap<EntityId, VehicleEntry>,
     pub(crate) ragdolls: BTreeMap<EntityId, RagdollEntry>,
+    /// Ragdoll motion from [`Physics::apply_motion_state`] for ragdolls not added yet.
+    pub(crate) pending_ragdolls: BTreeMap<EntityId, RagdollMotion>,
     /// The driver input of vehicles removed during the current `apply`, so a
     /// vehicle added again in the same `apply` keeps it.
     pub(crate) dropped_inputs: BTreeMap<EntityId, VehicleInput>,
@@ -402,6 +404,7 @@ impl Physics {
             constraints: BTreeMap::new(),
             vehicles: BTreeMap::new(),
             ragdolls: BTreeMap::new(),
+            pending_ragdolls: BTreeMap::new(),
             dropped_inputs: BTreeMap::new(),
             gate,
             state: StepState::default(),
@@ -542,7 +545,9 @@ impl Physics {
                 pos,
                 rot,
                 pose,
-            } => self.add_ragdoll(id, &desc, pos, rot, pose.as_deref()),
+            } => self
+                .add_ragdoll(id, &desc, pos, rot, pose.as_deref())
+                .map(|()| self.apply_pending_ragdoll(id)),
             PhysicsCmd::SetRagdollMode { id, mode } => self.set_ragdoll_mode(id, mode),
             PhysicsCmd::SetRagdollTarget { id, pos, rot, pose } => {
                 self.set_ragdoll_target(id, pos, rot, &pose)

@@ -3,7 +3,8 @@
 //! shows the simulated pose blended in while it is simulated or powered.
 //!
 //! [`push`] runs before the physics step: it adds a ragdoll once the skin is
-//! posed (and rebuilds it when the skin or the component's parts change), sends
+//! posed (and rebuilds it when the skin or the component's parts change; one
+//! physics refused waits for such a change), sends
 //! the component's mode when that field is edited, and sets this step's target
 //! from the animated pose, placed by the entity's world transform. Scripts switch
 //! modes with `physics.ragdoll`, which holds until the next edit of the field.
@@ -35,7 +36,7 @@ use re_types::{EntityId, SkinData};
 
 use crate::codes;
 use crate::sync::anim_skin::SkinSync;
-use crate::sync::physics::world_affine;
+use crate::sync::physics::{world_affine, world_scale};
 
 /// The name of the root joint added above the skin's joints.
 const ROOT: &str = "<skin root>";
@@ -138,6 +139,7 @@ fn unavailable(entity: Entity, world: &World, why: String) -> Diagnostic {
 /// targets.
 pub fn push(
     world: &mut World,
+    physics: &Physics,
     skins: &SkinSync,
     sync: &mut RagdollSync,
     cmds: &mut Vec<PhysicsCmd>,
@@ -163,6 +165,19 @@ pub fn push(
         cmds.push(PhysicsCmd::RemoveRagdoll { id });
     }
     sync.refused.retain(|id, _| present.contains(id));
+    // A ragdoll physics refused to add (it reported why) is not retried until what
+    // it was built from changes.
+    let lost: Vec<EntityId> = sync
+        .linked
+        .keys()
+        .filter(|&&id| !physics.has_ragdoll(id))
+        .copied()
+        .collect();
+    for id in lost {
+        if let Some(linked) = sync.linked.remove(&id) {
+            sync.refused.insert(id, linked.built);
+        }
+    }
 
     for (entity, component) in found {
         let id = entity_id(entity);
@@ -173,8 +188,11 @@ pub fn push(
             }
             continue;
         };
-        let (scale3, rot, pos) = world_affine(world, entity).to_scale_rotation_translation();
+        let (_, rot, pos) = world_affine(world, entity).to_scale_rotation_translation();
         let rot = rot.normalize();
+        // The product of the `Transform` scales, which a rotation leaves exact, so
+        // a turning entity is not rebuilt.
+        let scale3 = world_scale(world, entity);
         let scale = scale3.x.abs();
         let built = Built {
             skin: Arc::as_ptr(&skin) as usize,
@@ -208,22 +226,29 @@ pub fn push(
                         rot,
                         pose: Some(pose.clone()),
                     });
-                    if mode != RagdollMode::Animated {
+                    // A copied world's ragdoll gets the mode it was copied with, and
+                    // shows it at once.
+                    let copied = physics.pending_ragdoll_mode(id);
+                    if mode != RagdollMode::Animated && copied.is_none() {
                         cmds.push(PhysicsCmd::SetRagdollMode { id, mode });
                     }
+                    let weight = if copied.is_some_and(|m| m.is_dynamic()) {
+                        1.0
+                    } else {
+                        0.0
+                    };
                     let seconds = component.blend_seconds;
                     sync.linked.insert(
                         id,
                         Linked {
                             built,
                             mode,
-                            blend: RagdollBlend {
-                                weight: 0.0,
-                                seconds,
-                            },
+                            blend: RagdollBlend { weight, seconds },
                         },
                     );
                     sync.refused.remove(&id);
+                    // `AddRagdoll` carries this step's pose.
+                    continue;
                 }
                 Err(why) => {
                     diagnostics.push(unavailable(
