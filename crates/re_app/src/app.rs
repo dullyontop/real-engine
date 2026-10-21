@@ -1764,6 +1764,15 @@ impl App {
                 re_assets::AssetChange::Renamed { from, to } => vec![from.clone(), to.clone()],
             })
             .collect();
+        if paths.iter().any(|p| procedural::is_generator_script(p)) {
+            let declared = procedural::declare_generators(
+                &mut self.world,
+                &self.files,
+                self.config.proc.limits(),
+            );
+            self.diagnostics.extend(declared.iter().cloned());
+            problems.extend(declared);
+        }
         for p in paths.iter().filter(|p| p.ends_with(".heightfield")) {
             procedural::heightfield_changed(&mut self.world, p);
         }
@@ -2432,11 +2441,12 @@ fn load_world(
     })?;
     let mut world = content_world(config).map_err(|e| fail(e.message.clone()))?;
     procedural::install(&mut world, files);
+    let mut problems = procedural::declare_generators(&mut world, files, config.proc.limits());
     world.load(&doc).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not load")).with_related(e.to_diagnostic())
     })?;
     world.propagate_all();
-    let problems = procedural::load_graphs(&mut world, files, None);
+    problems.extend(procedural::load_graphs(&mut world, files, None));
     Ok((world, problems))
 }
 

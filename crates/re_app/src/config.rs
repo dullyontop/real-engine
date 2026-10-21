@@ -15,7 +15,8 @@ pub const CONFIG_FILE: &str = "real.toml";
 
 /// How [`App::open`](crate::App::open) runs a project.
 ///
-/// The file sections (`project`, `sim`, `render`, `scripts`, `input`, `audio`, `verify`)
+/// The file sections (`project`, `sim`, `render`, `scripts`, `proc`, `input`,
+/// `audio`, `verify`)
 /// come from `real.toml` through [`AppConfig::load`]; every field has a default,
 /// so a minimal `real.toml` is `[project]` with a name. The remaining fields are
 /// runtime options and are never read from the file.
@@ -38,6 +39,9 @@ pub struct AppConfig {
     /// `[scripts]`.
     #[serde(default)]
     pub scripts: ScriptsConfig,
+    /// `[proc]`.
+    #[serde(default)]
+    pub proc: ProcConfig,
     /// `[input]`: the action bindings, read by `re_input::InputConfig`.
     #[serde(default)]
     pub input: re_input::InputConfig,
@@ -78,6 +82,7 @@ impl Default for AppConfig {
             sim: SimConfig::default(),
             render: RenderConfig::default(),
             scripts: ScriptsConfig::default(),
+            proc: ProcConfig::default(),
             input: re_input::InputConfig::default(),
             audio: AudioGraphDesc::default(),
             verify: VerifyConfig::default(),
@@ -240,6 +245,44 @@ impl Default for ScriptsConfig {
             cpu_budget_ms: default_cpu_budget(),
             memory_limit_mb: default_memory_limit(),
             checker: default_checker(),
+        }
+    }
+}
+
+/// `[proc]`: the limits of Luau node kinds (ADR-0043 §4).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProcConfig {
+    /// Safepoints one Luau node evaluation may use (`RE4101` past it).
+    #[serde(default = "default_luau_budget")]
+    pub luau_budget: u64,
+    /// Memory limit of one Luau node evaluation, in MiB.
+    #[serde(default = "default_luau_memory")]
+    pub luau_memory_mb: u32,
+}
+
+fn default_luau_budget() -> u64 {
+    re_script::generator::DEFAULT_BUDGET
+}
+fn default_luau_memory() -> u32 {
+    re_script::generator::DEFAULT_MEMORY_MB as u32
+}
+
+impl Default for ProcConfig {
+    fn default() -> Self {
+        ProcConfig {
+            luau_budget: default_luau_budget(),
+            luau_memory_mb: default_luau_memory(),
+        }
+    }
+}
+
+impl ProcConfig {
+    /// The limits every Luau node evaluation runs with.
+    pub fn limits(&self) -> re_script::generator::Limits {
+        re_script::generator::Limits {
+            budget: self.luau_budget,
+            memory_mb: self.luau_memory_mb as usize,
         }
     }
 }
