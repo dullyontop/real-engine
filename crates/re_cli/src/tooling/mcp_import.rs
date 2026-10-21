@@ -35,8 +35,13 @@ const COMMAND: &str = "project.import";
 #[serde(deny_unknown_fields)]
 pub struct ImportArgs {
     /// The input, relative to the project: a `*.project.json` file, a
-    /// directory holding `default.project.json`, or a Luau loader script.
+    /// directory holding `default.project.json`, a Luau loader script, or a
+    /// place or model file (`.rbxl`, `.rbxlx`, `.rbxm`, `.rbxmx`).
     pub input: String,
+    /// Where a model file's instances go, as a dotted path from a service
+    /// (`ReplicatedStorage.Maps`; default `Workspace`). Only for model files.
+    #[serde(default)]
+    pub parent: Option<String>,
     /// Write the import into the project (default false: only report what
     /// would change; an agent whose policy is read-only previews with
     /// `dry_run: true`).
@@ -202,7 +207,13 @@ fn project_import(
     let dry = !args.write || call.dry_run();
 
     // Plan once: what is checked and recorded is what is written.
-    let (tree, format) = re_import::read(&input)?;
+    let (tree, format) = re_import::read_with(
+        &input,
+        &re_import::ImportOptions {
+            parent: args.parent.clone(),
+            ..re_import::ImportOptions::default()
+        },
+    )?;
     let target = re_import::apply::open_project(&project, &classes)?;
     let entry_scene = app.config().project.entry_scene.clone();
     if target.entry_scene != entry_scene {
@@ -315,7 +326,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<App>, agent: &Agent) {
     let agent = agent.clone();
     registry.register_typed_output::<ImportArgs, ImportOutput, _>(
         COMMAND,
-        "Import a Rojo-style project or a Studio loader script from inside the project into this compat project. Only reports what would change unless `write` is true. A write checkpoints first and returns the checkpoint: `undo` reverts the World, `checkpoint.restore` reverts the World and the files. Without `keep_stale` it deletes the scripts of instances the input no longer declares (destructive tier).",
+        "Import a Rojo-style project, a Studio loader script or a place or model file from inside the project into this compat project. Only reports what would change unless `write` is true. A write checkpoints first and returns the checkpoint: `undo` reverts the World, `checkpoint.restore` reverts the World and the files. Without `keep_stale` it deletes the scripts of instances the input no longer declares (destructive tier).",
         Tier::Edit,
         true,
         move |app, args, call| project_import(app, &agent, args, call),

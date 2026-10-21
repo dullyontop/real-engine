@@ -16,6 +16,7 @@ use re_scene::{SaveOptions, World};
 
 use crate::codes;
 use crate::names::{file_name, script_suffix};
+use crate::place::dom::PlaceValue;
 use crate::report::{Failure, FileChanges, ImportReport, InputFormat, Item, display_path};
 use crate::tree::{Kind, StaleScope, Tree};
 
@@ -479,6 +480,45 @@ pub fn plan(
             }
         }
     }
+    // Place-file values, after every instance exists so references resolve.
+    let mut unmapped: BTreeMap<(String, String), (u32, String)> = BTreeMap::new();
+    let mut order: Vec<(&usize, &String)> = mapped.iter().collect();
+    order.sort();
+    for (&node, id) in order {
+        let n = &tree.nodes[node];
+        if n.place.is_empty() {
+            continue;
+        }
+        let Ok(e) = world.entity(id) else { continue };
+        for (prop, v) in &n.place {
+            let result = settable(classes, &n.class, prop).and_then(|ty| {
+                let value = place_value(v, &ty, classes, &|node| {
+                    mapped.get(&node).and_then(|id| world.entity(id).ok())
+                })?;
+                classes
+                    .set_property(&mut world, e, prop, value)
+                    .map_err(|err| err.to_string())
+            });
+            if let Err(reason) = result {
+                let slot = unmapped
+                    .entry((n.class.clone(), prop.clone()))
+                    .or_insert((0, reason));
+                slot.0 += 1;
+            }
+        }
+    }
+    for ((class, prop), (count, reason)) in unmapped {
+        let instances = if count == 1 { "instance" } else { "instances" };
+        diagnostics.push(
+            Diagnostic::warning(
+                codes::PLACE_UNMAPPED,
+                format!(
+                    "{input_label}: {class}.{prop} is not imported ({count} {instances}): {reason}"
+                ),
+            )
+            .at(Location::file(input_label.to_string())),
+        );
+    }
     let problems = validate(&mut world, classes);
     if !problems.is_empty() {
         let mut d = Diagnostic::error(
@@ -604,6 +644,200 @@ fn json_value(v: &serde_json::Value, ty: Option<&str>) -> Option<Value> {
             a[2].as_f64()? as f32,
         )),
         _ => return None,
+    })
+}
+
+/// The type of property `prop` of `class` when the class layer can set it,
+/// else why not.
+fn settable(classes: &ClassRegistry, class: &str, prop: &str) -> Result<String, String> {
+    let m = classes
+        .member(class, prop)
+        .map_err(|_| "the compatibility layer has no such property".to_string())?;
+    let re_compat::Member::Property(p) = m.member else {
+        return Err("it is not a property here".into());
+    };
+    match p.status {
+        re_compat::Status::Implemented | re_compat::Status::Partial => {}
+        _ => return Err("the compatibility layer does not implement it yet".into()),
+    }
+    if p.read_only {
+        return Err("it is read-only".into());
+    }
+    Ok(p.ty.clone())
+}
+
+/// Record `name` from its fields by name.
+fn record(name: &str, fields: &[(&str, Value)]) -> Result<Value, String> {
+    let id = re_reflect::RecordId::by_name(name)
+        .ok_or_else(|| format!("the {name} record is not registered"))?;
+    let values = id
+        .schema()
+        .fields
+        .iter()
+        .map(|f| {
+            fields
+                .iter()
+                .find(|(n, _)| *n == f.name)
+                .map(|(_, v)| v.clone())
+                .ok_or_else(|| format!("the importer has no {name}.{} value", f.name))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Value::Record(id, values))
+}
+
+fn vec3(v: [f32; 3]) -> Value {
+    Value::Vec3(glam::Vec3::from_array(v))
+}
+
+fn color(c: [f32; 3]) -> Value {
+    Value::Color(re_reflect::Color::rgba(c[0], c[1], c[2], 1.0))
+}
+
+fn f(x: f32) -> Value {
+    Value::Float(f64::from(x))
+}
+
+/// The item of `Enum.<name>` with number `value`.
+fn enum_item(classes: &ClassRegistry, name: &str, value: i64) -> Result<Value, String> {
+    let e = classes
+        .enum_type(name)
+        .ok_or_else(|| format!("the compatibility layer has no Enum.{name}"))?;
+    e.items
+        .iter()
+        .find(|i| i.value == value)
+        .map(|i| Value::Enum(i.name.clone()))
+        .ok_or_else(|| format!("Enum.{name} has no item numbered {value}"))
+}
+
+/// A place-file value as a value of property type `ty`. `entity` finds the
+/// entity of a tree node, for references.
+fn place_value(
+    v: &PlaceValue,
+    ty: &str,
+    classes: &ClassRegistry,
+    entity: &dyn Fn(usize) -> Option<re_scene::Entity>,
+) -> Result<Value, String> {
+    use PlaceValue as P;
+    let wrong = || format!("its saved {} value does not convert to {ty}", v.type_name());
+    let cframe = |c: &crate::place::dom::CFrame| {
+        record(
+            "CFrame",
+            &[
+                ("Position", vec3(c.position)),
+                ("XVector", vec3(c.column(0))),
+                ("YVector", vec3(c.column(1))),
+                ("ZVector", vec3(c.column(2))),
+            ],
+        )
+    };
+    if let Some(name) = ty.strip_prefix("Enum.") {
+        return match v {
+            P::Enum(i) => enum_item(classes, name, i64::from(*i)),
+            _ => Err(wrong()),
+        };
+    }
+    if ty == "Instance" || ty.starts_with("Instance<") {
+        return match v {
+            P::Ref(None) => Ok(Value::Entity(None)),
+            P::Ref(Some(node)) => entity(*node)
+                .map(|e| Value::Entity(Some(e)))
+                .ok_or_else(|| "the instance it refers to was not imported".to_string()),
+            _ => Err(wrong()),
+        };
+    }
+    Ok(match (ty, v) {
+        ("bool", P::Bool(b)) => Value::Bool(*b),
+        ("number", P::Float32(x)) => f(*x),
+        ("number", P::Float64(x)) => Value::Float(*x),
+        ("number", P::Int32(i)) => Value::Float(f64::from(*i)),
+        ("number", P::Int64(i)) => Value::Float(*i as f64),
+        ("int", P::Int32(i)) => Value::Int(i64::from(*i)),
+        ("int", P::Int64(i)) => Value::Int(*i),
+        ("string", P::String(b) | P::SharedString(b)) => {
+            Value::Str(String::from_utf8_lossy(b).into_owned())
+        }
+        ("string", P::Content(c)) => Value::Str(c.clone().unwrap_or_default()),
+        ("Vector3", P::Vector3(x)) => vec3(*x),
+        ("Vector3", P::Vector3int16(x)) => vec3(x.map(f32::from)),
+        ("Vector2", P::Vector2([x, y])) => record("Vector2", &[("X", f(*x)), ("Y", f(*y))])?,
+        ("Color3", P::Color3(c)) => color(*c),
+        ("Color3", P::Color3uint8(c)) => color(c.map(|b| f32::from(b) / 255.0)),
+        ("CFrame", P::CFrame(c) | P::OptionalCFrame(Some(c))) => cframe(c)?,
+        ("UDim", P::UDim(s, o)) => record(
+            "UDim",
+            &[("Scale", f(*s)), ("Offset", Value::Int(i64::from(*o)))],
+        )?,
+        ("UDim2", P::UDim2(xs, xo, ys, yo)) => record(
+            "UDim2",
+            &[
+                ("XScale", f(*xs)),
+                ("XOffset", Value::Int(i64::from(*xo))),
+                ("YScale", f(*ys)),
+                ("YOffset", Value::Int(i64::from(*yo))),
+            ],
+        )?,
+        ("Rect", P::Rect([a, b, c, d])) => record(
+            "Rect",
+            &[
+                ("MinX", f(*a)),
+                ("MinY", f(*b)),
+                ("MaxX", f(*c)),
+                ("MaxY", f(*d)),
+            ],
+        )?,
+        ("NumberRange", P::NumberRange(a, b)) => {
+            record("NumberRange", &[("Min", f(*a)), ("Max", f(*b))])?
+        }
+        ("PhysicalProperties", P::PhysicalProperties(Some(p))) => record(
+            "PhysicalProperties",
+            &[
+                ("Density", f(p[0])),
+                ("Friction", f(p[1])),
+                ("Elasticity", f(p[2])),
+                ("FrictionWeight", f(p[3])),
+                ("ElasticityWeight", f(p[4])),
+                ("AcousticAbsorption", f(p[5])),
+            ],
+        )?,
+        ("NumberSequence", P::NumberSequence(keys)) => Value::List(
+            keys.iter()
+                .map(|[t, v, e]| {
+                    record(
+                        "NumberSequenceKeypoint",
+                        &[("Time", f(*t)), ("Value", f(*v)), ("Envelope", f(*e))],
+                    )
+                })
+                .collect::<Result<_, _>>()?,
+        ),
+        ("ColorSequence", P::ColorSequence(keys)) => Value::List(
+            keys.iter()
+                .map(|(t, c)| {
+                    record(
+                        "ColorSequenceKeypoint",
+                        &[("Time", f(*t)), ("Value", color(*c))],
+                    )
+                })
+                .collect::<Result<_, _>>()?,
+        ),
+        ("Font", P::Font(font)) => {
+            let style = classes
+                .enum_type("FontStyle")
+                .and_then(|e| e.items.iter().find(|i| i.name == font.style))
+                .map(|i| Value::Enum(i.name.clone()))
+                .ok_or_else(|| format!("Enum.FontStyle has no item {:?}", font.style))?;
+            record(
+                "Font",
+                &[
+                    ("Family", Value::Str(font.family.clone())),
+                    (
+                        "Weight",
+                        enum_item(classes, "FontWeight", i64::from(font.weight))?,
+                    ),
+                    ("Style", style),
+                ],
+            )?
+        }
+        _ => return Err(wrong()),
     })
 }
 

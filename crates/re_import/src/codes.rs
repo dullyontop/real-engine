@@ -38,3 +38,16 @@ pub const SCRIPT_SYNTAX: Code = Code::new("RE9807");
 
 /// Writing the project failed part-way.
 pub const WRITE_FAILED: Code = Code::new("RE9808");
+
+/// A place or model file (`.rbxl`, `.rbxm`, `.rbxlx`, `.rbxmx`) could not be
+/// read: a bad header, a chunk that does not decompress, a count past a
+/// limit, an unbalanced document, a cycle of parents.
+pub const PLACE_MALFORMED: Code = Code::new("RE9809");
+
+/// A place file holds a value of a type the reader does not know; the
+/// property is skipped (a warning).
+pub const PLACE_VALUE_TYPE: Code = Code::new("RE9810");
+
+/// A property in a place file maps to nothing the compatibility layer can set
+/// (a warning, one per class and property with a count).
+pub const PLACE_UNMAPPED: Code = Code::new("RE9811");
