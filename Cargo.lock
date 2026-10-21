@@ -3949,6 +3949,7 @@ dependencies = [
  "glam 0.34.1",
  "indexmap 2.14.2",
  "postcard",
+ "re_assets",
  "re_command",
  "re_core",
  "re_geom",

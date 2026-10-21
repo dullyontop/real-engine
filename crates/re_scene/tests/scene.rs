@@ -662,6 +662,35 @@ fn regeneration_never_reuses_a_taken_id() {
 }
 
 #[test]
+fn a_source_that_loses_procedural_drops_its_output_until_it_comes_back() {
+    let mut w = sample();
+    w.spawn_docs(&[grid_doc(2, 2)], None).unwrap();
+    w.update();
+    let before = w.state_hash();
+    assert!(w.entity("grid/pillar_0_0").is_ok());
+
+    let procedural = w.registry.key("Procedural").unwrap();
+    let grid = w.entity("grid").unwrap();
+    let saved = w.registry.get_all(&w.ecs, grid, procedural).unwrap();
+    w.registry.remove(&mut w.ecs, grid, procedural);
+    let report = w.update();
+    assert!(report.diagnostics.is_empty(), "{report:?}");
+    assert_eq!(report.sources, ["grid"]);
+    assert!(report.despawned.contains(&"grid/pillar_0_0".to_string()));
+    assert!(w.entity("grid/pillar_0_0").is_err());
+    assert!(w.update().despawned.is_empty(), "only once");
+
+    // Putting it back regenerates the same output with the same ids.
+    w.registry
+        .insert(&mut w.ecs, grid, procedural, saved)
+        .unwrap();
+    let report = w.update();
+    assert!(report.diagnostics.is_empty(), "{report:?}");
+    assert!(w.entity("grid/pillar_0_0").is_ok());
+    assert_eq!(w.state_hash(), before);
+}
+
+#[test]
 fn a_source_runs_only_a_generator_version_it_supports() {
     let mut w = sample();
     w.spawn_docs(&[grid_doc(2, 2)], None).unwrap();

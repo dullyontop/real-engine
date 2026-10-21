@@ -180,6 +180,67 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/plaza --frames 300 --exit-after | tee out/run.log
           grep -qx 'RUN OK' out/run.log
 
+  verify-valley:
+    # The M3 example (M3_PLAN WP28). Not required yet: ADR-0023's WP28 amendment
+    # makes it required once the valley streams.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/linux-setup
+      - name: Install luau-lsp 1.70.1
+        run: |
+          curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
+          echo "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567  /tmp/luau-lsp.zip" | sha256sum -c -
+          sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
+      - run: cargo build --locked --release -p re_cli
+      - name: The committed walker model is what its generator writes
+        run: |
+          (cd examples/valley && python3 tools/make_walker.py)
+          git diff --exit-code -- examples/valley/models/walker.glb
+      - name: real check --types on the valley
+        run: target/release/real check --types --project examples/valley
+      - name: real verify on the valley
+        run: |
+          mkdir -p out
+          target/release/real verify --project examples/valley --json > out/verify.json
+      - name: Check the verify report (M3_PLAN WP28)
+        # Every stage ran and passed, the walk and drive replays each ran twice
+        # with the same state_hash, and at least four goldens match.
+        run: |
+          jq -e '
+            .ok == true
+            and ([.stages[].name] | contains(["schema", "compile", "scan", "boot", "replays", "goldens", "perf"]))
+            and all(.stages[]; .ok and ((.data | type) != "object" or (.data | has("skipped") | not)))
+            and ([.stages[] | select(.name == "replays") | .data.runs[]] as $r
+                 | ($r | length) >= 2 and all($r[]; .deterministic)
+                   and any($r[]; .file | endswith("walk.replay.json"))
+                   and any($r[]; .file | endswith("drive.replay.json")))
+            and ([.stages[] | select(.name == "goldens") | .data.checks[]] as $g
+                 | ($g | length) >= 4 and all($g[]; .matches))
+            and (.perf | type == "object")
+          ' out/verify.json
+          jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
+          jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic), state_hash=\(.state_hash)"' out/verify.json
+          jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
+      - name: real verify on the valley with GL
+        env:
+          RE_BACKENDS: gl
+        run: |
+          target/release/real verify --project examples/valley --json > out/verify-gl.json
+          jq -e '.ok == true and ([.stages[] | select(.name == "goldens") | .data.checks[]] | length >= 4 and all(.[]; .matches))' out/verify-gl.json
+      - name: Windowed run under Xvfb (must print RUN OK)
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/valley --frames 300 --exit-after | tee out/run.log
+          grep -qx 'RUN OK' out/run.log
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: verify-valley
+          path: |
+            out/verify*.json
+            examples/valley/.real/out/goldens/
+          if-no-files-found: ignore
+
   xvfb-smoke:
     runs-on: ubuntu-latest
     steps:
