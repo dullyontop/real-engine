@@ -50,10 +50,6 @@ pub(crate) struct FrameUniform {
     pub fog_color: [f32; 4],
     /// x: fog end, y: 1 with fog, z: spot light count.
     pub fog_params: [f32; 4],
-    /// x: brightness, y: contrast, z: saturation, w: 1 with grading.
-    pub grading: [f32; 4],
-    /// rgb: tint.
-    pub tint: [f32; 4],
     /// rgb: zenith, w: 1 with a sky.
     pub sky_zenith: [f32; 4],
     pub sky_horizon: [f32; 4],
@@ -441,7 +437,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<SpotLightRaw>(), 48);
         assert_eq!(
             std::mem::size_of::<FrameUniform>(),
-            192 + 15 * 16 + 8 * 32 + 8 * 48
+            192 + 13 * 16 + 8 * 32 + 8 * 48
         );
         assert_eq!(std::mem::size_of::<InstanceRaw>(), 128);
         assert_eq!(std::mem::size_of::<MaterialUniform>(), 64);
