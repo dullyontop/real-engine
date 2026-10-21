@@ -1111,6 +1111,53 @@ pub(crate) fn order_generated_children(
     }
 }
 
+/// Despawns everything `source` generated and forgets its fingerprint: the
+/// rule for a source that lost its `Procedural` (ADR-0043 §2, bake). Adding
+/// `Procedural` back then regenerates the same output with the same ids.
+pub(crate) fn clear_output(world: &mut World, source: Entity) -> RegenReport {
+    let mut report = RegenReport::default();
+    if let Some(id) = world.id_of(source) {
+        report.sources.push(id.to_string());
+    }
+    let mut q = world.ecs.query::<(Entity, &Generated, &StableId)>();
+    let mut generated: Vec<(String, Entity)> = q
+        .iter(&world.ecs)
+        .filter(|(_, g, _)| g.source == source)
+        .map(|(e, _, id)| (id.0.clone(), e))
+        .collect();
+    generated.sort();
+    let old_assets: BTreeSet<String> = generated
+        .iter()
+        .flat_map(|&(_, e)| asset_refs(world, e))
+        .collect();
+    for (id, e) in generated {
+        report.despawned.push(id);
+        hierarchy::despawn_recursive(&mut world.ecs, e);
+    }
+    if let Ok(mut e) = world.ecs.get_entity_mut(source) {
+        e.remove::<GeneratedFingerprint>();
+    }
+    if !old_assets.is_empty() {
+        let mut live: HashSet<String> = HashSet::new();
+        let mut q = world
+            .ecs
+            .query::<(Option<&MeshRef>, Option<&MaterialRef>)>();
+        for (m, mat) in q.iter(&world.ecs) {
+            if let Some(m) = m {
+                live.insert(m.asset.clone());
+            }
+            if let Some(mat) = mat {
+                live.insert(mat.asset.clone());
+            }
+        }
+        report.released_assets = old_assets
+            .into_iter()
+            .filter(|a| !live.contains(a))
+            .collect();
+    }
+    report
+}
+
 fn asset_refs(world: &World, e: Entity) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(m) = world.ecs.get::<MeshRef>(e)

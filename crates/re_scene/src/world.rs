@@ -237,6 +237,21 @@ impl World {
             .collect();
         sources.sort();
         let mut report = RegenReport::default();
+        // A source that lost `Procedural` (baked, or the component removed)
+        // keeps no generated output.
+        let mut orphaned: Vec<(String, Entity)> = self
+            .ecs
+            .query_filtered::<(Entity, &StableId), (
+                bevy_ecs::query::With<GeneratedFingerprint>,
+                bevy_ecs::query::Without<procedural::Procedural>,
+            )>()
+            .iter(&self.ecs)
+            .map(|(e, id)| (id.0.clone(), e))
+            .collect();
+        orphaned.sort();
+        for (_, source) in orphaned {
+            report.merge(procedural::clear_output(self, source));
+        }
         for (_, source) in sources {
             let Some(fp) = procedural::fingerprint(self, source) else {
                 continue;

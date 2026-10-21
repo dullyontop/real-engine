@@ -51,6 +51,7 @@ pub mod codes;
 mod commands;
 mod eval;
 mod generator;
+mod glb;
 mod graph;
 pub mod migrate;
 pub mod nodes;
@@ -189,6 +190,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::MIGRATION_FAILED,
         title: "Node migration failed",
         page: include_str!("../explain/RE4020.md"),
+    },
+    DiagInfo {
+        code: codes::BAKE_FAILED,
+        title: "Bake failed",
+        page: include_str!("../explain/RE4021.md"),
     },
     DiagInfo {
         code: codes::OPEN_GRAPH_DIFFERS,
