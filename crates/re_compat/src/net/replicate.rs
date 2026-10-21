@@ -1,32 +1,48 @@
-//! The replication pass: server world → client world, plus the components a
-//! client owns, client → server.
+//! The replication pass, split in two halves that talk only through wire
+//! [`Frame`]s (ADR-0050 §3): server world → client world, plus the
+//! components a client owns, client → server.
 //!
-//! The pass keeps a mirror (the [`Replica`] resource of the client world): for
-//! each replicated server entity, its client entity and the values the server
-//! last sent (its name, parent and every registry component). Each pass:
-//! 1. **Upstream.** For each entity the local player owns ([`NetworkOwner`]),
-//!    the [`ReplicationSet::upstream`] components the client changed are
-//!    copied to the server.
-//! 2. **Walk.** The replicated containers' subtrees on the server are walked
-//!    in tree order. An entity the mirror lacks is new; one whose components
-//!    changed since the last pass (bevy change ticks; a move or a rename
-//!    changes `ChildOf` or `Name`) is diffed against the mirror.
+//! * The **server** keeps, per connection, a mirror of what that client was
+//!   sent ([`Conn`]): for each replicated entity, its handle and the values
+//!   last sent (its name, parent and every registry component).
+//! * The **client** keeps its own mirror ([`Replica`], a resource of the
+//!   client world): for each handle, its client entity and the values it
+//!   last received or sent, so a change can travel as just the fields that
+//!   changed.
+//!
+//! A pass is:
+//! 1. **Up** ([`Replica::diff_up`], on the client). For each instance the
+//!    server said the client owns ([`Op::Own`]), the
+//!    [`ReplicationSet::upstream`] components the client changed since the
+//!    last pass travel as [`Op::Up`]. The server ([`Conn::apply_up`]) writes
+//!    them to instances its player still owns, merged against what the
+//!    server last sent ([`write_changes`]).
+//! 2. **Walk** ([`Conn::diff`], on the server). The replicated containers'
+//!    subtrees are walked in tree order. An entity the mirror lacks is new;
+//!    one whose components changed since the last pass (bevy change ticks; a
+//!    move or a rename changes `ChildOf` or `Name`) is diffed against the
+//!    mirror.
 //! 3. **Create**, parents first: same stable id, name and parent, then every
-//!    registry component, with entity references remapped by stable id (a
-//!    reference to an instance the client does not have reads as `nil`).
-//! 4. **Diff.** Only what the server changed since the last pass is written:
-//!    per field, per attribute key and per tag. This is the client-local
-//!    write rule: a client's own write to a replicated instance stays until
-//!    the server next changes that same field.
-//! 5. **Remove.** A mirrored entity the walk did not reach (destroyed, or
-//!    moved under a container that does not replicate) is taken out of the
-//!    client tree, locked as destroyed and queued; the client VM's pump fires
-//!    `Destroying` and despawns it (`net::pump`), or the next pass despawns it
-//!    when no VM runs.
+//!    registry component, with entity references as handles (a reference to
+//!    an instance the client was not sent reads as `nil`, and is sent again
+//!    once it resolves).
+//! 4. **Diff.** Only what the server changed since the last pass is sent,
+//!    and the client merges it per field, per attribute key and per tag
+//!    ([`Replica::apply`]). This is the client-local write rule: a client's
+//!    own write to a replicated instance stays until the server next changes
+//!    that same field.
+//! 5. **Own and remove.** The owned set is sent as changes. A mirrored
+//!    entity the walk did not reach (destroyed, or moved under a container
+//!    that does not replicate) is taken out of the client tree, locked as
+//!    destroyed and queued; the client VM's pump fires `Destroying` and
+//!    despawns it (`net::pump`), or the next pass despawns it when no VM
+//!    runs.
 //!
-//! Entities without a stable id are runtime-only and are not replicated.
+//! [`replicate`] runs both halves in one process, through the wire encoding,
+//! for the in-process two-world run. Entities without a stable id are
+//! runtime-only and are not replicated.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use re_reflect::{ComponentKey, FieldType, Value};
 use re_scene::ecs as bevy_ecs;
@@ -35,6 +51,7 @@ use re_scene::ecs::component::Component;
 use re_scene::ecs::prelude::Resource;
 use re_scene::{Entity, Name, StableId, World, hierarchy};
 
+use super::wire::{Frame, NameTable, Names, Op, Ref, WireValue, from_wire, to_wire};
 use super::{NetLink, ReplicationSet};
 use crate::instance::tree;
 use crate::scene::ServiceTag;
@@ -84,18 +101,47 @@ pub struct ReplicationReport {
     pub upstream: usize,
 }
 
-/// One replicated entity.
+/// The server entities `player` owns: the owned instances and their
+/// descendants (including ones added later, a tool or an `Animator`),
+/// except those another player owns, in entity order.
+fn owned_by(server: &mut World, player: Entity) -> Vec<Entity> {
+    let mut q = server.ecs.query::<(Entity, &NetworkOwner)>();
+    let roots: Vec<Entity> = q
+        .iter(&server.ecs)
+        .filter(|(_, o)| o.0 == player)
+        .map(|(e, _)| e)
+        .collect();
+    let mut out: Vec<Entity> = Vec::new();
+    for r in roots {
+        for x in hierarchy::subtree(&server.ecs, r) {
+            let other = server
+                .ecs
+                .get::<NetworkOwner>(x)
+                .is_some_and(|o| o.0 != player);
+            if !other {
+                out.push(x);
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+// ------------------------------------------------------------------ server
+
+/// One replicated entity, as the server last sent it.
 struct Entry {
-    client: Entity,
+    handle: u32,
     name: String,
     /// The server parent last sent.
     parent: Option<Entity>,
-    /// The server values last sent, by server component key.
+    /// The server values last sent, by component key.
     comps: Vec<(ComponentKey, Vec<Value>)>,
     /// The components last sent with a reference to an instance the client
-    /// did not have yet (sent as nil), with the client values written; they
-    /// are sent again once the reference resolves.
-    unresolved: Vec<(ComponentKey, Vec<Value>)>,
+    /// was not sent yet (sent as nil), as sent; they are sent again once the
+    /// reference resolves.
+    unresolved: Vec<(ComponentKey, Vec<WireValue>)>,
 }
 
 impl Entry {
@@ -111,38 +157,922 @@ impl Entry {
     }
 }
 
-/// The mirror of the replicated entities, kept in the client world.
+/// The server's replication state for one connection: its mirror of what
+/// the client was sent, the handles it gave, and the names it numbered.
+#[derive(Default)]
+pub struct Conn {
+    mirror: HashMap<Entity, Entry>,
+    by_handle: HashMap<u32, Entity>,
+    next_handle: u32,
+    last: Option<Tick>,
+    /// The handles the client was told it owns.
+    owned: BTreeSet<u32>,
+    /// Names sent to the client.
+    names: Names,
+    /// Names the client sent.
+    names_in: NameTable,
+}
+
+impl Conn {
+    /// How many instances the client was sent and still has.
+    pub fn len(&self) -> usize {
+        self.mirror.len()
+    }
+
+    /// True when the client has no instance from this connection.
+    pub fn is_empty(&self) -> bool {
+        self.mirror.is_empty()
+    }
+
+    /// The server entity of a handle on this connection.
+    pub fn entity_of(&self, handle: u32) -> Option<Entity> {
+        self.by_handle.get(&handle).copied()
+    }
+
+    fn new_handle(&mut self) -> u32 {
+        let h = self.next_handle;
+        self.next_handle += 1;
+        h
+    }
+
+    /// For a client that already holds the replicated instances (made from
+    /// the same scene, with the same stable ids): gives each a handle and
+    /// records the server's current values as sent. The frame tells the
+    /// client which handle is which.
+    pub fn bind(&mut self, server: &mut World, set: &ReplicationSet) -> Frame {
+        let mut ops = Vec::new();
+        if let Some(game) = game_of(server) {
+            let order = replicated_order(server, game, set);
+            // Every handle first, so references among them encode.
+            for &s in &order {
+                let handle = self.new_handle();
+                let comps = server
+                    .registry
+                    .components_of(&server.ecs, s)
+                    .into_iter()
+                    .filter_map(|k| server.registry.get_all(&server.ecs, s, k).map(|v| (k, v)))
+                    .collect();
+                self.mirror.insert(
+                    s,
+                    Entry {
+                        handle,
+                        name: server.name_of(s).to_string(),
+                        parent: hierarchy::parent(&server.ecs, s),
+                        comps,
+                        unresolved: Vec::new(),
+                    },
+                );
+                self.by_handle.insert(handle, s);
+            }
+            let Conn { mirror, names, .. } = self;
+            let refs = |x: Entity| down_ref(mirror, game, x);
+            for &s in &order {
+                let entry = &mirror[&s];
+                let comps = entry
+                    .comps
+                    .iter()
+                    .map(|(k, v)| {
+                        let name = names.id(&server.registry.schema(*k).name);
+                        (name, v.iter().map(|x| to_wire(x, names, &refs)).collect())
+                    })
+                    .collect();
+                ops.push(Op::Bind {
+                    handle: entry.handle,
+                    id: server.id_of(s).unwrap_or_default().to_string(),
+                    comps,
+                });
+            }
+        }
+        self.last = Some(server.ecs.change_tick());
+        server.ecs.increment_change_tick();
+        Frame {
+            tick: 0,
+            names: self.names.take_fresh(),
+            ops,
+            msgs: Vec::new(),
+        }
+    }
+
+    /// Applies a client's frame: its owned [`ReplicationSet::upstream`]
+    /// components ([`Op::Up`]) are written to the instances `player` (a
+    /// server `Player`) owns now; anything else is ignored. Returns how many
+    /// instances were written.
+    pub fn apply_up(
+        &mut self,
+        server: &mut World,
+        set: &ReplicationSet,
+        player: Option<Entity>,
+        frame: &Frame,
+    ) -> usize {
+        self.names_in.extend(&frame.names);
+        let Some(game) = game_of(server) else {
+            return 0;
+        };
+        let all = set.upstream.iter().any(|n| n == UPSTREAM_ALL);
+        let owned: HashSet<Entity> = match player {
+            Some(p) => owned_by(server, p).into_iter().collect(),
+            None => HashSet::new(),
+        };
+        let mut wrote: BTreeSet<u32> = BTreeSet::new();
+        for op in &frame.ops {
+            let Op::Up {
+                handle,
+                comp,
+                values,
+            } = op
+            else {
+                continue;
+            };
+            let Some(&s) = self.by_handle.get(handle) else {
+                continue;
+            };
+            if !owned.contains(&s) {
+                continue;
+            }
+            let Some(sk) = self
+                .names_in
+                .get(*comp)
+                .filter(|n| all || set.upstream.iter().any(|u| u == n))
+                .and_then(|n| server.registry.try_key(n))
+            else {
+                continue;
+            };
+            let by_handle = &self.by_handle;
+            let refs = |r: Ref| match r {
+                Ref::Game => Some(game),
+                Ref::Handle(h) => by_handle.get(&h).copied(),
+            };
+            let Some(cv) = values
+                .iter()
+                .map(|v| from_wire(v, &self.names_in, &refs))
+                .collect::<Option<Vec<Value>>>()
+            else {
+                continue;
+            };
+            if cv.len() != server.registry.schema(sk).fields.len() {
+                continue;
+            }
+            let Some(entry) = self.mirror.get_mut(&s) else {
+                continue;
+            };
+            let old = entry.comp(sk).cloned();
+            if old.as_ref() == Some(&cv) {
+                continue;
+            }
+            let kinds = kinds_of(server, sk);
+            if write_changes(server, s, sk, &kinds, old.as_ref(), &cv) || old.is_none() {
+                wrote.insert(*handle);
+            }
+            entry.set_comp(sk, cv);
+        }
+        wrote.len()
+    }
+
+    /// The server half of a pass for this connection: what changed since its
+    /// last pass, as a frame for the client. `player` is the connection's
+    /// `Player`, whose owned instances the client is told about. The caller
+    /// increments the server world's change tick once every connection had
+    /// its pass.
+    pub fn diff(
+        &mut self,
+        server: &mut World,
+        set: &ReplicationSet,
+        player: Option<Entity>,
+    ) -> Frame {
+        let mut ops = Vec::new();
+        let Some(game) = game_of(server) else {
+            return Frame::default();
+        };
+        let this = server.ecs.change_tick();
+
+        // Walk the replicated subtrees.
+        let order = replicated_order(server, game, set);
+        let mut seen: HashSet<Entity> = HashSet::with_capacity(order.len());
+        let mut new = Vec::new();
+        let mut changed = Vec::new();
+        for &s in &order {
+            seen.insert(s);
+            match self.mirror.get(&s) {
+                None => new.push(s),
+                Some(_)
+                    if self
+                        .last
+                        .is_none_or(|last| changed_since(server, s, last, this)) =>
+                {
+                    changed.push(s)
+                }
+                // A reference it holds may resolve to an instance created now.
+                Some(e) if !e.unresolved.is_empty() => changed.push(s),
+                Some(_) => {}
+            }
+        }
+
+        // Create, parents first.
+        let mut fill = Vec::new();
+        for s in new {
+            let parent_s = hierarchy::parent(&server.ecs, s);
+            let Some(parent) = parent_s.and_then(|p| down_ref(&self.mirror, game, p)) else {
+                continue;
+            };
+            let service = (parent_s == Some(game) && server.ecs.get::<ServiceTag>(s).is_some())
+                .then(|| tree::class(server, s).map(str::to_string))
+                .flatten();
+            let handle = self.new_handle();
+            let name = server.name_of(s).to_string();
+            ops.push(Op::Create {
+                handle,
+                parent,
+                id: server.id_of(s).unwrap_or_default().to_string(),
+                name: name.clone(),
+                service,
+            });
+            self.mirror.insert(
+                s,
+                Entry {
+                    handle,
+                    name,
+                    parent: parent_s,
+                    comps: Vec::new(),
+                    unresolved: Vec::new(),
+                },
+            );
+            self.by_handle.insert(handle, s);
+            fill.push(s);
+        }
+
+        // Components of the new entities, then the changes of the others.
+        // References encode once every new entity has its handle.
+        for s in fill.into_iter().chain(changed) {
+            let Conn { mirror, names, .. } = self;
+            let Some(entry) = mirror.get(&s) else {
+                continue;
+            };
+            let handle = entry.handle;
+            let name = server.name_of(s).to_string();
+            if name != entry.name {
+                ops.push(Op::Name {
+                    handle,
+                    name: name.clone(),
+                });
+            }
+            let parent_s = hierarchy::parent(&server.ecs, s);
+            if parent_s != entry.parent
+                && let Some(parent) = parent_s.and_then(|p| down_ref(mirror, game, p))
+            {
+                ops.push(Op::Parent { handle, parent });
+            }
+            let refs = |x: Entity| down_ref(mirror, game, x);
+            let current = server.registry.components_of(&server.ecs, s);
+            let mut updates: Vec<(ComponentKey, Vec<Value>)> = Vec::new();
+            let mut unresolved: Vec<(ComponentKey, Vec<WireValue>)> = Vec::new();
+            for &sk in &current {
+                let Some(sv) = server.registry.get_all(&server.ecs, s, sk) else {
+                    continue;
+                };
+                let old = entry.comp(sk);
+                let pending = entry
+                    .unresolved
+                    .iter()
+                    .find(|(k, _)| *k == sk)
+                    .map(|(_, v)| v);
+                if old == Some(&sv) && pending.is_none() {
+                    continue;
+                }
+                let mapped: Vec<WireValue> = sv.iter().map(|v| to_wire(v, names, &refs)).collect();
+                let old_mapped: Option<Vec<WireValue>> = match pending {
+                    Some(sent) if old == Some(&sv) => Some(sent.clone()),
+                    _ => old.map(|o| o.iter().map(|v| to_wire(v, names, &refs)).collect()),
+                };
+                if old_mapped.as_ref() != Some(&mapped) {
+                    let comp = names.id(&server.registry.schema(sk).name);
+                    ops.push(match old_mapped {
+                        None => Op::Insert {
+                            handle,
+                            comp,
+                            values: mapped.clone(),
+                        },
+                        Some(o) => Op::Set {
+                            handle,
+                            comp,
+                            fields: mapped
+                                .iter()
+                                .enumerate()
+                                .filter(|(i, v)| o.get(*i) != Some(v))
+                                .map(|(i, v)| (i as u32, v.clone()))
+                                .collect(),
+                        },
+                    });
+                }
+                if mapped.iter().map(WireValue::refs).sum::<usize>()
+                    < sv.iter().map(refs_of).sum::<usize>()
+                {
+                    unresolved.push((sk, mapped));
+                }
+                if old != Some(&sv) {
+                    updates.push((sk, sv));
+                }
+            }
+            let dropped: Vec<ComponentKey> = entry
+                .comps
+                .iter()
+                .map(|(k, _)| *k)
+                .filter(|k| !current.contains(k))
+                .collect();
+            for sk in &dropped {
+                ops.push(Op::Drop {
+                    handle,
+                    comp: names.id(&server.registry.schema(*sk).name),
+                });
+            }
+            let entry = mirror.get_mut(&s).expect("present above");
+            entry.name = name;
+            entry.parent = parent_s;
+            for (k, v) in updates {
+                entry.set_comp(k, v);
+            }
+            entry.comps.retain(|(k, _)| !dropped.contains(k));
+            // What was re-checked this pass replaces what was pending.
+            entry.unresolved.retain(|(k, _)| !current.contains(k));
+            entry.unresolved.extend(unresolved);
+        }
+
+        // Remove what the walk did not reach.
+        let mut gone: Vec<u32> = Vec::new();
+        self.mirror.retain(|s, e| {
+            let keep = seen.contains(s);
+            if !keep {
+                gone.push(e.handle);
+            }
+            keep
+        });
+        gone.sort_unstable();
+        for h in &gone {
+            self.by_handle.remove(h);
+            self.owned.remove(h);
+        }
+        if !gone.is_empty() {
+            ops.push(Op::Remove { handles: gone });
+        }
+
+        // Ownership, as changes.
+        let owned: BTreeSet<u32> = match player {
+            Some(p) => owned_by(server, p)
+                .into_iter()
+                .filter_map(|s| self.mirror.get(&s).map(|e| e.handle))
+                .collect(),
+            None => BTreeSet::new(),
+        };
+        for &handle in owned.difference(&self.owned) {
+            ops.push(Op::Own {
+                handle,
+                owned: true,
+            });
+        }
+        for &handle in self.owned.difference(&owned) {
+            ops.push(Op::Own {
+                handle,
+                owned: false,
+            });
+        }
+        self.owned = owned;
+
+        self.last = Some(this);
+        Frame {
+            tick: 0,
+            names: self.names.take_fresh(),
+            ops,
+            msgs: Vec::new(),
+        }
+    }
+}
+
+/// How a server entity is referred to on a connection: the `game` root, or
+/// its handle once it was sent.
+fn down_ref(mirror: &HashMap<Entity, Entry>, game: Entity, x: Entity) -> Option<Ref> {
+    if x == game {
+        Some(Ref::Game)
+    } else {
+        mirror.get(&x).map(|e| Ref::Handle(e.handle))
+    }
+}
+
+/// The server world's replication state for the in-process client.
+#[derive(Resource, Default)]
+pub struct ServerReplica {
+    /// The local client's connection.
+    pub local: Conn,
+}
+
+// ------------------------------------------------------------------ client
+
+/// One replicated instance, as the client has it.
+struct ClientEntry {
+    /// Its client entity; `None` when its parent was gone when it arrived.
+    client: Option<Entity>,
+    /// Its server parent as last sent; `None` for a bound instance.
+    parent: Option<Ref>,
+    id: String,
+    name: String,
+    /// The values last received or sent, by client component key, as the
+    /// client read them (references to instances it did not have are null).
+    comps: Vec<(ComponentKey, Vec<Value>)>,
+}
+
+impl ClientEntry {
+    fn comp(&self, k: ComponentKey) -> Option<&Vec<Value>> {
+        self.comps.iter().find(|(x, _)| *x == k).map(|(_, v)| v)
+    }
+
+    fn set_comp(&mut self, k: ComponentKey, v: Vec<Value>) {
+        match self.comps.iter_mut().find(|(x, _)| *x == k) {
+            Some(slot) => slot.1 = v,
+            None => self.comps.push((k, v)),
+        }
+    }
+}
+
+/// The client's mirror of the replicated instances, a resource of the
+/// client world.
 #[derive(Resource, Default)]
 pub struct Replica {
-    mirror: HashMap<Entity, Entry>,
-    by_client: HashMap<Entity, Entity>,
-    server_last: Option<Tick>,
-    client_last: Option<Tick>,
+    entries: HashMap<u32, ClientEntry>,
+    by_client: HashMap<Entity, u32>,
+    last: Option<Tick>,
+    /// The handles the server said this client owns.
+    owned: BTreeSet<u32>,
+    /// Names sent to the server.
+    names: Names,
+    /// Names the server sent.
+    names_in: NameTable,
     /// Client subtree roots the server removed, waiting for the client VM.
     pub(crate) pending: Vec<Entity>,
 }
 
 impl Replica {
-    /// The server entity a client entity replicates, if it does.
-    pub fn server_of(&self, client: Entity) -> Option<Entity> {
+    /// The handle of a replicated client entity, if it is one.
+    pub fn handle_of(&self, client: Entity) -> Option<u32> {
         self.by_client.get(&client).copied()
     }
 
-    /// The client entity of a replicated server entity.
-    pub fn client_of(&self, server: Entity) -> Option<Entity> {
-        self.mirror.get(&server).map(|e| e.client)
+    /// The client entity of a handle.
+    pub fn client_of(&self, handle: u32) -> Option<Entity> {
+        self.entries.get(&handle).and_then(|e| e.client)
     }
 
-    /// How many entities are replicated.
+    /// How many instances are replicated.
     pub fn len(&self) -> usize {
-        self.mirror.len()
+        self.entries.len()
     }
 
     /// True when nothing is replicated.
     pub fn is_empty(&self) -> bool {
-        self.mirror.is_empty()
+        self.entries.is_empty()
+    }
+
+    /// The client half of step 1: the changed upstream components of the
+    /// instances this client owns, as a frame for the server.
+    pub fn diff_up(&mut self, client: &mut World, set: &ReplicationSet) -> Frame {
+        let mut ops = Vec::new();
+        let Some(game) = game_of(client) else {
+            return Frame::default();
+        };
+        let this = client.ecs.change_tick();
+        let all = set.upstream.iter().any(|n| n == UPSTREAM_ALL);
+        for handle in self.owned.iter().copied().collect::<Vec<_>>() {
+            let Some(c) = self.entries.get(&handle).and_then(|e| e.client) else {
+                continue;
+            };
+            if !tree::alive(client, c)
+                || self
+                    .last
+                    .is_some_and(|last| !changed_since(client, c, last, this))
+            {
+                continue;
+            }
+            let names: Vec<String> = if all {
+                client
+                    .registry
+                    .components_of(&client.ecs, c)
+                    .into_iter()
+                    .map(|k| client.registry.schema(k).name.clone())
+                    .collect()
+            } else {
+                set.upstream.clone()
+            };
+            let Replica {
+                entries,
+                by_client,
+                names: out,
+                ..
+            } = self;
+            let refs = |x: Entity| {
+                if x == game {
+                    Some(Ref::Game)
+                } else {
+                    by_client.get(&x).map(|h| Ref::Handle(*h))
+                }
+            };
+            let entry = entries.get_mut(&handle).expect("present above");
+            for name in &names {
+                let Some(ck) = client.registry.try_key(name) else {
+                    continue;
+                };
+                let Some(cv) = client.registry.get_all(&client.ecs, c, ck) else {
+                    continue;
+                };
+                if entry.comp(ck) == Some(&cv) {
+                    continue;
+                }
+                ops.push(Op::Up {
+                    handle,
+                    comp: out.id(name),
+                    values: cv.iter().map(|v| to_wire(v, out, &refs)).collect(),
+                });
+                entry.set_comp(ck, cv);
+            }
+        }
+        Frame {
+            tick: 0,
+            names: self.names.take_fresh(),
+            ops,
+            msgs: Vec::new(),
+        }
+    }
+
+    fn decode(&self, game: Entity, values: &[WireValue]) -> Option<Vec<Value>> {
+        let refs = |r: Ref| match r {
+            Ref::Game => Some(game),
+            Ref::Handle(h) => self.entries.get(&h).and_then(|e| e.client),
+        };
+        values
+            .iter()
+            .map(|v| from_wire(v, &self.names_in, &refs))
+            .collect()
+    }
+
+    /// The client key of a component name number.
+    fn key(&self, client: &World, comp: u32) -> Option<ComponentKey> {
+        client.registry.try_key(self.names_in.get(comp)?)
+    }
+
+    /// Makes the client entity of `handle` under `parent`: same stable id
+    /// and name. A client-made instance holding the id gives it up.
+    fn spawn(&mut self, client: &mut World, handle: u32, parent: Entity) -> Entity {
+        let entry = &self.entries[&handle];
+        let (id, name) = (entry.id.clone(), entry.name.clone());
+        if let Ok(other) = client.entity(&id) {
+            let fresh = client.new_id();
+            client.ecs.entity_mut(other).insert(StableId(fresh));
+        }
+        let c = client.ecs.spawn((Name(name), StableId(id))).id();
+        hierarchy::add_child(&mut client.ecs, parent, c);
+        c
+    }
+
+    /// Spawns the waiting `handle` under `parent`, with its components, then
+    /// the instances that waited under it. Returns the handles spawned.
+    fn arrive(&mut self, client: &mut World, handle: u32, parent: Entity) -> Vec<u32> {
+        let mut done = Vec::new();
+        let mut todo = vec![(handle, parent)];
+        while let Some((h, p)) = todo.pop() {
+            let c = self.spawn(client, h, p);
+            self.entries.get_mut(&h).expect("present").client = Some(c);
+            self.by_client.insert(c, h);
+            for (ck, v) in self.entries[&h].comps.clone() {
+                let kinds = kinds_of(client, ck);
+                write_changes(client, c, ck, &kinds, None, &v);
+            }
+            done.push(h);
+            let mut kids: Vec<u32> = self
+                .entries
+                .iter()
+                .filter(|(_, e)| e.client.is_none() && e.parent == Some(Ref::Handle(h)))
+                .map(|(k, _)| *k)
+                .collect();
+            // Lowest handle first: in the order the server created them.
+            kids.sort_unstable_by(|a, b| b.cmp(a));
+            todo.extend(kids.into_iter().map(|k| (k, c)));
+        }
+        done
+    }
+
+    /// The client half of steps 2 to 5: applies a server frame to the
+    /// client world.
+    pub fn apply(&mut self, client: &mut World, frame: &Frame) -> ReplicationReport {
+        self.names_in.extend(&frame.names);
+        let mut report = ReplicationReport::default();
+        let Some(game) = game_of(client) else {
+            return report;
+        };
+        // Subtrees removed in an earlier pass that no client VM took: despawn.
+        for root in std::mem::take(&mut self.pending) {
+            if tree::alive(client, root) {
+                let _ = client.despawn_runtime(root);
+            }
+        }
+        let mut wrote: Vec<u32> = Vec::new();
+        let mut mark = |h: u32| {
+            if !wrote.contains(&h) {
+                wrote.push(h);
+            }
+        };
+        let alive = |client: &World, c: Option<Entity>| c.filter(|c| tree::alive(client, *c));
+        for op in &frame.ops {
+            if let Op::Bind { handle, id, .. } = op {
+                let c = client.entity(id).ok();
+                let name = c.map(|c| client.name_of(c).to_string()).unwrap_or_default();
+                self.entries.insert(
+                    *handle,
+                    ClientEntry {
+                        client: c,
+                        parent: None,
+                        id: id.clone(),
+                        name,
+                        comps: Vec::new(),
+                    },
+                );
+                if let Some(c) = c {
+                    self.by_client.insert(c, *handle);
+                }
+            }
+        }
+        for op in &frame.ops {
+            match op {
+                Op::Bind { handle, comps, .. } => {
+                    // The entries were made above; references among them
+                    // resolve now.
+                    let comps = comps
+                        .iter()
+                        .filter_map(|(k, v)| Some((self.key(client, *k)?, self.decode(game, v)?)))
+                        .collect();
+                    if let Some(e) = self.entries.get_mut(handle) {
+                        e.comps = comps;
+                    }
+                }
+                Op::Create {
+                    handle,
+                    parent,
+                    id,
+                    name,
+                    service,
+                } => {
+                    self.entries.insert(
+                        *handle,
+                        ClientEntry {
+                            client: None,
+                            parent: Some(*parent),
+                            id: id.clone(),
+                            name: name.clone(),
+                            comps: Vec::new(),
+                        },
+                    );
+                    let parent = match parent {
+                        Ref::Game => Some(game),
+                        Ref::Handle(p) => self.entries.get(p).and_then(|e| e.client),
+                    };
+                    // Its parent is gone (destroyed by a client script): it
+                    // waits for a move to a live parent.
+                    let Some(parent) = alive(client, parent) else {
+                        continue;
+                    };
+                    // A service the client made itself before the server
+                    // had it: adopt it.
+                    let adopted = service
+                        .as_deref()
+                        .filter(|_| parent == game)
+                        .and_then(|class| service_in(client, game, class));
+                    let c = match adopted {
+                        Some(c) => {
+                            if let Some(old) = self.by_client.remove(&c)
+                                && let Some(e) = self.entries.get_mut(&old)
+                            {
+                                e.client = None;
+                            }
+                            if client.id_of(c) != Some(id.as_str()) {
+                                client.ecs.entity_mut(c).insert(StableId(id.clone()));
+                            }
+                            c
+                        }
+                        None => {
+                            report.created += 1;
+                            self.spawn(client, *handle, parent)
+                        }
+                    };
+                    self.entries.get_mut(handle).expect("inserted").client = Some(c);
+                    self.by_client.insert(c, *handle);
+                }
+                Op::Name { handle, name } => {
+                    let Some(e) = self.entries.get_mut(handle) else {
+                        continue;
+                    };
+                    e.name = name.clone();
+                    if let Some(c) = alive(client, e.client) {
+                        tree::set_name(client, c, name);
+                        mark(*handle);
+                    }
+                }
+                Op::Parent { handle, parent } => {
+                    let Some(e) = self.entries.get_mut(handle) else {
+                        continue;
+                    };
+                    e.parent = Some(*parent);
+                    let pc = match parent {
+                        Ref::Game => Some(game),
+                        Ref::Handle(p) => self.entries.get(p).and_then(|e| e.client),
+                    };
+                    let Some(pc) = alive(client, pc) else {
+                        continue;
+                    };
+                    match self.entries[handle].client {
+                        // It waited for a live parent: it arrives now, with
+                        // what waited under it.
+                        None => {
+                            for h in self.arrive(client, *handle, pc) {
+                                report.created += 1;
+                                mark(h);
+                            }
+                        }
+                        Some(c) => {
+                            if tree::alive(client, c)
+                                && !hierarchy::is_self_or_ancestor(&client.ecs, c, pc)
+                                && hierarchy::parent(&client.ecs, c) != Some(pc)
+                            {
+                                hierarchy::add_child(&mut client.ecs, pc, c);
+                                mark(*handle);
+                            }
+                        }
+                    }
+                }
+                Op::Insert {
+                    handle,
+                    comp,
+                    values,
+                } => {
+                    let Some(ck) = self.key(client, *comp) else {
+                        continue;
+                    };
+                    let Some(new) = self.decode(game, values) else {
+                        continue;
+                    };
+                    let Some(e) = self.entries.get_mut(handle) else {
+                        continue;
+                    };
+                    e.set_comp(ck, new.clone());
+                    if let Some(c) = alive(client, e.client) {
+                        let kinds = kinds_of(client, ck);
+                        if write_changes(client, c, ck, &kinds, None, &new) {
+                            mark(*handle);
+                        }
+                    }
+                }
+                Op::Set {
+                    handle,
+                    comp,
+                    fields,
+                } => {
+                    let Some(ck) = self.key(client, *comp) else {
+                        continue;
+                    };
+                    let Some(old) = self.entries.get(handle).and_then(|e| e.comp(ck)).cloned()
+                    else {
+                        continue;
+                    };
+                    let mut new = old.clone();
+                    let mut ok = true;
+                    for (i, v) in fields {
+                        match (
+                            new.get_mut(*i as usize),
+                            self.decode(game, std::slice::from_ref(v)),
+                        ) {
+                            (Some(slot), Some(mut d)) => *slot = d.remove(0),
+                            _ => ok = false,
+                        }
+                    }
+                    if !ok {
+                        continue;
+                    }
+                    let e = self.entries.get_mut(handle).expect("present above");
+                    e.set_comp(ck, new.clone());
+                    if let Some(c) = alive(client, e.client) {
+                        let kinds = kinds_of(client, ck);
+                        if write_changes(client, c, ck, &kinds, Some(&old), &new) {
+                            mark(*handle);
+                        }
+                    }
+                }
+                Op::Drop { handle, comp } => {
+                    let Some(ck) = self.key(client, *comp) else {
+                        continue;
+                    };
+                    let Some(e) = self.entries.get_mut(handle) else {
+                        continue;
+                    };
+                    e.comps.retain(|(k, _)| *k != ck);
+                    if let Some(c) = alive(client, e.client)
+                        && client.registry.has(&client.ecs, c, ck)
+                    {
+                        client.registry.remove(&mut client.ecs, c, ck);
+                        mark(*handle);
+                    }
+                }
+                Op::Own { handle, owned } => {
+                    if *owned {
+                        self.owned.insert(*handle);
+                    } else {
+                        self.owned.remove(handle);
+                    }
+                }
+                Op::Remove { handles } => {
+                    let mut gone: HashSet<Entity> = HashSet::new();
+                    for h in handles {
+                        self.owned.remove(h);
+                        let Some(e) = self.entries.remove(h) else {
+                            continue;
+                        };
+                        let Some(c) = e.client else {
+                            continue;
+                        };
+                        self.by_client.remove(&c);
+                        if tree::alive(client, c) && !tree::is_destroyed(client, c) {
+                            gone.insert(c);
+                        }
+                    }
+                    let mut roots: Vec<Entity> = gone
+                        .iter()
+                        .copied()
+                        .filter(|c| !tree::ancestors(client, *c).iter().any(|a| gone.contains(a)))
+                        .collect();
+                    roots.sort();
+                    // The client VM destroys them in its pump, after the
+                    // player and character events that need them in place.
+                    report.removed += roots.len();
+                    self.pending.extend(roots);
+                }
+                Op::Up { .. } => {}
+            }
+        }
+        report.updated = wrote
+            .iter()
+            .filter(|h| self.entries.get(h).is_some_and(|e| !e.comps.is_empty()))
+            .count();
+        self.last = Some(client.ecs.change_tick());
+        client.ecs.increment_change_tick();
+        report
     }
 }
+
+/// A frame through its bytes, as the in-process run sends it.
+fn carry(frame: Frame) -> Frame {
+    Frame::decode(&frame.encode()).expect("a frame decodes")
+}
+
+/// Puts both mirrors in place for a client world just forked from `server`:
+/// every replicated server entity gets a handle and is bound to the client
+/// entity of the same stable id, with the server's current values recorded
+/// as sent.
+pub(crate) fn init(server: &mut World, client: &mut World, set: &ReplicationSet) {
+    let mut conn = Conn::default();
+    let frame = carry(conn.bind(server, set));
+    let mut rep = Replica::default();
+    rep.apply(client, &frame);
+    server.ecs.insert_resource(ServerReplica { local: conn });
+    client.ecs.insert_resource(rep);
+}
+
+/// One replication pass between `server` and the in-process `client` (see
+/// the module docs), with both halves' frames going through their bytes.
+/// Without the mirrors [`CompatWorlds::new`](super::CompatWorlds::new) puts
+/// in place, the pass starts new ones and replicates everything as new.
+pub fn replicate(
+    server: &mut World,
+    client: &mut World,
+    set: &ReplicationSet,
+) -> ReplicationReport {
+    if game_of(server).is_none() || game_of(client).is_none() {
+        return ReplicationReport::default();
+    }
+    let mut rep = client.ecs.remove_resource::<Replica>().unwrap_or_default();
+    let mut conns = server
+        .ecs
+        .remove_resource::<ServerReplica>()
+        .unwrap_or_default();
+    let player = client
+        .ecs
+        .get_resource::<NetLink>()
+        .and_then(|l| l.local_player())
+        .and_then(|id| server.entity(&id).ok());
+    let up = carry(rep.diff_up(client, set));
+    let upstream = conns.local.apply_up(server, set, player, &up);
+    let down = carry(conns.local.diff(server, set, player));
+    server.ecs.increment_change_tick();
+    let mut report = rep.apply(client, &down);
+    report.upstream = upstream;
+    server.ecs.insert_resource(conns);
+    client.ecs.insert_resource(rep);
+    report
+}
+
+// ----------------------------------------------------------------- helpers
 
 /// True if any component of `e` changed after `last`.
 fn changed_since(w: &World, e: Entity, last: Tick, this: Tick) -> bool {
@@ -162,7 +1092,7 @@ fn game_of(w: &World) -> Option<Entity> {
 }
 
 /// The service of class `class` under `game`.
-fn service(w: &World, game: Entity, class: &str) -> Option<Entity> {
+fn service_in(w: &World, game: Entity, class: &str) -> Option<Entity> {
     crate::services::core::find_service(w, game, class)
 }
 
@@ -171,7 +1101,7 @@ fn service(w: &World, game: Entity, class: &str) -> Option<Entity> {
 fn replicated_order(server: &World, game: Entity, set: &ReplicationSet) -> Vec<Entity> {
     let mut out = Vec::new();
     for class in &set.containers {
-        let Some(root) = service(server, game, class) else {
+        let Some(root) = service_in(server, game, class) else {
             continue;
         };
         let mut stack = vec![root];
@@ -186,36 +1116,13 @@ fn replicated_order(server: &World, game: Entity, set: &ReplicationSet) -> Vec<E
     out
 }
 
-/// The client component key of a server component key (by name).
-struct KeyMap(HashMap<ComponentKey, Option<ComponentKey>>);
-
-impl KeyMap {
-    fn get(&mut self, server: &World, client: &World, k: ComponentKey) -> Option<ComponentKey> {
-        *self
-            .0
-            .entry(k)
-            .or_insert_with(|| client.registry.try_key(&server.registry.schema(k).name))
-    }
-}
-
-/// Maps entity references inside a value through `f` (`None`: no such
-/// instance on the other side).
 /// How many instance references `v` holds.
-fn refs(v: &Value) -> usize {
+fn refs_of(v: &Value) -> usize {
     match v {
         Value::Entity(Some(_)) => 1,
-        Value::List(items) => items.iter().map(refs).sum(),
-        Value::Map(m) => m.values().map(refs).sum(),
+        Value::List(items) => items.iter().map(refs_of).sum(),
+        Value::Map(m) => m.values().map(refs_of).sum(),
         _ => 0,
-    }
-}
-
-fn remap(v: &Value, f: &dyn Fn(Entity) -> Option<Entity>) -> Value {
-    match v {
-        Value::Entity(Some(e)) => Value::Entity(f(*e)),
-        Value::List(items) => Value::List(items.iter().map(|i| remap(i, f)).collect()),
-        Value::Map(m) => Value::Map(m.iter().map(|(k, x)| (k.clone(), remap(x, f))).collect()),
-        other => other.clone(),
     }
 }
 
@@ -275,8 +1182,8 @@ fn merged(kind: Merge, old: &Value, new: &Value, current: Option<&Value>) -> Val
 /// sending side into `to`'s entity `e` (key `tk`), merging maps per key and
 /// tags per tag (with no `old`, from an empty map or list, so the receiver's
 /// own keys and tags stay). Inserts the whole component when `to` lacks it.
-/// Returns true
-/// when something was written.
+/// Returns true when something was written; values that are not one per
+/// field write nothing.
 fn write_changes(
     to: &mut World,
     e: Entity,
@@ -285,6 +1192,10 @@ fn write_changes(
     old: Option<&Vec<Value>>,
     new: &[Value],
 ) -> bool {
+    // A peer's values that do not fit the component's fields.
+    if new.len() != to.registry.schema(tk).fields.len() {
+        return false;
+    }
     let Some(current) = to.registry.get_all(&to.ecs, e, tk) else {
         return to.registry.insert(&mut to.ecs, e, tk, new.to_vec()).is_ok();
     };
@@ -324,386 +1235,6 @@ fn kinds_of(w: &World, k: ComponentKey) -> Vec<Merge> {
     (0..w.registry.schema(k).fields.len())
         .map(|i| merge_kind(w, k, i))
         .collect()
-}
-
-/// Puts the client world's mirror of `server` in place: every replicated
-/// server entity is matched with the client entity of the same stable id
-/// (the client was just forked from the server), and the server's current
-/// values are recorded as sent.
-pub(crate) fn init(server: &mut World, client: &mut World, set: &ReplicationSet) {
-    let mut rep = Replica::default();
-    if let Some(game) = game_of(server) {
-        for s in replicated_order(server, game, set) {
-            let Some(c) = server.id_of(s).and_then(|id| client.entity(id).ok()) else {
-                continue;
-            };
-            let comps = server
-                .registry
-                .components_of(&server.ecs, s)
-                .into_iter()
-                .filter_map(|k| server.registry.get_all(&server.ecs, s, k).map(|v| (k, v)))
-                .collect();
-            rep.mirror.insert(
-                s,
-                Entry {
-                    client: c,
-                    name: server.name_of(s).to_string(),
-                    parent: hierarchy::parent(&server.ecs, s),
-                    comps,
-                    unresolved: Vec::new(),
-                },
-            );
-            rep.by_client.insert(c, s);
-        }
-    }
-    rep.server_last = Some(server.ecs.change_tick());
-    server.ecs.increment_change_tick();
-    rep.client_last = Some(client.ecs.change_tick());
-    client.ecs.increment_change_tick();
-    client.ecs.insert_resource(rep);
-}
-
-/// One replication pass from `server` to `client` (see the module docs).
-/// The client world's mirror must have been made by
-/// [`CompatWorlds::new`](super::CompatWorlds::new); without one, the pass
-/// starts a new mirror and replicates everything as new.
-pub fn replicate(
-    server: &mut World,
-    client: &mut World,
-    set: &ReplicationSet,
-) -> ReplicationReport {
-    let mut report = ReplicationReport::default();
-    let mut rep = client.ecs.remove_resource::<Replica>().unwrap_or_default();
-    let (Some(game_s), Some(game_c)) = (game_of(server), game_of(client)) else {
-        client.ecs.insert_resource(rep);
-        return report;
-    };
-    let server_this = server.ecs.change_tick();
-    let client_this = client.ecs.change_tick();
-    let mut keys = KeyMap(HashMap::new());
-
-    // Subtrees removed in an earlier pass that no client VM took: despawn.
-    for root in std::mem::take(&mut rep.pending) {
-        if tree::alive(client, root) {
-            let _ = client.despawn_runtime(root);
-        }
-    }
-
-    // 1. Upstream: the components the local player's client owns.
-    let local = client
-        .ecs
-        .get_resource::<NetLink>()
-        .and_then(|l| l.local_player())
-        .and_then(|id| server.entity(&id).ok());
-    if let Some(lp) = local {
-        let mut q = server.ecs.query::<(Entity, &NetworkOwner)>();
-        let roots: Vec<Entity> = q
-            .iter(&server.ecs)
-            .filter(|(_, o)| o.0 == lp)
-            .map(|(e, _)| e)
-            .collect();
-        // Ownership covers the owned instances' descendants too, including
-        // ones added later (a tool, an Animator), unless another player owns
-        // them.
-        let mut sorted: Vec<Entity> = Vec::new();
-        for r in roots {
-            for x in hierarchy::subtree(&server.ecs, r) {
-                let other = server.ecs.get::<NetworkOwner>(x).is_some_and(|o| o.0 != lp);
-                if !other {
-                    sorted.push(x);
-                }
-            }
-        }
-        sorted.sort();
-        sorted.dedup();
-        for s in sorted {
-            let Some(entry) = rep.mirror.get(&s) else {
-                continue;
-            };
-            let c = entry.client;
-            if !tree::alive(client, c)
-                || rep
-                    .client_last
-                    .is_some_and(|last| !changed_since(client, c, last, client_this))
-            {
-                continue;
-            }
-            let by_client = &rep.by_client;
-            let to_server = |x: Entity| {
-                if x == game_c {
-                    Some(game_s)
-                } else {
-                    by_client.get(&x).copied()
-                }
-            };
-            let mut wrote = false;
-            let mut updates = Vec::new();
-            let names: Vec<String> = if set.upstream.iter().any(|n| n == UPSTREAM_ALL) {
-                client
-                    .registry
-                    .components_of(&client.ecs, c)
-                    .into_iter()
-                    .map(|k| client.registry.schema(k).name.clone())
-                    .collect()
-            } else {
-                set.upstream.clone()
-            };
-            for name in &names {
-                let (Some(sk), Some(ck)) =
-                    (server.registry.try_key(name), client.registry.try_key(name))
-                else {
-                    continue;
-                };
-                let Some(cv) = client.registry.get_all(&client.ecs, c, ck) else {
-                    continue;
-                };
-                let cv: Vec<Value> = cv.iter().map(|v| remap(v, &to_server)).collect();
-                let old = entry.comp(sk);
-                if old == Some(&cv) {
-                    continue;
-                }
-                let kinds = kinds_of(server, sk);
-                if write_changes(server, s, sk, &kinds, old, &cv) || old.is_none() {
-                    wrote = true;
-                }
-                updates.push((sk, cv));
-            }
-            let entry = rep.mirror.get_mut(&s).expect("checked above");
-            for (sk, cv) in updates {
-                entry.set_comp(sk, cv);
-            }
-            if wrote {
-                report.upstream += 1;
-            }
-        }
-    }
-
-    // 2. Walk the replicated subtrees.
-    let order = replicated_order(server, game_s, set);
-    let mut seen: HashSet<Entity> = HashSet::with_capacity(order.len());
-    let mut new = Vec::new();
-    let mut changed = Vec::new();
-    for &s in &order {
-        seen.insert(s);
-        if !rep.mirror.contains_key(&s) {
-            new.push(s);
-        } else if rep
-            .server_last
-            .is_none_or(|last| changed_since(server, s, last, server_this))
-        {
-            changed.push(s);
-        } else if !rep.mirror[&s].unresolved.is_empty() {
-            // A reference it holds may resolve to an instance created now.
-            changed.push(s);
-        }
-    }
-
-    // 3. Create, parents first.
-    let mut fill = Vec::new();
-    for s in new {
-        let parent_s = hierarchy::parent(&server.ecs, s);
-        let parent_c = match parent_s {
-            Some(p) if p == game_s => Some(game_c),
-            Some(p) => rep.mirror.get(&p).map(|e| e.client),
-            None => None,
-        };
-        let Some(parent_c) = parent_c.filter(|p| tree::alive(client, *p)) else {
-            continue; // its client parent is gone (destroyed by a client script)
-        };
-        let id = server.id_of(s).unwrap_or_default().to_string();
-        let name = server.name_of(s).to_string();
-        // A service the client made itself before the server had it: adopt it.
-        let adopted = (parent_s == Some(game_s) && server.ecs.get::<ServiceTag>(s).is_some())
-            .then(|| tree::class(server, s).map(str::to_string))
-            .flatten()
-            .and_then(|class| service(client, game_c, &class));
-        let c = match adopted {
-            Some(c) => {
-                if let Some(old) = rep.by_client.remove(&c) {
-                    rep.mirror.remove(&old);
-                }
-                if client.id_of(c) != Some(id.as_str()) {
-                    client.ecs.entity_mut(c).insert(StableId(id.clone()));
-                }
-                c
-            }
-            None => {
-                // A client-made instance holding this id gives it up.
-                if let Ok(other) = client.entity(&id) {
-                    let fresh = client.new_id();
-                    client.ecs.entity_mut(other).insert(StableId(fresh));
-                }
-                let c = client.ecs.spawn((Name(name.clone()), StableId(id))).id();
-                hierarchy::add_child(&mut client.ecs, parent_c, c);
-                report.created += 1;
-                c
-            }
-        };
-        rep.mirror.insert(
-            s,
-            Entry {
-                client: c,
-                name,
-                parent: parent_s,
-                comps: Vec::new(),
-                unresolved: Vec::new(),
-            },
-        );
-        rep.by_client.insert(c, s);
-        fill.push(s);
-    }
-
-    // 3b and 4. Components of the new entities, then the changes of the
-    // others. References are remapped once every new entity exists.
-    let to_client = |rep: &Replica, x: Entity| {
-        if x == game_s {
-            Some(game_c)
-        } else {
-            rep.mirror.get(&x).map(|e| e.client)
-        }
-    };
-    for s in fill.into_iter().chain(changed) {
-        let Some(entry) = rep.mirror.get(&s) else {
-            continue;
-        };
-        let c = entry.client;
-        if !tree::alive(client, c) {
-            continue; // destroyed by a client script: stays gone
-        }
-        let mut wrote = false;
-        // Name.
-        let name = server.name_of(s).to_string();
-        let rename = name != entry.name;
-        if rename {
-            tree::set_name(client, c, &name);
-            wrote = true;
-        }
-        // Parent.
-        let parent_s = hierarchy::parent(&server.ecs, s);
-        let reparent = parent_s != entry.parent;
-        if reparent
-            && let Some(pc) = parent_s.and_then(|p| to_client(&rep, p))
-            && tree::alive(client, pc)
-            && !hierarchy::is_self_or_ancestor(&client.ecs, c, pc)
-            && hierarchy::parent(&client.ecs, c) != Some(pc)
-        {
-            hierarchy::add_child(&mut client.ecs, pc, c);
-            wrote = true;
-        }
-        // Components. An owned upstream component the client just sent is
-        // equal to the mirror here, so only the server's own changes to it
-        // go back down.
-        let current = server.registry.components_of(&server.ecs, s);
-        let mut updates: Vec<(ComponentKey, Vec<Value>)> = Vec::new();
-        let mut unresolved: Vec<(ComponentKey, Vec<Value>)> = Vec::new();
-        for &sk in &current {
-            let Some(sv) = server.registry.get_all(&server.ecs, s, sk) else {
-                continue;
-            };
-            let old = entry.comp(sk);
-            let pending = entry
-                .unresolved
-                .iter()
-                .find(|(k, _)| *k == sk)
-                .map(|(_, v)| v);
-            if old == Some(&sv) && pending.is_none() {
-                continue;
-            }
-            if let Some(ck) = keys.get(server, client, sk) {
-                let mapped: Vec<Value> = sv
-                    .iter()
-                    .map(|v| remap(v, &|x| to_client(&rep, x)))
-                    .collect();
-                let old_mapped: Option<Vec<Value>> = match pending {
-                    Some(sent) if old == Some(&sv) => Some(sent.clone()),
-                    _ => old.map(|o| {
-                        o.iter()
-                            .map(|v| remap(v, &|x| to_client(&rep, x)))
-                            .collect()
-                    }),
-                };
-                if old_mapped.as_ref() != Some(&mapped) {
-                    let kinds = kinds_of(client, ck);
-                    if write_changes(client, c, ck, &kinds, old_mapped.as_ref(), &mapped) {
-                        wrote = true;
-                    }
-                }
-                if mapped.iter().map(refs).sum::<usize>() < sv.iter().map(refs).sum::<usize>() {
-                    unresolved.push((sk, mapped));
-                }
-            }
-            if old != Some(&sv) {
-                updates.push((sk, sv));
-            }
-        }
-        let dropped: Vec<ComponentKey> = entry
-            .comps
-            .iter()
-            .map(|(k, _)| *k)
-            .filter(|k| !current.contains(k))
-            .collect();
-        for sk in &dropped {
-            if let Some(ck) = keys.get(server, client, *sk)
-                && client.registry.has(&client.ecs, c, ck)
-            {
-                client.registry.remove(&mut client.ecs, c, ck);
-                wrote = true;
-            }
-        }
-        let entry = rep.mirror.get_mut(&s).expect("present above");
-        entry.name = name;
-        entry.parent = parent_s;
-        for (k, v) in updates {
-            entry.set_comp(k, v);
-        }
-        entry.comps.retain(|(k, _)| !dropped.contains(k));
-        // What was re-checked this pass replaces what was pending.
-        let checked: Vec<ComponentKey> = current.clone();
-        entry.unresolved.retain(|(k, _)| !checked.contains(k));
-        entry.unresolved.extend(unresolved);
-        if wrote && !entry.comps.is_empty() {
-            report.updated += 1;
-        }
-    }
-
-    // 5. Remove what the walk did not reach.
-    let gone: Vec<Entity> = rep
-        .mirror
-        .keys()
-        .copied()
-        .filter(|s| !seen.contains(s))
-        .collect();
-    let mut roots: Vec<Entity> = Vec::new();
-    let mut gone_clients: HashSet<Entity> = HashSet::new();
-    for s in gone {
-        let entry = rep.mirror.remove(&s).expect("listed above");
-        rep.by_client.remove(&entry.client);
-        if tree::alive(client, entry.client) && !tree::is_destroyed(client, entry.client) {
-            gone_clients.insert(entry.client);
-        }
-    }
-    for &c in &gone_clients {
-        let covered = tree::ancestors(client, c)
-            .iter()
-            .any(|a| gone_clients.contains(a));
-        if !covered {
-            roots.push(c);
-        }
-    }
-    roots.sort();
-    // The client VM destroys them in its pump, after the player and
-    // character events that need them in place.
-    for root in roots {
-        rep.pending.push(root);
-        report.removed += 1;
-    }
-
-    rep.server_last = Some(server_this);
-    server.ecs.increment_change_tick();
-    rep.client_last = Some(client.ecs.change_tick());
-    client.ecs.increment_change_tick();
-    client.ecs.insert_resource(rep);
-    report
 }
 
 /// The client instances the server removed whose destruction is pending
