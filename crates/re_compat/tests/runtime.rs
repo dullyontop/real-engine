@@ -99,8 +99,18 @@ impl Project {
         self
     }
 
+    /// The source path the last [`Project::script`] call wrote.
+    fn last_path(&self, name: &str) -> String {
+        format!("scripts/{}_{name}.luau", self.scripts)
+    }
+
     /// Saves the project and opens it in a harness.
-    fn open(mut self) -> (Harness, tempfile::TempDir) {
+    fn open(self) -> (Harness, tempfile::TempDir) {
+        self.open_with(HarnessOptions::default())
+    }
+
+    /// [`Project::open`] with harness options.
+    fn open_with(mut self, opts: HarnessOptions) -> (Harness, tempfile::TempDir) {
         let dir = self.dir.path();
         std::fs::create_dir_all(dir.join("scenes")).unwrap();
         std::fs::write(
@@ -116,7 +126,7 @@ impl Project {
             ),
         )
         .unwrap();
-        let h = Harness::open_with(dir, &self.setup, HarnessOptions::default()).unwrap();
+        let h = Harness::open_with(dir, &self.setup, opts).unwrap();
         (h, self.dir)
     }
 }
@@ -1044,5 +1054,255 @@ mod model {
         assert_eq!(h.project(), dir.path());
         let _ = CompatConfig::default();
         assert!(Path::new(dir.path()).join("real.toml").is_file());
+    }
+}
+
+// Grouped so `cargo test -p re_compat reload` selects them (ADR-0048 §3).
+mod reload {
+    use super::*;
+
+    const WORKER: &str = r#"
+print("worker start", script.Enabled, script.Disabled)
+local beats = 0
+game:GetService("RunService").Heartbeat:Connect(function()
+    beats += 1
+    script:SetAttribute("beats", beats)
+end)
+task.spawn(function()
+    while true do
+        task.wait()
+        script:SetAttribute("loop", (script:GetAttribute("loop") or 0) + 1)
+    end
+end)
+local p = Instance.new("Part")
+p.Name = "FromWorker"
+p.Parent = workspace
+"#;
+
+    const CONTROL: &str = r#"
+local worker = script.Parent.Worker
+local function made()
+    local n = 0
+    for _, x in workspace:GetChildren() do
+        if x.Name == "FromWorker" then
+            n += 1
+        end
+    end
+    return n
+end
+task.wait(0.05)
+print("before", worker:GetAttribute("beats"), made())
+worker.Enabled = true
+task.wait(0.1)
+print("running", worker:GetAttribute("beats") > 0)
+worker.Disabled = true
+print("disabled", worker.Enabled, worker.Disabled)
+local beats, loop = worker:GetAttribute("beats"), worker:GetAttribute("loop")
+task.wait(0.1)
+print("stopped", worker:GetAttribute("beats") == beats, worker:GetAttribute("loop") == loop, made())
+worker.Enabled = true
+worker.Enabled = true
+task.wait(0.05)
+print("again", made())
+worker.Enabled = false
+worker.Enabled = true
+worker.Enabled = false
+task.wait(0.05)
+print("cancelled", made())
+"#;
+
+    /// A disabled script does not start; enabling it starts it from the
+    /// top, disabling stops its threads and connections and keeps what it
+    /// made, and a script starts at most once per enable.
+    #[test]
+    fn enabled_and_disabled_start_and_stop_a_script() {
+        let mut p = Project::new();
+        let sss = p.service("ServerScriptService");
+        let worker = p.script("Script", "Worker", sss, None, WORKER);
+        p.setup
+            .classes
+            .set_property(&mut p.world, worker, "Enabled", Value::Bool(false))
+            .unwrap();
+        p.script("Script", "Control", sss, None, CONTROL);
+        let (mut h, _dir) = p.open();
+        h.start();
+        h.step(40);
+        no_errors(&h);
+        assert_eq!(
+            out(&mut h, Side::Server),
+            [
+                "before\tnil\t0",
+                "worker start\ttrue\tfalse",
+                "running\ttrue",
+                "disabled\tfalse\ttrue",
+                "stopped\ttrue\ttrue\t1",
+                "worker start\ttrue\tfalse",
+                "again\t2",
+                "cancelled\t2",
+            ]
+        );
+    }
+
+    /// In a play test, a write the VM did not make (the editor's, or a
+    /// replicated one) takes effect at the next pump.
+    #[test]
+    fn a_write_from_outside_takes_effect_at_the_next_pump() {
+        let mut p = Project::new();
+        let sss = p.service("ServerScriptService");
+        p.script(
+            "Script",
+            "Ticker",
+            sss,
+            None,
+            "print(\"tick start\")\nwhile true do task.wait(0.05) print(\"tick\") end",
+        );
+        let (mut h, _dir) = p.open_with(HarnessOptions {
+            two_worlds: true,
+            ..HarnessOptions::default()
+        });
+        h.start();
+        h.step(4);
+        assert_eq!(out(&mut h, Side::Server), ["tick start", "tick"]);
+        let classes = h.vm(Side::Server).setup().classes.clone();
+        let ticker = h.world(Side::Server).entity("Ticker").ok();
+        let ticker = ticker.unwrap_or_else(|| {
+            let w = h.world(Side::Server);
+            re_compat::instance::tree::descendants(w, w.entity("ServerScriptService").unwrap())
+                .into_iter()
+                .find(|e| re_compat::instance::tree::name(w, *e) == "Ticker")
+                .unwrap()
+        });
+        classes
+            .set_property(
+                h.world_mut(Side::Server),
+                ticker,
+                "Disabled",
+                Value::Bool(true),
+            )
+            .unwrap();
+        h.step(10);
+        assert!(out(&mut h, Side::Server).is_empty());
+        classes
+            .set_property(
+                h.world_mut(Side::Server),
+                ticker,
+                "Enabled",
+                Value::Bool(true),
+            )
+            .unwrap();
+        h.step(4);
+        no_errors(&h);
+        assert_eq!(out(&mut h, Side::Server), ["tick start", "tick"]);
+    }
+
+    /// A changed script restarts; a changed module restarts every running
+    /// script that required it, directly or through another module, and
+    /// nothing else; a source that does not compile restarts nothing until
+    /// the next good save.
+    #[test]
+    fn changed_scripts_and_modules_restart_what_uses_them() {
+        let mut p = Project::new();
+        let rs = p.service("ReplicatedStorage");
+        let sss = p.service("ServerScriptService");
+        p.script("ModuleScript", "M", rs, None, "return { v = 1 }");
+        let m = p.last_path("M");
+        p.script(
+            "ModuleScript",
+            "N",
+            rs,
+            None,
+            "local M = require(script.Parent.M)\nreturn { v = M.v * 10 }",
+        );
+        p.script(
+            "Script",
+            "UsesN",
+            sss,
+            None,
+            "print(\"UsesN\", require(game.ReplicatedStorage.N).v)",
+        );
+        p.script(
+            "Script",
+            "UsesM",
+            sss,
+            None,
+            "task.wait(0.05)\nprint(\"UsesM\", require(game.ReplicatedStorage.M).v)",
+        );
+        p.script("Script", "Plain", sss, None, "print(\"Plain\", 1)");
+        let plain = p.last_path("Plain");
+        let dir = p.dir.path().to_path_buf();
+        let (mut h, _dir) = p.open();
+        h.start();
+        h.step(10);
+        no_errors(&h);
+        assert_eq!(
+            out(&mut h, Side::Server),
+            ["UsesN\t10", "Plain\t1", "UsesM\t1"]
+        );
+
+        std::fs::write(dir.join(&m), "return { v = 2 }").unwrap();
+        assert!(h.reload(std::slice::from_ref(&m)).is_empty());
+        h.step(10);
+        no_errors(&h);
+        assert_eq!(out(&mut h, Side::Server), ["UsesN\t20", "UsesM\t2"]);
+
+        std::fs::write(dir.join(&plain), "print(\"Plain\", 2)").unwrap();
+        assert!(h.reload(std::slice::from_ref(&plain)).is_empty());
+        h.step(2);
+        assert_eq!(out(&mut h, Side::Server), ["Plain\t2"]);
+
+        std::fs::write(dir.join(&m), "return { v = ").unwrap();
+        let d = h.reload(std::slice::from_ref(&m));
+        assert_eq!(d.len(), 1, "{d:#?}");
+        assert_eq!(d[0].code, re_compat::codes::RELOAD_COMPILE);
+        assert!(
+            d[0].message
+                .starts_with(&format!("{m} changed but does not compile")),
+            "{d:?}"
+        );
+        h.step(10);
+        no_errors(&h);
+        assert!(out(&mut h, Side::Server).is_empty());
+        assert_eq!(
+            h.required(Side::Server).len(),
+            2,
+            "the cache keeps the old modules"
+        );
+
+        std::fs::write(dir.join(&m), "return { v = 3 }").unwrap();
+        assert!(h.reload(std::slice::from_ref(&m)).is_empty());
+        h.step(10);
+        no_errors(&h);
+        assert_eq!(out(&mut h, Side::Server), ["UsesN\t30", "UsesM\t3"]);
+    }
+
+    /// A disabled script is not restarted by a change; it runs the new
+    /// source when it is enabled.
+    #[test]
+    fn a_disabled_script_runs_its_new_source_when_enabled() {
+        let mut p = Project::new();
+        let sss = p.service("ServerScriptService");
+        let e = p.script("Script", "Later", sss, None, "print(\"old\")");
+        let path = p.last_path("Later");
+        p.setup
+            .classes
+            .set_property(&mut p.world, e, "Disabled", Value::Bool(true))
+            .unwrap();
+        let dir = p.dir.path().to_path_buf();
+        let (mut h, _dir) = p.open();
+        h.start();
+        h.step(2);
+        std::fs::write(dir.join(&path), "print(\"new\")").unwrap();
+        assert!(h.reload(std::slice::from_ref(&path)).is_empty());
+        h.step(2);
+        assert!(out(&mut h, Side::Server).is_empty());
+        let d = h.exec(
+            Side::Server,
+            "enable",
+            "game.ServerScriptService.Later.Disabled = false",
+        );
+        assert!(d.is_empty(), "{d:#?}");
+        h.step(2);
+        no_errors(&h);
+        assert_eq!(out(&mut h, Side::Server), ["new"]);
     }
 }

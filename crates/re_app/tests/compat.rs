@@ -350,3 +350,91 @@ print("client box at", string.format("%.1f", box.Position.Y))
         );
     }
 }
+
+/// The source file of the server `Script` the loader made.
+fn main_script(dir: &Path) -> String {
+    let rel = |p: &Path| {
+        p.strip_prefix(dir)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+    let mut todo = vec![dir.join("scripts")];
+    while let Some(d) = todo.pop() {
+        for entry in std::fs::read_dir(d).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                todo.push(p);
+            } else if p.file_name().unwrap().to_string_lossy().starts_with("Main") {
+                return rel(&p);
+            }
+        }
+    }
+    panic!("no Main script under scripts/");
+}
+
+/// ADR-0048 §3: while files are watched (`real run`, the editor), a changed
+/// compat script restarts, and a source that does not compile keeps the
+/// old run (`RE9420`); without a watcher (verify, replays, `play.run`)
+/// nothing restarts.
+#[test]
+fn a_changed_compat_script_restarts_while_files_are_watched() {
+    let dir = project("print(\"v1\")", "print(\"hud\")");
+    let main = main_script(dir.path());
+    let write = |source: &str| std::fs::write(dir.path().join(&main), source).unwrap();
+
+    let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+    app.run_headless(Some(5), None).unwrap();
+    write("print(\"v2\")");
+    app.apply_file_changes(&[re_assets::AssetChange::Modified(main.clone())]);
+    let r = app.run_headless(Some(5), None).unwrap();
+    assert!(r.output.is_empty(), "{:?}", r.output);
+
+    // Runs frames until `done` holds for the output and diagnostics so far.
+    let until = |app: &mut App, done: &dyn Fn(&[String], &[re_core::Diagnostic]) -> bool| {
+        let (mut output, mut diags) = (Vec::new(), Vec::new());
+        let deadline = re_core::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done(&output, &diags) {
+            assert!(
+                re_core::time::Instant::now() < deadline,
+                "the change never arrived: {output:?} {diags:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let r = app.run_headless(Some(1), None).unwrap();
+            output.extend(r.output);
+            diags.extend(r.diagnostics);
+        }
+        // A few more frames, to see that nothing else restarts.
+        let r = app.run_headless(Some(10), None).unwrap();
+        output.extend(r.output);
+        diags.extend(r.diagnostics);
+        (output, diags)
+    };
+    write("print(\"v1\")");
+    let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+    app.enable_hot_reload().unwrap();
+    let r = app.run_headless(Some(5), None).unwrap();
+    assert_eq!(r.output, ["[server] v1", "[client] hud"]);
+
+    write("print(\"v2\")");
+    let (output, diags) = until(&mut app, &|o, _| !o.is_empty());
+    assert_eq!(output, ["[server] v2"]);
+    assert!(diags.iter().all(|d| !d.is_error()), "{diags:?}");
+
+    write("print(");
+    let reload_compile = re_compat::codes::RELOAD_COMPILE;
+    let (output, diags) = until(&mut app, &|_, d| d.iter().any(|d| d.code == reload_compile));
+    assert!(output.is_empty(), "{output:?}");
+    let bad: Vec<_> = diags.iter().filter(|d| d.code == reload_compile).collect();
+    assert_eq!(bad.len(), 1, "{diags:?}");
+    assert!(
+        bad[0]
+            .message
+            .starts_with(&format!("{main} changed but does not compile")),
+        "{diags:?}"
+    );
+
+    write("print(\"v3\")");
+    let (output, _) = until(&mut app, &|o, _| !o.is_empty());
+    assert_eq!(output, ["[server] v3"]);
+}

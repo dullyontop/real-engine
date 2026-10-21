@@ -27,6 +27,11 @@ const _: () = {
     const fn contract<T: Send + Sync + Clone + Serialize + DeserializeOwned + 'static>() {}
     contract::<EntityId>();
     contract::<RenderSnapshot>();
+    contract::<render::PostSettings>();
+    contract::<render::ToneMapping>();
+    contract::<render::SunShadows>();
+    contract::<render::WorldQuad>();
+    contract::<render::QuadDepth>();
     contract::<Camera>();
     contract::<Light>();
     contract::<LightKind>();
@@ -130,6 +135,47 @@ fn render() {
             color: [1.0, 0.0, 0.0, 1.0],
         }],
         clear: [0.1, 0.2, 0.3, 1.0],
+        post: render::PostSettings {
+            exposure: 2.0,
+            tone_mapping: render::ToneMapping::AgX,
+            bloom: render::Bloom {
+                intensity: 0.5,
+                ..render::Bloom::default()
+            },
+            blur_radius: 0.01,
+            sun_rays: render::SunRays {
+                intensity: 0.25,
+                spread: 0.5,
+            },
+            grading: Some(render::ColorGrading {
+                saturation: -0.5,
+                ..render::ColorGrading::default()
+            }),
+        },
+        shadows: render::SunShadows {
+            cascades: 2,
+            ..render::SunShadows::default()
+        },
+        quads: vec![
+            render::WorldQuad {
+                entity: EntityId(4),
+                world: mat(),
+                size: Vec2::new(2.0, 1.0),
+                texture: TextureHandle::new(7, 1),
+                depth: render::QuadDepth::Tested { bias: 0.01 },
+                light_influence: 1.0,
+                brightness: 1.0,
+            },
+            render::WorldQuad {
+                entity: EntityId(5),
+                world: Mat4::IDENTITY,
+                size: Vec2::ONE,
+                texture: TextureHandle::new(8, 1),
+                depth: render::QuadDepth::OnTop,
+                light_influence: 0.0,
+                brightness: 0.5,
+            },
+        ],
         skinned: vec![SkinnedDrawItem {
             entity: EntityId(10),
             mesh: MeshHandle::new(5, 1),
@@ -152,6 +198,14 @@ fn render() {
         RenderSnapshot::default()
     );
     round_trip(&RenderSnapshot::default());
+    // Snapshots written before the post settings existed still load.
+    let old: RenderSnapshot = serde_json::from_str(
+        r#"{"camera":{"world":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"fov_y_radians":1.0,"near":0.1,"far":10.0},"lights":[],"items":[],"debug_lines":[],"clear":[0,0,0,1]}"#,
+    )
+    .unwrap();
+    assert_eq!(old.post, render::PostSettings::default());
+    assert_eq!(old.post.exposure, 1.0);
+    assert!(old.quads.is_empty());
     round_trip(&TextureHandle::new(5, 6));
     round_trip(&MaterialDesc::default());
     assert!(MaterialDesc::default().is_resolved());

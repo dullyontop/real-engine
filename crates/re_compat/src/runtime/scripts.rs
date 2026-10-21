@@ -20,8 +20,19 @@
 //! `StarterGui`) in place, as if they had been copied to a player. In a
 //! two-world run (`re_compat::net`) players get real copies, and the scripts
 //! that become startable later (copied to a player or a character, cloned
-//! into `Workspace`) start at the next pump ([`unstarted`]). A script starts
-//! at most once.
+//! into `Workspace`) start at the next pump ([`unstarted`]).
+//!
+//! A script whose `Enabled` is false does not start. Setting it false stops
+//! the script ([`stop`]); setting it true starts it again from the top, at
+//! the end of the resumption cycle. A write the VM did not make (a
+//! replicated or editor change) takes effect at the next pump. A script
+//! starts at most once per enable: moving it out of a place it starts in
+//! and back does not restart it.
+//!
+//! [`reload`] restarts the scripts whose source changed on disk, and the
+//! ones that required a changed module, directly or through other modules
+//! (ADR-0048 §3). A changed source that does not compile leaves the old run
+//! going (`RE9420`).
 //!
 //! `require(module)` runs a `ModuleScript` once per context and caches its
 //! result. The module runs in the requiring thread, so it may yield. A module
@@ -76,6 +87,14 @@ fn under(w: &World, e: Entity, classes: &[&str]) -> bool {
         .any(|a| tree::class(w, a).is_some_and(|c| classes.contains(&c)))
 }
 
+/// The `Enabled` of a script instance (true when it has none).
+fn enabled(w: &World, classes: &ClassRegistry, e: Entity) -> bool {
+    !matches!(
+        classes.get_property(w, e, "Enabled"),
+        Ok(re_reflect::Value::Bool(false))
+    )
+}
+
 /// The context script instance `e` starts in, if it starts at all.
 pub fn start_side(
     w: &World,
@@ -85,7 +104,10 @@ pub fn start_side(
     opts: StartOptions,
 ) -> Option<ContextKind> {
     let class = tree::class(w, e)?;
-    if !classes.is_a(class, "BaseScript") || tree::is_destroyed(w, e) || !tree::in_game(w, game, e)
+    if !classes.is_a(class, "BaseScript")
+        || tree::is_destroyed(w, e)
+        || !tree::in_game(w, game, e)
+        || !enabled(w, classes, e)
     {
         return None;
     }
@@ -203,9 +225,31 @@ pub fn owner_of(e: Entity) -> sched::Owner {
     e.to_bits()
 }
 
-/// The script instances started in this context.
+/// The script instances started in this context, and the ones whose start
+/// is deferred (enabled again, waiting for the end of the cycle).
 #[derive(Default)]
-struct Started(std::collections::HashSet<Entity>);
+struct Started {
+    running: std::collections::HashSet<Entity>,
+    pending: std::collections::HashSet<Entity>,
+    /// What [`CompatVm::start_scripts`](super::CompatVm::start_scripts) was
+    /// given, so a script enabled again starts by the same rules.
+    opts: StartOptions,
+}
+
+/// Remembers the options scripts start with in this context.
+pub(crate) fn set_options(lua: &Lua, opts: StartOptions) {
+    if let Some(mut s) = lua.app_data_mut::<Started>() {
+        s.opts = opts;
+    }
+}
+
+/// True if `e` has a source to run (a script made with `Instance.new` has
+/// none).
+fn has_source(w: &World, e: Entity) -> bool {
+    w.ecs
+        .get::<ScriptRef>(e)
+        .is_some_and(|r| !r.path.is_empty())
+}
 
 /// The scripts that start in this context now and have not started yet, in
 /// tree order (default [`StartOptions`]). A script with no source (one a
@@ -217,11 +261,7 @@ pub(crate) fn unstarted(lua: &Lua) -> Result<Vec<Entity>> {
     let list = with_world(lua, |w| {
         let mut list: Vec<Entity> = startable(w, &classes, game, kind, StartOptions::default())
             .into_iter()
-            .filter(|e| {
-                w.ecs
-                    .get::<ScriptRef>(*e)
-                    .is_some_and(|r| !r.path.is_empty())
-            })
+            .filter(|e| has_source(w, *e))
             .collect();
         // A player's own scripts (PlayerScripts, PlayerGui, Backpack) start
         // before the ones in its character, as when it joins.
@@ -231,24 +271,47 @@ pub(crate) fn unstarted(lua: &Lua) -> Result<Vec<Entity>> {
     let started = lua.app_data_ref::<Started>();
     Ok(list
         .into_iter()
-        .filter(|e| !started.as_ref().is_some_and(|s| s.0.contains(e)))
+        .filter(|e| {
+            !started
+                .as_ref()
+                .is_some_and(|s| s.running.contains(e) || s.pending.contains(e))
+        })
         .collect())
+}
+
+/// The started scripts whose `Enabled` is now false (a write the VM did not
+/// make), in no particular order.
+pub(crate) fn disabled_running(lua: &Lua) -> Result<Vec<Entity>> {
+    let classes = state(lua)?.setup.classes.clone();
+    let running: Vec<Entity> = match lua.app_data_ref::<Started>() {
+        Some(s) => s.running.iter().chain(&s.pending).copied().collect(),
+        None => return Ok(Vec::new()),
+    };
+    with_world(lua, |w| {
+        running
+            .into_iter()
+            .filter(|e| tree::alive(w, *e) && !enabled(w, &classes, *e))
+            .collect()
+    })
 }
 
 /// Starts script instance `e` now in a thread it owns.
 pub(crate) fn start(lua: &Lua, e: Entity) -> Result<()> {
     if let Some(mut s) = lua.app_data_mut::<Started>() {
-        s.0.insert(e);
+        s.pending.remove(&e);
+        s.running.insert(e);
     }
     let (name, f) = compile(lua, e)?;
     sched::spawn_owned(lua, f, MultiValue::new(), &name, owner_of(e))?;
     Ok(())
 }
 
-/// Stops what script instance `e` started (when it is destroyed).
+/// Stops what script instance `e` started (when it is destroyed or
+/// disabled).
 pub(crate) fn stop(lua: &Lua, e: Entity) -> Result<()> {
     if let Some(mut s) = lua.app_data_mut::<Started>() {
-        s.0.remove(&e);
+        s.running.remove(&e);
+        s.pending.remove(&e);
     }
     let owner = owner_of(e);
     crate::signal::disconnect_owner(lua, owner)?;
@@ -256,6 +319,173 @@ pub(crate) fn stop(lua: &Lua, e: Entity) -> Result<()> {
     super::session::drop_owner(lua, owner)?;
     instance::drop_owner_callbacks(lua, owner)?;
     sched::stop_owner(lua, owner).map(|_| ())
+}
+
+/// After a script wrote `Enabled` (or `Disabled`) of `e`: a script that is
+/// now disabled stops; one enabled again that starts in this context starts
+/// at the end of the cycle, in a deferred thread it owns (so disabling it
+/// first cancels the start, and a source that fails to load is reported
+/// like any script error, not raised at the write).
+pub(crate) fn enabled_written(lua: &Lua, e: Entity) -> Result<()> {
+    let st = state(lua)?;
+    let (kind, game, classes) = (st.kind, st.game, st.setup.classes.clone());
+    drop(st);
+    let (is_script, on, starts, name) = with_world(lua, |w| {
+        let is_script = tree::class(w, e).is_some_and(|c| classes.is_a(c, "BaseScript"));
+        let opts = lua
+            .app_data_ref::<Started>()
+            .map(|s| s.opts)
+            .unwrap_or_default();
+        (
+            is_script,
+            enabled(w, &classes, e),
+            start_side(w, &classes, game, e, opts) == Some(kind) && has_source(w, e),
+            tree::full_name(w, e),
+        )
+    })?;
+    if !is_script {
+        return Ok(());
+    }
+    let (running, pending) = lua
+        .app_data_ref::<Started>()
+        .map(|s| (s.running.contains(&e), s.pending.contains(&e)))
+        .unwrap_or_default();
+    if !on {
+        if running || pending {
+            stop(lua, e)?;
+        }
+        return Ok(());
+    }
+    if running || pending || !starts {
+        return Ok(());
+    }
+    if let Some(mut s) = lua.app_data_mut::<Started>() {
+        s.pending.insert(e);
+    }
+    let f = lua.create_function(move |lua, ()| start(lua, e))?;
+    sched::defer_owned(lua, f, MultiValue::new(), &name, None, Some(owner_of(e)))?;
+    Ok(())
+}
+
+/// The scripts and modules of this context whose source is one of `paths`
+/// (project-relative), in tree order.
+fn sourced_from(lua: &Lua, paths: &[String]) -> Result<Vec<Entity>> {
+    let st = state(lua)?;
+    let (game, classes) = (st.game, st.setup.classes.clone());
+    drop(st);
+    with_world(lua, |w| {
+        tree::descendants(w, game)
+            .into_iter()
+            .filter(|e| {
+                w.ecs
+                    .get::<ScriptRef>(*e)
+                    .is_some_and(|r| paths.contains(&r.path))
+                    && tree::class(w, *e).is_some_and(|c| {
+                        classes.is_a(c, "BaseScript") || classes.is_a(c, "ModuleScript")
+                    })
+            })
+            .collect()
+    })
+}
+
+/// Restarts what changed on disk (ADR-0048 §3): each running script whose
+/// source is one of `paths`, and each running script that required a
+/// module whose source is, directly or through other modules. A changed
+/// module is dropped from the cache, with every module that required it,
+/// so the next `require` runs the new source. A source that does not
+/// compile changes nothing and is reported (`RE9420`); one that cannot be
+/// read (removed) is left alone.
+///
+/// Returns the scripts to restart, in tree order, and the reports. The
+/// caller restarts each with [`restart`], so one that fails does not stop
+/// the rest.
+pub(crate) fn reload(
+    lua: &Lua,
+    paths: &[String],
+) -> Result<(Vec<Entity>, Vec<re_core::Diagnostic>)> {
+    let root = state(lua)?.project_root.clone();
+    let mut good = Vec::new();
+    let mut reports = Vec::new();
+    for path in paths {
+        let Ok(text) = std::fs::read_to_string(root.join(path)) else {
+            continue;
+        };
+        let env = re_script::vm::environment(lua, LuaValue::Nil)?;
+        match super::load_chunk(lua, path, &text, env) {
+            Ok(_) => good.push(path.clone()),
+            Err(err) => reports.push(
+                re_core::Diagnostic::error(
+                    crate::codes::RELOAD_COMPILE,
+                    format!(
+                        "{path} changed but does not compile, so the running version stays: {}",
+                        compile_message(&err)
+                    ),
+                )
+                .at(re_core::Location::file(path.clone())),
+            ),
+        }
+    }
+    if good.is_empty() {
+        return Ok((Vec::new(), reports));
+    }
+    let changed = sourced_from(lua, &good)?;
+    let classes = state(lua)?.setup.classes.clone();
+    let (modules, scripts): (Vec<Entity>, Vec<Entity>) = with_world(lua, |w| {
+        changed
+            .iter()
+            .partition(|e| tree::class(w, **e).is_some_and(|c| classes.is_a(c, "ModuleScript")))
+    })?;
+    // Every module that required a changed one, round to the scripts.
+    let mut restart: std::collections::HashSet<Entity> = scripts.into_iter().collect();
+    {
+        let mut mods = lua.app_data_mut::<Modules>().expect("installed");
+        let mut todo = modules;
+        let mut seen = std::collections::HashSet::new();
+        while let Some(m) = todo.pop() {
+            if !seen.insert(m) {
+                continue;
+            }
+            mods.by_entity.remove(&m);
+            for user in mods.users.get(&m).into_iter().flatten() {
+                match user {
+                    User::Module(x) => todo.push(*x),
+                    User::Script(x) => {
+                        restart.insert(*x);
+                    }
+                }
+            }
+        }
+    }
+    let running: std::collections::HashSet<Entity> = lua
+        .app_data_ref::<Started>()
+        .map(|s| s.running.iter().chain(&s.pending).copied().collect())
+        .unwrap_or_default();
+    let st = state(lua)?;
+    let game = st.game;
+    drop(st);
+    let order = with_world(lua, |w| tree::descendants(w, game))?;
+    Ok((
+        order
+            .into_iter()
+            .filter(|e| restart.contains(e) && running.contains(e))
+            .collect(),
+        reports,
+    ))
+}
+
+/// The compiler's message of a failed load, without mlua's wrapping.
+fn compile_message(err: &mlua::Error) -> String {
+    match err {
+        mlua::Error::SyntaxError { message, .. } => message.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Stops script `e` and starts it again from the top with its current
+/// source; the instances it made stay.
+pub(crate) fn restart(lua: &Lua, e: Entity) -> Result<()> {
+    stop(lua, e)?;
+    start(lua, e)
 }
 
 // ---------------------------------------------------------------------------
@@ -269,9 +499,19 @@ enum Module {
     Failed,
 }
 
+/// What required a module: another module (while it loaded) or a script
+/// (any thread it owns).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum User {
+    Module(Entity),
+    Script(Entity),
+}
+
 #[derive(Default)]
 struct Modules {
     by_entity: HashMap<Entity, Module>,
+    /// Who required each module, for [`reload`].
+    users: HashMap<Entity, std::collections::HashSet<User>>,
     /// The modules each thread is loading, outermost first.
     stacks: HashMap<*const c_void, Vec<Entity>>,
     /// The threads waiting for a module another thread loads.
@@ -410,9 +650,17 @@ fn begin(lua: &Lua, (m, t): (LuaValue, Thread)) -> Result<(String, LuaValue)> {
     let e = module_arg(lua, &m)?;
     let me = t.to_pointer();
     forget_dead(lua);
+    let owner = sched::current_owner(lua)?;
     let refused: Option<String> = {
         let mut mods = lua.app_data_mut::<Modules>().expect("installed");
         mods.waiting.remove(&me);
+        let user = match mods.stacks.get(&me).and_then(|s| s.last()) {
+            Some(m) => Some(User::Module(*m)),
+            None => owner.and_then(Entity::try_from_bits).map(User::Script),
+        };
+        if let Some(user) = user {
+            mods.users.entry(e).or_default().insert(user);
+        }
         match mods.by_entity.get(&e) {
             Some(Module::Done(k)) => {
                 let v: LuaValue = lua.registry_value(k)?;
@@ -563,4 +811,30 @@ fn require_fn(lua: &Lua) -> Result<LuaValue> {
 /// Registers `require`.
 pub(crate) fn register(b: &mut Bindings) {
     b.global("require", std::sync::Arc::new(|lua, _| require_fn(lua)));
+    for (p, a) in accessors() {
+        b.accessor("BaseScript", p, a);
+    }
+}
+
+/// The accessors of `BaseScript`: `Disabled`, the inverse of `Enabled`.
+pub(crate) fn accessors() -> Vec<(&'static str, crate::class::Accessor)> {
+    use crate::class::access::{own_component_name, read_field, write_field};
+    let component = own_component_name("BaseScript");
+    let get_component = component.clone();
+    let not = |v: re_reflect::Value| match v {
+        re_reflect::Value::Bool(b) => Ok(re_reflect::Value::Bool(!b)),
+        other => Err(crate::error::CompatError::Runtime {
+            code: re_script::codes::BAD_ARGUMENT,
+            message: format!("Disabled is a bool, not {other:?}"),
+        }),
+    };
+    vec![(
+        "Disabled",
+        crate::class::Accessor {
+            get: std::sync::Arc::new(move |w, e| not(read_field(w, e, &get_component, "Enabled")?)),
+            set: Some(std::sync::Arc::new(move |w, e, v| {
+                write_field(w, e, &component, "Enabled", not(v)?)
+            })),
+        },
+    )]
 }
