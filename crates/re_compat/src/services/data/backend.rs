@@ -231,7 +231,8 @@ impl DataBackend for WritableBackend {
     }
 
     fn persists(&self) -> bool {
-        // A folder in memory is the host's choice to keep nothing.
+        // Only a folder on disk is known to outlast the run. A browser's data
+        // folder has no path, yet its host mirrors each write to IndexedDB.
         self.dir.path().is_some()
     }
 }
