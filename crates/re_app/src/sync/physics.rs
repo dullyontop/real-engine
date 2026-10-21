@@ -22,7 +22,9 @@ use std::sync::Arc;
 
 use glam::{Affine3A, Quat, Vec3};
 use re_core::{Diagnostic, Location};
+use re_scene::ecs::change_detection::Tick;
 use re_scene::ecs::query::{Or, With};
+use re_scene::ecs::world::WorldId;
 use re_scene::{
     BodyKind as SceneBodyKind, CharacterController, Collider, ColliderShape, Entity,
     GlobalTransform, RigidBody, Transform, Vehicle, VehicleKind as SceneVehicleKind, VehicleWheel,
@@ -53,21 +55,54 @@ pub struct HeightfieldData {
 /// (`assets/rock.glb`) or derived key (`derived:<hash>`).
 #[derive(Clone, Debug, Default)]
 pub struct ShapeLibrary {
-    meshes: HashMap<String, Arc<MeshData>>,
-    heightfields: HashMap<String, Arc<HeightfieldData>>,
+    /// Each shape with a hash of what a collider reads from it, so [`push`]
+    /// can tell an unchanged collider without copying the shape's data.
+    meshes: HashMap<String, (Arc<MeshData>, blake3::Hash)>,
+    heightfields: HashMap<String, (Arc<HeightfieldData>, blake3::Hash)>,
     generation: u64,
+}
+
+/// A hash of the mesh data a collider reads: positions and indices.
+fn mesh_content(mesh: &MeshData) -> blake3::Hash {
+    let mut h = blake3::Hasher::new();
+    h.update(&(mesh.vertices.len() as u64).to_le_bytes());
+    for v in &mesh.vertices {
+        for c in v.pos {
+            h.update(&c.to_le_bytes());
+        }
+    }
+    for i in &mesh.indices {
+        h.update(&i.to_le_bytes());
+    }
+    h.finalize()
+}
+
+/// A hash of a heightfield's data.
+fn heightfield_content(data: &HeightfieldData) -> blake3::Hash {
+    let mut h = blake3::Hasher::new();
+    h.update(&data.n.to_le_bytes());
+    h.update(&data.spacing.to_le_bytes());
+    for c in data.offset.to_array() {
+        h.update(&c.to_le_bytes());
+    }
+    for v in &data.samples {
+        h.update(&v.to_le_bytes());
+    }
+    h.finalize()
 }
 
 impl ShapeLibrary {
     /// Adds or replaces a mesh.
     pub fn insert_mesh(&mut self, source: impl Into<String>, mesh: Arc<MeshData>) {
-        self.meshes.insert(source.into(), mesh);
+        let content = mesh_content(&mesh);
+        self.meshes.insert(source.into(), (mesh, content));
         self.generation += 1;
     }
 
     /// Adds or replaces a heightfield.
     pub fn insert_heightfield(&mut self, source: impl Into<String>, data: Arc<HeightfieldData>) {
-        self.heightfields.insert(source.into(), data);
+        let content = heightfield_content(&data);
+        self.heightfields.insert(source.into(), (data, content));
         self.generation += 1;
     }
 
@@ -90,12 +125,12 @@ impl ShapeLibrary {
 
     /// The mesh named `source`.
     pub fn mesh(&self, source: &str) -> Option<&Arc<MeshData>> {
-        self.meshes.get(source)
+        self.meshes.get(source).map(|(m, _)| m)
     }
 
     /// The heightfield named `source`.
     pub fn heightfield(&self, source: &str) -> Option<&Arc<HeightfieldData>> {
-        self.heightfields.get(source)
+        self.heightfields.get(source).map(|(h, _)| h)
     }
 
     /// The number of meshes plus heightfields.
@@ -132,6 +167,10 @@ struct Link {
     /// World pose before and after the last step, for interpolation.
     prev: (Vec3, Quat),
     cur: (Vec3, Quat),
+    /// The entity had a `RigidBody` (its removal changes no other component).
+    rigid_body: bool,
+    /// The shape comes from the [`ShapeLibrary`].
+    library: bool,
 }
 
 /// A vehicle on a linked body.
@@ -164,6 +203,9 @@ pub struct PhysicsSync {
     /// collider is reported once, not every step.
     reported: BTreeSet<(EntityId, [u8; 32])>,
     shapes_generation: u64,
+    /// The world and change tick of the last [`push`]: a static body none of
+    /// whose components changed since is not looked at again.
+    last_push: Option<(WorldId, Tick)>,
 }
 
 impl PhysicsSync {
@@ -351,6 +393,59 @@ fn shape_of(
     })
 }
 
+/// What identifies a library-backed shape (convex, mesh, heightfield) without
+/// its data: the kind, the content hash of its source and the scale.
+#[derive(Clone, Copy, Debug)]
+struct LibraryShape {
+    kind: u8,
+    content: blake3::Hash,
+    scale: Vec3,
+}
+
+/// The library shape a collider names, or `None` for a primitive shape.
+fn library_shape(
+    c: &Collider,
+    scale: Vec3,
+    shapes: &ShapeLibrary,
+    id: &str,
+) -> Result<Option<LibraryShape>, Diagnostic> {
+    let (kind, content) = match c.shape {
+        ColliderShape::Box | ColliderShape::Sphere | ColliderShape::Capsule => return Ok(None),
+        ColliderShape::Convex => (
+            0,
+            shapes
+                .meshes
+                .get(&c.source)
+                .ok_or_else(|| missing_source(id, &c.source, "convex"))?
+                .1,
+        ),
+        ColliderShape::Mesh => (
+            1,
+            shapes
+                .meshes
+                .get(&c.source)
+                .ok_or_else(|| missing_source(id, &c.source, "mesh"))?
+                .1,
+        ),
+        ColliderShape::Heightfield => (
+            2,
+            shapes
+                .heightfields
+                .get(&c.source)
+                .ok_or_else(|| missing_source(id, &c.source, "heightfield"))?
+                .1,
+        ),
+    };
+    Ok(Some(LibraryShape {
+        kind,
+        content,
+        scale: scale.abs(),
+    }))
+}
+
+/// Stands in for a library shape in a [`Wanted`] body until the body is added.
+const PENDING_SHAPE: ShapeDesc = ShapeDesc::Sphere { radius: 0.0 };
+
 fn body_kind(rb: Option<&RigidBody>) -> BodyKind {
     match rb.map(|r| r.kind) {
         None | Some(SceneBodyKind::Static) => BodyKind::Static,
@@ -360,31 +455,69 @@ fn body_kind(rb: Option<&RigidBody>) -> BodyKind {
 }
 
 enum Wanted {
-    Body(BodyDesc),
+    /// A body. A library shape is left as [`PENDING_SHAPE`] and named by the
+    /// second field; [`Wanted::complete`] fills it in when the body is added.
+    Body(BodyDesc, Option<LibraryShape>),
     Character(CharacterDesc),
 }
 
 impl Wanted {
     fn kind(&self) -> LinkKind {
         match self {
-            Wanted::Body(d) => LinkKind::Body(d.kind),
+            Wanted::Body(d, _) => LinkKind::Body(d.kind),
             Wanted::Character(_) => LinkKind::Character,
         }
     }
 }
 
-/// The fingerprint of a description, ignoring its pose.
+impl Wanted {
+    /// Builds a library shape's data into the description: done only when a
+    /// body is added or replaced, not on every push.
+    fn complete(
+        self,
+        world: &World,
+        entity: Entity,
+        shapes: &ShapeLibrary,
+    ) -> Result<Wanted, Diagnostic> {
+        match self {
+            Wanted::Body(mut desc, Some(lib)) => {
+                let id = world.id_of(entity).unwrap_or("?");
+                let c = world
+                    .ecs
+                    .get::<Collider>(entity)
+                    .expect("a library shape comes from a collider");
+                desc.shape = shape_of(c, lib.scale, shapes, id)?;
+                Ok(Wanted::Body(desc, None))
+            }
+            other => Ok(other),
+        }
+    }
+}
+
+/// The fingerprint of a description, ignoring its pose. A library shape
+/// counts by its content hash and scale, so its data is neither copied nor
+/// hashed on each push.
 fn fingerprint(w: &Wanted) -> blake3::Hash {
-    let text = match w {
-        Wanted::Body(d) => {
+    let mut h = blake3::Hasher::new();
+    match w {
+        Wanted::Body(d, lib) => {
             let mut d = d.clone();
             d.pos = Vec3::ZERO;
             d.rot = Quat::IDENTITY;
-            serde_json::to_string(&d)
+            let _ = serde_json::to_writer(&mut h, &d);
+            if let Some(lib) = lib {
+                h.update(&[lib.kind]);
+                h.update(lib.content.as_bytes());
+                for c in lib.scale.to_array() {
+                    h.update(&c.to_le_bytes());
+                }
+            }
         }
-        Wanted::Character(d) => serde_json::to_string(d),
-    };
-    blake3::hash(text.unwrap_or_default().as_bytes())
+        Wanted::Character(d) => {
+            let _ = serde_json::to_writer(&mut h, d);
+        }
+    }
+    h.finalize()
 }
 
 fn wanted(
@@ -416,26 +549,34 @@ fn wanted(
     let rb = world.ecs.get::<RigidBody>(entity);
     let defaults = RigidBody::default();
     let r = rb.unwrap_or(&defaults);
-    Ok(Some(Wanted::Body(BodyDesc {
-        kind: body_kind(rb),
-        shape: shape_of(c, scale, shapes, id)?,
-        pos,
-        rot,
-        mass: r.mass,
-        friction: r.friction,
-        restitution: r.restitution,
-        linear_damping: r.linear_damping,
-        angular_damping: r.angular_damping,
-        center_of_mass_offset: r.center_of_mass_offset * scale,
-        layer: layer_of(c.layer, id, "Collider")?,
-        groups: groups_of(c.groups, id, "Collider")?,
-        sensor: c.sensor,
-    })))
+    let lib = library_shape(c, scale, shapes, id)?;
+    let shape = match lib {
+        Some(_) => PENDING_SHAPE,
+        None => shape_of(c, scale, shapes, id)?,
+    };
+    Ok(Some(Wanted::Body(
+        BodyDesc {
+            kind: body_kind(rb),
+            shape,
+            pos,
+            rot,
+            mass: r.mass,
+            friction: r.friction,
+            restitution: r.restitution,
+            linear_damping: r.linear_damping,
+            angular_damping: r.angular_damping,
+            center_of_mass_offset: r.center_of_mass_offset * scale,
+            layer: layer_of(c.layer, id, "Collider")?,
+            groups: groups_of(c.groups, id, "Collider")?,
+            sensor: c.sensor,
+        },
+        lib,
+    )))
 }
 
 fn add_cmd(id: EntityId, w: Wanted, pos: Vec3, rot: Quat) -> PhysicsCmd {
     match w {
-        Wanted::Body(desc) => PhysicsCmd::AddBody { id, desc },
+        Wanted::Body(desc, _) => PhysicsCmd::AddBody { id, desc },
         Wanted::Character(desc) => PhysicsCmd::AddCharacter { id, desc, pos, rot },
     }
 }
@@ -473,22 +614,38 @@ pub fn push(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     // A shape library change may fix a missing source: report again if still broken.
-    if sync.shapes_generation != shapes.generation {
+    let shapes_changed = sync.shapes_generation != shapes.generation;
+    if shapes_changed {
         sync.shapes_generation = shapes.generation;
         sync.reported.clear();
     }
+    // Changes since the last push in this world (a copied sync state in a
+    // forked world looks at everything once).
+    let now = world.ecs.change_tick();
+    let since = sync
+        .last_push
+        .filter(|(w, _)| *w == world.ecs.id())
+        .map(|(_, t)| t);
     let mut candidates: Vec<Entity> = world
         .ecs
         .query_filtered::<Entity, Or<(With<CharacterController>, With<Collider>)>>()
         .iter(&world.ecs)
         .collect();
     candidates.sort_by_key(|e| e.to_bits());
-    let world = &*world;
+    let world_mut = world;
+    let world = &*world_mut;
 
     let mut seen: BTreeSet<EntityId> = BTreeSet::new();
     let mut added: BTreeSet<EntityId> = BTreeSet::new();
     for entity in candidates {
         let id = entity_id(entity);
+        if let Some(since) = since
+            && let Some(link) = sync.links.get(&id)
+            && unchanged_static(world, entity, link, since, now, shapes_changed)
+        {
+            seen.insert(id);
+            continue;
+        }
         let mut world_pose = decompose(&world_affine(world, entity));
         // A vehicle chassis takes its scale from the Transforms: the scale of the
         // rotated world matrix rounds differently as the chassis turns, which
@@ -513,6 +670,8 @@ pub fn push(
         let Some(w) = wanted else {
             continue;
         };
+        let library = matches!(w, Wanted::Body(_, Some(_)));
+        let rigid_body = world.ecs.get::<RigidBody>(entity).is_some();
         seen.insert(id);
         let (pos, rot, _) = world_pose;
         let fp = fingerprint(&w);
@@ -538,6 +697,18 @@ pub fn push(
                 }
             }
             existing => {
+                // Only now is a library shape's data copied into the body.
+                let w = match w.complete(world, entity, shapes) {
+                    Ok(w) => w,
+                    Err(d) => {
+                        let key = (id, *blake3::hash(d.message.as_bytes()).as_bytes());
+                        if sync.reported.insert(key) {
+                            diagnostics.push(d);
+                        }
+                        seen.remove(&id);
+                        continue;
+                    }
+                };
                 if let Some(old) = existing {
                     cmds.push(remove_cmd(id, old.kind));
                 }
@@ -554,6 +725,8 @@ pub fn push(
                         parent,
                         prev: (pos, rot),
                         cur: (pos, rot),
+                        rigid_body,
+                        library,
                     },
                 );
             }
@@ -571,6 +744,40 @@ pub fn push(
         }
     }
     push_vehicles(world, sync, &added, cmds);
+    // Changes from here on carry a later tick than the one recorded.
+    sync.last_push = Some((world.ecs.id(), now));
+    world_mut.ecs.increment_change_tick();
+}
+
+/// True when `entity` is a static body whose `Transform`, `Collider` and
+/// `RigidBody` have not changed since `since`, under a parent that has not
+/// moved: [`push`] would find its fingerprint and pose as they were.
+fn unchanged_static(
+    world: &World,
+    entity: Entity,
+    link: &Link,
+    since: Tick,
+    now: Tick,
+    shapes_changed: bool,
+) -> bool {
+    if link.entity != entity
+        || link.kind != LinkKind::Body(BodyKind::Static)
+        || (shapes_changed && link.library)
+    {
+        return false;
+    }
+    let Ok(e) = world.ecs.get_entity(entity) else {
+        return false;
+    };
+    let changed = |ticks: Option<re_scene::ecs::change_detection::ComponentTicks>| {
+        ticks.is_some_and(|t| t.is_changed(since, now))
+    };
+    e.contains::<RigidBody>() == link.rigid_body
+        && !e.contains::<CharacterController>()
+        && !changed(e.get_change_ticks::<Collider>())
+        && !changed(e.get_change_ticks::<RigidBody>())
+        && !changed(e.get_change_ticks::<Transform>())
+        && parent_affine(world, entity) == link.parent
 }
 
 fn vehicle_kind(kind: SceneVehicleKind) -> VehicleKind {
@@ -791,5 +998,144 @@ pub fn pull_wheels(world: &mut World, sync: &mut PhysicsSync, poses: &[WheelPose
                 ..Default::default()
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(height: f32) -> Arc<HeightfieldData> {
+        Arc::new(HeightfieldData {
+            n: 3,
+            spacing: 1.0,
+            offset: Vec3::ZERO,
+            samples: vec![height; 9],
+        })
+    }
+
+    fn adds(cmds: &[PhysicsCmd]) -> usize {
+        cmds.iter()
+            .filter(|c| matches!(c, PhysicsCmd::AddBody { .. }))
+            .count()
+    }
+
+    /// An unchanged heightfield is not rebuilt on each push; new data, an
+    /// equal copy and a new scale behave as they did when its samples were
+    /// fingerprinted.
+    #[test]
+    fn heightfields_are_fingerprinted_by_content_and_scale() {
+        let mut world = World::new();
+        let mut shapes = ShapeLibrary::default();
+        shapes.insert_heightfield("derived:t", field(1.0));
+        let e = world
+            .ecs
+            .spawn((
+                Transform::default(),
+                Collider {
+                    shape: ColliderShape::Heightfield,
+                    source: "derived:t".into(),
+                    ..Collider::default()
+                },
+            ))
+            .id();
+        let mut sync = PhysicsSync::new();
+        let mut diagnostics = Vec::new();
+        let mut push_once = |world: &mut World, shapes: &ShapeLibrary| {
+            let mut cmds = Vec::new();
+            push(world, &mut sync, shapes, &mut cmds, &mut diagnostics);
+            cmds
+        };
+        let first = push_once(&mut world, &shapes);
+        assert_eq!(adds(&first), 1);
+        let PhysicsCmd::AddBody { desc, .. } = &first[0] else {
+            panic!("{first:?}");
+        };
+        assert!(
+            matches!(&desc.shape, ShapeDesc::Heightfield { samples, .. } if samples == &vec![1.0; 9]),
+            "{desc:?}"
+        );
+        assert!(push_once(&mut world, &shapes).is_empty());
+        // An equal copy under the same name changes nothing.
+        shapes.insert_heightfield("derived:t", field(1.0));
+        assert!(push_once(&mut world, &shapes).is_empty());
+        // New data replaces the body.
+        shapes.insert_heightfield("derived:t", field(2.0));
+        assert_eq!(adds(&push_once(&mut world, &shapes)), 1);
+        // So does a new scale.
+        world.ecs.get_mut::<Transform>(e).unwrap().scale = Vec3::new(1.0, 2.0, 1.0);
+        let scaled = push_once(&mut world, &shapes);
+        assert_eq!(adds(&scaled), 1);
+        let Some(PhysicsCmd::AddBody { desc, .. }) = scaled
+            .iter()
+            .find(|c| matches!(c, PhysicsCmd::AddBody { .. }))
+        else {
+            panic!("{scaled:?}");
+        };
+        assert!(
+            matches!(&desc.shape, ShapeDesc::Heightfield { samples, .. } if samples == &vec![4.0; 9]),
+            "{desc:?}"
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+}
+
+#[cfg(test)]
+mod skip_tests {
+    use super::*;
+
+    fn replaced(cmds: &[PhysicsCmd]) -> bool {
+        cmds.iter().any(|c| matches!(c, PhysicsCmd::AddBody { .. }))
+    }
+
+    /// A static body is skipped while nothing about it changes, and every
+    /// kind of change is still seen.
+    #[test]
+    fn unchanged_static_bodies_are_skipped_and_changes_still_seen() {
+        let mut world = World::new();
+        let shapes = ShapeLibrary::default();
+        let e = world
+            .ecs
+            .spawn((Transform::default(), Collider::default()))
+            .id();
+        let mut sync = PhysicsSync::new();
+        let mut diagnostics = Vec::new();
+        let mut push_once = |world: &mut World| {
+            let mut cmds = Vec::new();
+            push(world, &mut sync, &shapes, &mut cmds, &mut diagnostics);
+            cmds
+        };
+        assert!(replaced(&push_once(&mut world)));
+        assert!(push_once(&mut world).is_empty());
+        assert!(push_once(&mut world).is_empty());
+        // A collider edit.
+        world.ecs.get_mut::<Collider>(e).unwrap().half_extents = Vec3::ONE;
+        assert!(replaced(&push_once(&mut world)));
+        assert!(push_once(&mut world).is_empty());
+        // A move is a teleport.
+        world.ecs.get_mut::<Transform>(e).unwrap().translation = Vec3::X;
+        let moved = push_once(&mut world);
+        assert!(
+            matches!(moved.as_slice(), [PhysicsCmd::SetTransform { .. }]),
+            "{moved:?}"
+        );
+        // A static RigidBody added, then removed: friction and the rest
+        // come and go with it.
+        world.ecs.entity_mut(e).insert(RigidBody {
+            kind: SceneBodyKind::Static,
+            friction: 0.1,
+            ..RigidBody::default()
+        });
+        assert!(replaced(&push_once(&mut world)));
+        world.ecs.entity_mut(e).remove::<RigidBody>();
+        assert!(replaced(&push_once(&mut world)));
+        assert!(push_once(&mut world).is_empty());
+        // Disabled: the body goes.
+        world.ecs.get_mut::<Collider>(e).unwrap().enabled = false;
+        let gone = push_once(&mut world);
+        assert!(
+            matches!(gone.as_slice(), [PhysicsCmd::RemoveBody { .. }]),
+            "{gone:?}"
+        );
     }
 }
