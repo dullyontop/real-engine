@@ -45,6 +45,37 @@ const DATATYPES: &[&str] = &[
     "Font",
 ];
 
+/// How deep lists, maps, records and tables may nest in what is decoded, so
+/// a hostile peer cannot overflow the stack.
+pub const MAX_DEPTH: u32 = 128;
+
+thread_local! {
+    static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Decodes one nesting level, refusing past [`MAX_DEPTH`].
+fn nested<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct Level;
+    impl Drop for Level {
+        fn drop(&mut self) {
+            DEPTH.with(|c| c.set(c.get() - 1));
+        }
+    }
+    let depth = DEPTH.with(|c| {
+        c.set(c.get() + 1);
+        c.get()
+    });
+    let _level = Level;
+    if depth > MAX_DEPTH {
+        return Err(serde::de::Error::custom("nested too deep"));
+    }
+    T::deserialize(d)
+}
+
 /// An instance referred to inside a replicated value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Ref {
@@ -78,11 +109,11 @@ pub enum WireValue {
     /// [`Value::Enum`]: the variant's name number.
     Enum(u32),
     /// [`Value::List`].
-    List(Vec<WireValue>),
+    List(#[serde(deserialize_with = "nested")] Vec<WireValue>),
     /// [`Value::Map`], in key order.
-    Map(Vec<(String, WireValue)>),
+    Map(#[serde(deserialize_with = "nested")] Vec<(String, WireValue)>),
     /// [`Value::Record`]: the record type's name number and its fields.
-    Record(u32, Vec<WireValue>),
+    Record(u32, #[serde(deserialize_with = "nested")] Vec<WireValue>),
 }
 
 impl WireValue {
@@ -125,14 +156,19 @@ impl Names {
     }
 }
 
+/// How many names one side may number on a connection.
+pub const MAX_NAMES: usize = 1 << 16;
+
 /// The names the other side numbered, in order.
 #[derive(Debug, Default)]
 pub(crate) struct NameTable(Vec<String>);
 
 impl NameTable {
-    /// Adds the names a frame introduces.
+    /// Adds the names a frame introduces, up to [`MAX_NAMES`] in all; past
+    /// that the rest are dropped, and what refers to them is not understood.
     pub(crate) fn extend(&mut self, names: &[String]) {
-        self.0.extend(names.iter().cloned());
+        let room = MAX_NAMES.saturating_sub(self.0.len());
+        self.0.extend(names.iter().take(room).cloned());
     }
 
     /// The name with number `id`.
@@ -380,7 +416,7 @@ enum WireNet {
     Enum(String, String),
     /// A datatype: its name, the names its value uses, and the value.
     Data(String, Vec<String>, WireValue),
-    Table(Vec<(Option<Vec<u8>>, WireNet)>),
+    Table(#[serde(deserialize_with = "nested")] Vec<(Option<Vec<u8>>, WireNet)>),
 }
 
 fn net_to_wire(v: &NetValue) -> WireNet {
@@ -633,5 +669,24 @@ mod tests {
         let back = decode_msg(&encode_msg(&m)).unwrap();
         assert_eq!(format!("{back:?}"), format!("{m:?}"));
         assert!(decode_msg(&[0xff, 0xff]).is_none());
+    }
+
+    #[test]
+    fn deep_nesting_is_refused_not_a_stack_overflow() {
+        let empty = postcard::to_stdvec(&WireValue::List(Vec::new())).unwrap();
+        let tag = empty[0];
+        // A list holding a list holding ... 100,000 deep.
+        let deep = |n: usize| {
+            let mut b = Vec::new();
+            for _ in 0..n {
+                b.extend([tag, 1]);
+            }
+            b.extend([tag, 0]);
+            b
+        };
+        assert!(postcard::from_bytes::<WireValue>(&deep(100_000)).is_err());
+        assert!(postcard::from_bytes::<WireValue>(&deep(MAX_DEPTH as usize - 1)).is_ok());
+        // The depth count starts over after a refusal.
+        assert!(postcard::from_bytes::<WireValue>(&deep(10)).is_ok());
     }
 }

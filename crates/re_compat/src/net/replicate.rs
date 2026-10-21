@@ -253,14 +253,22 @@ impl Conn {
         }
     }
 
-    /// Applies a client's frame: its owned components ([`Op::Up`]) are
-    /// written to the instances `player` (a server `Player`) owns now;
-    /// anything else is ignored. Returns how many instances were written.
-    pub fn apply_up(&mut self, server: &mut World, player: Option<Entity>, frame: &Frame) -> usize {
+    /// Applies a client's frame: its owned [`ReplicationSet::upstream`]
+    /// components ([`Op::Up`]) are written to the instances `player` (a
+    /// server `Player`) owns now; anything else is ignored. Returns how many
+    /// instances were written.
+    pub fn apply_up(
+        &mut self,
+        server: &mut World,
+        set: &ReplicationSet,
+        player: Option<Entity>,
+        frame: &Frame,
+    ) -> usize {
         self.names_in.extend(&frame.names);
         let Some(game) = game_of(server) else {
             return 0;
         };
+        let all = set.upstream.iter().any(|n| n == UPSTREAM_ALL);
         let owned: HashSet<Entity> = match player {
             Some(p) => owned_by(server, p).into_iter().collect(),
             None => HashSet::new(),
@@ -284,6 +292,7 @@ impl Conn {
             let Some(sk) = self
                 .names_in
                 .get(*comp)
+                .filter(|n| all || set.upstream.iter().any(|u| u == n))
                 .and_then(|n| server.registry.try_key(n))
             else {
                 continue;
@@ -300,6 +309,9 @@ impl Conn {
             else {
                 continue;
             };
+            if cv.len() != server.registry.schema(sk).fields.len() {
+                continue;
+            }
             let Some(entry) = self.mirror.get_mut(&s) else {
                 continue;
             };
@@ -557,6 +569,8 @@ pub struct ServerReplica {
 struct ClientEntry {
     /// Its client entity; `None` when its parent was gone when it arrived.
     client: Option<Entity>,
+    /// Its server parent as last sent; `None` for a bound instance.
+    parent: Option<Ref>,
     id: String,
     name: String,
     /// The values last received or sent, by client component key, as the
@@ -715,6 +729,33 @@ impl Replica {
         c
     }
 
+    /// Spawns the waiting `handle` under `parent`, with its components, then
+    /// the instances that waited under it. Returns the handles spawned.
+    fn arrive(&mut self, client: &mut World, handle: u32, parent: Entity) -> Vec<u32> {
+        let mut done = Vec::new();
+        let mut todo = vec![(handle, parent)];
+        while let Some((h, p)) = todo.pop() {
+            let c = self.spawn(client, h, p);
+            self.entries.get_mut(&h).expect("present").client = Some(c);
+            self.by_client.insert(c, h);
+            for (ck, v) in self.entries[&h].comps.clone() {
+                let kinds = kinds_of(client, ck);
+                write_changes(client, c, ck, &kinds, None, &v);
+            }
+            done.push(h);
+            let mut kids: Vec<u32> = self
+                .entries
+                .iter()
+                .filter(|(_, e)| e.client.is_none() && e.parent == Some(Ref::Handle(h)))
+                .map(|(k, _)| *k)
+                .collect();
+            // Lowest handle first: in the order the server created them.
+            kids.sort_unstable_by(|a, b| b.cmp(a));
+            todo.extend(kids.into_iter().map(|k| (k, c)));
+        }
+        done
+    }
+
     /// The client half of steps 2 to 5: applies a server frame to the
     /// client world.
     pub fn apply(&mut self, client: &mut World, frame: &Frame) -> ReplicationReport {
@@ -744,6 +785,7 @@ impl Replica {
                     *handle,
                     ClientEntry {
                         client: c,
+                        parent: None,
                         id: id.clone(),
                         name,
                         comps: Vec::new(),
@@ -778,6 +820,7 @@ impl Replica {
                         *handle,
                         ClientEntry {
                             client: None,
+                            parent: Some(*parent),
                             id: id.clone(),
                             name: name.clone(),
                             comps: Vec::new(),
@@ -829,9 +872,10 @@ impl Replica {
                     }
                 }
                 Op::Parent { handle, parent } => {
-                    let Some(e) = self.entries.get(handle) else {
+                    let Some(e) = self.entries.get_mut(handle) else {
                         continue;
                     };
+                    e.parent = Some(*parent);
                     let pc = match parent {
                         Ref::Game => Some(game),
                         Ref::Handle(p) => self.entries.get(p).and_then(|e| e.client),
@@ -839,19 +883,14 @@ impl Replica {
                     let Some(pc) = alive(client, pc) else {
                         continue;
                     };
-                    match e.client {
-                        // It waited for a live parent: it arrives now.
+                    match self.entries[handle].client {
+                        // It waited for a live parent: it arrives now, with
+                        // what waited under it.
                         None => {
-                            let c = self.spawn(client, *handle, pc);
-                            self.entries.get_mut(handle).expect("present").client = Some(c);
-                            self.by_client.insert(c, *handle);
-                            report.created += 1;
-                            let comps = self.entries[handle].comps.clone();
-                            for (ck, v) in comps {
-                                let kinds = kinds_of(client, ck);
-                                write_changes(client, c, ck, &kinds, None, &v);
+                            for h in self.arrive(client, *handle, pc) {
+                                report.created += 1;
+                                mark(h);
                             }
-                            mark(*handle);
                         }
                         Some(c) => {
                             if tree::alive(client, c)
@@ -1023,7 +1062,7 @@ pub fn replicate(
         .and_then(|l| l.local_player())
         .and_then(|id| server.entity(&id).ok());
     let up = carry(rep.diff_up(client, set));
-    let upstream = conns.local.apply_up(server, player, &up);
+    let upstream = conns.local.apply_up(server, set, player, &up);
     let down = carry(conns.local.diff(server, set, player));
     server.ecs.increment_change_tick();
     let mut report = rep.apply(client, &down);
@@ -1143,8 +1182,8 @@ fn merged(kind: Merge, old: &Value, new: &Value, current: Option<&Value>) -> Val
 /// sending side into `to`'s entity `e` (key `tk`), merging maps per key and
 /// tags per tag (with no `old`, from an empty map or list, so the receiver's
 /// own keys and tags stay). Inserts the whole component when `to` lacks it.
-/// Returns true
-/// when something was written.
+/// Returns true when something was written; values that are not one per
+/// field write nothing.
 fn write_changes(
     to: &mut World,
     e: Entity,
@@ -1153,6 +1192,10 @@ fn write_changes(
     old: Option<&Vec<Value>>,
     new: &[Value],
 ) -> bool {
+    // A peer's values that do not fit the component's fields.
+    if new.len() != to.registry.schema(tk).fields.len() {
+        return false;
+    }
     let Some(current) = to.registry.get_all(&to.ecs, e, tk) else {
         return to.registry.insert(&mut to.ecs, e, tk, new.to_vec()).is_ok();
     };
