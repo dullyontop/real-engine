@@ -42,6 +42,7 @@
 #![warn(missing_docs)]
 
 pub mod codes;
+mod debugger;
 mod editor;
 pub mod gizmo;
 mod headless;

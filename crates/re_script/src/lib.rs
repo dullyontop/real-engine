@@ -24,6 +24,7 @@ pub mod api;
 mod budget;
 pub mod codes;
 mod compile;
+pub mod debug;
 pub mod diag;
 pub mod host;
 pub mod modules;
@@ -138,6 +139,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::SERVICE_UNAVAILABLE,
         title: "Engine service unavailable",
         page: include_str!("../explain/RE3015.md"),
+    },
+    DiagInfo {
+        code: debug::NOT_PAUSED,
+        title: "Breakpoint reached where the script cannot pause",
+        page: include_str!("../explain/RE3070.md"),
+    },
+    DiagInfo {
+        code: debug::DAP,
+        title: "Debugger DAP server failed",
+        page: include_str!("../explain/RE3071.md"),
     },
     DiagInfo {
         code: codes::UNSUPPORTED_MEMBER,
