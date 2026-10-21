@@ -411,6 +411,59 @@ impl Registry {
                 "deleted": { "const": true }
             }
         });
+        // Structural overrides (ADR-0043 §3).
+        let replacement_props = json!({
+            "prefab": { "type": "string", "minLength": 1 },
+            "components": { "type": "object" }
+        });
+        let one_replacement = json!([
+            { "required": ["prefab"], "not": { "required": ["components"] } },
+            { "required": ["components"], "not": { "required": ["prefab"] } }
+        ]);
+        let moved_override = json!({
+            "type": "object",
+            "required": ["target", "moved"],
+            "additionalProperties": false,
+            "properties": {
+                "target": { "type": "string" },
+                "moved": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "parent": { "type": ["string", "null"] },
+                        "index": { "type": "integer", "minimum": 0 }
+                    }
+                }
+            }
+        });
+        let mut replaced = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "oneOf": one_replacement.clone(),
+            "properties": replacement_props.clone()
+        });
+        replaced["properties"]["keep_children"] = json!({ "type": "boolean" });
+        let replaced_override = json!({
+            "type": "object",
+            "required": ["target", "replaced"],
+            "additionalProperties": false,
+            "properties": {
+                "target": { "type": "string" },
+                "replaced": replaced
+            }
+        });
+        let mut insert_props = replacement_props;
+        insert_props["insert"] = json!({ "type": "string", "pattern": "^[^/+~][^/]*$" });
+        insert_props["parent"] = json!({ "type": "string" });
+        insert_props["index"] = json!({ "type": "integer", "minimum": 0 });
+        insert_props["name"] = json!({ "type": "string" });
+        let insert_override = json!({
+            "type": "object",
+            "required": ["insert"],
+            "additionalProperties": false,
+            "oneOf": one_replacement,
+            "properties": insert_props
+        });
         let entity = json!({
             "type": "object",
             "required": ["id"],
@@ -426,7 +479,15 @@ impl Registry {
                 },
                 "overrides": {
                     "type": "array",
-                    "items": { "oneOf": [field_override, deletion_override] }
+                    "items": {
+                        "oneOf": [
+                            field_override,
+                            deletion_override,
+                            moved_override,
+                            replaced_override,
+                            insert_override
+                        ]
+                    }
                 }
             }
         });

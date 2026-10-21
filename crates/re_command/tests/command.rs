@@ -369,7 +369,7 @@ fn procedural_sources_overrides_and_regeneration() {
         .unwrap_err();
     assert_eq!(
         err.to_string(),
-        r#"command 0: "grid/pillar_0_1" is generated: change its source's generator parameters instead"#
+        r#"command 0: "grid/pillar_0_1" is generated: move it within its source's output with `proc.move`"#
     );
     assert_eq!(err.error.code().to_string(), "RE2003");
     for op in [
@@ -453,6 +453,9 @@ fn despawn_of_generated_entity_records_deletion_override() {
             value: None,
             deleted: Some(true),
             index: None,
+            moved: None,
+            replaced: None,
+            insert: None,
         }]),
     )
     .unwrap();
@@ -801,6 +804,9 @@ fn undo_restores_override_order() {
         value: None,
         deleted,
         index: None,
+        moved: None,
+        replaced: None,
+        insert: None,
     };
     h.execute(
         &mut w,
