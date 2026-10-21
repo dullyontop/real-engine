@@ -87,6 +87,7 @@ gilrs = "=0.11.2"
 web-time = "=1.1.0"
 # JavaScript bindings of the browser build (ADR-0049).
 wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "=0.4.79"
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "ansi", "json"] }
 puffin = "=0.20.0"
@@ -113,3 +114,12 @@ oxijolt-sys = { path = "third_party/oxijolt-sys" }
 
 [profile.dev]
 debug = "line-tables-only"
+
+# The browser build (ADR-0049): `cargo build --profile web --target wasm32-unknown-unknown`,
+# then wasm-opt -Oz. Smaller than release: 6.9 MB gzip against 9.1 MB for the full runtime
+# (research/m3/wp29/measurements.md §8); build-web fails above the 8 MB budget.
+[profile.web]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+opt-level = "s"

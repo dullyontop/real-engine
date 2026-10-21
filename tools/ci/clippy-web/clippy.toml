@@ -1,10 +1,11 @@
 # Clippy settings for the wasm32 pass in CI's build-web job (ADR-0049 §5), used through
-# CLIPPY_CONF_DIR. Clippy reads one file, so this is the root clippy.toml plus two clock
-# entries; `cargo xtask check` (clippy-web) fails if the copies drift.
+# CLIPPY_CONF_DIR. Clippy reads one file, so this is the root clippy.toml plus the
+# web-only entries at the end; `cargo xtask check` (clippy-web) fails if the copies drift.
 #
-# The clock entries live only here: on desktop, web-time re-exports std::time, so
-# re_core::time::Instant::now is std's and a ban there would flag every correct use.
-# Keep the list sorted by path, as in clippy.toml.
+# The web-only entries panic on wasm32-unknown-unknown. They live only here: on desktop,
+# web-time re-exports std::time, so re_core::time::Instant::now is std's and a ban there
+# would flag every correct use; std::process::id has correct desktop users.
+# The rest is clippy.toml's libm list, sorted by path as there.
 disallowed-methods = [
     { path = "f32::acos", reason = "platform libm; use libm (ADR-0036)" },
     { path = "f32::acosh", reason = "platform libm; use libm (ADR-0036)" },
@@ -58,4 +59,5 @@ disallowed-methods = [
     { path = "f64::tanh", reason = "platform libm; use libm (ADR-0036)" },
     { path = "std::time::Instant::now", reason = "panics on wasm32-unknown-unknown; use re_core::time (ADR-0049 §5)" },
     { path = "std::time::SystemTime::now", reason = "panics on wasm32-unknown-unknown; use re_core::time (ADR-0049 §5)" },
+    { path = "std::process::id", reason = "panics on wasm32-unknown-unknown; use re_core::process_id (ADR-0049 §5)" },
 ]
