@@ -156,6 +156,14 @@ pub(crate) struct Scheduler {
     pub(crate) ambient_owner: Option<Owner>,
     /// Threads parked by a yielding host call, by token.
     parked: BTreeMap<u64, Parked>,
+    /// Threads the debugger stopped at a breakpoint or step, by thread
+    /// ([`DebugParking`]).
+    debug_parked: BTreeMap<usize, Task>,
+    /// The live chunks of project files, for the debugger: entry scripts by
+    /// the run that loaded them (forgotten when it stops, [`drop_owner`]) and
+    /// modules by path (replaced when one reloads).
+    debug_chunks: BTreeMap<Owner, Vec<(String, RegistryKey)>>,
+    debug_modules: BTreeMap<String, RegistryKey>,
     next_token: u64,
     /// Park timeouts: (deadline, token).
     deadlines: BinaryHeap<Reverse<(WakeTime, u64)>>,
@@ -230,6 +238,9 @@ impl Scheduler {
             running: Vec::new(),
             ambient_owner: None,
             parked: BTreeMap::new(),
+            debug_parked: BTreeMap::new(),
+            debug_chunks: BTreeMap::new(),
+            debug_modules: BTreeMap::new(),
             next_token: 1,
             deadlines: BinaryHeap::new(),
             settle: None,
@@ -282,10 +293,12 @@ impl Scheduler {
         let before = self.sleeping.len() + self.deferred.len();
         self.sleeping.retain(|_, t| ptr(&t.thread) != p);
         self.deferred.retain(|t| ptr(&t.thread) != p);
-        let parked_before = self.parked.len();
+        let parked_before = self.parked.len() + self.debug_parked.len();
         self.parked
             .retain(|_, s| s.task.as_ref().is_none_or(|t| ptr(&t.thread) != p));
-        self.sleeping.len() + self.deferred.len() != before || self.parked.len() != parked_before
+        self.debug_parked.remove(&p);
+        self.sleeping.len() + self.deferred.len() != before
+            || self.parked.len() + self.debug_parked.len() != parked_before
     }
 }
 
@@ -356,6 +369,13 @@ fn resume(lua: &Lua, task: Task, now: f64) -> Result<()> {
         return Ok(());
     }
     match result {
+        // Stopped by the debugger: kept until it says to go on.
+        Ok(_)
+            if task.thread.status() == ThreadStatus::Resumable
+                && crate::debug::is_parked(lua, p) =>
+        {
+            sched(lua, |s| s.debug_parked.insert(p, task))?;
+        }
         Ok(yielded) if task.thread.status() == ThreadStatus::Resumable => {
             let sentinel: Table = lua.named_registry_value(WAIT_SENTINEL)?;
             let park: Table = lua.named_registry_value(PARK_SENTINEL)?;
@@ -618,7 +638,7 @@ pub(crate) fn connect(lua: &Lua, signal: Signal, f: Function) -> Result<Connecti
 /// waiting and deferred threads (a running one stops when it next yields).
 /// Returns how many callbacks and threads went.
 pub(crate) fn drop_owner(lua: &Lua, owner: Owner) -> Result<usize> {
-    let (removed, threads) = sched(lua, |s| {
+    let (removed, threads, chunks) = sched(lua, |s| {
         let ids: Vec<u64> = s
             .connections
             .iter()
@@ -632,9 +652,12 @@ pub(crate) fn drop_owner(lua: &Lua, owner: Owner) -> Result<usize> {
         let before = s.sleeping.len() + s.deferred.len();
         s.sleeping.retain(|_, t| t.owner != Some(owner));
         s.deferred.retain(|t| t.owner != Some(owner));
-        let parked_before = s.parked.len();
+        let parked_before = s.parked.len() + s.debug_parked.len();
         s.parked.retain(|_, p| p.owner != Some(owner));
-        let threads = before - s.sleeping.len() - s.deferred.len() + parked_before - s.parked.len();
+        s.debug_parked.retain(|_, t| t.owner != Some(owner));
+        let threads = before - s.sleeping.len() - s.deferred.len() + parked_before
+            - s.parked.len()
+            - s.debug_parked.len();
         let running: Vec<usize> = s
             .running
             .iter()
@@ -642,13 +665,106 @@ pub(crate) fn drop_owner(lua: &Lua, owner: Owner) -> Result<usize> {
             .map(|(p, _)| *p)
             .collect();
         s.cancelled.extend(running);
-        (removed, threads)
+        let chunks = s.debug_chunks.remove(&owner).unwrap_or_default();
+        (removed, threads, chunks)
     })?;
     let n = removed.len() + threads;
     for c in removed {
         lua.remove_registry_value(c.func)?;
     }
+    for (_, key) in chunks {
+        if let Ok(f) = lua.registry_value::<Function>(&key) {
+            crate::debug::unregister_chunk(lua, &f);
+        }
+        lua.remove_registry_value(key)?;
+    }
     Ok(n)
+}
+
+/// Registers `chunk`, loaded from the project file `path` by the run of
+/// `owner`, with the debugger attached to `lua` (if any), and forgets it when
+/// that run stops ([`drop_owner`]).
+pub(crate) fn register_owned_chunk(
+    lua: &Lua,
+    owner: Owner,
+    path: &str,
+    chunk: &Function,
+) -> Result<()> {
+    crate::debug::register_chunk(lua, path, chunk);
+    let key = lua.create_registry_value(chunk.clone())?;
+    sched(lua, |s| {
+        s.debug_chunks
+            .entry(owner)
+            .or_default()
+            .push((path.to_string(), key))
+    })
+}
+
+/// Registers the module chunk loaded from `path` with the debugger attached
+/// to `lua` (if any), in place of the module's previous chunk.
+pub(crate) fn register_module_chunk(lua: &Lua, path: &str, chunk: &Function) -> Result<()> {
+    crate::debug::register_chunk(lua, path, chunk);
+    let key = lua.create_registry_value(chunk.clone())?;
+    if let Some(old) = sched(lua, |s| s.debug_modules.insert(path.to_string(), key))? {
+        if let Ok(f) = lua.registry_value::<Function>(&old) {
+            crate::debug::unregister_chunk(lua, &f);
+        }
+        lua.remove_registry_value(old)?;
+    }
+    Ok(())
+}
+
+/// Registers every live chunk of `lua` with the debugger just attached to
+/// it: the scripts and modules loaded before it attached.
+pub(crate) fn register_live_chunks(lua: &Lua) -> Result<()> {
+    let chunks: Vec<(String, Function)> = {
+        let s = lua
+            .app_data_ref::<Scheduler>()
+            .ok_or_else(|| mlua::Error::runtime("this VM has no scheduler"))?;
+        let mut out = Vec::new();
+        for (path, key) in s.debug_chunks.values().flatten() {
+            out.push((path.clone(), lua.registry_value::<Function>(key)?));
+        }
+        for (path, key) in &s.debug_modules {
+            out.push((path.clone(), lua.registry_value::<Function>(key)?));
+        }
+        out
+    };
+    for (path, f) in chunks {
+        crate::debug::register_chunk(lua, &path, &f);
+    }
+    Ok(())
+}
+
+/// Parks the scheduler's threads that the script debugger stops (ADR-0045):
+/// the thread yields, the scheduler keeps it aside, and everything else in
+/// the context keeps running. Pass it to
+/// [`Debugger::attach`](crate::debug::Debugger::attach) for a context that
+/// runs on this scheduler.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DebugParking;
+
+impl crate::debug::Parking for DebugParking {
+    /// Only a thread the scheduler resumed itself, and is running now, can
+    /// yield back to it; a coroutine inside it stops synchronously.
+    fn can_park(&self, lua: &Lua, thread: usize) -> bool {
+        lua.app_data_ref::<Scheduler>()
+            .is_some_and(|s| s.running.last().is_some_and(|(p, _)| *p == thread))
+    }
+
+    /// The thread goes on at the end of the current resumption cycle, with
+    /// the deferred threads (or in the next phase when none runs now), so it
+    /// runs with the host bound like any other.
+    fn resume(&self, lua: &Lua, thread: usize) {
+        let _ = sched(lua, |s| {
+            if let Some(task) = s.debug_parked.remove(&thread) {
+                s.deferred.push_back(Task {
+                    args: Some(MultiValue::new()),
+                    ..task
+                });
+            }
+        });
+    }
 }
 
 /// The project path of the nearest calling script (`scripts/...`), if any.

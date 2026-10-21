@@ -206,11 +206,14 @@ impl Require for ProjectRequirer {
         })?;
         self.loaded.borrow_mut().insert(key.clone());
         let env = crate::vm::new_env(lua, &key, self.kind, None)?;
-        lua.load(source)
+        let chunk = lua
+            .load(source)
             .set_name(format!("@{key}"))
             .set_compiler(crate::compile::compiler())
             .set_environment(env)
-            .into_function()
+            .into_function()?;
+        crate::scheduler::register_module_chunk(lua, &key, &chunk)?;
+        Ok(chunk)
     }
 }
 
@@ -238,6 +241,7 @@ pub(crate) fn reload_module(lua: &Lua, key: &str, source: &[u8], env: Table) -> 
     let cache: Table = lua.named_registry_value(LOADER_CACHE)?;
     let old: Value = cache.raw_get(key)?;
     let fresh: Value = crate::scheduler::call_budgeted(lua, || chunk.call(old.clone()))?;
+    crate::scheduler::register_module_chunk(lua, key, &chunk)?;
     // mlua stores `true` for a module that returns nothing.
     let fresh = if fresh.is_nil() {
         Value::Boolean(true)

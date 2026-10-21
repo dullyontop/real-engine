@@ -52,6 +52,7 @@ pub use diag::{ErrorKind, ScriptError};
 pub use host::{CommandHost, NoServices, ScriptHost, WorldHost};
 pub use modules::Reload;
 pub use runtime::{Context, ReloadReport, RuntimeConfig, ScriptRuntime};
+pub use scheduler::DebugParking;
 pub use vm::{ContextKind, OutputLine};
 
 /// An mlua integer as an `i64`.
