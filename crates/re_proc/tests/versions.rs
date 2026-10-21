@@ -563,6 +563,49 @@ fn a_migration_reads_the_file_not_an_unsaved_open_graph() {
 }
 
 #[test]
+fn a_migration_refuses_an_open_graph_with_unsaved_edits() {
+    let (dir, mut st) = migration_world(1, json!({}));
+    let path = "graphs/s.graph.json";
+    let text = std::fs::read_to_string(dir.path().join(path)).unwrap();
+    st.world
+        .open_doc(path, serde_json::from_str(&text).unwrap())
+        .unwrap();
+    // A clean open document matches its file: nothing to say.
+    let report = re_proc::migrate::migration_report(&st.world, Some(dir.path()));
+    assert!(report.ok);
+    assert!(report.sources[0].diagnostics.is_empty());
+
+    let mut h = re_command::History::default();
+    let edit = re_command::Transaction::new(
+        "edit",
+        re_command::Origin::User,
+        vec![re_command::Op::SetDoc {
+            doc: path.into(),
+            pointer: "/nodes/1/params/factor".into(),
+            value: Some(json!(9.0)),
+        }],
+    );
+    h.execute(&mut st.world, edit).unwrap();
+    let report = re_proc::migrate::migration_report(&st.world, Some(dir.path()));
+    assert!(
+        !report.ok,
+        "a rewrite would be overwritten by the next save"
+    );
+    let d = &report.sources[0].diagnostics[0];
+    assert_eq!(d.code.to_string(), "RE4022");
+    assert_eq!(d.severity, re_core::Severity::Error);
+    assert!(
+        re_proc::migrate::write_files(&report, dir.path())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(path)).unwrap(),
+        text
+    );
+}
+
+#[test]
 fn a_failed_migration_writes_nothing() {
     let (dir, st) = migration_world(1, json!({}));
     let bad = scale_graph(1, json!({ "factor": "two" }));

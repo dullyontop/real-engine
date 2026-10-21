@@ -4,6 +4,15 @@
 //! applied are undone and a `rejected` entry is logged. [`History`] keeps the
 //! undo and redo stacks and the log of JSON lines that records the origin of
 //! every transaction.
+//!
+//! A transaction with `set_doc` operations is also checked as a whole: every
+//! open document it edited must pass its kind's validator once all its
+//! operations ran (ADR-0044), or it is rolled back like any failing
+//! operation; undo and redo are checked the same way. Each history entry
+//! remembers the [epoch](re_scene::OpenDoc::epoch) of every document it
+//! edited: once a document is reopened (or closed), undo and redo refuse the
+//! entries recorded against it and drop them, instead of applying JSON
+//! pointers to a different document.
 
 use re_scene::{IdGen, World};
 use serde::{Deserialize, Serialize};
@@ -84,6 +93,23 @@ struct Applied {
     origin: Origin,
     forward: Vec<Op>,
     inverse: Vec<Op>,
+    /// The open documents the operations edit, with the epoch they had.
+    docs: Vec<(String, u64)>,
+}
+
+/// The open documents `ops` edit, each once, with their current epoch.
+fn doc_epochs(world: &World, ops: &[Op]) -> Vec<(String, u64)> {
+    let mut out: Vec<(String, u64)> = Vec::new();
+    for op in ops {
+        if let Op::SetDoc { doc, .. } = op {
+            let doc = re_scene::doc_path(doc).unwrap_or_else(|_| doc.clone());
+            if !out.iter().any(|(d, _)| *d == doc) {
+                let epoch = world.doc_epoch(&doc).unwrap_or(0);
+                out.push((doc, epoch));
+            }
+        }
+    }
+    out
 }
 
 /// Undo and redo stacks plus the append-only transaction log.
@@ -106,6 +132,7 @@ impl History {
                 self.undo.push(Applied {
                     label: tx.label,
                     origin: tx.origin,
+                    docs: doc_epochs(world, &forward),
                     forward: forward.clone(),
                     inverse,
                 });
@@ -129,7 +156,8 @@ impl History {
     /// they would be applied. The undo and redo stacks, the log and the id
     /// generator are left unchanged, and so is the world's
     /// [`state_hash`](World::state_hash) (overrides keep their order and
-    /// procedural sources keep their generation state).
+    /// procedural sources keep their generation state), and so are open
+    /// documents, with their revisions and dirty flags.
     ///
     /// The run happens on the world itself, so `Entity` handles do not all
     /// survive: a dry run of a `despawn` re-creates the despawned subtree
@@ -139,6 +167,7 @@ impl History {
     /// look it up again by stable id.
     pub fn dry_run(world: &mut World, tx: &Transaction) -> Result<Vec<Op>, TxError> {
         let ids = world.ecs.get_resource::<IdGen>().cloned();
+        let marks = edits_docs(&tx.ops).then(|| world.doc_marks());
         let result = apply_all(world, &tx.ops).and_then(|(forward, inverse)| {
             rollback(world, std::slice::from_ref(&inverse), 0)?;
             Ok(forward)
@@ -146,14 +175,42 @@ impl History {
         if let Some(ids) = ids {
             world.ecs.insert_resource(ids);
         }
+        if let Some(marks) = marks {
+            world.restore_doc_marks(&marks);
+        }
         result
     }
 
-    /// Undoes the last transaction. Returns `Ok(false)` when there is nothing to undo.
+    /// A document `applied` edited that was reopened or closed since:
+    /// every entry that edited it is dropped from both stacks, and the
+    /// refusal is returned.
+    fn check_docs_still_open(&mut self, world: &World, applied: &Applied) -> Result<(), TxError> {
+        let Some((doc, _)) = applied
+            .docs
+            .iter()
+            .find(|(doc, epoch)| world.doc_epoch(doc) != Some(*epoch))
+        else {
+            return Ok(());
+        };
+        let doc = doc.clone();
+        let edits = |a: &Applied| a.docs.iter().any(|(d, _)| *d == doc);
+        self.undo.retain(|a| !edits(a));
+        self.redo.retain(|a| !edits(a));
+        Err(TxError {
+            index: 0,
+            error: OpError::StaleDocument { doc },
+        })
+    }
+
+    /// Undoes the last transaction. Returns `Ok(false)` when there is nothing
+    /// to undo. When a document the transaction edited was reopened or
+    /// closed since, nothing is applied: every entry that edited that
+    /// document is dropped and the error says so.
     pub fn undo(&mut self, world: &mut World) -> Result<bool, TxError> {
         let Some(applied) = self.undo.pop() else {
             return Ok(false);
         };
+        self.check_docs_still_open(world, &applied)?;
         match apply_all(world, &applied.inverse) {
             Ok(_) => {
                 self.record(
@@ -173,11 +230,14 @@ impl History {
         }
     }
 
-    /// Redoes the last undone transaction. Returns `Ok(false)` when there is nothing to redo.
+    /// Redoes the last undone transaction. Returns `Ok(false)` when there is
+    /// nothing to redo. Refused, like [`undo`](History::undo), when a
+    /// document it edited was reopened or closed since.
     pub fn redo(&mut self, world: &mut World) -> Result<bool, TxError> {
         let Some(applied) = self.redo.pop() else {
             return Ok(false);
         };
+        self.check_docs_still_open(world, &applied)?;
         match apply_all(world, &applied.forward) {
             Ok((forward, inverse)) => {
                 self.record(
@@ -190,6 +250,7 @@ impl History {
                 self.undo.push(Applied {
                     label: applied.label,
                     origin: applied.origin,
+                    docs: applied.docs,
                     forward,
                     inverse,
                 });
@@ -271,11 +332,43 @@ impl History {
     }
 }
 
+/// True if any of `ops` edits an open document.
+fn edits_docs(ops: &[Op]) -> bool {
+    ops.iter().any(|o| matches!(o, Op::SetDoc { .. }))
+}
+
+/// Checks every open document `ops` edited with its kind's validator. The
+/// error names the last operation that edited a document that does not
+/// validate (documents in the order of their last edit).
+fn check_docs(world: &World, ops: &[Op]) -> Result<(), TxError> {
+    let mut last: Vec<(String, usize)> = Vec::new();
+    for (index, op) in ops.iter().enumerate() {
+        if let Op::SetDoc { doc, .. } = op {
+            let doc = re_scene::doc_path(doc).unwrap_or_else(|_| doc.clone());
+            last.retain(|(d, _)| *d != doc);
+            last.push((doc, index));
+        }
+    }
+    for (doc, index) in last {
+        if let Some(Err(message)) = world.validate_doc(&doc) {
+            return Err(TxError {
+                index,
+                error: OpError::InvalidDocument { doc, message },
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Applies operations in order, returning (forward as applied, inverse in
-/// undo order). Rolls back on error.
+/// undo order). Rolls back on error, and when an edited open document does
+/// not validate afterwards. A rolled-back transaction leaves open
+/// documents' revisions and dirty flags as they were.
 fn apply_all(world: &mut World, ops: &[Op]) -> Result<(Vec<Op>, Vec<Op>), TxError> {
+    let marks = edits_docs(ops).then(|| world.doc_marks());
     let mut forward = Vec::with_capacity(ops.len());
     let mut inverse: Vec<Vec<Op>> = Vec::with_capacity(ops.len());
+    let mut failure = None;
     for (index, op) in ops.iter().enumerate() {
         match apply(world, op) {
             Ok((fwd, inv)) => {
@@ -283,11 +376,22 @@ fn apply_all(world: &mut World, ops: &[Op]) -> Result<(Vec<Op>, Vec<Op>), TxErro
                 inverse.push(inv);
             }
             Err(error) => {
-                inverse.reverse();
-                rollback(world, &inverse, index)?;
-                return Err(TxError { index, error });
+                failure = Some(TxError { index, error });
+                break;
             }
         }
+    }
+    if failure.is_none() && marks.is_some() {
+        failure = check_docs(world, ops).err();
+    }
+    if let Some(err) = failure {
+        inverse.reverse();
+        let rolled_back = rollback(world, &inverse, err.index);
+        if let Some(marks) = &marks {
+            world.restore_doc_marks(marks);
+        }
+        rolled_back?;
+        return Err(err);
     }
     let inverse = inverse.into_iter().rev().flatten().collect();
     Ok((forward, inverse))

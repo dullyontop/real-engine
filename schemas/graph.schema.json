@@ -36,6 +36,19 @@
       "items": {
         "$ref": "#/$defs/EdgeDoc"
       }
+    },
+    "layout": {
+      "description": "Where the editor's node canvas draws each node, `[x, y]` by node id\n(ADR-0044). Only nodes that were moved have an entry. Layout is not\npart of a node: generation, node cache keys, the document hash and the\nversion stamp all ignore it. Omitted when empty.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "number",
+          "format": "float"
+        },
+        "minItems": 2,
+        "maxItems": 2
+      }
     }
   },
   "additionalProperties": false,
