@@ -103,7 +103,7 @@ fn main() -> ExitCode {
     let opts = EvalOptions {
         seed: args.seed,
         root: Some(root),
-        deadline: None,
+        ..Default::default()
     };
     let world = re_scene::World::new();
     let runs = if args.twice { 2 } else { 1 };

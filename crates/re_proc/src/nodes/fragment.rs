@@ -118,6 +118,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "fragment.merge",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "Gathers fragments and meshes (inputs on any port names, in natural name order) into one fragment, optionally under a group entity.",
             inputs: &[],
             variadic: Some(&[PortType::Fragment, PortType::Mesh]),

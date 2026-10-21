@@ -1,5 +1,5 @@
-//! Render sync (ADR-0006): `GlobalTransform`, `MeshRef`, `MaterialRef`,
-//! `Visible`, `Camera` and `Light` become a [`RenderSnapshot`].
+//! Render sync (ADR-0006): `GlobalTransform`, `MeshRef`, `SkinnedMesh`,
+//! `MaterialRef`, `Visible`, `Camera` and `Light` become a [`RenderSnapshot`].
 //!
 //! Mesh and material asset strings are resolved to renderer handles through
 //! [`RenderAssets`]; an entity whose mesh is not uploaded (yet) is not drawn.
@@ -12,12 +12,14 @@ use glam::{Affine3A, Mat4, Vec3};
 use re_scene::ecs::entity::Entity;
 use re_scene::{
     Camera as CameraC, GlobalTransform, Light as LightC, LightKind as LightKindC, MaterialRef,
-    MeshRef, Visible, World, entity_id,
+    MeshRef, SkinnedMesh, Visible, World, entity_id,
 };
 use re_types::{
     Camera, DrawFlags, DrawItem, Light, LightKind, MaterialHandle, MeshHandle, RenderSnapshot,
+    SkinnedDrawItem,
 };
 
+use super::anim_skin::SkinSync;
 use super::physics::PhysicsSync;
 
 /// Renderer handles for the asset strings scenes use (`MeshRef.asset`,
@@ -97,6 +99,8 @@ pub struct RenderInputs<'a> {
     pub assets: &'a RenderAssets,
     /// Physics poses, for interpolation.
     pub physics: &'a PhysicsSync,
+    /// Skeleton palettes of skinned meshes.
+    pub skins: &'a SkinSync,
     /// Interpolation factor between the last two physics steps (0 to 1).
     pub alpha: f32,
     /// The clear colour.
@@ -125,6 +129,21 @@ pub fn referenced_assets(world: &mut World) -> (Vec<String>, Vec<String>) {
     materials.sort();
     materials.dedup();
     (meshes, materials)
+}
+
+/// `SkinnedMesh` assets referenced by the world, so the app can upload what is
+/// missing (with `Renderer::upload_skinned_mesh`, under the same asset string).
+pub fn referenced_skins(world: &mut World) -> Vec<String> {
+    let mut skins: Vec<String> = world
+        .ecs
+        .query::<&SkinnedMesh>()
+        .iter(&world.ecs)
+        .map(|m| m.asset.clone())
+        .filter(|a| !a.is_empty())
+        .collect();
+    skins.sort();
+    skins.dedup();
+    skins
 }
 
 fn global(world: &World, inputs: &RenderInputs<'_>, entity: Entity) -> Affine3A {
@@ -159,6 +178,8 @@ fn looking_at(eye: Vec3, target: Vec3) -> Mat4 {
 ///
 /// - Items: every entity with a `MeshRef` whose mesh has a handle, unless
 ///   `Visible.visible` is false; sorted by entity for a stable order.
+/// - Skinned items: likewise for `SkinnedMesh`, once its mesh is uploaded and
+///   its skeleton posed, each with its run of the joint palette.
 /// - Camera: the first active `Camera` in entity order; without one, a camera
 ///   at (0, 10, 20) looking at the origin.
 /// - Lights: every `Light`, in entity order. A directional light shines along
@@ -191,6 +212,49 @@ pub fn build(world: &mut World, inputs: &RenderInputs<'_>) -> RenderSnapshot {
             world: Mat4::from(global(world, inputs, entity)),
             flags: DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS,
         });
+    }
+
+    let mut skinned = Vec::new();
+    let mut joint_palette = Vec::new();
+    let mut posed: Vec<(Entity, String, Option<String>)> = world
+        .ecs
+        .query::<(Entity, &SkinnedMesh, Option<&MaterialRef>, Option<&Visible>)>()
+        .iter(&world.ecs)
+        .filter(|(_, m, _, v)| !m.asset.is_empty() && v.is_none_or(|v| v.visible))
+        .map(|(e, m, mat, _)| (e, m.asset.clone(), mat.map(|m| m.asset.clone())))
+        .collect();
+    posed.sort_by_key(|(e, _, _)| e.to_bits());
+    for (entity, asset, material) in posed {
+        let id = entity_id(entity);
+        let (Some(handle), Some(palette), Some(skin)) = (
+            inputs.assets.mesh(&asset),
+            inputs.skins.palette(id),
+            inputs.skins.skin(id),
+        ) else {
+            continue;
+        };
+        let material = material
+            .and_then(|m| inputs.assets.material(&m))
+            .or_else(|| inputs.assets.mesh_materials.get(&asset).copied())
+            .or(inputs.assets.default_material);
+        let Some(material) = material else {
+            continue;
+        };
+        let world_m = Mat4::from(global(world, inputs, entity));
+        let Some(bounds) = re_anim::skin::skinned_bounds(skin, palette, &world_m) else {
+            continue;
+        };
+        skinned.push(SkinnedDrawItem {
+            entity: id,
+            mesh: handle,
+            material,
+            world: world_m,
+            flags: DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS,
+            palette: joint_palette.len() as u32,
+            joints: palette.len() as u32,
+            bounds,
+        });
+        joint_palette.extend_from_slice(palette);
     }
 
     let mut cams: Vec<(Entity, CameraC)> = world
@@ -252,6 +316,8 @@ pub fn build(world: &mut World, inputs: &RenderInputs<'_>) -> RenderSnapshot {
         items,
         debug_lines: Vec::new(),
         clear: inputs.clear,
+        skinned,
+        joint_palette,
         ..RenderSnapshot::default()
     }
 }

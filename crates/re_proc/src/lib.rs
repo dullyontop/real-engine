@@ -40,6 +40,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod bake;
 mod cache;
 pub mod canon;
 pub mod codes;
@@ -47,23 +48,29 @@ mod commands;
 mod eval;
 mod generator;
 mod graph;
+pub mod migrate;
 pub mod nodes;
 mod store;
 pub mod value;
 
+pub use canon::version_stamp;
 pub use commands::{
-    DEFAULT_GENERATE_ENTITIES, DEFAULT_GENERATE_MS, GenerateArgs, RegenerateArgs, ReportArgs,
-    SetParamArgs, register_commands,
+    DEFAULT_GENERATE_ENTITIES, DEFAULT_GENERATE_MS, GenerateArgs, MigrationReportArgs,
+    RegenerateArgs, ReportArgs, SetParamArgs, register_commands,
 };
 pub use eval::{
     CacheState, DEFAULT_MEMORY_BUDGET, EvalOptions, EvalReport, Evaluation, Evaluator, NodeReport,
     OutputInfo, fragment_hash_hex, to_scene_fragment,
 };
 pub use generator::{
-    GENERATOR, ParamOverrides, apply_overrides, overrides_text, parse_overrides, register_generator,
+    GENERATOR, GENERATOR_VERSION, ParamOverrides, apply_overrides, overrides_text, parse_overrides,
+    register_generator,
 };
 pub use graph::{Edge, GraphId, Node, NodeId, OUT_ALIAS, PortName, ProcGraph};
-pub use nodes::{NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef};
+pub use nodes::{
+    Domain, Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef,
+    Streaming,
+};
 pub use store::{Budget, GraphStore};
 pub use value::{
     DerivedAsset, Field, FragItem, Fragment, MeshValue, Output, Point, Points, PortType, PrefabUse,
@@ -162,6 +169,26 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::NOT_A_GRAPH_SOURCE,
         title: "Not a graph source",
         page: include_str!("../explain/RE4017.md"),
+    },
+    DiagInfo {
+        code: codes::RETIRED_NODE_VERSION,
+        title: "Retired node version",
+        page: include_str!("../explain/RE4018.md"),
+    },
+    DiagInfo {
+        code: codes::OUTDATED_NODE_VERSION,
+        title: "Older node version in use",
+        page: include_str!("../explain/RE4019.md"),
+    },
+    DiagInfo {
+        code: codes::MIGRATION_FAILED,
+        title: "Node migration failed",
+        page: include_str!("../explain/RE4020.md"),
+    },
+    DiagInfo {
+        code: codes::OPEN_GRAPH_DIFFERS,
+        title: "Open graph differs from its file",
+        page: include_str!("../explain/RE4022.md"),
     },
 ];
 

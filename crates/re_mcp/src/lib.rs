@@ -29,12 +29,17 @@
 //!   clients that don't show images.
 //! * Protocol revision 2025-11-25 is the baseline; 2026-07-28 (stateless,
 //!   `server/discover`) is accepted. rmcp serves both on one connection.
+//! * Two transports serve the same server: stdio ([`serve_stdio`]) and
+//!   streamable HTTP on a loopback address with a bearer token
+//!   ([`serve_http`], ADR-0046).
 //!
 //! Codes `RE8500`–`RE8599`.
 
 #![warn(missing_docs)]
 
+pub mod client;
 pub mod codes;
+pub mod http;
 mod server;
 
 use std::path::PathBuf;
@@ -45,6 +50,7 @@ use re_agent::resources::ResourceSet;
 use re_command::EngineHandle;
 use re_core::DiagInfo;
 
+pub use http::{HttpListener, serve_http, serve_http_async};
 pub use server::{
     MAX_DESCRIPTION, RealEngineServer, command_name, error_json, output_schema, sanitize_schema,
     tool_for, tool_name,
@@ -119,11 +125,28 @@ where
 }
 
 /// Every diagnostic code `re_mcp` owns, with its title and explain page.
-pub const DIAGNOSTICS: &[DiagInfo] = &[DiagInfo {
-    code: codes::IMAGE_UNREADABLE,
-    title: "Result image unreadable",
-    page: include_str!("../explain/RE8501.md"),
-}];
+pub const DIAGNOSTICS: &[DiagInfo] = &[
+    DiagInfo {
+        code: codes::IMAGE_UNREADABLE,
+        title: "Result image unreadable",
+        page: include_str!("../explain/RE8501.md"),
+    },
+    DiagInfo {
+        code: codes::NOT_LOOPBACK,
+        title: "HTTP address is not loopback",
+        page: include_str!("../explain/RE8502.md"),
+    },
+    DiagInfo {
+        code: codes::WEAK_TOKEN,
+        title: "HTTP token too short",
+        page: include_str!("../explain/RE8503.md"),
+    },
+    DiagInfo {
+        code: codes::BIND_FAILED,
+        title: "Cannot listen on the HTTP address",
+        page: include_str!("../explain/RE8504.md"),
+    },
+];
 
 /// The code range this crate owns (ARCHITECTURE §7).
 pub const CODE_RANGE: std::ops::RangeInclusive<u16> = 8500..=8599;

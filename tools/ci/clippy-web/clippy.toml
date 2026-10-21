@@ -1,0 +1,10 @@
+# Clippy settings for the wasm32 pass in CI's build-web job (ADR-0049 §5), used through
+# CLIPPY_CONF_DIR. Clippy reads one file, so this is the root clippy.toml plus two clock
+# entries; `cargo xtask check` (clippy-web) fails if the copies drift.
+#
+# The clock entries live only here: on desktop, web-time re-exports std::time, so
+# re_core::time::Instant::now is std's and a ban there would flag every correct use.
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "panics on wasm32-unknown-unknown; use re_core::time (ADR-0049 §5)" },
+    { path = "std::time::SystemTime::now", reason = "panics on wasm32-unknown-unknown; use re_core::time (ADR-0049 §5)" },
+]

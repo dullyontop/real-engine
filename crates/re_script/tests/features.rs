@@ -713,6 +713,53 @@ fn builder_scripts_return_a_graph() {
 }
 
 #[test]
+fn builders_record_version_one_unless_a_kind_asks_for_another() {
+    let dir = temp_project(&[
+        (
+            "scripts/tools/g.luau",
+            "local g = proc.graph('v', { seed = 1 })\ng:node('terrain.heightfield', {})\ng:node('terrain.heightfield@3', {}, nil, 'h3')\nreturn g",
+        ),
+        (
+            "scripts/tools/bad.luau",
+            "local g = proc.graph('v', { seed = 1 })\ng:node('terrain.heightfield@0', {})\nreturn g",
+        ),
+    ]);
+    let mut rig = Rig::at(dir.path());
+    let Rig {
+        rt,
+        world,
+        services,
+    } = &mut rig;
+    let g = rt
+        .run_builder(
+            &mut re_script::WorldHost { world, services },
+            "scripts/tools/g.luau",
+        )
+        .unwrap();
+    let versions: Vec<(&str, u32)> = g
+        .nodes
+        .iter()
+        .map(|n| (n.kind.as_str(), n.version))
+        .collect();
+    assert_eq!(
+        versions,
+        [("terrain.heightfield", 1), ("terrain.heightfield", 3)]
+    );
+    let errs = rt
+        .run_builder(
+            &mut re_script::WorldHost { world, services },
+            "scripts/tools/bad.luau",
+        )
+        .unwrap_err();
+    assert_eq!(errs[0].code, codes::GRAPH_BUILDER);
+    assert!(
+        errs[0].message.contains("<kind>@<n>"),
+        "{}",
+        errs[0].message
+    );
+}
+
+#[test]
 fn errors_in_engine_plumbing_point_at_the_users_line() {
     let mut rig = Rig::new();
     let d = rig.exec_err("local e = world.spawn()\nlocal _ = e.zzz");

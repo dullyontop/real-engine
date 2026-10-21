@@ -104,6 +104,9 @@ enum Command {
     /// Work with procedural graphs.
     #[command(subcommand)]
     Graph(graph::GraphCommand),
+    /// Upgrade every procedural graph's nodes to their kinds' current
+    /// versions, after reporting what changes (all or nothing).
+    MigrateGraph(graph::MigrateArgs),
     /// Write every JSON Schema the engine defines.
     Schema {
         /// The output directory.
@@ -195,6 +198,10 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         },
         None => None,
     };
+    // A replay must repeat its recording, so only a live run keeps data.
+    if replay.is_none() {
+        app.persist_data();
+    }
     let (frames, mut diagnostics, mut report) = if args.headless {
         match app.run_headless(args.frames, replay) {
             Ok(r) => (
@@ -482,6 +489,7 @@ fn main() -> ExitCode {
         Command::Explain { code } => cmd_explain(code),
         Command::Schema { out } => cmd_schema(&out),
         Command::Graph(command) => graph::run(command, &project),
+        Command::MigrateGraph(args) => graph::migrate(args, &project),
         #[cfg(feature = "tooling")]
         Command::Check(args) => tooling_exit(tooling::check::run(args, &project)),
         #[cfg(feature = "tooling")]

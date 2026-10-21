@@ -181,6 +181,34 @@ impl Graphics {
                 }
             }
         }
+        for asset in render::referenced_skins(world) {
+            if assets.mesh(&asset).is_some() {
+                continue;
+            }
+            let loaded = match media.skin(&asset) {
+                Ok(l) => l,
+                Err(d) => {
+                    report(media, &asset, d, diagnostics);
+                    continue;
+                }
+            };
+            match self
+                .renderer
+                .upload_skinned_mesh(&loaded.mesh, &loaded.weights)
+            {
+                Ok(h) => assets.insert_mesh(asset.clone(), h),
+                Err(d) => {
+                    report(media, &asset, d, diagnostics);
+                    continue;
+                }
+            }
+            if let Some(material) = loaded.material {
+                match self.create_material(&material) {
+                    Ok(h) => assets.insert_mesh_material(asset.clone(), h),
+                    Err(d) => report(media, &asset, d, diagnostics),
+                }
+            }
+        }
         for asset in &materials {
             if assets.material(asset).is_some() {
                 continue;
