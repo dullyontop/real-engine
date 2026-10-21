@@ -12,7 +12,9 @@
 //!   [`EvalReport`];
 //! * [`GraphStore`]: the world resource holding each procedural source's
 //!   graph, the shared evaluator, the derived assets (meshes and
-//!   heightfields named `derived:<key>`) and the last reports;
+//!   heightfields named `derived:<key>`) and the last reports; a source whose
+//!   graph file is open in the World is generated from the open document
+//!   ([`register_doc_validators`] checks open graph documents, ADR-0044);
 //! * [`register_generator`]: the `graph` generator for `re_scene`'s
 //!   procedural sources (StableKeys `<node id>/<local key>`);
 //! * [`register_commands`]: `graph.set_param`, `graph.regenerate`,
@@ -75,7 +77,7 @@ pub use nodes::{
     Domain, Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef,
     Streaming,
 };
-pub use store::{Budget, GraphStore};
+pub use store::{Budget, CurrentGraph, GraphStore, register_doc_validators, validate_graph_json};
 pub use value::{
     DerivedAsset, Field, FragItem, Fragment, MeshValue, Output, Point, Points, PortType, PrefabUse,
 };

@@ -893,17 +893,21 @@ impl App {
         }
     }
 
-    /// Writes the World's authored entities back to the entry scene file.
+    /// Writes the World's authored entities back to the entry scene file,
+    /// and each open document with unsaved changes back to its file
+    /// (ADR-0044), which clears its dirty flag; the procedural sources that
+    /// read a saved file reload their stored graph from it, so it stays the
+    /// file's content once the document is closed.
     ///
     /// # Errors
     ///
-    /// `RE0518` when the file cannot be written.
+    /// `RE0518` when a file cannot be written.
     pub fn save_scene(&mut self) -> Result<(), Diagnostic> {
         let doc = self.world.save(SaveOptions::default());
         let text = re_scene::scene::to_json(&doc);
         let rel_path = self.config.project.entry_scene.clone();
         // Only a development run writes project files (ADR-0037).
-        let Some(dir) = self.files.project_dir() else {
+        let Some(dir) = self.files.project_dir().map(Path::to_path_buf) else {
             return Err(Diagnostic::error(
                 codes::SCENE_SAVE_FAILED,
                 format!(
@@ -911,14 +915,28 @@ impl App {
                 ),
             ));
         };
-        let path = dir.join(&rel_path);
-        std::fs::write(&path, text).map_err(|e| {
+        let failed = |what: &str, rel_path: &str, e: std::io::Error| {
             Diagnostic::error(
                 codes::SCENE_SAVE_FAILED,
-                format!("cannot write the scene back to {rel_path}: {e}"),
+                format!("cannot write {what} back to {rel_path}: {e}"),
             )
-            .at(rel(&rel_path))
-        })
+            .at(rel(rel_path))
+        };
+        std::fs::write(dir.join(&rel_path), text).map_err(|e| failed("the scene", &rel_path, e))?;
+        let saved = self.world.unsaved_docs();
+        for path in &saved {
+            let Some(text) = self.world.doc_text(path) else {
+                continue;
+            };
+            std::fs::write(dir.join(path), text)
+                .map_err(|e| failed("the open document", path, e))?;
+            self.world.mark_doc_saved(path);
+        }
+        if !saved.is_empty() {
+            let problems = procedural::load_graphs(&mut self.world, &self.files, Some(&saved));
+            self.diagnostics.extend(problems);
+        }
+        Ok(())
     }
 
     /// The work an edit needs outside the simulation: regenerate procedural
@@ -1673,6 +1691,9 @@ impl App {
         for p in paths.iter().filter(|p| p.ends_with(".heightfield")) {
             procedural::heightfield_changed(&mut self.world, p);
         }
+        let doc_problems = self.reload_open_docs(&paths);
+        self.diagnostics.extend(doc_problems.iter().cloned());
+        problems.extend(doc_problems);
         let graphs: Vec<String> = paths
             .iter()
             .filter(|p| procedural::is_graph_input(&mut self.world, p))
@@ -1700,6 +1721,47 @@ impl App {
                     &mut self.shapes,
                     &report.released_assets,
                 );
+            }
+        }
+        problems
+    }
+
+    /// Reloads the open documents (ADR-0044) among the changed project files
+    /// `paths`. A document without unsaved edits is reopened from its file
+    /// (a new epoch, so its undo history is dropped, and a new revision, so
+    /// views rebuild), unless the file holds exactly the open content (as
+    /// after a save). A document with unsaved edits is kept, and so is one
+    /// whose file is gone or invalid; each gives an `RE0528` warning.
+    fn reload_open_docs(&mut self, paths: &[String]) -> Vec<Diagnostic> {
+        let mut problems = Vec::new();
+        for path in paths {
+            let Some(doc) = self.world.doc(path) else {
+                continue;
+            };
+            let path = re_scene::doc_path(path).unwrap_or_else(|_| path.clone());
+            let warn = |message: String| {
+                Diagnostic::warning(codes::OPEN_DOC_CHANGED_ON_DISK, message).at(rel(&path))
+            };
+            let read = std::fs::read_to_string(self.project.join(&path))
+                .map_err(|e| e.to_string())
+                .and_then(|t| {
+                    serde_json::from_str::<serde_json::Value>(&t).map_err(|e| e.to_string())
+                });
+            match open_doc_reload(doc.dirty, &doc.value, read, |v| doc.matches_saved(v)) {
+                DocReload::Keep => {}
+                DocReload::Conflict => problems.push(warn(format!(
+                    "{path} changed on disk while it has unsaved edits; saving will overwrite the file"
+                ))),
+                DocReload::Unreadable(e) => problems.push(warn(format!(
+                    "{path} changed on disk but cannot be reloaded ({e}); the open document is kept"
+                ))),
+                DocReload::Reopen(value) => {
+                    if let Err(e) = self.world.open_doc(&path, value) {
+                        problems.push(warn(format!(
+                            "{path} changed on disk but cannot be reloaded ({e}); the open document is kept"
+                        )));
+                    }
+                }
             }
         }
         problems
@@ -2290,4 +2352,86 @@ fn load_world(
     world.propagate_all();
     let problems = procedural::load_graphs(&mut world, files, None);
     Ok((world, problems))
+}
+
+/// What to do with an open document whose file changed on disk.
+#[derive(Debug, PartialEq)]
+enum DocReload {
+    /// The file holds the open content, or the content last saved (our own
+    /// save, seen after later edits).
+    Keep,
+    /// Reopen the document with the file's content.
+    Reopen(serde_json::Value),
+    /// The document has unsaved edits: keep them and warn.
+    Conflict,
+    /// The file is gone or not JSON: keep the document and warn.
+    Unreadable(String),
+}
+
+/// Decides what a change on disk does to an open document: `dirty` and
+/// `open` are the document's state, `file` what reading the file gave, and
+/// `saved` tells whether a content is what the document was last saved as.
+fn open_doc_reload(
+    dirty: bool,
+    open: &serde_json::Value,
+    file: Result<serde_json::Value, String>,
+    saved: impl Fn(&serde_json::Value) -> bool,
+) -> DocReload {
+    match file {
+        Ok(value) if value == *open || saved(&value) => DocReload::Keep,
+        _ if dirty => DocReload::Conflict,
+        Ok(value) => DocReload::Reopen(value),
+        Err(e) => DocReload::Unreadable(e),
+    }
+}
+
+#[cfg(test)]
+mod doc_reload_tests {
+    use super::{DocReload, open_doc_reload};
+    use serde_json::json;
+
+    #[test]
+    fn a_change_on_disk_reopens_clean_documents_only() {
+        let open = json!({"a": 1});
+        assert_eq!(
+            open_doc_reload(false, &open, Ok(json!({"a": 1})), |_| false),
+            DocReload::Keep
+        );
+        assert_eq!(
+            open_doc_reload(true, &open, Ok(json!({"a": 1})), |_| false),
+            DocReload::Keep
+        );
+        assert_eq!(
+            open_doc_reload(false, &open, Ok(json!({"a": 2})), |_| false),
+            DocReload::Reopen(json!({"a": 2}))
+        );
+        assert_eq!(
+            open_doc_reload(true, &open, Ok(json!({"a": 2})), |_| false),
+            DocReload::Conflict
+        );
+        assert_eq!(
+            open_doc_reload(true, &open, Err("gone".into()), |_| false),
+            DocReload::Conflict
+        );
+        assert_eq!(
+            open_doc_reload(false, &open, Err("gone".into()), |_| false),
+            DocReload::Unreadable("gone".into())
+        );
+    }
+
+    /// A save followed by an edit before the watcher reports the save: the
+    /// file holds the saved content, which is not a conflict.
+    #[test]
+    fn our_own_save_seen_after_an_edit_is_kept() {
+        let saved = json!({"a": 1});
+        let edited = json!({"a": 2});
+        assert_eq!(
+            open_doc_reload(true, &edited, Ok(saved.clone()), |v| *v == saved),
+            DocReload::Keep
+        );
+        assert_eq!(
+            open_doc_reload(true, &edited, Ok(json!({"a": 3})), |v| *v == saved),
+            DocReload::Conflict
+        );
+    }
 }

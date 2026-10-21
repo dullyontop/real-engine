@@ -102,3 +102,8 @@ pub const STUCK_YIELD: Code = Code::new("RE0526");
 /// A `play.run` step could not run: it needs a `[compat]` project, or its
 /// path names no instance.
 pub const PLAY_STEP_FAILED: Code = Code::new("RE0527");
+
+/// An open document's file changed on disk and was not reloaded: the
+/// document has unsaved edits (saving overwrites the file), or the file is
+/// gone or invalid (ADR-0044).
+pub const OPEN_DOC_CHANGED_ON_DISK: Code = Code::new("RE0528");

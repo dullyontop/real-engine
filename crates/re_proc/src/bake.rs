@@ -358,12 +358,13 @@ fn inputs_hash(world: &re_scene::World, source: re_scene::Entity, params: &str) 
         h.update(serde_json::to_string(fields).unwrap_or_default().as_bytes());
     }
     let id = world.id_of(source).unwrap_or_default();
-    if let Some(doc) = world
+    // The graph as generation sees it: an open document's unsaved edits too.
+    if let Some(Ok(doc)) = world
         .ecs
         .get_resource::<crate::GraphStore>()
-        .and_then(|s| s.graph(id))
+        .and_then(|s| s.current(world, id))
     {
-        h.update(crate::canon::doc_hash(doc).as_bytes());
+        h.update(crate::canon::doc_hash(&doc).as_bytes());
     }
     h.finalize().to_hex().to_string()
 }
@@ -490,15 +491,19 @@ pub(crate) fn bake<C: re_command::EditTarget>(
         ids.insert(world.id_of(*e).unwrap_or_default().to_string(), id);
     }
 
-    let stamp = world
+    let stamp = match world
         .ecs
         .get_resource::<crate::GraphStore>()
-        .and_then(|s| {
-            s.graph(&a.source)
-                .map(|d| crate::canon::version_stamp(d, s.evaluator().registry()))
-        })
-        .map(|h| h.to_hex().to_string())
-        .unwrap_or_default();
+        .and_then(|s| s.current(world, &a.source).map(|c| (s, c)))
+    {
+        // An open graph document that does not parse: nothing generated
+        // from it can be recorded faithfully.
+        Some((_, Err(d))) => return Err(d),
+        Some((s, Ok(doc))) => crate::canon::version_stamp(&doc, s.evaluator().registry())
+            .to_hex()
+            .to_string(),
+        None => String::new(),
+    };
     let inputs = inputs_hash(world, src, &params_component);
     let store = world.ecs.get_resource::<crate::GraphStore>();
     let root = store

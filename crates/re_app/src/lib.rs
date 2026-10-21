@@ -190,6 +190,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "A play.run step failed",
         page: include_str!("../explain/RE0527.md"),
     },
+    DiagInfo {
+        code: codes::OPEN_DOC_CHANGED_ON_DISK,
+        title: "Open document changed on disk",
+        page: include_str!("../explain/RE0528.md"),
+    },
 ];
 
 /// The code range this crate owns (ARCHITECTURE §7; `re_cli` owns RE0900–0999).

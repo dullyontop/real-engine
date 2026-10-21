@@ -149,13 +149,16 @@ fn graph_source(world: &World, id: &str) -> Result<Source, Diagnostic> {
         Diagnostic::error(codes::NO_GRAPH, "the world has no GraphStore resource")
             .at(Location::entity(id.to_string()))
     })?;
-    let doc = store.graph(id).cloned().ok_or_else(|| {
-        Diagnostic::error(
-            codes::NO_GRAPH,
-            format!("no graph is stored for procedural source `{id}`"),
-        )
-        .at(Location::entity(id.to_string()))
-    })?;
+    let doc = store
+        .current(world, id)
+        .ok_or_else(|| {
+            Diagnostic::error(
+                codes::NO_GRAPH,
+                format!("no graph is stored for procedural source `{id}`"),
+            )
+            .at(Location::entity(id.to_string()))
+        })?
+        .map(|d| GraphDoc::clone(&d))?;
     let overrides = parse_overrides(&text);
     Ok(Source {
         entity,
