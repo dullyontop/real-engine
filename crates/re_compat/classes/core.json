@@ -60,10 +60,25 @@
     {
       "name": "BaseScript",
       "superclass": "LuaSourceContainer",
-      "status": "partial",
-      "note": "No Enabled or Disabled yet.",
+      "status": "implemented",
       "doc": "A script that starts on its own when the place runs, in the context its class and run context choose.",
       "properties": [
+        {
+          "name": "Enabled",
+          "type": "bool",
+          "storage": { "kind": "own" },
+          "default": true,
+          "status": "implemented",
+          "doc": "Whether the script runs. Setting it false stops the script: its threads, connections and bindings go, and the instances it made stay. Setting it true again starts the script from the top."
+        },
+        {
+          "name": "Disabled",
+          "type": "bool",
+          "storage": { "kind": "builtin" },
+          "status": "implemented",
+          "deprecated": "Enabled",
+          "doc": "The inverse of Enabled."
+        },
         {
           "name": "RunContext",
           "type": "Enum.RunContext",
@@ -78,16 +93,14 @@
       "name": "Script",
       "superclass": "BaseScript",
       "creatable": true,
-      "status": "partial",
-      "note": "Starts in the server context by the rules of docs/M2_PLAN.md WP11; no Enabled yet.",
+      "status": "implemented",
       "doc": "A script that runs in the server context (or the client context when its run context is Client). Its ScriptRef has context \"server\" or \"client\"."
     },
     {
       "name": "LocalScript",
       "superclass": "Script",
       "creatable": true,
-      "status": "partial",
-      "note": "Starts in the client context by the rules of docs/M2_PLAN.md WP11; no Enabled yet.",
+      "status": "implemented",
       "doc": "A script that runs in the client context for the local player. Its ScriptRef has context \"client\"."
     },
     {

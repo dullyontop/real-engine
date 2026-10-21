@@ -264,7 +264,7 @@ impl ClassRegistry {
     }
 }
 
-fn read_field(
+pub(crate) fn read_field(
     world: &World,
     entity: Entity,
     component: &str,
@@ -322,7 +322,7 @@ fn unsaturate(value: Value) -> Value {
     }
 }
 
-fn write_field(
+pub(crate) fn write_field(
     world: &mut World,
     entity: Entity,
     component: &str,

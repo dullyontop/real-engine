@@ -319,11 +319,16 @@ impl CompatWorlds {
 /// errors raised meanwhile (handlers included).
 pub fn pump(vm: &CompatVm, host: &mut dyn ScriptHost) -> Vec<Diagnostic> {
     let mut out = vm.run(host, pump_lua);
-    // Scripts that became startable since the last pump (copied to a player
-    // or a character, cloned into the tree) start now, each on its own.
+    // Scripts disabled by a write the VM did not make (replicated, or from
+    // the editor) stop; the ones that became startable since the last pump
+    // (copied to a player or a character, cloned into the tree, enabled
+    // again) start now, each on its own.
     let mut new = Vec::new();
     out.extend(vm.run(host, |lua| {
         if link(lua)?.is_some() {
+            for e in crate::runtime::scripts::disabled_running(lua)? {
+                crate::runtime::scripts::stop(lua, e)?;
+            }
             new = crate::runtime::scripts::unstarted(lua)?;
         }
         Ok(())
