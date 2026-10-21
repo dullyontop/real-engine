@@ -239,6 +239,11 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
     if replay.is_none() {
         app.persist_data();
         watch_problem = app.enable_hot_reload().err();
+        // A live window never stalls a frame on a streamed cell; headless
+        // runs wait for it, so they repeat (ADR-0042).
+        if !args.headless {
+            app.set_stream_lateness(re_proc::stream::Lateness::Late);
+        }
     }
     let (frames, mut diagnostics, mut report) = if args.headless {
         match app.run_headless(args.frames, replay) {

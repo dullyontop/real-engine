@@ -203,6 +203,11 @@ impl Streamer {
         self.lateness = lateness;
     }
 
+    /// How a result that is late for its apply tick is treated.
+    pub fn lateness(&self) -> Lateness {
+        self.lateness
+    }
+
     fn pool(&self) -> &TaskPool {
         self.pool.as_deref().unwrap_or_else(|| TaskPool::global())
     }
@@ -251,16 +256,32 @@ impl Streamer {
     /// This manager for `to`, a fork of `from` ([`World::fork`]): the same
     /// state, with the source entities it holds content of found again in
     /// `to` by id (a fork gives every entity a new handle).
+    ///
+    /// Jobs in flight are not shared: the fork generates its pending cells
+    /// again, with the same results. It waits for late results
+    /// ([`Lateness::Wait`]) until told otherwise.
     pub fn forked(&self, from: &World, to: &World) -> Streamer {
-        let mut out = self.clone();
-        for l in out.loaded.values_mut() {
+        let mut loaded = self.loaded.clone();
+        for l in loaded.values_mut() {
             l.sources = l
                 .sources
                 .iter()
                 .filter_map(|e| to.entity(from.id_of(*e)?).ok())
                 .collect();
         }
-        out
+        Streamer {
+            config: self.config.clone(),
+            loaded,
+            pending: self.pending.clone(),
+            ready: self.ready.clone(),
+            jobs: BTreeMap::new(),
+            pool: self.pool.clone(),
+            lateness: Lateness::Wait,
+            radius: self.radius,
+            reported: self.reported.clone(),
+            pinned: self.pinned.clone(),
+            described: source::DescribeCache::new(),
+        }
     }
 
     /// Keeps cell `key` wanted whatever the focuses (the editor and tools'
