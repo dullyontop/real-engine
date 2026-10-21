@@ -2,7 +2,7 @@
 //! (ADR-0042's acceptance walk) and checks the streaming budgets: no tick
 //! waiting on generation after the initial load, tick time, accounted memory,
 //! peak RSS, and the same `state_hash` from a cold and from a warm cache. The
-//! tick max is gated on each tick's main-thread CPU time (Linux schedstat), so
+//! tick max is gated on each tick's main-thread CPU time (Linux), so
 //! a shared runner's wall-clock spikes are reported, not gated; wall p95 and
 //! waits still catch blocking. Each run's wall max and p99 are reported, as is
 //! the max time a tick spent applying cells.
@@ -270,7 +270,7 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
         }
         position = (position + per_tick).min(END);
         let before = os_ticks();
-        let sched0 = schedstat();
+        let sched0 = thread_times();
         let t0 = Instant::now();
         w.set(
             "walker",
@@ -282,10 +282,10 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
         let r = step(w, tick, &config);
         apply_max_ms = apply_max_ms.max(r.apply_time.as_secs_f64() * 1000.0);
         let step_ms = t0.elapsed().as_secs_f64() * 1000.0;
-        let sched1 = schedstat();
+        let sched1 = thread_times();
         w.update();
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
-        let sched2 = schedstat();
+        let sched2 = thread_times();
         times.push(ms);
         if let Some(cpu) = cpu_between(sched0, sched2) {
             if cpu > busiest["cpu_ms"].as_f64().unwrap_or(-1.0) {
@@ -310,7 +310,7 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
                 // far longer than its CPU time was descheduled, not working.
                 "thread_cpu_ticks": after.0.saturating_sub(before.0),
                 "steal_ticks": after.1.saturating_sub(before.1),
-                // In ms (Linux schedstat): this thread's CPU time in the
+                // In ms (Linux): this thread's CPU time in the
                 // step and in the world update, and its time waiting for a
                 // CPU in the run queue.
                 "step_cpu_ms": cpu_between(sched0, sched1),
@@ -479,15 +479,44 @@ fn main() -> ExitCode {
     }
 }
 
-/// This thread's CPU time and run-queue wait in nanoseconds (Linux
-/// schedstat); `None` without it.
-fn schedstat() -> Option<(u64, u64)> {
-    let text = std::fs::read_to_string("/proc/thread-self/schedstat").ok()?;
-    let mut f = text.split_whitespace().map(|v| v.parse::<u64>().ok());
-    Some((f.next()??, f.next()??))
+/// This thread's CPU time in nanoseconds (`CLOCK_THREAD_CPUTIME_ID`, exact
+/// to the call; `/proc` schedstat only moves when the thread is switched
+/// out) and its run-queue wait (schedstat), on Linux; `None` elsewhere.
+fn thread_times() -> Option<(u64, u64)> {
+    let cpu = thread_cpu_ns()?;
+    let wait = std::fs::read_to_string("/proc/thread-self/schedstat")
+        .ok()
+        .and_then(|t| t.split_whitespace().nth(1)?.parse().ok())
+        .unwrap_or(0);
+    Some((cpu, wait))
 }
 
-/// CPU milliseconds between two [`schedstat`] readings.
+#[cfg(target_os = "linux")]
+fn thread_cpu_ns() -> Option<u64> {
+    #[repr(C)]
+    struct Timespec {
+        tv_sec: std::ffi::c_long,
+        tv_nsec: std::ffi::c_long,
+    }
+    unsafe extern "C" {
+        fn clock_gettime(clock: std::ffi::c_int, tp: *mut Timespec) -> std::ffi::c_int;
+    }
+    const CLOCK_THREAD_CPUTIME_ID: std::ffi::c_int = 3;
+    let mut t = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `t` is a valid, writable timespec; std links the C library.
+    let r = unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    (r == 0).then(|| t.tv_sec as u64 * 1_000_000_000 + t.tv_nsec as u64)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn thread_cpu_ns() -> Option<u64> {
+    None
+}
+
+/// CPU milliseconds between two [`thread_times`] readings.
 fn cpu_between(a: Option<(u64, u64)>, b: Option<(u64, u64)>) -> Option<f64> {
     a.zip(b).map(|(a, b)| (b.0 - a.0) as f64 / 1.0e6)
 }
