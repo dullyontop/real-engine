@@ -739,7 +739,8 @@ impl Streamer {
                 stamps.push(s.stamp.clone());
                 continue;
             }
-            for (_, a) in &out.assets {
+            // Only applied content is counted.
+            for (_, a) in out.assets.iter().filter(|_| applied.is_ok()) {
                 bytes += asset_bytes(a);
                 if let DerivedAsset::Heightfield(h) = a {
                     let (lo, hi) = h.height_range();
@@ -747,7 +748,7 @@ impl Streamer {
                     ymax = ymax.max(hi);
                 }
             }
-            for n in &out.fragment {
+            for n in out.fragment.iter().filter(|_| applied.is_ok()) {
                 for (cname, fields) in &n.components {
                     if cname == "Transform" {
                         for (f, v) in fields {
