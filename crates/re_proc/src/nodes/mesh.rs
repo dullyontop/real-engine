@@ -257,6 +257,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "mesh.primitive",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "A box, sphere, cylinder, capsule or plane mesh, centred on the origin.",
             inputs: &[],
             variadic: None,
@@ -270,6 +273,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "mesh.transform",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "Scales, rotates (Euler degrees, X then Y then Z) and moves a mesh.",
             inputs: ONE_MESH,
             variadic: None,
@@ -283,6 +289,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "mesh.merge",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "Merges any number of meshes (inputs on any port names, in natural name order) into one; the material is the first non-empty one.",
             inputs: &[],
             variadic: Some(MESH),
@@ -296,6 +305,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "material.assign",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "Sets the material file a mesh is drawn with.",
             inputs: ONE_MESH,
             variadic: None,

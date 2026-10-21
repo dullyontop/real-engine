@@ -353,6 +353,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "terrain.heightfield",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "A noise heightfield (fbm, ridged or warped), centred on the source, with heights from 0 to `height` metres.",
             inputs: &[],
             variadic: None,
@@ -366,6 +369,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "terrain.island_mask",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "A radial falloff from 1 in the middle to 0 at the edges; multiply a heightfield by it to make an island.",
             inputs: &[],
             variadic: None,
@@ -379,6 +385,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "terrain.mesh",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "Turns a field into a terrain entity: a derived mesh, an optional material and an optional heightfield collider.",
             inputs: &[PortDef {
                 name: "field",
@@ -397,6 +406,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "terrain.water_plane",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "A flat square water entity at a height.",
             inputs: &[],
             variadic: None,

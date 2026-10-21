@@ -54,6 +54,10 @@ component! {
         pub generator: String = String::new(),
         /// Seed for the generator's random choices.
         pub seed: i64 = 0,
+        /// The generator version this source was written for (ADR-0043).
+        /// The generator runs as that version; files without the field
+        /// mean 1.
+        pub version: i64 = 1,
     }
 }
 
@@ -359,6 +363,7 @@ pub struct GenContext<'a> {
     source: Entity,
     source_id: &'a str,
     seed: i64,
+    version: i64,
     params_component: &'a str,
 }
 
@@ -381,6 +386,11 @@ impl<'a> GenContext<'a> {
     /// The source's `Procedural.seed`.
     pub fn seed(&self) -> i64 {
         self.seed
+    }
+
+    /// The generator version the source records (`Procedural.version`).
+    pub fn version(&self) -> i64 {
+        self.version
     }
 
     /// Reads a field of the generator's parameter component on the source.
@@ -448,6 +458,10 @@ pub struct GeneratorInfo {
     /// Extra fingerprint input, for generators that read something besides
     /// the source's components.
     pub fingerprint_extra: Option<FingerprintFn>,
+    /// The generator's current version (ADR-0043); new sources record it.
+    pub version: u32,
+    /// The oldest `Procedural.version` the generator still runs.
+    pub oldest: u32,
 }
 
 impl fmt::Debug for GeneratorInfo {
@@ -581,6 +595,7 @@ pub(crate) fn fingerprint(world: &World, source: Entity) -> Option<u64> {
     let p = world.ecs.get::<Procedural>(source)?;
     p.generator.hash(&mut h);
     p.seed.hash(&mut h);
+    p.version.hash(&mut h);
     if let Some(info) = world.generators.get(&p.generator) {
         if let Some(key) = world.registry.try_key(&info.params_component) {
             format!("{:?}", world.registry.get_all(&world.ecs, source, key)).hash(&mut h);
@@ -593,6 +608,7 @@ pub(crate) fn fingerprint(world: &World, source: Entity) -> Option<u64> {
                 source,
                 source_id: id,
                 seed: p.seed,
+                version: p.version,
                 params_component: &info.params_component,
             };
             extra(&ctx).hash(&mut h);
@@ -641,6 +657,20 @@ pub(crate) fn regenerate(world: &mut World, source: Entity) -> Result<RegenRepor
         )
     })?;
 
+    if p.version < i64::from(info.oldest.max(1)) || p.version > i64::from(info.version) {
+        return Err(generator_failed(
+            &src_id,
+            format!(
+                "generator {} cannot run version {} (it runs {} to {})",
+                p.generator,
+                p.version,
+                info.oldest.max(1),
+                info.version
+            ),
+            None,
+        ));
+    }
+
     // Run first, so a failing generator leaves the previous output in place.
     let nodes = {
         let ctx = GenContext {
@@ -648,6 +678,7 @@ pub(crate) fn regenerate(world: &mut World, source: Entity) -> Result<RegenRepor
             source,
             source_id: &src_id,
             seed: p.seed,
+            version: p.version,
             params_component: &info.params_component,
         };
         (info.run)(&ctx).map_err(|d| {

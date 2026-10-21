@@ -69,6 +69,55 @@ impl From<String> for NodeError {
     }
 }
 
+/// How a node kind can be evaluated over part of a world (ADR-0042). WP23's
+/// streaming decides what each variant allows; a kind that says nothing is
+/// [`Streaming::Whole`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Streaming {
+    /// Needs its whole input at once (for example a mask relative to the
+    /// field's size): not streamable.
+    #[default]
+    Whole,
+    /// Each output sample depends only on the same sample of its inputs.
+    Pointwise,
+    /// Works on region tiles with an apron of neighbouring samples.
+    Region,
+    /// Works cell by cell; its keys are prefixed by the cell.
+    Cell,
+}
+
+/// The window of a world a node is evaluated over (ADR-0042): global sample
+/// indices `origin .. origin + n` on each axis, `spacing` metres apart. When
+/// an evaluation has one, it is part of every node's key.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Domain {
+    /// The global sample index of the window's first sample, on x and z.
+    pub origin: [i64; 2],
+    /// Samples per side.
+    pub n: u32,
+    /// Metres between samples.
+    pub spacing: f32,
+}
+
+/// One step of a kind's parameter migration, from version `from` to
+/// `from + 1` (ADR-0043). Steps run in memory before a node is checked and
+/// evaluated, so a kind's function sees one parameter shape whatever version
+/// the node was written for; `real migrate-graph` writes the result.
+#[derive(Clone, Copy, Debug)]
+pub struct Migration {
+    /// The version this step upgrades from.
+    pub from: u32,
+    /// What changed, for the migration report.
+    pub note: &'static str,
+    /// True if version `from + 1` gives different output than `from` for
+    /// some parameters (so migrating a graph can change the world).
+    pub changes_output: bool,
+    /// Rewrites the parameters into the next version's shape.
+    pub params: fn(&mut serde_json::Map<String, Json>) -> Result<(), String>,
+}
+
 type CheckFn = Arc<dyn Fn(&Json) -> Result<(), String> + Send + Sync>;
 type EvalFn = Arc<dyn Fn(&NodeCtx, &Json) -> Result<Output, NodeError> + Send + Sync>;
 
@@ -77,8 +126,20 @@ type EvalFn = Arc<dyn Fn(&NodeCtx, &Json) -> Result<Output, NodeError> + Send + 
 pub struct NodeDef {
     /// The kind's name (`terrain.heightfield`).
     pub kind: &'static str,
-    /// The kind's version; part of every node key.
+    /// The kind's current version. A node evaluates at the version it was
+    /// written for (its recorded version, which is part of its key).
     pub version: u32,
+    /// The oldest version this engine still evaluates.
+    pub oldest: u32,
+    /// The parameter migrations, one per version step that changed the
+    /// parameters' shape (steps not listed change nothing).
+    pub migrations: &'static [Migration],
+    /// How the kind can be streamed (ADR-0042).
+    pub streaming: Streaming,
+    /// A hash of the kind's implementation when it is not part of this
+    /// binary (a Luau node's scripts); all zeros for Rust kinds, whose
+    /// versions and goldens guard them.
+    pub implementation: [u8; 32],
     /// What the node does, for `describe`.
     pub doc: &'static str,
     /// The named input ports.
@@ -117,6 +178,12 @@ pub struct NodeSpec {
     pub kind: &'static str,
     /// See [`NodeDef::version`].
     pub version: u32,
+    /// See [`NodeDef::oldest`].
+    pub oldest: u32,
+    /// See [`NodeDef::migrations`].
+    pub migrations: &'static [Migration],
+    /// See [`NodeDef::streaming`].
+    pub streaming: Streaming,
     /// See [`NodeDef::doc`].
     pub doc: &'static str,
     /// See [`NodeDef::inputs`].
@@ -152,6 +219,10 @@ impl NodeDef {
         NodeDef {
             kind: spec.kind,
             version: spec.version,
+            oldest: spec.oldest,
+            migrations: spec.migrations,
+            streaming: spec.streaming,
+            implementation: [0; 32],
             doc: spec.doc,
             inputs: spec.inputs,
             variadic: spec.variadic,
@@ -170,9 +241,57 @@ impl NodeDef {
         }
     }
 
+    /// Sets [`NodeDef::implementation`].
+    #[must_use]
+    pub fn with_implementation(mut self, hash: [u8; 32]) -> Self {
+        self.implementation = hash;
+        self
+    }
+
     /// Checks parameters against the kind (`Err` is the message of `RE4005`).
+    /// They must already be in the current shape ([`NodeDef::migrate`]).
     pub fn check(&self, params: &Json) -> Result<(), String> {
         (self.check)(params)
+    }
+
+    /// True if this engine evaluates nodes written for `version`.
+    pub fn supports(&self, version: u32) -> bool {
+        version >= self.oldest.max(1) && version <= self.version
+    }
+
+    /// `params`, written for `version`, in the current shape: each listed
+    /// migration step from `version` up runs in order. Borrowed when no step
+    /// applies. `Err` is the failed step's `from` version and its message
+    /// (`RE4020`).
+    pub fn migrate<'p>(
+        &self,
+        version: u32,
+        params: &'p Json,
+    ) -> Result<std::borrow::Cow<'p, Json>, (u32, String)> {
+        let steps = self.steps_from(version);
+        if steps.is_empty() {
+            return Ok(std::borrow::Cow::Borrowed(params));
+        }
+        let mut map = match params {
+            Json::Object(m) => m.clone(),
+            Json::Null => serde_json::Map::new(),
+            _ => return Err((version, "parameters must be an object".into())),
+        };
+        for step in steps {
+            (step.params)(&mut map).map_err(|e| (step.from, e))?;
+        }
+        Ok(std::borrow::Cow::Owned(Json::Object(map)))
+    }
+
+    /// The migration steps from `version` to the current one, in order.
+    pub fn steps_from(&self, version: u32) -> Vec<&Migration> {
+        let mut steps: Vec<&Migration> = self
+            .migrations
+            .iter()
+            .filter(|m| m.from >= version && m.from < self.version)
+            .collect();
+        steps.sort_by_key(|m| m.from);
+        steps
     }
 
     /// Runs the node.
@@ -224,6 +343,8 @@ impl NodeDef {
         json!({
             "kind": self.kind,
             "version": self.version,
+            "oldest": self.oldest,
+            "streaming": self.streaming,
             "doc": self.doc,
             "inputs": inputs,
             "variadic": self.variadic,
@@ -376,6 +497,11 @@ pub struct NodeCtx<'a> {
     pub node_id: &'a str,
     /// The node's key (the hash of everything that decides its output).
     pub key: [u8; 32],
+    /// The version the node was written for. A kind keeps the output of
+    /// every version it supports, branching on this when versions differ.
+    pub version: u32,
+    /// The window being evaluated, for streamed evaluation (ADR-0042).
+    pub domain: Option<Domain>,
     /// The node's seed: `Pcg32::from_seed(graph seed).fork(hash64(node id))`'s
     /// first `u64`.
     pub seed: u64,

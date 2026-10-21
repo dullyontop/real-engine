@@ -90,6 +90,8 @@ pub fn register(w: &mut World) {
         params_component: "PillarGrid".into(),
         run: Arc::new(pillar_grid),
         fingerprint_extra: None,
+        version: 1,
+        oldest: 1,
     });
 }
 

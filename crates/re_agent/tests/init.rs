@@ -134,6 +134,45 @@ fn init_respects_existing_files() {
 }
 
 #[test]
+fn init_with_http_points_claude_code_at_the_endpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path();
+    let reg = registry();
+    let report = init::init(
+        project,
+        reg.specs(),
+        &InitOptions {
+            http: Some("http://127.0.0.1:8765/mcp".to_string()),
+            ..InitOptions::default()
+        },
+    )
+    .unwrap();
+    let claude: serde_json::Value = serde_json::from_str(&read(project, ".mcp.json")).unwrap();
+    assert_eq!(
+        claude["mcpServers"]["real-engine"],
+        serde_json::json!({
+            "type": "http",
+            "url": "http://127.0.0.1:8765/mcp",
+            "headers": { "Authorization": "Bearer ${REAL_MCP_TOKEN}" }
+        })
+    );
+    // The other clients keep starting `real mcp` over stdio.
+    let cursor: serde_json::Value =
+        serde_json::from_str(&read(project, ".cursor/mcp.json")).unwrap();
+    assert_eq!(cursor["mcpServers"]["real-engine"]["command"], "real");
+    let (_, _, how) = report
+        .snippets
+        .iter()
+        .find(|(client, _, _)| client == "HTTP")
+        .unwrap();
+    assert!(
+        how.contains("real mcp --http 127.0.0.1:8765 --project"),
+        "{how}"
+    );
+    assert!(how.contains("REAL_MCP_TOKEN"), "{how}");
+}
+
+#[test]
 fn agents_md_lists_every_command_and_its_example_applies() {
     let reg = registry();
     let md = init::generate_agents_md(&reg);

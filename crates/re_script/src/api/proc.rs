@@ -12,7 +12,8 @@
 //! ```
 //!
 //! Inputs map an input port to a node (its output port [`DEFAULT_OUTPUT`]) or to
-//! `node:out("port")`. Node ids are `n1`, `n2`, … in creation order unless an id
+//! `node:out("port")`. A node is recorded at version 1 of its kind unless the
+//! kind asks for another, as in `"terrain.heightfield@2"` (ADR-0043). Node ids are `n1`, `n2`, … in creation order unless an id
 //! is given. The result is a [`GraphDoc`]; `re_script` does not depend on
 //! `re_proc`, which validates node kinds and ports.
 
@@ -36,6 +37,7 @@ declare extern type Graph with
     read name: string
     read seed: number
     -- Adds a node. `inputs` maps input ports to nodes or ports; `id` defaults to n1, n2, ...
+    -- The node records version 1 of its kind; write 'kind@2' to ask for version 2.
     function node(self, kind: string, params: { [string]: any }?, inputs: { [string]: GraphNode | GraphPort }?, id: string?): GraphNode
     -- Connects an output to a node's input port.
     function connect(self, from: GraphNode | GraphPort, to: GraphNode, port: string): ()
@@ -107,6 +109,20 @@ fn source(graph: &Rc<RefCell<GraphDoc>>, v: &Value, what: &str) -> Result<(Strin
     )))
 }
 
+/// Splits `terrain.heightfield@2` into the kind and its version (1 when
+/// there is no `@`).
+fn split_version(kind: &str) -> mlua::Result<(String, u32)> {
+    let Some((name, version)) = kind.rsplit_once('@') else {
+        return Ok((kind.to_string(), 1));
+    };
+    match version.parse::<u32>() {
+        Ok(v) if v >= 1 && !name.is_empty() => Ok((name.to_string(), v)),
+        _ => Err(bad(format!(
+            "node {kind:?}: a version is written `<kind>@<n>` with n a whole number from 1, as in \"terrain.heightfield@2\""
+        ))),
+    }
+}
+
 impl UserData for GraphBuilder {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("name", |_, g| Ok(g.0.borrow().name.clone()));
@@ -117,6 +133,9 @@ impl UserData for GraphBuilder {
         methods.add_method(
             "node",
             |lua, g, (kind, params, inputs, id): (String, Option<Table>, Option<Table>, Option<String>)| {
+                // `kind@N` asks for version N; a bare kind is version 1, so a
+                // builder means the same thing on every engine (ADR-0043).
+                let (kind, version) = split_version(&kind)?;
                 let params = match params {
                     Some(t) => match json::to_json(lua, &Value::Table(t))? {
                         serde_json::Value::Object(m) => m,
@@ -142,7 +161,7 @@ impl UserData for GraphBuilder {
                 doc.nodes.push(NodeDoc {
                     id: id.clone(),
                     kind: kind.clone(),
-                    version: 1,
+                    version,
                     params,
                 });
                 for (from, port) in edges {
