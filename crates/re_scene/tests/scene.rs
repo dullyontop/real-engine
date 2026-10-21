@@ -595,6 +595,8 @@ fn regeneration_never_reuses_a_taken_id() {
             }])
         }),
         fingerprint_extra: None,
+        version: 1,
+        oldest: 1,
     });
     w.set(
         "grid",
@@ -606,6 +608,35 @@ fn regeneration_never_reuses_a_taken_id() {
     let report = w.update();
     assert_eq!(report.diagnostics[0].code.to_string(), "RE1207");
     assert!(w.entity("grid/").is_err());
+}
+
+#[test]
+fn a_source_runs_only_a_generator_version_it_supports() {
+    let mut w = sample();
+    w.spawn_docs(&[grid_doc(2, 2)], None).unwrap();
+    let report = w.update();
+    assert!(report.diagnostics.is_empty(), "{report:?}");
+    assert_eq!(
+        w.get("grid", "Procedural", "version").unwrap(),
+        Value::Int(1)
+    );
+
+    // A version the generator does not run is refused, and the previous
+    // output stays.
+    w.set("grid", "Procedural", "version", Value::Int(2))
+        .unwrap();
+    let report = w.update();
+    assert_eq!(report.diagnostics.len(), 1, "{report:?}");
+    assert_eq!(report.diagnostics[0].code.to_string(), "RE1207");
+    assert!(report.diagnostics[0].message.contains("version 2"));
+    assert!(w.entity("grid/pillar_0_0").is_ok());
+
+    // The version is part of the fingerprint: going back regenerates.
+    w.set("grid", "Procedural", "version", Value::Int(1))
+        .unwrap();
+    let report = w.update();
+    assert!(report.diagnostics.is_empty(), "{report:?}");
+    assert_eq!(report.sources, ["grid"]);
 }
 
 #[test]

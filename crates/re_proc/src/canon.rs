@@ -77,6 +77,43 @@ pub fn doc_hash(doc: &GraphDoc) -> blake3::Hash {
     blake3::hash(canonical_json(&json).as_bytes())
 }
 
+/// The version stamp of a graph document (ADR-0043): what decides which
+/// code produces its output. It hashes the `graph` generator's name and
+/// version and, for each node in document order, its id, kind, recorded
+/// version and its kind's implementation hash (all zeros for Rust kinds).
+/// Parameters, seeds and layout are not part of it. Streaming (WP23) keys
+/// cells by it, and the `graph` generator's fingerprint includes it, so
+/// changing a Luau node's scripts regenerates the sources that use it.
+pub fn version_stamp(doc: &GraphDoc, registry: &crate::NodeRegistry) -> blake3::Hash {
+    stamp(
+        doc.nodes
+            .iter()
+            .map(|n| (n.id.as_str(), n.kind.as_str(), n.version)),
+        registry,
+    )
+}
+
+pub(crate) fn stamp<'a>(
+    nodes: impl Iterator<Item = (&'a str, &'a str, u32)>,
+    registry: &crate::NodeRegistry,
+) -> blake3::Hash {
+    let mut h = blake3::Hasher::new();
+    let s = |h: &mut blake3::Hasher, t: &str| {
+        h.update(&(t.len() as u64).to_le_bytes());
+        h.update(t.as_bytes());
+    };
+    h.update(b"re_proc version stamp v1");
+    s(&mut h, crate::GENERATOR);
+    h.update(&crate::GENERATOR_VERSION.to_le_bytes());
+    for (id, kind, version) in nodes {
+        s(&mut h, id);
+        s(&mut h, kind);
+        h.update(&version.to_le_bytes());
+        h.update(&registry.get(kind).map_or([0; 32], |d| d.implementation));
+    }
+    h.finalize()
+}
+
 /// A hash of a fragment's exact content: keys, names, parents, and every
 /// component and field value bit for bit, in order. Equal fragments give
 /// equal hashes on every platform.

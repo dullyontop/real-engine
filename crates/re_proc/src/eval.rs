@@ -4,7 +4,9 @@
 //! [`EvalReport`] (ARCHITECTURE §5, "Evaluation").
 //!
 //! **Determinism.** A node's output depends only on its key's inputs: its
-//! kind and version, its id, its parameters, its inputs' keys, its seed
+//! kind and the version it was written for (ADR-0043), its id, its
+//! parameters (migrated to the kind's current shape), the evaluation's
+//! [`Domain`] if it has one, its inputs' keys, its seed
 //! (`Pcg32::from_seed(graph seed).fork(hash64(node id))`, for kinds that use
 //! one) and the contents of the files it names. Nodes never share mutable
 //! state and the order of their results is fixed, so the output is the same
@@ -28,7 +30,7 @@ use crate::cache::DiskCache;
 use crate::canon::{canonical_json, fragment_hash, hash64};
 use crate::codes;
 use crate::graph::ProcGraph;
-use crate::nodes::{NodeCtx, NodeDef, NodeRegistry, natural_cmp, sink_fragment};
+use crate::nodes::{Domain, NodeCtx, NodeDef, NodeRegistry, natural_cmp, sink_fragment};
 use crate::value::{DerivedAsset, Fragment, Output, PortType};
 
 /// Where a node's output came from.
@@ -100,6 +102,9 @@ pub struct EvalReport {
     pub misses: usize,
     /// Wall time of the evaluation, in milliseconds.
     pub ms: f64,
+    /// The graph's [version stamp](crate::version_stamp), in hex.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub stamp: String,
     /// The hash of the output fragment (hex), once it is assembled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fragment_hash: Option<String>,
@@ -146,6 +151,9 @@ pub struct EvalOptions {
     pub root: Option<PathBuf>,
     /// Stop before starting a level of nodes after this instant (`RE4016`).
     pub deadline: Option<Instant>,
+    /// The window to evaluate, for streamed evaluation (ADR-0042). Part of
+    /// every node's key when set.
+    pub domain: Option<Domain>,
 }
 
 struct MemEntry {
@@ -194,6 +202,7 @@ impl Default for Evaluator {
 struct Job<'a> {
     index: usize,
     def: &'a NodeDef,
+    params: Json,
     key: [u8; 32],
     seed: u64,
     inputs: Vec<(String, Output)>,
@@ -274,6 +283,7 @@ impl Evaluator {
             graph: graph.id.clone(),
             seed,
             threads: pool.threads(),
+            stamp: graph.version_stamp(&self.registry).to_hex().to_string(),
             nodes: graph
                 .nodes
                 .iter()
@@ -343,8 +353,23 @@ impl Evaluator {
                     continue; // An input failed or was skipped.
                 }
                 let node_seed = base.fork(hash64(id)).next_u64();
-                let files = load_files(def, &node.params, opts.root.as_deref());
-                let key = node_key(id, def, &node.params, &inputs, &keys, node_seed, &files);
+                // Validation above guarantees the migration succeeds.
+                let Ok(params) = def.migrate(node.version, &node.params) else {
+                    continue;
+                };
+                let params = params.into_owned();
+                let files = load_files(def, &params, opts.root.as_deref());
+                let key = node_key(&KeyInputs {
+                    id,
+                    def,
+                    version: node.version,
+                    params: &params,
+                    inputs: &inputs,
+                    keys: &keys,
+                    seed: node_seed,
+                    files: &files,
+                    domain: opts.domain,
+                });
                 keys[index] = Some(key);
                 report.nodes[index].key = blake3::Hash::from_bytes(key).to_hex().to_string();
                 let hit = {
@@ -373,6 +398,7 @@ impl Evaluator {
                 jobs.push(Job {
                     index,
                     def,
+                    params,
                     key,
                     seed: node_seed,
                     inputs,
@@ -383,12 +409,12 @@ impl Evaluator {
                 jobs.iter().map(|_| Mutex::new(None)).collect();
             if jobs.len() == 1 {
                 *results[0].lock().unwrap_or_else(|e| e.into_inner()) =
-                    Some(self.run_job(graph, &jobs[0], pool));
+                    Some(self.run_job(graph, &jobs[0], pool, opts.domain));
             } else if !jobs.is_empty() {
                 pool.scope(|s| {
                     for (job, slot) in jobs.iter().zip(&results) {
                         s.spawn(move |_| {
-                            let r = self.run_job(graph, job, pool);
+                            let r = self.run_job(graph, job, pool, opts.domain);
                             *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
                         });
                     }
@@ -438,7 +464,13 @@ impl Evaluator {
         Evaluation::new(graph, report, outputs)
     }
 
-    fn run_job(&self, graph: &ProcGraph, job: &Job, pool: &TaskPool) -> JobResult {
+    fn run_job(
+        &self,
+        graph: &ProcGraph,
+        job: &Job,
+        pool: &TaskPool,
+        domain: Option<Domain>,
+    ) -> JobResult {
         let start = Instant::now();
         let (id, node) = graph
             .nodes
@@ -464,12 +496,14 @@ impl Evaluator {
         let ctx = NodeCtx {
             node_id: id,
             key: job.key,
+            version: node.version,
+            domain,
             seed: job.seed,
             inputs: job.inputs.clone(),
             files: job.files.clone(),
             pool,
         };
-        let output = job.def.eval(&ctx, &node.params).map_err(|e| {
+        let output = job.def.eval(&ctx, &job.params).map_err(|e| {
             Diagnostic::error(
                 e.code,
                 format!("node `{id}` ({}): {}", node.kind, e.message),
@@ -589,15 +623,36 @@ fn load_files(
         .collect()
 }
 
-fn node_key(
-    id: &str,
-    def: &NodeDef,
-    params: &Json,
-    inputs: &[(&str, usize)],
-    keys: &[Option<[u8; 32]>],
+/// Everything a node's key hashes.
+struct KeyInputs<'a> {
+    id: &'a str,
+    def: &'a NodeDef,
+    /// The version the node was written for.
+    version: u32,
+    /// Its parameters, migrated to the kind's current shape.
+    params: &'a Json,
+    inputs: &'a [(&'a str, usize)],
+    keys: &'a [Option<[u8; 32]>],
     seed: u64,
-    files: &HashMap<String, Result<Arc<Vec<u8>>, String>>,
-) -> [u8; 32] {
+    files: &'a HashMap<String, Result<Arc<Vec<u8>>, String>>,
+    domain: Option<Domain>,
+}
+
+/// A node's key. For a node at its kind's current version, outside a
+/// domain, and with a Rust kind, the bytes hashed are exactly M1's, so
+/// caches written before versioning stay valid.
+fn node_key(k: &KeyInputs) -> [u8; 32] {
+    let KeyInputs {
+        id,
+        def,
+        version,
+        params,
+        inputs,
+        keys,
+        seed,
+        files,
+        domain,
+    } = *k;
     let mut h = blake3::Hasher::new();
     let s = |h: &mut blake3::Hasher, t: &str| {
         h.update(&(t.len() as u64).to_le_bytes());
@@ -605,7 +660,7 @@ fn node_key(
     };
     h.update(b"re_proc node key v1");
     s(&mut h, def.kind);
-    h.update(&def.version.to_le_bytes());
+    h.update(&version.to_le_bytes());
     s(&mut h, id);
     s(&mut h, &canonical_json(params));
     h.update(&(inputs.len() as u64).to_le_bytes());
@@ -632,6 +687,17 @@ fn node_key(
                 h.update(&[0]);
             }
         }
+    }
+    if def.implementation != [0; 32] {
+        h.update(b"implementation");
+        h.update(&def.implementation);
+    }
+    if let Some(d) = domain {
+        h.update(b"domain");
+        h.update(&d.origin[0].to_le_bytes());
+        h.update(&d.origin[1].to_le_bytes());
+        h.update(&d.n.to_le_bytes());
+        h.update(&d.spacing.to_bits().to_le_bytes());
     }
     *h.finalize().as_bytes()
 }
