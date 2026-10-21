@@ -7,7 +7,7 @@ use re_command::Origin;
 use re_core::Code;
 use re_scene::{Entity, entity_from_id, entity_id};
 use re_types::host::HostError;
-use re_types::physics::{GroundState, GroupMask};
+use re_types::physics::{GroundState, GroupMask, VehicleInput};
 
 use super::entity::{EntityRef, handle};
 use super::math::{LQuat, V3};
@@ -255,6 +255,60 @@ fn physics_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
             if let Some(g) = st.ground_entity.and_then(entity_from_id) {
                 t.raw_set("ground_entity", handle(lua, g)?)?;
             }
+            Ok(t)
+        },
+    )?;
+    lib.func(
+        lua,
+        "drive",
+        "(e: Entity, input: { throttle: number?, steer: number?, brake: number?, handbrake: number? }) -> ()",
+        "Sets a vehicle's driver input from the next step until the next call: `throttle` and `steer` -1 to 1 (negative reverses or steers left), `brake` and `handbrake` 0 to 1; missing fields are 0, and a value out of range or not finite is an error.",
+        |lua, (e, input): (Value, Table)| {
+            let e = entity_arg(&e, "physics.drive")?;
+            let field = |name: &str| -> Result<f32> { Ok(input.get::<Option<f32>>(name)?.unwrap_or(0.0)) };
+            let input = VehicleInput {
+                throttle: field("throttle")?,
+                steer: field("steer")?,
+                brake: field("brake")?,
+                handbrake: field("handbrake")?,
+            };
+            with_host(lua, |h| {
+                h.services()
+                    .vehicle_drive(entity_id(e), input)
+                    .map_err(host_err)
+            })
+        },
+    )?;
+    lib.func(
+        lua,
+        "vehicle",
+        "(e: Entity) -> { speed: number, rpm: number, gear: number, throttle: number, steer: number, brake: number, handbrake: number, wheels: { { on_ground: boolean, contact: Entity?, contact_point: vector, suspension_length: number, angular_velocity: number, steer_deg: number } } }",
+        "A vehicle's state after the last step: forward speed (m/s, negative in reverse), engine rpm, gear (negative in reverse, 0 neutral), the input in effect, and each wheel in wheel order.",
+        |lua, e: Value| {
+            let e = entity_arg(&e, "physics.vehicle")?;
+            let st = with_host(lua, |h| h.services().vehicle_state(entity_id(e)).map_err(host_err))?;
+            let t = lua.create_table()?;
+            t.raw_set("speed", st.speed)?;
+            t.raw_set("rpm", st.rpm)?;
+            t.raw_set("gear", st.gear)?;
+            t.raw_set("throttle", st.input.throttle)?;
+            t.raw_set("steer", st.input.steer)?;
+            t.raw_set("brake", st.input.brake)?;
+            t.raw_set("handbrake", st.input.handbrake)?;
+            let wheels = lua.create_table()?;
+            for (i, w) in st.wheels.iter().enumerate() {
+                let wt = lua.create_table()?;
+                wt.raw_set("on_ground", w.on_ground)?;
+                if let Some(c) = w.contact.and_then(entity_from_id) {
+                    wt.raw_set("contact", handle(lua, c)?)?;
+                }
+                wt.raw_set("contact_point", V3(w.contact_point))?;
+                wt.raw_set("suspension_length", w.suspension_length)?;
+                wt.raw_set("angular_velocity", w.angular_velocity)?;
+                wt.raw_set("steer_deg", w.steer_deg)?;
+                wheels.raw_set(i + 1, wt)?;
+            }
+            t.raw_set("wheels", wheels)?;
             Ok(t)
         },
     )?;

@@ -11,7 +11,7 @@ use re_types::EntityId;
 use re_types::glam::Vec3;
 use re_types::host::{HostResult, HostServices};
 use re_types::input::{ActionFrame, ButtonState};
-use re_types::physics::{CharacterState, GroupMask, RayHit};
+use re_types::physics::{CharacterState, GroupMask, RayHit, VehicleInput, VehicleState};
 
 pub fn project() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/project")
@@ -59,6 +59,12 @@ impl HostServices for Services {
     }
     fn body_velocity(&self, e: EntityId) -> HostResult<(Vec3, Vec3)> {
         self.none.body_velocity(e)
+    }
+    fn vehicle_drive(&mut self, e: EntityId, i: VehicleInput) -> HostResult<()> {
+        self.none.vehicle_drive(e, i)
+    }
+    fn vehicle_state(&self, e: EntityId) -> HostResult<VehicleState> {
+        self.none.vehicle_state(e)
     }
     fn play_sound(&mut self, clip: &str, _: Option<Vec3>, _: f32) -> HostResult<()> {
         self.sounds.push(clip.to_string());

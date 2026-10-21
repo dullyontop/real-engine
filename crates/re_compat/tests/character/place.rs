@@ -13,6 +13,7 @@ use re_types::glam::Vec3;
 use re_types::input::{MouseLock, RawInputFrame};
 use re_types::{
     ActionFrame, CharacterState, EntityId, GroupMask, HostResult, HostServices, RayHit,
+    VehicleInput, VehicleState,
 };
 
 /// Host services with injectable raw input; everything else is
@@ -39,6 +40,12 @@ impl HostServices for Services {
     }
     fn body_velocity(&self, e: EntityId) -> HostResult<(Vec3, Vec3)> {
         self.base.body_velocity(e)
+    }
+    fn vehicle_drive(&mut self, e: EntityId, i: VehicleInput) -> HostResult<()> {
+        self.base.vehicle_drive(e, i)
+    }
+    fn vehicle_state(&self, e: EntityId) -> HostResult<VehicleState> {
+        self.base.vehicle_state(e)
     }
     fn play_sound(&mut self, c: &str, a: Option<Vec3>, v: f32) -> HostResult<()> {
         self.base.play_sound(c, a, v)

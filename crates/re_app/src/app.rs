@@ -115,6 +115,7 @@ pub struct App {
     shapes: ShapeLibrary,
     physics_cmds: Vec<PhysicsCmd>,
     poses: Vec<BodyPose>,
+    wheel_poses: Vec<re_types::WheelPose>,
     contacts: Vec<ContactEvent>,
 
     media: Media,
@@ -256,6 +257,7 @@ impl App {
             shapes: ShapeLibrary::default(),
             physics_cmds: Vec::new(),
             poses: Vec::new(),
+            wheel_poses: Vec::new(),
             contacts: Vec::new(),
             media: Media::new(project),
             graphics: None,
@@ -1179,6 +1181,7 @@ impl App {
         }
         self.perf.physics_step(step.elapsed());
         self.physics.poses_into(&mut self.poses);
+        self.physics.vehicle_poses_into(&mut self.wheel_poses);
         self.contacts.extend_from_slice(self.physics.events());
         self.diagnostics.extend(self.physics.take_diagnostics());
         self.perf.add(Phase::Physics, t.elapsed());
@@ -1187,6 +1190,7 @@ impl App {
         // and post-physics script updates.
         let t = Instant::now();
         physics::pull(&mut self.world, &mut self.physics_sync, &self.poses);
+        physics::pull_wheels(&mut self.world, &mut self.physics_sync, &self.wheel_poses);
         if let Some(scripts) = &mut self.scripts {
             scripts.push_contacts(self.physics.events());
         }
@@ -1194,11 +1198,11 @@ impl App {
         self.perf.add(Phase::PostSimulation, t.elapsed());
     }
 
-    /// Gives characters that appeared since the last physics push (the first
-    /// step, a spawn, a restart) their physics character now, so scripts can
-    /// move them in the step they appear.
+    /// Gives characters and vehicles that appeared since the last physics push
+    /// (the first step, a spawn, a restart) their physics character or vehicle
+    /// now, so scripts can move them in the step they appear.
     fn link_new_characters(&mut self) {
-        let unlinked: Vec<re_types::EntityId> = self
+        let mut unlinked: Vec<re_types::EntityId> = self
             .world
             .ecs
             .query_filtered::<re_scene::Entity, re_scene::ecs::query::With<re_scene::CharacterController>>()
@@ -1206,7 +1210,15 @@ impl App {
             .map(re_scene::entity_id)
             .filter(|&id| self.physics_sync.kind(id) != Some(physics::LinkKind::Character))
             .collect();
-        // A character that cannot be linked (reported by `push`) is tried
+        unlinked.extend(
+            self.world
+                .ecs
+                .query_filtered::<re_scene::Entity, re_scene::ecs::query::With<re_scene::Vehicle>>()
+                .iter(&self.world.ecs)
+                .map(re_scene::entity_id)
+                .filter(|&id| !self.physics_sync.is_vehicle(id)),
+        );
+        // A character or vehicle that cannot be linked (reported by `push`) is tried
         // once here, not on every step.
         let fresh = unlinked.iter().any(|id| !self.link_tried.contains(id));
         self.link_tried = unlinked.into_iter().collect();

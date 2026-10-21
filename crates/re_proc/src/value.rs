@@ -56,6 +56,22 @@ impl Field {
             .map_err(|e| e.to_string())
     }
 
+    /// The field of a streamed window (ADR-0042): `domain.n²` values whose
+    /// first sample sits at the window's world position.
+    pub fn at(domain: &crate::Domain, values: Vec<f32>) -> Result<Field, String> {
+        let [x, z] = domain.min();
+        Heightfield::new(domain.n, domain.spacing, Vec3::new(x, 0.0, z), values)
+            .map(Field)
+            .map_err(|e| e.to_string())
+    }
+
+    /// A field on the same grid as `self` (size, spacing and position).
+    pub fn like(&self, values: Vec<f32>) -> Result<Field, String> {
+        Heightfield::new(self.0.n, self.0.spacing, self.0.offset, values)
+            .map(Field)
+            .map_err(|e| e.to_string())
+    }
+
     /// Samples per side.
     pub fn n(&self) -> u32 {
         self.0.n

@@ -433,6 +433,24 @@ fn physics() {
             },
         },
         PhysicsCmd::RemoveConstraint { id },
+        PhysicsCmd::RemoveVehicle { id },
+        PhysicsCmd::AddVehicle {
+            id,
+            desc: VehicleDesc {
+                kind: VehicleKind::Motorcycle,
+                tester: WheelTester::CastSphere { radius: 0.2 },
+                ..VehicleDesc::car(Vec3::new(0.9, -0.1, 1.4), 0.35)
+            },
+        },
+        PhysicsCmd::SetVehicleInput {
+            id,
+            input: VehicleInput {
+                throttle: 0.5,
+                steer: -0.25,
+                brake: 0.0,
+                handbrake: 1.0,
+            },
+        },
     ];
     let ranks: std::collections::BTreeSet<u8> =
         commands.iter().map(PhysicsCmd::kind_rank).collect();
@@ -801,6 +819,59 @@ fn constraints() {
     PhysicsCmd::sort(&mut commands);
     let ids: Vec<u64> = commands.iter().map(|c| c.id().0).collect();
     assert_eq!(ids, [11, 1, 2, 10]);
+}
+
+#[test]
+fn vehicle_types_take_defaults_and_check_input() {
+    let desc: VehicleDesc =
+        serde_json::from_str(r#"{"wheels": [{"pos": [0.9, -0.1, 1.4], "driven": true}]}"#).unwrap();
+    assert_eq!(desc.kind, VehicleKind::Wheeled);
+    assert_eq!(desc.tester, WheelTester::Ray);
+    assert_eq!(desc.wheels[0].radius, WheelDesc::default().radius);
+    assert!(desc.wheels[0].driven);
+    assert_eq!(desc.transmission, TransmissionDesc::default());
+    round_trip(&desc);
+    round_trip(&VehicleState {
+        speed: 3.0,
+        rpm: 2500.0,
+        gear: 2,
+        input: VehicleInput::default(),
+        wheels: vec![WheelState {
+            contact: Some(EntityId(4)),
+            on_ground: true,
+            ..WheelState::default()
+        }],
+    });
+    round_trip(&WheelPose {
+        id: EntityId(2),
+        wheel: 1,
+        pos: Vec3::ONE,
+        rot: Quat::IDENTITY,
+    });
+    assert!(VehicleInput::default().is_valid());
+    for bad in [
+        VehicleInput {
+            throttle: 1.5,
+            ..VehicleInput::default()
+        },
+        VehicleInput {
+            steer: f32::NAN,
+            ..VehicleInput::default()
+        },
+        VehicleInput {
+            brake: -0.1,
+            ..VehicleInput::default()
+        },
+        VehicleInput {
+            handbrake: 2.0,
+            ..VehicleInput::default()
+        },
+    ] {
+        assert!(!bad.is_valid(), "{bad:?}");
+    }
+    let car = VehicleDesc::car(Vec3::new(0.9, -0.1, 1.4), 0.35);
+    assert_eq!(car.wheels.len(), 4);
+    assert_eq!(car.wheels.iter().filter(|w| w.driven).count(), 2);
 }
 
 #[test]

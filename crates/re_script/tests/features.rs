@@ -909,3 +909,15 @@ fn cancel_removes_waiting_threads_at_once() {
     assert!(rig.output().is_empty());
     assert_eq!(rig.rt.context(ContextKind::Game).sleeping_threads(), 0);
 }
+
+#[test]
+fn vehicle_functions_are_refused_without_a_host() {
+    let mut rig = Rig::new();
+    rig.exec("world.spawn({ id = 'car' })").unwrap();
+    let d = rig.exec_err("physics.drive(world.get('car'), { throttle = 1 })");
+    assert_eq!(d.code, codes::SERVICE_UNAVAILABLE);
+    assert!(d.message.contains("physics.drive"), "{}", d.message);
+    let d = rig.exec_err("return physics.vehicle(world.get('car'))");
+    assert_eq!(d.code, codes::SERVICE_UNAVAILABLE);
+    assert!(d.message.contains("physics.vehicle"), "{}", d.message);
+}
