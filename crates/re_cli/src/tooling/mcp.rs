@@ -379,8 +379,9 @@ fn verify_diff(app: &mut App, agent: &Agent, args: VerifyDiffArgs) -> Result<Jso
     Ok(json!(out))
 }
 
-/// Registers `verify.diff` (read tier) for `agent`.
-fn register_verify_diff(registry: &mut re_command::CommandRegistry<App>, agent: &Agent) {
+/// Registers `verify.diff` (read tier) for `agent`; `real do` registers it
+/// too, since recipe checks use it.
+pub(crate) fn register_verify_diff(registry: &mut re_command::CommandRegistry<App>, agent: &Agent) {
     let agent = agent.clone();
     registry.register_typed_output::<VerifyDiffArgs, VerifyDiffOutput, _>(
         "verify.diff",
@@ -456,7 +457,9 @@ fn library() -> Result<Library, Diagnostic> {
     Library::builtin()
 }
 
-fn register_recipes(registry: &mut re_command::CommandRegistry<App>, project: &Path) {
+/// Registers `template.list`, `recipe.list` and `recipe.apply`, for
+/// `real mcp` and `real do` (which also need `verify.diff` for the checks).
+pub(crate) fn register_recipes(registry: &mut re_command::CommandRegistry<App>, project: &Path) {
     registry.register_typed_output::<ListArgs, ListOutput, _>(
         "template.list",
         "List the project templates `real new --template` offers, with their parameters and the checks a new project passes.",

@@ -50,6 +50,19 @@ fn do_applies_a_command_and_saves_the_scene() {
 }
 
 #[test]
+fn do_applies_a_recipe() {
+    let dir = game();
+    let game = dir.path().join("game");
+    let args = r#"{"recipe": "falling-box", "args": {"label": "Crate", "x": 2.0}}"#;
+    let o = real(&["do", "recipe.apply", "--args", args, "--json"], &game);
+    assert!(o.status.success(), "{}", text(&o));
+    let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(out["ok"], true, "{out}");
+    let scene = std::fs::read_to_string(game.join("scenes/main.scene.json")).unwrap();
+    assert!(scene.contains("Crate"), "{scene}");
+}
+
+#[test]
 fn a_dry_run_changes_nothing() {
     let dir = game();
     let game = dir.path().join("game");
