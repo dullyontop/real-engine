@@ -3136,7 +3136,9 @@ impl Renderer {
         queue.submit([encoder.finish()]);
         let bytes = capture::read_texture(device, queue, &texture, wgpu::TextureAspect::All)?;
         Ok(bytes
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|px| {
                 let channel = |i: usize| f16_to_f32(u16::from_le_bytes([px[2 * i], px[2 * i + 1]]));
                 let cascade = channel(1).round();
