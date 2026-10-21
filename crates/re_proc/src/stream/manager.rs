@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use glam::{Affine3A, Vec2, Vec3};
+use re_core::time::Instant;
 use re_core::{Diagnostic, Location, TaskPool};
 use re_scene::ecs as bevy_ecs;
 use re_scene::ecs::entity::Entity;
@@ -88,6 +89,8 @@ pub struct StepReport {
     pub late: usize,
     /// Problems found at this tick (each reported once per subject).
     pub diagnostics: Vec<Diagnostic>,
+    /// Wall time spent applying unloads and loads (including any waits).
+    pub apply_time: core::time::Duration,
 }
 
 /// The cells loaded and unloaded at the last tick, for scripts
@@ -667,6 +670,7 @@ impl Streamer {
             ..Default::default()
         };
         let mut done = 0usize;
+        let apply_start = Instant::now();
         for k in unloads {
             if done > 0 && done + self.loaded[&k].entities > limit {
                 report.deferred += 1;
@@ -737,6 +741,7 @@ impl Streamer {
             }
             done += self.load(world, &sources, &k, c, outputs, &mut report, &mut events);
         }
+        report.apply_time = apply_start.elapsed();
         // Start jobs for the next requests, nearest apply tick first.
         self.issue_next(world, &sources, &focuses);
         report.entities = done;
