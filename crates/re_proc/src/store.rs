@@ -88,7 +88,7 @@ impl Deref for CurrentGraph<'_> {
 /// `value` as a graph: it parses as a [`GraphDoc`], passes
 /// [`GraphDoc::validate`], and every layout position is finite (a number too
 /// large for `f32` would be written back as `null`).
-fn parse_graph(value: &serde_json::Value) -> Result<GraphDoc, String> {
+pub(crate) fn parse_graph(value: &serde_json::Value) -> Result<GraphDoc, String> {
     let doc = GraphDoc::deserialize(value).map_err(|e| format!("invalid graph file: {e}"))?;
     doc.validate().map_err(|e| e.to_string())?;
     if let Some((node, _)) = doc
