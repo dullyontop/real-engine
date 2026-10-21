@@ -1,5 +1,7 @@
 //! [`ProcGraph`]: the validated IR of a graph document (ARCHITECTURE §5).
 
+use std::collections::BTreeMap;
+
 use indexmap::IndexMap;
 use re_core::Diagnostic;
 use re_types::graph::{EdgeDoc, GraphDoc, NodeDoc};
@@ -49,6 +51,10 @@ pub struct ProcGraph {
     pub nodes: IndexMap<NodeId, Node>,
     /// The edges, in document order.
     pub edges: Vec<Edge>,
+    /// The document's node positions on the editor's canvas, carried through
+    /// [`from_doc`](Self::from_doc) and [`to_doc`](Self::to_doc) unchanged;
+    /// evaluation never reads them (ADR-0044).
+    pub layout: BTreeMap<NodeId, [f32; 2]>,
 }
 
 fn diag(code: re_core::Code, graph: &str, message: String) -> Diagnostic {
@@ -105,6 +111,7 @@ impl ProcGraph {
                     }
                 })
                 .collect(),
+            layout: doc.layout.clone(),
         };
         let problems = graph.validate(registry);
         if problems.is_empty() {
@@ -135,6 +142,7 @@ impl ProcGraph {
                 to: e.to.clone(),
             })
             .collect();
+        doc.layout = self.layout.clone();
         doc
     }
 

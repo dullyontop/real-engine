@@ -1,5 +1,6 @@
 //! The built-in commands of `re_command` (ARCHITECTURE §6, "MCP tool set"):
-//! read tier `describe`, `query`, `entity.get`, `command.describe`; edit tier
+//! read tier `describe`, `query`, `entity.get`, `command.describe`,
+//! `project.status`; edit tier
 //! `entity.spawn`, `entity.set`, `entity.reparent`, `entity.delete`,
 //! `component.add`, `component.remove`, `scene.apply`, `undo`, `redo`.
 
@@ -293,6 +294,21 @@ pub fn register_builtin_commands<C: EditTarget + 'static>(registry: &mut Command
                 )
                 .at(Location::command(args.name.clone())))
             }
+        },
+    );
+
+    registry.register_typed::<NoArgs, _>(
+        "project.status",
+        "Report unsaved work: every open document (ADR-0044) with its revision and dirty flag, and the paths of those with unsaved changes (the next scene save writes them).",
+        Tier::Read,
+        true,
+        |target, _args, _call| {
+            let world = target.world();
+            let open: Vec<Json> = world
+                .docs()
+                .map(|(path, d)| json!({ "path": path, "revision": d.revision, "dirty": d.dirty }))
+                .collect();
+            Ok(json!({ "unsaved": world.unsaved_docs(), "open": open }))
         },
     );
 

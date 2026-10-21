@@ -662,6 +662,35 @@ fn graph() {
 }
 
 #[test]
+fn graph_layout_is_optional_and_omitted_when_empty() {
+    // A file without `layout` writes back without one, byte for byte.
+    let doc = GraphDoc::from_json(GRAPH).unwrap();
+    assert!(doc.layout.is_empty());
+    let pretty = doc.to_json();
+    assert!(!pretty.contains("layout"), "{pretty}");
+    assert_eq!(GraphDoc::from_json(&pretty).unwrap().to_json(), pretty);
+
+    let with = GRAPH.replacen(
+        r#""edges""#,
+        r#""layout": { "t": [240.0, 0.0], "h": [0.0, -12.5] }, "edges""#,
+        1,
+    );
+    let doc = GraphDoc::from_json(&with).unwrap();
+    assert_eq!(doc.layout["h"], [0.0, -12.5]);
+    assert_eq!(doc.layout["t"], [240.0, 0.0]);
+    let pretty = doc.to_json();
+    assert_eq!(GraphDoc::from_json(&pretty).unwrap(), doc);
+    assert_eq!(GraphDoc::from_json(&pretty).unwrap().to_json(), pretty);
+    round_trip(&doc);
+    // Positions are pairs of numbers.
+    let bad = GRAPH.replacen(r#""edges""#, r#""layout": { "h": [1.0] }, "edges""#, 1);
+    assert!(matches!(
+        GraphDoc::from_json(&bad),
+        Err(GraphDocError::Parse(_))
+    ));
+}
+
+#[test]
 fn graph_rules() {
     let unknown_key = GRAPH.replacen(r#""seed""#, r#""colour": 1, "seed""#, 1);
     assert!(matches!(

@@ -266,7 +266,7 @@ The entity core is bevy_ecs 0.20.0 used standalone, behind our own API (ADR-0005
 - **M2 built-ins** (WP9): `Attributes` (a string-keyed map of `Value`s) and `Tags` (a string list), both immutable components written by replacement. The `TagIndex` resource maps each tag to its entities and is kept exact by hooks, like `IdIndex`. Two opt-in resources, `AttributeFeed` and `TagFeed`, record `AttributeChanged { entity, key }` and `TagChanged { entity, tag, added }` while a world holds them; `drain()` takes the batch.
 - **Hierarchy**: bevy's `ChildOf` / `Children` relationship: ordered children, recursive despawn. Files store a `parent` id per entity. `GlobalTransform` is recomputed in the Sync phase by a change-driven propagation system that only touches subtrees whose `Transform` or `ChildOf` changed (0.42 to 1.36 ms per update at 100,100 entities in the spike, against 5.5 ms for a full pass). `world.find("Island/Crates/Crate_3")` resolves a path of names as a convenience; it is not an identity.
 - **Change tracking**: bevy's per-component change ticks. Writing an equal value through the registry does not mark a component changed.
-- **Edits** go through `re_command` operations and transactions (ADR-0003): atomic, with exact undo and redo, and a log.
+- **Edits** go through `re_command` operations and transactions (ADR-0003): atomic, with exact undo and redo, and a log. Project files the editor or an agent edits in memory (graph files) are open documents in the World, changed by the `set_doc` operation, checked by a validator per file suffix, listed as unsaved by `project.status` and written back by the scene save (ADR-0044).
 - **Events**: `re_core::Events<T>`, which are typed and double-buffered, plus contact events. Scripts receive them as signals.
 
 ### Luau view (M1 native API)
@@ -352,7 +352,7 @@ Coverage is a data file, `crates/re_compat/coverage.json`, listing each class an
 ### ProcGraph IR
 
 ```rust
-pub struct ProcGraph { pub id: GraphId, pub seed: u64, pub nodes: IndexMap<NodeId, Node>, pub edges: Vec<Edge> }
+pub struct ProcGraph { pub id: GraphId, pub seed: u64, pub nodes: IndexMap<NodeId, Node>, pub edges: Vec<Edge>, pub layout: BTreeMap<NodeId, [f32; 2]> /* canvas positions, never evaluated */ }
 pub struct Node { pub kind: String /* "terrain.heightfield" */, pub version: u32, pub params: serde_json::Value }
 pub struct Edge { pub from: (NodeId, PortName), pub to: (NodeId, PortName) }
 ```
@@ -476,7 +476,7 @@ Each M1 command is one MCP tool. There is no generic `command.run` tool in M1, b
 
 | Tier | Tools | Registered by |
 |---|---|---|
-| Read | `describe`, `query`, `entity.get`, `command.describe` | `re_command` |
+| Read | `describe`, `query`, `entity.get`, `command.describe` (and `project.status`, added with ADR-0044) | `re_command` |
 | Read | `graph.report`, `graph.generate` | `re_proc` |
 | Read | `screenshot`, `verify`, `play.run` | `re_app` |
 | Read | `explain` | `re_cli` |
