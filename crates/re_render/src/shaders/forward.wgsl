@@ -42,8 +42,8 @@ struct VsOut {
     @location(4) flags: vec4<f32>,
 };
 
-@vertex
-fn vs_forward(v: VsIn, inst: Instance) -> VsOut {
+// The vertex stage, shared with the skinned entry point (forward_skinned.wgsl).
+fn forward_vertex(v: VsIn, inst: Instance) -> VsOut {
     let world = instance_model(inst) * vec4<f32>(v.position, 1.0);
     var out: VsOut;
     out.clip = frame.view_proj * world;
@@ -53,6 +53,11 @@ fn vs_forward(v: VsIn, inst: Instance) -> VsOut {
     out.color = v.color;
     out.flags = inst.flags;
     return out;
+}
+
+@vertex
+fn vs_forward(v: VsIn, inst: Instance) -> VsOut {
+    return forward_vertex(v, inst);
 }
 
 fn d_ggx(n_dot_h: f32, a: f32) -> f32 {

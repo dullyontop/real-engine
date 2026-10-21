@@ -232,6 +232,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "field.combine",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "Combines two fields value by value (add, sub, mul, min, max or lerp). The result has `a`'s size; `b` is resampled to it.",
             inputs: &[
                 PortDef {
@@ -258,6 +261,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "field.remap",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "Maps every value of a field: clamp, linear, a piecewise-linear curve, or terraces.",
             inputs: &[PortDef {
                 name: "field",

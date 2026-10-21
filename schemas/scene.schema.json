@@ -669,6 +669,11 @@
           "type": "integer",
           "default": 0,
           "description": "Seed for the generator's random choices."
+        },
+        "version": {
+          "type": "integer",
+          "default": 1,
+          "description": "The generator version this source was written for (ADR-0043).\nThe generator runs as that version; files without the field\nmean 1."
         }
       },
       "additionalProperties": false

@@ -234,16 +234,9 @@ jobs:
             jq -r '.stages[] | "\(.name): ok=\(.ok)"' "$report"
             jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' "$report"
             jq -c '.stages[] | select(.name == "goldens") | .data' "$report"
-            # Goldens are blessed on Linux only (lavapipe and GL). Here every other
-            # stage must pass, and goldens must match where a set for this backend
-            # exists; a backend with no set at all is reported, not failed. WP18's
-            # PR "d2" adds the dx12 and metal sets and removes this rule.
-            jq -r --arg p "$project" '.stages[] | select(.name == "goldens") | select(.data.checks | length > 0 and all(.missing == true)) | "::warning::\($p): no golden set for backend \(.data.backend), \(.data.checks | length) images not compared"' "$report"
-            jq -e '.ok == true or (
-              ([.stages[] | select(.name != "goldens") | .ok] | all) and
-              (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)) and
-                ([.diagnostics[]? | select(.severity == "error") | .code] | all(. == "RE0510")))
-            )' "$report" || status=1
+            # Every stage must pass, goldens included: each backend has its own set
+            # (vulkan and gl blessed on Linux, dx12 on Windows, metal on macOS).
+            jq -e '.ok == true' "$report" > /dev/null || status=1
           done
           exit $status
       - uses: actions/upload-artifact@v7
@@ -296,16 +289,9 @@ jobs:
             jq -r '.stages[] | "\(.name): ok=\(.ok)"' "$report"
             jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' "$report"
             jq -c '.stages[] | select(.name == "goldens") | .data' "$report"
-            # Goldens are blessed on Linux only (lavapipe and GL). Here every other
-            # stage must pass, and goldens must match where a set for this backend
-            # exists; a backend with no set at all is reported, not failed. WP18's
-            # PR "d2" adds the dx12 and metal sets and removes this rule.
-            jq -r --arg p "$project" '.stages[] | select(.name == "goldens") | select(.data.checks | length > 0 and all(.missing == true)) | "::warning::\($p): no golden set for backend \(.data.backend), \(.data.checks | length) images not compared"' "$report"
-            jq -e '.ok == true or (
-              ([.stages[] | select(.name != "goldens") | .ok] | all) and
-              (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)) and
-                ([.diagnostics[]? | select(.severity == "error") | .code] | all(. == "RE0510")))
-            )' "$report" || status=1
+            # Every stage must pass, goldens included: each backend has its own set
+            # (vulkan and gl blessed on Linux, dx12 on Windows, metal on macOS).
+            jq -e '.ok == true' "$report" > /dev/null || status=1
           done
           exit $status
       - uses: actions/upload-artifact@v7
@@ -318,18 +304,40 @@ jobs:
             examples/plaza/.real/out/goldens/
           if-no-files-found: ignore
 
-  # ADR-0049 (WP29 PR "portable"): the runtime crates that need no C++ type-check for the
-  # browser. WP29 PR "toolchain" adds wasi-sdk and extends this to re_app and re_web.
+  # ADR-0049 (WP29): the browser build. Type-checks and lints the runtime for
+  # wasm32-unknown-unknown (the std::time ban runs only here, ADR-0049 §5), then links
+  # tools/web-test with Luau and Jolt built by wasi-sdk and compares its report under
+  # Node with the native one; every line, the Jolt pile hash included, must match.
+  # actions/setup-node v7 (949feb24) verified with `git ls-remote` on 2026-10-20.
   build-web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+      - run: rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown --component clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install wasi-sdk 34
+        run: tools/ci/wasi-sdk.sh
+      - name: Install wasm-bindgen-cli 0.2.129
+        run: cargo install --locked wasm-bindgen-cli --version 0.2.129
       - run: >-
           cargo check --locked --target wasm32-unknown-unknown
           -p re_core -p re_types -p re_geom -p re_noise -p re_reflect -p re_scene
           -p re_command -p re_anim -p re_proc -p re_input -p re_audio -p re_render
+          -p re_script -p re_physics -p re_compat -p re_app -p web-test
+      - name: Clippy for wasm32 (web clippy.toml)
+        run: >-
+          CLIPPY_CONF_DIR=$PWD/tools/ci/clippy-web
+          cargo clippy --locked --target wasm32-unknown-unknown
+          -p re_app -p re_compat -p web-test -- -D warnings
+      - name: Luau and Jolt in wasm match native
+        run: |
+          cargo build --locked --release --target wasm32-unknown-unknown -p web-test
+          wasm-bindgen --target web --out-dir target/web-test target/wasm32-unknown-unknown/release/web_test.wasm
+          cargo run --locked --release -p web-test > target/web-test/native.txt
+          node --experimental-wasm-exnref tools/web-test/smoke.mjs target/web-test target/web-test/native.txt
 
   # D2 (ADR-0036): every replay of the island and the plaza, run on each
   # platform, writes its state_hash every 60 frames; `d2` compares them.

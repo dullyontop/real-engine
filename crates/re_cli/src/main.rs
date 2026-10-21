@@ -104,6 +104,9 @@ enum Command {
     /// Work with procedural graphs.
     #[command(subcommand)]
     Graph(graph::GraphCommand),
+    /// Upgrade every procedural graph's nodes to their kinds' current
+    /// versions, after reporting what changes (all or nothing).
+    MigrateGraph(graph::MigrateArgs),
     /// Write every JSON Schema the engine defines.
     Schema {
         /// The output directory.
@@ -510,6 +513,7 @@ fn main() -> ExitCode {
         Command::Explain { code } => cmd_explain(code),
         Command::Schema { out } => cmd_schema(&out),
         Command::Graph(command) => graph::run(command, &project),
+        Command::MigrateGraph(args) => graph::migrate(args, &project),
         #[cfg(feature = "tooling")]
         Command::Check(args) => tooling_exit(tooling::check::run(args, &project)),
         #[cfg(feature = "tooling")]

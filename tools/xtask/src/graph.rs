@@ -22,6 +22,7 @@ const SUBSYSTEMS: &[&str] = &[
     "re_input",
     "re_assets",
     "re_anim",
+    "re_net",
 ];
 
 /// The contract layer.
@@ -75,6 +76,7 @@ const NOT_SUBSYSTEMS_OR_MLUA: &[&str] = &[
     "re_input",
     "re_assets",
     "re_anim",
+    "re_net",
     "mlua",
 ];
 
@@ -201,7 +203,8 @@ pub struct Graph {
     pub members: BTreeSet<String>,
     /// Direct normal and build dependencies of each package.
     pub deps: BTreeMap<String, BTreeSet<String>>,
-    /// Packages that come from neither crates.io nor the workspace: (name, source).
+    /// Packages that come from neither crates.io, the workspace nor `third_party/`
+    /// (patched copies of crates.io releases, ADR-0049 §2): (name, source).
     pub foreign: Vec<(String, String)>,
 }
 
@@ -227,11 +230,21 @@ impl Graph {
             .context("metadata has no packages")?;
         let mut names = BTreeMap::new();
         let mut sources = BTreeMap::new();
+        let mut vendored = BTreeSet::new();
+        let third_party = metadata["workspace_root"]
+            .as_str()
+            .map(|root| Path::new(root).join("third_party"));
         for p in packages {
             let id = p["id"].as_str().context("package without id")?;
             let name = p["name"].as_str().context("package without name")?;
             names.insert(id.to_string(), name.to_string());
             sources.insert(id.to_string(), p["source"].as_str().map(String::from));
+            let manifest = p["manifest_path"].as_str().map(Path::new);
+            if let (Some(dir), Some(manifest)) = (&third_party, manifest)
+                && manifest.starts_with(dir)
+            {
+                vendored.insert(id.to_string());
+            }
         }
         let mut graph = Graph::default();
         for id in metadata["workspace_members"]
@@ -260,7 +273,7 @@ impl Graph {
             }
             match &sources[id] {
                 Some(source) if CRATES_IO.contains(&source.as_str()) => {}
-                None if graph.members.contains(&name) => {}
+                None if graph.members.contains(&name) || vendored.contains(id) => {}
                 Some(source) => graph.foreign.push((name, source.clone())),
                 None => graph
                     .foreign
@@ -504,5 +517,34 @@ mod tests {
             "dev-dependencies do not count"
         );
         assert!(g.foreign.is_empty());
+    }
+
+    #[test]
+    fn third_party_copies_are_allowed_and_other_paths_are_not() {
+        let metadata = serde_json::json!({
+            "workspace_root": "/w",
+            "packages": [
+                { "id": "a", "name": "re_core", "source": null, "manifest_path": "/w/crates/re_core/Cargo.toml" },
+                { "id": "b", "name": "mlua", "source": null, "manifest_path": "/w/third_party/mlua/Cargo.toml" },
+                { "id": "c", "name": "elsewhere", "source": null, "manifest_path": "/elsewhere/Cargo.toml" }
+            ],
+            "workspace_members": ["a"],
+            "resolve": { "nodes": [
+                { "id": "a", "deps": [
+                    { "pkg": "b", "dep_kinds": [{ "kind": null, "target": null }] },
+                    { "pkg": "c", "dep_kinds": [{ "kind": null, "target": null }] }
+                ]},
+                { "id": "b", "deps": [] },
+                { "id": "c", "deps": [] }
+            ]}
+        });
+        let g = Graph::from_metadata(&metadata).unwrap();
+        assert_eq!(
+            g.foreign,
+            [(
+                "elsewhere".to_string(),
+                "a path outside the workspace".to_string()
+            )]
+        );
     }
 }
