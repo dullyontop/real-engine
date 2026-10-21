@@ -403,15 +403,18 @@ pub(crate) fn reload(
     lua: &Lua,
     paths: &[String],
 ) -> Result<(Vec<Entity>, Vec<re_core::Diagnostic>)> {
-    let root = state(lua)?.project_root.clone();
+    let files = state(lua)?.files.clone();
     let mut good = Vec::new();
     let mut reports = Vec::new();
     for path in paths {
-        let Ok(text) = std::fs::read_to_string(root.join(path)) else {
+        let Ok(data) = files.read(path) else {
+            continue;
+        };
+        let Ok(mode) = re_script::chunk_mode(&data.form) else {
             continue;
         };
         let env = re_script::vm::environment(lua, LuaValue::Nil)?;
-        match super::load_chunk(lua, path, &text, env) {
+        match super::load_chunk(lua, path, &data.bytes, mode, env) {
             Ok(_) => good.push(path.clone()),
             Err(err) => reports.push(
                 re_core::Diagnostic::error(
