@@ -41,6 +41,11 @@ async function fetchBytes(url) {
 /// Loads the engine and the project. `onProgress(done, total)` is called as files
 /// arrive. Returns the engine module and a `Session` holding the project.
 export async function boot({ project = 'project/', onProgress = () => {} } = {}) {
+  // What the engine calls before play() sets them, such as its panic hook.
+  globalThis.realEngine ??= {
+    persist() {},
+    report: (kind, message) => (kind === 'warning' ? console.warn : console.error)(message),
+  };
   const base = new URL('.', import.meta.url);
   const wasm = await init({ module_or_path: new URL('real_bg.wasm', base) });
   setMemory(wasm.memory);
@@ -51,7 +56,8 @@ export async function boot({ project = 'project/', onProgress = () => {} } = {})
   let done = 0;
   onProgress(done, paths.length);
   await Promise.all(paths.map(async (path) => {
-    session.addFile(path, await fetchBytes(new URL(path, root)));
+    const url = new URL(path.split('/').map(encodeURIComponent).join('/'), root);
+    session.addFile(path, await fetchBytes(url));
     onProgress(++done, paths.length);
   }));
   return { engine, session };
@@ -95,18 +101,27 @@ function readAll(db) {
   });
 }
 
-/// Starts the game. `gameId` names its saved data (one database per game and site);
+/// Starts the game. `gameId` names its saved data (one database per game and site;
+/// the project's name from real.toml by default);
 /// `onReport(kind, message)` receives "running" with the GPU adapter once the first
-/// frame is drawn, and "error" with a message when the game stops.
-export async function play(session, { gameId = 'game', onReport = () => {} } = {}) {
+/// frame is drawn, "warning" and "problem" with a diagnostic while it runs, and
+/// "error" with a message when the game stops.
+export async function play(session, { gameId = session.projectName(), onReport = () => {} } = {}) {
   const db = await openDb(gameId);
   if (db) for (const [key, bytes] of await readAll(db)) session.addSaved(key, bytes);
   globalThis.realEngine = {
+    // Called from inside the engine, so it never throws: an exception would unwind
+    // through Rust frames.
     persist(key, bytes) {
       if (!db) return;
-      const store = db.transaction(STORE, 'readwrite').objectStore(STORE);
-      if (bytes === undefined || bytes === null) store.delete(key);
-      else store.put(bytes, key);
+      try {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.onerror = () => console.warn(`could not save ${key}:`, tx.error);
+        if (bytes === undefined || bytes === null) tx.objectStore(STORE).delete(key);
+        else tx.objectStore(STORE).put(bytes, key);
+      } catch (e) {
+        console.warn(`could not save ${key}:`, e);
+      }
     },
     report: onReport,
   };

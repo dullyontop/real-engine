@@ -70,6 +70,18 @@ impl Session {
         App::open_files(files, config)
     }
 
+    /// The project's name from `real.toml`, which names its saved data in the
+    /// browser.
+    ///
+    /// # Errors
+    ///
+    /// The diagnostic, rendered, when `real.toml` is missing or invalid.
+    pub fn project_name(&self) -> Result<String, String> {
+        let files = self.project_files(WritableDirs::memory());
+        let config = AppConfig::load_from(&files).map_err(|d| d.to_string())?;
+        Ok(config.project.name)
+    }
+
     /// The files as a [`ProjectFiles`], writing to `writable`.
     pub fn project_files(&self, writable: WritableDirs) -> ProjectFiles {
         ProjectFiles::new(vec![self.files.clone()], writable, None)
@@ -100,9 +112,9 @@ impl Session {
     /// size of `real.toml [render]`. Adds `adapter` and `drawn` to the JSON, and
     /// the GPU's validation errors to `errors`, and `last_frame`: the number of
     /// distinct colours and the mean luma of the last frame drawn, read back from
-    /// the GPU. The replay's screenshot checks
-    /// are skipped (their count is `screenshots_skipped`): a capture reads the
-    /// GPU back by blocking, which a browser does not allow.
+    /// the GPU. The replay's checks are skipped (their count is
+    /// `checks_skipped`): a screenshot check reads the GPU back by blocking,
+    /// which a browser does not allow.
     ///
     /// # Errors
     ///
@@ -166,7 +178,7 @@ impl Session {
             "errors": errors(&diagnostics),
             "adapter": adapter,
             "drawn": drawn,
-            "screenshots_skipped": skipped,
+            "checks_skipped": skipped,
             "last_frame": last_frame,
         })
         .to_string())
@@ -272,6 +284,12 @@ mod wasm {
                 .open_for_play(persist)
                 .map_err(|d| JsError::new(&d.to_string()))?;
             re_app::web::play(app, report).map_err(|d| JsError::new(&d.to_string()))
+        }
+
+        /// [`super::Session::project_name`].
+        #[wasm_bindgen(js_name = projectName)]
+        pub fn project_name(&self) -> Result<String, JsError> {
+            self.0.project_name().map_err(|e| JsError::new(&e))
         }
 
         /// [`super::Session::run_replay`].

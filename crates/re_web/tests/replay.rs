@@ -55,7 +55,7 @@ fn a_gpu_run_draws_without_errors_and_keeps_the_state_hash() {
     let replay = "tests/replays/walk_collect.replay.json";
     let plain: serde_json::Value =
         serde_json::from_str(&session.run_replay(replay).unwrap()).unwrap();
-    let backends = re_render::wgpu::Backends::all();
+    let backends = re_render::backends_from_env().expect("RE_BACKENDS");
     let gpu: serde_json::Value = serde_json::from_str(
         &pollster::block_on(session.run_replay_gpu(replay, backends, 120)).unwrap(),
     )

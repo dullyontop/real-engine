@@ -37,8 +37,12 @@ if (missing.length) {
       overlay.classList.add('done');
       try {
         await play(session, {
-          gameId: document.title,
-          onReport: (kind, text) => { document.body.dataset.state = kind; if (kind === 'error') fail(text); },
+          onReport: (kind, text) => {
+            if (kind === 'warning') return console.warn(text);
+            if (kind === 'problem') return console.error(text);
+            document.body.dataset.state = kind;
+            if (kind === 'error') fail(text);
+          },
         });
       } catch (e) {
         fail(String(e));

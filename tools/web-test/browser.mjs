@@ -57,12 +57,21 @@ const origin = server.origin;
 const browser = await chromium.launch({ args: ['--enable-unsafe-webgpu'] });
 const tab = await browser.newPage();
 tab.on('console', (m) => console.error(`[${m.type()}] ${m.text()}`));
-tab.on('pageerror', (e) => console.error(`[pageerror] ${e.message}`));
 let result;
+// A page that fails before setting __result (a missing module, a bad import map)
+// would otherwise keep CI waiting for the whole timeout.
+const pageFailed = new Promise((resolve) => tab.on('pageerror', (e) => {
+  console.error(`[pageerror] ${e.message}`);
+  resolve({ error: `page error: ${e.message}` });
+}));
 try {
   await tab.goto(origin + '/');
-  await tab.waitForFunction(() => window.__result, null, { timeout: 600000, polling: 500 });
-  result = await tab.evaluate(() => window.__result);
+  result = await Promise.race([
+    tab.waitForFunction(() => window.__result, null, { timeout: 600000, polling: 500 })
+      .then(() => tab.evaluate(() => window.__result))
+      .catch((e) => ({ error: String(e) })),
+    pageFailed,
+  ]);
 } finally {
   await browser.close();
   server.close();

@@ -106,8 +106,8 @@ pub const PLAY_STEP_FAILED: Code = Code::new("RE0527");
 /// The browser gave no WebGPU adapter or device for the page's canvas (ADR-0049).
 pub const WEB_NO_GPU: Code = Code::new("RE0620");
 
-/// The page's canvas stopped accepting frames: its WebGPU surface reported a
-/// validation error (ADR-0049).
+/// The page's canvas could not be created, or stopped accepting frames when its
+/// WebGPU surface reported a validation error (ADR-0049).
 pub const WEB_CANVAS_FAILED: Code = Code::new("RE0621");
 
 /// The engine panicked in the browser; the page stops (ADR-0049).

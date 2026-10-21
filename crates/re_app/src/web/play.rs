@@ -27,7 +27,10 @@ use crate::codes;
 use crate::gfx::Graphics;
 
 /// Receives what the page shows: `("running", adapter line)` once the first
-/// frame is drawn, and `("error", rendered diagnostic)` when the run stops.
+/// frame is drawn, `("problem", rendered diagnostic)` for each error and
+/// `("warning", rendered diagnostic)` for each other diagnostic the game or the
+/// GPU reports while it keeps running (wasm has no log output), and
+/// `("error", rendered diagnostic)` when the run stops.
 pub type Report = fn(kind: &str, message: &str);
 
 /// What the GPU future delivers.
@@ -141,8 +144,15 @@ impl Runner {
                 (self.report)("running", &gfx.gpu().adapter_line());
             }
         }
-        for d in self.app.take_diagnostics() {
-            tracing::warn!("{d}");
+        let gpu_errors = self.app.graphics().map(Graphics::take_errors);
+        for d in self
+            .app
+            .take_diagnostics()
+            .into_iter()
+            .chain(gpu_errors.into_iter().flatten())
+        {
+            let kind = if d.is_error() { "problem" } else { "warning" };
+            (self.report)(kind, &d.to_string());
         }
         Ok(())
     }
@@ -174,7 +184,7 @@ impl ApplicationHandler for Runner {
             Ok(w) => Arc::new(w),
             Err(e) => {
                 let d = Diagnostic::error(
-                    codes::WEB_NO_GPU,
+                    codes::WEB_CANVAS_FAILED,
                     format!("cannot create the page's canvas: {e}"),
                 );
                 return self.stop(event_loop, &d);

@@ -6,6 +6,11 @@
 //! boot script reads them back and passes them to [`browser_dirs`]. Caches and
 //! command outputs stay in memory only.
 //!
+//! Nothing writes to them on the web yet: the data service persists only to a
+//! folder on disk ([`WritableStore::path`] is `None` here), and the crash hook is
+//! re_cli's. Until a data backend writes through a [`WritableDir`], a game's saves
+//! last only as long as its page.
+//!
 //! [`play`] (wasm32 only) runs an [`App`](crate::App) in the page. The rest does
 //! not depend on the browser, so it is tested natively.
 
@@ -24,7 +29,7 @@ pub use play::{Report, play};
 
 /// Receives each change to a persisted file: its key (`data/<path>` or
 /// `crash/<path>`) and its new bytes, or `None` when it was removed. It must not
-/// block, and it must not panic, because the crash hook writes through it.
+/// block, and it must not panic, because a crash report may be written through it.
 pub type Sink = fn(key: &str, bytes: Option<&[u8]>);
 
 /// The writable folders of a web run. `saved` holds the files persisted by
