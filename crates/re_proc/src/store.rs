@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
+use re_core::files::{ProjectFiles, Writable};
 use re_geom::Heightfield;
 use re_scene::ecs as bevy_ecs;
 use re_types::graph::GraphDoc;
@@ -39,6 +40,7 @@ pub struct GraphStore {
     graphs: IndexMap<String, GraphDoc>,
     evaluator: Arc<Evaluator>,
     root: Option<PathBuf>,
+    files: Option<ProjectFiles>,
     derived: Arc<Mutex<HashMap<String, DerivedAsset>>>,
     reports: Mutex<HashMap<String, EvalReport>>,
     budget: Budget,
@@ -56,6 +58,7 @@ impl Clone for GraphStore {
             graphs: self.graphs.clone(),
             evaluator: self.evaluator.clone(),
             root: self.root.clone(),
+            files: self.files.clone(),
             derived: Arc::new(Mutex::new(self.lock_derived().clone())),
             reports: Mutex::new(self.lock_reports().clone()),
             budget: self.budget,
@@ -83,9 +86,20 @@ impl GraphStore {
     /// A store for the project at `root`: prefab paths are relative to it and
     /// node outputs are cached in `<root>/.real/cache/proc`.
     pub fn for_project(root: impl Into<PathBuf>) -> Self {
-        let root = root.into();
-        let evaluator = Evaluator::default().with_disk_cache(root.join(".real/cache/proc"));
-        Self::with_evaluator(Arc::new(evaluator), Some(root))
+        Self::for_files(ProjectFiles::project(root))
+    }
+
+    /// A store reading file parameters through `files` (ADR-0037) and caching
+    /// node outputs in `proc/` of its cache folder.
+    pub fn for_files(files: ProjectFiles) -> Self {
+        let evaluator =
+            Evaluator::default().with_disk_cache_in(files.writable(Writable::Cache).sub("proc"));
+        let mut store = Self::with_evaluator(
+            Arc::new(evaluator),
+            files.project_dir().map(Path::to_path_buf),
+        );
+        store.files = Some(files);
+        store
     }
 
     /// A store using `evaluator`, with file paths relative to `root`.
@@ -94,6 +108,7 @@ impl GraphStore {
             graphs: IndexMap::new(),
             evaluator,
             root,
+            files: None,
             derived: Arc::default(),
             reports: Mutex::default(),
             budget: Budget::default(),
@@ -129,6 +144,13 @@ impl GraphStore {
     /// The project root file parameters are relative to.
     pub fn root(&self) -> Option<&Path> {
         self.root.as_deref()
+    }
+
+    /// The project files file parameters are read through, when the store was
+    /// made with [`for_files`](Self::for_files) or
+    /// [`for_project`](Self::for_project).
+    pub fn files(&self) -> Option<&ProjectFiles> {
+        self.files.as_ref()
     }
 
     /// The budget applied to evaluations through this store.

@@ -1,13 +1,14 @@
 //! glTF 2.0 import into engine data: meshes, materials, textures, the node tree,
 //! node animations and skins ([`skin`]).
 //!
-//! The importer does not use `gltf::import`, which reads files itself and decodes
-//! every image with the formats gltf picks. It parses the document, resolves
-//! buffers with `gltf::import_buffers`, and decodes images with the `image` crate
-//! itself, so the asset system owns caching and formats.
+//! The importer does not use `gltf::import` or `gltf::import_buffers`, which read
+//! files themselves. It parses the document, gets each external buffer and image
+//! from a caller-supplied reader (the project's `ProjectFiles` in the asset
+//! server, ADR-0037), and decodes images with the `image` crate itself, so the
+//! asset system owns reading, caching and formats.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use glam::{Quat, Vec3};
 use re_core::{Code, Diagnostic, Location, Severity};
@@ -155,13 +156,32 @@ pub fn import_gltf(
     owner: AssetId,
     file: &str,
 ) -> Result<ImportedGltf, Diagnostic> {
+    let read = |rel: &str| -> Result<Vec<u8>, String> {
+        let base = base.ok_or("external files need the glTF file's directory")?;
+        std::fs::read(base.join(rel)).map_err(|e| format!("cannot read `{rel}`: {e}"))
+    };
+    import_gltf_with(bytes, &read, owner, file)
+}
+
+/// Imports a `.glb` or `.gltf` whose external files come from `read`, which is
+/// given each external URI percent-decoded and relative to the glTF file.
+///
+/// # Errors
+///
+/// As [`import_gltf`].
+pub(crate) fn import_gltf_with(
+    bytes: &[u8],
+    read: &dyn Fn(&str) -> Result<Vec<u8>, String>,
+    owner: AssetId,
+    file: &str,
+) -> Result<ImportedGltf, Diagnostic> {
     let at = || Location::file(file);
     let invalid = |e: &dyn std::fmt::Display| {
         Diagnostic::error(codes::GLTF_INVALID, format!("invalid glTF: {e}")).at(at())
     };
     let gltf::Gltf { document, blob } = gltf::Gltf::from_slice(bytes).map_err(|e| invalid(&e))?;
-    let buffers = gltf::import_buffers(&document, base, blob).map_err(|e| invalid(&e))?;
-    let buffer = |b: gltf::Buffer<'_>| buffers.get(b.index()).map(|d| &d.0[..]);
+    let buffers = load_buffers(&document, blob, read).map_err(|e| invalid(&e))?;
+    let buffer = |b: gltf::Buffer<'_>| buffers.get(b.index()).map(|d| &d[..]);
     let mut warnings = Vec::new();
     let mut skin_warnings = Vec::new();
     let names = skin::node_names(&document, file, &mut skin_warnings);
@@ -208,7 +228,7 @@ pub fn import_gltf(
                 decode_image(bytes, format, &what, file)?
             }
             gltf::image::Source::Uri { uri, .. } => {
-                let bytes = uri_bytes(uri, base).map_err(|e| {
+                let bytes = uri_bytes(uri, read).map_err(|e| {
                     Diagnostic::error(codes::IMAGE_INVALID, format!("cannot load {what}: {e}"))
                         .at(at())
                 })?;
@@ -489,9 +509,45 @@ pub fn image_id(owner: AssetId, index: usize) -> AssetId {
     AssetId::derived(owner, &format!("image/{index}"))
 }
 
+/// The data of every buffer, as `gltf::import_buffers` gives it (the GLB blob or
+/// the URI's bytes, at least the declared length, padded to 4 bytes), but read
+/// through `read`.
+fn load_buffers(
+    document: &gltf::Document,
+    mut blob: Option<Vec<u8>>,
+    read: &dyn Fn(&str) -> Result<Vec<u8>, String>,
+) -> Result<Vec<Vec<u8>>, String> {
+    let mut out = Vec::new();
+    for buffer in document.buffers() {
+        let mut data = match buffer.source() {
+            gltf::buffer::Source::Bin => blob.take().ok_or_else(|| {
+                format!(
+                    "buffer {} uses the GLB blob, which is missing",
+                    buffer.index()
+                )
+            })?,
+            gltf::buffer::Source::Uri(uri) => uri_bytes(uri, read)?,
+        };
+        if data.len() < buffer.length() {
+            return Err(format!(
+                "buffer {} is {} bytes, shorter than its declared {}",
+                buffer.index(),
+                data.len(),
+                buffer.length()
+            ));
+        }
+        while data.len() % 4 != 0 {
+            data.push(0);
+        }
+        out.push(data);
+    }
+    Ok(out)
+}
+
 /// The external files (buffers and images, not `data:` URIs) a glTF document
-/// names, resolved against `base`. They are part of the cache key.
-pub(crate) fn external_files(bytes: &[u8], base: &Path) -> Vec<PathBuf> {
+/// names, percent-decoded and relative to the glTF file. They are part of the
+/// cache key.
+pub(crate) fn external_uris(bytes: &[u8]) -> Vec<String> {
     let Ok(gltf) = gltf::Gltf::from_slice(bytes) else {
         return Vec::new();
     };
@@ -506,11 +562,11 @@ pub(crate) fn external_files(bytes: &[u8], base: &Path) -> Vec<PathBuf> {
     buffers
         .chain(images)
         .filter(|u| !u.starts_with("data:"))
-        .map(|u| base.join(percent_decode(u)))
+        .map(percent_decode)
         .collect()
 }
 
-fn uri_bytes(uri: &str, base: Option<&Path>) -> Result<Vec<u8>, String> {
+fn uri_bytes(uri: &str, read: &dyn Fn(&str) -> Result<Vec<u8>, String>) -> Result<Vec<u8>, String> {
     if let Some(rest) = uri.strip_prefix("data:") {
         let (header, payload) = rest.split_once(',').ok_or("malformed data URI")?;
         if !header.ends_with(";base64") {
@@ -521,9 +577,7 @@ fn uri_bytes(uri: &str, base: Option<&Path>) -> Result<Vec<u8>, String> {
     if uri.contains("://") {
         return Err(format!("`{uri}` is not a relative file path"));
     }
-    let base = base.ok_or("external files need the glTF file's directory")?;
-    let path = base.join(percent_decode(uri));
-    std::fs::read(&path).map_err(|e| format!("cannot read `{uri}`: {e}"))
+    read(&percent_decode(uri))
 }
 
 fn percent_decode(s: &str) -> String {

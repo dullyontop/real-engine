@@ -7,14 +7,17 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use re_core::files::{ProjectFiles, ProjectPath, Writable};
 use re_core::{Diagnostic, Location};
 use re_types::anim::ClipData;
 use re_types::render::{MaterialDesc, TextureData, TextureFormat, TextureRef};
 
 use crate::cache::{ProcessedCache, cache_key};
-use crate::gltf::{CachedGltf, GLTF_IMPORTER_VERSION, ImportedGltf, external_files, import_gltf};
+use crate::gltf::{
+    CachedGltf, GLTF_IMPORTER_VERSION, ImportedGltf, external_uris, import_gltf_with,
+};
 use crate::image_decode::decode_image;
-use crate::material::load_material_in;
+use crate::material::load_material_from;
 use crate::meta::AssetMeta;
 use crate::watch::AssetChange;
 use crate::{AssetId, codes, fsutil, id};
@@ -194,14 +197,16 @@ pub struct ReloadReport {
 
 /// Loads a project's assets.
 ///
-/// Assets are named by project-relative path (`assets/models/tree.glb`) and
-/// loaded synchronously; imports go through the processed-asset cache in
-/// `.real/cache/assets/`, so loading an unchanged file again is a cache read.
+/// Assets are named by project-relative path (`assets/models/tree.glb`), read
+/// through the project's [`ProjectFiles`] (ADR-0037) and loaded synchronously;
+/// imports go through the processed-asset cache in the run's cache folder
+/// (`.real/cache/assets/` in a project), so loading an unchanged file again is
+/// a cache read.
 /// Loading the same path twice gives the same handle. Feed file changes from an
 /// [`AssetWatcher`](crate::AssetWatcher) to [`AssetServer::apply_changes`] for
 /// hot reload: a failed re-import keeps the last good version.
 pub struct AssetServer {
-    root: PathBuf,
+    files: ProjectFiles,
     cache: ProcessedCache,
     gltfs: Assets<ImportedGltf>,
     textures: Assets<TextureData>,
@@ -214,16 +219,21 @@ pub struct AssetServer {
 impl AssetServer {
     /// A server for the project at `root`, caching in `<root>/.real/cache/assets`.
     pub fn new(root: impl Into<PathBuf>) -> AssetServer {
-        let root = root.into();
-        let cache = root.join(".real").join("cache").join("assets");
-        AssetServer::with_cache_dir(root, cache)
+        AssetServer::with_files(ProjectFiles::project(root))
     }
 
     /// A server for the project at `root`, caching in `cache_dir`.
     pub fn with_cache_dir(root: impl Into<PathBuf>, cache_dir: impl Into<PathBuf>) -> AssetServer {
+        let mut server = AssetServer::new(root);
+        server.cache = ProcessedCache::new(cache_dir);
+        server
+    }
+
+    /// A server reading through `files`, caching in `assets/` of its cache folder.
+    pub fn with_files(files: ProjectFiles) -> AssetServer {
         AssetServer {
-            root: root.into(),
-            cache: ProcessedCache::new(cache_dir),
+            cache: ProcessedCache::in_dir(files.writable(Writable::Cache).sub("assets")),
+            files,
             gltfs: Assets::default(),
             textures: Assets::default(),
             materials: Assets::default(),
@@ -232,9 +242,14 @@ impl AssetServer {
         }
     }
 
-    /// The project root.
+    /// The project directory; empty when the files have none (a packaged game).
     pub fn root(&self) -> &Path {
-        &self.root
+        self.files.project_dir().unwrap_or(Path::new(""))
+    }
+
+    /// The project's files.
+    pub fn files(&self) -> &ProjectFiles {
+        &self.files
     }
 
     /// The processed-asset cache (for its hit and miss counts).
@@ -526,11 +541,13 @@ impl AssetServer {
             return;
         };
         // Keep the id: move the sidecar along when the file moved without it.
-        let (old_meta, new_meta) = (
-            AssetMeta::path_for(&self.root.join(from)),
-            AssetMeta::path_for(&self.root.join(to)),
-        );
-        if old_meta.is_file()
+        // Only a development run writes project files.
+        if let Some(root) = self.files.project_dir()
+            && let (old_meta, new_meta) = (
+                AssetMeta::path_for(&root.join(from)),
+                AssetMeta::path_for(&root.join(to)),
+            )
+            && old_meta.is_file()
             && !new_meta.exists()
             && let Err(e) = std::fs::rename(&old_meta, &new_meta)
         {
@@ -619,21 +636,27 @@ impl AssetServer {
         &mut self,
         rel: &str,
     ) -> Result<(ImportedGltf, AssetId, Vec<String>), Diagnostic> {
-        let path = self.root.join(rel);
-        let bytes = fsutil::read(&path, rel)?;
-        let meta = AssetMeta::read_or_create(&path, rel, serde_json::json!({}))?;
+        let bytes = fsutil::read_in(&self.files, rel)?;
+        let meta = AssetMeta::read_or_create_in(&self.files, rel, serde_json::json!({}))?;
         let id = meta.id();
         self.id_paths.insert(id, rel.to_owned());
-        let dir = path.parent().unwrap_or(&self.root).to_path_buf();
-        let dep_paths = external_files(&bytes, &dir);
-        let dep_bytes: Vec<Vec<u8>> = dep_paths
-            .iter()
-            .map(|p| std::fs::read(p).unwrap_or_default())
-            .collect();
-        let deps = dep_paths
-            .iter()
-            .filter_map(|p| p.strip_prefix(&self.root).ok().map(fsutil::slash))
-            .collect();
+        let gltf_path = ProjectPath::new(rel).ok();
+        // External files resolve against the glTF's folder and may not leave
+        // the project.
+        let resolve = |uri: &str| gltf_path.as_ref().and_then(|p| p.join_relative(uri).ok());
+        let mut deps = Vec::new();
+        let mut dep_bytes: Vec<Vec<u8>> = Vec::new();
+        for uri in external_uris(&bytes) {
+            if let Some(p) = resolve(&uri) {
+                dep_bytes.push(
+                    self.files
+                        .read_source(p.as_str())
+                        .map(|b| b.to_vec())
+                        .unwrap_or_default(),
+                );
+                deps.push(p.as_str().to_owned());
+            }
+        }
         let mut sources: Vec<&[u8]> = vec![&bytes];
         sources.extend(dep_bytes.iter().map(Vec::as_slice));
         let key = cache_key(
@@ -651,7 +674,15 @@ impl AssetServer {
             return Ok((cached, id, deps));
         }
         self.cache.count(false);
-        let imported = import_gltf(&bytes, Some(&dir), id, rel)?;
+        let files = &self.files;
+        let read = |uri: &str| -> Result<Vec<u8>, String> {
+            let p = resolve(uri).ok_or_else(|| format!("`{uri}` is outside the project"))?;
+            files
+                .read_source(p.as_str())
+                .map(|b| b.to_vec())
+                .map_err(|e| e.to_string())
+        };
+        let imported = import_gltf_with(&bytes, &read, id, rel)?;
         if let Err(d) = self.cache.put(&key, &CachedGltf::from_imported(&imported)) {
             tracing::warn!(code = %d.code, "{}", d.message);
         }
@@ -659,9 +690,8 @@ impl AssetServer {
     }
 
     fn import_texture_file(&mut self, rel: &str) -> Result<(TextureData, AssetId), Diagnostic> {
-        let path = self.root.join(rel);
-        let bytes = fsutil::read(&path, rel)?;
-        let meta = AssetMeta::read_or_create(&path, rel, serde_json::json!({}))?;
+        let bytes = fsutil::read_in(&self.files, rel)?;
+        let meta = AssetMeta::read_or_create_in(&self.files, rel, serde_json::json!({}))?;
         let id = meta.id();
         self.id_paths.insert(id, rel.to_owned());
         let format = match meta.settings.get("color_space").and_then(|v| v.as_str()) {
@@ -691,9 +721,9 @@ impl AssetServer {
     }
 
     fn import_material_file(&mut self, rel: &str) -> Result<MaterialDesc, Diagnostic> {
-        let desc = load_material_in(&self.root, rel)?;
+        let desc = load_material_from(&self.files, rel)?;
         // Remember where each texture id lives, for `texture_by_id`.
-        let file = std::fs::read_to_string(self.root.join(rel)).unwrap_or_default();
+        let file = self.files.read_str(rel).unwrap_or_default();
         if let Ok(parsed) = serde_json::from_str::<crate::material::MaterialFile>(&file) {
             let paths = [
                 parsed.base_color_texture,
