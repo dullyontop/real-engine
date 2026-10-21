@@ -14,12 +14,17 @@ struct VsOut {
     @location(0) @interpolate(flat) id: u32,
 };
 
-@vertex
-fn vs_mask(v: VsIn, inst: Instance) -> VsOut {
+// The vertex stage, shared with the skinned entry point (mask_skinned.wgsl).
+fn mask_vertex(position: vec3<f32>, inst: Instance) -> VsOut {
     var out: VsOut;
-    out.clip = frame.view_proj * instance_model(inst) * vec4<f32>(v.position, 1.0);
+    out.clip = frame.view_proj * instance_model(inst) * vec4<f32>(position, 1.0);
     out.id = u32(inst.flags.z + 0.5);
     return out;
+}
+
+@vertex
+fn vs_mask(v: VsIn, inst: Instance) -> VsOut {
+    return mask_vertex(v.position, inst);
 }
 
 @fragment

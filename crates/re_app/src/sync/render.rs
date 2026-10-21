@@ -252,5 +252,6 @@ pub fn build(world: &mut World, inputs: &RenderInputs<'_>) -> RenderSnapshot {
         items,
         debug_lines: Vec::new(),
         clear: inputs.clear,
+        ..Default::default()
     }
 }

@@ -54,6 +54,35 @@ impl MeshData {
     }
 }
 
+/// Skin weights for a [`MeshData`]: up to four joints per vertex (ADR-0039).
+///
+/// `joints` and `weights` have one entry per vertex. Joint indices refer to a
+/// [`SkinData`](crate::anim::SkinData)'s joints. Weights are unorm16 (65,535 is
+/// 1.0) and each vertex's weights sum to 65,535.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SkinWeights {
+    /// Four joint indices per vertex.
+    pub joints: Vec<[u16; 4]>,
+    /// Four weights per vertex, matching `joints`.
+    pub weights: Vec<[u16; 4]>,
+}
+
+impl SkinWeights {
+    /// True when there is one entry per vertex of `mesh` in both lists, each
+    /// vertex's weights sum to 65,535 and every joint index with a weight is below
+    /// `joint_count`.
+    pub fn is_well_formed(&self, mesh: &MeshData, joint_count: usize) -> bool {
+        self.joints.len() == mesh.vertices.len()
+            && self.weights.len() == mesh.vertices.len()
+            && self.joints.iter().zip(&self.weights).all(|(j, w)| {
+                w.iter().map(|&x| u32::from(x)).sum::<u32>() == u32::from(u16::MAX)
+                    && j.iter()
+                        .zip(w)
+                        .all(|(&j, &w)| w == 0 || (j as usize) < joint_count)
+            })
+    }
+}
+
 /// An axis-aligned bounding box.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Aabb {
@@ -96,6 +125,19 @@ impl Aabb {
             min: self.min.min(other.min),
             max: self.max.max(other.max),
         }
+    }
+
+    /// The smallest box containing this box's eight corners moved by `m`.
+    #[must_use]
+    pub fn transformed(&self, m: &glam::Mat4) -> Aabb {
+        let corners = (0..8).map(|i| {
+            m.transform_point3(Vec3::new(
+                if i & 1 == 0 { self.min.x } else { self.max.x },
+                if i & 2 == 0 { self.min.y } else { self.max.y },
+                if i & 4 == 0 { self.min.z } else { self.max.z },
+            ))
+        });
+        Aabb::from_points(corners).unwrap_or(*self)
     }
 
     /// True when `p` is inside or on the boundary.
