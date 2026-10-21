@@ -23,6 +23,9 @@ use crate::sync::physics::{HeightfieldData, ShapeLibrary};
 pub fn install(world: &mut World, project: &Path) {
     re_proc::register_generator(&mut world.generators);
     world
+        .registry
+        .register::<re_proc::bake::Baked>(&mut world.ecs);
+    world
         .ecs
         .insert_resource(GraphStore::for_project(project.to_path_buf()));
 }
@@ -226,9 +229,45 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
         .collect();
     media.retain_derived_meshes(|name| meshes.contains(name));
     shapes.retain(|name| !name.starts_with(DERIVED) || colliders.iter().any(|(_, c)| c == name));
+    let baked: Vec<String> = world
+        .ecs
+        .query::<&Collider>()
+        .iter(&world.ecs)
+        .filter(|c| c.shape == ColliderShape::Heightfield && c.source.ends_with(".heightfield"))
+        .map(|c| c.source.clone())
+        .collect();
     let Some(store) = world.ecs.get_resource::<GraphStore>() else {
         return;
     };
+    // Baked heightfields (ADR-0043): `.heightfield` files in the project.
+    for name in baked {
+        if shapes.heightfield(&name).is_some() {
+            continue;
+        }
+        let Some(root) = store.root() else {
+            continue;
+        };
+        // A file that cannot be read stays missing; physics reports it.
+        if let Ok(bytes) = std::fs::read(root.join(&name))
+            && let Ok(h) = re_proc::bake::read_heightfield(&bytes)
+            && let ShapeDesc::Heightfield {
+                n,
+                samples,
+                spacing,
+                offset,
+            } = h.to_shape()
+        {
+            shapes.insert_heightfield(
+                name,
+                std::sync::Arc::new(HeightfieldData {
+                    n,
+                    spacing,
+                    offset,
+                    samples,
+                }),
+            );
+        }
+    }
     for name in meshes {
         if !media.has_derived_mesh(&name)
             && let Some(mesh) = store.mesh(&name)
