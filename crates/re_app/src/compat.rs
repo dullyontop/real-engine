@@ -146,9 +146,9 @@ impl CompatPlay {
         let client_vm =
             CompatVm::with_config(&setup, ContextKind::Client, &mut client, &runtime, compat)?;
         let step = 1.0 / f64::from(config.sim.fixed_hz.max(1));
-        let data = re_compat::services::data::DataSettings::from_config(
+        let data = re_compat::services::data::DataSettings::from_config_in(
             &compat.data,
-            project,
+            files,
             step,
             persist_data,
         )
