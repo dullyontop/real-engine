@@ -24,3 +24,16 @@ pub const INVALID_VOLUME: Code = Code::new("RE7404");
 
 /// A playback rate is not a finite number above zero.
 pub const INVALID_RATE: Code = Code::new("RE7405");
+
+/// An effect in the audio graph, a snapshot or a command has an invalid value,
+/// or names a parameter its kind does not have; the effect is dropped or left
+/// unchanged.
+pub const INVALID_EFFECT: Code = Code::new("RE7406");
+
+/// The audio graph has an unknown parent or send, a cycle, too many sends, or
+/// another structural problem; the default graph is used instead.
+pub const INVALID_GRAPH: Code = Code::new("RE7407");
+
+/// A command or snapshot names a bus, send or snapshot the graph does not have
+/// (a warning, given once per name).
+pub const UNKNOWN_BUS: Code = Code::new("RE7408");

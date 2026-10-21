@@ -13,8 +13,8 @@ use glam::Vec3;
 use re_physics::{Physics, QueryFilter};
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::{
-    ActionFrame, AudioCmd, BodyKind, CharacterState, EntityId, GroupMask, PhysicsCmd, RayHit,
-    VehicleInput, VehicleState,
+    ActionFrame, AudioCmd, BodyKind, BusLevel, CharacterState, EntityId, GroupMask, PhysicsCmd,
+    RayHit, VehicleInput, VehicleState,
 };
 
 use crate::codes::{HOST_INVALID_ARGUMENT_STR, HOST_NO_SUCH_THING_STR};
@@ -50,6 +50,10 @@ pub struct Host<'a> {
     pub physics_cmds: &'a mut Vec<PhysicsCmd>,
     /// Audio commands for this frame.
     pub audio_cmds: &'a mut Vec<AudioCmd>,
+    /// Every mixer bus's level over the last frame.
+    pub bus_levels: &'a [BusLevel],
+    /// The mixer graph the audio commands are checked against.
+    pub audio_graph: &'a re_types::AudioGraphDesc,
     /// End-of-frame requests.
     pub pending: &'a mut Pending,
 }
@@ -185,6 +189,117 @@ impl HostServices for Host<'_> {
             volume,
         });
         Ok(())
+    }
+
+    fn audio_mix(&mut self, cmd: AudioCmd) -> HostResult<()> {
+        let named = |bus: &str, what: &str| {
+            if bus.is_empty() {
+                Err(invalid(format!("the {what} name is empty")))
+            } else {
+                Ok(())
+            }
+        };
+        let tween = |seconds: f32| {
+            if seconds.is_finite() && seconds >= 0.0 {
+                Ok(())
+            } else {
+                Err(invalid(format!("seconds {seconds} must be 0 or more")))
+            }
+        };
+        let graph = self.audio_graph;
+        let bus_only = |bus: &str| {
+            named(bus, "bus")?;
+            if graph.buses.contains_key(bus) {
+                Ok(())
+            } else {
+                Err(no_such(format!("the mixer has no bus `{bus}`")))
+            }
+        };
+        let bus_or_send = |bus: &str| {
+            named(bus, "bus")?;
+            if graph.buses.contains_key(bus) || graph.sends.contains_key(bus) {
+                Ok(())
+            } else {
+                Err(no_such(format!("the mixer has no bus or send `{bus}`")))
+            }
+        };
+        match &cmd {
+            AudioCmd::PlayOneShotOnBus {
+                clip,
+                position,
+                volume,
+                bus,
+            } => {
+                bus_only(bus)?;
+                // The same checks as an unrouted one-shot.
+                return self.play_sound(clip, *position, *volume).map(|()| {
+                    if let Some(last) = self.audio_cmds.last_mut() {
+                        *last = cmd;
+                    }
+                });
+            }
+            AudioCmd::SetBusVolume {
+                bus,
+                volume_db,
+                seconds,
+            } => {
+                bus_or_send(bus)?;
+                if !volume_db.is_finite() {
+                    return Err(invalid(format!("volume {volume_db} dB is not finite")));
+                }
+                tween(*seconds)?;
+            }
+            AudioCmd::SetEffectParam {
+                bus,
+                effect,
+                param,
+                value,
+                seconds,
+            } => {
+                bus_or_send(bus)?;
+                let effects = graph
+                    .buses
+                    .get(bus)
+                    .map(|b| b.effects.len())
+                    .or_else(|| graph.sends.get(bus).map(|s| s.effects.len()))
+                    .unwrap_or(0);
+                if *effect as usize >= effects {
+                    return Err(no_such(format!(
+                        "`{bus}` has {effects} effects, so there is no effect {}",
+                        u64::from(*effect) + 1
+                    )));
+                }
+                named(param, "parameter")?;
+                if let re_types::EffectParam::Number(v) = value
+                    && !v.is_finite()
+                {
+                    return Err(invalid(format!("{param} {v} is not finite")));
+                }
+                tween(*seconds)?;
+            }
+            AudioCmd::ApplySnapshot { name, seconds } => {
+                named(name, "snapshot")?;
+                if name != re_audio::DEFAULT_SNAPSHOT && !graph.snapshots.contains_key(name) {
+                    return Err(no_such(format!("the mixer has no snapshot `{name}`")));
+                }
+                tween(*seconds)?;
+            }
+            other => {
+                return Err(invalid(format!(
+                    "{other:?} is not a mixer command scripts can send"
+                )));
+            }
+        }
+        self.audio_cmds.push(cmd);
+        Ok(())
+    }
+
+    fn audio_level(&self, bus: &str) -> HostResult<BusLevel> {
+        self.bus_levels
+            .iter()
+            .find(|l| l.bus == bus)
+            .cloned()
+            .ok_or_else(|| no_such(format!("the mixer has no bus or send `{bus}`")))
     }
 
     fn actions(&self) -> &ActionFrame {
