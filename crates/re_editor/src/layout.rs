@@ -6,6 +6,7 @@
 //! file gives the default layout; a file that cannot be read gives the
 //! default layout and an `RE8804` warning in the console.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use egui_dock::DockState;
@@ -30,12 +31,15 @@ pub enum PanelId {
     Console,
     /// The script debugger: breakpoints, stack and variables.
     Debugger,
+    /// The node canvas of a graph file.
+    Canvas,
 }
 
 impl PanelId {
     /// Every panel.
-    pub const ALL: [PanelId; 6] = [
+    pub const ALL: [PanelId; 7] = [
         PanelId::Viewport,
+        PanelId::Canvas,
         PanelId::Hierarchy,
         PanelId::Inspector,
         PanelId::Graph,
@@ -52,6 +56,7 @@ impl PanelId {
             PanelId::Graph => "Procedural",
             PanelId::Console => "Console",
             PanelId::Debugger => "Debugger",
+            PanelId::Canvas => "Node graph",
         }
     }
 }
@@ -59,13 +64,29 @@ impl PanelId {
 /// The version of the layout file this editor writes.
 pub const LAYOUT_VERSION: u32 = 1;
 
+/// The node canvas's collapsed nodes: node ids by graph file path.
+pub type Collapsed = BTreeMap<String, BTreeSet<String>>;
+
+/// A project's saved editor layout.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Layout {
+    /// The dock: which panel is where.
+    pub dock: DockState<PanelId>,
+    /// The gizmo's mode, orientation and snapping.
+    #[serde(default)]
+    pub gizmo: GizmoSettings,
+    /// The nodes collapsed on the node canvas: view state, not part of the
+    /// graph file.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub collapsed: Collapsed,
+}
+
 /// The file's contents.
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct LayoutFile {
     version: u32,
-    dock: DockState<PanelId>,
-    #[serde(default)]
-    gizmo: GizmoSettings,
+    #[serde(flatten)]
+    layout: Layout,
 }
 
 /// The layout file of the project at `root`.
@@ -75,9 +96,9 @@ pub fn layout_path(root: &Path) -> PathBuf {
 
 /// The default layout: the hierarchy on the left, the inspector over the
 /// procedural panel on the right, the console and the debugger (tabs) under
-/// the game view.
+/// the game view, and the node canvas a tab behind the game view.
 pub fn default_dock() -> DockState<PanelId> {
-    let mut dock = DockState::new(vec![PanelId::Viewport]);
+    let mut dock = DockState::new(vec![PanelId::Viewport, PanelId::Canvas]);
     let tree = dock.main_surface_mut();
     let root = egui_dock::NodeIndex::root();
     let [centre, _left] = tree.split_left(root, 0.2, vec![PanelId::Hierarchy]);
@@ -105,7 +126,7 @@ fn complete(dock: &mut DockState<PanelId>) {
 
 /// Reads the layout of the project at `root`. `Ok(None)` when there is no
 /// file; an `RE8804` warning when it cannot be read.
-pub fn load(root: &Path) -> Result<Option<(DockState<PanelId>, GizmoSettings)>, Diagnostic> {
+pub fn load(root: &Path) -> Result<Option<Layout>, Diagnostic> {
     let path = layout_path(root);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -123,18 +144,20 @@ pub fn load(root: &Path) -> Result<Option<(DockState<PanelId>, GizmoSettings)>, 
             ),
         ));
     }
-    let mut dock = file.dock;
-    complete(&mut dock);
-    Ok(Some((dock, file.gizmo)))
+    let mut layout = file.layout;
+    complete(&mut layout.dock);
+    Ok(Some(layout))
 }
 
 /// The JSON written for a layout.
-pub fn to_json(dock: &DockState<PanelId>, gizmo: &GizmoSettings) -> String {
+pub fn to_json(dock: &DockState<PanelId>, gizmo: &GizmoSettings, collapsed: &Collapsed) -> String {
     #[derive(Serialize)]
     struct Out<'a> {
         version: u32,
         dock: &'a DockState<PanelId>,
         gizmo: &'a GizmoSettings,
+        #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+        collapsed: &'a Collapsed,
     }
     // Node rectangles are recomputed every frame from the split fractions;
     // they are written as zero, so resizing the window is not a change, and
@@ -151,6 +174,7 @@ pub fn to_json(dock: &DockState<PanelId>, gizmo: &GizmoSettings) -> String {
         version: LAYOUT_VERSION,
         dock: &dock,
         gizmo,
+        collapsed,
     })
     .expect("a layout always serializes");
     text.push('\n');
@@ -206,11 +230,17 @@ mod tests {
         };
         let mut dock = default_dock();
         dock.main_surface_mut().push_to_first_leaf(PanelId::Console); // a duplicate
-        save(dir.path(), &to_json(&dock, &gizmo)).unwrap();
-        let (back, g) = load(dir.path()).unwrap().unwrap();
-        assert_eq!(g, gizmo);
+        let collapsed = Collapsed::from([(
+            "graphs/a.graph.json".to_string(),
+            BTreeSet::from(["h".to_string()]),
+        )]);
+        save(dir.path(), &to_json(&dock, &gizmo, &collapsed)).unwrap();
+        let back = load(dir.path()).unwrap().unwrap();
+        assert_eq!(back.gizmo, gizmo);
+        assert_eq!(back.collapsed, collapsed);
         assert_eq!(
-            back.iter_all_tabs()
+            back.dock
+                .iter_all_tabs()
                 .filter(|(_, t)| **t == PanelId::Console)
                 .count(),
             1
@@ -224,10 +254,12 @@ mod tests {
         let e = load(dir.path()).err().unwrap();
         assert_eq!(e.code, codes::LAYOUT_UNREADABLE);
         // An unknown panel name (a newer editor's layout) is refused, not guessed.
-        let text = to_json(&default_dock(), &gizmo).replace("\"Console\"", "\"Profiler\"");
+        let text = to_json(&default_dock(), &gizmo, &Collapsed::new())
+            .replace("\"Console\"", "\"Profiler\"");
         std::fs::write(layout_path(dir.path()), text).unwrap();
         assert!(load(dir.path()).is_err());
-        let text = to_json(&default_dock(), &gizmo).replace("\"version\": 1", "\"version\": 9");
+        let text = to_json(&default_dock(), &gizmo, &Collapsed::new())
+            .replace("\"version\": 1", "\"version\": 9");
         std::fs::write(layout_path(dir.path()), text).unwrap();
         assert!(
             load(dir.path())
