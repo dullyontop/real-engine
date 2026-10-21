@@ -182,7 +182,8 @@
           "suspension_max": 0.55,
           "max_steer_deg": 32.0,
           "driven": true,
-          "max_hand_brake_torque": 0.0
+          "max_hand_brake_torque": 0.0,
+          "max_brake_torque": 3000.0
         },
         "Transform": {
           "translation": [
@@ -225,7 +226,8 @@
           "suspension_max": 0.55,
           "max_steer_deg": 32.0,
           "driven": true,
-          "max_hand_brake_torque": 0.0
+          "max_hand_brake_torque": 0.0,
+          "max_brake_torque": 3000.0
         },
         "Transform": {
           "translation": [
@@ -268,7 +270,8 @@
           "suspension_max": 0.55,
           "max_steer_deg": 0.0,
           "driven": true,
-          "max_hand_brake_torque": 4000.0
+          "max_hand_brake_torque": 4000.0,
+          "max_brake_torque": 3000.0
         },
         "Transform": {
           "translation": [
@@ -311,7 +314,8 @@
           "suspension_max": 0.55,
           "max_steer_deg": 0.0,
           "driven": true,
-          "max_hand_brake_torque": 4000.0
+          "max_hand_brake_torque": 4000.0,
+          "max_brake_torque": 3000.0
         },
         "Transform": {
           "translation": [

@@ -1,6 +1,7 @@
 --!strict
--- The car: while the hero drives, the move stick's Y is the throttle (back
--- brakes, then reverses), its X steers, and `brake` pulls the hand brake.
+-- The car: while the hero drives, the move stick's Y is the throttle (against
+-- the way the car rolls it brakes first, then reverses or goes forward), its X
+-- steers, and `brake` pulls the hand brake.
 -- Parked, the hand brake holds it.
 local rig = require("./lib/rig")
 
@@ -15,14 +16,18 @@ time.on_step(function(_dt)
 	local speed = physics.vehicle(car).speed
 	local throttle = stick.y
 	local brake = 0
-	-- Pulling back while still rolling forward brakes before it reverses.
+	-- Against the way it rolls, the stick brakes first; it reverses (or
+	-- goes forward again) only once the car has nearly stopped.
 	if throttle < 0 and speed > 1 then
 		brake = -throttle
+		throttle = 0
+	elseif throttle > 0 and speed < -1 then
+		brake = throttle
 		throttle = 0
 	end
 	physics.drive(car, {
 		throttle = throttle,
-		steer = -stick.x,
+		steer = stick.x,
 		brake = brake,
 		handbrake = if input.down("brake") then 1 else 0,
 	})

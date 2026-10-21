@@ -104,8 +104,9 @@ def quat_z(deg):
 
 
 def walk_clip(n=16):
-    """One second: each leg swings ±28° about X, the knee bends on the back
-    swing, the arms swing against the legs and the hips bob twice."""
+    """One second: each leg swings ±28° about X, the knee bends while the leg
+    swings forward, the arms swing against the legs, and the hips drop by as
+    much as the swung legs shorten, so the feet stay on the ground."""
     times = [i / n for i in range(n + 1)]
     tracks = {}
 
@@ -121,8 +122,9 @@ def walk_clip(n=16):
         tracks[(f"UpperArm.{side}", "rotation")] = [quat_x(22 * phase(t, off)) for t in times]
         tracks[(f"LowerArm.{side}", "rotation")] = [quat_x(-18) for _ in times]
     rest = JOINTS[INDEX["Hips"]][2]
+    leg = 0.89  # hip joint to sole
     tracks[("Hips", "translation")] = [
-        (rest[0], rest[1] + 0.03 * abs(math.cos(2 * math.pi * t)), rest[2]) for t in times
+        (rest[0], rest[1] - leg * (1 - math.cos(math.radians(28 * phase(t)))), rest[2]) for t in times
     ]
     tracks[("Spine", "rotation")] = [quat_x(4.0) for _ in times]
     return times, tracks

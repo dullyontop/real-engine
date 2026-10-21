@@ -10,7 +10,7 @@ local car = world.get("car") :: Entity
 time.on_frame(function(_dt)
 	local look = input.axis("look")
 	rig.yaw -= look.x
-	rig.pitch = math.clamp(rig.pitch + look.y, 0.05, 1.2)
+	rig.pitch = math.clamp(rig.pitch - look.y, 0.05, 1.2)
 	local target: vector
 	local distance: number
 	if rig.driving then
