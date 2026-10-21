@@ -71,6 +71,11 @@ pub const OUTDATED_NODE_VERSION: Code = Code::new("RE4019");
 
 /// A node's parameters could not be migrated to its kind's current version.
 pub const MIGRATION_FAILED: Code = Code::new("RE4020");
+/// `proc.bake` could not bake a source (nothing to bake, an unknown key, a
+/// key whose generated parent is not baked, or a baked asset that cannot be
+/// written).
+pub const BAKE_FAILED: Code = Code::new("RE4021");
+
 /// A source's open graph differs from its graph file, which a migration
 /// reads and rewrites.
 pub const OPEN_GRAPH_DIFFERS: Code = Code::new("RE4022");
