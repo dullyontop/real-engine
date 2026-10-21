@@ -689,6 +689,20 @@ fn http_refuses_a_missing_or_wrong_token() {
     assert!(right.session().is_some(), "2025-11-25 gets a session");
 }
 
+/// A refusal reads the request it refuses: closing a socket with an unread
+/// body resets it, and the client can lose the 401 (always on Windows).
+#[test]
+fn http_refuses_a_large_body_without_a_reset() {
+    let c = Client::start(Transport::Http, Policy::read_only());
+    let (url, _) = endpoint(&c);
+    let mut padded = initialize();
+    padded["params"]["padding"] = json!("x".repeat(48 * 1024));
+    for _ in 0..20 {
+        let mut anonymous = re_mcp::client::HttpClient::new(&url, None).unwrap();
+        assert_eq!(anonymous.post(&padded, &[]).unwrap().status, 401);
+    }
+}
+
 #[test]
 fn http_refuses_foreign_hosts_browser_origins_and_other_paths() {
     let c = Client::start(Transport::Http, Policy::read_only());
