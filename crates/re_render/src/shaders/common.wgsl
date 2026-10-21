@@ -23,12 +23,14 @@ struct SpotLight {
 
 struct Frame {
     view_proj: mat4x4<f32>,
-    // Projection from world space into the shadow map (uv in xy, depth in z).
-    light_view_proj: mat4x4<f32>,
+    // World space into each cascade's shadow clip space.
+    cascades: array<mat4x4<f32>, 4>,
     // Clip space back to world space (the sky pass).
     inv_view_proj: mat4x4<f32>,
     // xyz: camera position
     camera_pos: vec4<f32>,
+    // xyz: the camera's forward direction
+    camera_forward: vec4<f32>,
     // xyz: direction towards the sun, w: 1 when there is a sun
     sun_dir: vec4<f32>,
     // rgb: sun colour * intensity * exposure, w: 1 when the sun casts shadows
@@ -37,9 +39,15 @@ struct Frame {
     ambient_sky: vec4<f32>,
     // rgb: ground ambient * exposure
     ambient_ground: vec4<f32>,
-    // x: shadow map texel size in uv, y: normal offset in world units,
+    // x: shadow map texel size in uv, y: unused,
     // z: point light count, w: exposure (applied to emissive here)
     params: vec4<f32>,
+    // The view depth where each cascade ends.
+    cascade_far: vec4<f32>,
+    // Each cascade's normal offset in world units.
+    cascade_offset: vec4<f32>,
+    // x: cascade count (0 without shadows), y: blend fraction
+    shadow_params: vec4<f32>,
     // rgb: fog colour (linear, unlit), w: fog start
     fog_color: vec4<f32>,
     // x: fog end, y: 1 with fog, z: spot light count

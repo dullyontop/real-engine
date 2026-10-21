@@ -1,7 +1,13 @@
-// Depth-only pass into the sun's shadow map.
+// Depth-only pass into one cascade of the sun's shadow map.
 #include "common.wgsl"
 
-@group(0) @binding(0) var<uniform> frame: Frame;
+// Must match `CascadeUniform` in src/renderer.rs.
+struct Cascade {
+    light_view_proj: mat4x4<f32>,
+};
+
+// At a dynamic offset: the cascade being drawn.
+@group(0) @binding(0) var<uniform> cascade: Cascade;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -10,7 +16,7 @@ struct VsIn {
 // The vertex stage, shared with the skinned entry point (shadow_skinned.wgsl).
 fn shadow_vertex(position: vec3<f32>, inst: Instance) -> vec4<f32> {
     let world = instance_model(inst) * vec4<f32>(position, 1.0);
-    return frame.light_view_proj * world;
+    return cascade.light_view_proj * world;
 }
 
 @vertex
