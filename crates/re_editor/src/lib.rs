@@ -92,6 +92,10 @@ pub struct EditorOptions {
     /// change the scene between loading it and locking it). `None`: taken
     /// by [`run_editor`].
     pub socket: Option<EditorSocket>,
+    /// The script debugger the debugger panel shows and the game's scripts
+    /// attach to (ADR-0045), when the caller also serves it over DAP.
+    /// `None`: a new one, used by the panel only.
+    pub debugger: Option<re_script::debug::Debugger>,
 }
 
 impl Default for EditorOptions {
@@ -104,6 +108,7 @@ impl Default for EditorOptions {
             agent_commands: true,
             agent: None,
             socket: None,
+            debugger: None,
         }
     }
 }
