@@ -1222,6 +1222,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-scale"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16194efd2800275df80448afa0ee11d3e23ce0220f6754e1af53fec8e9b7467a"
+dependencies = [
+ "egui",
+]
+
+[[package]]
+name = "egui-snarl"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "247c36a1f3b71fb25597f16f9396687641fec220a8116d5093941138fae59e61"
+dependencies = [
+ "ahash",
+ "egui",
+ "egui-scale",
+ "serde",
+ "slab",
+ "smallvec",
+]
+
+[[package]]
 name = "egui-wgpu"
 version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3825,6 +3848,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "egui",
+ "egui-snarl",
  "egui-winit",
  "egui_dock",
  "glam 0.34.1",
@@ -3833,6 +3857,7 @@ dependencies = [
  "re_app",
  "re_command",
  "re_core",
+ "re_proc",
  "re_reflect",
  "re_render",
  "re_scene",
@@ -4429,6 +4454,9 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "slotmap"
