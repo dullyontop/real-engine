@@ -103,10 +103,43 @@ def quat_z(deg):
     return (0.0, 0.0, math.sin(a), math.cos(a))
 
 
+def thigh_deg(t, off, phase):
+    # A negative X rotation swings the foot forward (+Z).
+    return -28 * phase(t, off)
+
+
+def knee_deg(t, off, phase):
+    return 35 * max(0.0, phase(t, off + 0.25))
+
+
+def rot_x(deg, y, z):
+    a = math.radians(deg)
+    return (y * math.cos(a) - z * math.sin(a), y * math.sin(a) + z * math.cos(a))
+
+
+def hips_height(t, phase):
+    """The Hips height that puts the lowest boot corner of either leg on
+    y = 0, from the legs' angles at `t` (forward kinematics in the Y-Z plane)."""
+    upper = global_rest()[INDEX["UpperLeg.L"]][1]
+    knee = global_rest()[INDEX["LowerLeg.L"]][1]
+    _, (_, cy, cz), (_, sy, sz), _ = next(b for b in BOXES if b[0] == "LowerLeg.L" and b[1][2] != 0)
+    lowest = 0.0
+    for off in (0.0, 0.5):
+        a1 = thigh_deg(t, off, phase)
+        a2 = a1 + knee_deg(t, off, phase)
+        ky, _ = rot_x(a1, knee - upper, 0.0)
+        for dy in (-sy / 2, sy / 2):
+            for dz in (-sz / 2, sz / 2):
+                y, _ = rot_x(a2, cy + dy - knee, cz + dz)
+                lowest = min(lowest, ky + y)
+    # `lowest` is relative to the hip joints, which sit this far below Hips.
+    return JOINTS[INDEX["Hips"]][2][1] - upper - lowest
+
+
 def walk_clip(n=16):
     """One second: each leg swings ±28° about X, the knee bends while the leg
-    swings forward, the arms swing against the legs, and the hips drop by as
-    much as the swung legs shorten, so the feet stay on the ground."""
+    swings forward, the arms swing against the legs, and the hips move so
+    the lowest boot corner is always on the ground (`hips_height`)."""
     times = [i / n for i in range(n + 1)]
     tracks = {}
 
@@ -114,18 +147,12 @@ def walk_clip(n=16):
         return math.sin(2 * math.pi * (t + offset))
 
     for side, off in (("L", 0.0), ("R", 0.5)):
-        # A negative X rotation swings the foot forward (+Z).
-        tracks[(f"UpperLeg.{side}", "rotation")] = [quat_x(-28 * phase(t, off)) for t in times]
-        tracks[(f"LowerLeg.{side}", "rotation")] = [
-            quat_x(35 * max(0.0, phase(t, off + 0.25))) for t in times
-        ]
+        tracks[(f"UpperLeg.{side}", "rotation")] = [quat_x(thigh_deg(t, off, phase)) for t in times]
+        tracks[(f"LowerLeg.{side}", "rotation")] = [quat_x(knee_deg(t, off, phase)) for t in times]
         tracks[(f"UpperArm.{side}", "rotation")] = [quat_x(22 * phase(t, off)) for t in times]
         tracks[(f"LowerArm.{side}", "rotation")] = [quat_x(-18) for _ in times]
     rest = JOINTS[INDEX["Hips"]][2]
-    leg = 0.89  # hip joint to sole
-    tracks[("Hips", "translation")] = [
-        (rest[0], rest[1] - leg * (1 - math.cos(math.radians(28 * phase(t)))), rest[2]) for t in times
-    ]
+    tracks[("Hips", "translation")] = [(rest[0], hips_height(t, phase), rest[2]) for t in times]
     tracks[("Spine", "rotation")] = [quat_x(4.0) for _ in times]
     return times, tracks
 
