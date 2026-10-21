@@ -708,3 +708,32 @@ fn stream_cancels_jobs_for_cells_no_longer_wanted() {
     let r = step(w, 1, &cfg);
     assert_eq!((r.pending, r.in_flight), (0, 0), "{r:?}");
 }
+
+#[test]
+fn stream_waits_never_apply_a_job_issued_with_old_inputs() {
+    // One worker, held busy: the cells' jobs are still queued when the
+    // water level changes, as on a slow machine.
+    let pool = Arc::new(re_core::TaskPool::new(1).unwrap());
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    pool.spawn(move || {
+        let _ = held.recv();
+    });
+    let mut st = streamed(world_graph(), 32.0, 32.0, json!([]));
+    let w = &mut st.world;
+    let cfg = StreamConfig {
+        delay_ticks: 2,
+        ..config()
+    };
+    w.ecs
+        .insert_resource(Streamer::new(cfg.clone()).unwrap().with_pool(pool));
+    let r = step(w, 0, &cfg);
+    assert!(r.in_flight > 0, "{r:?}");
+    set_water(w, 5.0);
+    step(w, 1, &cfg);
+    release.send(()).unwrap();
+    let r = step(w, 2, &cfg);
+    assert!(!r.loaded.is_empty(), "{r:?}");
+    for c in loaded(w) {
+        assert_eq!(water_y(w, &c), 5.0, "{c} has the new water level");
+    }
+}

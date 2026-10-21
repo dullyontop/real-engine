@@ -117,6 +117,8 @@ type Slot = Arc<(Mutex<Option<JobOutput>>, Condvar)>;
 struct InFlight {
     cancel: Arc<AtomicBool>,
     slot: Slot,
+    /// The covering sources and their inputs it was issued with.
+    inputs: Vec<(String, blake3::Hash)>,
 }
 
 impl std::fmt::Debug for InFlight {
@@ -788,6 +790,7 @@ impl Streamer {
         let Some(c) = parse_cell_key(k) else { return };
         let size = self.config.cell_size;
         let cancel = Arc::new(AtomicBool::new(false));
+        let inputs = Self::covering(sources, c, size);
         let mut work = Vec::new();
         for s in sources.iter().filter(|s| s.covers(c, size)) {
             work.push((
@@ -802,8 +805,23 @@ impl Streamer {
             let result: JobOutput = work
                 .into_iter()
                 .map(|(id, inputs, job)| {
+                    // A panicking node fails its cell instead of the pool
+                    // thread, and the result still arrives for `wait_for`.
                     let raw = match job {
-                        Ok(job) => job.run(),
+                        Ok(job) => {
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run()))
+                                .unwrap_or_else(|p| {
+                                    let why = p
+                                        .downcast_ref::<&str>()
+                                        .map(|s| (*s).to_string())
+                                        .or_else(|| p.downcast_ref::<String>().cloned())
+                                        .unwrap_or_default();
+                                    Err(Diagnostic::error(
+                                        codes::CELL_FAILED,
+                                        format!("generation panicked: {why}"),
+                                    ))
+                                })
+                        }
                         Err(d) => Err(d),
                     };
                     (id, inputs, raw)
@@ -813,7 +831,14 @@ impl Streamer {
             *lock.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
             ready.notify_all();
         });
-        self.jobs.insert(k.to_string(), InFlight { cancel, slot });
+        self.jobs.insert(
+            k.to_string(),
+            InFlight {
+                cancel,
+                slot,
+                inputs,
+            },
+        );
     }
 
     /// Starts jobs for pending cells with no result and no job, up to the
@@ -837,6 +862,13 @@ impl Streamer {
 
     /// Takes in finished jobs; drops results whose inputs no longer hold.
     fn collect(&mut self, world: &World, sources: &[Source]) {
+        // A job whose sources or inputs changed since it was issued is
+        // stopped, whether or not it has finished, so what loads never
+        // depends on how fast generation ran.
+        let size = self.config.cell_size;
+        self.jobs.retain(|k, j| {
+            parse_cell_key(k).is_some_and(|c| Self::covering(sources, c, size) == j.inputs)
+        });
         let done: Vec<String> = self
             .jobs
             .iter()
@@ -846,7 +878,6 @@ impl Streamer {
         for k in done {
             self.take(world, sources, &k);
         }
-        let size = self.config.cell_size;
         self.ready.retain(|k, outs| {
             let now = parse_cell_key(k).map(|c| Self::covering(sources, c, size));
             now.is_some_and(|now| {
