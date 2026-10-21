@@ -26,7 +26,8 @@ real verify --project examples/valley
   slopes, leaving the floor open to drive along, and rocks lie on steeper
   ground. Every node streams.
 - `scenes/main.scene.json`: the valley source (`Streamed`, bounds 8000 m,
-  inside the ±8 km precision limit), the hero (the `StreamFocus`), the car,
+  inside the ±8 km precision limit), the hero and the car (each a `StreamFocus`,
+  so the ground under a parked car stays loaded while the hero walks away),
   the camera and the sun. The car is kinematic until the ground under it
   loads; then the player script makes it a dynamic `Vehicle`.
 - `models/walker.glb`: the hero, a skinned figure (skin `Walker`, eleven
@@ -40,8 +41,8 @@ real verify --project examples/valley
 - `scripts/game/game.luau`: the HUD line.
 - `tests/replays/`: `walk` (walk, strafe, turn the camera, jump), `drive`
   (walk to the car, get in, drive along the valley, brake and reverse) and
-  `cross` (turn round and walk 75 s west along the valley floor, across the
-  cell borders at x = 0 and x = -256 while cells load ahead), each run twice
+  `cross` (turn round and walk 70 s west along the valley floor, from the
+  cell border at x = 0 across the one at x = -256 while cells load ahead), each run twice
   by `real verify` with the same `state_hash`, with goldens for Vulkan
   (lavapipe) and GL. `cross`'s stick inputs were recorded from a run that
   steered towards the low ground.
