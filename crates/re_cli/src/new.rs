@@ -10,31 +10,11 @@ use re_core::Diagnostic;
 use crate::codes;
 
 /// The entry scene of a new project: a camera, a sun, static ground and one
-/// dynamic box that falls onto it. Written in canonical form (load, then save).
+/// dynamic box that falls onto it. It is the `native` template's scene, so
+/// both ways of making the project load and save the same text and match
+/// on every platform.
 #[cfg(any(test, not(feature = "tooling")))]
-const STARTER_SCENE: &str = r#"{
-  "format": "real-engine/scene",
-  "version": 1,
-  "entities": [
-    { "id": "box", "name": "Box", "components": {
-        "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] },
-        "MaterialRef": { "asset": "materials/box.material.json" },
-        "MeshRef": { "asset": "builtin:cube" },
-        "RigidBody": { "kind": "Dynamic", "mass": 10.0 },
-        "Transform": { "translation": [0.0, 4.0, 0.0], "rotation": [0.2, 0.3, 0.1, 0.93] } } },
-    { "id": "camera", "name": "Camera", "components": {
-        "Camera": { "active": true },
-        "Transform": { "translation": [0.0, 5.0, 12.0], "rotation": [-0.19509032, 0.0, 0.0, 0.98078528] } } },
-    { "id": "ground", "name": "Ground", "components": {
-        "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] },
-        "MaterialRef": { "asset": "materials/ground.material.json" },
-        "MeshRef": { "asset": "builtin:cube" },
-        "Transform": { "translation": [0.0, -0.5, 0.0], "scale": [40.0, 1.0, 40.0] } } },
-    { "id": "sun", "name": "Sun", "components": {
-        "Light": { "kind": "Directional", "intensity": 1.0, "shadows": true },
-        "Transform": { "rotation": [-0.5, 0.3, 0.1, 0.8] } } }
-  ]
-}"#;
+const STARTER_SCENE: &str = include_str!("../../../templates/native/scenes/main.scene.json");
 
 #[cfg(any(test, not(feature = "tooling")))]
 fn material(base_color: [f32; 4], roughness: f32) -> String {
@@ -189,6 +169,31 @@ mod templated {
         Ok(given)
     }
 
+    /// Loads and saves each scene a template wrote, as `real new` saves its
+    /// starter scene: the engine's float formatting (quaternions are
+    /// normalized on load) can differ in the last digit between platforms,
+    /// so a stored scene is only canonical on the platform that wrote it.
+    fn resave_scenes(dir: &Path, written: &[String]) -> Result<(), Diagnostic> {
+        for path in written.iter().filter(|p| p.ends_with(".scene.json")) {
+            let file = dir.join(path);
+            let invalid = |message: String| {
+                Diagnostic::error(
+                    re_agent::codes::INVALID_TEMPLATE,
+                    format!("{path}: {message}"),
+                )
+            };
+            let text = std::fs::read_to_string(&file).map_err(|e| invalid(e.to_string()))?;
+            let doc = re_scene::scene::from_json(&text).map_err(|e| invalid(e.to_string()))?;
+            let mut world = re_scene::World::new();
+            world.load(&doc).map_err(|e| invalid(e.to_string()))?;
+            let mut saved = world.save(re_scene::SaveOptions::default());
+            saved.schema = doc.schema.clone();
+            std::fs::write(&file, re_scene::scene::to_json(&saved))
+                .map_err(|e| invalid(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     pub(super) fn create(dir: &Path, options: NewOptions<'_>) -> Result<Vec<String>, Diagnostic> {
         let lib = Library::builtin()?;
         let template = find(&lib, options.template)?;
@@ -199,7 +204,11 @@ mod templated {
         let values = template.values(&name, &given)?;
         refuse_non_empty(dir)?;
         let written = match template.manifest.generator.as_deref() {
-            None => template.write(dir, &values)?,
+            None => {
+                let written = template.write(dir, &values)?;
+                resave_scenes(dir, &written)?;
+                written
+            }
             Some(ROBLOX_PLACE) => super::create_roblox(dir, Some(&name))?,
             Some(other) => {
                 return Err(Diagnostic::error(
