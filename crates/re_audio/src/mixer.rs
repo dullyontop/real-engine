@@ -1,4 +1,5 @@
-//! `Audio`: the kira manager, the listener, and the sounds started by commands.
+//! `Audio`: the kira manager, the listener, the mixer graph, and the sounds
+//! started by commands.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -10,13 +11,16 @@ use kira::listener::ListenerHandle;
 use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::track::{SpatialTrackBuilder, SpatialTrackHandle};
-use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Tween};
+use kira::{
+    AudioManager, AudioManagerSettings, Capacities, Decibels, DefaultBackend, Frame, Tween,
+};
 use re_core::{Diagnostic, Location};
-use re_types::audio::AudioCmd;
+use re_types::audio::{AudioCmd, AudioGraphDesc, BusLevel};
 use re_types::ids::EntityId;
 
 use crate::capture::{CaptureBackend, CaptureSettings};
 use crate::codes;
+use crate::graph::{BUS_CAPACITY, Graph};
 
 /// Changes take effect at once (no fade).
 const NOW: Tween = Tween {
@@ -26,7 +30,8 @@ const NOW: Tween = Tween {
 };
 
 /// A playing sound, and its spatial track when it has one. Dropping the track
-/// handle removes the track, so it lives as long as the sound.
+/// handle removes the track, so it lives as long as the sound. Rebuilding the
+/// graph removes the bus tracks, and with them the sounds on them.
 struct Voice {
     sound: StaticSoundHandle,
     track: Option<SpatialTrackHandle>,
@@ -46,6 +51,9 @@ struct Mixer<B: Backend> {
     one_shots: Vec<Voice>,
     /// Entities whose spatial sounds only pan (`SetSourceAttenuation`).
     unattenuated: HashSet<EntityId>,
+    /// Entities' buses (`SetSourceBus`).
+    buses: HashMap<EntityId, String>,
+    graph: Graph,
 }
 
 impl<B: Backend> Mixer<B> {
@@ -54,30 +62,40 @@ impl<B: Backend> Mixer<B> {
         let listener = manager
             .add_listener([0.0f32; 3], [0.0f32, 0.0, 0.0, 1.0])
             .map_err(|e| limit(&e.to_string()))?;
+        let (graph, problems) = Graph::build(&mut manager, &AudioGraphDesc::default());
+        debug_assert!(problems.is_empty(), "{problems:?}");
         Ok(Mixer {
             manager,
             listener,
             sources: HashMap::new(),
             one_shots: Vec::new(),
             unattenuated: HashSet::new(),
+            buses: HashMap::new(),
+            graph,
         })
     }
 
+    /// Plays `data` on `bus` (the default bus when empty or unknown; the
+    /// warning for an unknown name is pushed to `problems` once).
     fn play(
         &mut self,
         data: StaticSoundData,
         position: Option<[f32; 3]>,
         attenuate: bool,
+        bus: &str,
+        problems: &mut Vec<Diagnostic>,
     ) -> Result<Voice, Diagnostic> {
+        let listener = self.listener.id();
+        let (track, warning) = self.graph.bus_track(bus);
+        problems.extend(warning);
         match position {
             Some(p) => {
                 let mut builder = SpatialTrackBuilder::new();
                 if !attenuate {
                     builder = builder.attenuation_function(None);
                 }
-                let mut track = self
-                    .manager
-                    .add_spatial_sub_track(&self.listener, p, builder)
+                let mut track = track
+                    .add_spatial_sub_track(listener, p, builder)
                     .map_err(|e| limit(&e.to_string()))?;
                 let sound = track.play(data).map_err(|e| limit(&e.to_string()))?;
                 Ok(Voice {
@@ -86,10 +104,28 @@ impl<B: Backend> Mixer<B> {
                 })
             }
             None => {
-                let sound = self.manager.play(data).map_err(|e| limit(&e.to_string()))?;
+                let sound = track.play(data).map_err(|e| limit(&e.to_string()))?;
                 Ok(Voice { sound, track: None })
             }
         }
+    }
+
+    /// Replaces the graph. The sounds on the old buses stop.
+    fn set_graph(&mut self, desc: &AudioGraphDesc) -> Vec<Diagnostic> {
+        let stopped = self.sources.len() + self.one_shots.len();
+        self.sources.clear();
+        self.one_shots.clear();
+        let (graph, problems) = Graph::build(&mut self.manager, desc);
+        // The old graph's tracks go when its handles drop, after the new graph
+        // is built, so the main track never has fewer buses than it needs.
+        self.graph = graph;
+        if stopped > 0 {
+            tracing::info!(
+                stopped,
+                "the audio graph was rebuilt; sounds on the replaced buses stopped"
+            );
+        }
+        problems
     }
 
     fn prune(&mut self) {
@@ -135,7 +171,7 @@ impl Audio {
     /// container), logs warning RE7400 and continues on the silent headless
     /// backend, so the game still runs.
     pub fn new_or_headless() -> Audio {
-        match AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()) {
+        match AudioManager::<DefaultBackend>::new(manager_settings(Default::default())) {
             Ok(m) => match Mixer::new(m) {
                 Ok(mixer) => Audio::with_output(Output::Device(mixer), 0),
                 Err(d) => {
@@ -161,11 +197,8 @@ impl Audio {
 
     /// Audio on the headless backend with these settings. Never opens a device.
     pub fn headless_with(settings: CaptureSettings) -> Audio {
-        let manager = AudioManager::<CaptureBackend>::new(AudioManagerSettings {
-            backend_settings: settings,
-            ..Default::default()
-        })
-        .unwrap_or_else(|never| match never {});
+        let manager = AudioManager::<CaptureBackend>::new(manager_settings(settings))
+            .unwrap_or_else(|never| match never {});
         // A fresh manager has room for its first listener.
         let mixer = Mixer::new(manager).expect("a new audio manager accepts one listener");
         Audio::with_output(Output::Headless(mixer), settings.sample_rate)
@@ -178,6 +211,34 @@ impl Audio {
             root: None,
             clips: HashMap::new(),
         }
+    }
+
+    /// Replaces the mixer graph (the `[audio]` section of `real.toml`,
+    /// ADR-0041), stopping the sounds on the buses it replaces. Every audio
+    /// starts with the default graph.
+    ///
+    /// A graph with structural problems (an unknown parent or send, a cycle, too
+    /// many sends; RE7407) is replaced by the default graph, so a typo never
+    /// silences a game. An invalid effect is dropped and the rest of its bus
+    /// still builds (RE7406). The returned diagnostics say what was dropped.
+    pub fn set_graph(&mut self, desc: &AudioGraphDesc) -> Vec<Diagnostic> {
+        with_mixer!(self, m => m.set_graph(desc))
+    }
+
+    /// The graph in use: the one last set, or the default graph when it had
+    /// structural problems.
+    pub fn graph(&self) -> &AudioGraphDesc {
+        match &self.output {
+            Output::Device(m) => m.graph.desc(),
+            Output::Headless(m) => m.graph.desc(),
+        }
+    }
+
+    /// Every bus's and send's level since the previous call (or since the graph
+    /// was built), after its effects and volume, sorted by name. A window with
+    /// nothing rendered reads as silence (-60 dB).
+    pub fn bus_levels(&mut self) -> Vec<BusLevel> {
+        with_mixer!(self, m => m.graph.levels())
     }
 
     /// True when playing on the headless backend.
@@ -298,29 +359,30 @@ impl Audio {
         with_mixer!(self, m => m.prune());
         let mut problems = Vec::new();
         for cmd in cmds {
-            if let Err(d) = self.apply_one(cmd) {
+            if let Err(d) = self.apply_one(cmd, &mut problems) {
                 problems.push(d);
             }
         }
         problems
     }
 
-    fn apply_one(&mut self, cmd: &AudioCmd) -> Result<(), Diagnostic> {
+    fn apply_one(
+        &mut self,
+        cmd: &AudioCmd,
+        problems: &mut Vec<Diagnostic>,
+    ) -> Result<(), Diagnostic> {
         match cmd {
             AudioCmd::PlayOneShot {
                 clip,
                 position,
                 volume,
-            } => {
-                let data = self
-                    .clip(clip)?
-                    .volume(linear_to_decibels(check_volume(*volume)?));
-                let position = position.map(|p| p.to_array());
-                with_mixer!(self, m => {
-                    let voice = m.play(data, position, true)?;
-                    m.one_shots.push(voice);
-                });
-            }
+            } => self.one_shot(clip, position.map(|p| p.to_array()), *volume, "", problems)?,
+            AudioCmd::PlayOneShotOnBus {
+                clip,
+                position,
+                volume,
+                bus,
+            } => self.one_shot(clip, position.map(|p| p.to_array()), *volume, bus, problems)?,
             AudioCmd::StartSource {
                 entity,
                 clip,
@@ -341,12 +403,45 @@ impl Audio {
                         old.sound.stop(NOW);
                     }
                     let attenuate = !m.unattenuated.contains(entity);
-                    let voice = m.play(data, position, attenuate)?;
+                    let bus = m.buses.get(entity).cloned().unwrap_or_default();
+                    let voice = m.play(data, position, attenuate, &bus, problems)?;
                     m.sources.insert(*entity, voice);
                 });
             }
+            AudioCmd::SetSourceBus { entity, bus } => with_mixer!(self, m => {
+                m.buses.insert(*entity, bus.clone());
+            }),
+            AudioCmd::SetBusVolume {
+                bus,
+                volume_db,
+                seconds,
+            } => {
+                if !volume_db.is_finite() {
+                    return Err(Diagnostic::error(
+                        codes::INVALID_VOLUME,
+                        format!("bus volume {volume_db} dB is not finite"),
+                    ));
+                }
+                let seconds = check_seconds(*seconds, codes::INVALID_VOLUME)?;
+                with_mixer!(self, m => quiet(m.graph.set_volume(bus, *volume_db, seconds))?);
+            }
+            AudioCmd::SetEffectParam {
+                bus,
+                effect,
+                param,
+                value,
+                seconds,
+            } => {
+                let seconds = check_seconds(*seconds, codes::INVALID_EFFECT)?;
+                with_mixer!(self, m => quiet(m.graph.set_param(bus, *effect, param, value, seconds))?);
+            }
+            AudioCmd::ApplySnapshot { name, seconds } => {
+                let seconds = check_seconds(*seconds, codes::INVALID_EFFECT)?;
+                with_mixer!(self, m => quiet(m.graph.apply_snapshot(name, seconds))?);
+            }
             AudioCmd::StopSource { entity } => with_mixer!(self, m => {
                 m.unattenuated.remove(entity);
+                m.buses.remove(entity);
                 if let Some(mut v) = m.sources.remove(entity) {
                     v.sound.stop(NOW);
                 }
@@ -399,6 +494,7 @@ impl Audio {
             }
             AudioCmd::StopAll => with_mixer!(self, m => {
                 m.unattenuated.clear();
+                m.buses.clear();
                 for (_, mut v) in m.sources.drain() {
                     v.sound.stop(NOW);
                 }
@@ -408,6 +504,60 @@ impl Audio {
             }),
         }
         Ok(())
+    }
+}
+
+impl Audio {
+    fn one_shot(
+        &mut self,
+        clip: &str,
+        position: Option<[f32; 3]>,
+        volume: f32,
+        bus: &str,
+        problems: &mut Vec<Diagnostic>,
+    ) -> Result<(), Diagnostic> {
+        let data = self
+            .clip(clip)?
+            .volume(linear_to_decibels(check_volume(volume)?));
+        with_mixer!(self, m => {
+            let voice = m.play(data, position, true, bus, problems)?;
+            m.one_shots.push(voice);
+        });
+        Ok(())
+    }
+}
+
+/// Settings for a manager: room for buses and the spatial voices under them.
+fn manager_settings<B: Backend>(backend_settings: B::Settings) -> AudioManagerSettings<B>
+where
+    B::Settings: Default,
+{
+    AudioManagerSettings {
+        capacities: Capacities {
+            sub_track_capacity: BUS_CAPACITY,
+            ..Default::default()
+        },
+        backend_settings,
+        ..Default::default()
+    }
+}
+
+/// A graph result whose error is a diagnostic only the first time.
+fn quiet(r: Result<(), Option<Diagnostic>>) -> Result<(), Diagnostic> {
+    match r {
+        Ok(()) | Err(None) => Ok(()),
+        Err(Some(d)) => Err(d),
+    }
+}
+
+fn check_seconds(seconds: f32, code: re_core::Code) -> Result<f32, Diagnostic> {
+    if seconds.is_finite() && seconds >= 0.0 {
+        Ok(seconds)
+    } else {
+        Err(Diagnostic::error(
+            code,
+            format!("tween length {seconds} s is not a finite number >= 0"),
+        ))
     }
 }
 

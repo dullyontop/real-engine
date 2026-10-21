@@ -68,6 +68,10 @@ const _: () = {
     contract::<ConstraintKind>();
     contract::<GroundState>();
     contract::<AudioCmd>();
+    contract::<AudioGraphDesc>();
+    contract::<EffectDesc>();
+    contract::<EffectParam>();
+    contract::<BusLevel>();
     contract::<ActionFrame>();
     contract::<ButtonState>();
     contract::<GraphDoc>();
@@ -607,11 +611,120 @@ fn audio() {
         },
         AudioCmd::SetMasterVolume { volume: 0.9 },
         AudioCmd::StopAll,
+        AudioCmd::SetSourceBus {
+            entity: id,
+            bus: "footsteps".into(),
+        },
+        AudioCmd::PlayOneShotOnBus {
+            clip: "assets/sfx/click.wav".into(),
+            position: None,
+            volume: 1.0,
+            bus: "ui".into(),
+        },
+        AudioCmd::SetBusVolume {
+            bus: "music".into(),
+            volume_db: -12.0,
+            seconds: 0.5,
+        },
+        AudioCmd::SetEffectParam {
+            bus: "sfx".into(),
+            effect: 1,
+            param: "cutoff_hz".into(),
+            value: EffectParam::Number(600.0),
+            seconds: 0.25,
+        },
+        AudioCmd::SetEffectParam {
+            bus: "sfx".into(),
+            effect: 1,
+            param: "mode".into(),
+            value: EffectParam::Choice("high_pass".into()),
+            seconds: 0.0,
+        },
+        AudioCmd::ApplySnapshot {
+            name: "underwater".into(),
+            seconds: 1.0,
+        },
     ];
     for cmd in &commands {
         round_trip(cmd);
     }
     assert_eq!(round_trip(&AudioCmd::StopAll), r#"{"cmd":"stop_all"}"#);
+    assert_eq!(
+        round_trip(&AudioCmd::ApplySnapshot {
+            name: "default".into(),
+            seconds: 0.0
+        }),
+        r#"{"cmd":"apply_snapshot","name":"default","seconds":0.0}"#
+    );
+}
+
+/// The `[audio]` section of ADR-0041's `real.toml` example, as JSON (re_types
+/// does not depend on toml; `re_app` parses the TOML).
+#[test]
+fn audio_graph() {
+    let graph: AudioGraphDesc = serde_json::from_str(
+        r#"{
+            "default_bus": "sfx",
+            "buses": {
+                "music": { "volume_db": -6.0 },
+                "sfx": {
+                    "sends": { "world_reverb": -9.0 },
+                    "effects": [{ "kind": "compressor", "threshold_db": -18.0, "ratio": 3.0 }]
+                },
+                "footsteps": {
+                    "parent": "sfx",
+                    "effects": [{ "kind": "filter", "mode": "high_pass", "cutoff_hz": 120.0 }]
+                }
+            },
+            "sends": {
+                "world_reverb": {
+                    "effects": [{ "kind": "reverb", "feedback": 0.85, "damping": 0.3, "mix": 1.0 }]
+                }
+            },
+            "snapshots": {
+                "underwater": {
+                    "buses": { "music": -12.0, "sfx": -3.0 },
+                    "effects": [{ "bus": "sfx", "effect": 0, "cutoff_hz": 600.0 }]
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(graph.buses.len(), 3);
+    assert_eq!(graph.buses["footsteps"].parent, "sfx");
+    assert_eq!(
+        graph.buses["footsteps"].effects,
+        [EffectDesc::Filter(audio::Filter {
+            mode: audio::FilterMode::HighPass,
+            cutoff_hz: 120.0,
+            ..Default::default()
+        })]
+    );
+    assert_eq!(
+        graph.buses["sfx"].effects,
+        [EffectDesc::Compressor(audio::Compressor {
+            threshold_db: -18.0,
+            ratio: 3.0,
+            ..Default::default()
+        })]
+    );
+    let snap = &graph.snapshots["underwater"];
+    assert_eq!(
+        snap.effects[0].params["cutoff_hz"],
+        EffectParam::Number(600.0)
+    );
+    let back: AudioGraphDesc =
+        serde_json::from_str(&serde_json::to_string(&graph).unwrap()).unwrap();
+    assert_eq!(back, graph);
+
+    // A missing `buses` keeps the default three; an unknown key is refused.
+    let only_default: AudioGraphDesc = serde_json::from_str(r#"{ "default_bus": "ui" }"#).unwrap();
+    assert_eq!(only_default.buses.len(), 3);
+    assert!(serde_json::from_str::<AudioGraphDesc>(r#"{ "busses": {} }"#).is_err());
+    assert!(
+        serde_json::from_str::<EffectDesc>(r#"{ "kind": "filter", "cutof_hz": 1.0 }"#).is_err()
+    );
+    assert!(AudioGraphDesc::default().is_default());
 }
 
 #[test]
