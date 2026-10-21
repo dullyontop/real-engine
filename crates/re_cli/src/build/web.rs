@@ -496,13 +496,19 @@ mod tests {
 
     #[test]
     fn link_flags_are_one_toml_array() {
-        let flags = link_flags(Path::new("/opt/wasi sdk"));
-        assert!(
-            flags.starts_with("target.wasm32-unknown-unknown.rustflags=[\"-L\",\"/opt/wasi sdk/"),
-            "{flags}"
-        );
-        assert!(
-            flags.ends_with("\"-lstatic=wasi-emulated-process-clocks\"]"),
+        let sdk = Path::new("/opt/wasi sdk");
+        let flags = link_flags(sdk);
+        let array = flags
+            .strip_prefix("target.wasm32-unknown-unknown.rustflags=")
+            .unwrap_or_else(|| panic!("{flags}"));
+        let array: Vec<String> = serde_json::from_str(array).unwrap();
+        // The path with its space is one element, whatever the separator.
+        let lib = sdk.join("share/wasi-sysroot/lib/wasm32-wasip1");
+        assert_eq!(array[3], lib.display().to_string(), "{flags}");
+        assert_eq!(array[0], "-L", "{flags}");
+        assert_eq!(
+            array.last().map(String::as_str),
+            Some("-lstatic=wasi-emulated-process-clocks"),
             "{flags}"
         );
     }
