@@ -8,6 +8,7 @@ use re_core::{Diagnostic, Phase};
 use re_scene::World;
 use re_script::{ContextKind, NoServices, RuntimeConfig, ScriptRuntime, WorldHost};
 use re_types::EntityId;
+use re_types::audio::{AudioCmd, BusLevel};
 use re_types::glam::Vec3;
 use re_types::host::{HostResult, HostServices};
 use re_types::input::{ActionFrame, ButtonState};
@@ -22,6 +23,8 @@ pub fn project() -> PathBuf {
 pub struct Services {
     pub actions: ActionFrame,
     pub sounds: Vec<String>,
+    /// Mixer commands (`audio_mix`).
+    pub mix: Vec<AudioCmd>,
     pub impulses: Vec<(EntityId, Vec3)>,
     pub restarts: usize,
     none: NoServices,
@@ -69,6 +72,22 @@ impl HostServices for Services {
     fn play_sound(&mut self, clip: &str, _: Option<Vec3>, _: f32) -> HostResult<()> {
         self.sounds.push(clip.to_string());
         Ok(())
+    }
+    fn audio_mix(&mut self, cmd: AudioCmd) -> HostResult<()> {
+        self.mix.push(cmd);
+        Ok(())
+    }
+    /// `sfx` measures -12 dB RMS and -6 dB peak; other names are unknown.
+    fn audio_level(&self, bus: &str) -> HostResult<BusLevel> {
+        if bus == "sfx" {
+            Ok(BusLevel {
+                bus: bus.into(),
+                peak_db: -6.0,
+                rms_db: -12.0,
+            })
+        } else {
+            self.none.audio_level(bus)
+        }
     }
     fn actions(&self) -> &ActionFrame {
         &self.actions

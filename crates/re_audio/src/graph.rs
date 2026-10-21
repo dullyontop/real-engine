@@ -73,7 +73,7 @@ struct Slot {
 }
 
 enum Track {
-    Bus(TrackHandle),
+    Bus(Box<TrackHandle>),
     Send(SendTrackHandle),
 }
 
@@ -694,7 +694,7 @@ impl Graph {
                     by_name.insert(name.clone(), nodes.len());
                     nodes.push(Node {
                         name: name.clone(),
-                        track: Track::Bus(track),
+                        track: Track::Bus(Box::new(track)),
                         volume,
                         base_db: bus.volume_db,
                         effects,

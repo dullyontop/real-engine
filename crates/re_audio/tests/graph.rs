@@ -402,6 +402,26 @@ fn a_snapshot_tween_reaches_its_target_one_batch_after_its_length() {
     render(&mut a, BATCH);
     let back = db(rms(&render(&mut a, 4800), 0));
     assert!((back - before).abs() < 0.1, "{back} dB against {before} dB");
+
+    // So does a restart (`StopAll`).
+    a.apply(&[AudioCmd::ApplySnapshot {
+        name: "quiet".into(),
+        seconds: 0.0,
+    }]);
+    a.apply(&[
+        AudioCmd::StopAll,
+        AudioCmd::PlayOneShot {
+            clip: "tone".into(),
+            position: None,
+            volume: 1.0,
+        },
+    ]);
+    render(&mut a, BATCH);
+    let restarted = db(rms(&render(&mut a, 4800), 0));
+    assert!(
+        (restarted - before).abs() < 0.1,
+        "{restarted} dB against {before} dB"
+    );
 }
 
 #[test]
@@ -563,7 +583,7 @@ fn an_unknown_bus_warns_once_and_plays_on_the_default_bus() {
         volume_db: -3.0,
         seconds: 0.0,
     };
-    assert_eq!(codes(&a.apply(&[quiet.clone()])), ["RE7408"]);
+    assert_eq!(codes(&a.apply(std::slice::from_ref(&quiet))), ["RE7408"]);
     assert!(a.apply(&[quiet]).is_empty());
     let snap = AudioCmd::ApplySnapshot {
         name: "underwater".into(),

@@ -103,7 +103,8 @@ pub enum AudioCmd {
         /// Volume, linear.
         volume: f32,
     },
-    /// Stop every sound (for a restart).
+    /// Stop every sound and return the mixer to the graph's own volumes and
+    /// effect parameters (for a restart).
     StopAll,
     /// Choose the bus an entity's sound plays on. Sent before `StartSource`, it
     /// applies to the entity's sounds until its next `StopSource` (or `StopAll`).

@@ -6,6 +6,7 @@ use mlua::{Function, IntoLua, Lua, MultiValue, Result, Table, Value};
 use re_command::Origin;
 use re_core::Code;
 use re_scene::{Entity, entity_from_id, entity_id};
+use re_types::audio::{AudioCmd, EffectParam};
 use re_types::host::HostError;
 use re_types::physics::{GroundState, GroupMask, VehicleInput};
 
@@ -343,14 +344,109 @@ fn audio_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
     lib.func(
         lua,
         "play",
-        "(clip: string, at: vector?, volume: number?) -> ()",
-        "Plays a sound asset once, at a world position or (without `at`) non-spatially; volume defaults to 1.",
-        |lua, (clip, at, volume): (String, Option<V3>, Option<f32>)| {
+        "(clip: string, at: vector?, volume: number?, bus: string?) -> ()",
+        "Plays a sound asset once, at a world position or (without `at`) non-spatially; volume defaults to 1, and `bus` to the project's default bus.",
+        |lua, (clip, at, volume, bus): (String, Option<V3>, Option<f32>, Option<String>)| {
+            let (at, volume) = (at.map(|v| v.0), volume.unwrap_or(1.0));
             with_host(lua, |h| {
-                h.services()
-                    .play_sound(&clip, at.map(|v| v.0), volume.unwrap_or(1.0))
-                    .map_err(host_err)
+                let s = h.services();
+                match bus {
+                    None => s.play_sound(&clip, at, volume),
+                    Some(bus) => s.audio_mix(AudioCmd::PlayOneShotOnBus {
+                        clip,
+                        position: at,
+                        volume,
+                        bus,
+                    }),
+                }
+                .map_err(host_err)
             })
+        },
+    )?;
+    lib.func(
+        lua,
+        "set_bus_volume",
+        "(bus: string, db: number, seconds: number?) -> ()",
+        "Tweens a mixer bus's (or send's) volume to `db` decibels (0 is unchanged) over `seconds`, at once by default.",
+        |lua, (bus, volume_db, seconds): (String, f32, Option<f32>)| {
+            let cmd = AudioCmd::SetBusVolume {
+                bus,
+                volume_db,
+                seconds: seconds.unwrap_or(0.0),
+            };
+            with_host(lua, |h| h.services().audio_mix(cmd).map_err(host_err))
+        },
+    )?;
+    lib.func(
+        lua,
+        "set_effect",
+        "(bus: string, index: number, params: { [string]: number | string }, seconds: number?) -> ()",
+        "Tweens parameters of a bus's effect over `seconds` (at once by default). `index` is the effect's place in the bus's `effects` list in real.toml, 1 for the first; `params` are its fields, such as `{ cutoff_hz = 600 }` or `{ mode = \"high_pass\" }`.",
+        |lua, (bus, index, params, seconds): (String, i64, Table, Option<f32>)| {
+            let effect = u32::try_from(index - 1).map_err(|_| {
+                mlua::Error::runtime(format!(
+                    "audio.set_effect: index {index} is not 1 or more"
+                ))
+            })?;
+            let mut values: Vec<(String, EffectParam)> = Vec::new();
+            for pair in params.pairs::<String, Value>() {
+                let (param, value) = pair?;
+                let value = match value {
+                    Value::Integer(i) => EffectParam::Number(i as f32),
+                    Value::Number(n) => EffectParam::Number(n as f32),
+                    Value::String(s) => EffectParam::Choice(s.to_str()?.to_string()),
+                    other => {
+                        return Err(mlua::Error::runtime(format!(
+                            "audio.set_effect: `{param}` must be a number or a string, not {}",
+                            other.type_name()
+                        )));
+                    }
+                };
+                values.push((param, value));
+            }
+            // Table order is not defined; the commands go in name order.
+            values.sort_by(|a, b| a.0.cmp(&b.0));
+            let seconds = seconds.unwrap_or(0.0);
+            with_host(lua, |h| {
+                for (param, value) in values {
+                    h.services()
+                        .audio_mix(AudioCmd::SetEffectParam {
+                            bus: bus.clone(),
+                            effect,
+                            param,
+                            value,
+                            seconds,
+                        })
+                        .map_err(host_err)?;
+                }
+                Ok(())
+            })
+        },
+    )?;
+    lib.func(
+        lua,
+        "snapshot",
+        "(name: string, seconds: number?) -> ()",
+        "Tweens the mixer to a snapshot from real.toml [audio.snapshots] over `seconds` (at once by default); `\"default\"` returns to the graph's own values.",
+        |lua, (name, seconds): (String, Option<f32>)| {
+            let cmd = AudioCmd::ApplySnapshot {
+                name,
+                seconds: seconds.unwrap_or(0.0),
+            };
+            with_host(lua, |h| h.services().audio_mix(cmd).map_err(host_err))
+        },
+    )?;
+    lib.func(
+        lua,
+        "levels",
+        "(bus: string) -> { peak_db: number, rms_db: number }",
+        "A mixer bus's (or send's) output over the last frame, after its effects and volume, in decibels (-60 is silence).",
+        |lua, bus: String| {
+            let level = with_host(lua, |h| h.services().audio_level(&bus).map_err(host_err))?;
+            let t = lua.create_table()?;
+            t.raw_set("peak_db", level.peak_db)?;
+            t.raw_set("rms_db", level.rms_db)?;
+            Ok(t)
         },
     )
 }

@@ -91,7 +91,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let sounds = arg(&args, "--sounds", 8);
     let seconds = arg(&args, "--seconds", 10);
-    for (name, desc) in [("default", AudioGraphDesc::default()), ("typical", typical())] {
+    for (name, desc) in [
+        ("default", AudioGraphDesc::default()),
+        ("typical", typical()),
+    ] {
         let best = (0..5)
             .map(|_| run(&desc, sounds, seconds))
             .fold(f64::INFINITY, f64::min);

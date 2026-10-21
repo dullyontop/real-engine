@@ -495,6 +495,8 @@ impl Audio {
             AudioCmd::StopAll => with_mixer!(self, m => {
                 m.unattenuated.clear();
                 m.buses.clear();
+                // A restart also starts from the graph's own volumes and effects.
+                quiet(m.graph.apply_snapshot(crate::DEFAULT_SNAPSHOT, 0.0))?;
                 for (_, mut v) in m.sources.drain() {
                     v.sound.stop(NOW);
                 }

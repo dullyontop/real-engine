@@ -13,6 +13,7 @@ use std::ptr::NonNull;
 use mlua::Lua;
 use re_command::{CommandOutcome, CommandRegistry, EditTarget, Origin, PolicyCheck};
 use re_scene::World;
+use re_types::audio::{AudioCmd, BusLevel};
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::input::ActionFrame;
 use re_types::physics::{CharacterState, GroupMask, RayHit, VehicleInput, VehicleState};
@@ -139,6 +140,17 @@ impl HostServices for NoServices {
     }
     fn play_sound(&mut self, _: &str, _: Option<Vec3>, _: f32) -> HostResult<()> {
         Self::unavailable("audio.play")
+    }
+    fn audio_mix(&mut self, cmd: AudioCmd) -> HostResult<()> {
+        Self::unavailable(match cmd {
+            AudioCmd::SetBusVolume { .. } => "audio.set_bus_volume",
+            AudioCmd::SetEffectParam { .. } => "audio.set_effect",
+            AudioCmd::ApplySnapshot { .. } => "audio.snapshot",
+            _ => "audio.play",
+        })
+    }
+    fn audio_level(&self, _: &str) -> HostResult<BusLevel> {
+        Self::unavailable("audio.levels")
     }
     fn actions(&self) -> &ActionFrame {
         &self.actions
