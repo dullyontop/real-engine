@@ -33,6 +33,8 @@ use crate::layout::Collapsed;
 const COLUMN: f32 = 220.0;
 /// The distance between the rows of nodes placed by depth, in points.
 const ROW: f32 = 120.0;
+/// The most commands [`Editor::canvas_commands`] keeps; older ones are dropped.
+const LOG: usize = 256;
 
 /// A place on the node canvas, in egui points, as drawn in the last frame:
 /// for tests and tools that drive the canvas with the pointer.
@@ -85,7 +87,7 @@ pub(crate) struct Canvas {
     collapsed: Collapsed,
     view: Option<View>,
     spots: Spots,
-    /// Every command the canvas sent, oldest first.
+    /// The last [`LOG`] commands the canvas sent, oldest first.
     log: Vec<(String, Json)>,
 }
 
@@ -153,7 +155,8 @@ impl Editor {
         spots.get(&spot.key()).copied()
     }
 
-    /// Every command the node canvas sent, oldest first, as `(name, args)`.
+    /// The last 256 commands the node canvas sent, oldest first, as
+    /// `(name, args)`.
     pub fn canvas_commands(&self) -> &[(String, Json)] {
         &self.canvas.log
     }
@@ -374,6 +377,10 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
     for (name, args) in sent {
         actions.push(command(&name, args.clone()));
         canvas.log.push((name, args));
+    }
+    if canvas.log.len() > LOG {
+        let extra = canvas.log.len() - LOG;
+        canvas.log.drain(..extra);
     }
     if layout_changed {
         ed.layout_changed();
