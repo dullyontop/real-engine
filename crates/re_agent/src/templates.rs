@@ -1269,6 +1269,39 @@ pub fn check_template(
     Ok(reports)
 }
 
+/// Runs every check in `checks` without stopping at a failure (`real agent
+/// eval`). `checkpoint` is what diff checks compare with: `run` gets
+/// `verify.diff` with it. A check that cannot run reports `ok: None`.
+pub fn evaluate_checks(
+    checks: &[Check],
+    values: &Map<String, Json>,
+    checkpoint: Option<&str>,
+    run: &mut dyn FnMut(&str, Json, bool) -> CommandOutcome,
+) -> Vec<CheckReport> {
+    let (mut verify, mut diff) = (None, None);
+    checks
+        .iter()
+        .map(|check| {
+            let described = check.describe();
+            let (ok, detail) = match check.kind() {
+                Err(e) => (Some(false), e),
+                Ok(kind) => {
+                    match evaluate(&kind, values, &mut verify, &mut diff, checkpoint, run) {
+                        Ok(Some(found)) => (Some(true), found),
+                        Ok(None) => (None, "needs a checkpoint to compare with".to_string()),
+                        Err(why) => (Some(false), why),
+                    }
+                }
+            };
+            CheckReport {
+                check: described,
+                ok,
+                detail,
+            }
+        })
+        .collect()
+}
+
 fn values_for(report: &RecipeReport) -> Map<String, Json> {
     report.values.clone()
 }
