@@ -475,6 +475,24 @@ mod model {
     }
 
     #[test]
+    fn attributes_survive_clone_whatever_they_hold() {
+        let mut p = place(SignalBehavior::Deferred);
+        p.run(
+            r#"
+            local f = Instance.new("Folder", workspace)
+            f:SetAttribute("M", Enum.Material.Plastic)
+            f:SetAttribute("Max", math.huge)
+            f:SetAttribute("Dir", Vector3.new(math.huge, 0, 0))
+            f:SetAttribute("N", 3)
+            local copy = f:Clone()
+            print(copy:GetAttribute("M") == Enum.Material.Plastic, copy:GetAttribute("Max"))
+            print(copy:GetAttribute("Dir").X, copy:GetAttribute("N"))
+            "#,
+        );
+        assert_eq!(p.out(), ["true\tinf", "inf\t3"]);
+    }
+
+    #[test]
     fn print_shows_instances_and_tables() {
         let mut p = place(SignalBehavior::Deferred);
         p.run(r#"print(workspace, game.ReplicatedStorage) print(type({}))"#);
