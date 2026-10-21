@@ -16,6 +16,8 @@ use serde_json::{Map, Value as Json, json};
 use crate::Panel;
 use crate::codes;
 use crate::editor::{Action, Editor, LineKind, Palette, Pending, command};
+use crate::gizmo;
+use crate::layout::PanelId;
 
 /// Draws every panel into the root `ui`.
 pub(crate) fn draw(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Action>) {
@@ -28,51 +30,99 @@ pub(crate) fn draw(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut 
     let r = egui::Panel::top("re_editor.toolbar").show(ui, |ui| toolbar(ed, ui, app));
     ed.rects.set(Panel::Toolbar, r.response.rect);
 
-    let r = egui::Panel::bottom("re_editor.console")
-        .resizable(true)
-        .default_size(160.0)
-        .show(ui, |ui| console(ed, ui));
-    ed.rects.set(Panel::Console, r.response.rect);
-
-    let r = egui::Panel::left("re_editor.hierarchy")
-        .resizable(true)
-        .default_size(240.0)
-        .show(ui, |ui| hierarchy(ed, ui, app.world(), actions));
-    ed.rects.set(Panel::Hierarchy, r.response.rect);
-
-    egui::Panel::right("re_editor.right")
-        .resizable(true)
-        .default_size(340.0)
-        .show(ui, |ui| {
-            let width = ui.available_width();
-            let height = ui.available_height();
-            let r = ui.allocate_ui(egui::vec2(width, height * 0.6), |ui| {
-                ui.set_min_size(ui.max_rect().size());
-                egui::ScrollArea::vertical()
-                    .id_salt("re_editor.inspector")
-                    .auto_shrink(false)
-                    .show(ui, |ui| inspector(ed, ui, app.world(), actions));
-            });
-            ed.rects.set(Panel::Inspector, r.response.rect);
-            ui.separator();
-            let r = ui.allocate_ui(ui.available_size(), |ui| {
-                ui.set_min_size(ui.max_rect().size());
-                egui::ScrollArea::vertical()
-                    .id_salt("re_editor.graph")
-                    .auto_shrink(false)
-                    .show(ui, |ui| graph(ed, ui, app, actions));
-            });
-            ed.rects.set(Panel::Graph, r.response.rect);
-        });
-
-    let r = egui::CentralPanel::no_frame().show(ui, |ui| viewport(ed, ui));
-    ed.rects.set(Panel::Viewport, r.response.rect);
+    // The other panels are tabs in the dock (ADR-0044). The dock is taken out
+    // of the editor while it is drawn, so the tabs can borrow the editor.
+    let mut dock = std::mem::replace(&mut ed.dock, egui_dock::DockState::new(Vec::new()));
+    let mut style = egui_dock::Style::from_egui(ui.style());
+    style.dock_area_padding = None;
+    // How close a split may be dragged to its edge; also the room egui_dock
+    // keeps on each side of a split when the window is small.
+    style.separator.extra = 60.0;
+    egui::CentralPanel::no_frame().show(ui, |ui| {
+        egui_dock::DockArea::new(&mut dock)
+            .id(egui::Id::new("re_editor.dock"))
+            .style(style)
+            .show_close_buttons(false)
+            .show_add_buttons(false)
+            .show_leaf_close_all_buttons(false)
+            .show_inside(
+                ui,
+                &mut Tabs {
+                    ed: &mut *ed,
+                    app,
+                    actions: &mut *actions,
+                },
+            );
+    });
+    ed.dock = dock;
 
     palette(ed, ui.ctx(), app, actions);
 
     actions.extend(later);
     if let Some(id) = select_now {
         select(ed, Some(id));
+    }
+}
+
+/// Draws the dock's tabs.
+struct Tabs<'a> {
+    ed: &'a mut Editor,
+    app: &'a App,
+    actions: &'a mut Vec<Action>,
+}
+
+impl egui_dock::TabViewer for Tabs<'_> {
+    type Tab = PanelId;
+
+    fn id(&mut self, tab: &mut PanelId) -> egui::Id {
+        egui::Id::new(("re_editor.tab", *tab))
+    }
+
+    fn title(&mut self, tab: &mut PanelId) -> egui::WidgetText {
+        tab.title().into()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut PanelId) {
+        let (ed, app, actions) = (&mut *self.ed, self.app, &mut *self.actions);
+        let rect = ui.max_rect();
+        let panel = match tab {
+            PanelId::Viewport => {
+                viewport(ed, ui, app, actions);
+                Panel::Viewport
+            }
+            PanelId::Hierarchy => {
+                hierarchy(ed, ui, app.world(), actions);
+                Panel::Hierarchy
+            }
+            PanelId::Inspector => {
+                egui::ScrollArea::vertical()
+                    .id_salt("re_editor.inspector")
+                    .auto_shrink(false)
+                    .show(ui, |ui| inspector(ed, ui, app.world(), actions));
+                Panel::Inspector
+            }
+            PanelId::Graph => {
+                egui::ScrollArea::vertical()
+                    .id_salt("re_editor.graph")
+                    .auto_shrink(false)
+                    .show(ui, |ui| graph(ed, ui, app, actions));
+                Panel::Graph
+            }
+            PanelId::Console => {
+                console(ed, ui);
+                Panel::Console
+            }
+        };
+        ed.rects.set(panel, rect);
+    }
+
+    fn is_closeable(&self, _tab: &PanelId) -> bool {
+        false
+    }
+
+    fn scroll_bars(&self, _tab: &PanelId) -> [bool; 2] {
+        // Each panel scrolls itself; the game view never does.
+        [false, false]
     }
 }
 
@@ -111,6 +161,8 @@ fn toolbar(ed: &mut Editor, ui: &mut egui::Ui, app: &App) {
             let open = !ed.palette.open;
             ed.set_palette_open(open);
         }
+        ui.separator();
+        gizmo::toolbar(&mut ed.gizmo.settings, ui);
         ui.separator();
         ui.label(RichText::new(&ed.status).weak());
     });
@@ -877,7 +929,7 @@ fn console(ed: &mut Editor, ui: &mut egui::Ui) {
 
 // ---- viewport -----------------------------------------------------------
 
-fn viewport(ed: &mut Editor, ui: &mut egui::Ui) {
+fn viewport(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Action>) {
     let rect = ui.max_rect();
     let ppp = ui.ctx().pixels_per_point();
     let px = [
@@ -897,6 +949,8 @@ fn viewport(ed: &mut Editor, ui: &mut egui::Ui) {
             });
         }
     }
+    let selected = ed.selected.clone();
+    ed.gizmo.ui(ui, rect, app, selected.as_deref(), actions);
 }
 
 // ---- command palette ----------------------------------------------------
