@@ -41,6 +41,9 @@ struct Session {
     parking: Option<Rc<dyn Parking>>,
     /// Registered chunks: (project-relative path, registry reference).
     chunks: Vec<(String, c_int)>,
+    /// Chunk names that are not `@path` (compat scripts are named
+    /// `=Service.Script`), with the path each was registered under.
+    aliases: HashMap<String, String>,
     /// User breakpoints as placed: (path, line).
     user: HashSet<(String, i32)>,
     /// The breakpoint generation last applied.
@@ -116,6 +119,7 @@ pub(super) fn attach(
                 lua: lua.weak(),
                 parking: parking.map(Rc::from),
                 chunks: Vec::new(),
+                aliases: HashMap::new(),
                 user: HashSet::new(),
                 generation: u64::MAX,
                 temp: Vec::new(),
@@ -185,18 +189,33 @@ pub fn register_chunk(lua: &Lua, path: &str, chunk: &Function) {
     if with_session(main, |_| ()).is_none() {
         return;
     }
-    // SAFETY: `lua_ref` takes a reference to the function mlua pushed, which
-    // is then popped; the number left is the reference, read back as the result.
+    // SAFETY: the chunk's name is read from a copy of the function mlua
+    // pushed (a negative level reads the function on top) and `lua_ref` takes
+    // a reference to it; both are popped, and the reference and the name are
+    // left as the results.
     let r = unsafe {
-        lua.exec_raw::<c_int>(chunk.clone(), |l| {
+        lua.exec_raw::<(c_int, String)>(chunk.clone(), |l| {
+            ffi::lua_checkstack(l, 3);
+            ffi::lua_pushvalue(l, -1);
+            let mut ar: ffi::lua_Debug = std::mem::zeroed();
+            let name = if ffi::lua_getinfo(l, -1, c"s".as_ptr(), &mut ar) != 0 {
+                values::cstr(ar.source)
+            } else {
+                None
+            };
             let r = ffi::lua_ref(l, -1);
-            ffi::lua_pop(l, 1);
+            ffi::lua_pop(l, 2);
             ffi::lua_pushinteger(l, r as _);
+            let name = std::ffi::CString::new(name.unwrap_or_default()).unwrap_or_default();
+            ffi::lua_pushstring(l, name.as_ptr());
         })
     };
-    let Ok(r) = r else { return };
+    let Ok((r, name)) = r else { return };
     let placed = with_session(main, |s| {
         s.chunks.push((path.to_string(), r));
+        if values::source_path(&name).as_deref() != Some(path) && !name.is_empty() {
+            s.aliases.insert(name, path.to_string());
+        }
         let (_, bps) = s.debugger.breakpoint_snapshot();
         let mut placed = Vec::new();
         for bp in bps.iter().filter(|b| b.source == path) {
@@ -247,6 +266,9 @@ pub fn unregister_chunk(lua: &Lua, chunk: &Function) {
                         }
                         ffi::lua_unref(l, r);
                         s.chunks.remove(i);
+                        if !s.chunks.iter().any(|(p, _)| *p == path) {
+                            s.aliases.retain(|_, p| *p != path);
+                        }
                     } else {
                         i += 1;
                     }
@@ -560,6 +582,7 @@ unsafe fn stop(
 ) {
     let thread = state as usize;
     let mut arena = Arena::default();
+    arena.aliases = with_session(main, |s| s.aliases.clone()).unwrap_or_default();
     // SAFETY: inside the callback the running thread's stack is readable.
     let frames = unsafe { values::read_stack(state, &mut arena) };
     let stopped = Stopped {
@@ -639,8 +662,9 @@ unsafe extern "C-unwind" fn on_break(state: *mut ffi::lua_State, ar: *mut ffi::l
         let thread = state as usize;
         let mut info: ffi::lua_Debug = std::mem::zeroed();
         ffi::lua_getinfo(state, 0, c"s".as_ptr(), &mut info);
-        let source = values::cstr(info.source)
-            .and_then(|s| values::source_path(&s))
+        let chunk = values::cstr(info.source).unwrap_or_default();
+        let source = with_session(main, |s| values::source_of(&s.aliases, &chunk))
+            .flatten()
             .unwrap_or_default();
 
         let decision = with_session(main, |s| {
@@ -716,8 +740,9 @@ unsafe extern "C-unwind" fn on_step(state: *mut ffi::lua_State, ar: *mut ffi::lu
         let thread = state as usize;
         let mut info: ffi::lua_Debug = std::mem::zeroed();
         ffi::lua_getinfo(state, 0, c"s".as_ptr(), &mut info);
-        let source = values::cstr(info.source)
-            .and_then(|s| values::source_path(&s))
+        let chunk = values::cstr(info.source).unwrap_or_default();
+        let source = with_session(main, |s| values::source_of(&s.aliases, &chunk))
+            .flatten()
             .unwrap_or_default();
         let decision = with_session(main, |s| {
             match s.single {

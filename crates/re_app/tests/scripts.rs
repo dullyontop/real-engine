@@ -235,3 +235,26 @@ fn verify_compiles_every_script() {
     assert_eq!(d.code.to_string(), "RE3001");
     assert!(format!("{:?}", d.location).contains("scripts/lib/bad.luau"));
 }
+
+#[test]
+fn the_game_context_stays_attached_to_the_debugger_across_a_restart() {
+    let dir = project(MOVER);
+    let mut app = open(dir.path());
+    let debugger = re_script::debug::Debugger::new();
+    app.set_debugger(Some(debugger.clone()));
+    // The VM starts on the first frame and is attached then.
+    assert!(debugger.contexts().is_empty());
+    app.frame(std::time::Duration::from_millis(16));
+    let names: Vec<String> = debugger.contexts().into_iter().map(|c| c.name).collect();
+    assert_eq!(names, ["game"]);
+
+    // A restart replaces the VM: the old context ends, the new one attaches.
+    app.restart();
+    app.frame(std::time::Duration::from_millis(16));
+    let contexts = debugger.contexts();
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0].name, "game");
+
+    app.set_debugger(None);
+    assert!(debugger.contexts().is_empty());
+}
