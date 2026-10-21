@@ -879,7 +879,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(format!(".{}-{n}.tmp", std::process::id()));
+    tmp.push(format!(".{}-{n}.tmp", crate::process_id()));
     let tmp = PathBuf::from(tmp);
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path).inspect_err(|_| {

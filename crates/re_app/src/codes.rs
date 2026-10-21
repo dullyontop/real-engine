@@ -107,3 +107,13 @@ pub const PLAY_STEP_FAILED: Code = Code::new("RE0527");
 /// document has unsaved edits (saving overwrites the file), or the file is
 /// gone or invalid (ADR-0044).
 pub const OPEN_DOC_CHANGED_ON_DISK: Code = Code::new("RE0528");
+
+/// The browser gave no WebGPU adapter or device for the page's canvas (ADR-0049).
+pub const WEB_NO_GPU: Code = Code::new("RE0620");
+
+/// The page's canvas could not be created, or stopped accepting frames when its
+/// WebGPU surface reported a validation error (ADR-0049).
+pub const WEB_CANVAS_FAILED: Code = Code::new("RE0621");
+
+/// The engine panicked in the browser; the page stops (ADR-0049).
+pub const WEB_PANIC: Code = Code::new("RE0622");

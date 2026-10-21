@@ -576,12 +576,15 @@ fn one_mesh_drawn_a_thousand_times() {
     );
     let stats = renderer.stats();
     assert_eq!(stats.meshes.count, 1);
-    assert_eq!(stats.last_frame.items_drawn, 1000);
+    // The cubes at the near corners are outside the view and culled.
+    let (drawn, culled) = (stats.last_frame.items_drawn, stats.last_frame.items_culled);
+    assert_eq!(drawn + culled, 1000);
+    assert!(culled > 0 && drawn > 700, "{drawn} drawn, {culled} culled");
     assert_eq!(
         stats.last_frame.draw_calls, 1,
         "the instances are batched into one draw"
     );
-    assert_eq!(stats.last_frame.triangles, 12_000);
+    assert_eq!(stats.last_frame.triangles, 12 * u64::from(drawn));
     assert!(image.stats(clear_srgb8()).pixels_differing_from_background > 320 * 240 / 4);
 }
 

@@ -87,7 +87,7 @@ impl Default for IdGen {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
-        Self::seeded(nanos ^ ((std::process::id() as u64) << 32))
+        Self::seeded(nanos ^ (u64::from(re_core::process_id()) << 32))
     }
 }
 
