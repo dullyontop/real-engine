@@ -1,0 +1,16 @@
+[project]
+name = "valley"
+entry_scene = "scenes/main.scene.json"
+
+[render]
+width = 1280
+height = 720
+
+[input.buttons]
+jump = ["key:Space", "pad:South"]
+use = ["key:KeyE", "pad:West"]
+brake = ["key:Space", "pad:RightTrigger"]
+
+[input.axes]
+move = [{ composite = ["key:KeyW", "key:KeyS", "key:KeyA", "key:KeyD"] }, { stick = "left", dead_zone = 0.15 }]
+look = [{ mouse_delta = 0.003 }, { stick = "right", dead_zone = 0.15 }]

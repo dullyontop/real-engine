@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "seed": 1,
+  "frames": 720,
+  "input": [
+    { "frame": 60, "action": "move", "axis": [0.0, 1.0] },
+    { "frame": 100, "action": "move", "axis": [-1.0, 0.0] },
+    { "frame": 200, "action": "move", "axis": [0.0, 1.0] },
+    { "frame": 300, "action": "look", "axis": [0.02, 0.0] },
+    { "frame": 360, "action": "look", "axis": [0.0, 0.0] },
+    { "frame": 420, "action": "jump", "down": true },
+    { "frame": 424, "action": "jump", "down": false },
+    { "frame": 600, "action": "move", "axis": [0.0, 0.0] }
+  ],
+  "checks": [
+    { "frame": 240, "screenshot": "tests/goldens/{backend}/walk_f240.png" },
+    { "frame": 719, "screenshot": "tests/goldens/{backend}/walk_f719.png" }
+  ]
+}
