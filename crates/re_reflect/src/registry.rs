@@ -342,12 +342,19 @@ impl ComponentKey {
     }
 }
 
+/// Called after a registry write changed a component: [`Registry::set_field`]
+/// with a different value, [`Registry::insert`] or [`Registry::remove`]. A
+/// world that keeps a journal of changes installs one with
+/// [`Registry::set_change_hook`]; the registry knows nothing else about it.
+pub type ChangeHook = fn(&mut World, Entity, ComponentKey);
+
 /// The component registry. It belongs to one bevy `World` (component ids are per world).
 #[derive(Default)]
 pub struct Registry {
     entries: Vec<Entry>,
     by_name: HashMap<String, usize>,
     by_id: HashMap<ComponentId, usize>,
+    change_hook: Option<ChangeHook>,
 }
 
 impl Registry {
@@ -628,6 +635,9 @@ impl Registry {
             path: format!("{}.{}", schema.name, field.name),
             error: e,
         })?;
+        if let Some(hook) = self.change_hook {
+            return self.set_field_hooked(world, entity, key, index, &value, hook);
+        }
         if self.entries[key.0]
             .ops
             .set_field(world, entity, index, &value)
@@ -638,6 +648,32 @@ impl Registry {
                 component: schema.name.clone(),
             })
         }
+    }
+
+    /// [`Registry::set_field`] with a change hook: the value before is read
+    /// so an equal write reports nothing. Kept apart so a registry without a
+    /// hook writes exactly as before.
+    #[cold]
+    fn set_field_hooked(
+        &self,
+        world: &mut World,
+        entity: Entity,
+        key: ComponentKey,
+        index: usize,
+        value: &Value,
+        hook: ChangeHook,
+    ) -> Result<(), ReflectError> {
+        let ops = &self.entries[key.0].ops;
+        let before = ops.get_field(world, entity, index);
+        if !ops.set_field(world, entity, index, value) {
+            return Err(ReflectError::MissingComponent {
+                component: self.schema(key).name.clone(),
+            });
+        }
+        if before != ops.get_field(world, entity, index) {
+            hook(world, entity, key);
+        }
+        Ok(())
     }
 
     /// Inserts (or replaces) a component from a full list of field values,
@@ -666,12 +702,30 @@ impl Registry {
             })?);
         }
         self.entries[key.0].ops.insert(world, entity, coerced);
+        if let Some(hook) = self.change_hook {
+            hook(world, entity, key);
+        }
         Ok(())
     }
 
     /// Removes the component (a no-op if the entity lacks it).
     pub fn remove(&self, world: &mut World, entity: Entity, key: ComponentKey) {
+        let had = self.change_hook.is_some() && self.has(world, entity, key);
         self.entries[key.0].ops.remove(world, entity);
+        if let Some(hook) = self.change_hook.filter(|_| had) {
+            hook(world, entity, key);
+        }
+    }
+
+    /// Installs (or with `None` removes) the hook told of every change a
+    /// registry write makes.
+    pub fn set_change_hook(&mut self, hook: Option<ChangeHook>) {
+        self.change_hook = hook;
+    }
+
+    /// The installed change hook.
+    pub fn change_hook(&self) -> Option<ChangeHook> {
+        self.change_hook
     }
 }
 

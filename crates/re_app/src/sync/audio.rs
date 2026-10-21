@@ -3,6 +3,8 @@
 //!
 //! - A source with `autoplay` starts when its entity appears (once per entity,
 //!   whether or not it loops), and stops when the entity or the component goes.
+//! - A source with a `bus` plays on it (`SetSourceBus` before `StartSource`). A
+//!   change of clip or bus stops the sound, and autoplay applies again.
 //! - A playing spatial source follows its entity; a volume change is sent as is.
 //! - The listener is the active camera.
 //!
@@ -26,9 +28,9 @@ struct Playing {
 #[derive(Clone, Debug, Default)]
 pub struct AudioSync {
     playing: BTreeMap<EntityId, Playing>,
-    /// Entities whose autoplay already started (a one-shot that ended is not
-    /// started again).
-    started: BTreeMap<EntityId, String>,
+    /// Entities whose autoplay already started, with the clip and bus (a
+    /// one-shot that ended is not started again).
+    started: BTreeMap<EntityId, (String, String)>,
     listener: Option<(Vec3, Quat)>,
 }
 
@@ -69,9 +71,9 @@ pub fn build(world: &mut World, sync: &mut AudioSync, cmds: &mut Vec<AudioCmd>) 
         let id = entity_id(entity);
         present.insert(id, ());
         let (position, _) = pose(world, entity);
-        let started_clip = sync.started.get(&id);
-        if started_clip.is_some_and(|c| *c != src.clip) {
-            // The clip changed: the old sound stops, and autoplay applies again.
+        let started = sync.started.get(&id);
+        if started.is_some_and(|(clip, bus)| *clip != src.clip || *bus != src.bus) {
+            // The clip or bus changed: the old sound stops, and autoplay applies again.
             if sync.playing.remove(&id).is_some() {
                 cmds.push(AudioCmd::StopSource { entity: id });
             }
@@ -95,7 +97,13 @@ pub fn build(world: &mut World, sync: &mut AudioSync, cmds: &mut Vec<AudioCmd>) 
             continue;
         }
         if src.autoplay && !src.clip.is_empty() && !sync.started.contains_key(&id) {
-            sync.started.insert(id, src.clip.clone());
+            sync.started.insert(id, (src.clip.clone(), src.bus.clone()));
+            if !src.bus.is_empty() {
+                cmds.push(AudioCmd::SetSourceBus {
+                    entity: id,
+                    bus: src.bus.clone(),
+                });
+            }
             cmds.push(AudioCmd::StartSource {
                 entity: id,
                 clip: src.clip.clone(),
