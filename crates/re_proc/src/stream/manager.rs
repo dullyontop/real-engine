@@ -184,14 +184,12 @@ impl Streamer {
             .filter(|_| world.ids().get(id).is_none())
             .map(str::to_string);
         match stashed.or(generated) {
-            Some(cell) if !self.is_loaded(&cell) || world.ids().get(id).is_none() => {
-                Err(Diagnostic::error(
-                    codes::IN_UNLOADED_CELL,
-                    format!("`{id}` is in cell {cell}, which is not loaded"),
-                )
-                .at(Location::entity(id.to_string()))
-                .with_hint("wait for `stream.on_loaded`, or load it with `stream.load`"))
-            }
+            Some(cell) if !self.is_loaded(&cell) => Err(Diagnostic::error(
+                codes::IN_UNLOADED_CELL,
+                format!("`{id}` is in cell {cell}, which is not loaded"),
+            )
+            .at(Location::entity(id.to_string()))
+            .with_hint("wait for `stream.on_loaded`, or load it with `stream.load`")),
             _ => Ok(()),
         }
     }
@@ -519,6 +517,9 @@ impl Streamer {
                     break;
                 }
                 total -= self.loaded[&k].bytes;
+                // An evicted stale cell is not generated again.
+                self.pending.remove(&k);
+                self.ready.remove(&k);
                 unloads.push(k);
             }
             if total > budget {
@@ -536,6 +537,9 @@ impl Streamer {
                 self.report_once(&mut report.diagnostics, "memory", d);
                 self.radius = shrunk;
             }
+        } else if self.radius < self.config.radius && total <= budget / 4 * 3 {
+            // Room again: the radius grows back a cell at a time.
+            self.radius = (self.radius + size).min(self.config.radius);
         }
         unloads.sort();
         unloads.dedup();
@@ -647,26 +651,8 @@ impl Streamer {
         let Some(l) = self.loaded.remove(k) else {
             return 0;
         };
-        let mut released = Vec::new();
-        for &e in &l.sources {
-            if world.ecs.get_entity(e).is_err() {
-                continue;
-            }
-            match world.unload_cell(e, k) {
-                Ok(r) => released.extend(r.released_assets),
-                // No longer a streamed source: remove its cell all the same.
-                Err(_) => {
-                    if let Some(root) = world.cell_root(e, k) {
-                        hierarchy::despawn_recursive(&mut world.ecs, root);
-                    }
-                }
-            }
-        }
-        if let Some(store) = world.ecs.get_resource::<GraphStore>() {
-            for a in &released {
-                store.release(a);
-            }
-        }
+        let released = remove_content(world, &l.sources, k);
+        release(world, &released);
         let size = self.config.cell_size;
         for (id, e, cell) in authored_roots(world, size) {
             if cell == k {
@@ -693,6 +679,23 @@ impl Streamer {
     ) -> usize {
         let size = self.config.cell_size;
         let reload = self.loaded.contains_key(k);
+        // A source that held content here and no longer does (it stopped
+        // covering the cell or being a valid streamed source) loses it.
+        if let Some(old) = self.loaded.get(k) {
+            let keep: Vec<Entity> = outputs
+                .iter()
+                .filter_map(|(sid, _, _)| sources.iter().find(|s| s.id == *sid))
+                .map(|s| s.entity)
+                .collect();
+            let gone: Vec<Entity> = old
+                .sources
+                .iter()
+                .copied()
+                .filter(|e| !keep.contains(e))
+                .collect();
+            let released = remove_content(world, &gone, k);
+            release(world, &released);
+        }
         let mut bytes = 0u64;
         let mut entities = 0usize;
         let mut ymin = f32::INFINITY;
@@ -718,6 +721,14 @@ impl Streamer {
                     continue;
                 }
             };
+            let applied = world.apply_cell(s.entity, k, &out.fragment);
+            // A deleted or suppressed cell root keeps the cell empty: its
+            // content, and its assets, are not used.
+            if applied.is_ok() && world.cell_root(s.entity, k).is_none() {
+                ids.push(sid.clone());
+                stamps.push(s.stamp.clone());
+                continue;
+            }
             for (_, a) in &out.assets {
                 bytes += asset_bytes(a);
                 if let DerivedAsset::Heightfield(h) = a {
@@ -738,17 +749,13 @@ impl Streamer {
                     }
                 }
             }
-            if let Some(store) = world.ecs.get_resource::<GraphStore>() {
-                store.add_derived(out.assets);
-            }
-            match world.apply_cell(s.entity, k, &out.fragment) {
+            match applied {
                 Ok(r) => {
                     entities += out.fragment.len();
                     if let Some(store) = world.ecs.get_resource::<GraphStore>() {
-                        for a in &r.released_assets {
-                            store.release(a);
-                        }
+                        store.add_derived(out.assets);
                     }
+                    release(world, &r.released_assets);
                     for d in r.diagnostics {
                         report.diagnostics.push(d);
                     }
@@ -831,5 +838,34 @@ impl Streamer {
             },
         );
         entities
+    }
+}
+
+/// Removes the content of `sources` in cell `k`; returns the derived assets
+/// it held.
+fn remove_content(world: &mut World, sources: &[Entity], k: &str) -> Vec<String> {
+    let mut released = Vec::new();
+    for &e in sources {
+        if world.ecs.get_entity(e).is_err() {
+            continue;
+        }
+        match world.unload_cell(e, k) {
+            Ok(r) => released.extend(r.released_assets),
+            // No longer a streamed source: remove its cell all the same.
+            Err(_) => {
+                if let Some(root) = world.cell_root(e, k) {
+                    hierarchy::despawn_recursive(&mut world.ecs, root);
+                }
+            }
+        }
+    }
+    released
+}
+
+fn release(world: &World, assets: &[String]) {
+    if let Some(store) = world.ecs.get_resource::<GraphStore>() {
+        for a in assets {
+            store.release(a);
+        }
     }
 }

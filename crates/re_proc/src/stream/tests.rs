@@ -328,6 +328,31 @@ fn stream_unloading_waits_for_the_margin_and_keeps_overrides() {
 }
 
 #[test]
+fn stream_a_deleted_cell_root_keeps_no_assets() {
+    let mut st = streamed(world_graph(), 32.0, 32.0, json!([]));
+    let w = &mut st.world;
+    run(w, 0..12);
+    let held = |w: &World| w.ecs.resource::<GraphStore>().derived_count();
+    let before = held(w);
+    let cells = loaded(w);
+    let grid = w.entity("terrain").unwrap();
+    let mut ov = re_scene::Overrides::default();
+    ov.set_deleted("c/0_0", true);
+    w.ecs.entity_mut(grid).insert(ov);
+    move_to(w, 32.0 + 64.0 * 5.0, 32.0);
+    run(w, 12..20);
+    move_to(w, 32.0, 32.0);
+    run(w, 20..32);
+    assert_eq!(loaded(w), cells);
+    assert!(w.entity("terrain/c/0_0/ground/terrain").is_err());
+    assert!(held(w) < before, "{} of {before}", held(w));
+    // In a loaded cell, a deleted entity is not "in an unloaded cell".
+    let s = w.ecs.resource::<Streamer>();
+    assert!(s.check_loaded(w, "terrain/c/0_0/ground/terrain").is_ok());
+    assert!(s.check_loaded(w, "terrain/c/9_9/ground/terrain").is_err());
+}
+
+#[test]
 fn stream_regenerates_cells_when_the_graph_changes() {
     let mut st = streamed(world_graph(), 32.0, 32.0, json!([]));
     let w = &mut st.world;

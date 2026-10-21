@@ -365,7 +365,8 @@ fn grid_window(
             if !d.owns(x, z) {
                 continue;
             }
-            // Unique within the window, stable for a given grid cell.
+            // Unique within the window (relative to it, not the global grid
+            // index); stable because a cell's window is fixed.
             let id = ((iz - z0) as u32) * 65_536 + (ix - x0) as u32;
             if let Some(pt) = on_surface(field, id, x, z)
                 && p.limits().keeps(&pt)
