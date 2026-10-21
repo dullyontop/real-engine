@@ -10,6 +10,7 @@ use std::fmt;
 use glam::Vec3;
 use serde::Serialize;
 
+use crate::audio::{AudioCmd, BusLevel};
 use crate::ids::EntityId;
 use crate::input::{ActionFrame, MouseLock, RawInputFrame};
 use crate::physics::{CharacterState, GroupMask, RayHit, VehicleInput, VehicleState};
@@ -85,6 +86,15 @@ pub trait HostServices {
 
     /// Plays a sound clip (an asset path) once, at a world position or non-spatially.
     fn play_sound(&mut self, clip: &str, at: Option<Vec3>, volume: f32) -> HostResult<()>;
+
+    /// Queues a mixer command for this frame (ADR-0041): one of
+    /// [`AudioCmd::PlayOneShotOnBus`], [`AudioCmd::SetBusVolume`],
+    /// [`AudioCmd::SetEffectParam`] and [`AudioCmd::ApplySnapshot`]. The
+    /// implementation refuses any other command.
+    fn audio_mix(&mut self, cmd: AudioCmd) -> HostResult<()>;
+
+    /// A bus's or send's level over the last frame.
+    fn audio_level(&self, bus: &str) -> HostResult<BusLevel>;
 
     /// The state of every input action this frame.
     fn actions(&self) -> &ActionFrame;

@@ -12,8 +12,8 @@ use re_script::{ContextKind, RuntimeConfig};
 use re_types::glam::Vec3;
 use re_types::input::{MouseLock, RawInputFrame};
 use re_types::{
-    ActionFrame, CharacterState, EntityId, GroupMask, HostResult, HostServices, RayHit,
-    VehicleInput, VehicleState,
+    ActionFrame, AudioCmd, BusLevel, CharacterState, EntityId, GroupMask, HostResult, HostServices,
+    RayHit, VehicleInput, VehicleState,
 };
 
 /// Host services with injectable raw input; everything else is
@@ -49,6 +49,12 @@ impl HostServices for Services {
     }
     fn play_sound(&mut self, c: &str, a: Option<Vec3>, v: f32) -> HostResult<()> {
         self.base.play_sound(c, a, v)
+    }
+    fn audio_mix(&mut self, cmd: AudioCmd) -> HostResult<()> {
+        self.base.audio_mix(cmd)
+    }
+    fn audio_level(&self, bus: &str) -> HostResult<BusLevel> {
+        self.base.audio_level(bus)
     }
     fn actions(&self) -> &ActionFrame {
         self.base.actions()

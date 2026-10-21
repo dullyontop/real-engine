@@ -2,8 +2,8 @@
 
 use glam::Vec3;
 use re_types::{
-    ActionFrame, CharacterState, EntityId, GroupMask, HostError, HostResult, HostServices, RayHit,
-    VehicleInput, VehicleState,
+    ActionFrame, AudioCmd, BusLevel, CharacterState, EntityId, GroupMask, HostError, HostResult,
+    HostServices, RayHit, VehicleInput, VehicleState,
 };
 
 /// A minimal host that records what scripts asked for.
@@ -69,6 +69,19 @@ impl HostServices for RecordingHost {
     fn play_sound(&mut self, clip: &str, at: Option<Vec3>, volume: f32) -> HostResult<()> {
         self.log.push(format!("sound {clip} {at:?} {volume}"));
         Ok(())
+    }
+
+    fn audio_mix(&mut self, cmd: AudioCmd) -> HostResult<()> {
+        self.log.push(format!("mix {cmd:?}"));
+        Ok(())
+    }
+
+    fn audio_level(&self, bus: &str) -> HostResult<BusLevel> {
+        Ok(BusLevel {
+            bus: bus.into(),
+            peak_db: -60.0,
+            rms_db: -60.0,
+        })
     }
 
     fn actions(&self) -> &ActionFrame {
