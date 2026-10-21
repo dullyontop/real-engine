@@ -309,6 +309,10 @@ pub struct CompatConfig {
     /// is the client's local player. One unless set.
     #[serde(default = "one_player")]
     pub players: u32,
+    /// How `DataStoreService` and `MemoryStoreService` keep their data
+    /// (`[compat.data]`, ADR-0048).
+    #[serde(default, skip_serializing_if = "DataConfig::is_default")]
+    pub data: DataConfig,
 }
 
 fn one_player() -> u32 {
@@ -326,6 +330,7 @@ impl Default for CompatConfig {
             assets: BTreeMap::new(),
             effect_budget: None,
             players: one_player(),
+            data: DataConfig::default(),
         }
     }
 }
@@ -374,6 +379,52 @@ impl GameInfo {
     /// True for the Studio-like defaults, which `real.toml` leaves out.
     pub fn is_default(&self) -> bool {
         *self == GameInfo::default()
+    }
+}
+
+/// Where the data services keep their data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum DataMode {
+    /// `real run` keeps data in `.real/data/` with the wall clock; other
+    /// runs start from `data/seed/` each time.
+    #[default]
+    Persist,
+    /// Every run starts from `data/seed/` and keeps nothing.
+    Session,
+}
+
+/// The `[compat.data]` section.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct DataConfig {
+    /// False makes every data call fail with error 403, as for a place whose
+    /// API access is off.
+    pub enabled: bool,
+    /// Frames a request takes to complete.
+    pub latency_frames: u32,
+    /// Where the data clock starts outside `real run`
+    /// (`YYYY-MM-DDTHH:MM:SSZ`).
+    pub epoch: String,
+    /// Where the data is kept.
+    pub mode: DataMode,
+}
+
+impl Default for DataConfig {
+    fn default() -> Self {
+        DataConfig {
+            enabled: true,
+            latency_frames: 1,
+            epoch: "2026-01-01T00:00:00Z".into(),
+            mode: DataMode::Persist,
+        }
+    }
+}
+
+impl DataConfig {
+    /// True for the defaults, which `real.toml` leaves out.
+    pub fn is_default(&self) -> bool {
+        *self == DataConfig::default()
     }
 }
 
@@ -500,6 +551,11 @@ impl CompatConfig {
                     toml::Value::String(path.clone())
                 ));
             }
+        }
+        if !self.data.is_default() {
+            let d = toml::to_string(&self.data).expect("plain values serialize");
+            out.push_str("\n[compat.data]\n");
+            out.push_str(&d);
         }
         if !self.animations.is_empty() {
             out.push_str("\n[compat.animations]\n");
