@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use re_core::{Diagnostic, Location};
+use re_types::render::{ColorGrading, PostSettings, SunShadows};
 use serde::{Deserialize, Serialize};
 
 use crate::codes;
@@ -151,6 +152,13 @@ pub struct RenderConfig {
     /// Linear RGBA clear colour, used when the scene does not set one.
     #[serde(default = "default_clear")]
     pub clear: [f32; 4],
+    /// `[render.post]`: exposure and the post-processing chain (ADR-0038). A
+    /// compat place's own settings (its `Lighting` and post effects) win.
+    #[serde(default)]
+    pub post: PostSettings,
+    /// `[render.shadows]`: the sun's shadow cascades (ADR-0038).
+    #[serde(default)]
+    pub shadows: SunShadows,
 }
 
 fn default_backends() -> Vec<String> {
@@ -173,6 +181,8 @@ impl Default for RenderConfig {
             width: default_width(),
             height: default_height(),
             clear: default_clear(),
+            post: PostSettings::default(),
+            shadows: SunShadows::default(),
         }
     }
 }
@@ -318,6 +328,7 @@ impl AppConfig {
             .at(location)
             .with_hint("see ARCHITECTURE §8 for the sections and their keys")
         })?;
+        check_render_keys(text)?;
         config.check()?;
         Ok(config)
     }
@@ -343,6 +354,9 @@ impl AppConfig {
         }
         if self.project.entry_scene.is_empty() {
             return bad("[project] entry_scene is empty".into());
+        }
+        if let Some(problem) = render_range_problem(&self.render) {
+            return bad(problem);
         }
         Ok(())
     }
@@ -379,6 +393,208 @@ frame_ms_p95 = 33.0
 "#
         )
     }
+}
+
+/// The first value of `[render.post]` or `[render.shadows]` outside the range
+/// the renderer draws, as a message. Values are reported, never clamped.
+fn render_range_problem(render: &RenderConfig) -> Option<String> {
+    let (post, shadows) = (&render.post, &render.shadows);
+    let at_least_0 = |v: f32| v.is_finite() && v >= 0.0;
+    let unit = |v: f32| v.is_finite() && (0.0..=1.0).contains(&v);
+    let finite = |v: f32| v.is_finite();
+    let grading = post.grading.unwrap_or_default();
+    let floats: [(&str, f32, bool, &str); 14] = [
+        (
+            "post] exposure",
+            post.exposure,
+            at_least_0(post.exposure),
+            "0 or more",
+        ),
+        (
+            "post] blur_radius",
+            post.blur_radius,
+            at_least_0(post.blur_radius),
+            "0 or more",
+        ),
+        (
+            "post.bloom] intensity",
+            post.bloom.intensity,
+            at_least_0(post.bloom.intensity),
+            "0 or more",
+        ),
+        (
+            "post.bloom] threshold",
+            post.bloom.threshold,
+            at_least_0(post.bloom.threshold),
+            "0 or more",
+        ),
+        (
+            "post.bloom] knee",
+            post.bloom.knee,
+            unit(post.bloom.knee),
+            "0 to 1",
+        ),
+        (
+            "post.bloom] radius",
+            post.bloom.radius,
+            at_least_0(post.bloom.radius),
+            "0 or more",
+        ),
+        (
+            "post.sun_rays] intensity",
+            post.sun_rays.intensity,
+            at_least_0(post.sun_rays.intensity),
+            "0 or more",
+        ),
+        (
+            "post.sun_rays] spread",
+            post.sun_rays.spread,
+            unit(post.sun_rays.spread),
+            "0 to 1",
+        ),
+        (
+            "post.grading] brightness",
+            grading.brightness,
+            finite(grading.brightness),
+            "a finite number",
+        ),
+        (
+            "post.grading] contrast",
+            grading.contrast,
+            grading.contrast.is_finite() && grading.contrast >= -1.0,
+            "-1 or more",
+        ),
+        (
+            "post.grading] saturation",
+            grading.saturation,
+            grading.saturation.is_finite() && grading.saturation >= -1.0,
+            "-1 or more",
+        ),
+        (
+            "shadows] distance",
+            shadows.distance,
+            shadows.distance.is_finite() && shadows.distance > 0.0,
+            "more than 0",
+        ),
+        (
+            "shadows] split_lambda",
+            shadows.split_lambda,
+            unit(shadows.split_lambda),
+            "0 to 1",
+        ),
+        (
+            "shadows] blend",
+            shadows.blend,
+            shadows.blend.is_finite() && (0.0..=0.5).contains(&shadows.blend),
+            "0 to 0.5",
+        ),
+    ];
+    if let Some((name, value, _, range)) = floats.iter().find(|f| !f.2) {
+        let (section, key) = name.split_once("] ").expect("section and key");
+        return Some(format!(
+            "[render.{section}] {key} = {value} is out of range ({range})"
+        ));
+    }
+    if let Some(c) = grading.tint.iter().find(|c| !at_least_0(**c)) {
+        return Some(format!(
+            "[render.post.grading] tint has {c}; each channel must be 0 or more"
+        ));
+    }
+    if !(1..=4).contains(&shadows.cascades) {
+        return Some(format!(
+            "[render.shadows] cascades = {} is out of range (1 to 4)",
+            shadows.cascades
+        ));
+    }
+    None
+}
+
+/// Rejects unknown keys in `[render.post]` and `[render.shadows]`. Their types
+/// come from `re_types`, which ignores unknown keys so snapshots stay readable
+/// across versions; in `real.toml` a misspelt key must not pass silently.
+fn check_render_keys(text: &str) -> Result<(), Diagnostic> {
+    // Syntax errors were reported by the typed parse.
+    let Ok(root) = toml::de::DeTable::parse(text) else {
+        return Ok(());
+    };
+    let reference = |value: Result<toml::Table, toml::ser::Error>| value.unwrap_or_default();
+    let known = [
+        (
+            "post",
+            reference(toml::Table::try_from(PostSettings {
+                grading: Some(ColorGrading::default()),
+                ..PostSettings::default()
+            })),
+        ),
+        (
+            "shadows",
+            reference(toml::Table::try_from(SunShadows::default())),
+        ),
+    ];
+    let Some(toml::de::DeValue::Table(render)) = child(root.get_ref(), "render") else {
+        return Ok(());
+    };
+    for (name, reference) in &known {
+        let Some(toml::de::DeValue::Table(table)) = child(render, name) else {
+            continue;
+        };
+        if let Some((section, key, offset, expected)) =
+            unknown_key(table, reference, &format!("render.{name}"))
+        {
+            let (line, column) = line_col(text, offset);
+            return Err(Diagnostic::error(
+                codes::CONFIG_INVALID,
+                format!(
+                    "invalid {CONFIG_FILE}: unknown field `{key}` in [{section}], expected one of {expected}"
+                ),
+            )
+            .at(Location::file_at(CONFIG_FILE, line, column))
+            .with_hint("see ARCHITECTURE §8 for the sections and their keys"));
+        }
+    }
+    Ok(())
+}
+
+/// The value of `key` in a parsed table.
+fn child<'a, 'i>(table: &'a toml::de::DeTable<'i>, key: &str) -> Option<&'a toml::de::DeValue<'i>> {
+    table
+        .iter()
+        .find(|(k, _)| k.get_ref().as_ref() == key)
+        .map(|(_, v)| v.get_ref())
+}
+
+/// The first key of `table` (at any depth) that `reference` lacks: its
+/// section, name, byte offset and the keys that section has.
+fn unknown_key(
+    table: &toml::de::DeTable<'_>,
+    reference: &toml::Table,
+    section: &str,
+) -> Option<(String, String, usize, String)> {
+    for (key, value) in table {
+        let name: &str = key.get_ref().as_ref();
+        match (reference.get(name), value.get_ref()) {
+            (None, _) => {
+                let expected = reference
+                    .keys()
+                    .map(|k| format!("`{k}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Some((
+                    section.to_string(),
+                    name.to_string(),
+                    key.span().start,
+                    expected,
+                ));
+            }
+            (Some(toml::Value::Table(inner)), toml::de::DeValue::Table(sub)) => {
+                if let Some(found) = unknown_key(sub, inner, &format!("{section}.{name}")) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// 1-based line and column of a byte offset.
@@ -443,5 +659,132 @@ mod tests {
     fn out_of_range_step_rate_is_refused() {
         let e = AppConfig::parse("[sim]\nfixed_hz = 0\n").unwrap_err();
         assert!(e.message.contains("fixed_hz"));
+    }
+
+    #[test]
+    fn post_and_shadow_tables_parse_with_defaults() {
+        let c = AppConfig::parse(
+            "[project]\nname = \"p\"\n\n[render.post]\nexposure = 2.0\ntone_mapping = \"AgX\"\n\n\
+             [render.post.grading]\nsaturation = 0.2\n\n[render.shadows]\ncascades = 3\n",
+        )
+        .unwrap();
+        assert_eq!(c.render.post.exposure, 2.0);
+        assert_eq!(
+            c.render.post.tone_mapping,
+            re_types::render::ToneMapping::AgX
+        );
+        let grading = c.render.post.grading.unwrap();
+        assert_eq!((grading.saturation, grading.tint), (0.2, [1.0; 3]));
+        assert_eq!(c.render.shadows.cascades, 3);
+        assert_eq!(c.render.shadows.distance, SunShadows::default().distance);
+        // Without the tables: the defaults, and so the renderer's defaults.
+        let plain = AppConfig::parse("[project]\nname = \"p\"\n").unwrap();
+        assert_eq!(plain.render.post, PostSettings::default());
+        assert_eq!(plain.render.shadows, SunShadows::default());
+    }
+
+    #[test]
+    fn unknown_post_and_shadow_keys_are_located() {
+        for (text, key, section, line) in [
+            (
+                "[render.post]\nexposur = 1.0\n",
+                "exposur",
+                "render.post",
+                5,
+            ),
+            (
+                "[render.post.bloom]\nintensity = 1.0\nradiuss = 0.1\n",
+                "radiuss",
+                "render.post.bloom",
+                6,
+            ),
+            (
+                "[render.post]\ngrading = { tnt = [1.0, 1.0, 1.0] }\n",
+                "tnt",
+                "render.post.grading",
+                5,
+            ),
+            (
+                "[render]\nshadows = { cascade = 2 }\n",
+                "cascade",
+                "render.shadows",
+                5,
+            ),
+        ] {
+            let err = AppConfig::parse(&format!("[project]\nname = \"p\"\n\n{text}")).unwrap_err();
+            assert_eq!(err.code, codes::CONFIG_INVALID);
+            assert!(
+                err.message
+                    .contains(&format!("unknown field `{key}` in [{section}]")),
+                "{}",
+                err.message
+            );
+            let Some(Location::File { line: at, .. }) = err.location else {
+                panic!("no file location: {err:?}");
+            };
+            assert_eq!(at, Some(line), "{text}");
+        }
+    }
+
+    #[test]
+    fn out_of_range_post_and_shadow_values_are_reported() {
+        for (table, want) in [
+            (
+                "[render.post]\nexposure = -1.0",
+                "[render.post] exposure = -1 is out of range (0 or more)",
+            ),
+            (
+                "[render.post]\nexposure = nan",
+                "[render.post] exposure = NaN is out of range (0 or more)",
+            ),
+            (
+                "[render.post.bloom]\nknee = 2.0",
+                "[render.post.bloom] knee = 2 is out of range (0 to 1)",
+            ),
+            (
+                "[render.post.grading]\ntint = [1.0, -0.5, 1.0]",
+                "[render.post.grading] tint has -0.5",
+            ),
+            (
+                "[render.shadows]\ncascades = 5",
+                "[render.shadows] cascades = 5 is out of range (1 to 4)",
+            ),
+            (
+                "[render.shadows]\ncascades = 0",
+                "[render.shadows] cascades = 0 is out of range (1 to 4)",
+            ),
+            (
+                "[render.shadows]\ndistance = 0.0",
+                "[render.shadows] distance = 0 is out of range (more than 0)",
+            ),
+            (
+                "[render.shadows]\nsplit_lambda = 1.5",
+                "[render.shadows] split_lambda = 1.5 is out of range (0 to 1)",
+            ),
+            (
+                "[render.shadows]\nblend = 0.6",
+                "[render.shadows] blend = 0.6 is out of range (0 to 0.5)",
+            ),
+        ] {
+            let err =
+                AppConfig::parse(&format!("[project]\nname = \"p\"\n\n{table}\n")).unwrap_err();
+            assert_eq!(err.code, codes::CONFIG_INVALID);
+            assert!(err.message.starts_with(want), "{table}: {}", err.message);
+        }
+    }
+
+    #[test]
+    fn the_explain_page_example_parses() {
+        let page = include_str!("../explain/RE0501.md");
+        let example = page
+            .split("```toml\n")
+            .nth(1)
+            .and_then(|rest| rest.split("```").next())
+            .expect("a toml example");
+        let c = AppConfig::parse(&format!("[project]\nname = \"p\"\n\n{example}")).unwrap();
+        assert_eq!(
+            c.render.post.tone_mapping,
+            re_types::render::ToneMapping::PbrNeutral
+        );
     }
 }

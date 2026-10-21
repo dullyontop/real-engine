@@ -14,6 +14,7 @@ use re_scene::{
     Camera as CameraC, GlobalTransform, Light as LightC, LightKind as LightKindC, MaterialRef,
     MeshRef, SkinnedMesh, Visible, World, entity_id,
 };
+use re_types::render::{PostSettings, SunShadows};
 use re_types::{
     Camera, DrawFlags, DrawItem, Light, LightKind, MaterialHandle, MeshHandle, RenderSnapshot,
     SkinnedDrawItem,
@@ -105,6 +106,10 @@ pub struct RenderInputs<'a> {
     pub alpha: f32,
     /// The clear colour.
     pub clear: [f32; 4],
+    /// Exposure and the post chain (`real.toml [render.post]`).
+    pub post: PostSettings,
+    /// The sun's shadow cascades (`real.toml [render.shadows]`).
+    pub shadows: SunShadows,
 }
 
 /// Mesh and material assets referenced by the world's drawable entities, so the
@@ -316,6 +321,8 @@ pub fn build(world: &mut World, inputs: &RenderInputs<'_>) -> RenderSnapshot {
         items,
         debug_lines: Vec::new(),
         clear: inputs.clear,
+        post: inputs.post,
+        shadows: inputs.shadows,
         skinned,
         joint_palette,
         ..RenderSnapshot::default()

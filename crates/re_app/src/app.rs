@@ -308,7 +308,7 @@ impl App {
             compat: None,
             compat_failed: false,
             persist_data: false,
-            compat_view: Default::default(),
+            compat_view: crate::compat_view::CompatView::new(&config.render),
             view_size: [config.render.width, config.render.height],
             view_ppp: 1.0,
             script_output: Vec::new(),
@@ -630,6 +630,8 @@ impl App {
             skins: &self.skin_sync,
             alpha: self.alpha,
             clear: self.config.render.clear,
+            post: self.config.render.post,
+            shadows: self.config.render.shadows,
         };
         self.snapshot = render::build(&mut self.world, &inputs);
         self.hud = hud::collect(&mut self.world);
@@ -955,6 +957,8 @@ impl App {
                 skins: &self.skin_sync,
                 alpha: self.alpha,
                 clear: self.config.render.clear,
+                post: self.config.render.post,
+                shadows: self.config.render.shadows,
             };
             self.snapshot = render::build(&mut self.world, &inputs);
             self.hud = hud::collect(&mut self.world);
@@ -1169,6 +1173,8 @@ impl App {
             skins: &self.skin_sync,
             alpha: self.alpha,
             clear: self.config.render.clear,
+            post: self.config.render.post,
+            shadows: self.config.render.shadows,
         };
         // A compat game shows the local player's world.
         let shown = match &mut self.compat {
@@ -2258,7 +2264,9 @@ impl App {
                 // The new client VM numbers its meshes from the start.
                 match &mut self.graphics {
                     Some(g) => self.compat_view.release_all(g.renderer_mut()),
-                    None => self.compat_view = Default::default(),
+                    None => {
+                        self.compat_view = crate::compat_view::CompatView::new(&self.config.render)
+                    }
                 }
                 if self.compat_config.is_some() {
                     // A cursor the old scripts held or hid is let go.
