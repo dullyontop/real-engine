@@ -286,7 +286,7 @@ fn bake_asset(
         // cannot take the temporary file away; whichever rename lands, the
         // content is the same.
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let tmp = full.with_extension(format!("{ext}.{}-{n}.writing", std::process::id()));
+        let tmp = full.with_extension(format!("{ext}.{}-{n}.writing", re_core::process_id()));
         std::fs::write(&tmp, &bytes).map_err(|e| format!("cannot write {path}: {e}"))?;
         if let Err(e) = std::fs::rename(&tmp, &full) {
             let _ = std::fs::remove_file(&tmp);
