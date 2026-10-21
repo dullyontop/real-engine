@@ -34,11 +34,13 @@ pub enum Panel {
     Palette,
     /// The game view.
     Viewport,
+    /// The node canvas.
+    Canvas,
 }
 
 impl Panel {
     /// Every panel, in drawing order.
-    pub const ALL: [Panel; 7] = [
+    pub const ALL: [Panel; 8] = [
         Panel::Toolbar,
         Panel::Hierarchy,
         Panel::Inspector,
@@ -46,6 +48,7 @@ impl Panel {
         Panel::Graph,
         Panel::Palette,
         Panel::Viewport,
+        Panel::Canvas,
     ];
 
     fn index(self) -> usize {
@@ -55,7 +58,7 @@ impl Panel {
 
 /// Where each panel was drawn in the last frame, in egui points.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct PanelRects([Option<egui::Rect>; 7]);
+pub struct PanelRects([Option<egui::Rect>; 8]);
 
 impl PanelRects {
     /// The rectangle of `panel`, or `None` if it was not drawn.
@@ -172,6 +175,7 @@ pub struct Editor {
     pub(crate) viewport_px: Option<[u32; 2]>,
     pub(crate) gizmo: Gizmo,
     pub(crate) debug: crate::debugger::DebugPanel,
+    pub(crate) canvas: crate::canvas::Canvas,
     pub(crate) dock: egui_dock::DockState<PanelId>,
     /// The project whose layout the dock shows, once it has been read.
     layout_root: Option<PathBuf>,
@@ -225,6 +229,7 @@ impl Editor {
             viewport_px: None,
             gizmo: Gizmo::default(),
             debug: Default::default(),
+            canvas: Default::default(),
             dock: layout::default_dock(),
             layout_root: None,
             layout_saved: String::new(),
@@ -358,18 +363,24 @@ impl Editor {
     /// layout when the layout next changes. [`Editor::ui`] does this on its
     /// first frame.
     pub fn load_layout(&mut self, root: &Path) {
-        let (dock, gizmo) = match layout::load(root) {
+        let default = || layout::Layout {
+            dock: layout::default_dock(),
+            gizmo: GizmoSettings::default(),
+            collapsed: layout::Collapsed::new(),
+        };
+        let found = match layout::load(root) {
             Ok(Some(found)) => found,
-            Ok(None) => (layout::default_dock(), GizmoSettings::default()),
+            Ok(None) => default(),
             Err(d) => {
                 self.log_diagnostic(&d);
-                (layout::default_dock(), GizmoSettings::default())
+                default()
             }
         };
-        self.dock = dock;
-        self.gizmo.settings = gizmo;
+        self.dock = found.dock;
+        self.gizmo.settings = found.gizmo;
         self.gizmo.drag = None;
-        self.layout_saved = layout::to_json(&self.dock, &self.gizmo.settings);
+        self.canvas.set_collapsed(found.collapsed);
+        self.layout_saved = self.layout_json();
         self.gizmo_saved = self.gizmo.settings;
         self.layout_at_press = None;
         self.layout_dirty = false;
@@ -391,7 +402,7 @@ impl Editor {
         let Some(root) = &self.layout_root else {
             return;
         };
-        let text = layout::to_json(&self.dock, &self.gizmo.settings);
+        let text = self.layout_json();
         self.gizmo_saved = self.gizmo.settings;
         if text == self.layout_saved {
             return;
@@ -407,15 +418,26 @@ impl Editor {
         }
     }
 
+    /// Notes a change to the layout made without a press and release that
+    /// [`Editor::ui`] would see (a click is both in one frame): it is saved
+    /// once no button is held.
+    pub(crate) fn layout_changed(&mut self) {
+        self.layout_dirty = true;
+    }
+
+    fn layout_json(&self) -> String {
+        layout::to_json(&self.dock, &self.gizmo.settings, self.canvas.collapsed())
+    }
+
     /// Notes dock changes made by a pointer press, after the frame is drawn.
     fn track_layout(&mut self, ui: &egui::Ui) {
         let down = ui.input(|i| i.pointer.any_down());
         match (&self.layout_at_press, down) {
             (None, true) => {
-                self.layout_at_press = Some(layout::to_json(&self.dock, &self.gizmo.settings));
+                self.layout_at_press = Some(self.layout_json());
             }
             (Some(before), false) => {
-                if *before != layout::to_json(&self.dock, &self.gizmo.settings) {
+                if *before != self.layout_json() {
                     self.layout_dirty = true;
                 }
                 self.layout_at_press = None;

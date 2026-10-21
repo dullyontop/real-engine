@@ -763,6 +763,48 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
         true,
         report::<C>,
     );
+    registry.register_typed::<crate::AddNodeArgs, _>(
+        "graph.add_node",
+        "Add a node to a graph file (opened for editing, saved by scene.save): its kind and parameters are checked; a fresh id is chosen when none is given, so a retry without an id adds another node.",
+        Tier::Edit,
+        false,
+        crate::edit::add_node::<C>,
+    );
+    registry.register_typed::<crate::RemoveNodeArgs, _>(
+        "graph.remove_node",
+        "Remove a node from a graph file, with its edges, its canvas position and the procedural sources' parameter overrides of it, in one undoable step. Its generated entities' keys go away; overrides of them are listed and kept.",
+        Tier::Edit,
+        true,
+        crate::edit::remove_node::<C>,
+    );
+    registry.register_typed::<crate::ConnectArgs, _>(
+        "graph.connect",
+        "Connect a node's output to another node's input in a graph file; ports and types are checked, cycles refused, and an edge already into that input is replaced.",
+        Tier::Edit,
+        true,
+        crate::edit::connect::<C>,
+    );
+    registry.register_typed::<crate::ConnectArgs, _>(
+        "graph.disconnect",
+        "Remove the edge from a node's output to another node's input in a graph file.",
+        Tier::Edit,
+        true,
+        crate::edit::disconnect::<C>,
+    );
+    registry.register_typed::<crate::MoveNodesArgs, _>(
+        "graph.move_nodes",
+        "Set the canvas positions of nodes in a graph file (layout only: nothing regenerates).",
+        Tier::Edit,
+        true,
+        crate::edit::move_nodes::<C>,
+    );
+    registry.register_typed::<crate::SetDefaultArgs, _>(
+        "graph.set_default",
+        "Set a node's parameter in the graph file itself (checked against the node kind; null removes it). graph.set_param sets a per-source override instead.",
+        Tier::Edit,
+        true,
+        crate::edit::set_default::<C>,
+    );
     registry.register_typed::<crate::bake::BakeArgs, _>(
         "proc.bake",
         "Turn a procedural source's generated entities into authored ones (ids `<source>.<key>`, a `Baked` record each, derived meshes and heightfields written under assets/baked/), as one undoable transaction. By default the source stops generating; with `keys` or `keep_source` it keeps generating the rest.",
