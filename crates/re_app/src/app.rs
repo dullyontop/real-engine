@@ -17,7 +17,7 @@ use re_physics::{Physics, PhysicsConfig};
 use re_reflect::Value;
 use re_scene::{HudText, SaveOptions, World, entity_from_id};
 use re_types::{
-    ActionFrame, AudioCmd, BodyPose, ContactEvent, PhysicsCmd, RenderSnapshot, ReplayDoc,
+    ActionFrame, AudioCmd, BodyPose, BusLevel, ContactEvent, PhysicsCmd, RenderSnapshot, ReplayDoc,
 };
 use serde::Serialize;
 
@@ -170,6 +170,8 @@ pub struct App {
     audio_sync: AudioSync,
     audio_cmds: Vec<AudioCmd>,
     last_audio_cmds: Vec<AudioCmd>,
+    /// Every bus's level over the last frame (ADR-0041), for scripts.
+    bus_levels: Vec<BusLevel>,
 
     pending: Pending,
     screenshots: Vec<ScreenshotRequest>,
@@ -275,13 +277,16 @@ impl App {
         let graph_inputs = procedural::inputs(&mut world);
         let physics = Physics::new(physics_config(&config), TaskPool::global())?;
         let clock = FixedClock::new(config.sim.fixed_hz, config.sim.max_steps_per_frame);
+        let mut audio = headless_audio(&files);
+        let audio_problems = audio.set_graph(&config.audio);
+        let bus_levels = audio.bus_levels();
         Ok(App {
             project: files
                 .project_dir()
                 .map(Path::to_path_buf)
                 .unwrap_or_default(),
             media: Media::with_files(files.clone()),
-            audio: headless_audio(&files),
+            audio,
             files,
             world,
             history: History::default(),
@@ -330,11 +335,12 @@ impl App {
             audio_sync: AudioSync::new(),
             audio_cmds: Vec::new(),
             last_audio_cmds: Vec::new(),
+            bus_levels,
             pending: Pending::default(),
             screenshots: Vec::new(),
             captures: Vec::new(),
             perf: PerfRecorder::new(),
-            diagnostics: Vec::new(),
+            diagnostics: audio_problems,
             verify_stages: Vec::new(),
             config,
         })
@@ -575,11 +581,20 @@ impl App {
         &mut self.audio
     }
 
-    /// Replaces the audio output (the windowed runner opens the device).
+    /// Replaces the audio output (the windowed runner opens the device) and
+    /// builds the project's mixer graph on it.
     pub fn set_audio(&mut self, mut audio: Audio) {
         audio.set_files(self.files.clone());
+        self.diagnostics.extend(audio.set_graph(&self.config.audio));
+        self.bus_levels = audio.bus_levels();
         self.audio = audio;
         self.audio_sync = AudioSync::new();
+    }
+
+    /// Every mixer bus's and send's level over the last frame, after its
+    /// effects and volume (ADR-0041).
+    pub fn bus_levels(&self) -> &[BusLevel] {
+        &self.bus_levels
     }
 
     /// Meshes, materials and clips by asset string.
@@ -821,6 +836,8 @@ impl App {
             raw: &self.raw_frame,
             physics_cmds: &mut self.physics_cmds,
             audio_cmds: &mut self.audio_cmds,
+            bus_levels: &self.bus_levels,
+            audio_graph: self.audio.graph(),
             pending: &mut self.pending,
         }
     }
@@ -1217,6 +1234,7 @@ impl App {
         let t = Instant::now();
         self.diagnostics.extend(self.audio.apply(&self.audio_cmds));
         self.last_audio_cmds = std::mem::take(&mut self.audio_cmds);
+        self.bus_levels = self.audio.bus_levels();
         if let Some(gfx) = &self.graphics {
             self.diagnostics.extend(gfx.take_errors());
         }
@@ -1896,6 +1914,8 @@ impl App {
                 raw: &self.raw_frame,
                 physics_cmds: &mut self.physics_cmds,
                 audio_cmds: &mut self.audio_cmds,
+                bus_levels: &self.bus_levels,
+                audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
             },
         };
@@ -2140,6 +2160,8 @@ impl App {
                 raw: &self.raw_frame,
                 physics_cmds: &mut self.physics_cmds,
                 audio_cmds: &mut self.audio_cmds,
+                bus_levels: &self.bus_levels,
+                audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
             },
         };
