@@ -64,6 +64,7 @@ graph TD
     script[re_script] --> command
     script --> scene
     script --> types
+    script --> proc
   end
 
   subgraph Runtime
@@ -481,7 +482,7 @@ Each M1 command is one MCP tool. There is no generic `command.run` tool in M1, b
 | Read | `screenshot`, `verify`, `play.run` | `re_app` |
 | Read | `explain` | `re_cli` |
 | Edit | `entity.spawn`, `entity.set`, `entity.reparent`, `entity.delete`, `component.add`, `component.remove`, `scene.apply` (a list of operations as one atomic transaction), `undo`, `redo` | `re_command` |
-| Edit | `graph.set_param`, `graph.regenerate` | `re_proc` |
+| Edit | `graph.set_param`, `graph.regenerate`, `proc.create_source` (M3, ADR-0043) | `re_proc` |
 | Edit | `asset.import` | `re_app` |
 | Edit | `script.write`, `checkpoint.restore` | `re_agent` |
 | Destructive | `file.delete` | `re_agent` |
@@ -582,6 +583,10 @@ contexts = ["game", "tools"]
 cpu_budget_ms = 4
 memory_limit_mb = 256
 checker = "luau-lsp"          # or a path to a patched luau-analyze (ADR-0013)
+
+[proc]                        # Luau node kinds (M3, ADR-0043 §4)
+luau_budget = 20000000        # safepoints per evaluation (RE4101 past it)
+luau_memory_mb = 256
 
 [input.buttons]               # action = list of bindings
 jump = ["key:Space", "pad:South"]
