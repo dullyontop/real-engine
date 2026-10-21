@@ -157,6 +157,9 @@ struct RunArgs {
     /// Print the run report as JSON.
     #[arg(long)]
     json: bool,
+    /// Serve the script debugger over DAP on 127.0.0.1 (default port 4711).
+    #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "4711")]
+    debug: Option<u16>,
 }
 
 fn print_diagnostics(diagnostics: &[Diagnostic]) {
@@ -190,6 +193,21 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
     let mut app = match open(project) {
         Ok(a) => a,
         Err(d) => return fail(d),
+    };
+    // Kept until the run ends; dropping it closes the client's connection.
+    let _dap = match args.debug {
+        Some(port) => {
+            let debugger = re_script::debug::Debugger::new();
+            match re_script::debug::dap::DapServer::listen(debugger.clone(), port, project) {
+                Ok(server) => {
+                    eprintln!("debugger: DAP on {}", server.addr());
+                    app.set_debugger(Some(debugger));
+                    Some(server)
+                }
+                Err(d) => return fail(d),
+            }
+        }
+        None => None,
     };
     let replay = match &args.replay {
         Some(path) => match re_input::load_replay(path) {
