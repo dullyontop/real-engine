@@ -363,4 +363,49 @@ impl re_script::ScriptHost for PlayHost<'_> {
     fn services(&mut self) -> &mut dyn HostServices {
         &mut self.services
     }
+    fn stream(&mut self) -> Option<&'static dyn re_script::StreamAccess> {
+        // Every App world has its streaming manager (`ensure_streamer`).
+        self.world
+            .ecs
+            .contains_resource::<re_proc::stream::Streamer>()
+            .then_some(&WorldStream as &'static dyn re_script::StreamAccess)
+    }
+}
+
+/// The `stream` library over `re_proc::stream`'s world resources.
+struct WorldStream;
+
+impl re_script::StreamAccess for WorldStream {
+    fn events(
+        &self,
+        world: &re_scene::World,
+    ) -> Option<(u64, Vec<re_scene::StreamCell>, Vec<re_scene::StreamCell>)> {
+        let e = world.ecs.get_resource::<re_proc::stream::StreamEvents>()?;
+        Some((e.tick, e.unloaded.clone(), e.loaded.clone()))
+    }
+
+    fn cells(&self, world: &re_scene::World) -> Vec<re_scene::StreamCell> {
+        world
+            .ecs
+            .get_resource::<re_proc::stream::Streamer>()
+            .map(|s| s.cells().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn is_loaded(&self, world: &re_scene::World, key: &str) -> bool {
+        world
+            .ecs
+            .get_resource::<re_proc::stream::Streamer>()
+            .is_some_and(|s| s.is_loaded(key))
+    }
+
+    fn pin(&self, world: &mut re_scene::World, key: &str, on: bool) {
+        if let Some(mut s) = world.ecs.get_resource_mut::<re_proc::stream::Streamer>() {
+            if on {
+                s.pin(key);
+            } else {
+                s.unpin(key);
+            }
+        }
+    }
 }

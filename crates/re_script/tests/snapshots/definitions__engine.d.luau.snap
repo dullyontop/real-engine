@@ -225,6 +225,22 @@ declare proc: {
     regenerate: (source_id: string, seed: number) -> (),
 }
 
+-- World streaming: the loaded cells and their load and unload events.
+declare stream: {
+    -- Calls `f` for each cell that loads, before `time.on_step`, in key order. Cells loaded before the script started fire nothing; read `stream.cells()` at start.
+    on_loaded: (f: (cell: { key: string, coord: { number }, min: vector, max: vector, sources: { string }, version: string }) -> ()) -> Connection,
+    -- Calls `f` for each cell that unloads, before the loads of the same step, in key order.
+    on_unloaded: (f: (cell: { key: string, coord: { number }, min: vector, max: vector, sources: { string }, version: string }) -> ()) -> Connection,
+    -- The loaded cells, in key order.
+    cells: () -> { { key: string, coord: { number }, min: vector, max: vector, sources: { string }, version: string } },
+    -- True if cell `key` (`c/<x>_<z>`) is loaded.
+    is_loaded: (key: string) -> boolean,
+    -- Tools only: keeps cell `key` loaded whatever the focuses, until `stream.release`; it loads at the streaming delay.
+    load: (key: string) -> (),
+    -- Tools only: lets a cell kept by `stream.load` unload when no focus wants it.
+    release: (key: string) -> (),
+}
+
 -- Commands (tools context only): the same registry the CLI, editor and agents use.
 declare command: {
     -- Runs a registered command as this script (undoable, logged with the script's path).

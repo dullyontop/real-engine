@@ -85,3 +85,15 @@ pub const RECIPE_STEP_FAILED: Code = Code::new("RE8023");
 
 /// A recipe or template check did not hold.
 pub const RECIPE_CHECK_FAILED: Code = Code::new("RE8024");
+
+/// An evaluation task or suite is malformed, or names a project that
+/// cannot be found.
+pub const INVALID_EVAL_TASK: Code = Code::new("RE8025");
+
+/// `real agent eval --agent NAME` names no agent in any `eval.toml`, or the
+/// file does not parse.
+pub const UNKNOWN_EVAL_AGENT: Code = Code::new("RE8026");
+
+/// An evaluation run could not be set up or its files written: the project
+/// copy, the MCP server, or the output directory.
+pub const EVAL_RUN_FAILED: Code = Code::new("RE8027");

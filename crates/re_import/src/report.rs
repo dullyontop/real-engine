@@ -7,7 +7,7 @@ use re_core::Diagnostic;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// The two input forms.
+/// The input forms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum InputFormat {
@@ -15,6 +15,8 @@ pub enum InputFormat {
     Rojo,
     /// A Studio command-bar loader script, read without running it.
     Loader,
+    /// A place or model file (`.rbxl`, `.rbxlx`, `.rbxm`, `.rbxmx`).
+    Place,
 }
 
 /// One instance the import created, adopted or removed.

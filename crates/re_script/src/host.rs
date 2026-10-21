@@ -12,7 +12,7 @@ use std::ptr::NonNull;
 
 use mlua::Lua;
 use re_command::{CommandOutcome, CommandRegistry, EditTarget, Origin, PolicyCheck};
-use re_scene::World;
+use re_scene::{StreamCell, World};
 use re_types::audio::{AudioCmd, BusLevel};
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::input::ActionFrame;
@@ -46,6 +46,29 @@ pub trait ScriptHost {
         let _ = (name, args, dry_run, origin);
         None
     }
+
+    /// World streaming (ADR-0042), for the `stream` library; `None` when
+    /// this host does not stream (builder runs, tools without a game).
+    fn stream(&mut self) -> Option<&'static dyn StreamAccess> {
+        None
+    }
+}
+
+/// World streaming as scripts see it: `re_app` implements it over
+/// `re_proc::stream`, whose state lives in the world's resources.
+pub trait StreamAccess {
+    /// The streaming tick that last ran, with the cells it unloaded and
+    /// loaded (each in key order); `None` before the first.
+    fn events(&self, world: &World) -> Option<(u64, Vec<StreamCell>, Vec<StreamCell>)>;
+
+    /// The loaded cells, in key order.
+    fn cells(&self, world: &World) -> Vec<StreamCell>;
+
+    /// True if cell `key` is loaded.
+    fn is_loaded(&self, world: &World, key: &str) -> bool;
+
+    /// Keeps cell `key` loaded whatever the focuses (`on`), or releases it.
+    fn pin(&self, world: &mut World, key: &str, on: bool);
 }
 
 /// A host made of a world and a set of services, without commands.

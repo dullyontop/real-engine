@@ -47,6 +47,10 @@ pub struct AppConfig {
     /// `[verify]`.
     #[serde(default)]
     pub verify: VerifyConfig,
+    /// `[stream]`: world streaming's cell grid, radii and per-tick budgets
+    /// (ADR-0042), read by `re_proc::stream`.
+    #[serde(default)]
+    pub stream: re_proc::stream::StreamConfig,
     /// `[compat]`: present in a project in the Roblox-style compat layout
     /// (docs/M2_PLAN.md, WP9). Kept as written; `re_compat::CompatConfig`
     /// reads and checks it.
@@ -73,6 +77,7 @@ impl Default for AppConfig {
             input: re_input::InputConfig::default(),
             audio: AudioGraphDesc::default(),
             verify: VerifyConfig::default(),
+            stream: re_proc::stream::StreamConfig::default(),
             compat: None,
             headless: true,
             persist_edits: false,
@@ -350,6 +355,10 @@ impl AppConfig {
         if self.project.entry_scene.is_empty() {
             return bad("[project] entry_scene is empty".into());
         }
+        // A bad `[stream]` value is `RE4300`, from re_proc.
+        self.stream
+            .validate()
+            .map_err(|d| d.at(Location::file(CONFIG_FILE)))?;
         Ok(())
     }
 

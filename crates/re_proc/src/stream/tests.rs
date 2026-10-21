@@ -608,3 +608,36 @@ fn stream_refuses_meshes_made_at_the_origin() {
     let r = step(&mut st.world, 0, &config());
     assert_eq!(r.diagnostics[0].code.to_string(), "RE4301");
 }
+
+#[test]
+fn stream_a_forked_world_unloads_its_own_cells() {
+    // Ids that sort before `terrain` give it another handle in the fork.
+    let extra = json!([
+        { "id": "a1", "components": { "Transform": {} } },
+        { "id": "a2", "components": { "Transform": {} } },
+        { "id": "a3", "components": { "Transform": {} } },
+    ]);
+    let mut st = streamed(world_graph(), 32.0, 32.0, extra);
+    let w = &mut st.world;
+    run(w, 0..12);
+    let mut fork = w.fork();
+    assert_ne!(
+        w.entity("terrain").unwrap(),
+        fork.entity("terrain").unwrap()
+    );
+    fork.ecs
+        .insert_resource(w.ecs.resource::<GraphStore>().clone());
+    let streamer = w.ecs.resource::<Streamer>().forked(w, &fork);
+    fork.ecs.insert_resource(streamer);
+    let before = w.state_hash();
+    move_to(&mut fork, 32.0 + 64.0 * 5.0, 32.0);
+    let r = run(&mut fork, 12..20);
+    assert!(r.iter().any(|r| r.unloaded.contains(&"c/0_0".to_string())));
+    assert!(fork.entity("terrain/c/0_0/ground/terrain").is_err());
+    assert!(fork.entity("a1").is_ok() && fork.entity("a3").is_ok());
+    move_to(&mut fork, 32.0, 32.0);
+    run(&mut fork, 20..32);
+    assert!(fork.entity("terrain/c/0_0/ground/terrain").is_ok());
+    // The original world is untouched.
+    assert_eq!(w.state_hash(), before);
+}

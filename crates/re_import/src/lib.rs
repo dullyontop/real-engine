@@ -1,13 +1,17 @@
 //! `re_import`: brings Roblox-style projects into Real Engine (docs/M2_PLAN.md,
 //! WP16), without running any of their Luau.
 //!
-//! Two input forms are read:
+//! Three input forms are read:
 //! * **Rojo-style projects** ([`rojo`]): a `*.project.json` tree and the
 //!   script, `*.model.json` and `*.meta.json` files it maps;
 //! * **Studio command-bar loader scripts** ([`loader`]): a Luau file that
 //!   creates instances and assigns each script's `Source`, parsed with
 //!   full_moon and interpreted statically for the statement shapes it
-//!   recognises. Anything else is reported, never run.
+//!   recognises. Anything else is reported, never run;
+//! * **place and model files** ([`place`]): `.rbxl` and `.rbxm` (binary),
+//!   `.rbxlx` and `.rbxmx` (XML), read by our own reader (ADR-0048 §4). A
+//!   place's services and a model's instances are imported with the
+//!   properties the class layer can set; the rest is reported (`RE9811`).
 //!
 //! [`import`] writes a compat project: `real.toml` with `[compat] api =
 //! "roblox"`, `scenes/main.scene.json` in the compat scene conventions
@@ -21,16 +25,16 @@
 //! start with [`IMPORT_ID_PREFIX`]) are ever removed. An import owns every
 //! instance any import created in what its input covers (a loader's script
 //! table: all imported scripts; a Rojo project: the whole place), so a project
-//! takes one input. Every check runs before anything is written: an import
+//! takes one input; a model file owns only the instances named like its
+//! roots under its parent. Every check runs before anything is written: an import
 //! that fails to plan leaves the project as it was, and only a file system
 //! error part-way through writing (`RE9808`) can leave it half-written.
-//!
-//! A general `.rbxl`/`.rbxlx` reader is M3.
 
 pub mod apply;
 pub mod codes;
 pub mod loader;
 pub mod names;
+pub mod place;
 pub mod report;
 pub mod rojo;
 pub mod tree;
@@ -55,11 +59,16 @@ pub struct ImportOptions {
     /// Keep instances an earlier import created even when the input no longer
     /// declares them.
     pub keep_stale: bool,
+    /// The dotted path a model file's instances go under
+    /// (`ReplicatedStorage.Maps`); `Workspace` when `None`. Refused for a
+    /// place file.
+    pub parent: Option<String>,
 }
 
 /// The input file and its form: a directory holding `default.project.json`
-/// and any `*.project.json` file are Rojo projects; any other file is read as
-/// a loader script.
+/// and any `*.project.json` file are Rojo projects; `.rbxl`, `.rbxlx`,
+/// `.rbxm` and `.rbxmx` files are places and models; any other file is read
+/// as a loader script.
 pub fn detect(input: &Path) -> Result<(PathBuf, InputFormat), Diagnostic> {
     let unreadable = |msg: String| {
         Diagnostic::error(codes::INPUT_UNREADABLE, msg)
@@ -85,15 +94,8 @@ pub fn detect(input: &Path) -> Result<(PathBuf, InputFormat), Diagnostic> {
         .unwrap_or_default();
     if name.ends_with(".project.json") {
         Ok((input.to_path_buf(), InputFormat::Rojo))
-    } else if name.ends_with(".rbxl")
-        || name.ends_with(".rbxlx")
-        || name.ends_with(".rbxm")
-        || name.ends_with(".rbxmx")
-    {
-        Err(unreadable(format!(
-            "{name} is a place or model file, which the importer does not read yet"
-        ))
-        .with_hint("export the scripts as a Rojo project, or use a loader script"))
+    } else if place::is_place_file(input) {
+        Ok((input.to_path_buf(), InputFormat::Place))
     } else {
         Ok((input.to_path_buf(), InputFormat::Loader))
     }
@@ -101,9 +103,29 @@ pub fn detect(input: &Path) -> Result<(PathBuf, InputFormat), Diagnostic> {
 
 /// Reads an input into its instance tree.
 pub fn read(input: &Path) -> Result<(tree::Tree, InputFormat), Diagnostic> {
+    read_with(input, &ImportOptions::default())
+}
+
+/// Reads an input into its instance tree, with the options that shape it
+/// ([`ImportOptions::parent`]).
+pub fn read_with(
+    input: &Path,
+    opts: &ImportOptions,
+) -> Result<(tree::Tree, InputFormat), Diagnostic> {
     let (file, format) = detect(input)?;
+    if opts.parent.is_some() && format != InputFormat::Place {
+        return Err(Diagnostic::error(
+            codes::INPUT_UNREADABLE,
+            format!(
+                "{} is not a model file, so it takes no parent",
+                input.display()
+            ),
+        )
+        .with_hint("--parent is for model files (.rbxm, .rbxmx)"));
+    }
     let tree = match format {
         InputFormat::Rojo => rojo::read(&file)?,
+        InputFormat::Place => place::read(&file, opts.parent.as_deref())?,
         InputFormat::Loader => {
             let bytes = std::fs::read(&file).map_err(|e| {
                 Diagnostic::error(
@@ -137,7 +159,7 @@ pub fn import(
     classes: &ClassRegistry,
     opts: &ImportOptions,
 ) -> Result<ImportReport, Diagnostic> {
-    let (tree, format) = read(input)?;
+    let (tree, format) = read_with(input, opts)?;
     let proj = apply::open_project(project, classes)?;
     let plan = apply::plan(
         &tree,
@@ -231,6 +253,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::WRITE_FAILED,
         title: "Import write failed",
         page: include_str!("../explain/RE9808.md"),
+    },
+    DiagInfo {
+        code: codes::PLACE_MALFORMED,
+        title: "Place file malformed",
+        page: include_str!("../explain/RE9809.md"),
+    },
+    DiagInfo {
+        code: codes::PLACE_VALUE_TYPE,
+        title: "Unknown value type in a place file",
+        page: include_str!("../explain/RE9810.md"),
+    },
+    DiagInfo {
+        code: codes::PLACE_UNMAPPED,
+        title: "Place file property not imported",
+        page: include_str!("../explain/RE9811.md"),
     },
 ];
 
