@@ -2,6 +2,7 @@
 //! cell, and the evaluation of one cell.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use glam::{Quat, Vec3};
 use re_core::{Diagnostic, Location};
@@ -13,8 +14,8 @@ use serde_json::Value as Json;
 use super::StreamConfig;
 use crate::canon::{doc_hash, version_stamp};
 use crate::generator::{GENERATOR, apply_overrides, parse_overrides};
-use crate::value::DerivedAsset;
-use crate::{Domain, EvalOptions, GraphStore, ProcGraph, Streaming, codes};
+use crate::value::{DerivedAsset, Fragment};
+use crate::{Domain, EvalOptions, Evaluator, GraphStore, ProcGraph, Streaming, codes};
 
 /// A streamed procedural source of the `graph` generator, as the manager sees
 /// it at one tick.
@@ -230,12 +231,59 @@ pub(crate) struct CellOutput {
     pub assets: Vec<(String, DerivedAsset)>,
 }
 
-/// Evaluates `source`'s graph over cell `cell` (`RE4307` on failure, with
-/// the cause as a related diagnostic).
-pub(crate) fn generate(
+/// One cell's evaluation for one source, owned, so it can run on a worker
+/// (ADR-0042): serial, cancellable, with the shared evaluator and its caches.
+pub(crate) struct CellJob {
+    evaluator: Arc<Evaluator>,
+    graph: Arc<ProcGraph>,
+    opts: EvalOptions,
+}
+
+/// The raw result of a [`CellJob`]: the graph's output fragment, before
+/// prefabs are instantiated and keys are put under the cell.
+pub(crate) type RawCell = Result<Fragment, Diagnostic>;
+
+impl CellJob {
+    /// The job for `source`'s cell `cell`, stopping when `cancel` is set.
+    pub fn new(
+        world: &World,
+        source: &Source,
+        cell: [i32; 2],
+        cancel: Option<Arc<AtomicBool>>,
+    ) -> Result<CellJob, Diagnostic> {
+        let store = world
+            .ecs
+            .get_resource::<GraphStore>()
+            .ok_or_else(|| Diagnostic::error(codes::NO_GRAPH, "the world has no GraphStore"))?;
+        Ok(CellJob {
+            evaluator: store.evaluator().clone(),
+            graph: source.graph.clone(),
+            opts: EvalOptions {
+                seed: Some(source.seed),
+                root: store.root().map(Into::into),
+                files: store.files().cloned(),
+                domain: Some(source.domain(cell)),
+                serial: true,
+                cancel,
+                ..Default::default()
+            },
+        })
+    }
+
+    /// Evaluates the graph over the cell's window.
+    pub fn run(self) -> RawCell {
+        self.evaluator.evaluate(&self.graph, &self.opts).fragment()
+    }
+}
+
+/// Turns a job's result into the cell's content, on the main thread:
+/// prefabs instantiated against the world's registry and keys put under the
+/// cell (`RE4307` on failure, with the cause as a related diagnostic).
+pub(crate) fn finish(
     world: &World,
     source: &Source,
     cell: [i32; 2],
+    raw: RawCell,
 ) -> Result<CellOutput, Diagnostic> {
     let key = re_scene::cell_key(cell[0], cell[1]);
     let failed = |cause: Diagnostic| {
@@ -246,21 +294,9 @@ pub(crate) fn generate(
         .at(Location::entity(source.id.clone()))
         .with_related(cause)
     };
-    let store = world.ecs.get_resource::<GraphStore>().ok_or_else(|| {
-        failed(Diagnostic::error(
-            codes::NO_GRAPH,
-            "the world has no GraphStore",
-        ))
-    })?;
-    let opts = EvalOptions {
-        seed: Some(source.seed),
-        root: store.root().map(Into::into),
-        files: store.files().cloned(),
-        deadline: None,
-        domain: Some(source.domain(cell)),
-    };
-    let evaluation = store.evaluator().evaluate(&source.graph, &opts);
-    let (fragment, assets) = evaluation.scene_fragment(&world.registry).map_err(failed)?;
+    let raw = raw.map_err(failed)?;
+    let fragment =
+        crate::to_scene_fragment(&source.graph.id, &raw, &world.registry).map_err(failed)?;
     let fragment = fragment
         .into_iter()
         .map(|n| GenNode {
@@ -269,5 +305,8 @@ pub(crate) fn generate(
             ..n
         })
         .collect();
-    Ok(CellOutput { fragment, assets })
+    Ok(CellOutput {
+        fragment,
+        assets: raw.assets,
+    })
 }

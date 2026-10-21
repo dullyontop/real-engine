@@ -112,3 +112,8 @@ pub const ORIGIN_RANGE: Code = Code::new("RE4308");
 
 /// Content lies beyond the precision limit of world-space positions (warning).
 pub const PRECISION_LIMIT: Code = Code::new("RE4309");
+
+/// A streaming job's evaluation was cancelled before it finished (its cell
+/// was no longer wanted, or its inputs changed). Never shown as a problem:
+/// the result is dropped.
+pub const CANCELLED: Code = Code::new("RE4310");

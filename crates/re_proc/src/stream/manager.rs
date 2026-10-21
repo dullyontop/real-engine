@@ -2,9 +2,11 @@
 //! within which budgets, and what it costs in memory (ADR-0042).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 use glam::{Affine3A, Vec2, Vec3};
-use re_core::{Diagnostic, Location};
+use re_core::{Diagnostic, Location, TaskPool};
 use re_scene::ecs as bevy_ecs;
 use re_scene::ecs::entity::Entity;
 use re_scene::ecs::resource::Resource;
@@ -14,7 +16,7 @@ use re_scene::{
 };
 
 use super::StreamConfig;
-use super::source::{self, CellOutput, Source};
+use super::source::{self, CellJob, CellOutput, RawCell, Source};
 use crate::value::DerivedAsset;
 use crate::{GraphStore, codes};
 
@@ -78,6 +80,12 @@ pub struct StepReport {
     pub memory_bytes: u64,
     /// Cells requested and not yet applied.
     pub pending: usize,
+    /// Generation jobs in flight after this tick.
+    pub in_flight: usize,
+    /// Results the tick waited for ([`Lateness::Wait`]); zero is the goal.
+    pub waits: usize,
+    /// Cells applied after their tick ([`Lateness::Late`]).
+    pub late: usize,
     /// Problems found at this tick (each reported once per subject).
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -95,17 +103,62 @@ pub struct StreamEvents {
     pub loaded: Vec<StreamCell>,
 }
 
+/// What a job hands back: for each source, its id, the inputs it ran with
+/// and the raw result.
+type JobOutput = Vec<(String, blake3::Hash, RawCell)>;
+
+/// Where a job leaves its result, and how the main thread waits for it.
+type Slot = Arc<(Mutex<Option<JobOutput>>, Condvar)>;
+
+/// A cell being generated on the pool.
+struct InFlight {
+    cancel: Arc<AtomicBool>,
+    slot: Slot,
+}
+
+impl std::fmt::Debug for InFlight {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InFlight").finish_non_exhaustive()
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        // A job nobody will read stops at its next level of nodes.
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// How the manager treats a result that is not ready at its apply tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lateness {
+    /// Wait for it and count the wait ([`StepReport::waits`]): `real
+    /// verify`, the D2 harness and replays, where the loaded set must not
+    /// depend on the machine.
+    #[default]
+    Wait,
+    /// Apply it when it arrives (`RE4305`, once per cell): play, where no
+    /// frame waits.
+    Late,
+}
+
 /// The world-streaming state of one world (ADR-0042): the loaded cells, the
-/// pending requests and their apply ticks, and the accounting. A world
-/// resource; [`step`] advances it once per fixed tick.
-#[derive(Resource, Clone, Debug)]
+/// pending requests and their apply ticks, the generation jobs in flight,
+/// and the accounting. A world resource; [`step`] advances it once per
+/// fixed tick.
+#[derive(Resource, Debug)]
 pub struct Streamer {
     config: StreamConfig,
     loaded: BTreeMap<String, Loaded>,
     /// Requested cells and the tick they apply at.
     pending: BTreeMap<String, u64>,
-    /// Generated content waiting for its turn in the apply budget.
+    /// Generated content waiting for its apply tick or its turn in the budget.
     ready: BTreeMap<String, Vec<SourceOutput>>,
+    /// Cells being generated on the pool.
+    jobs: BTreeMap<String, InFlight>,
+    /// The pool jobs run on (the global pool when `None`).
+    pool: Option<Arc<TaskPool>>,
+    lateness: Lateness,
     /// The load radius after memory pressure (starts at `radius`).
     radius: f32,
     /// Subjects already reported, by code.
@@ -124,9 +177,33 @@ impl Streamer {
             loaded: BTreeMap::new(),
             pending: BTreeMap::new(),
             ready: BTreeMap::new(),
+            jobs: BTreeMap::new(),
+            pool: None,
+            lateness: Lateness::default(),
             reported: BTreeSet::new(),
             pinned: BTreeSet::new(),
         })
+    }
+
+    /// Runs generation jobs on `pool` instead of the global pool.
+    #[must_use]
+    pub fn with_pool(mut self, pool: Arc<TaskPool>) -> Self {
+        self.pool = Some(pool);
+        self
+    }
+
+    /// Sets how a result that is late for its apply tick is treated.
+    pub fn set_lateness(&mut self, lateness: Lateness) {
+        self.lateness = lateness;
+    }
+
+    fn pool(&self) -> &TaskPool {
+        self.pool.as_deref().unwrap_or_else(|| TaskPool::global())
+    }
+
+    /// Generation jobs in flight.
+    pub fn in_flight(&self) -> usize {
+        self.jobs.len()
     }
 
     /// The settings.
@@ -512,6 +589,12 @@ impl Streamer {
             .cloned()
             .collect();
 
+        // Jobs for cells no longer requested stop; finished ones are taken in,
+        // and results whose inputs changed meanwhile are dropped.
+        let pending = &self.pending;
+        self.jobs.retain(|k, _| pending.contains_key(k));
+        self.collect(world, &sources);
+
         // Authored roots outside every loaded or pending cell are stashed.
         for (id, e, cell) in &roots {
             if !self.loaded.contains_key(cell) && !self.pending.contains_key(cell) {
@@ -599,23 +682,26 @@ impl Streamer {
             let Some(c) = parse_cell_key(&k) else {
                 continue;
             };
-            let covering: Vec<&Source> = sources.iter().filter(|s| s.covers(c, size)).collect();
-            // Content generated earlier is used only if its inputs still hold.
-            let fresh = self.ready.get(&k).is_some_and(|outs| {
-                outs.len() == covering.len()
-                    && outs
-                        .iter()
-                        .zip(&covering)
-                        .all(|((id, inputs, _), s)| *id == s.id && *inputs == s.inputs)
-            });
-            if !fresh {
-                let outputs: Vec<_> = covering
-                    .iter()
-                    .map(|s| (s.id.clone(), s.inputs, source::generate(world, s, c)))
-                    .collect();
-                self.ready.insert(k.clone(), outputs);
+            if !self.ready.contains_key(&k) {
+                match self.lateness {
+                    Lateness::Late => {
+                        report.deferred += 1;
+                        continue;
+                    }
+                    Lateness::Wait => {
+                        // Not issued yet (all workers busy), or still running.
+                        if !self.jobs.contains_key(&k) {
+                            self.issue(world, &sources, &k);
+                        }
+                        report.waits += 1;
+                        self.wait_for(world, &sources, &k);
+                    }
+                }
             }
-            let count: usize = self.ready[&k]
+            let Some(outputs) = self.ready.get(&k) else {
+                continue;
+            };
+            let count: usize = outputs
                 .iter()
                 .map(|(_, _, r)| r.as_ref().map_or(0, |o| o.fragment.len()))
                 .sum::<usize>()
@@ -630,15 +716,148 @@ impl Streamer {
                 continue;
             }
             let outputs = self.ready.remove(&k).unwrap_or_default();
-            self.pending.remove(&k);
+            let due_at = self.pending.remove(&k).unwrap_or(tick);
+            if tick > due_at + 1 && self.lateness == Lateness::Late {
+                report.late += 1;
+                let d = Diagnostic::warning(
+                    codes::LATE_CELL,
+                    format!(
+                        "cell {k} was applied {} ticks late (generation took longer than delay_ticks)",
+                        tick - due_at
+                    ),
+                )
+                .with_hint("raise [stream] delay_ticks or workers, or make the cell cheaper");
+                self.report_once(&mut report.diagnostics, &k, d);
+            }
             done += self.load(world, &sources, &k, c, outputs, &mut report, &mut events);
         }
+        // Start jobs for the next requests, nearest apply tick first.
+        self.issue_next(world, &sources, &focuses);
         report.entities = done;
         report.resident = self.loaded.len();
         report.memory_bytes = self.memory_bytes();
         report.pending = self.pending.len();
+        report.in_flight = self.jobs.len();
         world.ecs.insert_resource(events);
         report
+    }
+
+    /// The inputs each source covering cell `c` has now.
+    fn covering(sources: &[Source], c: [i32; 2], size: f32) -> Vec<(String, blake3::Hash)> {
+        sources
+            .iter()
+            .filter(|s| s.covers(c, size))
+            .map(|s| (s.id.clone(), s.inputs))
+            .collect()
+    }
+
+    /// Starts generating cell `k` on the pool.
+    fn issue(&mut self, world: &World, sources: &[Source], k: &str) {
+        let Some(c) = parse_cell_key(k) else { return };
+        let size = self.config.cell_size;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut work = Vec::new();
+        for s in sources.iter().filter(|s| s.covers(c, size)) {
+            work.push((
+                s.id.clone(),
+                s.inputs,
+                CellJob::new(world, s, c, Some(cancel.clone())),
+            ));
+        }
+        let slot: Slot = Arc::new((Mutex::new(None), Condvar::new()));
+        let out = slot.clone();
+        self.pool().spawn(move || {
+            let result: JobOutput = work
+                .into_iter()
+                .map(|(id, inputs, job)| {
+                    let raw = match job {
+                        Ok(job) => job.run(),
+                        Err(d) => Err(d),
+                    };
+                    (id, inputs, raw)
+                })
+                .collect();
+            let (lock, ready) = &*out;
+            *lock.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+            ready.notify_all();
+        });
+        self.jobs.insert(k.to_string(), InFlight { cancel, slot });
+    }
+
+    /// Starts jobs for pending cells with no result and no job, up to the
+    /// workers allowed: earliest apply tick first, then nearest, then key.
+    fn issue_next(&mut self, world: &World, sources: &[Source], focuses: &[Focus]) {
+        let cap = self.config.jobs(self.pool().threads());
+        if self.jobs.len() >= cap {
+            return;
+        }
+        let mut next: Vec<(u64, f32, String)> = self
+            .pending
+            .iter()
+            .filter(|(k, _)| !self.ready.contains_key(*k) && !self.jobs.contains_key(*k))
+            .map(|(k, t)| (*t, self.nearest(focuses, k), k.clone()))
+            .collect();
+        next.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
+        for (_, _, k) in next.into_iter().take(cap - self.jobs.len()) {
+            self.issue(world, sources, &k);
+        }
+    }
+
+    /// Takes in finished jobs; drops results whose inputs no longer hold.
+    fn collect(&mut self, world: &World, sources: &[Source]) {
+        let done: Vec<String> = self
+            .jobs
+            .iter()
+            .filter(|(_, j)| j.slot.0.lock().unwrap_or_else(|e| e.into_inner()).is_some())
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in done {
+            self.take(world, sources, &k);
+        }
+        let size = self.config.cell_size;
+        self.ready.retain(|k, outs| {
+            let now = parse_cell_key(k).map(|c| Self::covering(sources, c, size));
+            now.is_some_and(|now| {
+                now.len() == outs.len()
+                    && now
+                        .iter()
+                        .zip(outs.iter())
+                        .all(|((id, inputs), (oid, oinputs, _))| id == oid && inputs == oinputs)
+            })
+        });
+    }
+
+    /// Moves a finished job's result into `ready`, finishing it on this
+    /// thread (prefabs, keys under the cell).
+    fn take(&mut self, world: &World, sources: &[Source], k: &str) {
+        let Some(job) = self.jobs.remove(k) else {
+            return;
+        };
+        let raw = job.slot.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let Some(raw) = raw else { return };
+        let Some(c) = parse_cell_key(k) else { return };
+        let mut outputs = Vec::new();
+        for (id, inputs, r) in raw {
+            let Some(s) = sources.iter().find(|s| s.id == id) else {
+                continue;
+            };
+            outputs.push((id, inputs, source::finish(world, s, c, r)));
+        }
+        self.ready.insert(k.to_string(), outputs);
+    }
+
+    /// Blocks until cell `k`'s job has finished, then takes its result.
+    fn wait_for(&mut self, world: &World, sources: &[Source], k: &str) {
+        let Some(job) = self.jobs.get(k) else { return };
+        let slot = job.slot.clone();
+        {
+            let (lock, cv) = &*slot;
+            let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+            while guard.is_none() {
+                guard = cv.wait(guard).unwrap_or_else(|e| e.into_inner());
+            }
+        }
+        self.take(world, sources, k);
     }
 
     fn stash_root(

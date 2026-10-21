@@ -285,7 +285,7 @@ fn run(ctx: &GenContext) -> Result<SceneFragment, Diagnostic> {
         deadline: budget
             .max_ms
             .map(|ms| Instant::now() + Duration::from_millis(ms)),
-        domain: None,
+        ..Default::default()
     };
     let evaluation = store.evaluator().evaluate(&graph, &opts);
     let mut report = evaluation.report.clone();

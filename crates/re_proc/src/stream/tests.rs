@@ -177,13 +177,12 @@ fn stream_windows_agree_on_shared_samples() {
         let opts = EvalOptions {
             seed: Some(7),
             root: Some(fixtures()),
-            files: None,
-            deadline: None,
             domain: Some(Domain {
                 origin,
                 n,
                 spacing: 4.0,
             }),
+            ..Default::default()
         };
         ev.evaluate(&graph, &opts)
     };
@@ -640,4 +639,72 @@ fn stream_a_forked_world_unloads_its_own_cells() {
     assert!(fork.entity("terrain/c/0_0/ground/terrain").is_ok());
     // The original world is untouched.
     assert_eq!(w.state_hash(), before);
+}
+
+#[test]
+fn stream_jobs_run_ahead_and_waits_are_counted() {
+    // With no delay a result can never be ready in time: every load waits.
+    let mut st = streamed(world_graph(), 32.0, 32.0, json!([]));
+    let w = &mut st.world;
+    let now = StreamConfig {
+        delay_ticks: 0,
+        ..config()
+    };
+    let r = step(w, 0, &now);
+    assert!(!r.loaded.is_empty());
+    assert!(r.waits >= r.loaded.len(), "{r:?}");
+
+    // With a delay, jobs start at the request and run on the pool.
+    let mut st = streamed(world_graph(), 32.0, 32.0, json!([]));
+    let w = &mut st.world;
+    let r = step(w, 0, &config());
+    assert!(r.in_flight > 0 && r.in_flight <= config().jobs(re_core::TaskPool::global().threads()));
+    let all = run(w, 1..20);
+    assert_eq!(all.last().unwrap().pending, 0);
+}
+
+#[test]
+fn stream_late_results_apply_when_they_arrive() {
+    let mut st = streamed(world_graph(), 32.0, 32.0, json!([]));
+    let w = &mut st.world;
+    let mut s = Streamer::new(StreamConfig {
+        delay_ticks: 0,
+        ..config()
+    })
+    .unwrap();
+    s.set_lateness(Lateness::Late);
+    w.ecs.insert_resource(s);
+    let first = step(w, 0, &config());
+    assert_eq!(first.waits, 0);
+    assert!(first.loaded.is_empty(), "nothing is ready at tick 0");
+    // Results arrive later; they are applied without waiting, with RE4305.
+    let mut late = 0;
+    for t in 1..2000u64 {
+        let r = step(w, t, &config());
+        assert_eq!(r.waits, 0);
+        late += r.late;
+        if r.pending == 0 && r.in_flight == 0 && t > 2 {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(!loaded(w).is_empty());
+    // How late depends on the machine; that is the point of this mode.
+    let _ = late;
+}
+
+#[test]
+fn stream_cancels_jobs_for_cells_no_longer_wanted() {
+    let mut st = streamed(world_graph(), 32.0, 32.0, json!([]));
+    let w = &mut st.world;
+    let cfg = StreamConfig {
+        delay_ticks: 50,
+        ..config()
+    };
+    step(w, 0, &cfg);
+    assert!(w.ecs.resource::<Streamer>().in_flight() > 0);
+    // Far outside the source's bounds: nothing is wanted any more.
+    move_to(w, 5000.0, 5000.0);
+    let r = step(w, 1, &cfg);
+    assert_eq!((r.pending, r.in_flight), (0, 0), "{r:?}");
 }
