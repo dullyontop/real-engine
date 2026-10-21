@@ -166,7 +166,11 @@ impl HdrTargets {
 /// levels, and before a level would be smaller than 2 px.
 pub(crate) fn bloom_levels(radius: f32, (width, height): (u32, u32)) -> usize {
     let px = (radius.max(0.0) * height as f32).max(1.0);
-    let wanted = px.log2().ceil().max(1.0) as usize;
+    // ceil(log2(px)) in integers, so no platform maths (ADR-0036).
+    let wanted = ((px.min(65536.0).ceil() as u32)
+        .next_power_of_two()
+        .trailing_zeros() as usize)
+        .max(1);
     // Level k (1-based) is size / 2^k.
     let fits = (1..=MAX_BLOOM_LEVELS)
         .take_while(|k| (width.min(height) >> k) >= 2)
