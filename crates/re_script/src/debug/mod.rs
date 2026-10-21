@@ -49,7 +49,7 @@ use std::time::Duration;
 use mlua::Lua;
 use re_core::{Code, Diagnostic};
 
-pub use session::{is_parked, register_chunk, service};
+pub use session::{is_parked, register_chunk, service, unregister_chunk};
 
 /// The script has stopped at a breakpoint or step where it could not pause
 /// (no client waits for synchronous stops and the thread cannot be parked);
@@ -230,6 +230,19 @@ pub trait Parking {
     fn resume(&self, lua: &Lua, thread: usize);
 }
 
+/// Kept in an attached VM's app data: when the VM is dropped without
+/// [`Debugger::detach`], its context ends with it.
+struct ContextGuard {
+    debugger: Debugger,
+    context: u32,
+}
+
+impl Drop for ContextGuard {
+    fn drop(&mut self) {
+        self.debugger.forget(self.context);
+    }
+}
+
 #[derive(Default)]
 struct State {
     next_context: u32,
@@ -337,27 +350,46 @@ impl Debugger {
             info
         };
         self.notify();
+        // A VM attached again leaves its old context.
+        if let Some((old, id)) = session::detach(lua) {
+            old.forget(id);
+        }
         session::attach(lua, self.clone(), info.id, parking)?;
+        // Dropping the VM without `detach` still ends its context.
+        let _ = lua.set_app_data(ContextGuard {
+            debugger: self.clone(),
+            context: info.id,
+        });
         Ok(info)
     }
 
     /// Detaches `lua`: its breakpoints are removed and a thread it had
     /// stopped is resumed.
     pub fn detach(&self, lua: &Lua) {
-        if let Some(id) = session::detach(lua) {
-            let mut s = self.lock();
-            s.contexts.retain(|c| c.id != id);
-            for per in s.placements.values_mut() {
-                per.remove(&id);
-            }
-            if s.stopped.as_ref().is_some_and(|st| st.context == id) {
-                s.stopped = None;
-                s.resume = None;
-            }
-            s.event(Event::ContextExited(id));
-            drop(s);
-            self.notify();
+        if let Some((debugger, id)) = session::detach(lua) {
+            debugger.forget(id);
         }
+        let _ = lua.remove_app_data::<ContextGuard>();
+    }
+
+    /// Ends the context `id`: its placements and a stop of it are dropped.
+    /// Does nothing for a context already ended.
+    fn forget(&self, id: u32) {
+        let mut s = self.lock();
+        if !s.contexts.iter().any(|c| c.id == id) {
+            return;
+        }
+        s.contexts.retain(|c| c.id != id);
+        for per in s.placements.values_mut() {
+            per.remove(&id);
+        }
+        if s.stopped.as_ref().is_some_and(|st| st.context == id) {
+            s.stopped = None;
+            s.resume = None;
+        }
+        s.event(Event::ContextExited(id));
+        drop(s);
+        self.notify();
     }
 
     /// The attached contexts.
@@ -473,9 +505,13 @@ impl Debugger {
 
     // ---- the VM side ------------------------------------------------------
 
-    /// Publishes a stop and returns whether a client waits for it.
+    /// Publishes a stop. False, and nothing changes, when a script is
+    /// already stopped (one stop at a time, across every context).
     fn publish_stop(&self, stopped: Stopped) -> bool {
         let mut s = self.lock();
+        if s.stopped.is_some() {
+            return false;
+        }
         let event = Event::Stopped {
             context: stopped.context,
             reason: stopped.reason,
@@ -484,10 +520,16 @@ impl Debugger {
         s.resume = None;
         s.pause = false;
         s.event(event);
-        let client = s.client;
         drop(s);
         self.notify();
-        client
+        true
+    }
+
+    /// The queued events, taken, and the current stop, read at the same
+    /// moment: a client that connects sends that stop, then later events.
+    fn take_events_and_stop(&self) -> (Vec<Event>, Option<Stopped>) {
+        let mut s = self.lock();
+        (s.events.drain(..).collect(), s.stopped.clone())
     }
 
     fn record_unpaused(&self, stopped: Stopped) {

@@ -56,8 +56,19 @@ struct Session {
     /// Step into on a parked thread: it runs in single-step mode from
     /// (thread, depth, line) until the line or the depth changes.
     single: Option<(usize, i32, i32)>,
-    /// The thread parked at a stop: (thread, depth, line, path).
-    parked: Option<(usize, i32, i32, String)>,
+    parked: Option<Parked>,
+}
+
+/// The thread parked at a stop.
+#[derive(Clone)]
+struct Parked {
+    thread: usize,
+    depth: i32,
+    line: i32,
+    source: String,
+    /// A registry reference to the thread, so it stays alive (and its
+    /// address valid) until it is resumed, whatever its host does with it.
+    r: c_int,
 }
 
 thread_local! {
@@ -128,8 +139,8 @@ pub(super) fn attach(
 }
 
 /// Removes `lua`'s session: every breakpoint is cleared, a parked thread is
-/// resumed. Returns the context id it had.
-pub(super) fn detach(lua: &Lua) -> Option<u32> {
+/// resumed. Returns the debugger and the context id it had.
+pub(super) fn detach(lua: &Lua) -> Option<(Debugger, u32)> {
     let main = main_of(lua);
     with_session(main, |_| ())?; // drops a stale session first
     let mut s = SESSIONS.with_borrow_mut(|m| m.remove(&main))?;
@@ -148,6 +159,9 @@ pub(super) fn detach(lua: &Lua) -> Option<u32> {
             for (_, r) in s.chunks.drain(..) {
                 ffi::lua_unref(l, r);
             }
+            if let Some(p) = &s.parked {
+                ffi::lua_unref(l, p.r);
+            }
             // A thread still in single-step mode keeps running normally: with
             // no `debugstep` callback the flag only slows it. (Its address
             // may be stale, so it is never touched here.)
@@ -156,11 +170,10 @@ pub(super) fn detach(lua: &Lua) -> Option<u32> {
             (*cb).debugstep = None;
         })
     };
-    if let (Some((thread, ..)), Some(parking)) = (&s.parked, &s.parking) {
-        let thread = *thread;
-        parking.resume(lua, thread);
+    if let (Some(p), Some(parking)) = (&s.parked, &s.parking) {
+        parking.resume(lua, p.thread);
     }
-    Some(s.context)
+    Some((s.debugger, s.context))
 }
 
 /// Registers a loaded chunk under its project-relative `path`, so that the
@@ -208,6 +221,42 @@ pub fn register_chunk(lua: &Lua, path: &str, chunk: &Function) {
     }
 }
 
+/// Forgets a chunk [registered](register_chunk) before, when the script it
+/// ran has ended (its entity was destroyed, it was reloaded), so the debugger
+/// stops holding it. Its breakpoints are removed. Does nothing for a chunk
+/// that was not registered.
+pub fn unregister_chunk(lua: &Lua, chunk: &Function) {
+    let main = main_of(lua);
+    with_session(main, |s| {
+        // SAFETY: on the VM's thread while no Luau code runs: the function is
+        // compared raw with each registered one, which is pushed and popped.
+        let _ = unsafe {
+            lua.exec_raw::<()>(chunk.clone(), |l| {
+                ffi::lua_checkstack(l, 2);
+                let mut i = 0;
+                while i < s.chunks.len() {
+                    let (path, r) = s.chunks[i].clone();
+                    ffi::lua_rawgeti(l, ffi::LUA_REGISTRYINDEX, r as _);
+                    let same = ffi::lua_rawequal(l, -1, -2) != 0;
+                    ffi::lua_pop(l, 1);
+                    if same {
+                        for (src, line) in &s.user {
+                            if *src == path {
+                                patch(l, r, *line, false);
+                            }
+                        }
+                        ffi::lua_unref(l, r);
+                        s.chunks.remove(i);
+                    } else {
+                        i += 1;
+                    }
+                }
+                ffi::lua_pop(l, 1);
+            })
+        };
+    });
+}
+
 /// Between frames, on the VM's thread: places breakpoint changes, carries out
 /// a command for a thread parked at a stop, and arms a pause request. Does
 /// nothing when no debugger is attached to `lua`.
@@ -234,7 +283,14 @@ pub fn service(lua: &Lua) {
     }
 
     let parked = with_session(main, |s| s.parked.clone()).flatten();
-    if let Some((thread, depth, line, source)) = parked {
+    if let Some(Parked {
+        thread,
+        depth,
+        line,
+        source,
+        r,
+    }) = parked
+    {
         let Some(how) = debugger.take_resume(context) else {
             return;
         };
@@ -265,6 +321,12 @@ pub fn service(lua: &Lua) {
         if let Some(parking) = parking {
             parking.resume(lua, thread);
         }
+        // SAFETY: the reference taken when the thread parked, released once.
+        let _ = unsafe {
+            lua.exec_raw::<()>((), |l| {
+                ffi::lua_unref(l, r);
+            })
+        };
         return;
     }
 
@@ -293,7 +355,7 @@ pub fn service(lua: &Lua) {
 /// stopped it: its host keeps it parked until [`Parking::resume`].
 pub fn is_parked(lua: &Lua, thread: usize) -> bool {
     with_session(main_of(lua), |s| {
-        s.parked.as_ref().is_some_and(|(t, ..)| *t == thread)
+        s.parked.as_ref().is_some_and(|p| p.thread == thread)
     })
     .unwrap_or(false)
 }
@@ -514,8 +576,26 @@ unsafe fn stop(
             _ => false,
         };
     if park {
-        d.debugger.publish_stop(stopped);
-        with_session(main, |s| s.parked = Some((thread, depth, line, source)));
+        if !d.debugger.publish_stop(stopped) {
+            return; // another script stopped first
+        }
+        // SAFETY: the thread is pushed and referenced, then popped; the
+        // callback's stack has room (luau_callhook reserves LUA_MINSTACK).
+        let r = unsafe {
+            ffi::lua_pushthread(state);
+            let r = ffi::lua_ref(state, -1);
+            ffi::lua_pop(state, 1);
+            r
+        };
+        with_session(main, |s| {
+            s.parked = Some(Parked {
+                thread,
+                depth,
+                line,
+                source,
+                r,
+            })
+        });
         // SAFETY: the thread can yield (checked above); a yield from the
         // callback suspends it at this instruction, which its next resume
         // runs again (see `skip_once`).
@@ -526,7 +606,9 @@ unsafe fn stop(
         d.debugger.record_unpaused(stopped);
         return;
     }
-    d.debugger.publish_stop(stopped);
+    if !d.debugger.publish_stop(stopped) {
+        return; // another script stopped first
+    }
     let how = crate::budget::untimed(|| d.debugger.wait_resume(d.context));
     let (_, bps) = d.debugger.breakpoint_snapshot();
     let placed = with_session(main, |s| {

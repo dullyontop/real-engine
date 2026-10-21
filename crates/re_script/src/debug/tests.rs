@@ -682,3 +682,104 @@ fn debug_a_dap_disconnect_keeps_the_editors_breakpoints_and_drop_does_not_wait_f
     rx.recv_timeout(Duration::from_secs(10))
         .expect("dropping the server returns with a client connected");
 }
+
+#[test]
+fn debug_only_one_stop_is_published_at_a_time() {
+    let debugger = Debugger::new();
+    let stop = |context| Stopped {
+        context,
+        reason: StopReason::Breakpoint,
+        frames: Vec::new(),
+        variables: Vec::new(),
+    };
+    // Two VMs that reach a breakpoint together: the second one runs on.
+    assert!(debugger.publish_stop(stop(1)));
+    assert!(!debugger.publish_stop(stop(2)));
+    assert_eq!(debugger.stopped().unwrap().context, 1);
+}
+
+#[test]
+fn debug_a_vm_dropped_while_parked_ends_its_context() {
+    let debugger = Debugger::new();
+    let threads = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let (lua, info) = vm(
+        &debugger,
+        Some(Box::new(TestParking {
+            threads: threads.clone(),
+        })),
+    );
+    debugger.set_breakpoints("scripts/fixture.luau", &[4]);
+    service(&lua);
+    let run: Function = lua.globals().get("run").unwrap();
+    let thread = lua.create_thread(run).unwrap();
+    threads.borrow_mut().push(thread.clone());
+    thread.resume::<()>(()).unwrap();
+    assert_eq!(debugger.stopped().unwrap().context, info.id);
+
+    threads.borrow_mut().clear();
+    drop(thread);
+    drop(lua);
+    assert!(debugger.stopped().is_none());
+    assert!(debugger.contexts().is_empty());
+    // Other VMs can stop again.
+    let (lua, _) = vm(&debugger, None);
+    service(&lua);
+    let _: (i64, String) = lua
+        .globals()
+        .get::<Function>("run")
+        .unwrap()
+        .call(())
+        .unwrap();
+    assert_eq!(line(&debugger.last_unpaused().unwrap()), 4);
+}
+
+#[test]
+fn debug_an_unregistered_chunk_loses_its_breakpoints() {
+    let debugger = Debugger::new();
+    let lua = Lua::new();
+    debugger.attach(&lua, "game", None).unwrap();
+    let chunk = load(&lua, "scripts/fixture.luau", SCRIPT);
+    register_chunk(&lua, "scripts/fixture.luau", &chunk);
+    chunk.call::<()>(()).unwrap();
+    debugger.set_breakpoints("scripts/fixture.luau", &[4]);
+    service(&lua);
+    assert_eq!(debugger.breakpoints()[0].line, Some(4));
+
+    unregister_chunk(&lua, &chunk);
+    let _: (i64, String) = lua
+        .globals()
+        .get::<Function>("run")
+        .unwrap()
+        .call(())
+        .unwrap();
+    assert!(debugger.last_unpaused().is_none());
+}
+
+#[test]
+fn debug_a_dap_client_that_drops_its_connection_leaves_no_breakpoints() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let debugger = Debugger::new();
+    let server = dap::DapServer::listen(debugger.clone(), 0, dir.path()).unwrap();
+    let mut c = Client::connect(server.addr());
+    assert_eq!(c.request("initialize", json!({}))["success"], true);
+    // A file outside the project keeps its own path.
+    let file = std::fs::canonicalize(outside.path())
+        .unwrap()
+        .join("lib.luau");
+    let r = c.request(
+        "setBreakpoints",
+        json!({ "source": { "path": file }, "breakpoints": [{ "line": 1 }] }),
+    );
+    assert_eq!(
+        r["body"]["breakpoints"][0]["source"]["path"],
+        json!(file.to_string_lossy())
+    );
+    assert_eq!(debugger.breakpoints().len(), 1);
+    drop(c);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !debugger.breakpoints().is_empty() {
+        assert!(Instant::now() < deadline, "the breakpoints stayed");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}

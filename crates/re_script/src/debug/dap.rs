@@ -216,6 +216,11 @@ fn serve(
             // Holding the writer while handling keeps a request's events
             // (`continued`, a quick `stopped`) behind its response.
             let mut o = out.lock().unwrap_or_else(|e| e.into_inner());
+            // What happened before the client came is old news, except a
+            // script stopped now; both are read at once, before `initialize`
+            // is handled, so no event falls between them and the event thread.
+            let current = (command == "initialize" && events.is_none())
+                .then(|| debugger.take_events_and_stop().1);
             let (body, error, after) = handle(
                 &command,
                 &request["arguments"],
@@ -238,7 +243,14 @@ fn serve(
                 After::Nothing => {}
                 After::Initialized => {
                     o.event("initialized", json!({}))?;
-                    if events.is_none() {
+                    if let Some(current) = current {
+                        if let Some(s) = current {
+                            let stopped = Event::Stopped {
+                                context: s.context,
+                                reason: s.reason,
+                            };
+                            send_event(&mut o, &stopped, root)?;
+                        }
                         events = Some(spawn_events(&out, &done, debugger, root)?);
                     }
                 }
@@ -254,11 +266,15 @@ fn serve(
     if let Some(events) = events {
         let _ = events.join();
     }
+    // A client that went away without `disconnect` leaves no breakpoints.
+    for s in sources {
+        debugger.set_breakpoints(&s, &[]);
+    }
     result
 }
 
 /// Sends the debugger's events to the client as they happen, from the
-/// `initialize` response on.
+/// `initialize` response on (the queue was emptied then).
 fn spawn_events(
     out: &Arc<Mutex<Out>>,
     done: &Arc<AtomicBool>,
@@ -274,19 +290,6 @@ fn spawn_events(
     std::thread::Builder::new()
         .name("re_script dap events".into())
         .spawn(move || {
-            // What happened before the client came is old news, except a
-            // script that is stopped now.
-            let _ = debugger.take_events();
-            if let Some(s) = debugger.stopped() {
-                let stopped = Event::Stopped {
-                    context: s.context,
-                    reason: s.reason,
-                };
-                let mut out = out.lock().unwrap_or_else(|e| e.into_inner());
-                if send_event(&mut out, &stopped, &root).is_err() {
-                    return;
-                }
-            }
             while !done.load(Ordering::Relaxed) {
                 for e in debugger.wait_events(Duration::from_millis(50)) {
                     let mut out = out.lock().unwrap_or_else(|e| e.into_inner());
@@ -327,9 +330,13 @@ fn relative(root: &Path, path: &str) -> String {
 
 fn source(root: &Path, rel: &str) -> Json {
     let name = rel.rsplit('/').next().unwrap_or(rel);
-    let path = rel
-        .split('/')
-        .fold(root.to_path_buf(), |p, part| p.join(part));
+    // A file outside the project keeps the absolute path it was given.
+    let path = if Path::new(rel).is_absolute() {
+        PathBuf::from(rel)
+    } else {
+        rel.split('/')
+            .fold(root.to_path_buf(), |p, part| p.join(part))
+    };
     json!({ "name": name, "path": path.to_string_lossy() })
 }
 
