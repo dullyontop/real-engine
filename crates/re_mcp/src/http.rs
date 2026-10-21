@@ -227,6 +227,29 @@ fn refuse<B: Default>(status: hyper::StatusCode) -> hyper::Response<B> {
     response
 }
 
+/// The most of a refused request's body [`drain`] reads.
+const DRAIN_LIMIT: usize = 64 * 1024;
+
+/// Reads and drops a refused request's body, up to [`DRAIN_LIMIT`] bytes
+/// or one second, before the refusal is sent. Closing a socket with unread
+/// data resets it, and on Windows the client then loses the response
+/// (error 10053). A larger or slower body is left unread: that sender gets
+/// the reset.
+async fn drain(body: Incoming) {
+    use hyper::body::Body as _;
+    let mut body = std::pin::pin!(body);
+    let read_all = async {
+        let mut read = 0;
+        while read <= DRAIN_LIMIT {
+            match std::future::poll_fn(|cx| body.as_mut().poll_frame(cx)).await {
+                Some(Ok(frame)) => read += frame.data_ref().map_or(0, |data| data.len()),
+                _ => break,
+            }
+        }
+    };
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(1), read_all).await;
+}
+
 /// Serves MCP over HTTP on `listener` until `stop` completes. Must run inside
 /// a multi-threaded tokio runtime.
 ///
@@ -277,11 +300,18 @@ pub async fn serve_http_async(
                 let token = Arc::clone(&token);
                 async move {
                     use hyper::service::Service as _;
-                    if !authorized(request.headers().get(hyper::header::AUTHORIZATION), &token) {
-                        return Ok(refuse(hyper::StatusCode::UNAUTHORIZED));
-                    }
-                    if request.uri().path() != ENDPOINT {
-                        return Ok(refuse(hyper::StatusCode::NOT_FOUND));
+                    let refusal =
+                        if !authorized(request.headers().get(hyper::header::AUTHORIZATION), &token)
+                        {
+                            Some(hyper::StatusCode::UNAUTHORIZED)
+                        } else if request.uri().path() != ENDPOINT {
+                            Some(hyper::StatusCode::NOT_FOUND)
+                        } else {
+                            None
+                        };
+                    if let Some(status) = refusal {
+                        drain(request.into_body()).await;
+                        return Ok(refuse(status));
                     }
                     mcp.call(request).await
                 }
