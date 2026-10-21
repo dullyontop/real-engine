@@ -3687,6 +3687,7 @@ dependencies = [
  "tempfile",
  "toml",
  "tracing",
+ "wasm-bindgen-futures",
  "winit",
 ]
 
@@ -4039,6 +4040,20 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "re_web"
+version = "0.1.0"
+dependencies = [
+ "pollster",
+ "re_app",
+ "re_core",
+ "re_render",
+ "re_types",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

@@ -40,6 +40,19 @@ pub use phase::Phase;
 pub use task::TaskPool;
 pub use time::{FixedClock, Steps};
 
+/// The operating system's id of this process, or 0 in a browser, which has none
+/// (`std::process::id` panics on wasm32-unknown-unknown, ADR-0049 §5).
+pub fn process_id() -> u32 {
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    {
+        std::process::id()
+    }
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        0
+    }
+}
+
 /// Every diagnostic code `re_core` owns, with its title and explain page.
 ///
 /// `re_cli` collects this list (with those of the other crates) for `real explain`.

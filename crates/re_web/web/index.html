@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real Engine</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 16px system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100vw !important; height: 100vh !important; outline: none; }
+  #overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #111; cursor: pointer; text-align: center; padding: 16px; }
+  #overlay.done { display: none; }
+  #bar { width: min(320px, 80vw); height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
+  #fill { height: 100%; width: 0; background: #6cf; }
+  #message { max-width: 640px; white-space: pre-wrap; }
+</style>
+<script type="importmap">{ "imports": { "wasi_snapshot_preview1": "./wasi.js" } }</script>
+</head>
+<body>
+<div id="overlay"><div id="message">Loading…</div><div id="bar"><div id="fill"></div></div></div>
+<script type="module">
+import { boot, missingFeatures, play } from './boot.js';
+const overlay = document.getElementById('overlay');
+const message = document.getElementById('message');
+const fill = document.getElementById('fill');
+const fail = (text) => { overlay.classList.remove('done'); overlay.style.cursor = 'default'; message.textContent = text; };
+const missing = missingFeatures();
+if (missing.length) {
+  fail('This browser cannot run the game. It needs:\n' + missing.join('\n'));
+} else {
+  try {
+    const { session } = await boot({
+      project: 'project/',
+      onProgress: (done, total) => { fill.style.width = `${(100 * done) / Math.max(total, 1)}%`; },
+    });
+    message.textContent = 'Click to start';
+    overlay.addEventListener('click', async () => {
+      overlay.classList.add('done');
+      try {
+        await play(session, {
+          gameId: document.title,
+          onReport: (kind, text) => { document.body.dataset.state = kind; if (kind === 'error') fail(text); },
+        });
+      } catch (e) {
+        fail(String(e));
+      }
+    }, { once: true });
+  } catch (e) {
+    fail(String(e));
+  }
+}
+</script>
+</body>
+</html>
