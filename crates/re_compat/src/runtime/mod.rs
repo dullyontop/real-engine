@@ -27,6 +27,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use mlua::chunk::ChunkMode;
 use mlua::{Lua, MultiValue, Value as LuaValue};
 use re_core::{Code, Diagnostic};
 use re_scene::{Entity, World};
@@ -231,8 +232,8 @@ pub(crate) struct State {
     pub(crate) behavior: SignalBehavior,
     pub(crate) game: Entity,
     pub(crate) setup: Arc<CompatSetup>,
-    /// The project root; script sources are read relative to it.
-    pub(crate) project_root: std::path::PathBuf,
+    /// The project's files; script sources are read through them.
+    pub(crate) files: re_core::files::ProjectFiles,
     /// What `game` and `RunService` report about the session.
     pub(crate) info: crate::scene::GameInfo,
     /// True while a chunk loads ([`load_chunk`]).
@@ -275,7 +276,9 @@ pub(crate) fn compat_error(e: CompatError) -> mlua::Error {
     lua_error(e.code(), e)
 }
 
-/// Compiles a script chunk with environment `env`.
+/// Compiles a script chunk with environment `env`, with the engine's compiler
+/// (`re_script::compiler`, so compat and native bytecode cannot drift apart) and
+/// `mode` taken from the file's form, never sniffed from the bytes.
 ///
 /// While it loads, instance handles refuse to be indexed: Luau resolves
 /// `global.a.b` chains when it loads a chunk in a safe environment and keeps
@@ -285,7 +288,8 @@ pub(crate) fn compat_error(e: CompatError) -> mlua::Error {
 pub(crate) fn load_chunk(
     lua: &Lua,
     name: &str,
-    source: &str,
+    source: &[u8],
+    mode: ChunkMode,
     env: mlua::Table,
 ) -> mlua::Result<mlua::Function> {
     let st = state(lua)?;
@@ -294,6 +298,8 @@ pub(crate) fn load_chunk(
     let f = re_script::untimed(|| {
         lua.load(source)
             .set_name(format!("={name}"))
+            .set_mode(mode)
+            .set_compiler(re_script::compiler())
             .set_environment(env)
             .into_function()
     });
@@ -398,7 +404,7 @@ impl CompatVm {
             behavior,
             game,
             setup: setup.clone(),
-            project_root: config.project_root.clone(),
+            files: config.files.clone(),
             info: compat.game.clone(),
             loading: std::cell::Cell::new(false),
         });
@@ -464,7 +470,7 @@ impl CompatVm {
     pub fn exec(&self, host: &mut dyn ScriptHost, name: &str, source: &str) -> Vec<Diagnostic> {
         self.run(host, |lua| {
             let env = re_script::vm::environment(lua, LuaValue::Nil)?;
-            let f = load_chunk(lua, name, source, env)?;
+            let f = load_chunk(lua, name, source.as_bytes(), ChunkMode::Text, env)?;
             sched::spawn(lua, f, MultiValue::new(), name)?;
             Ok(())
         })

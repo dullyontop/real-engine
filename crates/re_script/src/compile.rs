@@ -3,17 +3,61 @@
 use std::cell::RefCell;
 
 use mlua::Lua;
-use mlua::chunk::Compiler;
+use mlua::chunk::{ChunkMode, Compiler};
+use re_core::files::Form;
 use re_core::{Diagnostic, Location};
 
 use crate::codes;
 
 use crate::diag::ScriptError;
 
-/// The compiler every context uses: optimisation level 1 and debug level 1 (line
-/// info and function names, enough for tracebacks). These are Luau's defaults.
-pub(crate) fn compiler() -> Compiler {
+/// The compiler every context uses, native and compat: optimisation level 1 and
+/// debug level 1 (line info and function names, enough for tracebacks). These
+/// are Luau's defaults. [`COMPILER_ID`] names these options.
+pub fn compiler() -> Compiler {
     Compiler::new().set_optimization_level(1).set_debug_level(1)
+}
+
+/// The id of [`compiler`]'s options, stored with packaged bytecode (ADR-0037).
+/// A packaged game refuses bytecode compiled with another id, so this changes
+/// whenever the options do.
+pub const COMPILER_ID: &str = "o1d1";
+
+/// Compiles `source` to Luau bytecode with [`compiler`], for `real build`.
+/// The output is deterministic.
+///
+/// # Errors
+///
+/// The script does not compile: the diagnostics of [`compile_check`].
+///
+/// ```
+/// let bytecode = re_script::compile_bytecode("return 1 + 2", "scripts/a.luau").unwrap();
+/// assert_eq!(bytecode, re_script::compile_bytecode("return 1 + 2", "scripts/a.luau").unwrap());
+/// assert!(re_script::compile_bytecode("return = 1", "scripts/b.luau").is_err());
+/// ```
+pub fn compile_bytecode(source: &str, chunk_name: &str) -> Result<Vec<u8>, Vec<Diagnostic>> {
+    match compiler().compile(source) {
+        Ok(bytecode) => Ok(bytecode),
+        Err(_) => Err(compile_check(source, chunk_name)),
+    }
+}
+
+/// How to load a project file of this [`Form`]: `Text` for source and `Binary`
+/// for bytecode from this engine's compiler. mlua never sniffs the bytes, so a
+/// `.luau` file that holds bytecode is a syntax error (ADR-0037).
+///
+/// # Errors
+///
+/// Bytecode from another compiler, or a form that is not a script.
+pub fn chunk_mode(form: &Form) -> Result<ChunkMode, String> {
+    match form {
+        Form::Source => Ok(ChunkMode::Text),
+        Form::Bytecode { compiler } if &**compiler == COMPILER_ID => Ok(ChunkMode::Binary),
+        Form::Bytecode { compiler } => Err(format!(
+            "the script was compiled with options `{compiler}`, but this engine runs `{COMPILER_ID}`; rebuild the package"
+        )),
+        other => Err(format!("a script cannot be loaded from {other:?}")),
+    }
 }
 
 thread_local! {
@@ -64,6 +108,7 @@ pub fn compile_check(source: &str, chunk_name: &str) -> Vec<Diagnostic> {
         match lua
             .load(&bytecode[..])
             .set_name(format!("@{chunk_name}"))
+            .set_mode(ChunkMode::Binary)
             .into_function()
         {
             Ok(_) => Vec::new(),
@@ -80,6 +125,19 @@ pub fn compile_check(source: &str, chunk_name: &str) -> Vec<Diagnostic> {
 mod tests {
     use super::*;
     use re_core::Location;
+
+    #[test]
+    fn compiler_id_names_the_compiler_options() {
+        // The id must change with the options: compile a probe both ways.
+        let probe = "local function f(a) return a * 2 end\nreturn f(21)";
+        let expected = Compiler::new()
+            .set_optimization_level(1)
+            .set_debug_level(1)
+            .compile(probe)
+            .unwrap();
+        assert_eq!(COMPILER_ID, "o1d1");
+        assert_eq!(compile_bytecode(probe, "scripts/p.luau").unwrap(), expected);
+    }
 
     #[test]
     fn valid_luau_compiles() {

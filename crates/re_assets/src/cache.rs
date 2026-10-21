@@ -5,14 +5,15 @@
 //! Changing any of them gives a new key, so a stale entry is never served.
 //!
 //! An entry is a `(magic, format_version)` header followed by the postcard
-//! encoding of the value, stored at `<dir>/<first 2 hex>/<hex>`. Entries are
-//! written through a temporary file and a rename, so a crash never leaves a torn
-//! entry. A corrupt or old-format entry reads as a miss. The cache is always
+//! encoding of the value, stored at `<dir>/<first 2 hex>/<hex>` in a
+//! [`WritableDir`] (the run's cache folder). Entries are written through a
+//! temporary file and a rename, so a crash never leaves a torn entry. A corrupt or old-format entry reads as a miss. The cache is always
 //! safe to delete (ARCHITECTURE §8).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use re_core::Diagnostic;
+use re_core::files::WritableDir;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -53,23 +54,28 @@ pub enum CacheOutcome {
 /// A directory of processed assets.
 #[derive(Debug)]
 pub struct ProcessedCache {
-    dir: PathBuf,
+    dir: WritableDir,
     hits: u64,
     misses: u64,
 }
 
 impl ProcessedCache {
-    /// A cache in `dir` (created on first write).
+    /// A cache in the directory `dir` (created on first write).
     pub fn new(dir: impl Into<PathBuf>) -> ProcessedCache {
+        ProcessedCache::in_dir(WritableDir::dir(dir))
+    }
+
+    /// A cache in `dir`.
+    pub fn in_dir(dir: WritableDir) -> ProcessedCache {
         ProcessedCache {
-            dir: dir.into(),
+            dir,
             hits: 0,
             misses: 0,
         }
     }
 
-    /// The cache directory.
-    pub fn dir(&self) -> &Path {
+    /// The cache folder.
+    pub fn dir(&self) -> &WritableDir {
         &self.dir
     }
 
@@ -83,9 +89,9 @@ impl ProcessedCache {
         self.misses
     }
 
-    fn entry_path(&self, key: &blake3::Hash) -> PathBuf {
+    fn entry_path(key: &blake3::Hash) -> String {
         let hex = key.to_hex();
-        self.dir.join(&hex[..2]).join(hex.as_str())
+        format!("{}/{}", &hex[..2], hex.as_str())
     }
 
     pub(crate) fn count(&mut self, hit: bool) {
@@ -98,13 +104,15 @@ impl ProcessedCache {
 
     /// True when an entry exists for `key` (it may still fail to decode).
     pub fn contains(&self, key: &blake3::Hash) -> bool {
-        self.entry_path(key).is_file()
+        self.dir
+            .read(&Self::entry_path(key))
+            .is_ok_and(|b| b.is_some())
     }
 
     /// The value stored under `key`, if there is a readable one. Does not count
     /// as a hit or miss.
     pub fn get<T: DeserializeOwned>(&self, key: &blake3::Hash) -> Option<T> {
-        let bytes = std::fs::read(self.entry_path(key)).ok()?;
+        let bytes = self.dir.read(&Self::entry_path(key)).ok()??;
         let (header, body) = bytes.split_at_checked(8)?;
         if &header[..4] != MAGIC || header[4..] != CACHE_FORMAT_VERSION.to_le_bytes() {
             return None;
@@ -129,9 +137,14 @@ impl ProcessedCache {
         bytes.extend_from_slice(MAGIC);
         bytes.extend_from_slice(&CACHE_FORMAT_VERSION.to_le_bytes());
         let bytes = postcard::to_extend(value, bytes).expect("cache values always serialize");
-        let path = self.entry_path(key);
-        fsutil::write_atomic(&path, &bytes)
-            .map_err(|e| fsutil::write_failed(&fsutil::slash(&path), &e))
+        let path = Self::entry_path(key);
+        self.dir.write(&path, &bytes).map_err(|e| {
+            let shown = match self.dir.path() {
+                Some(dir) => fsutil::slash(&dir.join(&path)),
+                None => path.clone(),
+            };
+            fsutil::write_failed(&shown, &e)
+        })
     }
 
     /// The value under `key`, or `compute()`'s result, which is then stored. A

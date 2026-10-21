@@ -1,0 +1,41 @@
+name = "terrain"
+summary = "A procedural landscape to start from: a noise heightfield shaped into an island, with its collider and the sea, built by a ProcGraph you can tune."
+render = ["real.toml", "scenes/main.scene.json"]
+folders = ["prefabs", "graphs", "scripts/game", "scripts/shared", "assets", "tests/replays", "tests/goldens"]
+
+[[params]]
+name = "seed"
+type = "int"
+default = 1
+min = 0
+doc = "The random seed of the landscape; each seed is a different island."
+
+[[params]]
+name = "height"
+type = "float"
+default = 16.0
+min = 1.0
+max = 64.0
+doc = "The height of the highest hills, in metres."
+
+[[params]]
+name = "roughness"
+type = "float"
+default = 0.018
+min = 0.002
+max = 0.1
+doc = "How quickly the ground rises and falls: small values give broad hills, large ones rough ground."
+
+# The shape goes through the graph's parameters, as an agent would change it.
+[[recipes]]
+recipe = "terrain-shape"
+args = { source = "terrain", height = "{{height}}", roughness = "{{roughness}}" }
+
+[[checks]]
+verify = "ok"
+
+[[checks]]
+command = "query"
+args = { generated = true }
+pointer = "/data/total"
+at_least = 2
