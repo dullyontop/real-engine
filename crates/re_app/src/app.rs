@@ -101,6 +101,8 @@ pub struct App {
     history: History,
     commands: Arc<CommandRegistry<App>>,
     clock: FixedClock,
+    /// Fixed steps taken since the scene was loaded: world streaming's tick.
+    stream_tick: u64,
     frame: u64,
     alpha: f32,
 
@@ -274,6 +276,7 @@ impl App {
             history: History::default(),
             commands,
             clock,
+            stream_tick: 0,
             frame: 0,
             alpha: 0.0,
             action_map,
@@ -1213,6 +1216,7 @@ impl App {
         // PreSimulation: fixed-update script callbacks; what they queue reaches
         // this step's physics.
         let t = Instant::now();
+        self.stream_step();
         self.link_new_characters();
         self.run_scripts(Phase::PreSimulation, self.clock.dt_secs().into());
         self.perf.add(Phase::PreSimulation, t.elapsed());
@@ -1274,6 +1278,30 @@ impl App {
         }
         self.run_scripts(Phase::PostSimulation, self.clock.dt_secs().into());
         self.perf.add(Phase::PostSimulation, t.elapsed());
+    }
+
+    /// World streaming (ADR-0042): loads and unloads the cells of `Streamed`
+    /// procedural sources around the focuses, before scripts' fixed update
+    /// sees this tick's stream events. A world with no streamed source pays a
+    /// query.
+    fn stream_step(&mut self) {
+        let streams = self
+            .world
+            .ecs
+            .contains_resource::<re_proc::stream::Streamer>()
+            || self
+                .world
+                .ecs
+                .query_filtered::<(), re_scene::ecs::query::With<re_scene::Streamed>>()
+                .iter(&self.world.ecs)
+                .next()
+                .is_some();
+        if streams {
+            let report =
+                re_proc::stream::step(&mut self.world, self.stream_tick, &self.config.stream);
+            self.diagnostics.extend(report.diagnostics);
+        }
+        self.stream_tick += 1;
     }
 
     /// Gives characters and vehicles that appeared since the last physics push
@@ -2210,6 +2238,7 @@ impl App {
                 // The fresh game VM is attached in place of the old one.
                 self.attach_debugger();
                 self.clock.reset();
+                self.stream_tick = 0;
                 self.edit_frame();
             }
             Err(d) => self.diagnostics.push(d),
