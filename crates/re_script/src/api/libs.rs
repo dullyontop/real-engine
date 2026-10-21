@@ -1,5 +1,5 @@
 //! The libraries other than `world`: `input`, `physics`, `audio`, `ui`, `time`,
-//! `task`, `quat`, `color`, `proc`, `command` (tools only), and the `print`,
+//! `task`, `quat`, `color`, `proc`, `stream`, `command` (tools only), and the `print`,
 //! `warn` and `script` globals.
 
 use mlua::{Function, IntoLua, Lua, MultiValue, Result, Table, Value};
@@ -74,6 +74,15 @@ pub(crate) fn all(lua: &Lua, kind: ContextKind) -> Result<Vec<(&'static str, Tab
             super::proc::lib,
         ),
     ];
+    let stream: Builder = match kind {
+        ContextKind::Tools => |lua, lib| super::stream::lib(lua, lib, true),
+        _ => |lua, lib| super::stream::lib(lua, lib, false),
+    };
+    libs.push((
+        "stream",
+        "World streaming: the loaded cells and their load and unload events.",
+        stream,
+    ));
     if kind == ContextKind::Tools {
         libs.push((
             "command",

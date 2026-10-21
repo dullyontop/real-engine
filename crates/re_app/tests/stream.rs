@@ -170,3 +170,68 @@ fn streamed_cells_are_drawn_and_released() {
     app.run_headless(Some(10), None).unwrap();
     assert_eq!(count(&app), empty, "unloaded cells leave the GPU");
 }
+
+#[test]
+fn scripts_see_cells_load_in_key_order_before_the_step() {
+    let dir = project(CONFIG);
+    let scene = SCENE.replace(
+        r#"    { "id": "land","#,
+        r#"    { "id": "watcher", "components": { "ScriptRef": { "path": "scripts/watch.luau" } } },
+    { "id": "land","#,
+    );
+    std::fs::write(dir.path().join("scenes/main.scene.json"), scene).unwrap();
+    std::fs::write(
+        dir.path().join("scripts/watch.luau"),
+        r#"local seen = 0
+stream.on_unloaded(function(cell) print("unloaded " .. cell.key) end)
+stream.on_loaded(function(cell)
+	seen += 1
+	print(`loaded {cell.key} {cell.coord[1]} {cell.coord[2]} {cell.sources[1]} {stream.is_loaded(cell.key)}`)
+end)
+local reported = false
+time.on_step(function()
+	if seen > 0 and not reported then
+		reported = true
+		print(`step sees {#stream.cells()} cells`)
+	end
+end)
+"#,
+    )
+    .unwrap();
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(20), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    let loaded: Vec<&String> = report
+        .output
+        .iter()
+        .filter(|l| l.starts_with("[game] loaded "))
+        .collect();
+    assert!(
+        loaded
+            .iter()
+            .any(|l| *l == "[game] loaded c/0_0 0 0 land true"),
+        "{:?}",
+        report.output
+    );
+    let mut sorted = loaded.clone();
+    sorted.sort();
+    assert_eq!(loaded, sorted, "key order");
+    let step = report
+        .output
+        .iter()
+        .position(|l| l.starts_with("[game] step sees"))
+        .expect("the step callback ran");
+    assert!(
+        step > report
+            .output
+            .iter()
+            .position(|l| l.starts_with("[game] loaded"))
+            .unwrap()
+    );
+    assert_eq!(
+        report.output[step],
+        format!("[game] step sees {} cells", loaded.len()),
+        "{:?}",
+        report.output
+    );
+}
