@@ -1,7 +1,7 @@
 //! Data store files (ADR-0048): one file per store and scope, a map from key
 //! to its record.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as J;
@@ -83,15 +83,57 @@ pub fn path(id: &StoreId) -> String {
 #[derive(Default)]
 pub struct Stores {
     map: HashMap<StoreId, Store>,
+    /// Stores whose file is there but did not read and could not be set
+    /// aside; they are never written, so the file is not lost.
+    blocked: HashSet<StoreId>,
 }
 
-/// A store file that did not read; it was set aside and the store is empty.
+/// A data file that did not read. The store or structure starts empty; the
+/// file was set aside, or, when it could not be, it is left alone and the
+/// store is not written this run.
 #[derive(Debug)]
 pub struct Unreadable {
     /// The file's relative path.
     pub path: String,
     /// What was wrong.
     pub reason: String,
+    /// True when the file was renamed to `.bad`.
+    pub set_aside: bool,
+}
+
+/// Reads `path` from `backend`: its bytes, nothing, or why it is unusable.
+/// A file that `parse` refuses is set aside when possible.
+pub(super) fn read_file<T>(
+    backend: &mut dyn DataBackend,
+    path: &str,
+    parse: impl FnOnce(&[u8]) -> Result<T, String>,
+) -> Result<Option<T>, Unreadable> {
+    match backend.read(path) {
+        Ok(None) => Ok(None),
+        Ok(Some(bytes)) => match parse(&bytes) {
+            Ok(t) => Ok(Some(t)),
+            Err(reason) => {
+                let set_aside = backend.set_aside(path).is_ok();
+                Err(Unreadable {
+                    path: path.to_string(),
+                    reason,
+                    set_aside,
+                })
+            }
+        },
+        Err(e) => Err(Unreadable {
+            path: path.to_string(),
+            reason: e.to_string(),
+            set_aside: false,
+        }),
+    }
+}
+
+/// The error a save of a blocked file gives.
+pub(super) fn blocked_error(path: &str) -> std::io::Error {
+    std::io::Error::other(format!(
+        "{path} did not read and is left as it is, so it is not overwritten"
+    ))
 }
 
 impl Stores {
@@ -103,22 +145,13 @@ impl Stores {
     ) -> (&mut Store, Option<Unreadable>) {
         let mut problem = None;
         if !self.map.contains_key(id) {
-            let p = path(id);
-            let store = match backend.read(&p) {
-                Ok(None) => Store::default(),
-                Ok(Some(bytes)) => match parse(&bytes) {
-                    Ok(s) => s,
-                    Err(reason) => {
-                        let _ = backend.set_aside(&p);
-                        problem = Some(Unreadable { path: p, reason });
-                        Store::default()
+            let store = match read_file(backend, &path(id), parse) {
+                Ok(s) => s.unwrap_or_default(),
+                Err(u) => {
+                    if !u.set_aside {
+                        self.blocked.insert(id.clone());
                     }
-                },
-                Err(e) => {
-                    problem = Some(Unreadable {
-                        path: p,
-                        reason: e.to_string(),
-                    });
+                    problem = Some(u);
                     Store::default()
                 }
             };
@@ -129,6 +162,9 @@ impl Stores {
 
     /// Writes store `id` (which must have been read) to `backend`.
     pub fn save(&self, backend: &mut dyn DataBackend, id: &StoreId) -> std::io::Result<()> {
+        if self.blocked.contains(id) {
+            return Err(blocked_error(&path(id)));
+        }
         let s = &self.map[id];
         let file = File {
             format: FORMAT.into(),
@@ -175,7 +211,7 @@ impl Store {
         let r = match self.keys.get(key) {
             Some(old) => Record {
                 value,
-                version: old.version + 1,
+                version: old.version.saturating_add(1),
                 created: old.created,
                 updated: now,
                 user_ids,
@@ -232,5 +268,38 @@ mod tests {
         assert!(st.keys.is_empty());
         assert!(problem.unwrap().path.ends_with("_global.json"));
         assert_eq!(b.read(&path(&id())).unwrap(), None);
+    }
+
+    /// A backend whose files cannot be renamed.
+    struct Stuck(MemoryBackend);
+
+    impl DataBackend for Stuck {
+        fn read(&self, path: &str) -> std::io::Result<Option<Vec<u8>>> {
+            self.0.read(path)
+        }
+        fn write(&mut self, path: &str, bytes: &[u8]) -> std::io::Result<()> {
+            self.0.write(path, bytes)
+        }
+        fn set_aside(&mut self, _: &str) -> std::io::Result<()> {
+            Err(std::io::Error::other("locked"))
+        }
+        fn list(&self, dir: &str) -> std::io::Result<Vec<String>> {
+            self.0.list(dir)
+        }
+        fn persists(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn a_bad_file_that_cannot_be_set_aside_is_never_overwritten() {
+        let mut b = Stuck(MemoryBackend::new());
+        b.write(&path(&id()), b"{ not json").unwrap();
+        let mut s = Stores::default();
+        let (st, problem) = s.get(&mut b, &id());
+        assert!(!problem.unwrap().set_aside);
+        st.write("k", J::from(1), vec![], Default::default(), 1);
+        assert!(s.save(&mut b, &id()).is_err());
+        assert_eq!(b.read(&path(&id())).unwrap().unwrap(), b"{ not json");
     }
 }

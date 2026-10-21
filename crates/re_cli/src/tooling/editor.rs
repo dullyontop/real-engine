@@ -35,10 +35,12 @@ pub fn run(args: EditorArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Ok(socket) => socket,
         Err(d) => return Ok(fail(&d)),
     };
-    let (app, agent) = match open(project, config) {
+    let (mut app, agent) = match open(project, config) {
         Ok(x) => x,
         Err(d) => return Ok(fail(&d)),
     };
+    // Play in the editor keeps saved data, as `real run` does (ADR-0048).
+    app.persist_data();
     let options = EditorOptions {
         max_frames: args.frames,
         socket: Some(socket),

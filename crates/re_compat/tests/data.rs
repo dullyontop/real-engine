@@ -464,4 +464,46 @@ mod data {
         );
         assert!(out[7].starts_with("false\t[RE9403] "), "{out:#?}");
     }
+
+    #[test]
+    fn calls_that_cannot_yield_do_nothing_and_bad_values_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        project(dir.path(), "");
+        let mut h = open(dir.path(), false);
+        let out = run(
+            &mut h,
+            Side::Server,
+            r#"
+            local DSS = game:GetService("DataStoreService")
+            local a, b = DSS:GetDataStore("A"), DSS:GetDataStore("B")
+            a:SetAsync("k", 1)
+            print(pcall(a.UpdateAsync, a, "k", function(v)
+                b:SetAsync("inner", 5)
+                return v + 1
+            end))
+            task.wait(0.2)
+            print((b:GetAsync("inner")), (a:GetAsync("k")))
+            print(pcall(a.SetAsync, a, "mixed", { 1, nil, 3, x = 1 }))
+            print(pcall(DSS.GetDataStore, DSS, string.rep("é", 40)))
+            local m = game:GetService("MemoryStoreService"):GetHashMap("Pages")
+            for i = 1, 3 do m:SetAsync("k" .. i, i, 60) end
+            local pages = m:ListItemsAsync(1)
+            pages:AdvanceToNextPageAsync()
+            pages:AdvanceToNextPageAsync()
+            print(pages.IsFinished, #pages:GetCurrentPage())
+            print(DSS:GetRequestBudgetForRequestType(Enum.DataStoreRequestType.ListAsync))
+            "#,
+            60,
+        );
+        assert!(out[0].starts_with("false\t103: "), "{out:#?}");
+        assert_eq!(out[1], "nil\t1", "{out:#?}");
+        assert!(out[2].starts_with("false\t104: "), "{out:#?}");
+        assert!(
+            out[3].starts_with("false\t106: ") && out[3].contains("file name"),
+            "{out:#?}"
+        );
+        assert_eq!(out[4], "true\t1", "{out:#?}");
+        // Turning hash map pages costs memory store units, not list budget.
+        assert_eq!(out[5], "5", "{out:#?}");
+    }
 }

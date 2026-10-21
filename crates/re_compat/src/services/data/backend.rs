@@ -24,6 +24,10 @@ pub trait DataBackend {
     fn persists(&self) -> bool;
 }
 
+/// The longest [`encode`]d name, in bytes, so a file name (with `.json`,
+/// `.tmp` or `.bad.N` added) stays well under the usual 255-byte limit.
+pub const MAX_ENCODED: usize = 200;
+
 /// One path component for a store, scope or structure name. The result
 /// starts with `_` (so no name becomes a reserved device name such as `con`
 /// on Windows, or `.` and `..`), keeps `a`–`z`, `0`–`9`, `-` and `_`, writes
@@ -117,10 +121,22 @@ impl DataBackend for DirBackend {
     }
 
     fn set_aside(&mut self, path: &str) -> io::Result<()> {
+        // An earlier `.bad` is kept: the next free `.bad.N` takes this one.
         let file = self.path(path);
-        let mut bad = file.clone().into_os_string();
-        bad.push(".bad");
-        std::fs::rename(&file, PathBuf::from(bad))
+        let mut n = 0;
+        loop {
+            let mut bad = file.clone().into_os_string();
+            bad.push(if n == 0 {
+                ".bad".to_string()
+            } else {
+                format!(".bad.{n}")
+            });
+            let bad = PathBuf::from(bad);
+            if !bad.exists() {
+                return std::fs::rename(&file, bad);
+            }
+            n += 1;
+        }
     }
 
     fn list(&self, dir: &str) -> io::Result<Vec<String>> {
@@ -141,7 +157,7 @@ fn list_dir(dir: &Path) -> io::Result<Vec<String>> {
     let mut out = Vec::new();
     for entry in rd {
         let name = entry?.file_name().to_string_lossy().into_owned();
-        if !name.ends_with(".tmp") && !name.ends_with(".bad") {
+        if !name.ends_with(".tmp") && !name.contains(".bad") {
             out.push(name);
         }
     }
@@ -216,6 +232,7 @@ impl DataBackend for MemoryBackend {
             .filter_map(|k| k.strip_prefix(&prefix))
             .map(|rest| rest.split('/').next().unwrap_or(rest).to_string())
             .collect();
+        out.sort();
         out.dedup();
         Ok(out)
     }

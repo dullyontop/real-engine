@@ -141,12 +141,30 @@ fn check_name(num: u16, what: &str, s: &str) -> Result<()> {
     Ok(())
 }
 
+/// Checks that a store or scope name fits in a file name.
+fn check_file_name(num: u16, what: &str, s: &str) -> Result<()> {
+    let e = super::encode(s).len();
+    if e > super::backend::MAX_ENCODED {
+        return Err(bad(
+            num,
+            format!(
+                "{what} takes {e} bytes as a file name; the limit is {} (each byte that is not \
+                 a lowercase ASCII letter, digit, - or _ takes 2 or 3)",
+                super::backend::MAX_ENCODED
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn store_handle(lua: &Lua, a: MultiValue, what: &str, kind: StoreKind) -> Result<MultiValue> {
     let (name, scope, _options): (String, Option<String>, LuaValue) = args(lua, a, what)?;
     usable(lua, &format!("DataStoreService:{what}"))?;
     check_name(106, "the data store name", &name)?;
+    check_file_name(106, "the data store name", &name)?;
     let scope = scope.unwrap_or_else(|| DEFAULT_SCOPE.to_string());
     check_name(106, "the scope", &scope)?;
+    check_file_name(106, "the scope", &scope)?;
     let class = match kind {
         StoreKind::Standard => "DataStore",
         StoreKind::Ordered => "OrderedDataStore",
@@ -274,7 +292,11 @@ fn user_ids(v: &LuaValue) -> Result<Vec<i64>> {
                 let x: LuaValue = t.raw_get(i)?;
                 match x {
                     LuaValue::Integer(n) => out.push(re_script::lua_int(n)),
-                    LuaValue::Number(n) if n.fract() == 0.0 => out.push(n as i64),
+                    LuaValue::Number(n)
+                        if n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_992.0 =>
+                    {
+                        out.push(n as i64)
+                    }
                     _ => return Err(bad(513, "user ids must be whole numbers")),
                 }
             }
@@ -303,7 +325,7 @@ fn key_arg(key: &LuaValue) -> Result<String> {
     let key = match key {
         LuaValue::String(s) => s.to_str()?.to_string(),
         LuaValue::Integer(n) => n.to_string(),
-        LuaValue::Number(n) => n.to_string(),
+        LuaValue::Number(_) => key.to_string()?,
         LuaValue::Nil => return Err(bad(101, "the key name is empty")),
         other => {
             return Err(bad(
@@ -409,10 +431,11 @@ fn increment_async(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
     let id = store_of(lua, e, "IncrementAsync")?;
     let key = key_arg(&key)?;
     let delta = delta.unwrap_or(1.0);
-    if delta.fract() != 0.0 || !delta.is_finite() {
+    // Past 2^53 a double no longer holds every whole number.
+    if delta.fract() != 0.0 || !delta.is_finite() || delta.abs() > 9_007_199_254_740_992.0 {
         return Err(bad(
             106,
-            format!("the increment {delta} is not a whole number"),
+            format!("the increment {delta} is not a whole number of at most 2^53"),
         ));
     }
     let user_ids = user_ids(&ids)?;
@@ -597,7 +620,7 @@ fn with_store<T>(
         (f(s), problem)
     };
     if let Some(p) = problem {
-        warn_unreadable(lua, &p.path, &p.reason)?;
+        warn_unreadable(lua, &p)?;
     }
     Ok(out)
 }
@@ -736,7 +759,12 @@ pub(super) fn complete(lua: &Lua, op: &Op) -> Result<Done> {
                     .collect::<Vec<J>>()
             })?;
             Ok(Done::Values(
-                pages_table(lua, paginate(keys, *page), Kind::StandardList)?.into_lua_multi(lua)?,
+                pages_table(
+                    lua,
+                    paginate(keys, *page),
+                    super::PageCost::Budget(Kind::StandardList),
+                )?
+                .into_lua_multi(lua)?,
             ))
         }
         Op::ListStores { prefix, page } => {
@@ -760,8 +788,12 @@ pub(super) fn complete(lua: &Lua, op: &Op) -> Result<Done> {
                 }));
             }
             Ok(Done::Values(
-                pages_table(lua, paginate(items, *page), Kind::StandardList)?
-                    .into_lua_multi(lua)?,
+                pages_table(
+                    lua,
+                    paginate(items, *page),
+                    super::PageCost::Budget(Kind::StandardList),
+                )?
+                .into_lua_multi(lua)?,
             ))
         }
         Op::Sorted {
@@ -787,7 +819,12 @@ pub(super) fn complete(lua: &Lua, op: &Op) -> Result<Done> {
                 .map(|(v, k)| serde_json::json!({ "key": k, "value": v }))
                 .collect();
             Ok(Done::Values(
-                pages_table(lua, paginate(items, *page), Kind::OrderedList)?.into_lua_multi(lua)?,
+                pages_table(
+                    lua,
+                    paginate(items, *page),
+                    super::PageCost::Budget(Kind::OrderedList),
+                )?
+                .into_lua_multi(lua)?,
             ))
         }
         Op::Version { id, key, version } => {
@@ -811,8 +848,12 @@ pub(super) fn complete(lua: &Lua, op: &Op) -> Result<Done> {
                 })
                 .unwrap_or_default();
             Ok(Done::Values(
-                pages_table(lua, paginate(items, MAX_PAGE), Kind::StandardList)?
-                    .into_lua_multi(lua)?,
+                pages_table(
+                    lua,
+                    paginate(items, MAX_PAGE),
+                    super::PageCost::Budget(Kind::StandardList),
+                )?
+                .into_lua_multi(lua)?,
             ))
         }
     }

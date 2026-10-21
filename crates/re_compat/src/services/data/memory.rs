@@ -2,12 +2,13 @@
 //! expire on the data clock, with the place's memory quota and request units.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as J;
 
 use super::backend::{DataBackend, encode};
+use super::store::{Unreadable, blocked_error, read_file};
 
 /// The largest stored value, in bytes of its JSON text.
 pub const MAX_VALUE_BYTES: usize = 32 * 1024;
@@ -195,6 +196,8 @@ impl Structure {
 #[derive(Default)]
 pub struct Memory {
     map: BTreeMap<(Kind, String), Structure>,
+    /// Structures whose file did not read and could not be set aside.
+    blocked: BTreeSet<(Kind, String)>,
     units: f64,
     units_at: f64,
     units_started: bool,
@@ -261,31 +264,25 @@ impl Memory {
         kind: Kind,
         name: &str,
         now: i64,
-    ) -> (&mut Structure, Option<String>) {
+    ) -> (&mut Structure, Option<Unreadable>) {
         let key = (kind, name.to_string());
         let mut problem = None;
         if !self.map.contains_key(&key) {
-            let p = path(kind, name);
-            let s = match backend.read(&p) {
-                Ok(None) => Structure::default(),
-                Ok(Some(bytes)) => match serde_json::from_slice::<File>(&bytes) {
-                    Ok(f) if f.format == FORMAT && f.version == 1 => f.structure,
-                    Ok(f) => {
-                        let _ = backend.set_aside(&p);
-                        problem = Some(format!(
-                            "{p}: expected format {FORMAT:?} version 1, found {:?} version {}",
-                            f.format, f.version
-                        ));
-                        Structure::default()
+            let parse = |bytes: &[u8]| match serde_json::from_slice::<File>(bytes) {
+                Ok(f) if f.format == FORMAT && f.version == 1 => Ok(f.structure),
+                Ok(f) => Err(format!(
+                    "expected format {FORMAT:?} version 1, found {:?} version {}",
+                    f.format, f.version
+                )),
+                Err(e) => Err(e.to_string()),
+            };
+            let s = match read_file(backend, &path(kind, name), parse) {
+                Ok(s) => s.unwrap_or_default(),
+                Err(u) => {
+                    if !u.set_aside {
+                        self.blocked.insert(key.clone());
                     }
-                    Err(e) => {
-                        let _ = backend.set_aside(&p);
-                        problem = Some(format!("{p}: {e}"));
-                        Structure::default()
-                    }
-                },
-                Err(e) => {
-                    problem = Some(format!("{p}: {e}"));
+                    problem = Some(u);
                     Structure::default()
                 }
             };
@@ -314,6 +311,9 @@ impl Memory {
         kind: Kind,
         name: &str,
     ) -> std::io::Result<()> {
+        if self.blocked.contains(&(kind, name.to_string())) {
+            return Err(blocked_error(&path(kind, name)));
+        }
         let s = &self.map[&(kind, name.to_string())];
         let file = File {
             format: FORMAT.into(),

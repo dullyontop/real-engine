@@ -148,6 +148,13 @@ fn structure(lua: &Lua, a: MultiValue, what: &str, kind: Kind, class: &str) -> R
             "{what}: the name must be 1 to {MAX_KEY_BYTES} bytes long"
         )));
     }
+    let e = super::encode(&name).len();
+    if e > super::backend::MAX_ENCODED {
+        return Err(invalid(format!(
+            "{what}: the name takes {e} bytes as a file name; the limit is {}",
+            super::backend::MAX_ENCODED
+        )));
+    }
     let hold = timeout.unwrap_or(DEFAULT_INVISIBILITY);
     if !(hold.is_finite() && hold >= 0.0) {
         return Err(invalid(format!(
@@ -186,7 +193,7 @@ fn of(lua: &Lua, e: Entity, what: &str) -> Result<(Kind, String, f64)> {
     }
 }
 
-fn charge(lua: &Lua, units: f64) -> Result<()> {
+pub(super) fn charge(lua: &Lua, units: f64) -> Result<()> {
     let (now, players) = (sched::now(lua)?, players(lua)?);
     data(lua)
         .memory
@@ -220,7 +227,7 @@ fn key_arg(v: &LuaValue) -> Result<String> {
     let k = match v {
         LuaValue::String(s) => s.to_str()?.to_string(),
         LuaValue::Integer(n) => n.to_string(),
-        LuaValue::Number(n) => n.to_string(),
+        LuaValue::Number(_) => v.to_string()?,
         other => {
             return Err(invalid(format!(
                 "the key must be a string, not a {}",
@@ -486,7 +493,7 @@ fn with<T>(
         (f(s), problem)
     };
     if let Some(p) = problem {
-        warn_unreadable(lua, &p, "it did not parse")?;
+        warn_unreadable(lua, &p)?;
     }
     Ok(out)
 }
@@ -789,14 +796,10 @@ pub(super) fn complete(lua: &Lua, op: &Op, started: f64) -> Result<Done> {
                     .map(|(k, i)| serde_json::json!({ "key": k, "value": i.value }))
                     .collect()
             })?;
-            let _ = charge(lua, items.len().min(*page) as f64);
+            let _ = charge(lua, items.len().min(*page).saturating_sub(1) as f64);
             Ok(Done::Values(
-                pages_table(
-                    lua,
-                    paginate(items, *page),
-                    super::budget::Kind::StandardList,
-                )?
-                .into_lua_multi(lua)?,
+                pages_table(lua, paginate(items, *page), super::PageCost::Unit)?
+                    .into_lua_multi(lua)?,
             ))
         }
     }

@@ -51,7 +51,15 @@ fn convert(v: &LuaValue, depth: usize, seen: &mut Vec<usize>) -> Result<J, NotSt
             let len = t.raw_len();
             let out = if pairs.is_empty() {
                 J::Array(Vec::new())
-            } else if len == pairs.len() {
+            } else if len == pairs.len()
+                && pairs.iter().all(|(k, _)| match k {
+                    LuaValue::Integer(i) => (1..=len as i64).contains(&re_script::lua_int(*i)),
+                    LuaValue::Number(n) => n.fract() == 0.0 && *n >= 1.0 && *n <= len as f64,
+                    _ => false,
+                })
+            {
+                // Every key is an index from 1 to the length and there are as
+                // many keys as indices, so the array has no holes.
                 let mut arr = Vec::with_capacity(len);
                 for i in 1..=len {
                     let item: LuaValue = t.raw_get(i).map_err(|e| NotStorable(e.to_string()))?;

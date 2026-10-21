@@ -25,8 +25,10 @@ mod ms;
 mod store;
 mod value;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use mlua::{Function, Lua, MultiValue, RegistryKey, Result, Table, Value as LuaValue};
@@ -135,16 +137,30 @@ struct Pending {
 enum Op {
     Ds(ds::Op),
     Ms(ms::Op),
-    Next(u64),
+    /// Advance these pages; the key holds their table until then.
+    Next(Rc<RefCell<Pages>>, RegistryKey),
 }
 
-/// The pages a pages table walks.
+/// What turning a page costs.
+#[derive(Clone, Copy, Debug)]
+enum PageCost {
+    /// A data store request of this kind.
+    Budget(budget::Kind),
+    /// One memory store request unit.
+    Unit,
+}
+
+/// The pages a pages table walks. Its functions share it, so it goes when
+/// the table is collected.
 struct Pages {
     pages: Vec<Vec<J>>,
     index: usize,
-    table: RegistryKey,
-    kind: budget::Kind,
+    cost: PageCost,
 }
+
+/// The scheduler owner of the runners: no script, so stopping or reloading
+/// the script that made a request does not drop the request.
+const RUNNER_OWNER: sched::Owner = sched::Owner::MAX;
 
 /// Per-VM state of the data services.
 struct Data {
@@ -156,7 +172,6 @@ struct Data {
     by_handle: HashMap<String, Entity>,
     set_options: HashMap<Entity, serde_json::Map<String, J>>,
     pending: HashMap<u64, Pending>,
-    pages: HashMap<u64, Pages>,
     next_id: u64,
     warned: Vec<String>,
 }
@@ -172,7 +187,6 @@ impl Data {
             by_handle: HashMap::new(),
             set_options: HashMap::new(),
             pending: HashMap::new(),
-            pages: HashMap::new(),
             next_id: 1,
             warned: Vec::new(),
         }
@@ -225,18 +239,27 @@ fn now_ms(lua: &Lua) -> Result<i64> {
 }
 
 /// Warns once per file that did not read.
-fn warn_unreadable(lua: &Lua, path: &str, reason: &str) -> Result<()> {
+fn warn_unreadable(lua: &Lua, u: &store::Unreadable) -> Result<()> {
+    let store::Unreadable {
+        path,
+        reason,
+        set_aside,
+    } = u;
     {
         let mut d = data(lua);
         if d.warned.iter().any(|p| p == path) {
             return Ok(());
         }
-        d.warned.push(path.to_string());
+        d.warned.push(path.clone());
     }
+    let what = if *set_aside {
+        format!("it was set aside as {path}.bad and the store starts empty")
+    } else {
+        "it is left as it is and not written this run; the store starts empty".to_string()
+    };
     let warn: Function = lua.globals().get("warn")?;
     warn.call::<()>(format!(
-        "[{}] 501: the data file {path} did not read ({reason}); it was set aside as {path}.bad \
-         and the store starts empty",
+        "[{}] 501: the data file {path} did not read ({reason}); {what}",
         codes::DATA_FILE
     ))
 }
@@ -256,8 +279,13 @@ fn saved(lua: &Lua, r: std::io::Result<()>, what: &str) -> Result<()> {
 /// The store instance for `handle`, made the first time.
 fn handle_instance(lua: &Lua, class: &str, name: &str, handle: Handle) -> Result<LuaValue> {
     let key = format!("{class}\u{1}{handle:?}");
-    if let Some(&e) = data(lua).by_handle.get(&key) {
-        return crate::instance::push(lua, e);
+    let cached = data(lua).by_handle.get(&key).copied();
+    if let Some(e) = cached {
+        // A script may have destroyed it; then it is made again.
+        if !with_world(lua, |w| crate::instance::tree::is_destroyed(w, e))? {
+            return crate::instance::push(lua, e);
+        }
+        data(lua).handles.remove(&e);
     }
     let classes = state(lua)?.setup.classes.clone();
     let e = with_world(lua, |w| {
@@ -294,10 +322,12 @@ fn runner(lua: &Lua) -> Result<Function> {
     })?;
     let sleep = sched::yielding(lua, "sleep", raw)?;
     let finish = lua.create_function(|lua, id: f64| finish(lua, id as u64))?;
+    let begin = lua.create_function(|lua, id: f64| begin(lua, id as u64))?;
     let r: Function = lua
         .load(
-            "local sleep, finish = ...\n\
+            "local sleep, finish, begin = ...\n\
              return function(label, id, delay)\n\
+                 if not begin(id) then return end\n\
                  while delay do\n\
                      sleep(label, delay)\n\
                      delay = finish(id)\n\
@@ -305,14 +335,20 @@ fn runner(lua: &Lua) -> Result<Function> {
              end",
         )
         .set_name("=data")
-        .call((sleep, finish))?;
+        .call((sleep, finish, begin))?;
     lua.set_named_registry_value(RUNNER_KEY, &r)?;
     Ok(r)
 }
 
-/// Parks the caller and starts a runner that completes `op` after `wait`
+/// Parks the caller and queues a runner that completes `op` after `wait`
 /// more seconds than the latency. Returns the values the method gives back
 /// to park.
+///
+/// The runner starts at the end of the resumption cycle, after the yielding
+/// wrapper has checked that the caller can yield; a caller that could not
+/// (inside an `UpdateAsync` transform, say) got an error and its request is
+/// dropped there ([`begin`]). Once started, a request completes even if its
+/// caller's script stops meanwhile, as a request already sent would.
 fn submit(lua: &Lua, label: &str, op: Op, wait: f64) -> Result<MultiValue> {
     let (values, token) = sched::park(lua, label, None)?;
     let started = sched::now(lua)?;
@@ -323,7 +359,7 @@ fn submit(lua: &Lua, label: &str, op: Op, wait: f64) -> Result<MultiValue> {
         d.pending.insert(id, Pending { token, op, started });
         (id, d.settings.latency + wait)
     };
-    sched::spawn(
+    sched::defer_owned(
         lua,
         runner(lua)?,
         MultiValue::from_iter([
@@ -332,8 +368,24 @@ fn submit(lua: &Lua, label: &str, op: Op, wait: f64) -> Result<MultiValue> {
             LuaValue::Number(delay),
         ]),
         label,
+        None,
+        Some(RUNNER_OWNER),
     )?;
     Ok(values)
+}
+
+/// Whether request `id` should run: false, and the request dropped, when
+/// its caller's park was cancelled before the runner started.
+fn begin(lua: &Lua, id: u64) -> Result<bool> {
+    let token = match data(lua).pending.get(&id) {
+        Some(p) => p.token,
+        None => return Ok(false),
+    };
+    if sched::is_parked(lua, token)? {
+        return Ok(true);
+    }
+    data(lua).pending.remove(&id);
+    Ok(false)
 }
 
 /// What completing a request gave.
@@ -356,7 +408,7 @@ fn finish(lua: &Lua, id: u64) -> Result<Option<f64>> {
     let done = match &p.op {
         Op::Ds(op) => ds::complete(lua, op),
         Op::Ms(op) => ms::complete(lua, op, p.started),
-        Op::Next(pages) => next_page(lua, *pages),
+        Op::Next(pages, table) => next_page(lua, pages, table),
     };
     let done = match done {
         Ok(d) => d,
@@ -375,6 +427,8 @@ fn finish(lua: &Lua, id: u64) -> Result<Option<f64>> {
             sched::wake_error(lua, p.token, &message, WakeMode::Deferred)?;
             Ok(None)
         }
+        // A wait nobody is left to see ends here.
+        Done::Again(_) if !sched::is_parked(lua, p.token)? => Ok(None),
         Done::Again(secs) => {
             data(lua).pending.insert(id, p);
             Ok(Some(secs))
@@ -383,27 +437,23 @@ fn finish(lua: &Lua, id: u64) -> Result<Option<f64>> {
 }
 
 /// A pages table over `pages` (at least one, possibly empty, page) whose
-/// `AdvanceToNextPageAsync` charges `kind`.
-fn pages_table(lua: &Lua, mut pages: Vec<Vec<J>>, kind: budget::Kind) -> Result<LuaValue> {
+/// `AdvanceToNextPageAsync` costs `cost`.
+fn pages_table(lua: &Lua, mut pages: Vec<Vec<J>>, cost: PageCost) -> Result<LuaValue> {
     if pages.is_empty() {
         pages.push(Vec::new());
     }
     let finished = pages.len() == 1;
+    let state = Rc::new(RefCell::new(Pages {
+        pages,
+        index: 0,
+        cost,
+    }));
     let t = lua.create_table()?;
     t.raw_set("IsFinished", finished)?;
-    let id = {
-        let mut d = data(lua);
-        let id = d.next_id;
-        d.next_id += 1;
-        id
-    };
+    let st = Rc::clone(&state);
     let current = lua.create_function(move |lua, _this: LuaValue| {
         let items = {
-            let d = data(lua);
-            let p = d
-                .pages
-                .get(&id)
-                .ok_or_else(|| lua_error(codes::DATA_REQUEST, "these pages are gone"))?;
+            let p = st.borrow();
             p.pages[p.index].clone()
         };
         let out = lua.create_table()?;
@@ -412,15 +462,12 @@ fn pages_table(lua: &Lua, mut pages: Vec<Vec<J>>, kind: budget::Kind) -> Result<
         }
         Ok(out)
     })?;
-    let raw = lua.create_function(move |lua, _this: LuaValue| -> Result<MultiValue> {
+    let st = Rc::clone(&state);
+    let raw = lua.create_function(move |lua, this: Table| -> Result<MultiValue> {
         usable(lua, "Pages:AdvanceToNextPageAsync")?;
-        let (kind, finished) = {
-            let d = data(lua);
-            let p = d
-                .pages
-                .get(&id)
-                .ok_or_else(|| lua_error(codes::DATA_REQUEST, "these pages are gone"))?;
-            (p.kind, p.index + 1 >= p.pages.len())
+        let (cost, finished) = {
+            let p = st.borrow();
+            (p.cost, p.index + 1 >= p.pages.len())
         };
         if finished {
             return Err(lua_error(
@@ -428,40 +475,36 @@ fn pages_table(lua: &Lua, mut pages: Vec<Vec<J>>, kind: budget::Kind) -> Result<
                 "AdvanceToNextPageAsync: there are no more pages (IsFinished is true)",
             ));
         }
-        let (now, players) = (sched::now(lua)?, players(lua)?);
-        let wait = data(lua)
-            .budgets
-            .reserve(&[kind], now, players)
-            .map_err(|_| queue_full(305, "AdvanceToNextPageAsync"))?;
-        submit(lua, "Pages:AdvanceToNextPageAsync", Op::Next(id), wait)
+        let wait = match cost {
+            PageCost::Budget(kind) => {
+                let (now, players) = (sched::now(lua)?, players(lua)?);
+                data(lua)
+                    .budgets
+                    .reserve(&[kind], now, players)
+                    .map_err(|_| queue_full(305, "AdvanceToNextPageAsync"))?
+            }
+            PageCost::Unit => {
+                ms::charge(lua, 1.0)?;
+                0.0
+            }
+        };
+        let op = Op::Next(Rc::clone(&st), lua.create_registry_value(this)?);
+        submit(lua, "Pages:AdvanceToNextPageAsync", op, wait)
     })?;
     let advance = sched::yielding(lua, "Pages:AdvanceToNextPageAsync", raw)?;
     t.raw_set("GetCurrentPage", current)?;
     t.raw_set("AdvanceToNextPageAsync", advance)?;
-    let key = lua.create_registry_value(&t)?;
-    data(lua).pages.insert(
-        id,
-        Pages {
-            pages,
-            index: 0,
-            table: key,
-            kind,
-        },
-    );
     Ok(LuaValue::Table(t))
 }
 
-fn next_page(lua: &Lua, id: u64) -> Result<Done> {
-    let (table, finished) = {
-        let mut d = data(lua);
-        let Some(p) = d.pages.get_mut(&id) else {
-            return Ok(Done::Values(MultiValue::new()));
-        };
+fn next_page(lua: &Lua, pages: &Rc<RefCell<Pages>>, table: &RegistryKey) -> Result<Done> {
+    let finished = {
+        let mut p = pages.borrow_mut();
         p.index = (p.index + 1).min(p.pages.len() - 1);
-        let finished = p.index + 1 >= p.pages.len();
-        (lua.registry_value::<Table>(&p.table)?, finished)
+        p.index + 1 >= p.pages.len()
     };
-    table.raw_set("IsFinished", finished)?;
+    lua.registry_value::<Table>(table)?
+        .raw_set("IsFinished", finished)?;
     Ok(Done::Values(MultiValue::new()))
 }
 
