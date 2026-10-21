@@ -260,9 +260,12 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
             continue;
         };
         // A file that cannot be read stays missing; physics reports it. A
-        // file that failed is read again only once its size changes.
+        // file that failed is read again once its size changes or it is removed
+        // and comes back.
         let path = root.join(&name);
         let Ok(len) = std::fs::metadata(&path).map(|m| m.len()) else {
+            // Gone: whatever comes back in its place is read afresh.
+            failed.remove(&name);
             continue;
         };
         if failed.get(&name) == Some(&len) {
