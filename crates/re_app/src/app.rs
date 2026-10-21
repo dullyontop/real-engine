@@ -1688,6 +1688,9 @@ impl App {
                 re_assets::AssetChange::Renamed { from, to } => vec![from.clone(), to.clone()],
             })
             .collect();
+        for p in paths.iter().filter(|p| p.ends_with(".heightfield")) {
+            procedural::heightfield_changed(&mut self.world, p);
+        }
         let doc_problems = self.reload_open_docs(&paths);
         self.diagnostics.extend(doc_problems.iter().cloned());
         problems.extend(doc_problems);
