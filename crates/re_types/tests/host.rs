@@ -3,6 +3,7 @@
 use glam::Vec3;
 use re_types::{
     ActionFrame, CharacterState, EntityId, GroupMask, HostError, HostResult, HostServices, RayHit,
+    VehicleInput, VehicleState,
 };
 
 /// A minimal host that records what scripts asked for.
@@ -53,6 +54,16 @@ impl HostServices for RecordingHost {
 
     fn body_velocity(&self, _entity: EntityId) -> HostResult<(Vec3, Vec3)> {
         Ok((Vec3::X, Vec3::ZERO))
+    }
+
+    fn vehicle_drive(&mut self, entity: EntityId, input: VehicleInput) -> HostResult<()> {
+        self.log
+            .push(format!("drive {} {}", entity.0, input.throttle));
+        Ok(())
+    }
+
+    fn vehicle_state(&self, _entity: EntityId) -> HostResult<VehicleState> {
+        Ok(VehicleState::default())
     }
 
     fn play_sound(&mut self, clip: &str, at: Option<Vec3>, volume: f32) -> HostResult<()> {
