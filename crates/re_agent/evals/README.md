@@ -94,3 +94,7 @@ The environment gets `REAL_EVAL_PROMPT`. Over HTTP it also gets
 
 The model, keys and provider all belong to that command. A task never names
 an agent.
+
+Agent commands come only from those `eval.toml` files, never from the suite
+folder. A suite you download can describe tasks, but it cannot make
+`real agent eval` run a program.
