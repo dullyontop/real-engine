@@ -18,7 +18,8 @@
 //! commands (`script.write`, `checkpoint.*`, `file.delete`), the resources
 //! (`resource.list`, `resource.read`, also served as MCP resources),
 //! `compat.coverage`, `scene.dump_tree`, `verify.diff`, `project.import`
-//! (a dry run unless `write` is set), the static scan stage
+//! (a dry run unless `write` is set), `template.list`, `recipe.list` and
+//! `recipe.apply` (ADR-0046), the static scan stage
 //! of `verify`, and last the project's Luau tools
 //! (`scripts/tools/commands/`).
 //!
@@ -30,6 +31,7 @@ use std::sync::Arc;
 
 use re_agent::resources::ResourceSet;
 use re_agent::session::Session;
+use re_agent::templates::{ApplyOptions, Library, Listing, RecipeReport, apply_recipe};
 use re_agent::verify_diff::{DiffOptions, VerifyDiff, diff};
 use re_agent::{Agent, Holder, Policy, Writer, guard, open_writer};
 use re_app::verify::{self, VerifyOptions, VerifyStage};
@@ -222,6 +224,7 @@ pub(crate) fn register_agent_tools(app: &mut App, agent: &Agent) -> Arc<Resource
     re_agent::compat::register_commands(commands);
     register_verify_diff(commands, agent);
     super::mcp_import::register(commands, agent);
+    register_recipes(commands, &project);
     app.add_verify_stage(Arc::new(super::check::ScanStage));
     // Last, so a tool cannot take an engine command's name.
     let (_tools, problems) = re_agent::luau_tools::register(app.commands_mut(), &project);
@@ -376,8 +379,9 @@ fn verify_diff(app: &mut App, agent: &Agent, args: VerifyDiffArgs) -> Result<Jso
     Ok(json!(out))
 }
 
-/// Registers `verify.diff` (read tier) for `agent`.
-fn register_verify_diff(registry: &mut re_command::CommandRegistry<App>, agent: &Agent) {
+/// Registers `verify.diff` (read tier) for `agent`; `real do` registers it
+/// too, since recipe checks use it.
+pub(crate) fn register_verify_diff(registry: &mut re_command::CommandRegistry<App>, agent: &Agent) {
     let agent = agent.clone();
     registry.register_typed_output::<VerifyDiffArgs, VerifyDiffOutput, _>(
         "verify.diff",
@@ -385,6 +389,123 @@ fn register_verify_diff(registry: &mut re_command::CommandRegistry<App>, agent: 
         Tier::Read,
         false,
         move |app, args, _call| verify_diff(app, &agent, args),
+    );
+}
+
+// ---- templates and recipes (ADR-0046) --------------------------------------
+
+/// Arguments of `template.list` and `recipe.list`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListArgs {}
+
+/// The result of `template.list` and `recipe.list`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListOutput {
+    /// Each template or recipe, by name.
+    pub items: Vec<Listing>,
+}
+
+/// Arguments of `recipe.apply`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecipeApplyArgs {
+    /// The recipe (`recipe.list` lists them).
+    pub recipe: String,
+    /// Its parameters; a missing one takes its default.
+    #[serde(default)]
+    pub args: serde_json::Map<String, Json>,
+}
+
+/// The policy for a recipe's steps: nothing above `edit`, and the agent
+/// policy when an agent applied the recipe.
+struct RecipePolicy<'a> {
+    agent: Option<&'a Policy>,
+}
+
+impl re_command::PolicyCheck for RecipePolicy<'_> {
+    fn check(
+        &self,
+        spec: &re_command::CommandSpec,
+        args: &Json,
+        dry_run: bool,
+    ) -> Result<(), Diagnostic> {
+        // Only recipe.apply itself takes and restores its checkpoint:
+        // apply_recipe refuses `checkpoint.*` as a step.
+        let checkpointing = matches!(
+            spec.name.as_str(),
+            "checkpoint.create" | "checkpoint.restore"
+        );
+        if spec.tier > Tier::Edit && !checkpointing {
+            return Err(Diagnostic::error(
+                re_agent::codes::RECIPE_STEP_REFUSED,
+                format!(
+                    "a recipe may not run `{}` ({} tier)",
+                    spec.name,
+                    spec.tier.as_str()
+                ),
+            ));
+        }
+        match self.agent {
+            Some(p) if !checkpointing => p.check(spec, args, dry_run),
+            _ => Ok(()),
+        }
+    }
+}
+
+fn library() -> Result<Library, Diagnostic> {
+    Library::builtin()
+}
+
+/// Registers `template.list`, `recipe.list` and `recipe.apply`, for
+/// `real mcp` and `real do` (which also need `verify.diff` for the checks).
+pub(crate) fn register_recipes(registry: &mut re_command::CommandRegistry<App>, project: &Path) {
+    registry.register_typed_output::<ListArgs, ListOutput, _>(
+        "template.list",
+        "List the project templates `real new --template` offers, with their parameters and the checks a new project passes.",
+        Tier::Read,
+        true,
+        |_app, ListArgs {}, _call| {
+            Ok(json!({ "items": library()?.template_listings() }))
+        },
+    );
+    registry.register_typed_output::<ListArgs, ListOutput, _>(
+        "recipe.list",
+        "List the generator recipes `recipe.apply` runs: what each makes, its parameters, the commands it runs and what it checks afterwards.",
+        Tier::Read,
+        true,
+        |_app, ListArgs {}, _call| Ok(json!({ "items": library()?.recipe_listings() })),
+    );
+    // The agent policy is read once, as the Luau tools read it.
+    let policy = Policy::load(project).unwrap_or_else(|_| Policy::read_only());
+    registry.register_typed_output::<RecipeApplyArgs, RecipeReport, _>(
+        "recipe.apply",
+        "Apply a generator recipe: run its edit commands with `args`, then its checks (verify stages, read commands, `verify.diff`). All or nothing: a failed step or check restores the checkpoint taken first. A dry run previews each step against the project as it is.",
+        Tier::Edit,
+        false,
+        move |app, args, call| {
+            let lib = library()?;
+            let recipe = lib.recipe(&args.recipe)?;
+            let origin = call.origin().clone();
+            let agent = matches!(origin, Origin::Agent(_)).then_some(&policy);
+            let nested = RecipePolicy { agent };
+            let specs = call.specs().to_vec();
+            let options = ApplyOptions {
+                dry_run: call.dry_run(),
+                // All or nothing: a checkpoint first, restored on failure.
+                atomic: true,
+            };
+            let mut run = |name: &str, args: Json, dry_run: bool| {
+                app.dispatch(name, args, dry_run, &nested, origin.clone())
+            };
+            let report = apply_recipe(recipe, &args.args, &specs, options, &mut run)?;
+            serde_json::to_value(&report).map_err(|e| {
+                Diagnostic::error(
+                    re_agent::codes::RECIPE_STEP_FAILED,
+                    format!("the recipe report could not be encoded: {e}"),
+                )
+            })
+        },
     );
 }
 
@@ -462,5 +583,183 @@ fn finish(result: anyhow::Result<()>) -> ExitCode {
             eprintln!("real mcp: {e:#}");
             ExitCode::from(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use re_command::{AllowAll, CommandOutcome};
+
+    /// A new project from `template`, open for an agent with the policy
+    /// `real agent init` writes, and an agent session.
+    fn agent_project(template: &str, policy: bool) -> (tempfile::TempDir, AgentApp) {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("game");
+        let options = crate::new::NewOptions {
+            name: None,
+            template,
+            set: &[],
+            check: false,
+        };
+        crate::new::create_from(&project, options).unwrap();
+        if policy {
+            std::fs::create_dir_all(project.join(".real")).unwrap();
+            std::fs::write(
+                project.join(".real/agent-policy.toml"),
+                Policy::init_default().to_toml(),
+            )
+            .unwrap();
+        }
+        let opened = open_for_agents(&project).unwrap();
+        opened.agent.start_session(opened.app.world()).unwrap();
+        (dir, opened)
+    }
+
+    fn call(app: &mut App, name: &str, args: Json, dry_run: bool) -> CommandOutcome {
+        app.dispatch(name, args, dry_run, &AllowAll, Origin::Agent(ORIGIN.into()))
+    }
+
+    fn checks_ok(out: &CommandOutcome) {
+        assert!(out.ok, "{:?}", out.diagnostics);
+        let checks = out.data["checks"].as_array().unwrap();
+        assert!(!checks.is_empty());
+        for c in checks {
+            assert_eq!(c["ok"], true, "{c}");
+        }
+    }
+
+    #[test]
+    fn templates_and_recipes_are_listed() {
+        let (_dir, mut opened) = agent_project("native", true);
+        let app = &mut opened.app;
+        let names = |out: CommandOutcome| -> Vec<String> {
+            assert!(out.ok, "{:?}", out.diagnostics);
+            out.data["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(
+            names(call(app, "template.list", json!({}), false)),
+            ["native", "roblox", "terrain"]
+        );
+        assert_eq!(
+            names(call(app, "recipe.list", json!({}), false)),
+            ["falling-box", "spinner", "terrain-shape"]
+        );
+    }
+
+    #[test]
+    fn recipes_apply_and_pass_their_checks() {
+        let (_dir, mut opened) = agent_project("native", true);
+        let app = &mut opened.app;
+        let out = call(
+            app,
+            "recipe.apply",
+            json!({ "recipe": "falling-box", "args": { "label": "Crate", "x": 2.0 } }),
+            false,
+        );
+        checks_ok(&out);
+        assert!(out.data["checkpoint"].is_string());
+        let out = call(
+            app,
+            "recipe.apply",
+            json!({ "recipe": "spinner", "args": { "label": "Fan" } }),
+            false,
+        );
+        checks_ok(&out);
+        assert!(app.project().join("scripts/game/spinner.luau").is_file());
+
+        let (_dir, mut opened) = agent_project("terrain", true);
+        let out = call(
+            &mut opened.app,
+            "recipe.apply",
+            json!({ "recipe": "terrain-shape", "args": { "source": "terrain", "height": 30.0 } }),
+            false,
+        );
+        checks_ok(&out);
+    }
+
+    #[test]
+    fn a_failed_recipe_changes_nothing() {
+        let (_dir, mut opened) = agent_project("native", true);
+        let app = &mut opened.app;
+        let before = app.world().state_hash();
+        let scene = std::fs::read(app.project().join("scenes/main.scene.json")).unwrap();
+        // The native project has no graph source to shape.
+        let out = call(
+            app,
+            "recipe.apply",
+            json!({ "recipe": "terrain-shape", "args": { "source": "terrain" } }),
+            false,
+        );
+        assert!(!out.ok);
+        assert_eq!(out.diagnostics[0].code, re_agent::codes::RECIPE_STEP_FAILED);
+        assert_eq!(app.world().state_hash(), before);
+        assert_eq!(
+            std::fs::read(app.project().join("scenes/main.scene.json")).unwrap(),
+            scene
+        );
+        // A dry run changes nothing either, and runs no checks.
+        let out = call(
+            app,
+            "recipe.apply",
+            json!({ "recipe": "falling-box", "args": { "label": "Crate" } }),
+            true,
+        );
+        assert!(out.ok, "{:?}", out.diagnostics);
+        assert_eq!(app.world().state_hash(), before);
+        assert!(
+            out.data["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|c| c["ok"].is_null())
+        );
+    }
+
+    #[test]
+    fn the_agent_policy_holds_inside_a_recipe() {
+        // No policy file: an agent may only read, even inside a recipe.
+        let (_dir, mut opened) = agent_project("native", false);
+        let app = &mut opened.app;
+        let before = app.world().state_hash();
+        let out = call(
+            app,
+            "recipe.apply",
+            json!({ "recipe": "falling-box", "args": { "label": "Crate" } }),
+            false,
+        );
+        assert!(!out.ok);
+        let message = &out.diagnostics[0].message;
+        assert!(
+            message.contains(&re_agent::codes::TIER_REFUSED.to_string()),
+            "{message}"
+        );
+        assert_eq!(app.world().state_hash(), before);
+    }
+
+    #[test]
+    fn bad_recipe_arguments_are_reported() {
+        let (_dir, mut opened) = agent_project("native", true);
+        let app = &mut opened.app;
+        let code = |out: CommandOutcome| out.diagnostics[0].code;
+        let out = call(
+            app,
+            "recipe.apply",
+            json!({ "recipe": "falling-bx" }),
+            false,
+        );
+        assert_eq!(code(out), re_agent::codes::UNKNOWN_TEMPLATE);
+        let out = call(
+            app,
+            "recipe.apply",
+            json!({ "recipe": "falling-box", "args": { "label": "A", "mass": "heavy" } }),
+            false,
+        );
+        assert_eq!(code(out), re_agent::codes::BAD_PARAM_VALUE);
     }
 }
