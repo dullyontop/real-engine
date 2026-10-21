@@ -209,13 +209,20 @@ fn parent_affine(world: &World, entity: Entity) -> Affine3A {
         .map_or(Affine3A::IDENTITY, |g| g.0)
 }
 
-/// The entity's world pose, with the scale taken from the `Transform`s (each
-/// ancestor's scale times the entity's own) rather than from the matrix: the
-/// matrix's column lengths round differently as the body turns, which would
-/// change its shape's fingerprint and replace the body every few steps.
+/// The entity's world pose. The scale is the product of the `Transform` scales
+/// (see [`world_scale`]) whenever that product is the matrix's scale up to
+/// rounding: the matrix's column lengths round differently as the body turns,
+/// which would change its shape's fingerprint and replace the body every few
+/// steps. Under a non-uniformly scaled parent with a rotation in between, the
+/// product is on the wrong axes, and the matrix's scale is used.
 fn world_pose(world: &World, entity: Entity) -> (Vec3, Quat, Vec3) {
-    let (_, r, t) = world_affine(world, entity).to_scale_rotation_translation();
-    (t, r.normalize(), world_scale(world, entity))
+    let (s, r, t) = world_affine(world, entity).to_scale_rotation_translation();
+    let product = world_scale(world, entity);
+    let close = (s.abs() - product.abs())
+        .abs()
+        .cmple(product.abs() * 1e-4 + Vec3::splat(1e-6))
+        .all();
+    (t, r.normalize(), if close { product } else { s })
 }
 
 /// The product of the `Transform` scales from the root down to `entity`.
@@ -570,6 +577,49 @@ pub fn pull(world: &mut World, sync: &mut PhysicsSync, poses: &[BodyPose]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A rotated child of a stretched parent keeps the shape that is drawn: the
+    /// parent's (4, 1, 1) lies along the child's z after a quarter turn about y.
+    #[test]
+    fn a_rotated_child_of_a_stretched_parent_is_stretched_along_world_x() {
+        let mut world = World::new();
+        let parent = world
+            .ecs
+            .spawn(Transform {
+                scale: Vec3::new(4.0, 1.0, 1.0),
+                ..Default::default()
+            })
+            .id();
+        world.ecs.spawn((
+            Transform {
+                rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                ..Default::default()
+            },
+            Collider::default(),
+            re_scene::ecs::hierarchy::ChildOf(parent),
+        ));
+        world.update();
+        let mut sync = PhysicsSync::default();
+        let (mut cmds, mut diagnostics) = (Vec::new(), Vec::new());
+        push(
+            &mut world,
+            &mut sync,
+            &ShapeLibrary::default(),
+            &mut cmds,
+            &mut diagnostics,
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let [PhysicsCmd::AddBody { desc, .. }] = &cmds[..] else {
+            panic!("{cmds:?}");
+        };
+        let ShapeDesc::Box { half_extents } = desc.shape else {
+            panic!("{desc:?}");
+        };
+        assert!(
+            half_extents.abs_diff_eq(Vec3::new(0.5, 0.5, 2.0), 1e-5),
+            "{half_extents}"
+        );
+    }
 
     /// A turning body keeps its shape: the scale comes from the `Transform`s, not
     /// from the decomposed world matrix, whose column lengths round differently at
