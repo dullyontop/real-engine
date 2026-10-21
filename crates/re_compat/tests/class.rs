@@ -41,15 +41,12 @@ fn builtin_registry_builds_with_the_core_tree() {
         .map(|c| c.name.as_str())
         .collect();
     assert_eq!(names, ["ModuleScript", "LuaSourceContainer", "Instance"]);
-    // Scripts start and modules load (WP11 "runtime"); Source and Enabled
-    // are not built.
-    for c in [
-        "LuaSourceContainer",
-        "BaseScript",
-        "Script",
-        "LocalScript",
-        "ModuleScript",
-    ] {
+    // Scripts start, stop and start again with Enabled (WP11 "runtime",
+    // WP27 "reload"); modules load; Source is not built.
+    for c in ["BaseScript", "Script", "LocalScript"] {
+        assert_eq!(r.class(c).unwrap().status, Status::Implemented, "{c}");
+    }
+    for c in ["LuaSourceContainer", "ModuleScript"] {
         assert_eq!(r.class(c).unwrap().status, Status::Partial, "{c}");
     }
 }

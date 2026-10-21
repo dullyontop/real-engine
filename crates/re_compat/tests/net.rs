@@ -787,8 +787,8 @@ mod net {
             print(Http:UrlEncode("a b&c"))
             print(pcall(Http.JSONEncode, Http, {f = print}))
             print(pcall(Http.GetAsync, Http, "https://example.com"))
-            local ds = game:GetService("DataStoreService")
-            print(pcall(ds.GetDataStore, ds, "x"))
+            local badges = game:GetService("BadgeService")
+            print(pcall(badges.AwardBadge, badges, 1, 2))
             local f = Instance.new("Folder", workspace)
             f.Name = "Temp"
             game:GetService("Debris"):AddItem(f, 0.05)
@@ -831,7 +831,7 @@ mod net {
             "{hits:?}"
         );
         assert_eq!(
-            hits.get("DataStoreService.GetDataStore (RE9002)"),
+            hits.get("BadgeService.AwardBadge (RE9002)"),
             Some(&1),
             "{hits:?}"
         );

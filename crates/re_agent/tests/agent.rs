@@ -594,5 +594,5 @@ fn script_write_is_compile_gated_and_scoped() {
 fn diagnostics_catalogue_is_complete() {
     let problems = re_core::validate_catalog(re_agent::DIAGNOSTICS, re_agent::CODE_RANGE);
     assert!(problems.is_empty(), "{problems:?}");
-    assert_eq!(re_agent::DIAGNOSTICS.len(), 18);
+    assert_eq!(re_agent::DIAGNOSTICS.len(), 24);
 }

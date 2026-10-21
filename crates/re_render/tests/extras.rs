@@ -6,11 +6,13 @@ mod common;
 use common::*;
 use glam::{Mat4, Vec3};
 use re_render::{
-    Ambient, Capture, ColorGrading, Fog, Gpu, Highlight, Image, Renderer, Ribbon, RibbonPoint,
-    SceneExtras, Sky, SpotLight, Sprite, SpriteShape, codes,
+    Ambient, Capture, Fog, Gpu, Highlight, Image, Renderer, Ribbon, RibbonPoint, SceneExtras, Sky,
+    SpotLight, Sprite, SpriteShape, codes,
 };
 use re_types::EntityId;
-use re_types::render::{DrawFlags, MaterialDesc, MaterialHandle, MeshHandle, RenderSnapshot};
+use re_types::render::{
+    ColorGrading, DrawFlags, MaterialDesc, MaterialHandle, MeshHandle, RenderSnapshot,
+};
 
 const W: u32 = 320;
 const H: u32 = 240;
@@ -170,10 +172,6 @@ fn golden_scene_extras() {
             ground: [0.3, 0.28, 0.25],
             sun: Some((Vec3::new(0.3, 1.0, -0.5), [1.0, 0.9, 0.7])),
         }),
-        grading: Some(ColorGrading {
-            saturation: 0.15,
-            ..ColorGrading::default()
-        }),
         spot_lights: vec![SpotLight {
             position: Vec3::new(-1.5, 3.0, 1.5),
             direction: Vec3::new(0.2, -1.0, -0.2).normalize(),
@@ -191,7 +189,12 @@ fn golden_scene_extras() {
             always_on_top: true,
         }],
     };
-    let (image, report) = draw(&gpu, &mut renderer, &s.snapshot, &extras);
+    let mut snapshot = s.snapshot.clone();
+    snapshot.post.grading = Some(ColorGrading {
+        saturation: 0.15,
+        ..ColorGrading::default()
+    });
+    let (image, report) = draw(&gpu, &mut renderer, &snapshot, &extras);
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     let stats = report.stats;
     assert_eq!(stats.spot_lights, 1);
@@ -294,14 +297,12 @@ fn additive_sprites_brighten_and_grading_tints() {
     );
     assert!(b[1] > a[1] + 30 && b[0].abs_diff(a[0]) <= 1, "{a:?} {b:?}");
 
-    let red = SceneExtras {
-        grading: Some(ColorGrading {
-            tint: [1.0, 0.0, 0.0],
-            ..ColorGrading::default()
-        }),
-        ..SceneExtras::default()
-    };
-    let (tinted, _) = draw(&gpu, &mut renderer, &s.snapshot, &red);
+    let mut red = s.snapshot.clone();
+    red.post.grading = Some(ColorGrading {
+        tint: [1.0, 0.0, 0.0],
+        ..ColorGrading::default()
+    });
+    let (tinted, _) = draw(&gpu, &mut renderer, &red, &SceneExtras::default());
     let t = pixel_at(&tinted, &s.snapshot, p);
     assert!(t[0] > 50 && t[1] == 0 && t[2] == 0, "{t:?}");
 }

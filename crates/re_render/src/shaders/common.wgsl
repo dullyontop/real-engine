@@ -44,10 +44,6 @@ struct Frame {
     fog_color: vec4<f32>,
     // x: fog end, y: 1 with fog, z: spot light count
     fog_params: vec4<f32>,
-    // x: brightness, y: contrast, z: saturation, w: 1 with colour correction
-    grading: vec4<f32>,
-    // rgb: tint
-    tint: vec4<f32>,
     // rgb: sky colours, w of zenith: 1 with a sky
     sky_zenith: vec4<f32>,
     sky_horizon: vec4<f32>,
@@ -59,6 +55,10 @@ struct Frame {
     spots: array<SpotLight, 8>,
 };
 
+
+// Scene passes write linear HDR colour. Alpha is coverage: the sky and the
+// clear colour leave 0, geometry writes up to 1, and sun rays read it as the
+// mask of what hides the sky.
 
 // One drawn instance (vertex buffer slot 1).
 struct Instance {

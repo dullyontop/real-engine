@@ -84,3 +84,23 @@ pub const EFFECT_BUDGET: Code = Code::new("RE9351");
 
 /// `TweenService:Create` was given a property whose type cannot be tweened.
 pub const NOT_TWEENABLE: Code = Code::new("RE9352");
+
+/// A data store request was refused: a bad name, key or value, a value too
+/// large, a request from a client, or data access turned off. The message
+/// starts with the vendor's error number (WP27 holds RE9400–RE9449).
+pub const DATA_REQUEST: Code = Code::new("RE9400");
+
+/// A data store request found its request type's queue full and was dropped.
+pub const DATA_QUEUE_FULL: Code = Code::new("RE9401");
+
+/// A data file under `.real/data/` (or `data/seed/`) did not read or write;
+/// an unreadable file is set aside as `<file>.bad` and the store starts empty.
+pub const DATA_FILE: Code = Code::new("RE9402");
+
+/// A memory store request was refused: over the request units or the memory
+/// quota, a value or structure too large, or a bad argument.
+pub const MEMORY_REQUEST: Code = Code::new("RE9403");
+
+/// A compat script changed on disk during play but does not compile; the
+/// running version stays until a save that compiles (ADR-0048 §3).
+pub const RELOAD_COMPILE: Code = Code::new("RE9420");

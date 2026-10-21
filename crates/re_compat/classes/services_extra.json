@@ -1027,8 +1027,8 @@
       "name": "DataStoreService",
       "superclass": "Instance",
       "service": true,
-      "status": "stub-error",
-      "doc": "Saved data. It needs an online service: every call raises RE9002.",
+      "status": "implemented",
+      "doc": "Saved data, kept in .real/data/ under `real run` and in memory, from data/seed/, elsewhere (ADR-0048).",
       "methods": [
         {
           "name": "GetDataStore",
@@ -1041,21 +1041,27 @@
               "name": "scope",
               "type": "string",
               "optional": true
+            },
+            {
+              "name": "options",
+              "type": "Instance",
+              "optional": true
             }
           ],
           "returns": [
-            "Instance"
+            "Instance<DataStore>"
           ],
-          "status": "stub-error",
-          "doc": "Needs an online service; raises RE9002 at once."
+          "status": "implemented",
+          "doc": "The store `name` in `scope` (default `global`).",
+          "note": "The options instance is accepted and not read."
         },
         {
           "name": "GetGlobalDataStore",
           "returns": [
-            "Instance"
+            "Instance<GlobalDataStore>"
           ],
-          "status": "stub-error",
-          "doc": "Needs an online service; raises RE9002 at once."
+          "status": "implemented",
+          "doc": "The place's global store."
         },
         {
           "name": "GetOrderedDataStore",
@@ -1071,10 +1077,10 @@
             }
           ],
           "returns": [
-            "Instance"
+            "Instance<OrderedDataStore>"
           ],
-          "status": "stub-error",
-          "doc": "Needs an online service; raises RE9002 at once."
+          "status": "implemented",
+          "doc": "The ordered store `name` in `scope`."
         },
         {
           "name": "GetRequestBudgetForRequestType",
@@ -1087,17 +1093,35 @@
           "returns": [
             "number"
           ],
-          "status": "stub-error",
-          "doc": "Needs an online service; raises RE9002 at once."
+          "status": "implemented",
+          "doc": "Requests of that type that can run now without queueing."
         },
         {
           "name": "ListDataStoresAsync",
+          "params": [
+            {
+              "name": "prefix",
+              "type": "string",
+              "optional": true
+            },
+            {
+              "name": "pageSize",
+              "type": "int",
+              "optional": true
+            },
+            {
+              "name": "cursor",
+              "type": "string",
+              "optional": true
+            }
+          ],
           "returns": [
-            "Instance"
+            "table"
           ],
           "yields": true,
-          "status": "stub-error",
-          "doc": "Needs an online service; raises RE9002 at once."
+          "status": "partial",
+          "doc": "Pages of the stores that have files.",
+          "note": "Returns a pages table (IsFinished, GetCurrentPage, AdvanceToNextPageAsync), not a DataStoreListingPages instance; the cursor is not read."
         }
       ]
     },
@@ -1105,23 +1129,9 @@
       "name": "MemoryStoreService",
       "superclass": "Instance",
       "service": true,
-      "status": "stub-error",
-      "doc": "Shared server memory. It needs an online service: every call raises RE9002.",
+      "status": "implemented",
+      "doc": "Shared server memory, kept in project files like DataStoreService (ADR-0048).",
       "methods": [
-        {
-          "name": "GetSortedMap",
-          "params": [
-            {
-              "name": "name",
-              "type": "string"
-            }
-          ],
-          "returns": [
-            "Instance"
-          ],
-          "status": "stub-error",
-          "doc": "Needs an online service; raises RE9002 at once."
-        },
         {
           "name": "GetQueue",
           "params": [
@@ -1136,10 +1146,24 @@
             }
           ],
           "returns": [
-            "Instance"
+            "Instance<MemoryStoreQueue>"
           ],
-          "status": "stub-error",
-          "doc": "Needs an online service; raises RE9002 at once."
+          "status": "implemented",
+          "doc": "The queue `name`; read items stay hidden for the timeout (default 30 s)."
+        },
+        {
+          "name": "GetSortedMap",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "Instance<MemoryStoreSortedMap>"
+          ],
+          "status": "implemented",
+          "doc": "The sorted map `name`."
         },
         {
           "name": "GetHashMap",
@@ -1150,10 +1174,10 @@
             }
           ],
           "returns": [
-            "Instance"
+            "Instance<MemoryStoreHashMap>"
           ],
-          "status": "stub-error",
-          "doc": "Needs an online service; raises RE9002 at once."
+          "status": "implemented",
+          "doc": "The hash map `name`."
         }
       ]
     },
@@ -1550,6 +1574,612 @@
           "yields": true,
           "status": "stub-error",
           "doc": "Needs an online service; raises RE9002 at once."
+        }
+      ]
+    },
+    {
+      "name": "GlobalDataStore",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "A data store: one value per key. Kept in .real/data/ under `real run` and in memory, from data/seed/, elsewhere (ADR-0048).",
+      "methods": [
+        {
+          "name": "GetAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "options",
+              "type": "Instance",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "any",
+            "table"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "The key's value and its key info, or nil.",
+          "note": "The key info is a table with Version, CreatedTime, UpdatedTime, GetUserIds and GetMetadata, not a DataStoreKeyInfo instance."
+        },
+        {
+          "name": "SetAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "any"
+            },
+            {
+              "name": "userIds",
+              "type": "table",
+              "optional": true
+            },
+            {
+              "name": "options",
+              "type": "Instance<DataStoreSetOptions>",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "string"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Stores the value; returns the new version."
+        },
+        {
+          "name": "IncrementAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "delta",
+              "type": "int",
+              "optional": true
+            },
+            {
+              "name": "userIds",
+              "type": "table",
+              "optional": true
+            },
+            {
+              "name": "options",
+              "type": "Instance",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "int",
+            "table"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "Adds to an integer value; returns it and its key info.",
+          "note": "The key info is a table, as for GetAsync."
+        },
+        {
+          "name": "UpdateAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "transform",
+              "type": "function"
+            }
+          ],
+          "returns": [
+            "any",
+            "table"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "Calls the transform with the current value and stores what it returns; nil cancels.",
+          "note": "The key info is a table, as for GetAsync."
+        },
+        {
+          "name": "RemoveAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "any",
+            "table"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "Removes the key; returns its old value and key info.",
+          "note": "The key info is a table, as for GetAsync."
+        }
+      ]
+    },
+    {
+      "name": "DataStore",
+      "superclass": "GlobalDataStore",
+      "status": "partial",
+      "doc": "A named data store. Only the current version of each key is kept.",
+      "note": "Earlier versions of a key are not kept, so the version calls see only the current one.",
+      "methods": [
+        {
+          "name": "ListKeysAsync",
+          "params": [
+            {
+              "name": "prefix",
+              "type": "string",
+              "optional": true
+            },
+            {
+              "name": "pageSize",
+              "type": "int",
+              "optional": true
+            },
+            {
+              "name": "cursor",
+              "type": "string",
+              "optional": true
+            },
+            {
+              "name": "excludeDeleted",
+              "type": "bool",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "Pages of the store's keys.",
+          "note": "Returns a pages table; the cursor and excludeDeleted are not read."
+        },
+        {
+          "name": "GetVersionAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "any",
+            "table"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "The value at a version, which must be the current one.",
+          "note": "Earlier versions are not kept, so only the current version is found."
+        },
+        {
+          "name": "ListVersionsAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "sortDirection",
+              "type": "Enum.SortDirection",
+              "optional": true
+            },
+            {
+              "name": "minDate",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "maxDate",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "pageSize",
+              "type": "int",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "Pages of the key's versions: the current one only.",
+          "note": "Earlier versions are not kept; the filters are not read."
+        }
+      ]
+    },
+    {
+      "name": "OrderedDataStore",
+      "superclass": "GlobalDataStore",
+      "status": "implemented",
+      "doc": "A data store of integers, listed in order.",
+      "methods": [
+        {
+          "name": "GetSortedAsync",
+          "params": [
+            {
+              "name": "ascending",
+              "type": "bool"
+            },
+            {
+              "name": "pageSize",
+              "type": "int"
+            },
+            {
+              "name": "minValue",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "maxValue",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "Pages of key and value entries in value order.",
+          "note": "Returns a pages table, not a DataStorePages instance."
+        }
+      ]
+    },
+    {
+      "name": "DataStoreSetOptions",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "Metadata for SetAsync.",
+      "methods": [
+        {
+          "name": "SetMetadata",
+          "params": [
+            {
+              "name": "metadata",
+              "type": "table"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Sets the metadata stored with the next write."
+        },
+        {
+          "name": "GetMetadata",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The metadata set so far."
+        }
+      ]
+    },
+    {
+      "name": "MemoryStoreQueue",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "A queue of items with priorities and expirations. Each call costs request units; over the limit it raises TotalRequestsOverLimit (RE9403).",
+      "methods": [
+        {
+          "name": "AddAsync",
+          "params": [
+            {
+              "name": "value",
+              "type": "any"
+            },
+            {
+              "name": "expiration",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "priority",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Adds an item; higher priorities are read first."
+        },
+        {
+          "name": "ReadAsync",
+          "params": [
+            {
+              "name": "count",
+              "type": "int"
+            },
+            {
+              "name": "allOrNothing",
+              "type": "bool",
+              "optional": true
+            },
+            {
+              "name": "waitTimeout",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table",
+            "string"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "Reads up to count items and hides them; returns them and a read id.",
+          "note": "A waitTimeout of -1 (the default) waits until items arrive; the wait looks again every 2 s at one unit a look and ends empty when units run out."
+        },
+        {
+          "name": "RemoveAsync",
+          "params": [
+            {
+              "name": "id",
+              "type": "string"
+            }
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Removes the items of a read."
+        },
+        {
+          "name": "GetSizeAsync",
+          "params": [
+            {
+              "name": "excludeInvisible",
+              "type": "bool",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "int"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "The number of items."
+        }
+      ]
+    },
+    {
+      "name": "MemoryStoreSortedMap",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "Keyed items ordered by sort key, then key. Each call costs request units; over the limit it raises TotalRequestsOverLimit (RE9403).",
+      "methods": [
+        {
+          "name": "GetAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "any",
+            "any"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "The item's value and sort key, or nil."
+        },
+        {
+          "name": "SetAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "any"
+            },
+            {
+              "name": "expiration",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "sortKey",
+              "type": "any",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Stores an item; true if it is new."
+        },
+        {
+          "name": "UpdateAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "transform",
+              "type": "function"
+            },
+            {
+              "name": "expiration",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "any",
+            "any"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Calls the transform with the value and sort key and stores what it returns; nil cancels."
+        },
+        {
+          "name": "RemoveAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Removes an item."
+        },
+        {
+          "name": "GetRangeAsync",
+          "params": [
+            {
+              "name": "direction",
+              "type": "Enum.SortDirection"
+            },
+            {
+              "name": "count",
+              "type": "int"
+            },
+            {
+              "name": "exclusiveLowerBound",
+              "type": "table",
+              "optional": true
+            },
+            {
+              "name": "exclusiveUpperBound",
+              "type": "table",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "Up to count items in order, as key, value and sortKey tables.",
+          "note": "Sort keys order numbers before strings; that order is our choice."
+        },
+        {
+          "name": "GetSizeAsync",
+          "returns": [
+            "int"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "The number of items."
+        }
+      ]
+    },
+    {
+      "name": "MemoryStoreHashMap",
+      "superclass": "Instance",
+      "status": "implemented",
+      "doc": "Keyed items. Each call costs request units; over the limit it raises TotalRequestsOverLimit (RE9403).",
+      "methods": [
+        {
+          "name": "GetAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "returns": [
+            "any"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "The item's value, or nil."
+        },
+        {
+          "name": "SetAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "any"
+            },
+            {
+              "name": "expiration",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "bool"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Stores an item; true if it is new."
+        },
+        {
+          "name": "UpdateAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "transform",
+              "type": "function"
+            },
+            {
+              "name": "expiration",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "any"
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Calls the transform with the value and stores what it returns; nil cancels."
+        },
+        {
+          "name": "RemoveAsync",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "yields": true,
+          "status": "implemented",
+          "doc": "Removes an item."
+        },
+        {
+          "name": "ListItemsAsync",
+          "params": [
+            {
+              "name": "count",
+              "type": "int"
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "yields": true,
+          "status": "partial",
+          "doc": "Pages of key and value entries.",
+          "note": "Returns a pages table, not a MemoryStoreHashMapPages instance."
         }
       ]
     }

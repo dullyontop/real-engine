@@ -181,6 +181,34 @@ impl Graphics {
                 }
             }
         }
+        for asset in render::referenced_skins(world) {
+            if assets.mesh(&asset).is_some() {
+                continue;
+            }
+            let loaded = match media.skin(&asset) {
+                Ok(l) => l,
+                Err(d) => {
+                    report(media, &asset, d, diagnostics);
+                    continue;
+                }
+            };
+            match self
+                .renderer
+                .upload_skinned_mesh(&loaded.mesh, &loaded.weights)
+            {
+                Ok(h) => assets.insert_mesh(asset.clone(), h),
+                Err(d) => {
+                    report(media, &asset, d, diagnostics);
+                    continue;
+                }
+            }
+            if let Some(material) = loaded.material {
+                match self.create_material(&material) {
+                    Ok(h) => assets.insert_mesh_material(asset.clone(), h),
+                    Err(d) => report(media, &asset, d, diagnostics),
+                }
+            }
+        }
         for asset in &materials {
             if assets.material(asset).is_some() {
                 continue;
@@ -300,14 +328,9 @@ impl Graphics {
     ) -> Result<(), Diagnostic> {
         let (device, queue) = (&self.gpu.device, &self.gpu.queue);
         match view.prepare(&mut self.renderer)? {
-            Some((snapshot, extras, exposure)) => {
-                let before = self.renderer.settings().exposure;
-                self.renderer.settings_mut().exposure = exposure;
-                let drawn = self
-                    .renderer
-                    .render_with(device, queue, target, &snapshot, &extras);
-                self.renderer.settings_mut().exposure = before;
-                drawn?;
+            Some((snapshot, extras)) => {
+                self.renderer
+                    .render_with(device, queue, target, &snapshot, &extras)?;
             }
             None => {
                 self.renderer

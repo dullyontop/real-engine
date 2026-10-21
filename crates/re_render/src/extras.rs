@@ -32,8 +32,6 @@ pub struct SceneExtras {
     pub fog: Option<Fog>,
     /// A sky gradient drawn behind the scene instead of the clear colour.
     pub sky: Option<Sky>,
-    /// Colour correction of the scene (not of the UI).
-    pub grading: Option<ColorGrading>,
     /// Spot lights; past [`MAX_SPOT_LIGHTS`] only the nearest are drawn.
     pub spot_lights: Vec<SpotLight>,
     /// Camera-facing quads (particles).
@@ -82,30 +80,6 @@ pub struct Sky {
     pub ground: [f32; 3],
     /// A sun disc towards this direction (the way to the sun), with its colour.
     pub sun: Option<(Vec3, [f32; 3])>,
-}
-
-/// Colour correction applied to the lit scene, sprites and ribbons.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ColorGrading {
-    /// Added to every channel.
-    pub brightness: f32,
-    /// 0 keeps the contrast; positive values stretch away from mid grey.
-    pub contrast: f32,
-    /// 0 keeps the saturation; -1 is grey.
-    pub saturation: f32,
-    /// Multiplies the result, linear RGB.
-    pub tint: [f32; 3],
-}
-
-impl Default for ColorGrading {
-    fn default() -> Self {
-        ColorGrading {
-            brightness: 0.0,
-            contrast: 0.0,
-            saturation: 0.0,
-            tint: [1.0; 3],
-        }
-    }
 }
 
 /// A cone of light.

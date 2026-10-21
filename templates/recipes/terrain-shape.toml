@@ -1,0 +1,45 @@
+name = "terrain-shape"
+summary = "Reshape a terrain graph (like the `terrain` template's): set the hills' height and roughness, then regenerate it."
+
+[[params]]
+name = "source"
+type = "string"
+default = "terrain"
+doc = "The entity with the terrain's GraphSource."
+
+[[params]]
+name = "height"
+type = "float"
+default = 16.0
+min = 1.0
+max = 64.0
+doc = "The height of the highest hills, in metres."
+
+[[params]]
+name = "roughness"
+type = "float"
+default = 0.018
+min = 0.002
+max = 0.1
+doc = "The noise scale: small values give broad hills, large ones rough ground."
+
+[[steps]]
+command = "graph.set_param"
+args = { source = "{{source}}", node = "height", param = "height", value = "{{height}}" }
+
+[[steps]]
+command = "graph.set_param"
+args = { source = "{{source}}", node = "height", param = "scale", value = "{{roughness}}" }
+
+[[steps]]
+command = "graph.regenerate"
+args = { source = "{{source}}" }
+
+[[checks]]
+command = "query"
+args = { generated = true }
+pointer = "/data/total"
+at_least = 1
+
+[[checks]]
+no_regressions = true

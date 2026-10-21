@@ -1,0 +1,6 @@
+name = "roblox"
+summary = "An empty Roblox-style place ([compat] api = \"roblox\"), the shape `real import` writes. Its files come from the engine's class data."
+generator = "roblox-place"
+
+[[checks]]
+verify = "ok"

@@ -9,9 +9,12 @@
 //!   GPU errors logged as `RE6001` instead of panicking.
 //! * [`Renderer`]: uploads meshes and textures and creates materials behind
 //!   generation-checked handles, draws snapshots (one shadowed sun, up to eight
-//!   point lights, ambient, MSAA where the adapter allows it, debug lines) and
-//!   paints egui ([`UiFrame`]). [`Renderer::render_with`] adds [`SceneExtras`]:
-//!   fog, a sky, colour correction, spot lights, sprites, ribbons and highlights.
+//!   point lights, ambient, MSAA where the adapter allows it, debug lines, world
+//!   quads) into an HDR target and runs the post chain of the snapshot's
+//!   [`PostSettings`](re_types::render::PostSettings) (sun rays, bloom, blur,
+//!   colour grading, tone mapping; ADR-0038), and paints egui ([`UiFrame`]).
+//!   [`Renderer::render_with`] adds [`SceneExtras`]: fog, a sky, spot lights,
+//!   sprites, ribbons and highlights.
 //! * [`Capture`] and [`Image`]: offscreen targets, readback and PNG files.
 //! * [`imgdiff`]: golden-image comparison with a per-channel tolerance and an
 //!   outlier budget.
@@ -40,6 +43,7 @@ pub mod extras;
 mod frame;
 pub mod gpu;
 pub mod imgdiff;
+mod post;
 mod renderer;
 pub mod shader;
 mod slots;
@@ -47,8 +51,8 @@ mod ui;
 
 pub use capture::{Capture, Image, ImageStats};
 pub use extras::{
-    Ambient, ColorGrading, Fog, Highlight, MAX_HIGHLIGHTS, MAX_SPOT_LIGHTS, Ribbon, RibbonPoint,
-    SceneExtras, Sky, SpotLight, Sprite, SpriteShape,
+    Ambient, Fog, Highlight, MAX_HIGHLIGHTS, MAX_SPOT_LIGHTS, Ribbon, RibbonPoint, SceneExtras,
+    Sky, SpotLight, Sprite, SpriteShape,
 };
 pub use frame::MAX_POINT_LIGHTS;
 pub use gpu::{Gpu, GpuErrors, backends_from_env, parse_backends};

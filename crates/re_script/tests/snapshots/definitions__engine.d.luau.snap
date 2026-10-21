@@ -155,6 +155,10 @@ declare physics: {
     move_character: (e: Entity, velocity: vector, jump: boolean?) -> (),
     -- A character's state after the last step.
     character: (e: Entity) -> { position: vector, rotation: Quat, velocity: vector, on_ground: boolean, ground: string, ground_normal: vector, ground_entity: Entity? },
+    -- Sets a vehicle's driver input from the next step until the next call: `throttle` and `steer` -1 to 1 (negative reverses or steers left), `brake` and `handbrake` 0 to 1; missing fields are 0, and a value out of range or not finite is an error.
+    drive: (e: Entity, input: { throttle: number?, steer: number?, brake: number?, handbrake: number? }) -> (),
+    -- A vehicle's state after the last step: forward speed (m/s, negative in reverse), engine rpm, gear (negative in reverse, 0 neutral), the input in effect, and each wheel in wheel order.
+    vehicle: (e: Entity) -> { speed: number, rpm: number, gear: number, throttle: number, steer: number, brake: number, handbrake: number, wheels: { { on_ground: boolean, contact: Entity?, contact_point: vector, suspension_length: number, angular_velocity: number, steer_deg: number } } },
     -- Calls `f` when two bodies start touching (or a body enters a sensor), after each physics step.
     on_contact: (f: (a: Entity, b: Entity, info: { point: vector, normal: vector, sensor: boolean }) -> ()) -> Connection,
     -- Calls `f` when two bodies stop touching (one may already be gone).

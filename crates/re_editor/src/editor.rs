@@ -2,6 +2,7 @@
 //! dispatch.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use re_app::App;
 use re_command::{CommandOutcome, Origin, PolicyCheck};
@@ -9,6 +10,8 @@ use re_core::{Diagnostic, Severity};
 use re_reflect::{Doc, FieldType, Value};
 use serde_json::{Value as Json, json};
 
+use crate::gizmo::{Gizmo, GizmoSettings};
+use crate::layout::{self, PanelId};
 use crate::panels;
 
 /// The most console lines kept; older ones are dropped.
@@ -167,6 +170,22 @@ pub struct Editor {
     pub(crate) status: String,
     pub(crate) viewport_texture: Option<(egui::TextureId, [u32; 2])>,
     pub(crate) viewport_px: Option<[u32; 2]>,
+    pub(crate) gizmo: Gizmo,
+    pub(crate) debug: crate::debugger::DebugPanel,
+    pub(crate) dock: egui_dock::DockState<PanelId>,
+    /// The project whose layout the dock shows, once it has been read.
+    layout_root: Option<PathBuf>,
+    /// The layout as last read or written.
+    layout_saved: String,
+    /// The gizmo settings as last read or written.
+    gizmo_saved: GizmoSettings,
+    /// The dock as it was when a pointer button went down: the dock is saved
+    /// only when a press changed it (or [`Editor::dock_mut`] was called),
+    /// never because the window was resized. egui_dock clamps each split to
+    /// the window's size every frame; saving those clamps would lose the
+    /// layout after a moment in a small window.
+    layout_at_press: Option<String>,
+    layout_dirty: bool,
     log_seq: u64,
 }
 
@@ -204,6 +223,14 @@ impl Editor {
             status: String::new(),
             viewport_texture: None,
             viewport_px: None,
+            gizmo: Gizmo::default(),
+            debug: Default::default(),
+            dock: layout::default_dock(),
+            layout_root: None,
+            layout_saved: String::new(),
+            gizmo_saved: GizmoSettings::default(),
+            layout_at_press: None,
+            layout_dirty: false,
             log_seq: 0,
         }
     }
@@ -277,6 +304,129 @@ impl Editor {
         self.viewport_px
     }
 
+    /// The gizmo's mode, orientation and snapping.
+    pub fn gizmo_settings(&self) -> &GizmoSettings {
+        &self.gizmo.settings
+    }
+
+    /// Sets the gizmo's mode, orientation and snapping (saved with the layout).
+    pub fn set_gizmo_settings(&mut self, settings: GizmoSettings) {
+        self.gizmo.settings = settings;
+    }
+
+    /// Whether a gizmo drag is in progress (nothing is sent until it ends).
+    pub fn gizmo_dragging(&self) -> bool {
+        self.gizmo.drag.is_some()
+    }
+
+    /// Where the gizmo's `handle` on the selected entity was drawn in the
+    /// last frame (a point that picks it, in egui points), if it was shown.
+    pub fn gizmo_handle(&self, app: &App, handle: crate::gizmo::Handle) -> Option<egui::Pos2> {
+        let rect = self.rects.get(Panel::Viewport)?;
+        let id = self.selected.as_deref()?;
+        crate::gizmo::handle_point(app, rect, &self.gizmo.settings, id, handle)
+    }
+
+    /// Shows `debugger` in the debugger panel (`None`: no debugger). The
+    /// panel sends it commands and reads its state; whoever runs the scripts
+    /// attaches their VMs to it.
+    pub fn set_debugger(&mut self, debugger: Option<re_script::debug::Debugger>) {
+        self.debug.debugger = debugger;
+    }
+
+    /// The debugger shown in the debugger panel.
+    pub fn debugger(&self) -> Option<&re_script::debug::Debugger> {
+        self.debug.debugger.as_ref()
+    }
+
+    /// The dock's layout: which panel is where.
+    pub fn dock(&self) -> &egui_dock::DockState<PanelId> {
+        &self.dock
+    }
+
+    /// The dock's layout, to rearrange panels; the change is saved after the
+    /// next frame, as a drag in the dock is. (The first frame reads the
+    /// project's layout, replacing changes made before it.)
+    pub fn dock_mut(&mut self) -> &mut egui_dock::DockState<PanelId> {
+        self.layout_dirty = true;
+        &mut self.dock
+    }
+
+    /// Reads the layout of the project at `root` (`.real/editor/layout.json`),
+    /// or the default layout when it has none. A file that cannot be read is
+    /// reported in the console as `RE8804` and replaced by the default
+    /// layout when the layout next changes. [`Editor::ui`] does this on its
+    /// first frame.
+    pub fn load_layout(&mut self, root: &Path) {
+        let (dock, gizmo) = match layout::load(root) {
+            Ok(Some(found)) => found,
+            Ok(None) => (layout::default_dock(), GizmoSettings::default()),
+            Err(d) => {
+                self.log_diagnostic(&d);
+                (layout::default_dock(), GizmoSettings::default())
+            }
+        };
+        self.dock = dock;
+        self.gizmo.settings = gizmo;
+        self.gizmo.drag = None;
+        self.layout_saved = layout::to_json(&self.dock, &self.gizmo.settings);
+        self.gizmo_saved = self.gizmo.settings;
+        self.layout_at_press = None;
+        self.layout_dirty = false;
+        self.layout_root = Some(root.to_path_buf());
+    }
+
+    /// Writes the layout to the project's `.real/editor/layout.json` if the
+    /// person changed it since it was read or last written: a drag in the
+    /// dock, a gizmo setting, or [`Editor::dock_mut`]. [`Editor::ui`] calls
+    /// it after each frame in which no pointer button is held; the windowed
+    /// editor calls it again on exit.
+    pub fn save_layout(&mut self) {
+        if self.gizmo.settings != self.gizmo_saved {
+            self.layout_dirty = true;
+        }
+        if !std::mem::take(&mut self.layout_dirty) {
+            return;
+        }
+        let Some(root) = &self.layout_root else {
+            return;
+        };
+        let text = layout::to_json(&self.dock, &self.gizmo.settings);
+        self.gizmo_saved = self.gizmo.settings;
+        if text == self.layout_saved {
+            return;
+        }
+        let result = layout::save(root, &text);
+        // On failure the text is kept as if saved, so the warning is shown once.
+        self.layout_saved = text;
+        if let Err(e) = result {
+            self.log(
+                LineKind::Warning,
+                format!("the editor layout could not be saved: {e}"),
+            );
+        }
+    }
+
+    /// Notes dock changes made by a pointer press, after the frame is drawn.
+    fn track_layout(&mut self, ui: &egui::Ui) {
+        let down = ui.input(|i| i.pointer.any_down());
+        match (&self.layout_at_press, down) {
+            (None, true) => {
+                self.layout_at_press = Some(layout::to_json(&self.dock, &self.gizmo.settings));
+            }
+            (Some(before), false) => {
+                if *before != layout::to_json(&self.dock, &self.gizmo.settings) {
+                    self.layout_dirty = true;
+                }
+                self.layout_at_press = None;
+            }
+            _ => {}
+        }
+        if !down {
+            self.save_layout();
+        }
+    }
+
     /// Adds a line to the console.
     pub fn log(&mut self, kind: LineKind, text: impl Into<String>) {
         self.console.push(ConsoleLine {
@@ -305,6 +455,10 @@ impl Editor {
     /// [`EditorSocket::serve_pending`](crate::EditorSocket::serve_pending)
     /// before each frame.
     pub fn ui(&mut self, ui: &mut egui::Ui, app: &mut App, policy: &dyn PolicyCheck) {
+        if self.layout_root.as_deref() != Some(app.project()) {
+            let root = app.project().to_path_buf();
+            self.load_layout(&root);
+        }
         self.pull_log(app);
         self.rects = PanelRects::default();
         self.pending.rects.clear();
@@ -320,6 +474,7 @@ impl Editor {
             self.apply(app, policy, action);
         }
         self.pull_log(app);
+        self.track_layout(ui);
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
@@ -335,6 +490,7 @@ impl Editor {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
+        crate::gizmo::shortcuts(&mut self.gizmo.settings, ctx);
         let redo = [
             KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z),
             KeyboardShortcut::new(Modifiers::COMMAND, Key::Y),

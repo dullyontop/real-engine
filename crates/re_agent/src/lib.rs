@@ -43,6 +43,7 @@ pub mod policy;
 pub mod remote;
 pub mod resources;
 pub mod session;
+pub mod templates;
 pub mod verify_diff;
 
 pub use commands::{Agent, register_commands};
@@ -145,6 +146,36 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::UNKNOWN_COMPAT_NAME,
         title: "Unknown name in the coverage table",
         page: include_str!("../explain/RE8018.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_TEMPLATE,
+        title: "Invalid template or recipe",
+        page: include_str!("../explain/RE8019.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_TEMPLATE,
+        title: "Unknown template, recipe or parameter",
+        page: include_str!("../explain/RE8020.md"),
+    },
+    DiagInfo {
+        code: codes::BAD_PARAM_VALUE,
+        title: "Bad parameter value",
+        page: include_str!("../explain/RE8021.md"),
+    },
+    DiagInfo {
+        code: codes::RECIPE_STEP_REFUSED,
+        title: "Recipe step refused",
+        page: include_str!("../explain/RE8022.md"),
+    },
+    DiagInfo {
+        code: codes::RECIPE_STEP_FAILED,
+        title: "Recipe step failed",
+        page: include_str!("../explain/RE8023.md"),
+    },
+    DiagInfo {
+        code: codes::RECIPE_CHECK_FAILED,
+        title: "Recipe check failed",
+        page: include_str!("../explain/RE8024.md"),
     },
 ];
 

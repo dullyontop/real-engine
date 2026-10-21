@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::{NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
-use crate::value::{Field, Output, PortType};
+use crate::value::{Output, PortType};
 
 /// How [`CombineParams`] combines two fields.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -70,11 +70,7 @@ fn combine(ctx: &NodeCtx, p: &CombineParams) -> Result<Output, String> {
                 CombineOp::Lerp => x + (y - x) * p.t,
             })
             .collect();
-    Ok(Output::Field(Arc::new(Field::new(
-        a.n(),
-        a.0.spacing,
-        values,
-    )?)))
+    Ok(Output::Field(Arc::new(a.like(values)?)))
 }
 
 /// How [`RemapParams`] maps values.
@@ -218,11 +214,7 @@ fn remap_value(p: &RemapParams, v: f32) -> f32 {
 fn remap(ctx: &NodeCtx, p: &RemapParams) -> Result<Output, String> {
     let f = ctx.need_field("field")?;
     let values = f.0.samples.iter().map(|&v| remap_value(p, v)).collect();
-    Ok(Output::Field(Arc::new(Field::new(
-        f.n(),
-        f.0.spacing,
-        values,
-    )?)))
+    Ok(Output::Field(Arc::new(f.like(values)?)))
 }
 
 const FIELD: &[PortType] = &[PortType::Field];
@@ -234,7 +226,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
+            streaming: super::Streaming::Pointwise,
             doc: "Combines two fields value by value (add, sub, mul, min, max or lerp). The result has `a`'s size; `b` is resampled to it.",
             inputs: &[
                 PortDef {
@@ -263,7 +255,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
+            streaming: super::Streaming::Pointwise,
             doc: "Maps every value of a field: clamp, linear, a piecewise-linear curve, or terraces.",
             inputs: &[PortDef {
                 name: "field",

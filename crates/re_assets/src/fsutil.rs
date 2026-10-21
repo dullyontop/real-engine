@@ -3,35 +3,24 @@
 use std::io;
 use std::path::Path;
 
+use re_core::files::ProjectFiles;
 use re_core::{Diagnostic, Location};
 
 use crate::codes;
 
-/// Writes `bytes` to `path` through a temporary file in the same directory and a
-/// rename, so readers never see half a file. Creates missing directories.
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(format!(".{}.tmp", std::process::id()));
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
-}
+pub(crate) use re_core::files::write_atomic;
 
 /// A path with `/` separators, for messages.
 pub(crate) fn slash(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// Reads a file, as [`codes::READ_FAILED`] on error. `shown` is the path used in
-/// the diagnostic (project-relative where possible).
-pub(crate) fn read(path: &Path, shown: &str) -> Result<Vec<u8>, Diagnostic> {
-    std::fs::read(path).map_err(|e| {
-        Diagnostic::error(codes::READ_FAILED, format!("cannot read `{shown}`: {e}"))
-            .at(Location::file(shown))
+/// Reads the source of project file `rel` through `files`, as
+/// [`codes::READ_FAILED`] on error.
+pub(crate) fn read_in(files: &ProjectFiles, rel: &str) -> Result<std::sync::Arc<[u8]>, Diagnostic> {
+    files.read_source(rel).map_err(|e| {
+        Diagnostic::error(codes::READ_FAILED, format!("cannot read `{rel}`: {e}"))
+            .at(Location::file(rel))
     })
 }
 

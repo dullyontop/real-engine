@@ -7,12 +7,14 @@
 //! cargo xtask schemas [--check]  regenerate (or check) the JSON Schemas in schemas/
 //! cargo xtask coverage [--check] regenerate (or check) crates/re_compat/coverage.json
 //! cargo xtask members DIR      every implemented compat member is called from a fixture
+//! cargo xtask clippy-web       the wasm clippy settings are clippy.toml plus the clock bans
 //! cargo xtask check            all of the above except members, with `--check`
 //! ```
 //!
 //! The alias lives in `.cargo/config.toml`. xtask links no engine crate: it reads
 //! `cargo metadata` and `cargo tree` output and the source tree.
 
+mod clippy_web;
 mod coverage;
 mod dupes;
 mod explain;
@@ -39,8 +41,10 @@ commands:
   members DIR        check that every implemented compat member is called from a
                      test fixture, from traces the tests wrote to DIR with
                      REAL_COMPAT_MEMBER_TRACE=DIR
-  check              run check-graph, dupes, explain, schemas --check and
-                     coverage --check
+  clippy-web         check that tools/ci/clippy-web/clippy.toml is clippy.toml plus
+                     the two clock entries (ADR-0049)
+  check              run check-graph, dupes, explain, schemas --check,
+                     coverage --check and clippy-web
 ";
 
 fn main() -> ExitCode {
@@ -60,6 +64,7 @@ fn main() -> ExitCode {
         ["coverage"] => coverage::run(&root, false),
         ["coverage", "--check"] => coverage::run(&root, true),
         ["members", dir] => members::run(&root, Path::new(dir)),
+        ["clippy-web"] => clippy_web::run(&root),
         ["check"] => check_all(&root),
         ["help" | "--help" | "-h"] => {
             print!("{USAGE}");
@@ -81,12 +86,13 @@ fn main() -> ExitCode {
 
 fn check_all(root: &Path) -> Result<()> {
     type Step = (&'static str, fn(&Path) -> Result<()>);
-    let steps: [Step; 5] = [
+    let steps: [Step; 6] = [
         ("check-graph", graph::run),
         ("dupes", dupes::run),
         ("explain", explain::run),
         ("schemas --check", |root| schemas::run(root, true)),
         ("coverage --check", |root| coverage::run(root, true)),
+        ("clippy-web", clippy_web::run),
     ];
     let mut failed = Vec::new();
     for (name, step) in steps {

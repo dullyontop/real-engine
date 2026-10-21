@@ -1,0 +1,79 @@
+name = "spinner"
+summary = "Add a cube that turns around its vertical axis, driven by a small Luau script the recipe writes."
+
+[[params]]
+name = "label"
+type = "string"
+default = "Spinner"
+doc = "The new entity's name."
+
+[[params]]
+name = "script"
+type = "string"
+default = "scripts/game/spinner.luau"
+doc = "Where the script goes (under scripts/game/)."
+
+[[params]]
+name = "speed"
+type = "float"
+default = 1.5
+min = -50.0
+max = 50.0
+doc = "How fast it turns, in radians per second (negative turns the other way)."
+
+[[params]]
+name = "x"
+type = "float"
+default = 0.0
+doc = "Where it stands, east to west (metres)."
+
+[[params]]
+name = "y"
+type = "float"
+default = 1.0
+doc = "How high it stands (metres)."
+
+[[params]]
+name = "z"
+type = "float"
+default = 0.0
+doc = "Where it stands, north to south (metres)."
+
+[[steps]]
+command = "script.write"
+[steps.args]
+path = "{{script}}"
+source = """
+--!strict
+-- Turns this entity around the vertical axis (written by the `spinner`
+-- recipe; change SPEED or the axis freely).
+local SPEED = {{speed}} -- radians per second
+local me = script.entity :: Entity
+local angle = 0.0
+
+time.on_step(function(dt)
+	angle += SPEED * dt
+	me:set("Transform", "rotation", quat.from_axis_angle(vector.create(0, 1, 0), angle))
+end)
+"""
+
+[[steps]]
+command = "entity.spawn"
+[steps.args]
+name = "{{label}}"
+[steps.args.components]
+MeshRef = { asset = "builtin:cube" }
+ScriptRef = { path = "{{script}}" }
+Transform = { translation = ["{{x}}", "{{y}}", "{{z}}"] }
+
+[[checks]]
+command = "query"
+args = { name = "{{label}}" }
+pointer = "/data/total"
+at_least = 1
+
+[[checks]]
+verify_stage = "compile"
+
+[[checks]]
+no_regressions = true

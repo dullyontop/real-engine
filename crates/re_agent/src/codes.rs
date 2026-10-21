@@ -65,3 +65,23 @@ pub const TOOL_OUTPUT: Code = Code::new("RE8017");
 /// `compat.coverage` was asked for a class, enum or library the coverage
 /// table does not have.
 pub const UNKNOWN_COMPAT_NAME: Code = Code::new("RE8018");
+
+/// A template or recipe in the library is malformed (ADR-0046): bad TOML, a
+/// file name that is not its name, a missing render file, an unsafe path.
+pub const INVALID_TEMPLATE: Code = Code::new("RE8019");
+
+/// A template, recipe or parameter name is unknown, or a required parameter
+/// has no value.
+pub const UNKNOWN_TEMPLATE: Code = Code::new("RE8020");
+
+/// A parameter value has the wrong type or is out of its range.
+pub const BAD_PARAM_VALUE: Code = Code::new("RE8021");
+
+/// A recipe step names a command that is unknown or above the edit tier.
+pub const RECIPE_STEP_REFUSED: Code = Code::new("RE8022");
+
+/// A recipe step failed; an atomic apply restored the checkpoint.
+pub const RECIPE_STEP_FAILED: Code = Code::new("RE8023");
+
+/// A recipe or template check did not hold.
+pub const RECIPE_CHECK_FAILED: Code = Code::new("RE8024");

@@ -86,6 +86,10 @@ pub struct HarnessOptions {
     /// Run the server and the client as two worlds with players and
     /// replication ([`crate::net`]); `templates_as_player` is then ignored.
     pub two_worlds: bool,
+    /// Keep the data services' data in the project's `.real/data/` with the
+    /// wall clock, as `real run` does; otherwise each run starts from
+    /// `data/seed/` on the fixed data clock (ADR-0048).
+    pub persist_data: bool,
 }
 
 impl Default for HarnessOptions {
@@ -96,6 +100,7 @@ impl Default for HarnessOptions {
             cpu_budget_ms: None,
             compat: None,
             two_worlds: false,
+            persist_data: false,
         }
     }
 }
@@ -236,6 +241,16 @@ impl Harness {
         };
         let make = |side: Side, mut world: World| -> Result<Ctx, Diagnostic> {
             let vm = CompatVm::with_config(setup, side.kind(), &mut world, &config, &compat)?;
+            if side == Side::Server {
+                let data = crate::services::data::DataSettings::from_config(
+                    &compat.data,
+                    project,
+                    opts.dt,
+                    opts.persist_data,
+                )
+                .map_err(|m| Diagnostic::error(crate::codes::DATA_FILE, m))?;
+                crate::services::data::configure(vm.context().lua(), data);
+            }
             Ok(Ctx {
                 world,
                 services: NoServices::default(),
@@ -363,6 +378,29 @@ impl Harness {
         if let Some((set, _)) = &self.net {
             net::replicate(&mut self.server.world, &mut self.client.world, set);
         }
+    }
+
+    /// Restarts, in both contexts, the scripts whose source is one of
+    /// `paths` and the ones that required such a module, as a running game
+    /// does when files change ([`CompatVm::reload`]). Returns the reports
+    /// (`RE9420`) and the errors raised; the errors are also kept in
+    /// [`Harness::uncaught`].
+    pub fn reload(&mut self, paths: &[String]) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        for side in Side::BOTH {
+            let d = self.ctx(side).with(|vm, h| vm.reload(h, paths));
+            let (reports, errors): (Vec<_>, Vec<_>) = d
+                .into_iter()
+                .partition(|d| d.code == crate::codes::RELOAD_COMPILE);
+            // Both contexts compile the file; one report is enough.
+            for r in reports {
+                if !out.contains(&r) {
+                    out.push(r);
+                }
+            }
+            out.extend(self.keep(side, errors));
+        }
+        out
     }
 
     /// Runs Luau `source` as a new thread in one context (its `script` is

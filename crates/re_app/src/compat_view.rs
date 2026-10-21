@@ -131,8 +131,8 @@ impl CompatView {
     }
 
     /// Frees what was released, uploads what is missing and returns the
-    /// frame to draw: the snapshot, the extras and the exposure. `None`
-    /// before the first frame.
+    /// frame to draw: the snapshot (with the exposure and colour grading in
+    /// its post settings) and the extras. `None` before the first frame.
     ///
     /// # Errors
     ///
@@ -140,7 +140,7 @@ impl CompatView {
     pub fn prepare(
         &mut self,
         r: &mut Renderer,
-    ) -> Result<Option<(RenderSnapshot, SceneExtras, f32)>, Diagnostic> {
+    ) -> Result<Option<(RenderSnapshot, SceneExtras)>, Diagnostic> {
         for h in self.dead_meshes.drain(..) {
             r.release_mesh(h)?;
         }
@@ -190,14 +190,21 @@ impl CompatView {
                 })
             })
             .collect();
-        let snapshot = RenderSnapshot {
+        let mut snapshot = RenderSnapshot {
             camera: f.camera,
             lights: f.lights.clone(),
             items,
             clear: f.clear,
             ..RenderSnapshot::default()
         };
-        Ok(Some((snapshot, extras(f), f.exposure)))
+        snapshot.post.exposure = f.exposure;
+        snapshot.post.grading = f.grading.map(|g| re_types::render::ColorGrading {
+            brightness: g.brightness,
+            contrast: g.contrast,
+            saturation: g.saturation,
+            tint: g.tint,
+        });
+        Ok(Some((snapshot, extras(f))))
     }
 
     /// Frees everything on the GPU and forgets it (a restart, whose new VM
@@ -253,12 +260,6 @@ fn extras(f: &RenderFrame) -> SceneExtras {
             horizon: f.sky.horizon,
             ground: f.sky.ground,
             sun: f.sky.sun,
-        }),
-        grading: f.grading.map(|g| rr::ColorGrading {
-            brightness: g.brightness,
-            contrast: g.contrast,
-            saturation: g.saturation,
-            tint: g.tint,
         }),
         spot_lights: f
             .spot_lights
