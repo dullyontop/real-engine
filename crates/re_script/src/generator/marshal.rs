@@ -29,8 +29,10 @@ const POINT_BYTES: usize = 28;
 
 fn f32s(bytes: &[u8]) -> impl Iterator<Item = f32> + '_ {
     bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| f32::from_le_bytes(*c))
 }
 
 fn bytes_of(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
@@ -250,7 +252,7 @@ fn points(t: &Table) -> Result<Points, String> {
         }
     };
     let mut out = Vec::with_capacity(count);
-    for (i, rec) in bytes.chunks_exact(POINT_BYTES).enumerate() {
+    for (i, rec) in bytes.as_chunks::<POINT_BYTES>().0.iter().enumerate() {
         let id = u32::from_le_bytes([rec[0], rec[1], rec[2], rec[3]]);
         let v: Vec<f32> = f32s(&rec[4..]).collect();
         finite(&v, &format!("points.data record {i}"))?;
@@ -331,8 +333,10 @@ fn mesh(t: &Table, what: &str) -> Result<MeshData, String> {
         ));
     }
     let indices: Vec<u32> = ibytes
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_le_bytes(*c))
         .collect();
     let vertices = (0..n)
         .map(|i| Vertex {
