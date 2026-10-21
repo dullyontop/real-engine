@@ -930,3 +930,75 @@ fn typed_output_commands_carry_an_output_schema() {
     let out = reg.dispatch(&mut s, "typed", json!({}), false, &AllowAll);
     assert_eq!(out.data, json!({ "count": 2 }));
 }
+
+/// A drag's live edits share a coalescing key: they are one undo step, the
+/// log still has each, and a seal, another transaction or an undo ends the
+/// run.
+#[test]
+fn coalescing_transactions_are_one_undo_step() {
+    let (mut w, mut h) = sample();
+    let s0 = scene_json(&mut w);
+    let drag =
+        |v: i64| tx(vec![set("lamp", "PointLight", "intensity", Doc::Int(v))]).coalescing("gizmo");
+    let logged = h.log().len();
+    for v in [100, 200, 300] {
+        h.execute(&mut w, drag(v)).unwrap();
+    }
+    assert_eq!(h.log().len(), logged + 3, "every edit is logged");
+    // Same fields: the step keeps the last value and the first inverse.
+    assert_eq!(h.peek_undo().unwrap().len(), 1);
+    let s3 = scene_json(&mut w);
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s0, "one undo reverts the whole drag");
+    assert!(h.redo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s3);
+
+    // After a redo the step is sealed: a new drag is a new step.
+    h.execute(&mut w, drag(400)).unwrap();
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s3);
+
+    // A seal ends the run.
+    h.execute(&mut w, drag(500)).unwrap();
+    h.seal();
+    h.execute(&mut w, drag(600)).unwrap();
+    assert!(h.undo(&mut w).unwrap());
+    let s5 = scene_json(&mut w);
+    assert!(s5.contains("500"), "{s5}");
+
+    // Another key, or another origin, starts a new step.
+    h.execute(&mut w, drag(700)).unwrap();
+    h.execute(
+        &mut w,
+        tx(vec![set("lamp", "PointLight", "intensity", Doc::Int(800))]).coalescing("other"),
+    )
+    .unwrap();
+    assert!(h.undo(&mut w).unwrap());
+    assert!(scene_json(&mut w).contains("700"));
+    let mut by_user = Transaction::new(
+        "test",
+        Origin::User,
+        vec![set("lamp", "PointLight", "intensity", Doc::Int(900))],
+    );
+    by_user.coalesce = Some("gizmo".into());
+    h.execute(&mut w, by_user).unwrap();
+    assert!(h.undo(&mut w).unwrap());
+    assert!(scene_json(&mut w).contains("700"));
+
+    // Different operations in one run are kept in full and undone together.
+    h.seal();
+    let before = scene_json(&mut w);
+    h.execute(&mut w, drag(1000)).unwrap();
+    h.execute(
+        &mut w,
+        tx(vec![Op::Rename {
+            id: "crate".into(),
+            name: "Box".into(),
+        }])
+        .coalescing("gizmo"),
+    )
+    .unwrap();
+    assert_eq!(h.peek_undo().unwrap().len(), 2);
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), before);
+}
