@@ -663,6 +663,22 @@ impl Editor {
             .collect();
         self.log_seq = history.last_seq();
         for line in lines {
+            // A live gizmo drag logs the same transaction every frame: one
+            // line with a count.
+            if let Some(last) = self.console.last_mut()
+                && last.kind == LineKind::Info
+                && let Some(rest) = last.text.strip_prefix(line.as_str())
+            {
+                let count = match rest.strip_prefix(" ×") {
+                    _ if rest.is_empty() => Some(1),
+                    Some(n) => n.parse::<u64>().ok(),
+                    None => None,
+                };
+                if let Some(n) = count {
+                    last.text = format!("{line} ×{}", n + 1);
+                    continue;
+                }
+            }
             self.log(LineKind::Info, line);
         }
     }

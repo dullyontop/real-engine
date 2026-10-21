@@ -1002,3 +1002,34 @@ fn coalescing_transactions_are_one_undo_step() {
     assert!(h.undo(&mut w).unwrap());
     assert_eq!(scene_json(&mut w), before);
 }
+
+/// A drag whose edits set a growing set of fields (a gizmo drag that starts
+/// changing a second field) stays one operation per field: each keeps its
+/// latest value and its first inverse, and one undo restores every field.
+#[test]
+fn a_coalesced_run_merges_set_fields_by_field() {
+    let (mut w, mut h) = sample();
+    let s0 = scene_json(&mut w);
+    let intensity = |v: i64| set("lamp", "PointLight", "intensity", Doc::Int(v));
+    let range = |v: i64| set("lamp", "PointLight", "range", Doc::Int(v));
+    h.execute(&mut w, tx(vec![intensity(100)]).coalescing("gizmo:lamp:1"))
+        .unwrap();
+    h.execute(
+        &mut w,
+        tx(vec![intensity(200), range(5)]).coalescing("gizmo:lamp:1"),
+    )
+    .unwrap();
+    h.execute(
+        &mut w,
+        tx(vec![intensity(300), range(6)]).coalescing("gizmo:lamp:1"),
+    )
+    .unwrap();
+    assert_eq!(h.undo_key(), Some("gizmo:lamp:1"));
+    assert_eq!(h.peek_undo().unwrap().len(), 2, "{:?}", h.peek_undo());
+    let s3 = scene_json(&mut w);
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s0, "one undo restores both fields");
+    assert_eq!(h.undo_key(), None);
+    assert!(h.redo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s3);
+}
