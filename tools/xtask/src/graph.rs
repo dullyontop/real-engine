@@ -22,6 +22,7 @@ const SUBSYSTEMS: &[&str] = &[
     "re_input",
     "re_assets",
     "re_anim",
+    "re_net",
 ];
 
 /// The contract layer.
@@ -75,6 +76,7 @@ const NOT_SUBSYSTEMS_OR_MLUA: &[&str] = &[
     "re_input",
     "re_assets",
     "re_anim",
+    "re_net",
     "mlua",
 ];
 
