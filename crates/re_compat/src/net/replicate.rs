@@ -424,12 +424,22 @@ impl Conn {
             if old.as_ref() == Some(&cv) {
                 continue;
             }
-            if let Some((c, k, i)) = moves
-                && k == sk
-                && let (Some(Value::Vec3(from)), Some(Value::Vec3(to))) =
+            // A checked client's write that is not a number (NaN, infinite)
+            // or moves an owned part too fast is put back like a teleport.
+            let bad = check.is_some() && !cv.iter().all(finite);
+            let too_fast = || {
+                let Some((c, k, i)) = moves else {
+                    return false;
+                };
+                let (Some(Value::Vec3(from)), Some(Value::Vec3(to))) =
                     (server.registry.get_field(&server.ecs, s, sk, i), cv.get(i))
-                && from.distance(*to) > c.max_speed * c.dt.max(f32::EPSILON)
-            {
+                else {
+                    return false;
+                };
+                let d = from.distance(*to);
+                k == sk && (d.is_nan() || d > c.max_speed * c.dt.max(f32::EPSILON))
+            };
+            if bad || too_fast() {
                 // The client has it there; the next diff puts it back.
                 entry.set_comp(sk, cv);
                 self.recheck.insert(s);
@@ -1438,4 +1448,16 @@ pub(crate) fn take_removed(client: &mut World) -> Vec<Entity> {
         .get_resource_mut::<Replica>()
         .map(|mut r| std::mem::take(&mut r.pending))
         .unwrap_or_default()
+}
+
+/// True when every number in `v` is finite.
+fn finite(v: &Value) -> bool {
+    match v {
+        Value::Float(f) => f.is_finite(),
+        Value::Vec3(v) => v.is_finite(),
+        Value::Quat(q) => q.is_finite(),
+        Value::List(l) | Value::Record(_, l) => l.iter().all(finite),
+        Value::Map(m) => m.values().all(finite),
+        _ => true,
+    }
 }

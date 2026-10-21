@@ -65,9 +65,14 @@ const WAIT_STEP: Duration = Duration::from_millis(1);
 enum NetMsg {
     /// Client to server, once connected: the player's name, if it chose one.
     Join { name: Option<String> },
-    /// Server to client: its `Player`'s stable id, and the frame that binds
-    /// the client's copy of the scene.
-    Welcome { player: String, bind: Frame },
+    /// Server to client: its `Player`'s stable id, the frame that binds
+    /// the client's copy of the scene, and the server frame it joins at (its
+    /// own frames count from there, and in lockstep it waits for that one).
+    Welcome {
+        player: String,
+        bind: Frame,
+        tick: u64,
+    },
     /// Either way, once a frame.
     Frame(Frame),
     /// A piece of a message too large for one transport message (a large
@@ -81,8 +86,15 @@ const PART: usize = re_net::MAX_MESSAGE - 1024;
 /// The largest message a server takes from a client in parts.
 const MAX_CLIENT_JOINED: usize = 4 * re_net::MAX_MESSAGE;
 
-/// The largest message a client takes from its server in parts.
-const MAX_SERVER_JOINED: usize = 256 * re_net::MAX_MESSAGE;
+/// The largest message a client takes from its server in parts: as much as
+/// a server may have unacknowledged (`re_net::Config::max_backlog`).
+const MAX_SERVER_JOINED: usize = 4 * re_net::MAX_MESSAGE;
+
+/// The most frames of a lockstep player that may wait, ahead of the server.
+const MAX_AHEAD: usize = 8;
+
+/// The most unreliable messages of a player that may wait for a frame.
+const MAX_UNRELIABLE_WAITING: usize = 4096;
 
 /// Joins [`NetMsg::Part`]s back into the message they carry.
 #[derive(Default)]
@@ -114,11 +126,18 @@ impl Parts {
 }
 
 /// Sends `msg` reliably to `peer`, in parts when it is too large for one
-/// transport message. True when the endpoint refused it.
-fn send_msg<T: Transport>(end: &mut Endpoint<T>, peer: PeerId, msg: &NetMsg) -> bool {
+/// transport message.
+///
+/// # Errors
+///
+/// Why the endpoint refused it (the connection is gone, or too much is
+/// unacknowledged); the connection must close, since the other end may have
+/// some of the parts.
+fn send_msg<T: Transport>(end: &mut Endpoint<T>, peer: PeerId, msg: &NetMsg) -> Result<(), String> {
     let bytes = msg.encode();
+    let refused = |e: Diagnostic| e.message;
     if bytes.len() <= PART {
-        return end.send(peer, Channel::Reliable, &bytes).is_err();
+        return end.send(peer, Channel::Reliable, &bytes).map_err(refused);
     }
     let count = bytes.len().div_ceil(PART);
     for (i, chunk) in bytes.chunks(PART).enumerate() {
@@ -126,11 +145,10 @@ fn send_msg<T: Transport>(end: &mut Endpoint<T>, peer: PeerId, msg: &NetMsg) -> 
             last: i + 1 == count,
             bytes: chunk.to_vec(),
         };
-        if end.send(peer, Channel::Reliable, &part.encode()).is_err() {
-            return true;
-        }
+        end.send(peer, Channel::Reliable, &part.encode())
+            .map_err(refused)?;
     }
-    false
+    Ok(())
 }
 
 impl NetMsg {
@@ -156,7 +174,7 @@ fn send_frame<T: Transport>(
     mut frame: Frame,
     msgs: Vec<(bool, Vec<u8>)>,
     out: &mut Vec<Diagnostic>,
-) -> bool {
+) -> Result<(), String> {
     for (unreliable, bytes) in msgs {
         if !unreliable {
             frame.msgs.push(bytes);
@@ -241,6 +259,8 @@ pub struct ServerNet<T: Transport> {
     /// Players whose connection the replication step closed, removed from
     /// the game at the next receive (which has the VM).
     lost: Vec<(String, Entity)>,
+    /// Connections the replication step saw close.
+    dropped: Vec<(PeerId, Diagnostic)>,
 }
 
 impl<T: Transport> ServerNet<T> {
@@ -270,6 +290,7 @@ impl<T: Transport> ServerNet<T> {
             tick: 0,
             time: 0.0,
             lost: Vec::new(),
+            dropped: Vec::new(),
         }
     }
 
@@ -293,11 +314,12 @@ impl<T: Transport> ServerNet<T> {
     }
 
     /// What changes while traffic moves: each connection's unacked backlog
-    /// and what arrived from it.
-    fn progress(&self) -> Vec<(usize, usize, usize)> {
+    /// and the parts of a message arriving from it (bounded, so a client
+    /// cannot keep a lockstep wait alive by itself).
+    fn progress(&self) -> Vec<(usize, usize)> {
         self.remotes
             .iter()
-            .map(|(p, r)| (self.end.backlog(*p), r.parts.0.len(), r.frames.len()))
+            .map(|(p, r)| (self.end.backlog(*p), r.parts.0.len()))
             .collect()
     }
 
@@ -446,7 +468,11 @@ impl<T: Transport> ServerNet<T> {
             out.extend(remove_remote(vm, host, &id, p));
         }
         let now = self.now();
-        let mut events = self.end.poll(now);
+        let mut events: Vec<Event> = std::mem::take(&mut self.dropped)
+            .into_iter()
+            .map(|(peer, reason)| Event::Disconnected { peer, reason })
+            .collect();
+        events.extend(self.end.poll(now));
         let mut flushed = false;
         while !events.is_empty() || !flushed {
             if events.is_empty() {
@@ -470,6 +496,7 @@ impl<T: Transport> ServerNet<T> {
                 } => {
                     if let Some(r) = self.remotes.get_mut(&peer)
                         && r.player.is_some()
+                        && r.unreliable.len() < MAX_UNRELIABLE_WAITING
                     {
                         r.unreliable.push(bytes);
                     }
@@ -484,10 +511,24 @@ impl<T: Transport> ServerNet<T> {
                         out.extend(self.join(peer, name, vm, host, players));
                     }
                     Some(Ok(Some(NetMsg::Frame(f)))) => {
+                        let tick = self.tick;
+                        let lockstep = self.lockstep;
+                        let mut ahead = false;
                         if let Some(r) = self.remotes.get_mut(&peer)
                             && r.player.is_some()
+                            // In lockstep a frame from the past is dropped.
+                            && !(lockstep && f.tick < tick)
                         {
-                            r.frames.push_back(f);
+                            ahead = lockstep && r.frames.len() >= MAX_AHEAD;
+                            if !ahead {
+                                r.frames.push_back(f);
+                            }
+                        }
+                        if ahead {
+                            // A lockstep player never runs this far ahead.
+                            self.end
+                                .disconnect(now, peer, "too many frames ahead of the server");
+                            out.extend(self.leave(peer, vm, host));
                         }
                     }
                     None => {}
@@ -577,10 +618,17 @@ impl<T: Transport> ServerNet<T> {
         let welcome = NetMsg::Welcome {
             player: id.clone(),
             bind: self.bind.clone(),
+            tick: self.tick,
         };
         let r = self.remotes.get_mut(&peer).expect("checked above");
         r.player = Some((id, p));
-        let _ = send_msg(&mut self.end, peer, &welcome);
+        let mut diags = diags;
+        if let Err(why) = send_msg(&mut self.end, peer, &welcome) {
+            let why = format!("the server could not send the scene: {why}");
+            self.end.disconnect(self.now(), peer, &why);
+            diags.push(warn(re_net::codes::SEND, why));
+            diags.extend(self.leave(peer, vm, host));
+        }
         diags
     }
 
@@ -674,18 +722,12 @@ impl<T: Transport> ServerNet<T> {
                 f.tick = self.tick;
                 f
             };
-            if send_frame(&mut self.end, peer, frame, msgs, &mut out) {
-                close.push((
-                    peer,
-                    "the connection fell too far behind (4 MiB unacknowledged)".to_string(),
-                ));
+            if let Err(why) = send_frame(&mut self.end, peer, frame, msgs, &mut out) {
                 out.push(warn(
                     re_net::codes::TIMED_OUT,
-                    format!(
-                        "{} was disconnected: 4 MiB of its messages went unacknowledged",
-                        server.name_of(p)
-                    ),
+                    format!("{} was disconnected: {why}", server.name_of(p)),
                 ));
+                close.push((peer, format!("the connection fell too far behind: {why}")));
             }
         }
         server.ecs.increment_change_tick();
@@ -698,10 +740,13 @@ impl<T: Transport> ServerNet<T> {
                 self.lost.push(player);
             }
         }
-        out.extend(self.end.flush(now).into_iter().filter_map(|e| match e {
-            Event::Disconnected { reason, .. } => Some(reason),
-            _ => None,
-        }));
+        for e in self.end.flush(now) {
+            if let Event::Disconnected { peer, reason } = e {
+                // Removed from the game at the next receive (which has the
+                // VM), as a disconnect seen there is.
+                self.dropped.push((peer, reason));
+            }
+        }
         self.tick += 1;
         out
     }
@@ -809,7 +854,7 @@ pub struct ClientNet<T: Transport> {
     name: Option<String>,
     state: ClientState,
     sent_join: bool,
-    welcome: Option<(String, Frame)>,
+    welcome: Option<(String, Frame, u64)>,
     /// Server frames that arrived and were not applied.
     frames: VecDeque<Frame>,
     unreliable: Vec<Vec<u8>>,
@@ -890,8 +935,8 @@ impl<T: Transport> ClientNet<T> {
                 } => self.unreliable.push(bytes),
                 Event::Message { bytes, .. } => match self.parts.take(&bytes, MAX_SERVER_JOINED) {
                     Ok(None) => {}
-                    Ok(Some(NetMsg::Welcome { player, bind })) => {
-                        self.welcome = Some((player, bind));
+                    Ok(Some(NetMsg::Welcome { player, bind, tick })) => {
+                        self.welcome = Some((player, bind, tick));
                     }
                     Ok(Some(NetMsg::Frame(f))) => self.frames.push_back(f),
                     Ok(Some(_)) | Err(()) => {
@@ -903,14 +948,21 @@ impl<T: Transport> ClientNet<T> {
                         ));
                     }
                 },
-                Event::Disconnected { reason, .. } => {
-                    if !matches!(self.state, ClientState::Closed(_)) {
-                        self.state = ClientState::Closed(reason);
-                    }
-                }
+                Event::Disconnected { reason, .. } => self.closed(reason),
             }
         }
-        self.end.flush(now);
+        for e in self.end.flush(now) {
+            if let Event::Disconnected { reason, .. } = e {
+                self.closed(reason);
+            }
+        }
+    }
+
+    /// The session ended for `reason`, unless it already had.
+    fn closed(&mut self, reason: Diagnostic) {
+        if !matches!(self.state, ClientState::Closed(_)) {
+            self.state = ClientState::Closed(reason);
+        }
     }
 
     /// Connects and joins, waiting in real time for the server's welcome,
@@ -958,9 +1010,13 @@ impl<T: Transport> ClientNet<T> {
         if let ClientState::Closed(d) = &self.state {
             return Err(d.clone());
         }
-        let Some((player, bind)) = self.welcome.take() else {
+        let Some((player, bind, tick)) = self.welcome.take() else {
             return Ok(false);
         };
+        // The server's frames from here on, and this client's, are
+        // numbered from the frame it joined at.
+        self.applied = tick.checked_sub(1);
+        self.tick = tick;
         let mut rep = client.ecs.remove_resource::<Replica>().unwrap_or_default();
         rep.apply(client, &bind);
         client.ecs.insert_resource(rep);
@@ -1055,11 +1111,19 @@ impl<T: Transport> ClientNet<T> {
             .get_resource::<NetLink>()
             .map(|l| l.lock().to_server.take_bytes())
             .unwrap_or_default();
-        send_frame(&mut self.end, PeerId(0), frame, msgs, &mut out);
         let now = self.now();
+        if let Err(why) = send_frame(&mut self.end, PeerId(0), frame, msgs, &mut out) {
+            // The server may have part of it; the session cannot go on.
+            self.end
+                .disconnect(now, PeerId(0), "the client could not send its frame");
+            self.closed(Diagnostic::error(
+                re_net::codes::SEND,
+                format!("this client could not send its frame to the server: {why}"),
+            ));
+        }
         for e in self.end.flush(now) {
             if let Event::Disconnected { reason, .. } = e {
-                self.state = ClientState::Closed(reason);
+                self.closed(reason);
             }
         }
         out
@@ -1110,7 +1174,7 @@ mod part_tests {
             msgs: vec![vec![7; 900 * 1024], vec![9; 900 * 1024]],
             ..Frame::default()
         };
-        assert!(!send_msg(&mut server, peer, &NetMsg::Frame(frame)));
+        send_msg(&mut server, peer, &NetMsg::Frame(frame)).unwrap();
         let mut parts = Parts::default();
         let mut got = None;
         let mut pieces = 0;

@@ -159,6 +159,9 @@ impl Names {
 /// How many names one side may number on a connection.
 pub const MAX_NAMES: usize = 1 << 16;
 
+/// The longest name kept in a [`NameTable`].
+pub const MAX_NAME_LEN: usize = 1024;
+
 /// The names the other side numbered, in order.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NameTable(Vec<String>);
@@ -166,9 +169,17 @@ pub(crate) struct NameTable(Vec<String>);
 impl NameTable {
     /// Adds the names a frame introduces, up to [`MAX_NAMES`] in all; past
     /// that the rest are dropped, and what refers to them is not understood.
+    /// A name longer than [`MAX_NAME_LEN`] bytes keeps its number but is
+    /// stored empty (no component, field or key is that long).
     pub(crate) fn extend(&mut self, names: &[String]) {
         let room = MAX_NAMES.saturating_sub(self.0.len());
-        self.0.extend(names.iter().take(room).cloned());
+        self.0.extend(names.iter().take(room).map(|n| {
+            if n.len() > MAX_NAME_LEN {
+                String::new()
+            } else {
+                n.clone()
+            }
+        }));
     }
 
     /// The name with number `id`.

@@ -76,6 +76,13 @@ fn check(exe: &Path, project: &Path, config: &AppConfig, file: &str) -> Result<J
         .state_hash;
 
     let port = free_port()?;
+    // The server writes to files, not pipes: nobody reads a pipe while the
+    // client runs, and a full one would stop the server mid-frame.
+    let base = std::env::temp_dir().join(format!("real-verify-net-{}-{port}", std::process::id()));
+    let (out_path, err_path) = (base.with_extension("json"), base.with_extension("err"));
+    let create = |p: &Path| {
+        std::fs::File::create(p).map_err(|e| differs(format!("cannot write {}: {e}", p.display())))
+    };
     let mut server = Command::new(exe)
         .arg("--project")
         .arg(project)
@@ -88,8 +95,9 @@ fn check(exe: &Path, project: &Path, config: &AppConfig, file: &str) -> Result<J
             "--json",
         ])
         .args(["--port", &port.to_string(), "--frames", &frames.to_string()])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(create(&out_path)?)
+        .stderr(create(&err_path)?)
+        .stdin(Stdio::null())
         .spawn()
         .map_err(|e| differs(format!("cannot start the server ({}): {e}", exe.display())))?;
     let client = Command::new(exe)
@@ -107,14 +115,18 @@ fn check(exe: &Path, project: &Path, config: &AppConfig, file: &str) -> Result<J
             return Err(differs(format!("cannot start the client: {e}")));
         }
     };
-    let server = server
-        .wait_with_output()
+    server
+        .wait()
         .map_err(|e| differs(format!("the server did not finish: {e}")))?;
+    let read = |p: &Path| std::fs::read(p).unwrap_or_default();
+    let (server_out, server_err) = (read(&out_path), read(&err_path));
+    let _ = std::fs::remove_file(&out_path);
+    let _ = std::fs::remove_file(&err_path);
     let report = |out: &[u8]| serde_json::from_slice::<Json>(out).unwrap_or(Json::Null);
-    let (s, c) = (report(&server.stdout), report(&client.stdout));
+    let (s, c) = (report(&server_out), report(&client.stdout));
     let Some(remote) = s["state_hash"].as_str().map(str::to_string) else {
         let mut d = differs("the networked server printed no report");
-        for (who, out) in [("server", &server.stderr), ("client", &client.stderr)] {
+        for (who, out) in [("server", &server_err), ("client", &client.stderr)] {
             let text = String::from_utf8_lossy(out);
             if !text.trim().is_empty() {
                 d = d.with_related(differs(format!("{who}: {}", text.trim())));

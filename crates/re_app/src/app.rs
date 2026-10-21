@@ -1239,6 +1239,11 @@ impl App {
         };
         self.snapshot = render::build(shown, &inputs);
         self.hud = hud::collect(shown);
+        // A network client sends its frame once its world is propagated, as
+        // the in-process pass reads the client world after the Sync phase:
+        // the compat simulation moves welded parts without change detection,
+        // and the propagation is what marks them moved.
+        self.net_send_client();
         if self.compat.is_some() && self.graphics.is_some() {
             self.compat_render(self.view_size, self.view_ppp, 1, true);
         }
@@ -2152,9 +2157,8 @@ impl App {
 
     /// A server's replication to its network players, after the
     /// in-process one.
-    fn net_replicate(&mut self) {
+    fn net_replicate(&mut self, dt: f64) {
         if let Some(crate::net::NetPlay::Server(s)) = &mut self.net {
-            let dt: f64 = self.clock.dt_secs().into();
             let diags = s.replicate(&mut self.world, dt);
             self.report_script_errors(diags);
         }
@@ -2456,7 +2460,9 @@ impl App {
             c.replicate(&mut self.world);
         }
         if role.is_some() {
-            self.net_replicate();
+            // The simulated time this frame ran, for the server's limits.
+            let dt = f64::from(steps.max(1)) * f64::from(self.clock.dt_secs());
+            self.net_replicate(dt);
             self.net_receive_client();
         }
         let step_dt: f64 = self.clock.dt_secs().into();
@@ -2472,9 +2478,6 @@ impl App {
             }
             d
         });
-        if role.is_some() {
-            self.net_send_client();
-        }
         let sounds = self
             .compat
             .as_ref()
