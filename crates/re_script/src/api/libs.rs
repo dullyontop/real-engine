@@ -74,15 +74,19 @@ pub(crate) fn all(lua: &Lua, kind: ContextKind) -> Result<Vec<(&'static str, Tab
             super::proc::lib,
         ),
     ];
-    let stream: Builder = match kind {
-        ContextKind::Tools => |lua, lib| super::stream::lib(lua, lib, true),
-        _ => |lua, lib| super::stream::lib(lua, lib, false),
+    // Only the game and tools contexts run the phases its callbacks fire in.
+    let stream: Option<Builder> = match kind {
+        ContextKind::Tools => Some(|lua, lib| super::stream::lib(lua, lib, true)),
+        ContextKind::Game => Some(|lua, lib| super::stream::lib(lua, lib, false)),
+        _ => None,
     };
-    libs.push((
-        "stream",
-        "World streaming: the loaded cells and their load and unload events.",
-        stream,
-    ));
+    if let Some(stream) = stream {
+        libs.push((
+            "stream",
+            "World streaming: the loaded cells and their load and unload events.",
+            stream,
+        ));
+    }
     if kind == ContextKind::Tools {
         libs.push((
             "command",

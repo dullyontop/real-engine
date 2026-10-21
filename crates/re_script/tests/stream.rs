@@ -131,6 +131,7 @@ time.on_step(function() print(`step {#stream.cells()}`) end)
         r#"stream.load("c/0_0")"#,
     )
     .unwrap_err();
+    assert_eq!(game[0].code.to_string(), "RE9001", "{game:?}");
     assert!(game[0].message.contains("stream.load"), "{game:?}");
     exec(
         &mut rt,
@@ -153,6 +154,24 @@ time.on_step(function() print(`step {#stream.cells()}`) end)
     )
     .unwrap_err();
     assert!(bad[0].message.contains("not a cell key"), "{bad:?}");
+    // The tables scripts get are read-only, nested ones too.
+    let mut s = STATE.lock().unwrap();
+    s.loaded = vec![cell(2, 3)];
+    drop(s);
+    for src in [
+        r#"stream.cells()[1].coord[1] = 9"#,
+        r#"stream.cells()[1].sources[1] = "x""#,
+        r#"stream.cells()[1].key = "x""#,
+    ] {
+        exec(
+            &mut rt,
+            &mut World::new(),
+            &mut Services::default(),
+            ContextKind::Game,
+            src,
+        )
+        .unwrap_err();
+    }
 }
 
 #[test]

@@ -3,7 +3,8 @@
 //! `stream.on_loaded` in `PreSimulation`, before `time.on_step`, each list in
 //! key order. `stream.load` and `stream.release` exist in the `tools` context
 //! only. A host without streaming ([`ScriptHost::stream`] is `None`) has no
-//! cells and fires nothing.
+//! cells and fires nothing. A script that starts after cells have loaded gets
+//! no `on_loaded` for them, so it reads `stream.cells()` when it starts.
 //!
 //! [`ScriptHost::stream`]: crate::ScriptHost::stream
 
@@ -21,14 +22,15 @@ const CELL: &str = "{ key: string, coord: { number }, min: vector, max: vector, 
 /// `cell` as the table scripts get: read-only.
 fn cell_table(lua: &Lua, cell: &StreamCell) -> Result<Table> {
     let t = lua.create_table()?;
+    let coord = lua.create_sequence_from(cell.coord)?;
+    coord.set_readonly(true);
+    let sources = lua.create_sequence_from(cell.sources.iter().map(String::as_str))?;
+    sources.set_readonly(true);
     t.raw_set("key", cell.key.as_str())?;
-    t.raw_set("coord", lua.create_sequence_from(cell.coord)?)?;
+    t.raw_set("coord", coord)?;
     t.raw_set("min", V3(cell.min))?;
     t.raw_set("max", V3(cell.max))?;
-    t.raw_set(
-        "sources",
-        lua.create_sequence_from(cell.sources.iter().map(String::as_str))?,
-    )?;
+    t.raw_set("sources", sources)?;
     t.raw_set("version", cell.version.as_str())?;
     t.set_readonly(true);
     Ok(t)
@@ -40,7 +42,7 @@ pub(crate) fn lib(lua: &Lua, lib: &mut Lib, tools: bool) -> Result<()> {
         lua,
         "on_loaded",
         &format!("(f: (cell: {CELL}) -> ()) -> Connection"),
-        "Calls `f` for each cell that loads, before `time.on_step`, in key order.",
+        "Calls `f` for each cell that loads, before `time.on_step`, in key order. Cells loaded before the script started fire nothing; read `stream.cells()` at start.",
         |lua, f: Function| scheduler::connect(lua, Signal::StreamLoaded, f),
     )?;
     lib.func(

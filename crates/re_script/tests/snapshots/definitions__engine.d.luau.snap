@@ -219,7 +219,7 @@ declare proc: {
 
 -- World streaming: the loaded cells and their load and unload events.
 declare stream: {
-    -- Calls `f` for each cell that loads, before `time.on_step`, in key order.
+    -- Calls `f` for each cell that loads, before `time.on_step`, in key order. Cells loaded before the script started fire nothing; read `stream.cells()` at start.
     on_loaded: (f: (cell: { key: string, coord: { number }, min: vector, max: vector, sources: { string }, version: string }) -> ()) -> Connection,
     -- Calls `f` for each cell that unloads, before the loads of the same step, in key order.
     on_unloaded: (f: (cell: { key: string, coord: { number }, min: vector, max: vector, sources: { string }, version: string }) -> ()) -> Connection,
