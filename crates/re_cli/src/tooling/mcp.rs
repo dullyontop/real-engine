@@ -39,6 +39,7 @@ use re_app::{App, AppConfig};
 use re_command::{EngineHandle, History, Origin, Tier, Transaction, channel};
 use re_core::{Diagnostic, Location};
 use re_mcp::McpOptions;
+use re_mcp::record::Recorder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
@@ -52,6 +53,10 @@ pub struct McpArgs {
     /// or is generated, and is written with the URL to .real/mcp-http.json.
     #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = re_mcp::http::DEFAULT_ADDR)]
     pub http: Option<String>,
+    /// Write each tool call to FILE as one JSON line (time, tool,
+    /// arguments, outcome code, duration), as `real agent eval` does.
+    #[arg(long, value_name = "FILE")]
+    pub record: Option<std::path::PathBuf>,
 }
 
 /// Where `real mcp --http` writes its URL and token (local state).
@@ -278,6 +283,15 @@ fn verify_options(boot_frames: Option<u64>) -> VerifyOptions {
         options.warmup_frames = options.warmup_frames.min(options.boot_frames - 1);
     }
     options
+}
+
+/// Runs verify with every stage the agent app has, as `verify.diff` does,
+/// and returns the report (`real agent eval` scores runs with it).
+pub(crate) fn verify_json(app: &mut App) -> Result<Json, Diagnostic> {
+    let options = verify_options(None);
+    let extra = app.verify_stages();
+    let stages: Vec<&dyn VerifyStage> = extra.iter().map(|s| &**s as &dyn VerifyStage).collect();
+    report_json(&verify::run(app, &options, &stages))
 }
 
 fn report_json(report: &re_app::VerifyReport) -> Result<Json, Diagnostic> {
@@ -519,6 +533,20 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Ok(p) => p,
         Err(d) => return Ok(fail(&d)),
     };
+    let recorder = match args.record.as_deref().map(Recorder::create).transpose() {
+        Ok(r) => r.map(Arc::new),
+        Err(e) => {
+            let file = args.record.as_deref().unwrap_or(Path::new("")).display();
+            return Ok(fail(&Diagnostic::error(
+                re_agent::codes::EVAL_RUN_FAILED,
+                format!("cannot write the transcript {file}: {e}"),
+            )));
+        }
+    };
+    let with_recorder = |options: McpOptions| match &recorder {
+        Some(r) => options.with_recorder(Arc::clone(r)),
+        None => options,
+    };
     let origin = Origin::Agent(ORIGIN.to_string());
     let lock = match open_writer(project, Holder::headless("real mcp")) {
         Ok(Writer::Local(lock)) => lock,
@@ -529,7 +557,7 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
                 Err(d) => return Ok(fail(&d)),
             };
             let handle = guard::guarded(handle, Arc::new(policy), origin);
-            let options = McpOptions::new(project).with_resources(resources());
+            let options = with_recorder(McpOptions::new(project).with_resources(resources()));
             return Ok(finish(transport.serve(handle, options)));
         }
         Err(d) => return Ok(fail(&d)),
@@ -543,7 +571,7 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Ok(x) => x,
         Err(d) => return Ok(fail(&d)),
     };
-    let options = McpOptions::new(project).with_resources(resources);
+    let options = with_recorder(McpOptions::new(project).with_resources(resources));
     match agent.start_session(app.world()) {
         Ok(id) => eprintln!(
             "real mcp: agent session {id} (`real agent rollback {id}` returns to its start)"
