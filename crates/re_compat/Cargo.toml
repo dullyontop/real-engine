@@ -27,6 +27,7 @@ mlua.workspace = true
 glam.workspace = true
 indexmap.workspace = true
 serde.workspace = true
+postcard.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 toml.workspace = true
@@ -39,6 +40,8 @@ re_noise.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# WP30: the several-clients test sends frames through re_net endpoints.
+re_net.workspace = true
 # Replays of raw input drive the character tests (WP14).
 re_input.workspace = true
 # The sample runner (tests/samples.rs) imports each sample and boots and
