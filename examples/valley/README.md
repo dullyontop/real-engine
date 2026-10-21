@@ -3,10 +3,15 @@
 The M3 example (`docs/M3_PLAN.md`, WP28): a procedural valley to walk and
 drive through. CI checks it with `verify-valley`.
 
-You start on the valley floor next to a car. Walk with WASD (or the left
-stick), look with the mouse (or the right stick), jump with Space. Press E
-next to the car to get in: W and S are throttle and brake (S reverses once the
-car has stopped), A and D steer, Space is the hand brake. E again gets you out.
+The valley is a streamed world (ADR-0042): 16 km square, generated cell by
+cell (256 m cells) around the hero as you go, with the `[stream]` defaults.
+You start on the valley floor next to a car; the hero and the car wait until
+the ground under them has loaded.
+
+Walk with WASD (or the left stick), look with the mouse (or the right stick),
+jump with Space. Press E next to the car to get in: W and S are throttle and
+brake (against the way the car rolls they brake first, then drive), A and D
+steer, Space is the hand brake. E again gets you out.
 
 ```sh
 real run --project examples/valley
@@ -17,11 +22,14 @@ real verify --project examples/valley
 
 - `graphs/valley.graph.json`: the terrain, as a ProcGraph. Broad fBm hills
   plus inverted ridged noise, whose crest lines become the valley floors; a
-  curve flattens the floor and steepens the slopes. Trees are scattered on
-  gentle ground and rocks on steeper ground. Every node streams (ADR-0042),
-  so the same graph runs as a streamed world.
-- `scenes/main.scene.json`: the valley source, the hero, the car, the camera
-  and the sun.
+  curve flattens the floor and steepens the slopes. Trees grow on the lower
+  slopes, leaving the floor open to drive along, and rocks lie on steeper
+  ground. Every node streams.
+- `scenes/main.scene.json`: the valley source (`Streamed`, bounds 8000 m,
+  inside the ±8 km precision limit), the hero and the car (each a `StreamFocus`,
+  so the ground under a parked car stays loaded while the hero walks away),
+  the camera and the sun. The car is kinematic until the ground under it
+  loads; then the player script makes it a dynamic `Vehicle`.
 - `models/walker.glb`: the hero, a skinned figure (skin `Walker`, eleven
   joints) with the looping clips `idle` and `walk`. `tools/make_walker.py`
   writes it (standard-library Python, the same bytes on every run); run it
@@ -31,19 +39,19 @@ real verify --project examples/valley
 - `scripts/game/car.luau`: the car's driver input through `physics.drive`.
 - `scripts/game/camera.luau`: the orbit camera, on the hero or the car.
 - `scripts/game/game.luau`: the HUD line.
-- `tests/replays/`: `walk` (walk, strafe, turn the camera, jump) and `drive`
-  (walk to the car, get in, drive along the valley, brake and reverse), each
-  run twice by `real verify` with the same `state_hash`, with goldens for
-  Vulkan (lavapipe) and GL.
+- `tests/replays/`: `walk` (walk, strafe, turn the camera, jump), `drive`
+  (walk to the car, get in, drive along the valley, brake and reverse) and
+  `cross` (turn round and walk 70 s west along the valley floor, from the
+  cell border at x = 0 across the one at x = -256 while cells load ahead), each run twice
+  by `real verify` with the same `state_hash`, with goldens for Vulkan
+  (lavapipe) and GL. `cross`'s stick inputs were recorded from a run that
+  steered towards the low ground.
 
 Everything here is made by the engine's generators or by the script in
 `tools/`; there are no third-party assets.
 
 ## Not yet
 
-- The valley is a fixed 512 m square. A follow-up makes the source `Streamed`
-  with a `[stream]` section and adds a long walk across cell borders, once
-  the app runs the streaming manager (WP23).
 - Post-processing is off (the defaults) until native projects can set it
   (WP20); shadows use the renderer's defaults.
 - Erosion, roads, an animation graph and audio buses come as WP23, WP24, WP21

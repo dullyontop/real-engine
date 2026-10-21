@@ -39,10 +39,6 @@
       "id": "hero",
       "name": "Hero",
       "components": {
-        "CharacterController": {
-          "height": 1.8,
-          "radius": 0.35
-        },
         "ScriptRef": {
           "path": "scripts/game/player.luau"
         },
@@ -52,7 +48,8 @@
             5.0,
             18.0
           ]
-        }
+        },
+        "StreamFocus": {}
       }
     },
     {
@@ -91,7 +88,7 @@
           ]
         },
         "RigidBody": {
-          "kind": "Dynamic",
+          "kind": "Kinematic",
           "mass": 1400.0,
           "center_of_mass_offset": [
             0.0,
@@ -99,9 +96,7 @@
             0.0
           ]
         },
-        "Vehicle": {
-          "max_torque": 600.0
-        },
+        "StreamFocus": {},
         "ScriptRef": {
           "path": "scripts/game/car.luau"
         },
@@ -357,7 +352,10 @@
           "generator": "graph",
           "seed": 7
         },
-        "Transform": {}
+        "Transform": {},
+        "Streamed": {
+          "bounds": 8000.0
+        }
       }
     },
     {

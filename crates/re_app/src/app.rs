@@ -156,7 +156,7 @@ pub struct App {
     compat_config: Option<re_compat::CompatConfig>,
     compat: Option<crate::compat::CompatPlay>,
     compat_failed: bool,
-    /// Whether the compat data services keep their data in `.real/data/`
+    /// Whether the compat data services keep their data in the run's data folder
     /// ([`App::persist_data`]).
     persist_data: bool,
     /// A compat game's 3D view and UI on the renderer.
@@ -330,7 +330,7 @@ impl App {
             compat: None,
             compat_failed: false,
             persist_data: false,
-            compat_view: Default::default(),
+            compat_view: crate::compat_view::CompatView::new(&config.render),
             view_size: [config.render.width, config.render.height],
             view_ppp: 1.0,
             script_output: Vec::new(),
@@ -673,6 +673,8 @@ impl App {
             skins: &self.skin_sync,
             alpha: self.alpha,
             clear: self.config.render.clear,
+            post: self.config.render.post,
+            shadows: self.config.render.shadows,
         };
         self.snapshot = render::build(&mut self.world, &inputs);
         self.hud = hud::collect(&mut self.world);
@@ -749,8 +751,9 @@ impl App {
     }
 
     /// Makes a compat game's `DataStoreService` and `MemoryStoreService`
-    /// keep their data in the project's `.real/data/` with the wall clock, as
-    /// `real run` does (ADR-0048). Without it, each run starts from
+    /// keep their data in the run's data folder (`.real/data/` on desktop,
+    /// IndexedDB in a browser) with the wall clock, as `real run` does
+    /// (ADR-0048). Without it, each run starts from
     /// `data/seed/` on a fixed clock so it repeats. Call it before the first
     /// frame.
     pub fn persist_data(&mut self) {
@@ -1005,6 +1008,8 @@ impl App {
                 skins: &self.skin_sync,
                 alpha: self.alpha,
                 clear: self.config.render.clear,
+                post: self.config.render.post,
+                shadows: self.config.render.shadows,
             };
             self.snapshot = render::build(&mut self.world, &inputs);
             self.hud = hud::collect(&mut self.world);
@@ -1219,6 +1224,8 @@ impl App {
             skins: &self.skin_sync,
             alpha: self.alpha,
             clear: self.config.render.clear,
+            post: self.config.render.post,
+            shadows: self.config.render.shadows,
         };
         // A compat game shows the local player's world.
         let shown = match &mut self.compat {
@@ -1780,6 +1787,15 @@ impl App {
                 re_assets::AssetChange::Renamed { from, to } => vec![from.clone(), to.clone()],
             })
             .collect();
+        if paths.iter().any(|p| procedural::is_generator_script(p)) {
+            let declared = procedural::declare_generators(
+                &mut self.world,
+                &self.files,
+                self.config.proc.limits(),
+            );
+            self.diagnostics.extend(declared.iter().cloned());
+            problems.extend(declared);
+        }
         for p in paths.iter().filter(|p| p.ends_with(".heightfield")) {
             procedural::heightfield_changed(&mut self.world, p);
         }
@@ -2361,7 +2377,9 @@ impl App {
                 // The new client VM numbers its meshes from the start.
                 match &mut self.graphics {
                     Some(g) => self.compat_view.release_all(g.renderer_mut()),
-                    None => self.compat_view = Default::default(),
+                    None => {
+                        self.compat_view = crate::compat_view::CompatView::new(&self.config.render)
+                    }
                 }
                 if self.compat_config.is_some() {
                     // A cursor the old scripts held or hid is let go.
@@ -2447,11 +2465,12 @@ fn load_world(
     })?;
     let mut world = content_world(config).map_err(|e| fail(e.message.clone()))?;
     procedural::install(&mut world, files);
+    let mut problems = procedural::declare_generators(&mut world, files, config.proc.limits());
     world.load(&doc).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not load")).with_related(e.to_diagnostic())
     })?;
     world.propagate_all();
-    let problems = procedural::load_graphs(&mut world, files, None);
+    problems.extend(procedural::load_graphs(&mut world, files, None));
     Ok((world, problems))
 }
 

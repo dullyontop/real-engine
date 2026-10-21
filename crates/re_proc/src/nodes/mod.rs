@@ -29,7 +29,7 @@ use crate::value::{Field, MeshValue, Output, Points, PortType};
 pub use fragment::{mesh_item, sink_fragment};
 
 /// An input port of a node kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PortDef {
     /// The port's name.
     pub name: &'static str,
@@ -147,8 +147,15 @@ pub struct Migration {
     pub params: fn(&mut serde_json::Map<String, Json>) -> Result<(), String>,
 }
 
-type CheckFn = Arc<dyn Fn(&Json) -> Result<(), String> + Send + Sync>;
-type EvalFn = Arc<dyn Fn(&NodeCtx, &Json) -> Result<Output, NodeError> + Send + Sync>;
+/// Checks a node's parameters (`Err` is the message of `RE4005`).
+pub type CheckFn = Arc<dyn Fn(&Json) -> Result<(), String> + Send + Sync>;
+/// Runs a node.
+pub type EvalFn = Arc<dyn Fn(&NodeCtx, &Json) -> Result<Output, NodeError> + Send + Sync>;
+/// Rewrites parameters written for a version into the current shape, for a
+/// kind whose migration is not Rust (a Luau node's `migrate`). `Err` is the
+/// failed step's `from` version and its message.
+pub type MigrateFn =
+    Arc<dyn Fn(u32, &mut serde_json::Map<String, Json>) -> Result<(), (u32, String)> + Send + Sync>;
 
 /// A node kind.
 #[derive(Clone)]
@@ -188,6 +195,7 @@ pub struct NodeDef {
     pub params_schema: Json,
     check: CheckFn,
     eval: EvalFn,
+    custom_migrate: Option<MigrateFn>,
 }
 
 impl fmt::Debug for NodeDef {
@@ -196,6 +204,59 @@ impl fmt::Debug for NodeDef {
             .field("kind", &self.kind)
             .field("version", &self.version)
             .field("output", &self.output)
+            .finish_non_exhaustive()
+    }
+}
+
+/// An input port of a [`CustomKind`].
+#[derive(Clone, Debug)]
+pub struct CustomPort {
+    /// The port's name.
+    pub name: String,
+    /// The types it accepts.
+    pub accepts: Vec<PortType>,
+    /// True if the node cannot run without it.
+    pub required: bool,
+    /// One sentence for `describe`.
+    pub doc: String,
+}
+
+/// A node kind defined outside this binary, for [`NodeDef::custom`].
+#[derive(Clone)]
+pub struct CustomKind {
+    /// See [`NodeDef::kind`].
+    pub kind: String,
+    /// See [`NodeDef::version`].
+    pub version: u32,
+    /// See [`NodeDef::oldest`].
+    pub oldest: u32,
+    /// See [`NodeDef::streaming`].
+    pub streaming: Streaming,
+    /// See [`NodeDef::implementation`]: the hash of the code that runs it.
+    pub implementation: [u8; 32],
+    /// See [`NodeDef::doc`].
+    pub doc: String,
+    /// See [`NodeDef::inputs`].
+    pub inputs: Vec<CustomPort>,
+    /// See [`NodeDef::output`].
+    pub output: PortType,
+    /// See [`NodeDef::uses_seed`].
+    pub uses_seed: bool,
+    /// See [`NodeDef::params_schema`].
+    pub params_schema: Json,
+    /// Checks parameters in the current shape.
+    pub check: CheckFn,
+    /// Runs the node; it sees parameters in the current shape.
+    pub eval: EvalFn,
+    /// Migrates parameters from an older version, when the kind has one.
+    pub migrate: Option<MigrateFn>,
+}
+
+impl fmt::Debug for CustomKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CustomKind")
+            .field("kind", &self.kind)
+            .field("version", &self.version)
             .finish_non_exhaustive()
     }
 }
@@ -267,6 +328,72 @@ impl NodeDef {
                 })?;
                 eval(ctx, &p).map_err(Into::into)
             }),
+            custom_migrate: None,
+        }
+    }
+
+    /// A node kind defined outside this binary (a Luau node, ADR-0043 §4):
+    /// its names, ports and documentation are owned strings, its parameters
+    /// are checked by `check` against `params_schema`, and its migration
+    /// (when it has versions to migrate from) is `migrate`.
+    ///
+    /// The strings and ports are kept for the life of the process
+    /// (`NodeDef`'s fields are `'static`), interned by content, so declaring
+    /// the same kinds again (a hot reload) keeps no more memory.
+    pub fn custom(def: CustomKind) -> NodeDef {
+        use std::collections::{HashMap, HashSet};
+        use std::sync::{LazyLock, Mutex, PoisonError};
+        static STRINGS: LazyLock<Mutex<HashSet<&'static str>>> = LazyLock::new(Mutex::default);
+        static PORTS: LazyLock<Mutex<HashMap<Vec<PortDef>, &'static [PortDef]>>> =
+            LazyLock::new(Mutex::default);
+        static TYPES: LazyLock<Mutex<HashMap<Vec<PortType>, &'static [PortType]>>> =
+            LazyLock::new(Mutex::default);
+        fn keep(s: String) -> &'static str {
+            let mut set = STRINGS.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(k) = set.get(s.as_str()) {
+                return k;
+            }
+            let k: &'static str = Box::leak(s.into_boxed_str());
+            set.insert(k);
+            k
+        }
+        fn types(t: Vec<PortType>) -> &'static [PortType] {
+            let mut map = TYPES.lock().unwrap_or_else(PoisonError::into_inner);
+            map.entry(t.clone())
+                .or_insert_with(|| Box::leak(t.into_boxed_slice()))
+        }
+        let inputs: Vec<PortDef> = def
+            .inputs
+            .into_iter()
+            .map(|p| PortDef {
+                name: keep(p.name),
+                accepts: types(p.accepts),
+                required: p.required,
+                doc: keep(p.doc),
+            })
+            .collect();
+        let inputs: &'static [PortDef] = {
+            let mut map = PORTS.lock().unwrap_or_else(PoisonError::into_inner);
+            map.entry(inputs.clone())
+                .or_insert_with(|| Box::leak(inputs.into_boxed_slice()))
+        };
+        NodeDef {
+            kind: keep(def.kind),
+            version: def.version,
+            oldest: def.oldest,
+            migrations: &[],
+            streaming: def.streaming,
+            implementation: def.implementation,
+            doc: keep(def.doc),
+            inputs,
+            variadic: None,
+            output: def.output,
+            uses_seed: def.uses_seed,
+            file_params: &[],
+            params_schema: def.params_schema,
+            check: def.check,
+            eval: def.eval,
+            custom_migrate: def.migrate,
         }
     }
 
@@ -298,7 +425,11 @@ impl NodeDef {
         params: &'p Json,
     ) -> Result<std::borrow::Cow<'p, Json>, (u32, String)> {
         let steps = self.steps_from(version);
-        if steps.is_empty() {
+        let custom = self
+            .custom_migrate
+            .as_ref()
+            .filter(|_| version < self.version);
+        if steps.is_empty() && custom.is_none() {
             return Ok(std::borrow::Cow::Borrowed(params));
         }
         let mut map = match params {
@@ -309,7 +440,16 @@ impl NodeDef {
         for step in steps {
             (step.params)(&mut map).map_err(|e| (step.from, e))?;
         }
+        if let Some(migrate) = custom {
+            migrate(version, &mut map)?;
+        }
         Ok(std::borrow::Cow::Owned(Json::Object(map)))
+    }
+
+    /// True if the kind's migration is not Rust ([`NodeDef::custom`]): its
+    /// steps are not listed, and any of them may change the output.
+    pub fn migrates_custom(&self) -> bool {
+        self.custom_migrate.is_some()
     }
 
     /// The migration steps from `version` to the current one, in order.
@@ -541,9 +681,39 @@ pub struct NodeCtx<'a> {
     pub files: HashMap<String, Result<Arc<Vec<u8>>, String>>,
     /// The worker pool, for nodes that split their own work.
     pub pool: &'a TaskPool,
+    /// Lines the node logged ([`NodeCtx::log`]), for its report.
+    pub logs: std::sync::Mutex<Vec<String>>,
 }
 
+/// At most this many lines of a node's log reach its report.
+pub const MAX_LOG_LINES: usize = 100;
+
+/// Longer log lines are cut to this many bytes.
+pub const MAX_LOG_LINE: usize = 1000;
+
 impl NodeCtx<'_> {
+    /// Adds a line to the node's log (in its report). Past
+    /// [`MAX_LOG_LINES`] lines one last line says how many were dropped.
+    pub fn log(&self, text: &str) {
+        let mut logs = self.logs.lock().unwrap_or_else(|e| e.into_inner());
+        match logs.len() {
+            n if n < MAX_LOG_LINES => {
+                let mut line = text.to_string();
+                if line.len() > MAX_LOG_LINE {
+                    let mut end = MAX_LOG_LINE;
+                    while !line.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    line.truncate(end);
+                    line.push('…');
+                }
+                logs.push(line);
+            }
+            n if n == MAX_LOG_LINES => logs.push("(more lines dropped)".into()),
+            _ => {}
+        }
+    }
+
     fn input(&self, port: &str) -> Option<&Output> {
         self.inputs.iter().find(|(p, _)| p == port).map(|(_, o)| o)
     }

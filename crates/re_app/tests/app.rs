@@ -346,6 +346,48 @@ fn the_snapshot_has_the_camera_lights_and_uploaded_meshes() {
     assert_eq!(items[0].entity, id_of(&app, "box"));
 }
 
+/// `real.toml`'s `[render.post]` and `[render.shadows]` reach a native
+/// project's snapshots; without them the snapshot has the defaults.
+#[test]
+fn post_and_shadow_settings_come_from_real_toml() {
+    let dir = project();
+    let mut app = open(dir.path());
+    app.run_headless(Some(1), None).unwrap();
+    assert_eq!(
+        app.snapshot().post,
+        re_types::render::PostSettings::default()
+    );
+    assert_eq!(
+        app.snapshot().shadows,
+        re_types::render::SunShadows::default()
+    );
+
+    let config = format!(
+        "{CONFIG}\n[render.post]\nexposure = 0.5\ntone_mapping = \"PbrNeutral\"\n\n\
+         [render.post.bloom]\nintensity = 0.3\n\n[render.shadows]\ncascades = 2\ndistance = 80.0\n"
+    );
+    std::fs::write(dir.path().join("real.toml"), config).unwrap();
+    let mut app = open(dir.path());
+    app.run_headless(Some(1), None).unwrap();
+    let snapshot = app.snapshot();
+    assert_eq!(snapshot.post.exposure, 0.5);
+    assert_eq!(
+        snapshot.post.tone_mapping,
+        re_types::render::ToneMapping::PbrNeutral
+    );
+    assert_eq!(snapshot.post.bloom.intensity, 0.3);
+    // Keys left out keep their defaults.
+    assert_eq!(
+        snapshot.post.bloom.radius,
+        re_types::render::Bloom::default().radius
+    );
+    assert_eq!(
+        (snapshot.shadows.cascades, snapshot.shadows.distance),
+        (2, 80.0)
+    );
+    assert_eq!(snapshot.shadows.split_lambda, 0.75);
+}
+
 #[test]
 fn autoplay_sources_start_once_and_the_listener_follows_the_camera() {
     let dir = project();

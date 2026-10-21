@@ -6,8 +6,18 @@
 local rig = require("./lib/rig")
 
 local car = script.entity :: Entity
+-- The Vehicle that player.luau adds when `rig.ready` turns true exists only
+-- from the next step on, whichever script steps first.
+local armed = false
 
 time.on_step(function(_dt)
+	if not rig.ready then
+		return
+	end
+	if not armed then
+		armed = true
+		return
+	end
 	if not rig.driving then
 		physics.drive(car, { handbrake = 1 })
 		return
