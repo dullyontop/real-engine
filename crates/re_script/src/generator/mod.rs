@@ -76,6 +76,12 @@ pub const DEFAULT_MEMORY_MB: usize = 256;
 /// The wall-clock backstop of one evaluation (`RE4102`).
 pub const BACKSTOP: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// The version of the generator context, part of every Luau kind's
+/// implementation hash: changing what a script can see or how it computes
+/// (the portable `math` of ADR-0036, a library) bumps it, so cached outputs
+/// are not reused across the change.
+const CONTEXT_VERSION: &str = "re_script luau nodes v1";
+
 /// The limits of every Luau node evaluation (`[proc] luau_budget` and
 /// `luau_memory_mb` in `real.toml`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +119,26 @@ impl Declared {
         let mut r = base.clone();
         for k in &self.kinds {
             r.register(k.clone());
+        }
+        r
+    }
+
+    /// Like [`Declared::registry`], for a re-declaration (a hot reload):
+    /// while some script has a declaration error, the `project.` kinds of
+    /// `previous` that are no longer declared stay, so a half-typed edit
+    /// does not take the sources using its kind down with it.
+    pub fn registry_keeping(&self, base: &NodeRegistry, previous: &NodeRegistry) -> NodeRegistry {
+        let mut r = self.registry(base);
+        if self.diagnostics.is_empty() {
+            return r;
+        }
+        for kind in previous.kinds() {
+            if kind.starts_with("project.")
+                && r.get(kind).is_none()
+                && let Some(def) = previous.get(kind)
+            {
+                r.register(def.clone());
+            }
         }
         r
     }
@@ -157,7 +183,7 @@ pub fn declare(root: &Path, base: &NodeRegistry, limits: Limits) -> Declared {
     }
     let mut scripts = Scripts::new();
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"re_script luau nodes v1");
+    hasher.update(CONTEXT_VERSION.as_bytes());
     for path in &files {
         let source = match std::fs::read(root.join(path)) {
             Ok(s) => s,
@@ -249,6 +275,70 @@ fn short(e: &mlua::Error) -> String {
     text.lines().next().unwrap_or_default().to_string()
 }
 
+/// Why a run of a script failed: a node error code and its message.
+struct Failure {
+    code: re_core::Code,
+    message: String,
+}
+
+impl Failure {
+    fn new(code: re_core::Code, message: impl Into<String>) -> Failure {
+        Failure {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+/// Runs `f` under the budget: a stop is `RE4101` or `RE4102`, a memory
+/// error `RE4101`, any other error `RE4008` (`what` prefixes its message).
+fn budgeted<T>(
+    limits: Limits,
+    what: &str,
+    f: impl FnOnce() -> mlua::Result<T>,
+) -> Result<T, Failure> {
+    let budget = Budget::arm(limits.budget, BACKSTOP);
+    let result = f();
+    match budget.finish() {
+        Stop::None => {}
+        Stop::Budget => {
+            return Err(Failure::new(
+                codes::LUAU_BUDGET,
+                format!(
+                    "{what}: the Luau node ran past its budget of {} safepoints",
+                    limits.budget
+                ),
+            ));
+        }
+        Stop::Backstop => {
+            return Err(Failure::new(
+                codes::LUAU_BACKSTOP,
+                format!(
+                    "{what}: the Luau node ran past the {} s wall-clock backstop (this depends on the machine)",
+                    BACKSTOP.as_secs()
+                ),
+            ));
+        }
+    }
+    result.map_err(|e| {
+        let mut cause = &e;
+        while let mlua::Error::CallbackError { cause: c, .. } = cause {
+            cause = c;
+        }
+        if matches!(cause, mlua::Error::MemoryError(_)) {
+            Failure::new(
+                codes::LUAU_BUDGET,
+                format!(
+                    "{what}: the Luau node ran past its memory limit of {} MiB",
+                    limits.memory_mb
+                ),
+            )
+        } else {
+            Failure::new(codes::NODE_FAILED, format!("{what}: {}", short(&e)))
+        }
+    })
+}
+
 /// Runs the declaration script `path` in a fresh VM and returns the
 /// declaration table with the VM.
 fn run_declaration(
@@ -256,38 +346,26 @@ fn run_declaration(
     path: &str,
     limits: Limits,
     log: Log,
-) -> Result<(Lua, Table), String> {
-    let lua = vm::create(scripts.clone(), limits.memory_mb, log).map_err(|e| short(&e))?;
-    let budget = Budget::arm(limits.budget, BACKSTOP);
-    let result = vm::load(&lua, scripts, path).and_then(|f| f.call::<Value>(()));
-    let stop = budget.finish();
-    stopped(stop, limits)?;
-    let value = result.map_err(|e| short(&e))?;
+) -> Result<(Lua, Table), Failure> {
+    let lua = vm::create(scripts.clone(), limits.memory_mb, log)
+        .map_err(|e| Failure::new(codes::NODE_FAILED, short(&e)))?;
+    let value = budgeted(limits, path, || {
+        vm::load(&lua, scripts, path).and_then(|f| f.call::<Value>(()))
+    })?;
     match value {
         Value::Table(t) if vm::marked(&lua, &t, vm::NODE_META) => Ok((lua, t)),
-        other => Err(format!(
-            "the script must return proc.node{{...}}, found {}",
-            other.type_name()
-        )),
-    }
-}
-
-fn stopped(stop: Stop, limits: Limits) -> Result<(), String> {
-    match stop {
-        Stop::None => Ok(()),
-        Stop::Budget => Err(format!(
-            "the Luau node ran past its budget of {} safepoints",
-            limits.budget
-        )),
-        Stop::Backstop => Err(format!(
-            "the Luau node ran past the {} s wall-clock backstop (this depends on the machine)",
-            BACKSTOP.as_secs()
+        other => Err(Failure::new(
+            codes::NODE_FAILED,
+            format!(
+                "the script must return proc.node{{...}}, found {}",
+                other.type_name()
+            ),
         )),
     }
 }
 
 fn read_declaration(scripts: &Arc<Scripts>, path: &str, limits: Limits) -> Result<Decl, String> {
-    let (lua, t) = run_declaration(scripts, path, limits, Log::default())?;
+    let (lua, t) = run_declaration(scripts, path, limits, Log::default()).map_err(|f| f.message)?;
     let get = |key: &str| t.raw_get::<Value>(key).map_err(|e| short(&e));
     let string = |key: &str, required: bool| -> Result<Option<String>, String> {
         match get(key)? {
@@ -334,7 +412,14 @@ fn read_declaration(scripts: &Arc<Scripts>, path: &str, limits: Limits) -> Resul
             other => {
                 return Err(format!(
                     "unknown declaration field {} (fields: {})",
-                    other.to_string().unwrap_or_default(),
+                    match &other {
+                        // Never `tostring` a script value here: a
+                        // `__tostring` would run outside the budget.
+                        Value::String(s) => format!("`{}`", s.to_string_lossy()),
+                        Value::Integer(i) => i.to_string(),
+                        Value::Number(n) => n.to_string(),
+                        v => format!("of type {}", v.type_name()),
+                    },
                     known.join(", ")
                 ));
             }
@@ -678,15 +763,14 @@ fn migrate(
         program.limits,
         Log::default(),
     )
-    .map_err(|m| (from, m))?;
+    .map_err(|f| (from, f.message))?;
     let f: Function = decl.raw_get("migrate").map_err(|e| (from, short(&e)))?;
     for step in from..current {
-        let budget = Budget::arm(program.limits.budget, BACKSTOP);
-        let result = crate::api::json::from_json(&lua, &Json::Object(params.clone()))
-            .and_then(|t| f.call::<Value>((step, t)));
-        let stop = budget.finish();
-        stopped(stop, program.limits).map_err(|m| (step, m))?;
-        let value = result.map_err(|e| (step, short(&e)))?;
+        let value = budgeted(program.limits, "migrate", || {
+            crate::api::json::from_json(&lua, &Json::Object(params.clone()))
+                .and_then(|t| f.call::<Value>((step, t)))
+        })
+        .map_err(|f| (step, f.message))?;
         match crate::api::json::to_json(&lua, &value).map_err(|e| (step, short(&e)))? {
             Json::Object(m) => *params = m,
             Json::Array(a) if a.is_empty() => params.clear(),
@@ -708,12 +792,13 @@ impl UserData for Rng {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method_mut("next", |_, this, ()| Ok(this.0.next_f64()));
         methods.add_method_mut("int", |_, this, (lo, hi): (i64, i64)| {
-            if lo > hi || hi - lo >= i64::from(u32::MAX) {
+            let span = i128::from(hi) - i128::from(lo);
+            if span < 0 || span >= i128::from(u32::MAX) {
                 return Err(mlua::Error::runtime(format!(
                     "rng:int({lo}, {hi}): lo must not be above hi, and the range must fit 32 bits"
                 )));
             }
-            let span = (hi - lo) as u32;
+            let span = span as u32;
             Ok(lo + i64::from(this.0.range_u32(0, span.wrapping_add(1).max(1)).min(span)))
         });
         methods.add_method("fork", |_, this, n: i64| Ok(Rng(this.0.fork(n as u64))));
@@ -730,7 +815,7 @@ fn evaluate(program: &Program, ctx: &NodeCtx, params: &Json) -> Result<Output, N
         let failed = |m: String| node_error(codes::NODE_FAILED, m);
         let (lua, decl) =
             run_declaration(&program.scripts, &program.path, program.limits, log.clone())
-                .map_err(failed)?;
+                .map_err(|f| node_error(f.code, f.message))?;
         let eval: Function = decl.raw_get("eval").map_err(|e| failed(short(&e)))?;
         let lua_ctx = context(&lua, ctx, log.clone()).map_err(|e| failed(short(&e)))?;
         let inputs = lua.create_table().map_err(|e| failed(short(&e)))?;
@@ -743,38 +828,10 @@ fn evaluate(program: &Program, ctx: &NodeCtx, params: &Json) -> Result<Output, N
         let resolved = program.params.resolve(params);
         let lua_params =
             params_to_lua(&lua, &program.params, &resolved).map_err(|e| failed(short(&e)))?;
-        let budget = Budget::arm(program.limits.budget, BACKSTOP);
-        let result = eval.call::<Value>((lua_ctx, inputs, lua_params));
-        let stop = budget.finish();
-        match stop {
-            Stop::None => {}
-            Stop::Budget => {
-                return Err(node_error(
-                    codes::LUAU_BUDGET,
-                    stopped(stop, program.limits).unwrap_err(),
-                ));
-            }
-            Stop::Backstop => {
-                return Err(node_error(
-                    codes::LUAU_BACKSTOP,
-                    stopped(stop, program.limits).unwrap_err(),
-                ));
-            }
-        }
-        let value = match result {
-            Ok(v) => v,
-            Err(e @ mlua::Error::MemoryError(_)) => {
-                return Err(node_error(
-                    codes::LUAU_BUDGET,
-                    format!(
-                        "the Luau node ran past its memory limit of {} MiB: {}",
-                        program.limits.memory_mb,
-                        short(&e)
-                    ),
-                ));
-            }
-            Err(e) => return Err(failed(format!("{}: {}", program.path, short(&e)))),
-        };
+        let value = budgeted(program.limits, &program.path, || {
+            eval.call::<Value>((lua_ctx, inputs, lua_params))
+        })
+        .map_err(|f| node_error(f.code, f.message))?;
         marshal::from_lua(value, program.output, ctx.node_id, &ctx.key)
             .map_err(|m| node_error(codes::LUAU_OUTPUT, format!("{}: {m}", program.path)))
     })();
@@ -793,7 +850,7 @@ fn context(lua: &Lua, ctx: &NodeCtx, log: Log) -> mlua::Result<Table> {
     t.raw_set(
         "log",
         lua.create_function(move |_, (_ctx, text): (Value, mlua::LuaString)| {
-            log.borrow_mut().push(text.to_string_lossy());
+            vm::push_log(&log, &text.as_bytes());
             Ok(())
         })?,
     )?;

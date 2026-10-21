@@ -29,7 +29,7 @@ use crate::value::{Field, MeshValue, Output, Points, PortType};
 pub use fragment::{mesh_item, sink_fragment};
 
 /// An input port of a node kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PortDef {
     /// The port's name.
     pub name: &'static str,
@@ -337,23 +337,46 @@ impl NodeDef {
     /// are checked by `check` against `params_schema`, and its migration
     /// (when it has versions to migrate from) is `migrate`.
     ///
-    /// The strings are kept for the life of the process (`NodeDef`'s fields
-    /// are `'static`), so custom kinds are declared when a project loads and
-    /// when their scripts change, not per evaluation.
+    /// The strings and ports are kept for the life of the process
+    /// (`NodeDef`'s fields are `'static`), interned by content, so declaring
+    /// the same kinds again (a hot reload) keeps no more memory.
     pub fn custom(def: CustomKind) -> NodeDef {
+        use std::collections::{HashMap, HashSet};
+        use std::sync::{LazyLock, Mutex, PoisonError};
+        static STRINGS: LazyLock<Mutex<HashSet<&'static str>>> = LazyLock::new(Mutex::default);
+        static PORTS: LazyLock<Mutex<HashMap<Vec<PortDef>, &'static [PortDef]>>> =
+            LazyLock::new(Mutex::default);
+        static TYPES: LazyLock<Mutex<HashMap<Vec<PortType>, &'static [PortType]>>> =
+            LazyLock::new(Mutex::default);
         fn keep(s: String) -> &'static str {
-            Box::leak(s.into_boxed_str())
+            let mut set = STRINGS.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(k) = set.get(s.as_str()) {
+                return k;
+            }
+            let k: &'static str = Box::leak(s.into_boxed_str());
+            set.insert(k);
+            k
+        }
+        fn types(t: Vec<PortType>) -> &'static [PortType] {
+            let mut map = TYPES.lock().unwrap_or_else(PoisonError::into_inner);
+            map.entry(t.clone())
+                .or_insert_with(|| Box::leak(t.into_boxed_slice()))
         }
         let inputs: Vec<PortDef> = def
             .inputs
             .into_iter()
             .map(|p| PortDef {
                 name: keep(p.name),
-                accepts: Box::leak(p.accepts.into_boxed_slice()),
+                accepts: types(p.accepts),
                 required: p.required,
                 doc: keep(p.doc),
             })
             .collect();
+        let inputs: &'static [PortDef] = {
+            let mut map = PORTS.lock().unwrap_or_else(PoisonError::into_inner);
+            map.entry(inputs.clone())
+                .or_insert_with(|| Box::leak(inputs.into_boxed_slice()))
+        };
         NodeDef {
             kind: keep(def.kind),
             version: def.version,
@@ -362,7 +385,7 @@ impl NodeDef {
             streaming: def.streaming,
             implementation: def.implementation,
             doc: keep(def.doc),
-            inputs: Box::leak(inputs.into_boxed_slice()),
+            inputs,
             variadic: None,
             output: def.output,
             uses_seed: def.uses_seed,

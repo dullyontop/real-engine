@@ -40,7 +40,8 @@ pub fn declare_generators(
     let base = re_proc::NodeRegistry::m1();
     let declared = re_script::generator::declare(project, &base, limits);
     if let Some(mut store) = world.ecs.get_resource_mut::<GraphStore>() {
-        store.set_registry(std::sync::Arc::new(declared.registry(&base)));
+        let registry = declared.registry_keeping(&base, store.evaluator().registry());
+        store.set_registry(std::sync::Arc::new(registry));
     }
     declared.diagnostics
 }

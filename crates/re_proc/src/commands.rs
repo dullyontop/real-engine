@@ -522,14 +522,33 @@ fn create_source<C: EditTarget>(
             .unwrap_or(&a.kind)
             .to_string()
     });
+    let seed = a.seed.unwrap_or(0);
+    let doc: GraphDoc = serde_json::from_value(json!({
+        "format": "real-engine/graph",
+        "version": 1,
+        "name": name,
+        "seed": seed,
+        "nodes": [{ "id": CREATED_NODE, "kind": a.kind, "version": def.version, "params": a.params }],
+        "edges": [],
+    }))
+    .map_err(|e| create_error(format!("cannot build the graph: {e}")))?;
+    // A file that already holds exactly this graph (left by an undone
+    // `proc.create_source`) is used again rather than written beside.
+    let text = doc.to_json();
+    let free = |p: &str| match std::fs::read(root.join(p)) {
+        Ok(bytes) => bytes == text.as_bytes(),
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    };
     let graph = match &a.graph {
         Some(g) if !valid_graph_path(g) => {
             return Err(create_error(format!(
                 "`{g}` is not a project path ending in `.graph.json` (plain names, no `..`)"
             )));
         }
-        Some(g) if root.join(g).exists() => {
-            return Err(create_error(format!("the graph file `{g}` already exists")));
+        Some(g) if !free(g) => {
+            return Err(create_error(format!(
+                "the graph file `{g}` already exists (with other contents)"
+            )));
         }
         Some(g) => g.clone(),
         None => {
@@ -555,20 +574,10 @@ fn create_source<C: EditTarget>(
                     1 => format!("graphs/{stem}.graph.json"),
                     n => format!("graphs/{stem}_{n}.graph.json"),
                 })
-                .find(|p| !root.join(p).exists())
+                .find(|p| free(p))
                 .expect("a free name")
         }
     };
-    let seed = a.seed.unwrap_or(0);
-    let doc: GraphDoc = serde_json::from_value(json!({
-        "format": "real-engine/graph",
-        "version": 1,
-        "name": name,
-        "seed": seed,
-        "nodes": [{ "id": CREATED_NODE, "kind": a.kind, "version": def.version, "params": a.params }],
-        "edges": [],
-    }))
-    .map_err(|e| create_error(format!("cannot build the graph: {e}")))?;
     let mut components = re_scene::scene::ComponentsDoc::default();
     components.insert(
         "GraphSource".into(),
@@ -587,7 +596,8 @@ fn create_source<C: EditTarget>(
     );
     components.insert("Transform".into(), Default::default());
     let file = root.join(&graph);
-    if !call.dry_run() {
+    let written = !call.dry_run() && !file.exists();
+    if written {
         let write = || -> std::io::Result<()> {
             if let Some(dir) = file.parent() {
                 std::fs::create_dir_all(dir)?;
@@ -598,7 +608,7 @@ fn create_source<C: EditTarget>(
                 .write(true)
                 .create_new(true)
                 .open(&file)?;
-            f.write_all(doc.to_json().as_bytes())
+            f.write_all(text.as_bytes())
         };
         write().map_err(|e| create_error(format!("cannot write `{graph}`: {e}")))?;
     }
@@ -616,7 +626,7 @@ fn create_source<C: EditTarget>(
     let applied = match applied {
         Ok(ops) => ops,
         Err(d) => {
-            if !call.dry_run() {
+            if written {
                 let _ = std::fs::remove_file(&file);
             }
             return Err(d);

@@ -37,6 +37,20 @@ fn bytes_of(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
     values.into_iter().flat_map(f32::to_le_bytes).collect()
 }
 
+/// True if every number in `v` is finite.
+fn finite_value(v: &re_reflect::Value) -> bool {
+    use re_reflect::Value as V;
+    match v {
+        V::Float(f) => f.is_finite(),
+        V::Vec3(x) => x.is_finite(),
+        V::Quat(q) => q.is_finite(),
+        V::Color(c) => [c.r, c.g, c.b, c.a].iter().all(|x| x.is_finite()),
+        V::List(items) | V::Record(_, items) => items.iter().all(finite_value),
+        V::Map(m) => m.values().all(finite_value),
+        V::Bool(_) | V::Int(_) | V::Str(_) | V::Entity(_) | V::Enum(_) => true,
+    }
+}
+
 /// An input value as Luau sees it.
 pub(crate) fn to_lua(lua: &Lua, output: &Output) -> mlua::Result<Value> {
     let t = lua.create_table()?;
@@ -458,6 +472,9 @@ fn fragment(t: &Table, node: &str, key: &[u8; 32]) -> Result<Fragment, String> {
                     for (fname, raw) in fields {
                         let value = crate::api::value::dynamic_value(raw)
                             .map_err(|m| format!("{at}.{fname}: {m}"))?;
+                        if !finite_value(&value) {
+                            return Err(format!("{at}.{fname}: a number is not finite"));
+                        }
                         values.push((fname, value));
                     }
                     match built.components.iter_mut().find(|(n, _)| *n == cname) {

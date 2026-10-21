@@ -433,6 +433,7 @@ mod source {
 
     fn call(st: &mut EditState, name: &str, args: Json) -> CommandOutcome {
         let mut r = CommandRegistry::new();
+        re_command::register_builtin_commands(&mut r);
         register_commands(&mut r);
         r.dispatch(st, name, args, false, &AllowAll)
     }
@@ -520,6 +521,19 @@ mod source {
         st.world.regenerate_changed();
         assert_eq!(children(&mut st, "rocks").len(), 5);
 
+        // Undo leaves the file; creating the same source again reuses it.
+        for _ in 0..2 {
+            // graph.set_param, then proc.create_source.
+            let o = call(&mut st, "undo", json!({}));
+            assert!(o.ok, "{o:#?}");
+        }
+        let o = call(
+            &mut st,
+            "proc.create_source",
+            json!({ "kind": "project.scatter", "id": "rocks", "seed": 5, "params": { "count": 2 } }),
+        );
+        assert!(o.ok, "{o:#?}");
+        assert_eq!(o.data["graph"], json!("graphs/rocks.graph.json"));
         // A second source of the same kind gets its own file.
         let o = call(
             &mut st,
@@ -544,4 +558,101 @@ mod source {
         );
         assert_eq!(o.diagnostics[0].code, codes::CREATE_SOURCE, "{o:#?}");
     }
+}
+
+#[test]
+fn script_mistakes_are_node_errors_not_crashes() {
+    let cases: [(&str, &[(&str, &str)]); 4] = [
+        // A cycle of requires.
+        (
+            "return require(\"m/a\")",
+            &[
+                ("scripts/generators/m/a.luau", "return require(\"./b\")"),
+                ("scripts/generators/m/b.luau", "return require(\"./a\")"),
+            ],
+        ),
+        // Bounds too far apart for rng:int.
+        ("return ctx.rng:int(-9e18, 9e18)", &[]),
+        // A non-finite component value.
+        (
+            "return { items = { { key = \"a\", components = { Transform = { scale = vector.create(0/0, 1, 1) } } } } }",
+            &[],
+        ),
+        ("error(\"boom\")", &[]),
+    ];
+    for (body, extra) in cases {
+        let src = bad(body, "fragment");
+        let mut files = vec![("scripts/generators/bad.luau", src.as_str())];
+        files.extend_from_slice(extra);
+        let dir = project(&files);
+        let e = first_error(dir.path(), Limits::default());
+        assert!(
+            e.code == codes::NODE_FAILED || e.code == codes::LUAU_OUTPUT,
+            "{body}: {e:#?}"
+        );
+    }
+}
+
+#[test]
+fn tostring_never_shows_an_address_and_logs_are_capped() {
+    let src = bad(
+        "local f = function() end
+        ctx:log(tostring({}) .. \" \" .. tostring(f) .. \" \" .. tostring(ctx.rng))
+        local long = string.rep(\"x\", 5000)
+        for i = 1, 1000 do ctx:log(long) end
+        return { items = {} }",
+        "fragment",
+    );
+    let dir = project(&[("scripts/generators/bad.luau", &src)]);
+    let (_, registry) = declared(dir.path(), Limits::default());
+    let g = ProcGraph::from_doc(
+        &graph(1, &[("n", "project.bad", json!({}))], &[]),
+        &registry,
+    )
+    .unwrap();
+    let e = evaluator(registry, 1).evaluate(&g, &EvalOptions::default());
+    assert!(e.ok(), "{:#?}", e.report.diagnostics);
+    let logs = &e.report.node("n").unwrap().logs;
+    assert_eq!(logs[0], "table function userdata");
+    assert!(logs.len() <= re_proc::MAX_LOG_LINES + 1, "{}", logs.len());
+    assert!(logs.iter().all(|l| l.len() <= re_proc::MAX_LOG_LINE + 3));
+}
+
+#[test]
+fn a_declaration_key_with_tostring_cannot_hang_declare() {
+    let src = "return proc.node { [setmetatable({}, { __tostring = function() while true do end end })] = 1,
+        kind = \"project.x\", version = 1, doc = \"\", output = \"fragment\",
+        eval = function() return { items = {} } end }";
+    let dir = project(&[("scripts/generators/x.luau", src)]);
+    let d = declare(
+        dir.path(),
+        &NodeRegistry::m1(),
+        Limits {
+            budget: 100_000,
+            memory_mb: 64,
+        },
+    );
+    assert_eq!(d.diagnostics.len(), 1, "{:#?}", d.diagnostics);
+    assert!(d.diagnostics[0].message.contains("of type table"));
+}
+
+#[test]
+fn a_failed_redeclaration_keeps_the_last_good_kind() {
+    let dir = project(&[("scripts/generators/shape.luau", SHAPE)]);
+    let m1 = NodeRegistry::m1();
+    let first = declare(dir.path(), &m1, Limits::default()).registry(&m1);
+    std::fs::write(
+        dir.path().join("scripts/generators/shape.luau"),
+        "return proc.node {",
+    )
+    .unwrap();
+    let again = declare(dir.path(), &m1, Limits::default());
+    assert_eq!(again.diagnostics.len(), 1);
+    assert!(again.registry(&m1).get("project.shape").is_none());
+    assert!(
+        again
+            .registry_keeping(&m1, &first)
+            .get("project.shape")
+            .is_some()
+    );
 }

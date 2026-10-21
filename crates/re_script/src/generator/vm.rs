@@ -109,6 +109,19 @@ pub(crate) type Scripts = BTreeMap<String, Arc<[u8]>>;
 /// Lines a script printed or logged, shared with the caller.
 pub(crate) type Log = Rc<RefCell<Vec<String>>>;
 
+/// Adds a line to `log`, as `NodeCtx::log` will keep it: at most
+/// [`re_proc::MAX_LOG_LINES`] lines (one more marks the cut), each cut to
+/// [`re_proc::MAX_LOG_LINE`] bytes, so a script cannot fill the host's memory
+/// past its own limit.
+pub(crate) fn push_log(log: &Log, line: &[u8]) {
+    let mut log = log.borrow_mut();
+    if log.len() > re_proc::MAX_LOG_LINES {
+        return;
+    }
+    let cut = &line[..line.len().min(re_proc::MAX_LOG_LINE)];
+    log.push(String::from_utf8_lossy(cut).into_owned());
+}
+
 /// A fresh generator VM. `log` receives `print` output.
 pub(crate) fn create(scripts: Arc<Scripts>, memory_mb: usize, log: Log) -> mlua::Result<Lua> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
@@ -116,9 +129,38 @@ pub(crate) fn create(scripts: Arc<Scripts>, memory_mb: usize, log: Log) -> mlua:
     let g = lua.globals();
     // No clock, no files, no global randomness: output depends only on the
     // parameters, the inputs, the seed and the scripts.
-    for name in ["os", "loadstring", "getfenv", "setfenv", "collectgarbage"] {
+    for name in [
+        "os",
+        "loadstring",
+        "getfenv",
+        "setfenv",
+        "collectgarbage",
+        "gcinfo",
+    ] {
         g.raw_set(name, Value::Nil)?;
     }
+    // `tostring` of a table, function, userdata or thread without
+    // `__tostring` is its type name, never its address.
+    let stock: Function = g.get("tostring")?;
+    g.raw_set(
+        "tostring",
+        lua.create_function(move |lua, v: Value| {
+            let plain = match &v {
+                Value::Table(t) => t
+                    .metatable()
+                    .is_none_or(|m| m.raw_get::<Value>("__tostring").is_ok_and(|f| f.is_nil())),
+                Value::Function(_)
+                | Value::Thread(_)
+                | Value::LightUserData(_)
+                | Value::UserData(_) => true,
+                _ => false,
+            };
+            if plain {
+                return Ok(Value::String(lua.create_string(v.type_name())?));
+            }
+            stock.call::<Value>(v)
+        })?,
+    )?;
     let math: Table = g.get("math")?;
     for name in ["random", "randomseed"] {
         math.raw_set(name, Value::Nil)?;
@@ -131,14 +173,22 @@ pub(crate) fn create(scripts: Arc<Scripts>, memory_mb: usize, log: Log) -> mlua:
     let mut color = Lib::new(&lua, "color", "Linear colours.")?;
     crate::api::math::color_lib(&lua, &mut color)?;
     g.raw_set("color", color.finish(&lua)?.0)?;
+    let tostring: Function = g.raw_get("tostring")?;
     g.raw_set(
         "print",
         lua.create_function(move |_, args: MultiValue| {
-            let line: Vec<String> = args
-                .iter()
-                .map(|v| v.to_string().unwrap_or_else(|_| v.type_name().to_string()))
-                .collect();
-            log.borrow_mut().push(line.join("\t"));
+            let mut line = Vec::new();
+            for (i, v) in args.into_iter().enumerate() {
+                if i > 0 {
+                    line.push(b'\t');
+                }
+                let s: mlua::LuaString = tostring.call(v)?;
+                line.extend_from_slice(&s.as_bytes());
+                if line.len() > re_proc::MAX_LOG_LINE {
+                    break;
+                }
+            }
+            push_log(&log, &line);
             Ok(())
         })?,
     )?;
@@ -159,9 +209,10 @@ pub(crate) fn create(scripts: Arc<Scripts>, memory_mb: usize, log: Log) -> mlua:
     Ok(lua)
 }
 
-/// The transcendental `math` functions on every machine alike (ADR-0036):
-/// the compiler disables their builtins (`compile::compiler`), so a call
-/// reaches the table.
+/// The transcendental `math` functions on every machine alike (ADR-0036).
+/// Until WP18's portable maths lands this is the host's `math`, so `sin`,
+/// `exp` and friends may differ in the last bit between platforms; landing
+/// it bumps `CONTEXT_VERSION`.
 fn portable_math(_lua: &Lua) -> mlua::Result<()> {
     Ok(()) // PENDING-D2: crate::portable_math::install(lua) once #100 lands
 }
@@ -207,11 +258,27 @@ fn require(lua: &Lua, scripts: &Scripts, name: &str) -> mlua::Result<Value> {
     }
     let modules: Table = lua.named_registry_value(MODULES)?;
     let cached: Value = modules.raw_get(path.as_str())?;
+    if let Value::LightUserData(_) = cached {
+        return Err(mlua::Error::runtime(format!(
+            "require({name:?}): {path} is already loading (a cycle of requires)"
+        )));
+    }
     if !cached.is_nil() {
         return Ok(cached);
     }
+    // A marker while the module runs: requiring it again is a cycle.
+    modules.raw_set(
+        path.as_str(),
+        Value::LightUserData(mlua::LightUserData(std::ptr::null_mut())),
+    )?;
     let chunk = load(lua, scripts, &path)?;
-    let value: Value = chunk.call(())?;
+    let value: Value = match chunk.call(()) {
+        Ok(v) => v,
+        Err(e) => {
+            modules.raw_set(path.as_str(), Value::Nil)?;
+            return Err(e);
+        }
+    };
     let value = if value.is_nil() {
         Value::Boolean(true)
     } else {
