@@ -157,12 +157,20 @@ struct SourceTerrain {
 #[derive(Debug, Default)]
 pub(crate) struct TerrainState {
     sources: BTreeMap<String, SourceTerrain>,
+    /// Selected chunks not drawn yet, after the last step.
+    missing: usize,
 }
 
 impl TerrainState {
     /// Generation jobs in flight.
     pub fn in_flight(&self) -> usize {
         self.sources.values().map(|s| s.jobs.len()).sum()
+    }
+
+    /// Selected chunks not drawn yet: zero once the terrain within the
+    /// horizon is all shown.
+    pub fn missing(&self) -> usize {
+        self.missing
     }
 
     /// Brings `world`'s [`TerrainView`] up to date for `focuses` (world
@@ -191,6 +199,7 @@ impl TerrainState {
         view.chunks
             .retain(|(id, _), _| terrains.iter().any(|(s, _)| s.id == *id));
         let mut free = free;
+        self.missing = 0;
         let started = Instant::now();
         let store = world.ecs.get_resource::<GraphStore>();
         for (source, terrain) in terrains {
@@ -278,6 +287,10 @@ impl TerrainState {
                 }
             }
             swap(&mut view, st, source, terrain, &grid, &desired, started);
+            self.missing += desired
+                .keys()
+                .filter(|k| !view.chunks.contains_key(&(source.id.clone(), **k)))
+                .count();
         }
         world.ecs.insert_resource(view);
     }

@@ -19,8 +19,9 @@ use serde::Deserialize;
 use super::{Domain, NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
 use crate::value::{Field, Output, PortType};
 
-/// Eroded tiles kept in memory (each about 400 KiB).
-const TILE_CACHE: usize = 64;
+/// Eroded tiles kept in memory (each about 400 KiB): more than the 6 km
+/// terrain horizon covers (about 130 tiles at 4 m).
+const TILE_CACHE: usize = 256;
 
 /// Parameters of `terrain.erode`.
 #[derive(Debug, Deserialize, JsonSchema)]

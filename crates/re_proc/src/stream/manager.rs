@@ -239,6 +239,12 @@ impl Streamer {
         self.jobs.len() + self.terrain.in_flight() + self.collision.in_flight()
     }
 
+    /// Terrain chunks the view has selected but not drawn yet, after the
+    /// last step (zero with the view off).
+    pub fn view_missing(&self) -> usize {
+        self.terrain.missing()
+    }
+
     /// The settings.
     pub fn config(&self) -> &StreamConfig {
         &self.config
