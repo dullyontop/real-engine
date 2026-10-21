@@ -2012,7 +2012,13 @@ impl App {
             Ok(play) => self.compat = Some(play),
             Err(d) => {
                 self.compat_failed = true;
-                self.diagnostics.push(d);
+                if self.net.is_some() {
+                    // An online run with no game stops rather than serving
+                    // (or playing) nothing.
+                    self.net_failed(d);
+                } else {
+                    self.diagnostics.push(d);
+                }
                 return;
             }
         }

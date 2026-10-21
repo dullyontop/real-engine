@@ -468,7 +468,7 @@ impl<T: Transport> ServerNet<T> {
             out.extend(remove_remote(vm, host, &id, p));
         }
         let now = self.now();
-        let mut events: Vec<Event> = std::mem::take(&mut self.dropped)
+        let mut events: std::collections::VecDeque<Event> = std::mem::take(&mut self.dropped)
             .into_iter()
             .map(|(peer, reason)| Event::Disconnected { peer, reason })
             .collect();
@@ -480,10 +480,12 @@ impl<T: Transport> ServerNet<T> {
                 // a lockstep server waits in `receive` for frames that need
                 // them.
                 flushed = true;
-                events = self.end.flush(now);
+                events = self.end.flush(now).into();
                 continue;
             }
-            let e = events.remove(0);
+            let Some(e) = events.pop_front() else {
+                continue;
+            };
             match e {
                 Event::Connected(peer) => {
                     self.remotes
@@ -659,12 +661,18 @@ impl<T: Transport> ServerNet<T> {
                 continue;
             };
             r.since += dt as f32;
-            for f in std::mem::take(&mut r.ops) {
+            // Frames applied together share the time since the last pass, so
+            // a burst of frames cannot each move a part a full step.
+            let ops = std::mem::take(&mut r.ops);
+            let step = r.since.max(dt as f32) / ops.len().max(1) as f32;
+            if !ops.is_empty() {
+                r.since = 0.0;
+            }
+            for f in ops {
                 let check = UpCheck {
                     max_speed,
-                    dt: r.since.max(dt as f32),
+                    dt: step,
                 };
-                r.since = 0.0;
                 let report = r.conn.apply_up(server, &self.set, Some(p), &f, Some(check));
                 if let Some(&e) = report.too_fast.first()
                     && r.speed_reported != Some(second)
