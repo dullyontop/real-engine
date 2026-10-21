@@ -17,7 +17,7 @@ if (!engineDir) {
 }
 const server = await serve({ engineDir });
 const gpuArgs = webgl
-  ? ['--disable-features=WebGPU', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
+  ? ['--disable-features=WebGPU', '--disable-blink-features=WebGPU', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
   : ['--enable-unsafe-webgpu'];
 const browser = await chromium.launch({ args: [...gpuArgs, '--autoplay-policy=user-gesture-required'] });
 const tab = await browser.newPage({ viewport: { width: 1280, height: 720 } });

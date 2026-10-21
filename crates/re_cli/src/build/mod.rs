@@ -145,6 +145,7 @@ fn build(args: &BuildArgs, project: &Path) -> (BuildReport, bool) {
     }
 
     // 2. The archive.
+    let mut web_runtime = None;
     let mut errors = report
         .pack
         .diagnostics
@@ -165,6 +166,22 @@ fn build(args: &BuildArgs, project: &Path) -> (BuildReport, bool) {
             .filter(|d| d.is_error())
             .count();
         if errors == 0 {
+            // The web runtime is ready before `out` is cleared, so a missing
+            // toolchain leaves an earlier build in place.
+            if args.target.as_deref().is_some_and(web::is_web) && !args.archive_only {
+                let runtime = web::runtime(
+                    &args.out,
+                    args.runtime.as_deref(),
+                    &mut report.pack.diagnostics,
+                );
+                match runtime {
+                    Ok(dir) => web_runtime = Some(dir),
+                    Err(d) => {
+                        let ok = stop(&mut report, d);
+                        return (report, ok);
+                    }
+                }
+            }
             let written = match prepare_out(&args.out, &earlier) {
                 Ok(()) => writer.write(&archive_path(&args.out)),
                 Err(d) => {
@@ -213,9 +230,9 @@ fn build(args: &BuildArgs, project: &Path) -> (BuildReport, bool) {
         .clone()
         .unwrap_or_else(crate::game::target_triple);
     report.target = Some(triple.clone());
-    if web::is_web(&triple) {
+    if let Some(runtime) = web_runtime {
         report.target = Some(web::TARGET.to_owned());
-        report.ok = web::build(&args.out, args.runtime.as_deref(), &config, &mut report)
+        report.ok = web::lay_out(&args.out, &runtime, &config, &mut report)
             && finish(&args.out, &mut report);
         let ok = report.ok;
         return (report, ok);

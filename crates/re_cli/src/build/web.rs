@@ -54,29 +54,83 @@ pub fn is_web(target: &str) -> bool {
     target == "web" || target == TARGET
 }
 
-/// Lays out the web game folder in `out`, where the archive already is.
-/// Diagnostics go to `report`; returns false when the build failed.
-pub fn build(
+/// `path` made absolute with links resolved, also when it does not exist yet
+/// (its parent is resolved instead).
+fn resolved(path: &Path) -> PathBuf {
+    if let Ok(p) = path.canonicalize() {
+        return p;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => resolved(parent).join(name),
+        _ => std::env::current_dir().map_or_else(|_| path.to_owned(), |d| d.join(path)),
+    }
+}
+
+/// Refuses an `out` that is `dir` or lies inside it: the build clears `out`
+/// before it copies the runtime from `dir`.
+fn out_apart(out: &Path, dir: &Path, what: &str) -> Result<(), Diagnostic> {
+    if resolved(out).starts_with(resolved(dir)) {
+        return Err(Diagnostic::error(
+            codes::BUNDLE_FAILED,
+            format!(
+                "--out {} is inside {what} {}, which the build reads after it clears --out",
+                out.display(),
+                dir.display()
+            ),
+        )
+        .with_hint("choose another --out; an earlier web build can be --runtime for a new --out"));
+    }
+    Ok(())
+}
+
+/// The web runtime folder for a build into `out`: `runtime` after checking it
+/// against this engine, or one built with cargo. It runs before `out` is
+/// cleared. A missing `wasm-opt` is a warning in `diagnostics`.
+///
+/// # Errors
+///
+/// `RE0955` when `out` is the runtime's folder, `RE0970`–`RE0972` from the
+/// toolchain and the runtime's build or check.
+pub fn runtime(
     out: &Path,
     runtime: Option<&Path>,
-    config: &AppConfig,
-    report: &mut BuildReport,
-) -> bool {
-    let diagnostics = &mut report.pack.diagnostics;
-    let runtime = match runtime {
-        Some(dir) => check_runtime(dir).map(|()| dir.to_owned()),
-        None => build_runtime(diagnostics),
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<PathBuf, Diagnostic> {
+    match runtime {
+        Some(dir) => {
+            out_apart(out, dir, "--runtime")?;
+            check_runtime(dir)?;
+            Ok(dir.to_owned())
+        }
+        None => build_runtime(out, diagnostics),
+    }
+}
+
+/// Copies the web runtime from `runtime` into `out`, where the archive
+/// already is, with the page titled after the game. Diagnostics go to
+/// `report`; returns false when the build failed.
+pub fn lay_out(out: &Path, runtime: &Path, config: &AppConfig, report: &mut BuildReport) -> bool {
+    let failed = |what: &str, e: std::io::Error| {
+        Diagnostic::error(codes::BUNDLE_FAILED, format!("cannot write {what}: {e}"))
     };
-    let runtime = match runtime {
-        Ok(dir) => dir,
-        Err(d) => {
-            diagnostics.push(d);
+    for name in RUNTIME_FILES {
+        let from = runtime.join(name);
+        let copied = if *name == "index.html" {
+            let title = config
+                .package
+                .as_ref()
+                .and_then(|p| p.display_name.clone())
+                .unwrap_or_else(|| config.project.name.clone());
+            std::fs::read_to_string(&from)
+                .and_then(|page| std::fs::write(out.join(name), titled(&page, &title)))
+        } else {
+            std::fs::copy(&from, out.join(name)).map(|_| ())
+        };
+        if let Err(e) = copied {
+            report.pack.diagnostics.push(failed(name, e));
             return false;
         }
-    };
-    if let Err(d) = lay_out(out, &runtime, config, &mut report.files) {
-        report.pack.diagnostics.push(d);
-        return false;
+        report.files.push((*name).to_owned());
     }
     let size = std::fs::metadata(out.join(ARCHIVE_NAME)).map_or(0, |m| m.len());
     if size > LARGE_ARCHIVE {
@@ -96,34 +150,6 @@ pub fn build(
             .to_owned(),
     );
     true
-}
-
-/// Copies the runtime into `out`, with the page titled after the game.
-fn lay_out(
-    out: &Path,
-    runtime: &Path,
-    config: &AppConfig,
-    files: &mut Vec<String>,
-) -> Result<(), Diagnostic> {
-    let failed = |what: &str, e: std::io::Error| {
-        Diagnostic::error(codes::BUNDLE_FAILED, format!("cannot write {what}: {e}"))
-    };
-    for name in RUNTIME_FILES {
-        let from = runtime.join(name);
-        if *name == "index.html" {
-            let page = std::fs::read_to_string(&from).map_err(|e| failed(name, e))?;
-            let title = config
-                .package
-                .as_ref()
-                .and_then(|p| p.display_name.clone())
-                .unwrap_or_else(|| config.project.name.clone());
-            std::fs::write(out.join(name), titled(&page, &title)).map_err(|e| failed(name, e))?;
-        } else if from != out.join(name) {
-            std::fs::copy(&from, out.join(name)).map_err(|e| failed(name, e))?;
-        }
-        files.push((*name).to_owned());
-    }
-    Ok(())
 }
 
 /// `page` with its `<title>` replaced by `title`, escaped.
@@ -225,10 +251,10 @@ fn tool_version(tool: &str) -> Option<String> {
     })
 }
 
-/// The environment wasi-sdk at `sdk` needs (the same as `tools/ci/wasi-sdk.sh`).
+/// The compiler environment wasi-sdk at `sdk` needs (as `tools/ci/wasi-sdk.sh`
+/// sets it); the link flags go through [`link_flags`].
 fn wasi_env(sdk: &Path) -> Vec<(String, String)> {
     let sysroot = sdk.join("share/wasi-sysroot");
-    let lib = sysroot.join("lib/wasm32-wasip1");
     let bin = |t: &str| sdk.join("bin").join(t).display().to_string();
     vec![
         ("CC_wasm32_unknown_unknown".into(), bin("clang")),
@@ -242,15 +268,30 @@ fn wasi_env(sdk: &Path) -> Vec<(String, String)> {
                 sysroot.display()
             ),
         ),
-        (
-            "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS".into(),
-            format!(
-                "-L {} -L {} -l static=c++abi -l static=unwind -l static=c -l static=wasi-emulated-process-clocks",
-                lib.join("eh").display(),
-                lib.display()
-            ),
-        ),
     ]
+}
+
+/// A `--config` value with the link flags wasi-sdk at `sdk` needs (as
+/// `tools/ci/wasi-sdk.sh` sets them): the C++ runtime with exceptions,
+/// wasi-libc, and the process clocks Luau's `os.clock` uses. An array, so a
+/// path is never split.
+fn link_flags(sdk: &Path) -> String {
+    let lib = sdk.join("share/wasi-sysroot/lib/wasm32-wasip1");
+    let flags = [
+        "-L".to_owned(),
+        lib.join("eh").display().to_string(),
+        "-L".to_owned(),
+        lib.display().to_string(),
+        "-lstatic=c++abi".to_owned(),
+        "-lstatic=unwind".to_owned(),
+        "-lstatic=c".to_owned(),
+        "-lstatic=wasi-emulated-process-clocks".to_owned(),
+    ];
+    let quoted: Vec<String> = flags
+        .iter()
+        .map(|f| serde_json::Value::from(f.as_str()).to_string())
+        .collect();
+    format!("target.{TARGET}.rustflags=[{}]", quoted.join(","))
 }
 
 /// Checks the toolchain the web runtime's build needs; returns wasi-sdk's path.
@@ -272,12 +313,19 @@ fn check_toolchain(ws: &Path) -> Result<PathBuf, Diagnostic> {
             "run `rustup target add wasm32-unknown-unknown`, or pass `--runtime DIR`",
         ));
     }
-    let Some(sdk) = std::env::var_os("WASI_SDK_PATH").map(PathBuf::from) else {
+    let Some(sdk) = std::env::var_os("WASI_SDK_PATH").map(|p| resolved(Path::new(&p))) else {
         return Err(missing(
             "wasi-sdk was not found: WASI_SDK_PATH is not set".to_owned(),
             "install wasi-sdk 34 and set WASI_SDK_PATH (the engine's tools/ci/wasi-sdk.sh does both), or pass `--runtime DIR`",
         ));
     };
+    if sdk.to_string_lossy().contains(char::is_whitespace) {
+        // cc splits CXXFLAGS on whitespace, so --sysroot would break.
+        return Err(missing(
+            format!("WASI_SDK_PATH {} has a space in it", sdk.display()),
+            "unpack wasi-sdk into a folder whose path has no spaces",
+        ));
+    }
     if !sdk.join("bin/clang++").is_file() && !sdk.join("bin/clang++.exe").is_file() {
         return Err(missing(
             format!("WASI_SDK_PATH {} holds no bin/clang++", sdk.display()),
@@ -285,7 +333,15 @@ fn check_toolchain(ws: &Path) -> Result<PathBuf, Diagnostic> {
         ));
     }
     let lock = std::fs::read_to_string(ws.join("Cargo.lock")).unwrap_or_default();
-    let want = locked_version(&lock, "wasm-bindgen").unwrap_or_default();
+    let Some(want) = locked_version(&lock, "wasm-bindgen") else {
+        return Err(Diagnostic::error(
+            codes::WEB_RUNTIME_FAILED,
+            format!(
+                "cannot read wasm-bindgen's version from {}",
+                ws.join("Cargo.lock").display()
+            ),
+        ));
+    };
     let install = format!("cargo install --locked wasm-bindgen-cli --version {want}");
     match tool_version("wasm-bindgen") {
         None => Err(missing(
@@ -308,7 +364,7 @@ fn check_toolchain(ws: &Path) -> Result<PathBuf, Diagnostic> {
 
 /// Builds the web runtime with cargo in the engine workspace, into
 /// `target/web-runtime/`. A missing `wasm-opt` is a warning in `diagnostics`.
-fn build_runtime(diagnostics: &mut Vec<Diagnostic>) -> Result<PathBuf, Diagnostic> {
+fn build_runtime(out: &Path, diagnostics: &mut Vec<Diagnostic>) -> Result<PathBuf, Diagnostic> {
     let failed = |msg: String| Diagnostic::error(codes::WEB_RUNTIME_FAILED, msg);
     let Some(ws) = super::engine_workspace() else {
         return Err(failed(
@@ -316,6 +372,9 @@ fn build_runtime(diagnostics: &mut Vec<Diagnostic>) -> Result<PathBuf, Diagnosti
         )
         .with_hint("pass `--runtime DIR` with a web runtime of this engine version"));
     };
+    let target_dir = ws.join("target");
+    let stage = target_dir.join("web-runtime");
+    out_apart(out, &stage, "the web runtime's staging folder")?;
     let sdk = check_toolchain(&ws)?;
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     eprintln!("building the web runtime (cargo --profile web --target {TARGET})...");
@@ -331,6 +390,13 @@ fn build_runtime(diagnostics: &mut Vec<Diagnostic>) -> Result<PathBuf, Diagnosti
             "-p",
             "re_web",
         ])
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .arg("--config")
+        .arg(link_flags(&sdk))
+        // Either would replace the link flags.
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env("WASI_SDK_PATH", &sdk)
         .envs(wasi_env(&sdk))
         .stdout(Stdio::null())
@@ -341,8 +407,7 @@ fn build_runtime(diagnostics: &mut Vec<Diagnostic>) -> Result<PathBuf, Diagnosti
             "cargo could not build the web runtime ({status})"
         )));
     }
-    let module = ws.join("target").join(TARGET).join("web/re_web.wasm");
-    let stage = ws.join("target/web-runtime");
+    let module = target_dir.join(TARGET).join("web/re_web.wasm");
     let _ = std::fs::remove_dir_all(&stage);
     let status = Command::new("wasm-bindgen")
         .args(["--target", "web", "--out-name", "real", "--out-dir"])
@@ -414,6 +479,32 @@ mod tests {
             Some("0.4.79")
         );
         assert_eq!(locked_version(lock, "nothing"), None);
+    }
+
+    #[test]
+    fn the_out_folder_is_not_its_own_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("dist");
+        // A new --out beside the runtime is fine, existing or not.
+        out_apart(&out, &dir.path().join("rt"), "--runtime").unwrap();
+        std::fs::create_dir(&out).unwrap();
+        let err = runtime(&out, Some(&out.join(".")), &mut Vec::new()).unwrap_err();
+        assert_eq!(err.code, codes::BUNDLE_FAILED);
+        let err = out_apart(&out.join("sub"), &out, "--runtime").unwrap_err();
+        assert_eq!(err.code, codes::BUNDLE_FAILED);
+    }
+
+    #[test]
+    fn link_flags_are_one_toml_array() {
+        let flags = link_flags(Path::new("/opt/wasi sdk"));
+        assert!(
+            flags.starts_with("target.wasm32-unknown-unknown.rustflags=[\"-L\",\"/opt/wasi sdk/"),
+            "{flags}"
+        );
+        assert!(
+            flags.ends_with("\"-lstatic=wasi-emulated-process-clocks\"]"),
+            "{flags}"
+        );
     }
 
     #[test]

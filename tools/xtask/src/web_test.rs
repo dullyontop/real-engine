@@ -1,6 +1,6 @@
 //! `cargo xtask web-test`: the browser build's checks (ADR-0049 §8), as CI's
 //! `build-web` job runs them. It builds `real`, builds the island and the plaza with
-//! `real build --target web` into `target/web/` (failing when `real_bg.wasm` gzips
+//! `real build --target web` into `target/web-games/` (failing when `real_bg.wasm` gzips
 //! above the 8 MB budget), and in headless Chromium with WebGPU plays each one's
 //! replays from its game.rpak and starts the island's game page, with
 //! `tools/web-test`'s scripts. It also starts the page on WebGL2 and reports the
@@ -73,9 +73,14 @@ pub fn run(root: &Path, reported: bool) -> Result<()> {
         root,
         cargo().args(["build", "--locked", "--release", "-p", "re_cli"]),
     )?;
-    let real = root.join("target/release/real");
-    let out = root.join("target/web");
-    std::fs::create_dir_all(&out).context("creating target/web")?;
+    let target =
+        std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), |d| root.join(d));
+    let real = target
+        .join("release")
+        .join(format!("real{}", std::env::consts::EXE_SUFFIX));
+    // Not target/web/: that is cargo's folder for profile `web`.
+    let out = target.join("web-games");
+    std::fs::create_dir_all(&out).context("creating target/web-games")?;
     for (i, (name, _)) in PROJECTS.iter().enumerate() {
         let mut cmd = Command::new(&real);
         cmd.arg("--project")
