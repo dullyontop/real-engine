@@ -267,16 +267,16 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
       - run: cargo build --locked --release -p re_cli
-      - name: real build the island and the plaza
+      - name: real build the island, the plaza and the valley
         run: |
           mkdir -p out
-          for project in island plaza; do
+          for project in island plaza valley; do
             target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
             jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes"' "out/build-$project.json"
           done
       - name: real verify --package
         run: |
-          for project in island plaza; do
+          for project in island plaza valley; do
             target/release/real verify --project "examples/$project" --package "dist/$project"
           done
       - name: The game needs at most glibc 2.35 and links no hot reload

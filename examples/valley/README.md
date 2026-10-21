@@ -16,7 +16,11 @@ steer, Space is the hand brake. E again gets you out.
 ```sh
 real run --project examples/valley
 real verify --project examples/valley
+real build --project examples/valley --out dist/valley
 ```
+
+`real.toml` turns on mild post-processing (neutral tone mapping, a little
+bloom) and packs `models/`, which is not a default package folder.
 
 ## Layout
 
@@ -52,7 +56,5 @@ Everything here is made by the engine's generators or by the script in
 
 ## Not yet
 
-- Post-processing is off (the defaults) until native projects can set it
-  (WP20); shadows use the renderer's defaults.
 - Erosion, roads, an animation graph and audio buses come as WP23, WP24, WP21
   and WP22 land them.
