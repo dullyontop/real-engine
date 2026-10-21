@@ -28,3 +28,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+re_assets.workspace = true

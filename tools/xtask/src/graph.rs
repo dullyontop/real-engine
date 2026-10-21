@@ -176,6 +176,21 @@ pub fn rules() -> Vec<Rule> {
             why: "re_app must not depend on tokio, rmcp or full_moon",
         },
         Rule {
+            krate: "re_web",
+            check: Check::Reaches(&[
+                "tokio",
+                "rmcp",
+                "full_moon",
+                "re_cli",
+                "re_editor",
+                "re_agent",
+                "re_mcp",
+                "re_import",
+                "re_script_check",
+            ]),
+            why: "re_web (the browser runtime, ADR-0049) must not depend on tokio or a tooling crate",
+        },
+        Rule {
             krate: "re_agent",
             check: Check::Reaches(&["tokio"]),
             why: "re_agent must not depend on tokio",
