@@ -23,17 +23,21 @@ fn example() -> GraphDoc {
 }
 
 /// The example island with the kinds it has no use for added as extra sinks:
-/// `terrain.chunks` (world streaming's terrain) on the shore field.
+/// `terrain.chunks` (world streaming's terrain) and `terrain.erode` on the
+/// shore field.
 fn example_with_every_kind() -> GraphDoc {
     let mut doc: Json =
         serde_json::from_str(include_str!("../examples/island.graph.json")).unwrap();
     doc["nodes"].as_array_mut().unwrap().push(json!({
         "id": "lod", "kind": "terrain.chunks", "version": 1, "params": { "name": "Terrain" },
     }));
-    doc["edges"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({ "from": ["shore", "field"], "to": ["lod", "field"] }));
+    doc["nodes"].as_array_mut().unwrap().push(json!({
+        "id": "eroded", "kind": "terrain.erode", "version": 1,
+        "params": { "droplets": 0.1, "steps": 24 },
+    }));
+    let edges = doc["edges"].as_array_mut().unwrap();
+    edges.push(json!({ "from": ["shore", "field"], "to": ["lod", "field"] }));
+    edges.push(json!({ "from": ["shore", "field"], "to": ["eroded", "field"] }));
     GraphDoc::from_json(&doc.to_string()).unwrap()
 }
 
@@ -66,6 +70,7 @@ const GOLDEN: &[(&str, u32, &str, &str)] = &[
     ("material.assign", 1, "dock", "d80ce6803193eae7"),
     ("fragment.merge", 1, "out", "3e333807edeff974"),
     ("terrain.chunks", 1, "lod", "8fed4ae29c80e636"),
+    ("terrain.erode", 1, "eroded", "300f5e16a637b2d1"),
 ];
 
 #[test]

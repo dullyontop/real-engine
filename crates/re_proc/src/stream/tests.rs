@@ -1054,3 +1054,103 @@ fn stream_terrain_collision_precision_is_only_for_chunks() {
     );
     assert_eq!(collider_precision("derived:0123"), None);
 }
+
+/// A height field, eroded (light settings, so debug tests stay quick).
+fn eroded_graph() -> GraphDoc {
+    graph(
+        &[
+            (
+                "h",
+                "terrain.heightfield",
+                json!({ "cell": 4.0, "height": 40.0, "scale": 0.01 }),
+            ),
+            (
+                "e",
+                "terrain.erode",
+                json!({ "spacing": 4.0, "droplets": 0.05, "steps": 16 }),
+            ),
+            ("ground", "terrain.chunks", json!({ "max_level": 2 })),
+        ],
+        &[
+            ("h", "field", "e", "field"),
+            ("e", "field", "ground", "field"),
+        ],
+    )
+}
+
+#[test]
+fn stream_erosion_windows_agree_across_levels_and_tiles() {
+    let registry = Arc::new(crate::NodeRegistry::m1());
+    let graph = ProcGraph::from_doc(&eroded_graph(), &registry).unwrap();
+    let ev = Evaluator::new(registry);
+    let eval = |origin: [i64; 2], n: u32, spacing: f32, id: &str| {
+        let opts = EvalOptions {
+            seed: Some(7),
+            domain: Some(Domain { origin, n, spacing }),
+            serial: true,
+            ..Default::default()
+        };
+        let e = ev.evaluate(&graph, &opts);
+        assert!(e.ok(), "{:#?}", e.report.diagnostics);
+        match e.output(id) {
+            Some(Output::Field(f)) => f.clone(),
+            other => panic!("{other:?}"),
+        }
+    };
+    // Windows either side of the tile border at x = 1024 m (256 cells of
+    // 4 m), at 4 m and at 8 m.
+    let a = eval([240, 0], 17, 4.0, "e");
+    let b = eval([256, 0], 17, 4.0, "e");
+    let coarse = eval([120, 0], 17, 8.0, "e");
+    let raw = eval([240, 0], 17, 4.0, "h");
+    for z in 0..17 {
+        assert_eq!(a.0.sample(16, z).to_bits(), b.0.sample(0, z).to_bits());
+    }
+    for z in (0..17).step_by(2) {
+        for x in (0..17).step_by(2) {
+            // Coarse sample (x/2 + 120) is fine sample (x + 240).
+            assert_eq!(
+                coarse.0.sample(x / 2, z / 2).to_bits(),
+                a.0.sample(x, z).to_bits(),
+                "({x}, {z})"
+            );
+        }
+    }
+    assert_ne!(a.0.samples, raw.0.samples, "erosion changes the terrain");
+    // The same again from a fresh evaluator (no cache): bit for bit.
+    let ev2 = Evaluator::new(Arc::new(crate::NodeRegistry::m1()));
+    let opts = EvalOptions {
+        seed: Some(7),
+        domain: Some(Domain {
+            origin: [240, 0],
+            n: 17,
+            spacing: 4.0,
+        }),
+        ..Default::default()
+    };
+    match ev2.evaluate(&graph, &opts).output("e") {
+        Some(Output::Field(f)) => assert_eq!(f.0.samples, a.0.samples),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn stream_eroded_terrain_streams_with_matching_collision_seams() {
+    let mut st = streamed(eroded_graph(), 0.0, 0.0, json!([]));
+    let w = &mut st.world;
+    for t in 0..10u64 {
+        let r = step(w, t, &collision_config());
+        assert!(r.diagnostics.is_empty(), "tick {t}: {:#?}", r.diagnostics);
+        w.update();
+    }
+    let chunks: BTreeMap<String, Arc<re_geom::Heightfield>> =
+        collision_chunks(w).into_iter().collect();
+    assert_eq!(chunks.len(), 4);
+    let (a, b) = (&chunks["t/-1_0"], &chunks["t/0_0"]);
+    for z in 0..65 {
+        assert_eq!(
+            a.samples[z * 65 + 64].to_bits(),
+            b.samples[z * 65].to_bits()
+        );
+    }
+}

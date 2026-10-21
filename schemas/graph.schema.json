@@ -78,6 +78,7 @@
             "terrain.mesh",
             "terrain.chunks",
             "terrain.water_plane",
+            "terrain.erode",
             "field.combine",
             "field.remap",
             "scatter.poisson",
@@ -384,6 +385,66 @@
                   }
                 },
                 "description": "Parameters of `terrain.water_plane`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "terrain.erode"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "spacing": {
+                    "description": "Metres between the samples erosion runs on, when streamed (the\nfield's own spacing otherwise).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 4.0
+                  },
+                  "droplets": {
+                    "description": "Droplets per cell of the erosion grid.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.5
+                  },
+                  "steps": {
+                    "description": "Steps a droplet lives at most.",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 48
+                  },
+                  "erosion": {
+                    "description": "Share of the free capacity eroded per step (0 to 1).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.30000001192092896
+                  },
+                  "deposition": {
+                    "description": "Share of the excess sediment dropped per step (0 to 1).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.30000001192092896
+                  },
+                  "capacity": {
+                    "description": "Sediment a droplet can carry, per unit of slope, speed and water.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 4.0
+                  }
+                },
+                "description": "Parameters of `terrain.erode`.",
                 "type": "object"
               }
             }

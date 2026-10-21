@@ -7,6 +7,7 @@
 //! defaults) and checks ranges, so a bad parameter is `RE4005` before
 //! anything runs.
 
+mod erode;
 mod field;
 mod fragment;
 mod mesh;
@@ -540,6 +541,7 @@ impl NodeRegistry {
     pub fn m1() -> Self {
         let mut r = Self::new();
         terrain::register(&mut r);
+        erode::register(&mut r);
         field::register(&mut r);
         scatter::register(&mut r);
         points::register(&mut r);
@@ -686,7 +688,15 @@ pub struct NodeCtx<'a> {
     pub pool: &'a TaskPool,
     /// Lines the node logged ([`NodeCtx::log`]), for its report.
     pub logs: std::sync::Mutex<Vec<String>>,
+    /// For a [`Streaming::Region`] node in a streamed evaluation: the field
+    /// on an input port evaluated over another window (its region tiles),
+    /// through the same evaluator and caches.
+    pub upstream: Option<&'a Upstream<'a>>,
 }
+
+/// Evaluates the field on input `port` over a window (see
+/// [`NodeCtx::upstream`]).
+pub type Upstream<'a> = dyn Fn(&str, Domain) -> Result<Arc<Field>, String> + Sync + 'a;
 
 /// At most this many lines of a node's log reach its report.
 pub const MAX_LOG_LINES: usize = 100;
@@ -891,10 +901,10 @@ mod tests {
     }
 
     #[test]
-    fn m1_has_seventeen_kinds() {
+    fn m1_has_eighteen_kinds() {
         let r = NodeRegistry::m1();
-        assert_eq!(r.len(), 17);
+        assert_eq!(r.len(), 18);
         let schema = r.graph_json_schema();
-        assert!(schema.pointer("/$defs/NodeDoc/allOf/16").is_some());
+        assert!(schema.pointer("/$defs/NodeDoc/allOf/17").is_some());
     }
 }
