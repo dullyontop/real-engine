@@ -24,19 +24,20 @@ pub fn compiler() -> Compiler {
 pub const COMPILER_ID: &str = "o1d1";
 
 /// The version of the Luau the engine links, such as `"0.740"`, stored with
-/// packaged bytecode (ADR-0037).
+/// packaged bytecode (ADR-0037). `"unknown"` when mlua was built without it,
+/// so two such builds compare equal.
 pub fn luau_version() -> &'static str {
     mlua::ffi::luau_version().unwrap_or("unknown")
 }
 
 /// The bytecode format version [`compiler`] writes (its output's first byte),
-/// stored with packaged bytecode (ADR-0037).
+/// stored with packaged bytecode (ADR-0037). Computed once.
 pub fn bytecode_version() -> u8 {
-    compiler()
-        .compile("")
-        .ok()
-        .and_then(|b| b.first().copied())
-        .unwrap_or(0)
+    static VERSION: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    *VERSION.get_or_init(|| {
+        let code = compiler().compile("").expect("the empty chunk compiles");
+        code[0]
+    })
 }
 
 /// Compiles `source` to Luau bytecode with [`compiler`], for `real build`.
