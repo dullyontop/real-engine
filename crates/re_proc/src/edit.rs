@@ -461,10 +461,18 @@ pub(crate) fn remove_node<C: EditTarget>(
         let mut entity_overrides = Vec::new();
         let prefix = format!("{}/", a.node);
         for (source, entity) in sources_of(world, path) {
-            if let Ok(Value::Str(text)) = world.get(&source, "GraphSource", "params")
-                && let Ok(mut overrides) = crate::generator::parse_overrides(&text)
-                && let Some(params) = overrides.remove(&a.node)
-            {
+            let text = match world.get(&source, "GraphSource", "params") {
+                Ok(Value::Str(text)) => text,
+                _ => String::new(),
+            };
+            // Text that does not parse is an error, not "no overrides": the
+            // source would keep a stale override of the removed node.
+            let mut overrides = crate::generator::parse_overrides(&text).map_err(|e| {
+                Diagnostic::error(codes::UNKNOWN_OVERRIDE, format!("{source}: {e}"))
+                    .at(Location::entity(source.clone()))
+                    .with_hint("fix or clear `GraphSource.params` with `set_field` first")
+            })?;
+            if let Some(params) = overrides.remove(&a.node) {
                 params_removed.push(json!({ "source": source, "params": params }));
                 ops.push(Op::SetField {
                     id: source.clone(),
@@ -698,7 +706,7 @@ pub(crate) fn set_default<C: EditTarget>(
         // `describe` shows the current parameters; a node written for another
         // version keeps its own shape in the file, which is migrated first.
         if node.version != def.version {
-            let code = if node.version < def.version {
+            let code = if node.version >= 1 && node.version < def.version {
                 codes::OUTDATED_NODE_VERSION
             } else {
                 codes::UNSUPPORTED_NODE_VERSION

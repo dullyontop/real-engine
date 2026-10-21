@@ -444,32 +444,63 @@ fn remove_node_clears_the_sources_overrides_of_it() {
 }
 
 #[test]
-fn set_default_refuses_a_node_of_an_older_version() {
-    let (_dir, mut st) = project();
-    let mut doc = island(7);
-    doc.nodes[0].version = 0; // `h`, written before the current version
-    std::fs::write(_dir.path().join(PATH), doc.to_json()).unwrap();
+fn set_default_refuses_a_node_of_another_version() {
+    let (dir, mut st) = project();
+    // This engine's `terrain.heightfield` is at version 2; `h` is written
+    // for version 1.
     let mut registry = re_proc::NodeRegistry::m1();
     let mut def = registry.get("terrain.heightfield").unwrap().clone();
     def.version = 2;
-    def.oldest = 0;
     registry.register(def);
     st.world.ecs.insert_resource(GraphStore::with_evaluator(
         std::sync::Arc::new(re_proc::Evaluator::new(std::sync::Arc::new(registry))),
-        Some(_dir.path().to_path_buf()),
+        Some(dir.path().to_path_buf()),
     ));
+    let set = |st: &mut EditState| {
+        call(
+            st,
+            "graph.set_default",
+            json!({ "graph": PATH, "node": "h", "param": "height", "value": 25.0 }),
+        )
+    };
+    let o = set(&mut st);
+    assert_eq!(code(&o), "RE4019");
+    let hint = o.diagnostics[0].hint.as_deref().unwrap();
+    assert!(hint.contains("real migrate-graph"), "{hint}");
+    assert!(st.world.doc(PATH).is_none());
+
+    // A node newer than the kind, or of version 0, is not supported.
+    for version in [3, 0] {
+        let mut doc = island(7);
+        doc.nodes[0].version = version;
+        std::fs::write(dir.path().join(PATH), doc.to_json()).unwrap();
+        assert_eq!(code(&set(&mut st)), "RE4012", "version {version}");
+    }
+}
+
+#[test]
+fn remove_node_refuses_unreadable_overrides() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("graphs")).unwrap();
+    std::fs::write(dir.path().join(PATH), island(7).to_json()).unwrap();
+    let mut st = support::world(island(7), json!([]));
+    let text = |s: &str| re_reflect::Value::Str(s.into());
+    st.world
+        .set("island", "GraphSource", "graph", text(PATH))
+        .unwrap();
+    st.world
+        .set("island", "GraphSource", "params", text("{ not json"))
+        .unwrap();
+    st.world
+        .ecs
+        .insert_resource(GraphStore::for_project(dir.path()));
     let o = call(
         &mut st,
-        "graph.set_default",
-        json!({ "graph": PATH, "node": "h", "param": "height", "value": 25.0 }),
+        "graph.remove_node",
+        json!({ "graph": PATH, "node": "crates" }),
     );
-    assert_eq!(code(&o), "RE4019");
-    assert!(
-        o.diagnostics[0]
-            .hint
-            .as_deref()
-            .unwrap()
-            .contains("real migrate-graph")
-    );
-    assert!(st.world.doc(PATH).is_none());
+    assert_eq!(code(&o), "RE4011");
+    let hint = o.diagnostics[0].hint.as_deref().unwrap();
+    assert!(hint.contains("GraphSource.params"), "{hint}");
+    assert!(st.world.doc(PATH).is_none(), "nothing changed");
 }
