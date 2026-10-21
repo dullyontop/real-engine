@@ -1,7 +1,8 @@
-// A small static server for the browser checks (ADR-0049): the engine under /engine/
-// (wasm-bindgen's output with re_web's web/ files beside it) and a project under
-// /project/, with the files.json manifest the boot script reads. `pages` maps extra
-// paths to HTML.
+// A small static server for the browser checks (ADR-0049): a web build under /engine/
+// (a folder `real build --target web` wrote, or wasm-bindgen's output, with re_web's
+// web/ files filling in what it lacks) and, when given, a project under /project/,
+// with the files.json manifest the boot script reads for loose files. `pages` maps
+// extra paths to HTML.
 import { createServer } from 'node:http';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { extname, join, relative, resolve, sep } from 'node:path';
@@ -35,8 +36,8 @@ function under(root, rel) {
 const TYPES = { '.js': 'text/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.html': 'text/html' };
 
 /// Starts the server on a free port of 127.0.0.1 and resolves to { origin, close }.
-export async function serve({ engineDir, projectDir, pages = {} }) {
-  const files = JSON.stringify(projectFiles(projectDir));
+export async function serve({ engineDir, projectDir = null, pages = {} }) {
+  const files = projectDir === null ? null : JSON.stringify(projectFiles(projectDir));
   const server = createServer((req, res) => {
     let url;
     try {
@@ -50,11 +51,11 @@ export async function serve({ engineDir, projectDir, pages = {} }) {
     if (url in pages) {
       body = pages[url];
       type = 'text/html';
-    } else if (url === '/project/files.json' || url === '/engine/project/files.json') {
+    } else if (files !== null && (url === '/project/files.json' || url === '/engine/project/files.json')) {
       body = files;
     } else {
       let path = null;
-      if (url.startsWith('/engine/project/') || url.startsWith('/project/')) {
+      if (projectDir !== null && (url.startsWith('/engine/project/') || url.startsWith('/project/'))) {
         path = under(projectDir, url.replace(/^\/(engine\/)?project\//, ''));
       } else if (url.startsWith('/engine/')) {
         const name = url.slice('/engine/'.length) || 'index.html';

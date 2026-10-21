@@ -2,14 +2,16 @@
 // import map that maps "wasi_snapshot_preview1" to ./wasi.js:
 //
 //   import { boot, play } from './boot.js';
-//   const { session } = await boot({ project: 'project/', onProgress });
-//   await play(session, { gameId: 'my-game', onReport });   // after a click
+//   const { session } = await boot({ onProgress });          // fetches game.rpak
+//   await play(session, { onReport });                       // after a click
 //
 // `boot` checks what the browser supports, loads the engine (real.js and real_bg.wasm
-// next to this file), runs its static constructors once, and hands it every file the
-// project's manifest (files.json: a JSON array of project paths) names. `play` loads
-// the game's saved data from IndexedDB and starts it in a canvas appended to the page;
-// the engine stores each later change there through `realEngine.persist`.
+// next to this file), runs its static constructors once, and hands it the game: the
+// archive `real build --target web` wrote (game.rpak), or with `project` a project's
+// loose files, every one its manifest (files.json: a JSON array of project paths)
+// names. `play` loads the game's saved data from IndexedDB and starts it in a canvas
+// appended to the page; the engine stores each later change there through
+// `realEngine.persist`.
 import init, * as engine from './real.js';
 import { setMemory } from './wasi.js';
 
@@ -32,15 +34,36 @@ export function missingFeatures() {
   return missing;
 }
 
-async function fetchBytes(url) {
+async function fetchBytes(url, onBytes = () => {}) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
-  return new Uint8Array(await response.arrayBuffer());
+  // Content-Length is the encoded size when the host compresses; then the bar is a guess.
+  const total = Number(response.headers.get('content-length')) || 0;
+  if (!response.body) return new Uint8Array(await response.arrayBuffer());
+  const chunks = [];
+  let done = 0;
+  for (const reader = response.body.getReader(); ;) {
+    const { done: end, value } = await reader.read();
+    if (end) break;
+    chunks.push(value);
+    done += value.length;
+    onBytes(done, Math.max(total, done));
+  }
+  const bytes = new Uint8Array(done);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.length;
+  }
+  return bytes;
 }
 
-/// Loads the engine and the project. `onProgress(done, total)` is called as files
-/// arrive. Returns the engine module and a `Session` holding the project.
-export async function boot({ project = 'project/', onProgress = () => {} } = {}) {
+/// Loads the engine and the game: the archive at `archive` (relative to the page), or
+/// with `project` the loose files of the project folder at that URL. `extra` adds
+/// [path, url] files above them (the test runners add replays this way).
+/// `onProgress(done, total)` is called as bytes or files arrive. Returns the engine
+/// module and a `Session` holding the game.
+export async function boot({ archive = 'game.rpak', project = null, extra = [], onProgress = () => {} } = {}) {
   // What the engine calls before play() sets them, such as its panic hook.
   globalThis.realEngine ??= {
     persist() {},
@@ -50,16 +73,21 @@ export async function boot({ project = 'project/', onProgress = () => {} } = {})
   const wasm = await init({ module_or_path: new URL('real_bg.wasm', base) });
   setMemory(wasm.memory);
   engine.init();
-  const root = new URL(project, document.baseURI);
-  const paths = JSON.parse(new TextDecoder().decode(await fetchBytes(new URL('files.json', root))));
   const session = new engine.Session();
-  let done = 0;
-  onProgress(done, paths.length);
-  await Promise.all(paths.map(async (path) => {
-    const url = new URL(path.split('/').map(encodeURIComponent).join('/'), root);
-    session.addFile(path, await fetchBytes(url));
-    onProgress(++done, paths.length);
-  }));
+  const encode = (path) => path.split('/').map(encodeURIComponent).join('/');
+  if (project === null) {
+    session.addArchive(await fetchBytes(new URL(archive, document.baseURI), onProgress));
+  } else {
+    const root = new URL(project, document.baseURI);
+    const paths = JSON.parse(new TextDecoder().decode(await fetchBytes(new URL('files.json', root))));
+    let done = 0;
+    onProgress(done, paths.length);
+    await Promise.all(paths.map(async (path) => {
+      session.addFile(path, await fetchBytes(new URL(encode(path), root)));
+      onProgress(++done, paths.length);
+    }));
+  }
+  for (const [path, url] of extra) session.addFile(path, await fetchBytes(new URL(url, document.baseURI)));
   return { engine, session };
 }
 
@@ -102,11 +130,11 @@ function readAll(db) {
 }
 
 /// Starts the game. `gameId` names its saved data (one database per game and site;
-/// the project's name from real.toml by default);
+/// by default the archive's [package] identifier, or the project's name);
 /// `onReport(kind, message)` receives "running" with the GPU adapter once the first
 /// frame is drawn, "warning" and "problem" with a diagnostic while it runs, and
 /// "error" with a message when the game stops.
-export async function play(session, { gameId = session.projectName() || 'game', onReport = () => {} } = {}) {
+export async function play(session, { gameId = session.gameId() || 'game', onReport = () => {} } = {}) {
   const db = await openDb(gameId);
   if (db) for (const [key, bytes] of await readAll(db)) session.addSaved(key, bytes);
   globalThis.realEngine = {

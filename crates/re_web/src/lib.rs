@@ -1,7 +1,9 @@
 //! `re_web`: Real Engine in the browser (ADR-0049).
 //!
-//! The boot script hands the project's files to [`Session::add_file`] and then
-//! plays it with [`Session::open_for_play`] (`play` in JavaScript).
+//! The boot script hands the game's archive to [`Session::add_archive`] (a
+//! folder `real build --target web` wrote), or a project's loose files to
+//! [`Session::add_file`], and then plays it with [`Session::open_for_play`]
+//! (`play` in JavaScript).
 //! [`Session::run_replay`] is the headless entry point CI uses: it plays one
 //! replay without a GPU, as `real verify` does, so the `state_hash` can be
 //! compared with desktop's (equal once Jolt and glam are deterministic across
@@ -12,13 +14,17 @@
 
 use std::sync::Arc;
 
+use re_app::package::{ARCHIVE_NAME, Archive};
 use re_app::{App, AppConfig, Graphics};
-use re_core::files::{Form, LayerKind, MemLayer, ProjectFiles, ProjectPath, WritableDirs};
+use re_core::files::{
+    FileLayer, Form, LayerKind, MemLayer, ProjectFiles, ProjectPath, WritableDirs,
+};
 use re_render::{Capture, Gpu, wgpu};
 
 /// The project files received so far, and what to play.
 #[derive(Debug)]
 pub struct Session {
+    archive: Option<Arc<Archive>>,
     files: Arc<MemLayer>,
     saved: Vec<(String, Vec<u8>)>,
 }
@@ -33,6 +39,7 @@ impl Session {
     /// An empty project.
     pub fn new() -> Session {
         Session {
+            archive: None,
             files: Arc::new(MemLayer::new(LayerKind::Project)),
             saved: Vec::new(),
         }
@@ -50,6 +57,33 @@ impl Session {
             .ok_or_else(|| format!("{path}: the project is already running"))?;
         files.insert(rel, bytes.to_vec(), Form::Source);
         Ok(())
+    }
+
+    /// Reads the game from `bytes`, a `game.rpak` (ADR-0049 §6). Its files come
+    /// before any added with [`Session::add_file`], as an archive comes before
+    /// the folder that holds it in a desktop game.
+    ///
+    /// # Errors
+    ///
+    /// The diagnostic, rendered, when `bytes` is not an archive this runtime
+    /// reads.
+    pub fn add_archive(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+        let archive = Archive::from_bytes(ARCHIVE_NAME, bytes).map_err(|d| d.to_string())?;
+        self.archive = Some(Arc::new(archive));
+        Ok(())
+    }
+
+    /// The name the game's saved data is kept under: the archive's
+    /// `[package] identifier`, or for loose files the project's name.
+    ///
+    /// # Errors
+    ///
+    /// As [`Session::project_name`].
+    pub fn game_id(&self) -> Result<String, String> {
+        match &self.archive {
+            Some(a) => Ok(a.index().package.identifier.clone()),
+            None => self.project_name(),
+        }
     }
 
     /// Adds a file an earlier run persisted, keyed as
@@ -84,7 +118,12 @@ impl Session {
 
     /// The files as a [`ProjectFiles`], writing to `writable`.
     pub fn project_files(&self, writable: WritableDirs) -> ProjectFiles {
-        ProjectFiles::new(vec![self.files.clone()], writable, None)
+        let mut layers: Vec<Arc<dyn FileLayer>> = Vec::new();
+        if let Some(a) = &self.archive {
+            layers.push(a.clone());
+        }
+        layers.push(self.files.clone());
+        ProjectFiles::new(layers, writable, None)
     }
 
     /// Opens the project and plays the replay at `replay` headless. Returns the
@@ -267,6 +306,18 @@ mod wasm {
         #[wasm_bindgen(js_name = addFile)]
         pub fn add_file(&mut self, path: &str, bytes: &[u8]) -> Result<(), JsError> {
             self.0.add_file(path, bytes).map_err(|e| JsError::new(&e))
+        }
+
+        /// [`super::Session::add_archive`].
+        #[wasm_bindgen(js_name = addArchive)]
+        pub fn add_archive(&mut self, bytes: Vec<u8>) -> Result<(), JsError> {
+            self.0.add_archive(bytes).map_err(|e| JsError::new(&e))
+        }
+
+        /// [`super::Session::game_id`].
+        #[wasm_bindgen(js_name = gameId)]
+        pub fn game_id(&self) -> Result<String, JsError> {
+            self.0.game_id().map_err(|e| JsError::new(&e))
         }
 
         /// [`super::Session::add_saved`].

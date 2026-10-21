@@ -88,6 +88,31 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "Packaged run differs from the project",
         page: include_str!("../explain/RE0956.md"),
     },
+    DiagInfo {
+        code: codes::WEB_TOOLCHAIN_MISSING,
+        title: "The web build's toolchain is missing",
+        page: include_str!("../explain/RE0970.md"),
+    },
+    DiagInfo {
+        code: codes::WEB_RUNTIME_FAILED,
+        title: "Web runtime build or check failed",
+        page: include_str!("../explain/RE0971.md"),
+    },
+    DiagInfo {
+        code: codes::WASM_BINDGEN_MISMATCH,
+        title: "wasm-bindgen CLI version differs",
+        page: include_str!("../explain/RE0972.md"),
+    },
+    DiagInfo {
+        code: codes::BINARYEN_MISSING,
+        title: "wasm-opt is not installed",
+        page: include_str!("../explain/RE0973.md"),
+    },
+    DiagInfo {
+        code: codes::WEB_ARCHIVE_LARGE,
+        title: "The web build's archive is large",
+        page: include_str!("../explain/RE0974.md"),
+    },
 ];
 
 #[derive(Parser, Debug)]

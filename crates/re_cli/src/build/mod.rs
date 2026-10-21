@@ -4,6 +4,7 @@
 
 pub mod pack;
 pub mod verify;
+pub mod web;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -26,10 +27,12 @@ pub struct BuildArgs {
     #[arg(long)]
     out: PathBuf,
     /// The target to build for, such as `x86_64-unknown-linux-gnu` (default:
-    /// this machine's). A runtime for another OS needs `--runtime`.
+    /// this machine's), or `web` for a folder a static web server hosts. A
+    /// runtime for another OS needs `--runtime`.
     #[arg(long)]
     target: Option<String>,
-    /// Use this prebuilt game runtime instead of building one with cargo.
+    /// Use this prebuilt game runtime instead of building one with cargo (for
+    /// `--target web`, a folder holding a web runtime).
     #[arg(long, value_name = "PATH")]
     runtime: Option<PathBuf>,
     /// Write only `game.rpak`.
@@ -210,6 +213,13 @@ fn build(args: &BuildArgs, project: &Path) -> (BuildReport, bool) {
         .clone()
         .unwrap_or_else(crate::game::target_triple);
     report.target = Some(triple.clone());
+    if web::is_web(&triple) {
+        report.target = Some(web::TARGET.to_owned());
+        report.ok = web::build(&args.out, args.runtime.as_deref(), &config, &mut report)
+            && finish(&args.out, &mut report);
+        let ok = report.ok;
+        return (report, ok);
+    }
     let runtime = match &args.runtime {
         Some(path) => check_runtime(path, &triple).map(|()| path.clone()),
         None => build_runtime(&triple),

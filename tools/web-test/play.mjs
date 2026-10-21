@@ -1,16 +1,17 @@
-// Opens a project's game page (re_web's index.html) in headless Chromium with WebGPU,
-// clicks to start, presses a key, and checks that the game runs in its canvas for a few
-// seconds with no error and no page error (ADR-0049). Usage:
-//   node play.mjs <engine dir> <project dir> [screenshot.png]
+// Opens the game page (index.html) of a folder `real build --target web` wrote in
+// headless Chromium with WebGPU, clicks to start, presses a key, and checks that the
+// game runs in its canvas for a few seconds with no error and no page error
+// (ADR-0049). Usage:
+//   node play.mjs <web build dir> [screenshot.png]
 import { chromium } from 'playwright';
 import { serve } from './serve.mjs';
 
-const [engineDir, projectDir, shot] = process.argv.slice(2);
-if (!engineDir || !projectDir) {
-  console.error('usage: node play.mjs <engine dir> <project dir> [screenshot.png]');
+const [engineDir, shot] = process.argv.slice(2);
+if (!engineDir) {
+  console.error('usage: node play.mjs <web build dir> [screenshot.png]');
   process.exit(2);
 }
-const server = await serve({ engineDir, projectDir });
+const server = await serve({ engineDir });
 const browser = await chromium.launch({ args: ['--enable-unsafe-webgpu', '--autoplay-policy=user-gesture-required'] });
 const tab = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const problems = [];

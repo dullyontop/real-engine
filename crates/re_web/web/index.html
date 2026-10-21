@@ -29,7 +29,6 @@ if (missing.length) {
 } else {
   try {
     const { session } = await boot({
-      project: 'project/',
       onProgress: (done, total) => { fill.style.width = `${(100 * done) / Math.max(total, 1)}%`; },
     });
     message.textContent = 'Click to start';
