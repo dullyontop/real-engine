@@ -28,16 +28,19 @@ pub enum PanelId {
     Graph,
     /// Diagnostics, command results and the transaction log.
     Console,
+    /// The script debugger: breakpoints, stack and variables.
+    Debugger,
 }
 
 impl PanelId {
     /// Every panel.
-    pub const ALL: [PanelId; 5] = [
+    pub const ALL: [PanelId; 6] = [
         PanelId::Viewport,
         PanelId::Hierarchy,
         PanelId::Inspector,
         PanelId::Graph,
         PanelId::Console,
+        PanelId::Debugger,
     ];
 
     /// The tab's title.
@@ -48,6 +51,7 @@ impl PanelId {
             PanelId::Inspector => "Inspector",
             PanelId::Graph => "Procedural",
             PanelId::Console => "Console",
+            PanelId::Debugger => "Debugger",
         }
     }
 }
@@ -70,7 +74,8 @@ pub fn layout_path(root: &Path) -> PathBuf {
 }
 
 /// The default layout: the hierarchy on the left, the inspector over the
-/// procedural panel on the right, the console under the game view.
+/// procedural panel on the right, the console and the debugger (tabs) under
+/// the game view.
 pub fn default_dock() -> DockState<PanelId> {
     let mut dock = DockState::new(vec![PanelId::Viewport]);
     let tree = dock.main_surface_mut();
@@ -78,7 +83,7 @@ pub fn default_dock() -> DockState<PanelId> {
     let [centre, _left] = tree.split_left(root, 0.2, vec![PanelId::Hierarchy]);
     let [centre, right] = tree.split_right(centre, 0.72, vec![PanelId::Inspector]);
     tree.split_below(right, 0.6, vec![PanelId::Graph]);
-    tree.split_below(centre, 0.75, vec![PanelId::Console]);
+    tree.split_below(centre, 0.75, vec![PanelId::Console, PanelId::Debugger]);
     dock
 }
 
@@ -219,7 +224,7 @@ mod tests {
         let e = load(dir.path()).err().unwrap();
         assert_eq!(e.code, codes::LAYOUT_UNREADABLE);
         // An unknown panel name (a newer editor's layout) is refused, not guessed.
-        let text = to_json(&default_dock(), &gizmo).replace("\"Console\"", "\"Debugger\"");
+        let text = to_json(&default_dock(), &gizmo).replace("\"Console\"", "\"Profiler\"");
         std::fs::write(layout_path(dir.path()), text).unwrap();
         assert!(load(dir.path()).is_err());
         let text = to_json(&default_dock(), &gizmo).replace("\"version\": 1", "\"version\": 9");

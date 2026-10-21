@@ -442,8 +442,7 @@ impl View3d {
                 r.release_material(h).unwrap();
             }
         }
-        r.settings_mut().exposure = f.exposure;
-        let snapshot = RenderSnapshot {
+        let mut snapshot = RenderSnapshot {
             camera: f.camera,
             lights: f.lights.clone(),
             items: f
@@ -464,6 +463,13 @@ impl View3d {
             clear: f.clear,
             ..RenderSnapshot::default()
         };
+        snapshot.post.exposure = f.exposure;
+        snapshot.post.grading = f.grading.map(|g| re_types::render::ColorGrading {
+            brightness: g.brightness,
+            contrast: g.contrast,
+            saturation: g.saturation,
+            tint: g.tint,
+        });
         let extras = extras(f);
         r.render_with(
             &self.gpu.device,
@@ -553,12 +559,6 @@ fn extras(f: &RenderFrame) -> re_render::SceneExtras {
             horizon: f.sky.horizon,
             ground: f.sky.ground,
             sun: f.sky.sun,
-        }),
-        grading: f.grading.map(|g| rr::ColorGrading {
-            brightness: g.brightness,
-            contrast: g.contrast,
-            saturation: g.saturation,
-            tint: g.tint,
         }),
         spot_lights: f
             .spot_lights

@@ -815,3 +815,47 @@ fn the_layout_is_saved_per_project() {
     ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
 }
+
+/// The debugger panel draws a recorded stop: a script VM with a breakpoint
+/// and no DAP client records its stack, and the panel (brought to the front
+/// of its leaf) shows it.
+#[test]
+fn the_debugger_panel_shows_a_recorded_stop() {
+    use re_editor::layout::PanelId;
+    use re_script::debug::{self, Debugger};
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    let debugger = Debugger::new();
+    ed.editor.set_debugger(Some(debugger.clone()));
+
+    let lua = mlua::Lua::new();
+    debugger.attach(&lua, "game", None).unwrap();
+    let bytecode = mlua::chunk::Compiler::new()
+        .set_debug_level(2)
+        .compile("local speed = 12\nlocal t = { a = 1 }\nreturn speed\n")
+        .unwrap();
+    let chunk = lua
+        .load(&bytecode[..])
+        .set_name("@scripts/probe.luau")
+        .into_function()
+        .unwrap();
+    debug::register_chunk(&lua, "scripts/probe.luau", &chunk);
+    debugger.set_breakpoints("scripts/probe.luau", &[3]);
+    debug::service(&lua);
+    assert_eq!(chunk.call::<i64>(()).unwrap(), 12);
+    let s = debugger.last_unpaused().expect("a recorded stop");
+    assert_eq!(s.local("speed").unwrap().value, "12");
+
+    // The first frame reads the project's layout; rearrange after it.
+    ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    let dock = ed.editor.dock_mut();
+    let at = dock.find_tab(&PanelId::Debugger).unwrap();
+    dock.set_active_tab(at).unwrap();
+    for _ in 0..2 {
+        ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    }
+    // The console shares the leaf and is now behind the debugger.
+    assert!(ed.editor.rects().get(Panel::Console).is_none());
+    assert!(ed.editor.debugger().is_some());
+}

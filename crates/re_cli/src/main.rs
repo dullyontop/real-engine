@@ -202,9 +202,13 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         },
         None => None,
     };
-    // A replay must repeat its recording, so only a live run keeps data.
+    // A replay must repeat its recording, so only a live run keeps data and
+    // reloads changed files. A watcher that cannot start is reported; the
+    // run goes on without reload.
+    let mut watch_problem = None;
     if replay.is_none() {
         app.persist_data();
+        watch_problem = app.enable_hot_reload().err();
     }
     let (frames, mut diagnostics, mut report) = if args.headless {
         let every = args.checkpoints.map(std::num::NonZeroU64::get);
@@ -257,6 +261,7 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
             Err(d) => return fail(d),
         }
     };
+    diagnostics.extend(watch_problem);
     if let Some(path) = &args.screenshot {
         let path = std::env::current_dir().unwrap_or_default().join(path);
         match app.screenshot(Some(&path)) {

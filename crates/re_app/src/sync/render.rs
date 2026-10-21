@@ -318,5 +318,6 @@ pub fn build(world: &mut World, inputs: &RenderInputs<'_>) -> RenderSnapshot {
         clear: inputs.clear,
         skinned,
         joint_palette,
+        ..RenderSnapshot::default()
     }
 }
