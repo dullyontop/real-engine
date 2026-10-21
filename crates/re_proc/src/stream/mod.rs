@@ -31,7 +31,8 @@ mod source;
 
 pub use config::StreamConfig;
 pub use manager::{
-    ENTITY_BYTES, Focus, SHAPE_BYTES, StepReport, StreamEvents, Streamer, cell_at, focuses, step,
+    ENTITY_BYTES, Focus, Lateness, SHAPE_BYTES, StepReport, StreamEvents, Streamer, cell_at,
+    focuses, step,
 };
 
 #[cfg(test)]

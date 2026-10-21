@@ -341,6 +341,11 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
             Live::Packaged if !options.headless => app.persist_data(),
             Live::Packaged => {}
         }
+        // A live window never stalls a frame on a streamed cell; headless
+        // runs wait for it, so they repeat (ADR-0042).
+        if !options.headless {
+            app.set_stream_lateness(re_proc::stream::Lateness::Late);
+        }
     }
     let (frames, mut diagnostics, mut report) = if options.headless {
         match app.run_headless(options.frames, replay) {

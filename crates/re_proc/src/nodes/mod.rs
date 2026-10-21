@@ -671,6 +671,9 @@ pub struct NodeCtx<'a> {
     pub version: u32,
     /// The window being evaluated, for streamed evaluation (ADR-0042).
     pub domain: Option<Domain>,
+    /// Rows and other splittable work run on the calling thread
+    /// ([`EvalOptions::serial`](crate::EvalOptions::serial)).
+    pub serial: bool,
     /// The node's seed: `Pcg32::from_seed(graph seed).fork(hash64(node id))`'s
     /// first `u64`.
     pub seed: u64,
@@ -791,6 +794,12 @@ impl NodeCtx<'_> {
         row: impl Fn(usize, &mut [f32]) + Sync,
     ) {
         let row = &row;
+        if self.serial {
+            for (z, values) in out.chunks_mut(row_len.max(1)).enumerate() {
+                row(z, values);
+            }
+            return;
+        }
         let rows_per_job = (4096 / row_len.max(1)).max(1);
         self.pool.scope(|s| {
             for (j, chunk) in out.chunks_mut(row_len * rows_per_job).enumerate() {
