@@ -281,7 +281,8 @@ component! {
 /// Registers every built-in component, in a fixed order: `Transform`,
 /// `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light`, `RigidBody`,
 /// `Collider`, `CharacterController`, `ScriptRef`, `AudioSource`, `AnimPlayer`,
-/// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `SkinnedMesh`.
+/// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `SkinnedMesh`,
+/// `Streamed`, `StreamFocus`.
 pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<Transform>(world);
     registry.register::<MeshRef>(world);
@@ -302,4 +303,6 @@ pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<crate::Tags>(world);
     // Added in M3, after the M2 set, so earlier registration order is kept.
     registry.register::<SkinnedMesh>(world);
+    registry.register::<crate::stream::Streamed>(world);
+    registry.register::<crate::stream::StreamFocus>(world);
 }

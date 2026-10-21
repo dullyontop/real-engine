@@ -52,6 +52,7 @@ pub mod ids;
 pub mod prefab;
 pub mod procedural;
 pub mod scene;
+pub mod stream;
 pub mod tags;
 pub mod world;
 
@@ -77,6 +78,9 @@ pub use procedural::{
     Suppressions,
 };
 pub use scene::{EntityDoc, GeneratedDoc, SaveOptions, SceneDoc, Snapshot};
+pub use stream::{
+    LoadedCell, Stash, StashedRoot, StreamCell, StreamFocus, Streamed, cell_key, parse_cell_key,
+};
 pub use tags::{TagChanged, TagFeed, TagIndex, Tags};
 pub use world::World;
 
