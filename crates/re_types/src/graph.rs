@@ -5,11 +5,14 @@
 //! ```json
 //! { "format": "real-engine/graph", "version": 1, "name": "island", "seed": 1234,
 //!   "nodes": [{ "id": "h", "kind": "terrain.heightfield", "version": 1, "params": { "size": 256 } }],
-//!   "edges": [{ "from": ["h", "field"], "to": ["t", "a"] }] }
+//!   "edges": [{ "from": ["h", "field"], "to": ["t", "a"] }],
+//!   "layout": { "h": [0.0, 120.0] } }
 //! ```
 //!
 //! Node ids are unique, `nodes` keep file order and unknown keys are errors.
+//! `layout` is optional and omitted when empty (ADR-0044).
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -31,6 +34,12 @@ pub struct GraphDoc {
     pub nodes: Vec<NodeDoc>,
     /// The edges between node ports.
     pub edges: Vec<EdgeDoc>,
+    /// Where the editor's node canvas draws each node, `[x, y]` by node id
+    /// (ADR-0044). Only nodes that were moved have an entry. Layout is not
+    /// part of a node: generation, node cache keys, the document hash and the
+    /// version stamp all ignore it. Omitted when empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub layout: BTreeMap<String, [f32; 2]>,
 }
 
 /// One node of a [`GraphDoc`].
@@ -76,6 +85,7 @@ impl GraphDoc {
             seed,
             nodes: Vec::new(),
             edges: Vec::new(),
+            layout: BTreeMap::new(),
         }
     }
 
