@@ -189,3 +189,55 @@ fn graph_eval_reports_each_node() {
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
     assert!(text(&o).contains("RE4001"), "{}", text(&o));
 }
+
+#[test]
+fn run_debug_reports_a_port_in_use() {
+    let dir = tempfile::tempdir().unwrap();
+    real(&["new", "g"], dir.path());
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port().to_string();
+    let o = real(
+        &[
+            "run",
+            "--project",
+            "g",
+            "--headless",
+            "--frames",
+            "1",
+            "--debug",
+            &port,
+        ],
+        dir.path(),
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("RE3071"), "{}", text(&o));
+}
+
+#[test]
+fn run_debug_serves_dap_on_localhost() {
+    let dir = tempfile::tempdir().unwrap();
+    real(&["new", "g"], dir.path());
+    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = free.local_addr().unwrap().port().to_string();
+    drop(free);
+    let o = real(
+        &[
+            "run",
+            "--project",
+            "g",
+            "--headless",
+            "--frames",
+            "5",
+            "--exit-after",
+            "--debug",
+            &port,
+        ],
+        dir.path(),
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(
+        text(&o).contains(&format!("debugger: DAP on 127.0.0.1:{port}")),
+        "{}",
+        text(&o)
+    );
+}

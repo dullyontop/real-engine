@@ -24,7 +24,7 @@ use serde::Serialize;
 use re_assets::AssetWatcher;
 use re_audio::Audio;
 use re_render::Image;
-use re_script::{ContextKind, RuntimeConfig, ScriptRuntime};
+use re_script::{ContextKind, RuntimeConfig, ScriptError, ScriptRuntime};
 
 use crate::codes;
 use crate::config::AppConfig;
@@ -145,6 +145,8 @@ pub struct App {
 
     scripts: Option<ScriptRuntime>,
     scripts_failed: bool,
+    /// The script debugger the game context is attached to (ADR-0045).
+    debugger: Option<re_script::debug::Debugger>,
     /// `[compat]`, when the project is a compat project; its scripts then run
     /// in [`CompatPlay`](crate::compat::CompatPlay) instead of `scripts`.
     compat_config: Option<re_compat::CompatConfig>,
@@ -306,6 +308,7 @@ impl App {
             link_tried: Default::default(),
             scripts: None,
             scripts_failed: false,
+            debugger: None,
             compat_config,
             compat: None,
             compat_failed: false,
@@ -1072,6 +1075,11 @@ impl App {
     pub fn frame(&mut self, frame_time: Duration) {
         let frame_start = Instant::now();
         let f = self.frame;
+        if self.debugger.is_some()
+            && let Some(scripts) = &self.scripts
+        {
+            re_script::debug::service(scripts.context(ContextKind::Game).lua());
+        }
 
         // Input.
         let t = Instant::now();
@@ -1723,7 +1731,10 @@ impl App {
                 self.config.scripts.memory_limit_mb as usize,
             );
             match ScriptRuntime::new(config) {
-                Ok(r) => self.scripts = Some(r),
+                Ok(r) => {
+                    self.scripts = Some(r);
+                    self.attach_debugger();
+                }
                 Err(e) => {
                     // Reported once; the game runs on without scripts.
                     self.scripts_failed = true;
@@ -1738,6 +1749,34 @@ impl App {
     /// The script runtime, once the game has run a frame.
     pub fn scripts(&self) -> Option<&ScriptRuntime> {
         self.scripts.as_ref()
+    }
+
+    /// Attaches the game context's VM to `debugger` (ADR-0045), now if the
+    /// scripts are running and again whenever the VM is replaced; `None`
+    /// detaches it. Breakpoint changes and commands for a parked script are
+    /// carried out at the start of each frame.
+    pub fn set_debugger(&mut self, debugger: Option<re_script::debug::Debugger>) {
+        if let (Some(old), Some(scripts)) = (&self.debugger, &self.scripts) {
+            old.detach(scripts.context(ContextKind::Game).lua());
+        }
+        self.debugger = debugger;
+        self.attach_debugger();
+    }
+
+    /// The debugger set with [`App::set_debugger`].
+    pub fn debugger(&self) -> Option<&re_script::debug::Debugger> {
+        self.debugger.as_ref()
+    }
+
+    fn attach_debugger(&mut self) {
+        let (Some(debugger), Some(scripts)) = (&self.debugger, &self.scripts) else {
+            return;
+        };
+        let lua = scripts.context(ContextKind::Game).lua();
+        if let Err(e) = debugger.attach(lua, ContextKind::Game.name(), None) {
+            self.diagnostics
+                .push(ScriptError::from_mlua(ContextKind::Game.name(), &e).to_diagnostic());
+        }
     }
 
     /// Calls `f` with the script runtime (created on first use) and a host over
@@ -2190,6 +2229,8 @@ impl App {
                 {
                     self.diagnostics.push(e.to_diagnostic());
                 }
+                // The fresh game VM is attached in place of the old one.
+                self.attach_debugger();
                 self.clock.reset();
                 self.edit_frame();
             }

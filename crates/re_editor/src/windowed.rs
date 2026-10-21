@@ -77,6 +77,9 @@ pub fn run_editor(mut app: App, mut options: EditorOptions) -> anyhow::Result<()
         .unwrap_or([app.config().render.width, app.config().render.height]);
     let mut editor = Editor::new();
     editor.set_status(status);
+    let debugger = options.debugger.take().unwrap_or_default();
+    app.set_debugger(Some(debugger.clone()));
+    editor.set_debugger(Some(debugger));
     let mut host = Host {
         app,
         socket,
