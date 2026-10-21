@@ -26,6 +26,7 @@ pub const SOURCES: &[(&str, &str)] = &[
     ("tonemap.wgsl", include_str!("shaders/tonemap.wgsl")),
     ("post.wgsl", include_str!("shaders/post.wgsl")),
     ("skin.wgsl", include_str!("shaders/skin.wgsl")),
+    ("probe.wgsl", include_str!("shaders/probe.wgsl")),
     (
         "forward_skinned.wgsl",
         include_str!("shaders/forward_skinned.wgsl"),
