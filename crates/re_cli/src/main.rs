@@ -202,6 +202,10 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         },
         None => None,
     };
+    // A replay must repeat its recording, so only a live run keeps data.
+    if replay.is_none() {
+        app.persist_data();
+    }
     let (frames, mut diagnostics, mut report) = if args.headless {
         let every = args.checkpoints.map(std::num::NonZeroU64::get);
         let mut checkpoints = Vec::new();

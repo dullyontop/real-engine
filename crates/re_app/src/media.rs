@@ -16,7 +16,7 @@ use std::sync::Arc;
 use glam::{Affine3A, Vec3};
 use re_assets::{AssetChange, AssetServer, ReloadReport};
 use re_core::{Diagnostic, Location};
-use re_types::{ClipData, MaterialDesc, MeshData, TextureData, Vertex};
+use re_types::{ClipData, MaterialDesc, MeshData, SkinData, SkinWeights, TextureData, Vertex};
 
 use crate::codes;
 
@@ -35,6 +35,19 @@ pub struct LoadedMaterial {
     pub textures: Vec<(usize, String, TextureData)>,
 }
 
+/// A skin and the meshes it draws, merged into one (`SkinnedMesh.asset`).
+#[derive(Clone, Debug)]
+pub struct LoadedSkin {
+    /// The skeleton.
+    pub skin: Arc<SkinData>,
+    /// Every mesh the skin draws, in bind space.
+    pub mesh: Arc<MeshData>,
+    /// The merged mesh's weights, with joint indices into `skin`.
+    pub weights: Arc<SkinWeights>,
+    /// The material of the first mesh the skin draws, if any.
+    pub material: Option<LoadedMaterial>,
+}
+
 /// A mesh asset: its geometry and, for a glTF file, the file's first material.
 #[derive(Clone, Debug)]
 pub struct LoadedMesh {
@@ -51,6 +64,7 @@ pub struct Media {
     derived: HashMap<String, Arc<MeshData>>,
     materials: HashMap<String, LoadedMaterial>,
     clips: HashMap<String, Arc<ClipData>>,
+    skins: HashMap<String, LoadedSkin>,
     /// Loads that failed, so a broken file is not read again every frame; a
     /// change to any file forgets them.
     failed: HashMap<String, Diagnostic>,
@@ -66,6 +80,7 @@ impl Media {
             derived: HashMap::new(),
             materials: HashMap::new(),
             clips: HashMap::new(),
+            skins: HashMap::new(),
             failed: HashMap::new(),
             reported: HashSet::new(),
         }
@@ -278,6 +293,87 @@ impl Media {
         }
     }
 
+    /// The skin named by a `SkinnedMesh.asset` (`<glTF path>#<skin name>`), with
+    /// every mesh drawn by it merged in bind space (glTF ignores a skinned
+    /// node's own transform).
+    ///
+    /// # Errors
+    ///
+    /// The asset server's errors, and an unknown skin or one that draws no mesh.
+    pub fn skin(&mut self, reference: &str) -> Result<LoadedSkin, Diagnostic> {
+        if let Some(s) = self.skins.get(reference) {
+            return Ok(s.clone());
+        }
+        if let Some(d) = self.failed.get(reference) {
+            return Err(d.clone());
+        }
+        let loaded = self.load_skin(reference);
+        match &loaded {
+            Ok(l) => {
+                self.skins.insert(reference.to_string(), l.clone());
+            }
+            Err(d) => {
+                self.failed.insert(reference.to_string(), d.clone());
+            }
+        }
+        loaded
+    }
+
+    fn load_skin(&mut self, reference: &str) -> Result<LoadedSkin, Diagnostic> {
+        let Some((path, name)) = reference.split_once('#') else {
+            return Err(unknown_asset(
+                reference,
+                "a skinned mesh is `<model path>#<skin name>`",
+            ));
+        };
+        let h = self.server.load_gltf(path)?;
+        let gltf = self.server.gltf(h).expect("just loaded");
+        let Some(index) = gltf.skins.iter().position(|s| s.name == name) else {
+            let names: Vec<&str> = gltf.skins.iter().map(|s| s.name.as_str()).collect();
+            return Err(unknown_asset(
+                reference,
+                &format!("the model has no skin `{name}` (its skins: {names:?})"),
+            ));
+        };
+        let skin = gltf.skins[index].clone();
+        let drawn = gltf.skinned_meshes(index);
+        if drawn.is_empty() {
+            return Err(unknown_asset(
+                reference,
+                "no mesh of the model is drawn by this skin",
+            ));
+        }
+        let mut mesh = MeshData::default();
+        let mut weights = SkinWeights::default();
+        for &m in &drawn {
+            let part = &gltf.meshes[m];
+            let w = part
+                .skin_weights
+                .as_ref()
+                .expect("skinned_meshes has weights");
+            append(&mut mesh, &part.mesh, &Affine3A::IDENTITY);
+            weights.joints.extend_from_slice(&w.joints);
+            weights.weights.extend_from_slice(&w.weights);
+        }
+        let material_index = gltf.meshes[drawn[0]].material;
+        let desc = material_index
+            .and_then(|i| gltf.materials.get(i))
+            .map(|m| m.desc.clone());
+        let material = match desc {
+            Some(desc) => {
+                let textures = self.textures_of(&desc)?;
+                Some(LoadedMaterial { desc, textures })
+            }
+            None => None,
+        };
+        Ok(LoadedSkin {
+            skin: Arc::new(skin),
+            mesh: Arc::new(mesh),
+            weights: Arc::new(weights),
+            material,
+        })
+    }
+
     /// True the first time `key` is passed, so each broken asset is reported once.
     pub fn first_report(&mut self, key: &str) -> bool {
         self.reported.insert(key.to_string())
@@ -310,6 +406,11 @@ impl Media {
                     .filter(|k| textures_changed || changed.contains(*k)),
             )
             .chain(self.clips.keys().filter(|k| changed.contains(&file_of(k))))
+            .chain(
+                self.skins
+                    .keys()
+                    .filter(|k| changed.contains(&file_of(k)) || textures_changed),
+            )
             .cloned()
             .collect();
         stale.retain(|k| !k.starts_with(DERIVED));
@@ -321,6 +422,7 @@ impl Media {
             self.meshes.remove(key);
             self.materials.remove(key);
             self.clips.remove(key);
+            self.skins.remove(key);
             self.reported.remove(key);
         }
         (report, stale)
