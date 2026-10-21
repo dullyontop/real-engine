@@ -10,7 +10,7 @@
 //! | Phase | Work |
 //! |---|---|
 //! | `PreRender` | start newly attached `ScriptRef`s; frame counter and `time.delta`; `input.on_pressed`/`on_released`; `time.on_frame(dt)` |
-//! | `PreSimulation` | start newly attached `ScriptRef`s; advance `time.now` by the fixed step; `time.on_step(dt)` |
+//! | `PreSimulation` | start newly attached `ScriptRef`s; advance `time.now` by the fixed step; `stream.on_unloaded`/`on_loaded` (from [`ScriptHost::stream`](crate::ScriptHost::stream)); `time.on_step(dt)` |
 //! | `PostSimulation` | contact callbacks (from [`ScriptRuntime::push_contacts`]); threads whose `task.wait` is due; `time.on_post_step(dt)` |
 //! | others | nothing |
 //!
@@ -249,6 +249,8 @@ pub struct ScriptRuntime {
     entries: Vec<Entry>,
     next_owner: Owner,
     contacts: Vec<ContactEvent>,
+    /// The streaming tick whose events last fired.
+    stream_tick: Option<u64>,
 }
 
 /// One entry-script run. Its owner id tags every thread and callback it starts.
@@ -272,6 +274,7 @@ impl ScriptRuntime {
             entries: Vec::new(),
             next_owner: 1,
             contacts: Vec::new(),
+            stream_tick: None,
         })
     }
 
@@ -304,6 +307,7 @@ impl ScriptRuntime {
         self.tools = Context::new(&self.config, ContextKind::Tools)?;
         self.entries.clear();
         self.contacts.clear();
+        self.stream_tick = None;
         Ok(())
     }
 
@@ -379,9 +383,20 @@ impl ScriptRuntime {
                 }
             }
             Phase::PreSimulation => {
+                // This step's streamed cells, once per streaming tick.
+                let events = host
+                    .stream()
+                    .and_then(|s| s.events(host.world()))
+                    .filter(|(tick, _, _)| self.stream_tick != Some(*tick));
+                if let Some((tick, _, _)) = &events {
+                    self.stream_tick = Some(*tick);
+                }
                 for ctx in [&self.game, &self.tools] {
                     diags.extend(run_in(ctx, host, |lua| {
                         scheduler::with(lua, |s| s.now += dt)?;
+                        if let Some((_, unloaded, loaded)) = &events {
+                            api::stream::fire(lua, unloaded, loaded)?;
+                        }
                         fire_dt(lua, Signal::Step, dt)
                     }));
                 }

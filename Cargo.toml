@@ -60,6 +60,11 @@ oxijolt = { version = "=1.1.0", default-features = false }
 # Scripting and script tooling.
 mlua = { version = "=0.12.2", features = ["luau"] }
 full_moon = { version = "=3.0.0", features = ["luau"] }
+# Place files (WP27 "place files", ADR-0048): re_import only.
+lz4_flex = { version = "=0.14.0", default-features = false, features = ["std", "safe-decode", "checked-decode"] }
+ruzstd = { version = "=0.9.1", default-features = false, features = ["std"] }
+quick-xml = "=0.41.0"
+base64 = "=0.23.1"
 
 # Core, data and serialization.
 bevy_ecs = { version = "=0.20.0", default-features = false, features = ["std", "multi_threaded"] }

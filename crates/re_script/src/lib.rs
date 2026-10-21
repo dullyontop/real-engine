@@ -49,7 +49,7 @@ pub use api::{DEFINITIONS_PATH, definitions, write_definitions};
 pub use budget::untimed;
 pub use compile::{COMPILER_ID, chunk_mode, compile_bytecode, compile_check, compiler};
 pub use diag::{ErrorKind, ScriptError};
-pub use host::{CommandHost, NoServices, ScriptHost, WorldHost};
+pub use host::{CommandHost, NoServices, ScriptHost, StreamAccess, WorldHost};
 pub use modules::Reload;
 pub use runtime::{Context, ReloadReport, RuntimeConfig, ScriptRuntime};
 pub use vm::{ContextKind, OutputLine};
