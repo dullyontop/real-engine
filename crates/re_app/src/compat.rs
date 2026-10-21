@@ -107,7 +107,7 @@ pub fn setup() -> Result<Arc<CompatSetup>, Diagnostic> {
 
 impl CompatPlay {
     /// Splits `world` (the App's, which becomes the server world) and makes
-    /// the two contexts. Nothing runs yet: [`CompatPlay::start_scripts`]
+    /// the two contexts; `persist_data` is [`App::persist_data`](crate::App::persist_data). Nothing runs yet: [`CompatPlay::start_scripts`]
     /// starts the game.
     ///
     /// # Errors
@@ -119,6 +119,7 @@ impl CompatPlay {
         compat: &CompatConfig,
         world: &mut World,
         clip_seconds: HashMap<String, f64>,
+        persist_data: bool,
     ) -> Result<CompatPlay, Diagnostic> {
         let setup = setup()?;
         // Instances scripts make get ids from a fixed sequence, so a run
@@ -145,6 +146,15 @@ impl CompatPlay {
             CompatVm::with_config(&setup, ContextKind::Server, world, &runtime, compat)?;
         let client_vm =
             CompatVm::with_config(&setup, ContextKind::Client, &mut client, &runtime, compat)?;
+        let step = 1.0 / f64::from(config.sim.fixed_hz.max(1));
+        let data = re_compat::services::data::DataSettings::from_config(
+            &compat.data,
+            project,
+            step,
+            persist_data,
+        )
+        .map_err(|m| Diagnostic::error(re_compat::codes::DATA_FILE, m))?;
+        re_compat::services::data::configure(server_vm.context().lua(), data);
         let clips = Arc::new(clip_seconds);
         for vm in [&server_vm, &client_vm] {
             let clips = Arc::clone(&clips);
