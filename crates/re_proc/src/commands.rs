@@ -225,7 +225,7 @@ fn with_override(
     overrides
 }
 
-fn regen_json(report: &RegenReport) -> Json {
+pub(crate) fn regen_json(report: &RegenReport) -> Json {
     json!({
         "sources": report.sources,
         "spawned": report.spawned,
@@ -237,6 +237,7 @@ fn regen_json(report: &RegenReport) -> Json {
             "target": o.target,
             "component": o.component,
             "field": o.field,
+            "structural": o.structural.map(|k| k.to_string()),
         })).collect::<Vec<_>>(),
     })
 }
@@ -244,7 +245,7 @@ fn regen_json(report: &RegenReport) -> Json {
 /// The warnings of a regeneration for `source`: orphaned overrides
 /// (`RE4010`), overrides that could not be applied, and the graph's own
 /// warnings. The first error, if the source's generator failed.
-fn regen_diagnostics(
+pub(crate) fn regen_diagnostics(
     world: &World,
     source: &str,
     report: &RegenReport,
@@ -769,6 +770,34 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
         Tier::Edit,
         false,
         crate::bake::bake::<C>,
+    );
+    registry.register_typed::<crate::structure::MoveArgs, _>(
+        "proc.move",
+        "Move a generated entity under another entity of its source's output (or the source itself), kept across regenerations as an override; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::move_entity::<C>,
+    );
+    registry.register_typed::<crate::structure::ReplaceArgs, _>(
+        "proc.replace",
+        "Replace what a generated entity is with a prefab or components, keeping its key, id and generated Transform; kept across regenerations; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::replace::<C>,
+    );
+    registry.register_typed::<crate::structure::InsertArgs, _>(
+        "proc.insert",
+        "Add an authored entity (a prefab or components) to a procedural source's output with id `<source>/+<key>`, kept across regenerations; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::insert::<C>,
+    );
+    registry.register_typed::<crate::structure::ClearStructureArgs, _>(
+        "proc.clear_structure",
+        "Remove a procedural source's structural overrides (moves, replacements, inserts), all or one key's; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::clear_structure::<C>,
     );
     registry.register_typed::<MigrationReportArgs, _>(
         "graph.migration_report",

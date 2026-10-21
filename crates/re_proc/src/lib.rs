@@ -57,6 +57,7 @@ pub mod migrate;
 pub mod nodes;
 mod store;
 pub mod stream;
+mod structure;
 pub mod value;
 
 pub use canon::version_stamp;
@@ -195,6 +196,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::BAKE_FAILED,
         title: "Bake failed",
         page: include_str!("../explain/RE4021.md"),
+    },
+    DiagInfo {
+        code: codes::STRUCTURE_REFUSED,
+        title: "Structural override refused",
+        page: include_str!("../explain/RE4023.md"),
     },
     DiagInfo {
         code: codes::OPEN_GRAPH_DIFFERS,

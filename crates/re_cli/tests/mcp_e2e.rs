@@ -329,10 +329,11 @@ fn an_agent_edits_checks_and_restores_the_island(t: Transport) {
         .collect();
     // The 25 of M1, plus WP17's resource.list, resource.read,
     // checkpoint.create, compat.coverage, scene.dump_tree, verify.diff and
-    // project.import, plus WP24's graph.migration_report, proc.bake and
-    // proc.create_source, plus WP26's template.list, recipe.list and
+    // project.import, plus WP24's graph.migration_report, proc.bake,
+    // proc.create_source, proc.move, proc.replace, proc.insert and
+    // proc.clear_structure, plus WP26's template.list, recipe.list and
     // recipe.apply, plus project.status (ADR-0044).
-    assert_eq!(names.len(), 39, "{names:?}");
+    assert_eq!(names.len(), 43, "{names:?}");
     for tool in [
         "entity_spawn",
         "graph_set_param",
