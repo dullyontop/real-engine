@@ -44,6 +44,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use re_core::Diagnostic;
 use re_reflect::{ComponentKey, FieldType, Value};
 use re_scene::ecs as bevy_ecs;
 use re_scene::ecs::change_detection::Tick;
@@ -53,6 +54,7 @@ use re_scene::{Entity, Name, StableId, World, hierarchy};
 
 use super::wire::{Frame, NameTable, Names, Op, Ref, WireValue, from_wire, to_wire};
 use super::{NetLink, ReplicationSet};
+use crate::codes;
 use crate::instance::tree;
 use crate::scene::ServiceTag;
 use crate::{GAME_ID, ROOT_CLASS};
@@ -77,6 +79,21 @@ pub fn set_network_owner(server: &mut World, entity: Entity, player: Option<Enti
         None => {
             e.remove::<NetworkOwner>();
         }
+    }
+}
+
+/// Gives everything `player` owned back to the server (its connection
+/// closed).
+pub(crate) fn disown(server: &mut World, player: Entity) {
+    let owned: Vec<Entity> = server
+        .ecs
+        .query::<(Entity, &NetworkOwner)>()
+        .iter(&server.ecs)
+        .filter(|(_, o)| o.0 == player)
+        .map(|(e, _)| e)
+        .collect();
+    for e in owned {
+        server.ecs.entity_mut(e).remove::<NetworkOwner>();
     }
 }
 
@@ -131,6 +148,7 @@ fn owned_by(server: &mut World, player: Entity) -> Vec<Entity> {
 // ------------------------------------------------------------------ server
 
 /// One replicated entity, as the server last sent it.
+#[derive(Clone)]
 struct Entry {
     handle: u32,
     name: String,
@@ -157,9 +175,67 @@ impl Entry {
     }
 }
 
+/// How [`ReplicationSet::upstream`] lets a component flow up: an entry
+/// names a component (every field) or `Component.field` (that field).
+#[derive(Debug, PartialEq, Eq)]
+enum Up<'a> {
+    All,
+    Fields(Vec<&'a str>),
+    No,
+}
+
+fn up_rule<'a>(upstream: &'a [String], name: &str) -> Up<'a> {
+    if upstream.iter().any(|u| u == UPSTREAM_ALL || u == name) {
+        return Up::All;
+    }
+    let fields: Vec<&str> = upstream
+        .iter()
+        .filter_map(|u| u.strip_prefix(name)?.strip_prefix('.'))
+        .collect();
+    if fields.is_empty() {
+        Up::No
+    } else {
+        Up::Fields(fields)
+    }
+}
+
+/// The components `upstream` names, each once, in order.
+fn up_components(upstream: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for u in upstream {
+        let c = u.split('.').next().unwrap_or(u);
+        if !out.iter().any(|x| x == c) {
+            out.push(c.to_string());
+        }
+    }
+    out
+}
+
+/// The server's check of an owner's moves in [`Conn::apply_up`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UpCheck {
+    /// The fastest an owned part may move, in studs per second.
+    pub max_speed: f32,
+    /// The seconds since the connection's previous frame was applied.
+    pub dt: f32,
+}
+
+/// What [`Conn::apply_up`] did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UpReport {
+    /// Owned instances whose components were written.
+    pub written: usize,
+    /// Owned parts that moved faster than [`UpCheck::max_speed`]: not
+    /// moved, and sent back where the server has them.
+    pub too_fast: Vec<Entity>,
+}
+
 /// The server's replication state for one connection: its mirror of what
 /// the client was sent, the handles it gave, and the names it numbered.
-#[derive(Default)]
+/// A clone of a connection bound at boot ([`Conn::bind`]) serves a client
+/// that joins later from the same scene: its first diff is everything that
+/// changed since.
+#[derive(Clone, Default)]
 pub struct Conn {
     mirror: HashMap<Entity, Entry>,
     by_handle: HashMap<u32, Entity>,
@@ -171,6 +247,9 @@ pub struct Conn {
     names: Names,
     /// Names the client sent.
     names_in: NameTable,
+    /// Entities the next diff looks at although they did not change: a move
+    /// the server refused is sent back.
+    recheck: HashSet<Entity>,
 }
 
 impl Conn {
@@ -255,20 +334,26 @@ impl Conn {
 
     /// Applies a client's frame: its owned [`ReplicationSet::upstream`]
     /// components ([`Op::Up`]) are written to the instances `player` (a
-    /// server `Player`) owns now; anything else is ignored. Returns how many
-    /// instances were written.
+    /// server `Player`) owns now; anything else is ignored. With `check`, a
+    /// part that moved too fast is not moved.
     pub fn apply_up(
         &mut self,
         server: &mut World,
         set: &ReplicationSet,
         player: Option<Entity>,
         frame: &Frame,
-    ) -> usize {
+        check: Option<UpCheck>,
+    ) -> UpReport {
         self.names_in.extend(&frame.names);
+        let mut report = UpReport::default();
         let Some(game) = game_of(server) else {
-            return 0;
+            return report;
         };
-        let all = set.upstream.iter().any(|n| n == UPSTREAM_ALL);
+        let moves = check.and_then(|c| {
+            let k = server.registry.try_key("Transform")?;
+            let i = server.registry.schema(k).field_index("translation").ok()?;
+            Some((c, k, i))
+        });
         let owned: HashSet<Entity> = match player {
             Some(p) => owned_by(server, p).into_iter().collect(),
             None => HashSet::new(),
@@ -289,12 +374,14 @@ impl Conn {
             if !owned.contains(&s) {
                 continue;
             }
-            let Some(sk) = self
-                .names_in
-                .get(*comp)
-                .filter(|n| all || set.upstream.iter().any(|u| u == n))
-                .and_then(|n| server.registry.try_key(n))
-            else {
+            let Some(name) = self.names_in.get(*comp) else {
+                continue;
+            };
+            let rule = up_rule(&set.upstream, name);
+            if rule == Up::No {
+                continue;
+            }
+            let Some(sk) = server.registry.try_key(name) else {
                 continue;
             };
             let by_handle = &self.by_handle;
@@ -302,7 +389,7 @@ impl Conn {
                 Ref::Game => Some(game),
                 Ref::Handle(h) => by_handle.get(&h).copied(),
             };
-            let Some(cv) = values
+            let Some(mut cv) = values
                 .iter()
                 .map(|v| from_wire(v, &self.names_in, &refs))
                 .collect::<Option<Vec<Value>>>()
@@ -316,7 +403,37 @@ impl Conn {
                 continue;
             };
             let old = entry.comp(sk).cloned();
+            if let Up::Fields(fields) = &rule {
+                // Only those fields come from the client; the rest stay as
+                // the client was last known to have them.
+                let Some(base) = old
+                    .clone()
+                    .or_else(|| server.registry.get_all(&server.ecs, s, sk))
+                else {
+                    continue;
+                };
+                let schema = server.registry.schema(sk);
+                let mut kept = base;
+                for f in fields {
+                    if let Ok(i) = schema.field_index(f) {
+                        kept[i] = cv[i].clone();
+                    }
+                }
+                cv = kept;
+            }
             if old.as_ref() == Some(&cv) {
+                continue;
+            }
+            if let Some((c, k, i)) = moves
+                && k == sk
+                && let (Some(Value::Vec3(from)), Some(Value::Vec3(to))) =
+                    (server.registry.get_field(&server.ecs, s, sk, i), cv.get(i))
+                && from.distance(*to) > c.max_speed * c.dt.max(f32::EPSILON)
+            {
+                // The client has it there; the next diff puts it back.
+                entry.set_comp(sk, cv);
+                self.recheck.insert(s);
+                report.too_fast.push(s);
                 continue;
             }
             let kinds = kinds_of(server, sk);
@@ -325,7 +442,8 @@ impl Conn {
             }
             entry.set_comp(sk, cv);
         }
-        wrote.len()
+        report.written = wrote.len();
+        report
     }
 
     /// The server half of a pass for this connection: what changed since its
@@ -357,7 +475,8 @@ impl Conn {
                 Some(_)
                     if self
                         .last
-                        .is_none_or(|last| changed_since(server, s, last, this)) =>
+                        .is_none_or(|last| changed_since(server, s, last, this))
+                        || self.recheck.contains(&s) =>
                 {
                     changed.push(s)
                 }
@@ -536,6 +655,7 @@ impl Conn {
         }
         self.owned = owned;
 
+        self.recheck.clear();
         self.last = Some(this);
         Frame {
             tick: 0,
@@ -606,6 +726,10 @@ pub struct Replica {
     names_in: NameTable,
     /// Client subtree roots the server removed, waiting for the client VM.
     pub(crate) pending: Vec<Entity>,
+    /// Components outside the upstream set whose owned changes were
+    /// reported ([`codes::OWNED_WRITE`]), and the reports not taken yet.
+    warned: HashSet<String>,
+    warnings: Vec<Diagnostic>,
 }
 
 impl Replica {
@@ -622,6 +746,12 @@ impl Replica {
     /// How many instances are replicated.
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Takes the reports of owned changes that stay on this client
+    /// ([`codes::OWNED_WRITE`]), each component once per run.
+    pub fn take_warnings(&mut self) -> Vec<Diagnostic> {
+        std::mem::take(&mut self.warnings)
     }
 
     /// True when nothing is replicated.
@@ -657,8 +787,11 @@ impl Replica {
                     .map(|k| client.registry.schema(k).name.clone())
                     .collect()
             } else {
-                set.upstream.clone()
+                up_components(&set.upstream)
             };
+            if !all {
+                self.report_kept(client, handle, c, &set.upstream);
+            }
             let Replica {
                 entries,
                 by_client,
@@ -696,6 +829,48 @@ impl Replica {
             names: self.names.take_fresh(),
             ops,
             msgs: Vec::new(),
+        }
+    }
+
+    /// Reports, once per component, an owned instance's component outside
+    /// `upstream` that differs from what the server sent: the change stays
+    /// here.
+    fn report_kept(&mut self, client: &World, handle: u32, c: Entity, upstream: &[String]) {
+        let Some(entry) = self.entries.get(&handle) else {
+            return;
+        };
+        for k in client.registry.components_of(&client.ecs, c) {
+            let schema = client.registry.schema(k);
+            let name = &schema.name;
+            let rule = up_rule(upstream, name);
+            if rule == Up::All || self.warned.contains(name) {
+                continue;
+            }
+            let Some(sent) = entry.comp(k) else {
+                continue;
+            };
+            let Some(now) = client.registry.get_all(&client.ecs, c, k) else {
+                continue;
+            };
+            let kept = |i: usize| match &rule {
+                Up::Fields(f) => !f.contains(&schema.fields[i].name.as_str()),
+                _ => true,
+            };
+            let differs = now
+                .iter()
+                .zip(sent)
+                .enumerate()
+                .any(|(i, (a, b))| a != b && kept(i));
+            if differs {
+                self.warned.insert(name.clone());
+                self.warnings.push(Diagnostic::warning(
+                    codes::OWNED_WRITE,
+                    format!(
+                        "a client change to {name} on an owned instance stays on this client: \
+                         networked games send only [compat.net] upstream components to the server"
+                    ),
+                ));
+            }
         }
     }
 
@@ -1062,7 +1237,7 @@ pub fn replicate(
         .and_then(|l| l.local_player())
         .and_then(|id| server.entity(&id).ok());
     let up = carry(rep.diff_up(client, set));
-    let upstream = conns.local.apply_up(server, set, player, &up);
+    let upstream = conns.local.apply_up(server, set, player, &up, None).written;
     let down = carry(conns.local.diff(server, set, player));
     server.ecs.increment_change_tick();
     let mut report = rep.apply(client, &down);

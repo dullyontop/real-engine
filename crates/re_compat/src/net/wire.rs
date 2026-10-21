@@ -26,7 +26,7 @@ use super::{Msg, PromptAction};
 use crate::enums::EnumItem;
 
 /// The version of the wire types. A change to any of them bumps it.
-pub const WIRE_VERSION: u32 = 1;
+pub const WIRE_VERSION: u32 = 2;
 
 /// The datatypes a [`NetValue::Data`] can name.
 const DATATYPES: &[&str] = &[
@@ -132,7 +132,7 @@ impl WireValue {
 
 /// Numbers the names one side sends; the names new since the last frame go
 /// in the next frame's [`Frame::names`].
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Names {
     ids: HashMap<String, u32>,
     fresh: Vec<String>,
@@ -160,7 +160,7 @@ impl Names {
 pub const MAX_NAMES: usize = 1 << 16;
 
 /// The names the other side numbered, in order.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct NameTable(Vec<String>);
 
 impl NameTable {
@@ -376,6 +376,7 @@ enum WireMsg {
         remote: String,
         player: Option<String>,
         args: Vec<WireNet>,
+        unreliable: bool,
     },
     Invoke {
         remote: String,
@@ -385,6 +386,7 @@ enum WireMsg {
     },
     Reply {
         call: u64,
+        player: Option<String>,
         result: Result<Vec<WireNet>, String>,
     },
     Prompt {
@@ -500,10 +502,12 @@ pub(crate) fn encode_msg(m: &Msg) -> Vec<u8> {
             remote,
             player,
             args,
+            unreliable,
         } => WireMsg::Event {
             remote: remote.clone(),
             player: player.clone(),
             args: args_to_wire(args),
+            unreliable: *unreliable,
         },
         Msg::Invoke {
             remote,
@@ -516,8 +520,13 @@ pub(crate) fn encode_msg(m: &Msg) -> Vec<u8> {
             call: *call,
             args: args_to_wire(args),
         },
-        Msg::Reply { call, result } => WireMsg::Reply {
+        Msg::Reply {
+            call,
+            player,
+            result,
+        } => WireMsg::Reply {
             call: *call,
+            player: player.clone(),
             result: result
                 .as_ref()
                 .map(|a| args_to_wire(a))
@@ -551,10 +560,12 @@ pub(crate) fn decode_msg(bytes: &[u8]) -> Option<Msg> {
             remote,
             player,
             args,
+            unreliable,
         } => Msg::Event {
             remote,
             player,
             args: args_from_wire(args)?,
+            unreliable,
         },
         WireMsg::Invoke {
             remote,
@@ -567,8 +578,13 @@ pub(crate) fn decode_msg(bytes: &[u8]) -> Option<Msg> {
             call,
             args: args_from_wire(args)?,
         },
-        WireMsg::Reply { call, result } => Msg::Reply {
+        WireMsg::Reply {
             call,
+            player,
+            result,
+        } => Msg::Reply {
+            call,
+            player,
             result: match result {
                 Ok(a) => Ok(args_from_wire(a)?),
                 Err(e) => Err(e),
@@ -665,6 +681,7 @@ mod tests {
                     (NetKey::Str(b"k".to_vec()), NetValue::Bool(true)),
                 ]),
             ],
+            unreliable: true,
         };
         let back = decode_msg(&encode_msg(&m)).unwrap();
         assert_eq!(format!("{back:?}"), format!("{m:?}"));

@@ -313,6 +313,9 @@ pub struct CompatConfig {
     /// (`[compat.data]`, ADR-0048).
     #[serde(default, skip_serializing_if = "DataConfig::is_default")]
     pub data: DataConfig,
+    /// What a networked game lets clients do (`[compat.net]`, ADR-0050 §2).
+    #[serde(default, skip_serializing_if = "crate::net::NetSettings::is_default")]
+    pub net: crate::net::NetSettings,
 }
 
 fn one_player() -> u32 {
@@ -331,6 +334,7 @@ impl Default for CompatConfig {
             effect_budget: None,
             players: one_player(),
             data: DataConfig::default(),
+            net: Default::default(),
         }
     }
 }

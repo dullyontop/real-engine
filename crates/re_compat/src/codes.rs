@@ -104,3 +104,23 @@ pub const MEMORY_REQUEST: Code = Code::new("RE9403");
 /// A compat script changed on disk during play but does not compile; the
 /// running version stays until a save that compiles (ADR-0048 §3).
 pub const RELOAD_COMPILE: Code = Code::new("RE9420");
+
+/// A remote message from a network client was dropped: larger than 64 KiB,
+/// or not a message this build reads (WP30 holds RE9450–RE9499).
+pub const REMOTE_DROPPED: Code = Code::new("RE9450");
+
+/// A client changed a component of an instance it owns that does not flow to
+/// the server (`[compat.net] upstream`); the change stays on that client.
+pub const OWNED_WRITE: Code = Code::new("RE9451");
+
+/// An owned part moved faster than `[compat.net] max_owned_speed`; the server
+/// kept it where it was and sent it back to its owner.
+pub const OWNED_SPEED: Code = Code::new("RE9452");
+
+/// A network player sent more remote messages a second than
+/// `[compat.net] remote_rate`; the excess was dropped.
+pub const REMOTE_RATE: Code = Code::new("RE9453");
+
+/// An `UnreliableRemoteEvent` message was too large for one datagram and was
+/// dropped.
+pub const UNRELIABLE_SIZE: Code = Code::new("RE9454");
