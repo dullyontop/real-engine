@@ -308,6 +308,168 @@ fn a_dry_run_changes_nothing() {
     );
     assert!(o.ok, "{:#?}", o.diagnostics);
     assert_eq!(o.changes.len(), 5); // four edges and the node
-    assert_eq!(open(&st), island(7));
-    assert!(st.world.unsaved_docs().is_empty());
+    // The file was opened for the dry run only.
+    assert!(st.world.doc(PATH).is_none());
+    assert!(st.history.log().is_empty());
+
+    // A refused edit leaves the file closed too; one already open stays open.
+    let refused = call(
+        &mut st,
+        "graph.connect",
+        json!({ "graph": PATH, "from": ["land", "field"], "to": ["land", "a"] }),
+    );
+    assert_eq!(code(&refused), "RE4004", "a self-loop is a cycle");
+    assert!(st.world.doc(PATH).is_none());
+    ok(
+        &mut st,
+        "graph.move_nodes",
+        json!({ "graph": PATH, "positions": { "h": [1.0, 1.0] } }),
+    );
+    let refused = call(
+        &mut st,
+        "graph.connect",
+        json!({ "graph": PATH, "from": ["land", "field"], "to": ["land", "a"] }),
+    );
+    assert_eq!(code(&refused), "RE4004");
+    assert_eq!(open(&st).layout["h"], [1.0, 1.0]);
+}
+
+#[test]
+fn node_ids_and_positions_are_checked() {
+    let (_dir, mut st) = project();
+    for id in ["a/b", "a b", "ä", ""] {
+        let o = call(
+            &mut st,
+            "graph.add_node",
+            json!({ "graph": PATH, "kind": "field.combine", "id": id }),
+        );
+        assert_eq!(code(&o), "RE4000", "{id:?}");
+        assert!(
+            o.diagnostics[0].message.contains("not a valid node id"),
+            "{id:?}"
+        );
+    }
+    ok(
+        &mut st,
+        "graph.add_node",
+        json!({ "graph": PATH, "kind": "field.combine", "id": "Mix-2_b" }),
+    );
+    // Too large for f32: not finite.
+    let far = call(
+        &mut st,
+        "graph.add_node",
+        json!({ "graph": PATH, "kind": "field.combine", "pos": [1e300, 0.0] }),
+    );
+    assert_eq!(code(&far), "RE4000");
+    assert!(far.diagnostics[0].message.contains("finite"));
+    let far = call(
+        &mut st,
+        "graph.move_nodes",
+        json!({ "graph": PATH, "positions": { "h": [0.0, -1e300] } }),
+    );
+    assert_eq!(code(&far), "RE4000");
+    assert!(open(&st).node("combine_1").is_none());
+}
+
+#[test]
+fn add_node_is_not_idempotent() {
+    let idempotent = |name| commands().spec(name).unwrap().annotations.idempotent_hint;
+    assert!(!idempotent("graph.add_node"));
+    for name in [
+        "graph.remove_node",
+        "graph.connect",
+        "graph.disconnect",
+        "graph.move_nodes",
+        "graph.set_default",
+    ] {
+        assert!(idempotent(name), "{name}");
+    }
+}
+
+#[test]
+fn remove_node_clears_the_sources_overrides_of_it() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("graphs")).unwrap();
+    std::fs::write(dir.path().join(PATH), island(7).to_json()).unwrap();
+    // An override of an entity `crates` generates, which stays (RE4010).
+    let mut st = support::world(
+        island(7),
+        json!([{ "target": "crates/0", "deleted": true }]),
+    );
+    let text = |s: &str| re_reflect::Value::Str(s.into());
+    st.world
+        .set("island", "GraphSource", "graph", text(PATH))
+        .unwrap();
+    st.world
+        .set(
+            "island",
+            "GraphSource",
+            "params",
+            text(r#"{"crates":{"prefab":"prefabs/crate.prefab.json"},"h":{"height":3.0}}"#),
+        )
+        .unwrap();
+    st.world
+        .ecs
+        .insert_resource(GraphStore::for_project(dir.path()));
+    let data = ok(
+        &mut st,
+        "graph.remove_node",
+        json!({ "graph": PATH, "node": "crates" }),
+    );
+    assert_eq!(
+        data["params_removed"],
+        json!([{ "source": "island", "params": { "prefab": "prefabs/crate.prefab.json" } }])
+    );
+    assert_eq!(
+        data["orphaned_overrides"],
+        json!([{ "source": "island", "target": "crates/0" }])
+    );
+    let params = |st: &EditState| match st.world.get("island", "GraphSource", "params") {
+        Ok(re_reflect::Value::Str(s)) => s,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(params(&st), r#"{"h":{"height":3.0}}"#);
+    // A node that takes the id again starts without them.
+    ok(
+        &mut st,
+        "graph.add_node",
+        json!({ "graph": PATH, "kind": "field.combine", "id": "crates" }),
+    );
+    assert_eq!(params(&st), r#"{"h":{"height":3.0}}"#);
+    // Undoing the removal brings the overrides back with the node.
+    undo(&mut st);
+    undo(&mut st);
+    assert!(params(&st).contains("prefab"));
+    assert_eq!(open(&st).node("crates").unwrap().kind, "points.instance");
+}
+
+#[test]
+fn set_default_refuses_a_node_of_an_older_version() {
+    let (_dir, mut st) = project();
+    let mut doc = island(7);
+    doc.nodes[0].version = 0; // `h`, written before the current version
+    std::fs::write(_dir.path().join(PATH), doc.to_json()).unwrap();
+    let mut registry = re_proc::NodeRegistry::m1();
+    let mut def = registry.get("terrain.heightfield").unwrap().clone();
+    def.version = 2;
+    def.oldest = 0;
+    registry.register(def);
+    st.world.ecs.insert_resource(GraphStore::with_evaluator(
+        std::sync::Arc::new(re_proc::Evaluator::new(std::sync::Arc::new(registry))),
+        Some(_dir.path().to_path_buf()),
+    ));
+    let o = call(
+        &mut st,
+        "graph.set_default",
+        json!({ "graph": PATH, "node": "h", "param": "height", "value": 25.0 }),
+    );
+    assert_eq!(code(&o), "RE4019");
+    assert!(
+        o.diagnostics[0]
+            .hint
+            .as_deref()
+            .unwrap()
+            .contains("real migrate-graph")
+    );
+    assert!(st.world.doc(PATH).is_none());
 }

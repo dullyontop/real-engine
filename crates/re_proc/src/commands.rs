@@ -521,14 +521,14 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
     );
     registry.register_typed::<crate::AddNodeArgs, _>(
         "graph.add_node",
-        "Add a node to a graph file (opened for editing, saved by scene.save): its kind and parameters are checked; a fresh id is chosen when none is given.",
+        "Add a node to a graph file (opened for editing, saved by scene.save): its kind and parameters are checked; a fresh id is chosen when none is given, so a retry without an id adds another node.",
         Tier::Edit,
-        true,
+        false,
         crate::edit::add_node::<C>,
     );
     registry.register_typed::<crate::RemoveNodeArgs, _>(
         "graph.remove_node",
-        "Remove a node from a graph file, with its edges and its canvas position, in one undoable step.",
+        "Remove a node from a graph file, with its edges, its canvas position and the procedural sources' parameter overrides of it, in one undoable step. Its generated entities' keys go away; overrides of them are listed and kept.",
         Tier::Edit,
         true,
         crate::edit::remove_node::<C>,
