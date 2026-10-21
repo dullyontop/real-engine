@@ -189,6 +189,64 @@ fn a_graph_file_works_like_a_builder() {
 }
 
 #[test]
+fn a_saved_and_closed_graph_document_keeps_generating_its_edit() {
+    let dir = project(BUILDER);
+    let graph = json!({
+        "format": "real-engine/graph", "version": 1, "name": "flat", "seed": 1,
+        "nodes": [
+            { "id": "h", "kind": "terrain.heightfield", "version": 1, "params": { "size": 9, "cell": 4.0, "height": 0.0 } },
+            { "id": "ground", "kind": "terrain.mesh", "version": 1, "params": { "collider": true } }
+        ],
+        "edges": [ { "from": ["h", "field"], "to": ["ground", "field"] } ]
+    });
+    // A graph file whose name does not end in `.graph.json`.
+    let path = "graphs/flat.json";
+    std::fs::create_dir_all(dir.path().join("graphs")).unwrap();
+    std::fs::write(dir.path().join(path), graph.to_string()).unwrap();
+    let scene = SCENE.replace(
+        r#""builder": "scripts/tools/island_graph.luau""#,
+        r#""graph": "graphs/flat.json""#,
+    );
+    std::fs::write(dir.path().join("scenes/main.scene.json"), scene).unwrap();
+    let mut app = open(dir.path());
+    app.world_mut().open_doc(path, graph).unwrap();
+    let apply = |app: &mut App, op: serde_json::Value| {
+        app.dispatch(
+            "scene.apply",
+            json!({ "ops": [op] }),
+            false,
+            &AllowAll,
+            Origin::User,
+        )
+    };
+    // The app knows the file is a graph: a breaking edit is refused.
+    let bad = apply(
+        &mut app,
+        json!({ "op": "set_doc", "doc": path, "pointer": "/nodes/0" }),
+    );
+    assert!(!bad.ok);
+    let out = apply(
+        &mut app,
+        json!({ "op": "set_doc", "doc": path, "pointer": "/nodes/0/params/size", "value": 5 }),
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    app.save_scene().unwrap();
+    app.world_mut().close_doc(path);
+
+    let size = |app: &App| {
+        let store = app.world().ecs.resource::<re_proc::GraphStore>();
+        let current = store.current(app.world(), "island").unwrap().unwrap();
+        assert!(matches!(current, re_proc::CurrentGraph::Stored(_)));
+        current.node("h").unwrap().params["size"].clone()
+    };
+    assert_eq!(size(&app), json!(5), "the stored graph is the saved file");
+    let island = app.world().entity("island").unwrap();
+    let report = app.world_mut().regenerate(island);
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+    assert_eq!(size(&app), json!(5));
+}
+
+#[test]
 fn a_failing_builder_is_re0523_and_a_fixed_one_regenerates() {
     let dir = project("error(\"no island today\")\n");
     let mut app = open(dir.path());

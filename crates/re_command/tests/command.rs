@@ -562,6 +562,7 @@ fn builtin_commands_read_and_edit() {
             "query",
             "entity.get",
             "command.describe",
+            "project.status",
             "entity.spawn",
             "entity.set",
             "entity.reparent",
@@ -578,7 +579,7 @@ fn builtin_commands_read_and_edit() {
     }
     let d = reg.dispatch(&mut s, "describe", json!(null), false, &AllowAll);
     assert!(d.ok);
-    assert_eq!(d.data["commands"].as_array().unwrap().len(), 13);
+    assert_eq!(d.data["commands"].as_array().unwrap().len(), 14);
     assert!(
         d.data["generators"]
             .as_array()
@@ -655,7 +656,7 @@ fn remote_channel_round_trip() {
     });
     receiver.serve(&mut s, &reg, &AllowAll);
     let (n, out) = client.join().unwrap();
-    assert_eq!(n, 13);
+    assert_eq!(n, 14);
     assert!(out.ok, "{:?}", out.diagnostics);
     assert_eq!(out.changes.len(), 1);
     assert_eq!(
@@ -679,7 +680,7 @@ fn remote_channel_round_trip() {
 fn diagnostics_catalogue_is_complete() {
     let problems = re_core::validate_catalog(re_command::DIAGNOSTICS, re_command::CODE_RANGE);
     assert!(problems.is_empty(), "{problems:?}");
-    assert_eq!(re_command::DIAGNOSTICS.len(), 7);
+    assert_eq!(re_command::DIAGNOSTICS.len(), 8);
 }
 
 // Regression tests from the entity core PR review.
