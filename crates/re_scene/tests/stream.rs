@@ -297,3 +297,83 @@ fn stashed_roots_are_saved_and_come_back_exactly() {
     let ground = w.entity("ground").unwrap();
     assert!(w.stash(ground, "c/0_0").is_err(), "no Streamed component");
 }
+
+#[test]
+fn a_cell_root_keeps_its_overrides() {
+    let mut w = streamed_world();
+    let grid = w.entity("grid").unwrap();
+    let mut ov = Overrides::default();
+    ov.set(
+        "c/1_0",
+        "Transform",
+        "translation",
+        Some(Doc::List(vec![Doc::F32(0.0), Doc::F32(2.0), Doc::F32(0.0)])),
+    );
+    ov.set_deleted("c/2_0", true);
+    w.ecs.entity_mut(grid).insert(ov);
+    assert!(
+        w.regenerate(grid).orphans.is_empty(),
+        "cell root overrides belong to their cell"
+    );
+
+    for _ in 0..2 {
+        let r = w.apply_cell(grid, "c/1_0", &rocks("c/1_0", 1)).unwrap();
+        assert!(r.orphans.is_empty() && r.diagnostics.is_empty(), "{r:?}");
+        assert_eq!(
+            w.get("grid/c/1_0", "Transform", "translation").unwrap(),
+            Value::Vec3(Vec3::new(0.0, 2.0, 0.0))
+        );
+        w.unload_cell(grid, "c/1_0").unwrap();
+    }
+
+    // A deleted cell root takes its content with it.
+    let r = w.apply_cell(grid, "c/2_0", &rocks("c/2_0", 1)).unwrap();
+    assert!(r.spawned.is_empty() && r.orphans.is_empty(), "{r:?}");
+    assert!(w.cell_root(grid, "c/2_0").is_none());
+    assert!(w.entity("grid/c/2_0/rock/0").is_err());
+}
+
+#[test]
+fn stashed_ids_stay_taken_and_references_follow() {
+    let mut w = world();
+    w.spawn_docs(&sample_docs(), None).unwrap();
+    let docs = vec![
+        entity("zz_tower", None, &[("Transform", &[]), ("Streamed", &[])]),
+        entity("zz_tower_top", Some("zz_tower"), &[("Transform", &[])]),
+        entity(
+            "zz_rope",
+            None,
+            &[("Weld", &[("other", Doc::Str("zz_tower_top".into()))])],
+        ),
+    ];
+    w.spawn_docs(&docs, None).unwrap();
+    let before = scene_json(&mut w);
+    let tower = w.entity("zz_tower").unwrap();
+    w.stash(tower, "c/1_0").unwrap();
+
+    // The ids stay reserved while stashed.
+    let err = w
+        .spawn_docs(&[entity("zz_tower_top", None, &[])], None)
+        .unwrap_err();
+    assert_eq!(err.code().to_string(), "RE1201", "{err}");
+
+    // The reference is saved as the id, in the world and in a copy.
+    assert_eq!(scene_json(&mut w), before);
+    let mut fork = w.fork();
+    assert_eq!(scene_json(&mut fork), before);
+    fork.unstash_cell("c/1_0").unwrap();
+    assert_eq!(
+        fork.get("zz_rope", "Weld", "other").unwrap(),
+        Value::Entity(Some(fork.entity("zz_tower_top").unwrap()))
+    );
+
+    // And points at the entity again once it is back.
+    w.unstash_cell("c/1_0").unwrap();
+    let top = w.entity("zz_tower_top").unwrap();
+    assert_eq!(
+        w.get("zz_rope", "Weld", "other").unwrap(),
+        Value::Entity(Some(top))
+    );
+    assert_eq!(scene_json(&mut w), before);
+    assert!(w.stashed().unwrap().is_empty());
+}

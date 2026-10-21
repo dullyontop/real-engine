@@ -712,8 +712,8 @@ impl Scope<'_> {
     /// True if an override target belongs to this scope.
     fn owns_target(&self, streamed: bool, target: &str) -> bool {
         match self {
-            Scope::Whole => !(streamed && crate::stream::in_cell(target).is_some()),
-            Scope::Cell { key, .. } => crate::stream::under(target, key),
+            Scope::Whole => !(streamed && crate::stream::owning_cell(target).is_some()),
+            Scope::Cell { key, .. } => crate::stream::owning_cell(target) == Some(*key),
         }
     }
 }
@@ -872,7 +872,11 @@ pub(crate) fn apply_output(
         .unwrap_or_default();
 
     // Orphans: overrides whose target key is not in the output at all.
-    let all_keys: HashSet<&str> = prepared.iter().map(|n| n.key.as_str()).collect();
+    let mut all_keys: HashSet<&str> = prepared.iter().map(|n| n.key.as_str()).collect();
+    if let Scope::Cell { key, .. } = scope {
+        // The cell root always exists; `World::apply_cell` applies its overrides.
+        all_keys.insert(key);
+    }
     for o in &overrides.0 {
         if scope.owns_target(streamed, o.target()) && !all_keys.contains(o.target()) {
             report.orphans.push(match o {

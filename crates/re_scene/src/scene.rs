@@ -137,7 +137,14 @@ impl World {
         let parent = world
             .get::<ChildOf>(entity)
             .and_then(|c| self.id_of(c.parent()).map(str::to_string));
-        let name_of = |e: Entity| self.id_of(e).map(str::to_string);
+        // A reference to an entity stashed with an unloaded cell is written
+        // as its id, so saving does not depend on what is loaded.
+        let stash = self.stashed();
+        let name_of = |e: Entity| {
+            self.id_of(e)
+                .or_else(|| stash.and_then(|s| s.gone_id(e)))
+                .map(str::to_string)
+        };
         let mut components = IndexMap::new();
         for key in self.registry.components_of(world, entity) {
             let schema = self.registry.schema(key);
@@ -405,7 +412,7 @@ impl World {
                     error: Box::new(e),
                 })?;
             }
-            if !seen.insert(d.id.as_str()) || self.ids().get(&d.id).is_some() {
+            if !seen.insert(d.id.as_str()) || self.id_taken(&d.id) {
                 return Err(SceneError::DuplicateId(d.id.clone()));
             }
         }

@@ -22,21 +22,24 @@
 //!
 //! [`StreamCell`] is the description of a cell that scripts and events see.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use glam::Vec3;
-use re_reflect::{Doc, component};
+use re_core::{Diagnostic, Location};
+use re_reflect::{Doc, FieldType, Value, component};
 use serde::{Deserialize, Serialize};
 
+use crate::codes;
 use crate::components::{MaterialRef, MeshRef, Name};
 use crate::error::SceneError;
 use crate::hierarchy::{self, children};
 use crate::ids::StableId;
 use crate::procedural::{
-    self, GenNode, Generated, Procedural, RegenReport, Scope, generated_children,
+    self, GenNode, Generated, OverrideDoc, Overrides, Procedural, RegenReport, Scope,
+    generated_children,
 };
 use crate::scene::{EntityDoc, GeneratedDoc, SaveOptions, Snapshot};
 use crate::world::World;
@@ -106,6 +109,12 @@ pub fn in_cell(key: &str) -> Option<&str> {
     parse_cell_key(cell).map(|_| cell)
 }
 
+/// The cell a generated key belongs to: the cell itself for a cell key
+/// (`c/3_-2`, its root entity), or the cell it lies under (`c/3_-2/rocks/7`).
+pub fn owning_cell(key: &str) -> Option<&str> {
+    in_cell(key).or_else(|| parse_cell_key(key).map(|_| key))
+}
+
 /// True if `key` lies under `cell` (`c/1_2/a` is under `c/1_2`).
 pub fn under(key: &str, cell: &str) -> bool {
     key.strip_prefix(cell).is_some_and(|r| r.starts_with('/'))
@@ -118,12 +127,21 @@ pub struct StashedRoot {
     pub id: String,
     /// The subtree, exactly (play state included).
     pub snapshot: Snapshot,
+    /// Live entities outside the subtree whose entity fields pointed into it
+    /// when it was stashed; re-pointed when it comes back.
+    holders: Vec<Entity>,
 }
 
-/// Authored [`Streamed`] roots of unloaded cells, by cell key.
+/// Authored [`Streamed`] roots of unloaded cells, by cell key. Their ids
+/// stay reserved ([`World::id_taken`]) while they are stashed.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct Stash {
-    pub(crate) cells: BTreeMap<String, Vec<StashedRoot>>,
+    cells: BTreeMap<String, Vec<StashedRoot>>,
+    /// Every stashed entity id (roots and descendants), to its cell.
+    ids: HashMap<String, String>,
+    /// The handles the stashed entities had, to their ids: entity fields
+    /// elsewhere still hold them, and saving writes them as these ids.
+    pub(crate) gone: HashMap<Entity, String>,
 }
 
 impl Stash {
@@ -136,20 +154,110 @@ impl Stash {
 
     /// The stashed root with stable id `id`, if any.
     pub fn root(&self, id: &str) -> Option<&StashedRoot> {
-        self.iter().map(|(_, r)| r).find(|r| r.id == id)
+        let cell = self.ids.get(id)?;
+        self.cells[cell].iter().find(|r| r.id == id)
     }
 
     /// The cell holding the stashed entity `id` (a root or one of its
     /// descendants), if any.
     pub fn cell_of(&self, id: &str) -> Option<&str> {
-        self.iter()
-            .find(|(_, r)| r.snapshot.entities.iter().any(|d| d.id == id))
-            .map(|(k, _)| k)
+        self.ids.get(id).map(String::as_str)
     }
 
     /// True if nothing is stashed.
     pub fn is_empty(&self) -> bool {
         self.cells.is_empty()
+    }
+
+    fn push(&mut self, cell: &str, root: StashedRoot) {
+        for d in &root.snapshot.entities {
+            self.ids.insert(d.id.clone(), cell.to_string());
+        }
+        let list = self.cells.entry(cell.to_string()).or_default();
+        list.push(root);
+        list.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+
+    fn take(&mut self, cell: &str) -> Option<Vec<StashedRoot>> {
+        let roots = self.cells.remove(cell)?;
+        for r in &roots {
+            for d in &r.snapshot.entities {
+                self.ids.remove(&d.id);
+            }
+        }
+        Some(roots)
+    }
+
+    fn put_back(&mut self, cell: &str, roots: Vec<StashedRoot>) {
+        for r in roots {
+            self.push(cell, r);
+        }
+    }
+
+    /// The id a stashed entity's old handle stands for.
+    pub(crate) fn gone_id(&self, e: Entity) -> Option<&str> {
+        self.gone.get(&e).map(String::as_str)
+    }
+
+    /// The stash for a copy of the world (`World::fork`), its handles mapped
+    /// through `map` (holders the copy does not have are dropped).
+    pub(crate) fn mapped(&self, map: &HashMap<Entity, Entity>) -> Stash {
+        let mut out = self.clone();
+        out.gone = self
+            .gone
+            .iter()
+            .filter_map(|(e, id)| Some((*map.get(e)?, id.clone())))
+            .collect();
+        for roots in out.cells.values_mut() {
+            for r in roots {
+                r.holders = r
+                    .holders
+                    .iter()
+                    .filter_map(|e| map.get(e).copied())
+                    .collect();
+            }
+        }
+        out
+    }
+}
+
+/// True if a field of type `ty` can hold an entity reference.
+fn holds_entity(ty: &FieldType) -> bool {
+    match ty {
+        FieldType::Entity => true,
+        FieldType::List(item) => holds_entity(item),
+        FieldType::Record(id) => id.schema().fields.iter().any(|f| holds_entity(&f.ty)),
+        _ => false,
+    }
+}
+
+/// True if `v` references an entity of `set`.
+fn refers(v: &Value, set: &HashSet<Entity>) -> bool {
+    match v {
+        Value::Entity(Some(e)) => set.contains(e),
+        Value::List(items) | Value::Record(_, items) => items.iter().any(|i| refers(i, set)),
+        _ => false,
+    }
+}
+
+/// Re-points references in `v` through `map`; true if anything changed.
+fn remap(v: &mut Value, map: &HashMap<Entity, Entity>) -> bool {
+    match v {
+        Value::Entity(Some(e)) => match map.get(e) {
+            Some(n) => {
+                *e = *n;
+                true
+            }
+            None => false,
+        },
+        Value::List(items) | Value::Record(_, items) => {
+            let mut changed = false;
+            for i in items {
+                changed |= remap(i, map);
+            }
+            changed
+        }
+        _ => false,
     }
 }
 
@@ -215,6 +323,18 @@ impl World {
             .map(|p| p.generator.clone());
         let generator = generator.unwrap_or_default();
         let root_id = format!("{src_id}/{cell}");
+        let overrides = self
+            .ecs
+            .get::<Overrides>(source)
+            .cloned()
+            .unwrap_or_default();
+        // A deleted or suppressed cell root takes the cell's content with it.
+        if overrides.is_deleted(cell) || self.suppressions().contains(&root_id) {
+            let mut report = self.unload_cell(source, cell)?;
+            report.despawned.clear();
+            report.released_assets.clear();
+            return Ok(report);
+        }
         let (root, created) = match self.cell_root(source, cell) {
             Some(r) => (r, false),
             None => {
@@ -257,6 +377,7 @@ impl World {
         );
         match result {
             Ok(mut report) => {
+                self.apply_root_overrides(root, &src_id, cell, &overrides, &mut report);
                 if created {
                     report.spawned.insert(0, root_id);
                     self.order_cells(source);
@@ -268,6 +389,63 @@ impl World {
                     hierarchy::despawn_recursive(&mut self.ecs, root);
                 }
                 Err(e)
+            }
+        }
+    }
+
+    /// Sets the field overrides that target the cell root `cell` (an edited
+    /// cell root keeps its edits across unloads, like any generated entity).
+    fn apply_root_overrides(
+        &mut self,
+        root: Entity,
+        src_id: &str,
+        cell: &str,
+        overrides: &Overrides,
+        report: &mut RegenReport,
+    ) {
+        for o in &overrides.0 {
+            let OverrideDoc::Field {
+                target,
+                component,
+                field,
+                value,
+            } = o
+            else {
+                continue;
+            };
+            if target != cell {
+                continue;
+            }
+            let applied = (|| -> Result<(), SceneError> {
+                let key = self.registry.key(component)?;
+                let schema = self.registry.schema(key);
+                let index = schema.field_index(field)?;
+                let ids = self.ids();
+                let v = value
+                    .to_value(&schema.fields[index].ty, &|id| ids.get(id))
+                    .map_err(|error| re_reflect::ReflectError::Value {
+                        path: format!("{component}.{field}"),
+                        error,
+                    })?;
+                if !self.registry.has(&self.ecs, root, key) {
+                    return Err(re_reflect::ReflectError::MissingComponent {
+                        component: component.clone(),
+                    }
+                    .into());
+                }
+                self.registry
+                    .set_field(&mut self.ecs, root, key, index, v)?;
+                Ok(())
+            })();
+            if let Err(e) = applied {
+                report.diagnostics.push(
+                    Diagnostic::warning(
+                        codes::OVERRIDE_NOT_APPLIED,
+                        format!("{src_id}: override on {target:?} not applied: {e}"),
+                    )
+                    .at(Location::entity(src_id.to_string()))
+                    .with_related(e.to_diagnostic()),
+                );
             }
         }
     }
@@ -291,7 +469,7 @@ impl World {
         let Some(root) = self.cell_root(source, cell) else {
             return Ok(report);
         };
-        let mut old_assets = std::collections::BTreeSet::new();
+        let mut old_assets = BTreeSet::new();
         for e in hierarchy::subtree(&self.ecs, root) {
             if let Some(id) = self.id_of(e) {
                 report.despawned.push(id.to_string());
@@ -316,11 +494,11 @@ impl World {
     }
 
     /// The assets of `candidates` that no entity references any more, sorted.
-    fn unreferenced(&mut self, candidates: std::collections::BTreeSet<String>) -> Vec<String> {
+    fn unreferenced(&mut self, candidates: BTreeSet<String>) -> Vec<String> {
         if candidates.is_empty() {
             return Vec::new();
         }
-        let mut live = std::collections::HashSet::new();
+        let mut live = HashSet::new();
         let mut q = self.ecs.query::<(Option<&MeshRef>, Option<&MaterialRef>)>();
         for (m, mat) in q.iter(&self.ecs) {
             if let Some(m) = m {
@@ -360,11 +538,23 @@ impl World {
             )));
         }
         let snapshot = self.snapshot_subtree(root);
+        let inside: HashSet<Entity> = hierarchy::subtree(&self.ecs, root).into_iter().collect();
+        let holders = self.holders_of(&inside);
+        let gone: Vec<(Entity, String)> = inside
+            .iter()
+            .filter_map(|e| Some((*e, self.id_of(*e)?.to_string())))
+            .collect();
         hierarchy::despawn_recursive(&mut self.ecs, root);
         let mut stash = self.ecs.remove_resource::<Stash>().unwrap_or_default();
-        let list = stash.cells.entry(cell.to_string()).or_default();
-        list.push(StashedRoot { id, snapshot });
-        list.sort_by(|a, b| a.id.cmp(&b.id));
+        stash.gone.extend(gone);
+        stash.push(
+            cell,
+            StashedRoot {
+                id,
+                snapshot,
+                holders,
+            },
+        );
         self.ecs.insert_resource(stash);
         Ok(())
     }
@@ -375,7 +565,7 @@ impl World {
         let Some(mut stash) = self.ecs.remove_resource::<Stash>() else {
             return Ok(Vec::new());
         };
-        let Some(roots) = stash.cells.remove(cell) else {
+        let Some(roots) = stash.take(cell) else {
             self.ecs.insert_resource(stash);
             return Ok(Vec::new());
         };
@@ -387,29 +577,107 @@ impl World {
                     for &s in &spawned {
                         hierarchy::despawn_recursive(&mut self.ecs, s);
                     }
-                    stash.cells.insert(cell.to_string(), roots);
+                    stash.put_back(cell, roots);
                     self.ecs.insert_resource(stash);
                     return Err(e);
                 }
+            }
+        }
+        // Entity fields that pointed into the stashed subtrees follow them.
+        let back: HashSet<&str> = roots
+            .iter()
+            .flat_map(|r| r.snapshot.entities.iter().map(|d| d.id.as_str()))
+            .collect();
+        let mut map = HashMap::new();
+        stash.gone.retain(|old, id| {
+            if !back.contains(id.as_str()) {
+                return true;
+            }
+            if let Some(new) = self.ids().get(id) {
+                map.insert(*old, new);
+            }
+            false
+        });
+        for r in &roots {
+            for &holder in &r.holders {
+                self.remap_refs(holder, &map);
             }
         }
         self.ecs.insert_resource(stash);
         Ok(spawned)
     }
 
+    /// The live entities outside `inside` with an entity field pointing into it.
+    fn holders_of(&self, inside: &HashSet<Entity>) -> Vec<Entity> {
+        let keys: Vec<_> = self
+            .registry
+            .keys()
+            .filter(|k| {
+                self.registry
+                    .schema(*k)
+                    .fields
+                    .iter()
+                    .any(|f| holds_entity(&f.ty))
+            })
+            .collect();
+        if keys.is_empty() {
+            return Vec::new();
+        }
+        let mut out: Vec<Entity> = self
+            .ids()
+            .iter()
+            .map(|(_, e)| e)
+            .filter(|e| !inside.contains(e))
+            .filter(|&e| {
+                keys.iter().any(|&k| {
+                    self.registry
+                        .get_all(&self.ecs, e, k)
+                        .is_some_and(|vs| vs.iter().any(|v| refers(v, inside)))
+                })
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Re-points `holder`'s entity fields through `map`.
+    fn remap_refs(&mut self, holder: Entity, map: &HashMap<Entity, Entity>) {
+        if self.ecs.get_entity(holder).is_err() {
+            return;
+        }
+        for k in self.registry.components_of(&self.ecs, holder) {
+            let Some(values) = self.registry.get_all(&self.ecs, holder, k) else {
+                continue;
+            };
+            for (i, mut v) in values.into_iter().enumerate() {
+                if remap(&mut v, map) {
+                    // Same field type, already coerced: cannot fail.
+                    let _ = self.registry.set_field(&mut self.ecs, holder, k, i, v);
+                }
+            }
+        }
+    }
+
     /// The authored documents of a stashed root, as [`World::save`] writes
     /// them (generated entities left out; defaults dropped when `opts` says so).
     pub(crate) fn stashed_docs(&self, root: &StashedRoot, opts: SaveOptions) -> Vec<EntityDoc> {
-        let generated: std::collections::HashSet<String> = root
+        // Like `subtree_docs`: a generated entity and everything under it
+        // (authored children included) are left out. Parents come first.
+        let mut skipped: HashSet<String> = root
             .snapshot
             .generated
             .iter()
             .map(GeneratedDoc::id)
             .collect();
+        for d in &root.snapshot.entities {
+            if d.parent.as_ref().is_some_and(|p| skipped.contains(p)) {
+                skipped.insert(d.id.clone());
+            }
+        }
         root.snapshot
             .entities
             .iter()
-            .filter(|d| !generated.contains(&d.id))
+            .filter(|d| !skipped.contains(&d.id))
             .map(|d| {
                 let mut d = d.clone();
                 if opts.omit_defaults {

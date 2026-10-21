@@ -134,14 +134,25 @@ impl World {
             .unwrap_or("")
     }
 
-    /// A fresh engine-made id (`e7kq2m9x4tb`) not used by any entity.
+    /// A fresh engine-made id (`e7kq2m9x4tb`) not used by any entity, live
+    /// or stashed.
     pub fn new_id(&mut self) -> String {
         loop {
             let id = self.ecs.resource_mut::<IdGen>().next_id();
-            if self.ids().get(&id).is_none() {
+            if !self.id_taken(&id) {
                 return id;
             }
         }
+    }
+
+    /// True if `id` names a live entity or one stashed with an unloaded
+    /// cell (ADR-0042), so a new entity must not take it.
+    pub fn id_taken(&self, id: &str) -> bool {
+        self.ids().get(id).is_some()
+            || self
+                .ecs
+                .get_resource::<crate::stream::Stash>()
+                .is_some_and(|s| s.cell_of(id).is_some())
     }
 
     /// Resolves a path of names such as `"Island/Crates/Crate_3"`: the first
@@ -365,6 +376,15 @@ impl World {
             .collect();
 
         let mut map: HashMap<Entity, Entity> = HashMap::with_capacity(order.len());
+        // Handles of stashed entities get empty stand-ins, so references to
+        // them stay distinct (and saved as their ids) in the copy too.
+        if let Some(stash) = self.stashed() {
+            let mut gone: Vec<_> = stash.gone.keys().copied().collect();
+            gone.sort();
+            for old in gone {
+                map.insert(old, out.ecs.spawn_empty().id());
+            }
+        }
         for &old in &order {
             let id = self.ecs.get::<StableId>(old).cloned();
             let name = self.ecs.get::<Name>(old).cloned().unwrap_or_default();
@@ -413,7 +433,7 @@ impl World {
             }
         }
         if let Some(stash) = self.stashed() {
-            out.ecs.insert_resource(stash.clone());
+            out.ecs.insert_resource(stash.mapped(&map));
         }
         out
     }
