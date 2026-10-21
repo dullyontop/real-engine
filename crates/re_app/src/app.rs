@@ -1662,6 +1662,9 @@ impl App {
                 re_assets::AssetChange::Renamed { from, to } => vec![from.clone(), to.clone()],
             })
             .collect();
+        for p in paths.iter().filter(|p| p.ends_with(".heightfield")) {
+            procedural::heightfield_changed(&mut self.world, p);
+        }
         let graphs: Vec<String> = paths
             .iter()
             .filter(|p| procedural::is_graph_input(&mut self.world, p))

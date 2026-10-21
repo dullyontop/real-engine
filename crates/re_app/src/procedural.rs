@@ -215,9 +215,18 @@ pub fn is_graph_input(world: &mut World, path: &str) -> bool {
     sources(world).iter().any(|s| reads(s, path))
 }
 
-/// Baked `.heightfield` files that failed to load, with their size then.
+/// Baked `.heightfield` files that failed to load: read again only after
+/// they change ([`heightfield_changed`]) or disappear.
 #[derive(Default, bevy_ecs::resource::Resource)]
-struct FailedHeightfields(std::collections::HashMap<String, u64>);
+struct FailedHeightfields(BTreeSet<String>);
+
+/// Forgets that the `.heightfield` file at `path` failed to load, so the
+/// next [`sync_derived`] reads it again (the project watcher saw it change).
+pub fn heightfield_changed(world: &mut World, path: &str) {
+    if let Some(mut failed) = world.ecs.get_resource_mut::<FailedHeightfields>() {
+        failed.0.remove(path);
+    }
+}
 
 /// Gives `media` the derived meshes that `MeshRef`s name, and `shapes` the
 /// derived meshes and heightfields that colliders name, from the World's store,
@@ -252,7 +261,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
         .remove_resource::<FailedHeightfields>()
         .unwrap_or_default()
         .0;
-    failed.retain(|name, _| baked.contains(name));
+    failed.retain(|name| baked.contains(name));
     let Some(store) = world.ecs.get_resource::<GraphStore>() else {
         world.ecs.insert_resource(FailedHeightfields(failed));
         return;
@@ -262,24 +271,23 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
         if shapes.heightfield(&name).is_some() {
             continue;
         }
-        let Some(root) = store.root() else {
+        let Some(files) = store.files() else {
             continue;
         };
         // A file that cannot be read stays missing; physics reports it. A
-        // file that failed is read again once its size changes or it is removed
-        // and comes back.
-        let path = root.join(&name);
-        let Ok(len) = std::fs::metadata(&path).map(|m| m.len()) else {
-            // Gone: whatever comes back in its place is read afresh.
+        // file that failed is read again once it changes, or is removed and
+        // comes back.
+        if !files.is_file(&name) {
             failed.remove(&name);
             continue;
-        };
-        if failed.get(&name) == Some(&len) {
+        }
+        if failed.contains(&name) {
             continue;
         }
-        let shape = std::fs::read(&path)
+        let shape = files
+            .read(&name)
             .ok()
-            .and_then(|bytes| re_proc::bake::read_heightfield(&bytes).ok())
+            .and_then(|data| re_proc::bake::read_heightfield(&data.bytes).ok())
             .map(|h| h.to_shape());
         let Some(ShapeDesc::Heightfield {
             n,
@@ -288,7 +296,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
             offset,
         }) = shape
         else {
-            failed.insert(name, len);
+            failed.insert(name);
             continue;
         };
         failed.remove(&name);
