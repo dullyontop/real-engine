@@ -1,0 +1,19 @@
+prompt = "Add a cube that keeps turning around its vertical axis, driven by a Luau script."
+project = { template = "native" }
+budget = { tool_calls = 20, seconds = 300 }
+
+[[checks]]
+command = "query"
+args = { with = ["ScriptRef"] }
+pointer = "/data/total"
+at_least = 1
+
+[[checks]]
+verify_stage = "compile"
+
+[[checks]]
+no_regressions = true
+
+[[reference]]
+command = "recipe.apply"
+args = { recipe = "spinner", args = { label = "Fan", speed = 2.0 } }

@@ -1,0 +1,25 @@
+prompt = "Add a box that falls from about six metres up and lands on the ground."
+project = { template = "native" }
+budget = { tool_calls = 20, seconds = 300 }
+
+# One more entity than the template's four, and nothing that passed broke.
+[[checks]]
+command = "query"
+pointer = "/data/total"
+equals = 5
+
+[[checks]]
+command = "query"
+args = { with = ["RigidBody"] }
+pointer = "/data/total"
+equals = 2
+
+[[checks]]
+verify = "ok"
+
+[[checks]]
+no_regressions = true
+
+[[reference]]
+command = "recipe.apply"
+args = { recipe = "falling-box", args = { label = "Crate", x = 2.0 } }
