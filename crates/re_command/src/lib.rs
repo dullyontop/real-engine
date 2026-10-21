@@ -4,15 +4,15 @@
 //! goes through this crate:
 //!
 //! * [`op`]: [`Op`], the closed set of edit operations, each with its exact
-//!   inverse;
+//!   inverse (scene edits, and `set_doc` on open documents, ADR-0044);
 //! * [`history`]: [`Transaction`] (atomic), [`History`] (undo, redo, dry runs)
 //!   and the append-only log of [`LogEntry`] lines with their [`Origin`];
 //! * [`registry`]: [`CommandRegistry`], named commands with JSON Schema
 //!   inputs, a [`Tier`], dry runs and the [`PolicyCheck`] hook;
 //! * [`builtins`]: the built-in commands (`describe`, `query`, `entity.get`,
-//!   `command.describe`, `entity.spawn`, `entity.set`, `entity.reparent`,
-//!   `entity.delete`, `component.add`, `component.remove`, `scene.apply`,
-//!   `undo`, `redo`);
+//!   `command.describe`, `project.status`, `entity.spawn`, `entity.set`,
+//!   `entity.reparent`, `entity.delete`, `component.add`, `component.remove`,
+//!   `scene.apply`, `undo`, `redo`);
 //! * [`remote`]: the std channel that carries command calls from other
 //!   threads to the thread that owns the world;
 //! * [`error`]: [`OpError`] and [`TxError`], with codes `RE2000`–`RE2999`.
@@ -77,6 +77,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::UNDO_FAILED,
         title: "Undo or redo failed",
         page: include_str!("../explain/RE2007.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_DOCUMENT,
+        title: "Document not valid",
+        page: include_str!("../explain/RE2008.md"),
     },
 ];
 

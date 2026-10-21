@@ -23,8 +23,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, Lines, 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The commands of ARCHITECTURE §6 that other crates register, as stubs
-/// with their real tiers, so `tools/list` sees the full M1 set of 25 (28
-/// with WP17's `checkpoint.create`, `resource.list` and `resource.read`).
+/// with their real tiers, so `tools/list` sees the full M1 set of 25 (29
+/// with WP17's `checkpoint.create`, `resource.list` and `resource.read`, and
+/// `re_command`'s `project.status`).
 const STUBS: &[(&str, Tier, bool)] = &[
     ("graph.report", Tier::Read, true),
     ("graph.generate", Tier::Read, true),
@@ -314,13 +315,13 @@ fn initialize_advertises_capabilities_and_identity(t: Transport) {
     assert!(instructions.len() < 4096);
 }
 
-fn tools_list_has_28_clean_tools(t: Transport) {
+fn tools_list_has_29_clean_tools(t: Transport) {
     let mut c = Client::initialized(t, Policy::read_only());
     let list = c.request(1, "tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
     assert_eq!(
         tools.len(),
-        28,
+        29,
         "{:#?}",
         tools.iter().map(|t| &t["name"]).collect::<Vec<_>>()
     );
@@ -535,7 +536,7 @@ fn stateless_2026_07_28_requests_carry_meta(t: Transport) {
     );
 
     let list = c.request(2, "tools/list", json!({ "_meta": meta }));
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 28);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 29);
     let query = c.request(
         3,
         "tools/call",
@@ -641,7 +642,7 @@ macro_rules! over_both_transports {
 
 over_both_transports!(
     initialize_advertises_capabilities_and_identity,
-    tools_list_has_28_clean_tools,
+    tools_list_has_29_clean_tools,
     edit_call_with_read_policy_is_refused_but_dry_run_works,
     scene_apply_is_atomic_and_one_undo_reverts_it,
     script_write_with_a_syntax_error_writes_nothing,

@@ -192,6 +192,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE0527.md"),
     },
     DiagInfo {
+        code: codes::OPEN_DOC_CHANGED_ON_DISK,
+        title: "Open document changed on disk",
+        page: include_str!("../explain/RE0528.md"),
+    },
+    DiagInfo {
         code: codes::WEB_NO_GPU,
         title: "No WebGPU in this browser",
         page: include_str!("../explain/RE0620.md"),

@@ -103,6 +103,11 @@ pub const STUCK_YIELD: Code = Code::new("RE0526");
 /// path names no instance.
 pub const PLAY_STEP_FAILED: Code = Code::new("RE0527");
 
+/// An open document's file changed on disk and was not reloaded: the
+/// document has unsaved edits (saving overwrites the file), or the file is
+/// gone or invalid (ADR-0044).
+pub const OPEN_DOC_CHANGED_ON_DISK: Code = Code::new("RE0528");
+
 /// The browser gave no WebGPU adapter or device for the page's canvas (ADR-0049).
 pub const WEB_NO_GPU: Code = Code::new("RE0620");
 
