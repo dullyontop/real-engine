@@ -683,13 +683,8 @@ pub(crate) fn drop_owner(lua: &Lua, owner: Owner) -> Result<usize> {
 
 /// Registers `chunk`, loaded from the project file `path` by the run of
 /// `owner`, with the debugger attached to `lua` (if any), and forgets it when
-/// that run stops ([`drop_owner`]).
-pub(crate) fn register_owned_chunk(
-    lua: &Lua,
-    owner: Owner,
-    path: &str,
-    chunk: &Function,
-) -> Result<()> {
+/// that run stops ([`stop_owner`]).
+pub fn register_owned_chunk(lua: &Lua, owner: Owner, path: &str, chunk: &Function) -> Result<()> {
     crate::debug::register_chunk(lua, path, chunk);
     let key = lua.create_registry_value(chunk.clone())?;
     sched(lua, |s| {
@@ -702,7 +697,7 @@ pub(crate) fn register_owned_chunk(
 
 /// Registers the module chunk loaded from `path` with the debugger attached
 /// to `lua` (if any), in place of the module's previous chunk.
-pub(crate) fn register_module_chunk(lua: &Lua, path: &str, chunk: &Function) -> Result<()> {
+pub fn register_module_chunk(lua: &Lua, path: &str, chunk: &Function) -> Result<()> {
     crate::debug::register_chunk(lua, path, chunk);
     let key = lua.create_registry_value(chunk.clone())?;
     if let Some(old) = sched(lua, |s| s.debug_modules.insert(path.to_string(), key))? {

@@ -304,6 +304,31 @@ fn memory_past_the_limit_is_a_budget_error() {
 }
 
 #[test]
+fn a_caught_memory_error_still_stops_the_node() {
+    let grow = "local function grow() local t = {} for i = 1, 1e9 do t[i] = buffer.create(1024 * 1024) end end";
+    for catch in [
+        "pcall(grow)",
+        "xpcall(grow, function(e) return e end)",
+        "coroutine.resume(coroutine.create(grow))",
+        "pcall(function() pcall(grow) end)",
+    ] {
+        let body =
+            format!("{grow} {catch} return {{ n = 2, spacing = 1, samples = buffer.create(16) }}");
+        let src = bad(&body, "field");
+        let dir = project(&[("scripts/generators/bad.luau", &src)]);
+        let e = first_error(
+            dir.path(),
+            Limits {
+                budget: 1_000_000_000,
+                memory_mb: 16,
+            },
+        );
+        assert_eq!(e.code, codes::LUAU_BUDGET, "{catch}: {e:#?}");
+        assert!(e.message.contains("memory"), "{catch}: {}", e.message);
+    }
+}
+
+#[test]
 fn invalid_outputs_are_refused() {
     let cases = [
         ("return 3", "field"),

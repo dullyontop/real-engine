@@ -35,6 +35,8 @@ pub(crate) enum Stop {
     Budget,
     /// Over the wall-clock backstop (`RE4102`).
     Backstop,
+    /// Out of memory, even if a `pcall` caught it (`RE4101`).
+    Memory,
 }
 
 thread_local! {
@@ -192,6 +194,7 @@ pub(crate) fn create(scripts: Arc<Scripts>, memory_mb: usize, log: Log) -> mlua:
             Ok(())
         })?,
     )?;
+    catch_memory_errors(&lua)?;
     lua.set_named_registry_value(MODULES, lua.create_table()?)?;
     let require = lua.create_function(move |lua, name: String| require(lua, &scripts, &name))?;
     g.raw_set("require", require)?;
@@ -207,6 +210,45 @@ pub(crate) fn create(scripts: Arc<Scripts>, memory_mb: usize, log: Log) -> mlua:
         })?;
     }
     Ok(lua)
+}
+
+/// The error value Luau gives a caught out-of-memory error.
+const NO_MEMORY: &str = "not enough memory";
+
+/// Wraps `pcall`, `xpcall` and `coroutine.resume` so that catching an
+/// out-of-memory error still stops the node: it is marked [`Stop::Memory`],
+/// and from then on every safepoint raises, as for the budget. Otherwise a
+/// node could catch the error and return output that depends on
+/// `luau_memory_mb`.
+fn catch_memory_errors(lua: &Lua) -> mlua::Result<()> {
+    let oom = lua.create_function(|_, ()| -> mlua::Result<()> {
+        STOPPED.with(|s| {
+            if s.get() == Stop::None {
+                s.set(Stop::Memory);
+            }
+        });
+        Err(mlua::Error::runtime(NO_MEMORY))
+    })?;
+    lua.load(
+        r#"
+local oom, nomem = ...
+local raw_pcall, raw_xpcall, raw_resume = pcall, xpcall, coroutine.resume
+local function check(ok, ...)
+    if not ok and (...) == nomem then oom() end
+    return ok, ...
+end
+pcall = function(f, ...) return check(raw_pcall(f, ...)) end
+xpcall = function(f, handler, ...)
+    return raw_xpcall(f, function(e)
+        if e == nomem then oom() end
+        return handler(e)
+    end, ...)
+end
+coroutine.resume = function(co, ...) return check(raw_resume(co, ...)) end
+"#,
+    )
+    .set_name("=generator")
+    .call::<()>((oom, NO_MEMORY))
 }
 
 /// The transcendental `math` functions on every machine alike (ADR-0036).

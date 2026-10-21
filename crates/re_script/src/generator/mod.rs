@@ -281,6 +281,16 @@ impl Failure {
 
 /// Runs `f` under the budget: a stop is `RE4101` or `RE4102`, a memory
 /// error `RE4101`, any other error `RE4008` (`what` prefixes its message).
+fn memory_failure(what: &str, limits: Limits) -> Failure {
+    Failure::new(
+        codes::LUAU_BUDGET,
+        format!(
+            "{what}: the Luau node ran past its memory limit of {} MiB",
+            limits.memory_mb
+        ),
+    )
+}
+
 fn budgeted<T>(
     limits: Limits,
     what: &str,
@@ -299,6 +309,9 @@ fn budgeted<T>(
                 ),
             ));
         }
+        Stop::Memory => {
+            return Err(memory_failure(what, limits));
+        }
         Stop::Backstop => {
             return Err(Failure::new(
                 codes::LUAU_BACKSTOP,
@@ -315,13 +328,7 @@ fn budgeted<T>(
             cause = c;
         }
         if matches!(cause, mlua::Error::MemoryError(_)) {
-            Failure::new(
-                codes::LUAU_BUDGET,
-                format!(
-                    "{what}: the Luau node ran past its memory limit of {} MiB",
-                    limits.memory_mb
-                ),
-            )
+            memory_failure(what, limits)
         } else {
             Failure::new(codes::NODE_FAILED, format!("{what}: {}", short(&e)))
         }
