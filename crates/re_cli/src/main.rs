@@ -173,6 +173,9 @@ struct RunArgs {
     /// Print the run report as JSON.
     #[arg(long)]
     json: bool,
+    /// Serve the script debugger over DAP on 127.0.0.1 (default port 4711).
+    #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "4711")]
+    debug: Option<u16>,
 }
 
 fn print_diagnostics(diagnostics: &[Diagnostic]) {
@@ -206,6 +209,21 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
     let mut app = match open(project) {
         Ok(a) => a,
         Err(d) => return fail(d),
+    };
+    // Kept until the run ends; dropping it closes the client's connection.
+    let _dap = match args.debug {
+        Some(port) => {
+            let debugger = re_script::debug::Debugger::new();
+            match re_script::debug::dap::DapServer::listen(debugger.clone(), port, project) {
+                Ok(server) => {
+                    eprintln!("debugger: DAP on {}", server.addr());
+                    app.set_debugger(Some(debugger));
+                    Some(server)
+                }
+                Err(d) => return fail(d),
+            }
+        }
+        None => None,
     };
     let replay = match &args.replay {
         Some(path) => match re_input::load_replay(path) {
@@ -453,12 +471,12 @@ fn cmd_schema(out: &Path) -> ExitCode {
     }
 }
 
-/// Writes a crash report to `<project>/.real/crash/` on a panic (ARCHITECTURE §7).
-fn install_crash_hook(project: PathBuf) {
+/// Writes a crash report to the run's crash folder (`<project>/.real/crash/`)
+/// on a panic (ARCHITECTURE §7).
+fn install_crash_hook(crash: re_core::files::WritableDir) {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default(info);
-        let dir = project.join(".real/crash");
         let stamp = re_core::time::SystemTime::now()
             .duration_since(re_core::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
@@ -468,10 +486,14 @@ fn install_crash_hook(project: PathBuf) {
             env!("CARGO_PKG_VERSION"),
             std::backtrace::Backtrace::force_capture()
         );
-        if std::fs::create_dir_all(&dir).is_ok() {
-            let path = dir.join(format!("crash-{stamp}.txt"));
-            if std::fs::write(&path, report).is_ok() {
-                eprintln!("a crash report was written to {}", path.display());
+        let name = format!("crash-{stamp}.txt");
+        if crash.write(&name, report.as_bytes()).is_ok() {
+            match crash.path() {
+                Some(dir) => eprintln!(
+                    "a crash report was written to {}",
+                    dir.join(&name).display()
+                ),
+                None => eprintln!("a crash report was written ({name})"),
             }
         }
     }));
@@ -479,7 +501,7 @@ fn install_crash_hook(project: PathBuf) {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    install_crash_hook(cli.project.clone());
+    install_crash_hook(re_core::files::WritableDirs::in_project(&cli.project).crash);
     // Warnings, plus what scripts `print`, on standard error (stdout stays for
     // results and JSON); `RUST_LOG` replaces this.
     if let Err(d) = re_core::init_logging(re_core::LogConfig {

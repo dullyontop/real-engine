@@ -55,7 +55,9 @@ pub use self::gltf::{
 pub use cache::{CACHE_FORMAT_VERSION, CacheOutcome, ProcessedCache, cache_key};
 pub use id::{AssetId, normalize_path};
 pub use image_decode::decode_image;
-pub use material::{AlphaModeName, MaterialFile, load_material, load_material_in};
+pub use material::{
+    AlphaModeName, MaterialFile, load_material, load_material_from, load_material_in,
+};
 pub use meta::AssetMeta;
 pub use server::{
     AssetInfo, AssetServer, Handle, LoadedAsset, ReloadReport, TEXTURE_IMPORTER_VERSION,

@@ -17,6 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
+use re_core::files::ProjectFiles;
 use re_core::{Diagnostic, Location};
 use re_types::render::{AlphaMode, MaterialDesc, TextureRef};
 use serde::{Deserialize, Serialize};
@@ -121,8 +122,18 @@ pub fn load_material(path: &Path) -> Result<MaterialDesc, Diagnostic> {
 /// [`codes::MATERIAL_TEXTURE_MISSING`] for a texture that does not exist. Each
 /// is located at the line of the problem.
 pub fn load_material_in(root: &Path, path: &str) -> Result<MaterialDesc, Diagnostic> {
+    load_material_from(&ProjectFiles::project(root), path)
+}
+
+/// Loads the material file `path` (project-relative) through `files`, the way
+/// the asset server does (ADR-0037).
+///
+/// # Errors
+///
+/// As [`load_material_in`].
+pub fn load_material_from(files: &ProjectFiles, path: &str) -> Result<MaterialDesc, Diagnostic> {
     let rel = id::normalize_path(path)?;
-    let bytes = fsutil::read(&root.join(&rel), &rel)?;
+    let bytes = fsutil::read_in(files, &rel)?;
     let text = String::from_utf8_lossy(&bytes);
     let file: MaterialFile = serde_json::from_str(&text).map_err(|e| {
         Diagnostic::error(codes::MATERIAL_INVALID, format!("invalid material: {e}"))
@@ -179,8 +190,7 @@ pub fn load_material_in(root: &Path, path: &str) -> Result<MaterialDesc, Diagnos
      -> Result<Option<TextureRef>, Diagnostic> {
         let Some(tex) = value else { return Ok(None) };
         let tex_rel = id::normalize_path(tex).map_err(|d| d.at(located(key)))?;
-        let tex_path = root.join(&tex_rel);
-        if !tex_path.is_file() {
+        if !files.is_file(&tex_rel) {
             return Err(Diagnostic::error(
                 codes::MATERIAL_TEXTURE_MISSING,
                 format!("material `{key}` names `{tex_rel}`, which does not exist"),
@@ -193,7 +203,7 @@ pub fn load_material_in(root: &Path, path: &str) -> Result<MaterialDesc, Diagnos
         } else {
             serde_json::json!({})
         };
-        let meta = AssetMeta::read_or_create(&tex_path, &tex_rel, settings)?;
+        let meta = AssetMeta::read_or_create_in(files, &tex_rel, settings)?;
         Ok(Some(TextureRef::Asset(meta.id().to_string())))
     };
 
