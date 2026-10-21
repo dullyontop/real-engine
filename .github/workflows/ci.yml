@@ -252,6 +252,52 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/island --frames 300 --exit-after | tee out/run.log
           grep -qx 'RUN OK' out/run.log
 
+  build-package:
+    # ADR-0037, WP19 PR "archive": `real build` makes the Linux game folder,
+    # and the packaged game plays as its project does (`real verify --package`).
+    # Ubuntu 22.04 is the oldest supported runner, so a packaged game needs at
+    # most its glibc (2.35). Not required yet: it joins ADR-0023's required
+    # checks when PR "bundles" runs it on all three platforms.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/linux-setup
+      - run: cargo build --locked --release -p re_cli
+      - name: real build the island and the plaza
+        run: |
+          mkdir -p out
+          for project in island plaza; do
+            target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
+            jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes"' "out/build-$project.json"
+          done
+      - name: real verify --package
+        run: |
+          for project in island plaza; do
+            target/release/real verify --project "examples/$project" --package "dist/$project"
+          done
+      - name: The game needs at most glibc 2.35 and links no hot reload
+        run: |
+          need=$(objdump -T dist/island/island | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -1)
+          echo "highest glibc symbol version: $need"
+          [ "$(printf '%s\n2.35\n' "$need" | sort -V | tail -1)" = "2.35" ]
+          if nm dist/island/island | grep -q enable_hot_reload; then
+            echo "the game links App::enable_hot_reload"; exit 1
+          fi
+          dist/island/island --runtime-info
+          dist/island/island --version
+      - name: The packaged game in a window under Xvfb
+        # xvfb-run merges the command's stderr into its stdout, so the game's log
+        # lines go to their own file and stdout stays one JSON document.
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" sh -c 'dist/island/island --frames 300 --json 2> out/run.log' > out/run.json
+          jq -e '.frames == 300 and ([.diagnostics[] | select(.severity == "error")] | length == 0)' out/run.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: build-package-linux
+          path: out/
+          if-no-files-found: ignore
+
   build-windows:
     runs-on: windows-latest
     steps:

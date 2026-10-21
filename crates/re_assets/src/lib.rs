@@ -52,7 +52,9 @@ pub use self::gltf::{
     GLTF_IMPORTER_VERSION, ImportedGltf, ImportedMaterial, ImportedMesh, ImportedNode,
     ImportedTexture, image_id, import_gltf,
 };
-pub use cache::{CACHE_FORMAT_VERSION, CacheOutcome, ProcessedCache, cache_key};
+pub use cache::{
+    CACHE_FORMAT_VERSION, CacheOutcome, ProcessedCache, cache_key, decode_entry, encode_entry,
+};
 pub use id::{AssetId, normalize_path};
 pub use image_decode::decode_image;
 pub use material::{
@@ -60,7 +62,8 @@ pub use material::{
 };
 pub use meta::AssetMeta;
 pub use server::{
-    AssetInfo, AssetServer, Handle, LoadedAsset, ReloadReport, TEXTURE_IMPORTER_VERSION,
+    AssetInfo, AssetServer, GLTF_IMPORTER, Handle, LoadedAsset, ProcessedAsset, ReloadReport,
+    TEXTURE_IMPORTER, TEXTURE_IMPORTER_VERSION,
 };
 pub use watch::{AssetChange, AssetWatcher};
 

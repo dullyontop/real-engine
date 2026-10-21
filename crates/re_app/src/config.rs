@@ -51,6 +51,9 @@ pub struct AppConfig {
     /// reads and checks it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compat: Option<toml::Table>,
+    /// `[package]`: how `real build` packs the game (ADR-0037).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<crate::package::PackageConfig>,
     /// Runtime option: run without a window. Headless runs use a fixed frame
     /// time of one simulation step.
     #[serde(skip)]
@@ -73,6 +76,7 @@ impl Default for AppConfig {
             verify: VerifyConfig::default(),
             stream: re_proc::stream::StreamConfig::default(),
             compat: None,
+            package: None,
             headless: true,
             persist_edits: false,
         }
