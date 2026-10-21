@@ -1890,4 +1890,5 @@ fn set_pose_raw(w: &mut World, e: Entity, world: Pose, parent: Pose) {
     if let Some(mut gt) = w.ecs.get_mut::<GlobalTransform>(e) {
         gt.set_if_neq(GlobalTransform(g));
     }
+    re_scene::note_moved(&mut w.ecs, e);
 }

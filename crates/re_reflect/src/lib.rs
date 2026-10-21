@@ -36,8 +36,8 @@ pub use doc::{Doc, f32_from_parsed_f64};
 pub use error::{ReflectError, suggest};
 pub use record::{RecordField, RecordId, RecordSchema};
 pub use registry::{
-    ComponentKey, ComponentOrigin, ComponentSchema, FieldSchema, Reflect, Registry, WriteMode,
-    is_identifier,
+    ChangeHook, ComponentKey, ComponentOrigin, ComponentSchema, FieldSchema, Reflect, Registry,
+    WriteMode, is_identifier,
 };
 pub use schema::{ComponentSchemaDoc, FieldSchemaDoc, FieldTypeDoc};
 pub use value::{Color, FieldType, FieldValue, Value, ValueChange, ValueError, coerce_dynamic};
