@@ -94,8 +94,16 @@ pub fn migrate_doc(
             kind: node.kind.clone(),
             from: node.version,
             to: def.version,
-            notes: steps.iter().map(|s| s.note.to_string()).collect(),
-            changes_output: steps.iter().any(|s| s.changes_output),
+            notes: if def.migrates_custom() {
+                vec![format!(
+                    "migrated by the kind's script from version {}",
+                    node.version
+                )]
+            } else {
+                steps.iter().map(|s| s.note.to_string()).collect()
+            },
+            // A script's steps say nothing about their output: assume they change it.
+            changes_output: def.migrates_custom() || steps.iter().any(|s| s.changes_output),
             params_before: node.params.clone(),
             params_after: params_after.clone(),
         });

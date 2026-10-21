@@ -27,6 +27,31 @@ pub fn install(world: &mut World, project: &Path) {
         .insert_resource(GraphStore::for_project(project.to_path_buf()));
 }
 
+/// Declares the project's Luau node kinds (`scripts/generators/`, ADR-0043
+/// §4) into the World's store: graphs use the M1 kinds plus these from now
+/// on. Called when the project loads and when a generator script changes; a
+/// source whose graph uses a kind whose scripts changed regenerates at the
+/// next `regenerate_changed`. Returns the declaration problems (`RE4100`).
+pub fn declare_generators(
+    world: &mut World,
+    project: &Path,
+    limits: re_script::generator::Limits,
+) -> Vec<Diagnostic> {
+    let base = re_proc::NodeRegistry::m1();
+    let declared = re_script::generator::declare(project, &base, limits);
+    if let Some(mut store) = world.ecs.get_resource_mut::<GraphStore>() {
+        store.set_registry(std::sync::Arc::new(declared.registry(&base)));
+    }
+    declared.diagnostics
+}
+
+/// True if `path` (a project path) is a generator script or module.
+pub fn is_generator_script(path: &str) -> bool {
+    path.strip_prefix(re_script::generator::GENERATORS_DIR)
+        .is_some_and(|rest| rest.starts_with('/'))
+        && path.ends_with(".luau")
+}
+
 /// Every procedural source with a `GraphSource`: `(stable id, graph, builder)`.
 fn sources(world: &mut World) -> Vec<(String, String, String)> {
     let mut found: Vec<_> = world

@@ -71,8 +71,8 @@ pub use generator::{
 };
 pub use graph::{Edge, GraphId, Node, NodeId, OUT_ALIAS, PortName, ProcGraph};
 pub use nodes::{
-    Domain, Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef,
-    Streaming,
+    CheckFn, CustomKind, CustomPort, Domain, EvalFn, MAX_LOG_LINE, MAX_LOG_LINES, MigrateFn,
+    Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef, Streaming,
 };
 pub use store::{Budget, GraphStore};
 pub use value::{
@@ -192,6 +192,31 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::OPEN_GRAPH_DIFFERS,
         title: "Open graph differs from its file",
         page: include_str!("../explain/RE4022.md"),
+    },
+    DiagInfo {
+        code: codes::LUAU_DECLARATION,
+        title: "Invalid Luau node declaration",
+        page: include_str!("../explain/RE4100.md"),
+    },
+    DiagInfo {
+        code: codes::LUAU_BUDGET,
+        title: "Luau node over its budget",
+        page: include_str!("../explain/RE4101.md"),
+    },
+    DiagInfo {
+        code: codes::LUAU_BACKSTOP,
+        title: "Luau node stopped by the wall-clock backstop",
+        page: include_str!("../explain/RE4102.md"),
+    },
+    DiagInfo {
+        code: codes::LUAU_OUTPUT,
+        title: "Invalid Luau node output",
+        page: include_str!("../explain/RE4103.md"),
+    },
+    DiagInfo {
+        code: codes::CREATE_SOURCE,
+        title: "Cannot create a source from a node kind",
+        page: include_str!("../explain/RE4104.md"),
     },
     DiagInfo {
         code: codes::STREAM_CONFIG,

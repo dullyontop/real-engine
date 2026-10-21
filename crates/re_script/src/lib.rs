@@ -26,6 +26,7 @@ pub mod codes;
 mod compile;
 pub mod debug;
 pub mod diag;
+pub mod generator;
 pub mod host;
 pub mod modules;
 mod runtime;

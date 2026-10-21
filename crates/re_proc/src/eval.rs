@@ -80,6 +80,10 @@ pub struct NodeReport {
     /// The node's problems.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<Diagnostic>,
+    /// What the node logged while it computed (a Luau node's `ctx:log`);
+    /// empty when its output came from a cache.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<String>,
 }
 
 /// What an evaluation did. `real graph eval --json` and `graph.report`
@@ -214,6 +218,7 @@ struct JobResult {
     from_disk: bool,
     ms: f64,
     warnings: Vec<Diagnostic>,
+    logs: Vec<String>,
 }
 
 impl Evaluator {
@@ -253,6 +258,20 @@ impl Evaluator {
     /// The node registry.
     pub fn registry(&self) -> &NodeRegistry {
         &self.registry
+    }
+
+    /// This evaluator with `registry` instead of its own: the same pool, disk
+    /// cache and memory budget, with an empty memory cache. Keys include
+    /// each kind's version and implementation hash, so disk entries of
+    /// kinds that did not change stay valid.
+    pub fn with_registry(&self, registry: Arc<NodeRegistry>) -> Evaluator {
+        Evaluator {
+            registry,
+            pool: self.pool.clone(),
+            disk: self.disk.clone(),
+            memory: Mutex::new(MemCache::default()),
+            budget: self.budget,
+        }
     }
 
     /// The disk cache directory, if any.
@@ -295,6 +314,7 @@ impl Evaluator {
                     ms: 0.0,
                     output: None,
                     diagnostics: Vec::new(),
+                    logs: Vec::new(),
                 })
                 .collect(),
             ..Default::default()
@@ -428,6 +448,7 @@ impl Evaluator {
                 let nr = &mut report.nodes[job.index];
                 nr.ms = r.ms;
                 nr.diagnostics.extend(r.warnings);
+                nr.logs = r.logs;
                 match r.output {
                     Ok(output) => {
                         nr.output = Some(info(&output));
@@ -487,6 +508,7 @@ impl Evaluator {
                         from_disk: true,
                         ms: ms_since(start),
                         warnings,
+                        logs: Vec::new(),
                     };
                 }
                 Ok(_) => {}
@@ -502,6 +524,7 @@ impl Evaluator {
             inputs: job.inputs.clone(),
             files: job.files.clone(),
             pool,
+            logs: Default::default(),
         };
         let output = job.def.eval(&ctx, &job.params).map_err(|e| {
             Diagnostic::error(
@@ -520,6 +543,7 @@ impl Evaluator {
             from_disk: false,
             ms: ms_since(start),
             warnings,
+            logs: ctx.logs.into_inner().unwrap_or_else(|e| e.into_inner()),
         }
     }
 

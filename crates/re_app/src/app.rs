@@ -1577,6 +1577,15 @@ impl App {
                 re_assets::AssetChange::Renamed { from, to } => vec![from.clone(), to.clone()],
             })
             .collect();
+        if paths.iter().any(|p| procedural::is_generator_script(p)) {
+            let declared = procedural::declare_generators(
+                &mut self.world,
+                &self.project,
+                self.config.proc.limits(),
+            );
+            self.diagnostics.extend(declared.iter().cloned());
+            problems.extend(declared);
+        }
         let graphs: Vec<String> = paths
             .iter()
             .filter(|p| procedural::is_graph_input(&mut self.world, p))
@@ -2152,10 +2161,11 @@ fn load_world(project: &Path, config: &AppConfig) -> Result<(World, Vec<Diagnost
     })?;
     let mut world = content_world(config).map_err(|e| fail(e.message.clone()))?;
     procedural::install(&mut world, project);
+    let mut problems = procedural::declare_generators(&mut world, project, config.proc.limits());
     world.load(&doc).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not load")).with_related(e.to_diagnostic())
     })?;
     world.propagate_all();
-    let problems = procedural::load_graphs(&mut world, project, None);
+    problems.extend(procedural::load_graphs(&mut world, project, None));
     Ok((world, problems))
 }

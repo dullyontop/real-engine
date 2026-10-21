@@ -75,6 +75,27 @@ pub const MIGRATION_FAILED: Code = Code::new("RE4020");
 /// reads and rewrites.
 pub const OPEN_GRAPH_DIFFERS: Code = Code::new("RE4022");
 
+/// A Luau node script under `scripts/generators/` does not declare a valid
+/// node kind: it fails to compile or run, does not return `proc.node{...}`,
+/// or its kind is malformed or taken (ADR-0043 §4).
+pub const LUAU_DECLARATION: Code = Code::new("RE4100");
+
+/// A Luau node ran past its safepoint budget (`[proc] luau_budget`) or its
+/// memory limit (`[proc] luau_memory_mb`). The same on every machine.
+pub const LUAU_BUDGET: Code = Code::new("RE4101");
+
+/// A Luau node ran past the wall-clock backstop (60 s), for example inside
+/// one long builtin. Machine-dependent, unlike `RE4101`.
+pub const LUAU_BACKSTOP: Code = Code::new("RE4102");
+
+/// A Luau node returned an output that does not fit its declared type: a
+/// non-finite number, a wrong length, a bad key or component name.
+pub const LUAU_OUTPUT: Code = Code::new("RE4103");
+
+/// `proc.create_source` cannot make a source from the kind: it is unknown,
+/// does not output a fragment, needs inputs, or the graph file exists.
+pub const CREATE_SOURCE: Code = Code::new("RE4104");
+
 /// The `[stream]` section of `real.toml` has an unknown key or a bad value.
 pub const STREAM_CONFIG: Code = Code::new("RE4300");
 

@@ -356,6 +356,11 @@ pub fn lua_to_value(v: LuaValue) -> Result<Value> {
     dynamic_from_lua(raw).map_err(|m| super::error(crate::codes::BAD_ARGUMENT, m))
 }
 
+/// [`lua_to_value`] for a value already read ([`fields_from_table`]).
+pub(crate) fn dynamic_value(raw: RawValue) -> std::result::Result<Value, String> {
+    dynamic_from_lua(raw)
+}
+
 /// Converts a Luau value to a value for a field of type `ty` (the registry
 /// still coerces it). Errors carry `RE3006`.
 pub fn lua_to_field(v: LuaValue, ty: &FieldType) -> Result<Value> {

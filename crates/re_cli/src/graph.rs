@@ -73,10 +73,20 @@ pub fn run(command: GraphCommand, project: &Path) -> ExitCode {
             return refuse(json, vec![d]);
         }
     };
-    let registry = Arc::new(NodeRegistry::m1());
+    // The project's Luau kinds too (`scripts/generators/`).
+    let limits = re_app::AppConfig::load(project)
+        .map(|c| c.proc.limits())
+        .unwrap_or_default();
+    let m1 = NodeRegistry::m1();
+    let declared = re_script::generator::declare(project, &m1, limits);
+    let registry = Arc::new(declared.registry(&m1));
     let graph = match ProcGraph::from_doc(&doc, &registry) {
         Ok(g) => g,
-        Err(ds) => return refuse(json, ds),
+        Err(mut ds) => {
+            // A kind whose declaration failed is unknown: say why.
+            ds.extend(declared.diagnostics);
+            return refuse(json, ds);
+        }
     };
     let evaluator = Evaluator::new(registry);
     let evaluation = evaluator.evaluate(
@@ -112,6 +122,9 @@ pub fn run(command: GraphCommand, project: &Path) -> ExitCode {
                 node.id, node.kind, node.ms, node.cache
             );
             crate::print_diagnostics(&node.diagnostics);
+            for line in &node.logs {
+                println!("  log: {line}");
+            }
         }
         crate::print_diagnostics(&report.diagnostics);
         println!(
