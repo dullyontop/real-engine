@@ -9,6 +9,7 @@ use std::path::Path;
 
 use re_core::{Diagnostic, Location};
 use re_proc::GraphStore;
+use re_scene::ecs as bevy_ecs;
 use re_scene::{Collider, ColliderShape, GraphSource, MeshRef, World};
 use re_script::{NoServices, RuntimeConfig, ScriptRuntime, WorldHost};
 use re_types::ShapeDesc;
@@ -208,6 +209,10 @@ pub fn is_graph_input(world: &mut World, path: &str) -> bool {
     sources(world).iter().any(|s| reads(s, path))
 }
 
+/// Baked `.heightfield` files that failed to load, with their size then.
+#[derive(Default, bevy_ecs::resource::Resource)]
+struct FailedHeightfields(std::collections::HashMap<String, u64>);
+
 /// Gives `media` the derived meshes that `MeshRef`s name, and `shapes` the
 /// derived meshes and heightfields that colliders name, from the World's store,
 /// and forgets the derived ones nothing names any more (whatever released them:
@@ -236,7 +241,14 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
         .filter(|c| c.shape == ColliderShape::Heightfield && c.source.ends_with(".heightfield"))
         .map(|c| c.source.clone())
         .collect();
+    let mut failed = world
+        .ecs
+        .remove_resource::<FailedHeightfields>()
+        .unwrap_or_default()
+        .0;
+    failed.retain(|name, _| baked.contains(name));
     let Some(store) = world.ecs.get_resource::<GraphStore>() else {
+        world.ecs.insert_resource(FailedHeightfields(failed));
         return;
     };
     // Baked heightfields (ADR-0043): `.heightfield` files in the project.
@@ -247,26 +259,39 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
         let Some(root) = store.root() else {
             continue;
         };
-        // A file that cannot be read stays missing; physics reports it.
-        if let Ok(bytes) = std::fs::read(root.join(&name))
-            && let Ok(h) = re_proc::bake::read_heightfield(&bytes)
-            && let ShapeDesc::Heightfield {
+        // A file that cannot be read stays missing; physics reports it. A
+        // file that failed is read again only once its size changes.
+        let path = root.join(&name);
+        let Ok(len) = std::fs::metadata(&path).map(|m| m.len()) else {
+            continue;
+        };
+        if failed.get(&name) == Some(&len) {
+            continue;
+        }
+        let shape = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| re_proc::bake::read_heightfield(&bytes).ok())
+            .map(|h| h.to_shape());
+        let Some(ShapeDesc::Heightfield {
+            n,
+            samples,
+            spacing,
+            offset,
+        }) = shape
+        else {
+            failed.insert(name, len);
+            continue;
+        };
+        failed.remove(&name);
+        shapes.insert_heightfield(
+            name,
+            std::sync::Arc::new(HeightfieldData {
                 n,
-                samples,
                 spacing,
                 offset,
-            } = h.to_shape()
-        {
-            shapes.insert_heightfield(
-                name,
-                std::sync::Arc::new(HeightfieldData {
-                    n,
-                    spacing,
-                    offset,
-                    samples,
-                }),
-            );
-        }
+                samples,
+            }),
+        );
     }
     for name in meshes {
         if !media.has_derived_mesh(&name)
@@ -308,6 +333,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
             _ => {}
         }
     }
+    world.ecs.insert_resource(FailedHeightfields(failed));
 }
 
 /// Forgets derived assets a regeneration released: from the store (which also

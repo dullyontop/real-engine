@@ -46,9 +46,28 @@ pub fn baked_id(source: &str, key: &str, taken: impl Fn(&str) -> bool) -> String
 }
 
 /// The directory baked assets of `source` are written to, relative to the
-/// project.
+/// project. The source id is encoded into a name every file system takes:
+/// bytes outside `[A-Za-z0-9_-]` and every `.` become `%XX`, so `..` and
+/// `a\b` stay one directory, and a Windows device name (`CON`, `aux`, `com1`)
+/// gets its first letter encoded.
 pub fn baked_dir(source: &str) -> String {
-    format!("assets/baked/{source}")
+    let mut name = String::new();
+    for b in source.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' {
+            name.push(b as char);
+        } else {
+            name.push_str(&format!("%{b:02X}"));
+        }
+    }
+    let upper = name.to_ascii_uppercase();
+    let device = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (upper.len() == 4
+            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.as_bytes()[3].is_ascii_digit());
+    if device {
+        name = format!("%{:02X}{}", name.as_bytes()[0], &name[1..]);
+    }
+    format!("assets/baked/{name}")
 }
 
 /// The project path of a baked asset: content-addressed by the first 16 hex
@@ -149,6 +168,17 @@ mod tests {
     }
 
     #[test]
+    fn baked_dirs_are_one_portable_directory() {
+        assert_eq!(baked_dir("island-2_b"), "assets/baked/island-2_b");
+        assert_eq!(baked_dir(".."), "assets/baked/%2E%2E");
+        assert_eq!(baked_dir("a\\b:c"), "assets/baked/a%5Cb%3Ac");
+        assert_eq!(baked_dir("con"), "assets/baked/%63on");
+        assert_eq!(baked_dir("LPT1"), "assets/baked/%4CPT1");
+        assert_eq!(baked_dir("lpt"), "assets/baked/lpt");
+        assert_ne!(baked_dir("a.b"), baked_dir("a%2Eb"));
+    }
+
+    #[test]
     fn baked_asset_paths_are_content_addressed() {
         let p = baked_asset_path("island", b"abc", "glb");
         assert!(p.starts_with("assets/baked/island/"), "{p}");
@@ -245,19 +275,24 @@ fn bake_asset(
         ));
     };
     let path = baked_asset_path(source, &bytes, ext);
-    if write {
-        let root = root.ok_or("the GraphStore has no project root to write baked assets to")?;
-        let full = root.join(&path);
-        if !full.exists() {
-            if let Some(dir) = full.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {path}: {e}"))?;
+    let root = root.ok_or("the GraphStore has no project root to write baked assets to")?;
+    let full = root.join(&path);
+    if write && !full.exists() {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        if let Some(dir) = full.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {path}: {e}"))?;
+        }
+        // A name of its own, so another process baking the same content
+        // cannot take the temporary file away; whichever rename lands, the
+        // content is the same.
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = full.with_extension(format!("{ext}.{}-{n}.writing", std::process::id()));
+        std::fs::write(&tmp, &bytes).map_err(|e| format!("cannot write {path}: {e}"))?;
+        if let Err(e) = std::fs::rename(&tmp, &full) {
+            let _ = std::fs::remove_file(&tmp);
+            if !full.is_file() {
+                return Err(format!("cannot write {path}: {e}"));
             }
-            let tmp = full.with_extension(format!("{ext}.writing"));
-            std::fs::write(&tmp, &bytes).map_err(|e| format!("cannot write {path}: {e}"))?;
-            std::fs::rename(&tmp, &full).map_err(|e| {
-                let _ = std::fs::remove_file(&tmp);
-                format!("cannot write {path}: {e}")
-            })?;
         }
     }
     Ok(path)
@@ -333,6 +368,9 @@ fn inputs_hash(world: &re_scene::World, source: re_scene::Entity, params: &str) 
     h.finalize().to_hex().to_string()
 }
 
+/// `proc.bake`. ADR-0043 §2 refuses a bake during play; play runs on a copy
+/// of the World that the command host does not edit, so there is nothing to
+/// check here.
 pub(crate) fn bake<C: re_command::EditTarget>(
     target: &mut C,
     a: BakeArgs,
@@ -379,6 +417,10 @@ pub(crate) fn bake<C: re_command::EditTarget>(
     }
     let known: HashSet<&str> = output.iter().map(|(_, k)| k.as_str()).collect();
     let chosen: Option<Vec<String>> = a.keys.clone();
+    if chosen.as_ref().is_some_and(Vec::is_empty) {
+        return Err(bake_error(&a.source, "`keys` names no key to bake")
+            .with_hint("leave `keys` out to bake the whole source"));
+    }
     if let Some(keys) = &chosen {
         for k in keys {
             if !known.contains(k.as_str()) {
@@ -454,11 +496,17 @@ pub(crate) fn bake<C: re_command::EditTarget>(
         .map(std::path::Path::to_path_buf);
     let write = !call.dry_run();
     let mut written: Vec<String> = Vec::new();
+    // Each derived asset is encoded once, however many entities name it.
+    let mut paths: HashMap<String, String> = HashMap::new();
     let mut asset = |name: &str| -> Result<String, String> {
+        if let Some(path) = paths.get(name) {
+            return Ok(path.clone());
+        }
         let path = bake_asset(store, root.as_deref(), &a.source, name, write)?;
         if !written.contains(&path) {
             written.push(path.clone());
         }
+        paths.insert(name.to_string(), path.clone());
         Ok(path)
     };
 
@@ -499,12 +547,63 @@ pub(crate) fn bake<C: re_command::EditTarget>(
             components,
         });
     }
+    // References from outside the bake follow it to the baked entities, so
+    // removing the generated ones below clears nothing.
+    let baked_set: HashSet<re_scene::Entity> = baked.iter().map(|(e, _)| *e).collect();
+    for (referrer, key, fi) in world.registry.references_to(&world.ecs, &baked_set) {
+        if baked_set.contains(&referrer) {
+            continue;
+        }
+        let (Some(referrer_id), Some(re_reflect::Value::Entity(Some(t)))) = (
+            world.id_of(referrer),
+            world.registry.get_field(&world.ecs, referrer, key, fi),
+        ) else {
+            continue;
+        };
+        let Some(to) = world.id_of(t).and_then(|id| ids.get(id)) else {
+            continue;
+        };
+        let schema = world.registry.schema(key);
+        ops.push(Op::SetField {
+            id: referrer_id.to_string(),
+            component: schema.name.clone(),
+            field: schema.fields[fi].name.clone(),
+            value: re_reflect::Doc::Str(to.clone()),
+        });
+    }
+    // The generated originals go in the same transaction (so nothing in
+    // the world still names a source that no longer generates them, and undo
+    // restores them exactly): despawning the top baked keys takes their
+    // descendants and records their deletion overrides.
+    let tops: Vec<(re_scene::Entity, String)> = baked
+        .iter()
+        .filter(|(e, _)| !parent_key(*e).is_some_and(|p| baked_keys.contains(&p)))
+        .cloned()
+        .collect();
+    for (e, _) in &tops {
+        ops.push(Op::Despawn {
+            id: world.id_of(*e).unwrap_or_default().to_string(),
+        });
+    }
     let overrides: Vec<OverrideDoc> = world
         .ecs
         .get::<Overrides>(src)
         .map(|o| o.0.clone())
         .unwrap_or_default();
     if full {
+        // The source keeps no overrides: first the deletions just recorded,
+        // then the ones it had.
+        for (_, key) in tops.iter().rev() {
+            ops.push(Op::SetOverride {
+                source: a.source.clone(),
+                target: key.clone(),
+                component: None,
+                field: None,
+                value: None,
+                deleted: Some(false),
+                index: None,
+            });
+        }
         for o in overrides.iter().rev() {
             ops.push(match o {
                 OverrideDoc::Field {
@@ -546,17 +645,6 @@ pub(crate) fn bake<C: re_command::EditTarget>(
             id: a.source.clone(),
             component: "Procedural".into(),
         });
-    } else {
-        // Despawning the top baked keys records their deletion overrides
-        // (undo restores them exactly); their descendants go with them.
-        for (e, _) in &baked {
-            if parent_key(*e).is_some_and(|p| baked_keys.contains(&p)) {
-                continue;
-            }
-            ops.push(Op::Despawn {
-                id: world.id_of(*e).unwrap_or_default().to_string(),
-            });
-        }
     }
     let count = baked.len();
     let mut pairs: Vec<(String, String)> = ids.into_iter().collect();

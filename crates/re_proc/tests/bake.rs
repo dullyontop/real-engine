@@ -10,8 +10,9 @@ use std::sync::Arc;
 use re_command::{AllowAll, CommandOutcome, CommandRegistry, EditState};
 use re_proc::bake::{Baked, read_heightfield};
 use re_proc::{Evaluator, GraphStore, register_commands, register_generator};
-use re_reflect::Value;
-use re_scene::{SaveOptions, World};
+use re_reflect::{Value, component};
+use re_scene::ecs as bevy_ecs;
+use re_scene::{Entity, SaveOptions, World};
 use serde_json::{Value as Json, json};
 use support::{fixtures, island};
 
@@ -27,6 +28,14 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
+component! {
+    /// An authored entity's reference to another one.
+    pub struct Aim {
+        /// What it aims at.
+        pub target: Option<Entity> = None,
+    }
+}
+
 /// The island source in a project copied to a temporary directory (bake
 /// writes files there), with `Baked` registered, generated once.
 fn world(overrides: Json) -> (tempfile::TempDir, EditState) {
@@ -35,6 +44,7 @@ fn world(overrides: Json) -> (tempfile::TempDir, EditState) {
     let mut st = EditState::new();
     register_generator(&mut st.world.generators);
     st.world.registry.register::<Baked>(&mut st.world.ecs);
+    st.world.registry.register::<Aim>(&mut st.world.ecs);
     let mut store = GraphStore::with_evaluator(
         Arc::new(Evaluator::default()),
         Some(dir.path().to_path_buf()),
@@ -264,4 +274,68 @@ fn baked_meshes_load_through_the_gltf_importer_bit_for_bit() {
     for (a, b) in back.vertices.iter().zip(&mesh.vertices) {
         assert_eq!(bits(a), bits(b));
     }
+}
+
+#[test]
+fn references_to_the_output_follow_it_and_undo_puts_them_back() {
+    let (_dir, mut st) = world(json!([]));
+    let mut r = CommandRegistry::new();
+    re_command::register_builtin_commands(&mut r);
+    let out = r.dispatch(
+        &mut st,
+        "scene.apply",
+        json!({ "ops": [
+            { "op": "spawn", "id": "cam", "components": { "Aim": { "target": "island/crates/65537" } } }
+        ] }),
+        false,
+        &AllowAll,
+    );
+    assert!(out.ok, "{:#?}", out.diagnostics);
+    let before_scene = saved(&mut st.world);
+    let before_hash = st.world.state_hash();
+
+    let out = bake(&mut st, json!({ "source": "island" }));
+    assert!(out.ok, "{:#?}", out.diagnostics);
+    assert!(
+        st.world.entity("island/crates/65537").is_err(),
+        "gone in the bake itself"
+    );
+    let aim = st.world.get_doc("cam", "Aim", "target").unwrap();
+    assert_eq!(aim, re_reflect::Doc::Str("island.crates.65537".into()));
+    let regen = st.world.regenerate_changed();
+    assert!(regen.diagnostics.is_empty(), "{:#?}", regen.diagnostics);
+
+    assert!(st.history.undo(&mut st.world).unwrap());
+    st.world.regenerate_changed();
+    assert_eq!(saved(&mut st.world), before_scene);
+    assert_eq!(st.world.state_hash(), before_hash);
+}
+
+#[test]
+fn the_source_can_be_despawned_right_after_a_bake_and_brought_back() {
+    let (_dir, mut st) = world(json!([]));
+    let out = bake(&mut st, json!({ "source": "island" }));
+    assert!(out.ok, "{:#?}", out.diagnostics);
+    let after_bake = st.world.state_hash();
+    let mut r = CommandRegistry::new();
+    re_command::register_builtin_commands(&mut r);
+    let out = r.dispatch(
+        &mut st,
+        "scene.apply",
+        json!({ "ops": [{ "op": "despawn", "id": "island" }] }),
+        false,
+        &AllowAll,
+    );
+    assert!(out.ok, "{:#?}", out.diagnostics);
+    assert!(st.history.undo(&mut st.world).unwrap());
+    assert_eq!(st.world.state_hash(), after_bake);
+}
+
+#[test]
+fn an_empty_key_list_is_refused() {
+    let (_dir, mut st) = world(json!([]));
+    let before = st.world.state_hash();
+    let out = bake(&mut st, json!({ "source": "island", "keys": [] }));
+    assert_eq!(codes(&out), ["RE4021"]);
+    assert_eq!(st.world.state_hash(), before);
 }
