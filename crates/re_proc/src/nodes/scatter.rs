@@ -15,7 +15,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::{
-    NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, check_range, positive, within,
+    Domain, NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, check_range, positive,
+    within,
 };
 use crate::value::{Field, Output, Point, Points, PortType};
 
@@ -83,7 +84,10 @@ fn on_surface(field: Option<&Field>, id: u32, x: f32, z: f32) -> Option<Point> {
     })
 }
 
-fn half_extent(field: Option<&Field>, extent: f32) -> f32 {
+fn half_extent(ctx: &NodeCtx, field: Option<&Field>, extent: f32) -> f32 {
+    if let Some(d) = ctx.domain {
+        return (d.max()[0] - d.min()[0]) * 0.5;
+    }
     field.map_or(extent * 0.5, Field::half_extent)
 }
 
@@ -216,7 +220,7 @@ fn poisson_disc(
 
 fn poisson(ctx: &NodeCtx, p: &PoissonParams) -> Result<Output, String> {
     let field = ctx.field("field").map(|f| &**f);
-    let half = half_extent(field, p.extent);
+    let half = half_extent(ctx, field, p.extent);
     let cells = (2.0 * half / p.radius) as f64;
     if cells * cells > 4.0e6 {
         return Err(format!(
@@ -225,11 +229,22 @@ fn poisson(ctx: &NodeCtx, p: &PoissonParams) -> Result<Output, String> {
             2.0 * half
         ));
     }
-    let mut rng = Pcg32::from_seed(ctx.seed);
+    // In a streamed window: the window's square, with the window's own seed,
+    // keeping the points it owns (half-open, so each point has one cell).
+    let (centre, window) = match ctx.domain {
+        Some(d) => {
+            let (lo, hi) = (d.min(), d.max());
+            ([(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5], Some(d))
+        }
+        None => ([0.0, 0.0], None),
+    };
+    let mut rng = Pcg32::from_seed(ctx.window_seed());
     let xz = poisson_disc(&mut rng, half, p.radius, p.attempts, p.max_points);
     let points = xz
         .into_iter()
+        .map(|(x, z)| (x + centre[0], z + centre[1]))
         .enumerate()
+        .filter(|(_, (x, z))| window.is_none_or(|d| d.owns(*x, *z)))
         .filter_map(|(i, (x, z))| on_surface(field, i as u32, x, z))
         .filter(|pt| p.limits().keeps(pt))
         .collect();
@@ -282,7 +297,10 @@ impl Params for GridParams {
 
 fn grid_jitter(ctx: &NodeCtx, p: &GridParams) -> Result<Output, String> {
     let field = ctx.field("field").map(|f| &**f);
-    let half = half_extent(field, p.extent);
+    if let Some(d) = ctx.domain {
+        return Ok(Output::Points(Arc::new(grid_window(ctx, p, field, &d)?)));
+    }
+    let half = half_extent(ctx, field, p.extent);
     let cols = (2.0 * half / p.spacing) as u32;
     if cols > 4096 {
         return Err(format!(
@@ -314,6 +332,51 @@ fn grid_jitter(ctx: &NodeCtx, p: &GridParams) -> Result<Output, String> {
     Ok(Output::Points(Arc::new(Points { points })))
 }
 
+/// `scatter.grid_jitter` over a streamed window: one global grid (cell
+/// `(ix, iz)` covers `[ix, ix + 1) * spacing` and draws from
+/// `fork2(ix, iz)` of the node seed), keeping the points the window owns. So
+/// neighbouring windows continue the same grid exactly.
+fn grid_window(
+    ctx: &NodeCtx,
+    p: &GridParams,
+    field: Option<&Field>,
+    d: &Domain,
+) -> Result<Points, String> {
+    let (lo, hi) = (d.min(), d.max());
+    let cell = |v: f32| (v / p.spacing).floor() as i64;
+    let (x0, x1) = (cell(lo[0]) - 1, cell(hi[0]) + 1);
+    let (z0, z1) = (cell(lo[1]) - 1, cell(hi[1]) + 1);
+    if x1 - x0 > 4096 || z1 - z0 > 4096 {
+        return Err(format!(
+            "`spacing` {} is too small for a {} m cell (at most 4096 grid cells per side)",
+            p.spacing,
+            hi[0] - lo[0]
+        ));
+    }
+    let base = Pcg32::from_seed(ctx.seed);
+    let mut points = Vec::new();
+    for iz in z0..=z1 {
+        for ix in x0..=x1 {
+            let mut rng = base.fork2(ix as i32, iz as i32);
+            let jx = (rng.next_f32() - 0.5) * p.jitter * p.spacing;
+            let jz = (rng.next_f32() - 0.5) * p.jitter * p.spacing;
+            let x = (ix as f32 + 0.5) * p.spacing + jx;
+            let z = (iz as f32 + 0.5) * p.spacing + jz;
+            if !d.owns(x, z) {
+                continue;
+            }
+            // Unique within the window, stable for a given grid cell.
+            let id = ((iz - z0) as u32) * 65_536 + (ix - x0) as u32;
+            if let Some(pt) = on_surface(field, id, x, z)
+                && p.limits().keeps(&pt)
+            {
+                points.push(pt);
+            }
+        }
+    }
+    Ok(Points { points })
+}
+
 const FIELD: &[PortType] = &[PortType::Field];
 const ON_FIELD: &[PortDef] = &[PortDef {
     name: "field",
@@ -329,8 +392,8 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
-            doc: "Points at least `radius` apart (Poisson disc), on a field's surface, filtered by height and slope.",
+            streaming: super::Streaming::Cell,
+            doc: "Points at least `radius` apart (Poisson disc), on a field's surface, filtered by height and slope. Streamed: per cell, with the cell's own seed, so two points either side of a cell border can be closer than `radius`.",
             inputs: ON_FIELD,
             variadic: None,
             output: PortType::Points,
@@ -345,8 +408,8 @@ pub(super) fn register(r: &mut NodeRegistry) {
             version: 1,
             oldest: 1,
             migrations: &[],
-            streaming: super::Streaming::Whole,
-            doc: "One point per grid cell, moved randomly by up to `jitter` of the spacing, on a field's surface, filtered by height and slope.",
+            streaming: super::Streaming::Cell,
+            doc: "One point per grid cell, moved randomly by up to `jitter` of the spacing, on a field's surface, filtered by height and slope. Streamed: one global grid, seamless across cells.",
             inputs: ON_FIELD,
             variadic: None,
             output: PortType::Points,
