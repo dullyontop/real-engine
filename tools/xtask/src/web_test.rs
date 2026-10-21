@@ -3,7 +3,8 @@
 //! `real build --target web` into `target/web/` (failing when `real_bg.wasm` gzips
 //! above the 8 MB budget), and in headless Chromium with WebGPU plays each one's
 //! replays from its game.rpak and starts the island's game page, with
-//! `tools/web-test`'s scripts. Each replay's `state_hash` must equal the native run's,
+//! `tools/web-test`'s scripts. It also starts the page on WebGL2 and reports the
+//! result without failing. Each replay's `state_hash` must equal the native run's,
 //! or with `--reported` is only printed (until WP18 PR "d2").
 //!
 //! It needs what `real build --target web` needs (Rust's wasm32 target, wasi-sdk with
@@ -133,5 +134,15 @@ pub fn run(root: &Path, reported: bool) -> Result<()> {
         Command::new("node")
             .arg("tools/web-test/play.mjs")
             .arg(out.join(PROJECTS[0].0)),
-    )
+    )?;
+    // WebGL2, the fallback without WebGPU, is reported only (ADR-0049 §8).
+    if let Err(e) = run_cmd(
+        root,
+        Command::new("node")
+            .args(["tools/web-test/play.mjs", "--webgl"])
+            .arg(out.join(PROJECTS[0].0)),
+    ) {
+        println!("reported: the island's page on WebGL2 failed: {e:#}");
+    }
+    Ok(())
 }

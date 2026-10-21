@@ -40,6 +40,7 @@ if (missing.length) {
             if (kind === 'warning') return console.warn(text);
             if (kind === 'problem') return console.error(text);
             document.body.dataset.state = kind;
+            if (kind === 'running') document.body.dataset.adapter = text;
             if (kind === 'error') fail(text);
           },
         });

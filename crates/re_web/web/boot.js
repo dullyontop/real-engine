@@ -28,8 +28,9 @@ export function missingFeatures() {
   if (typeof WebAssembly !== 'object' || !WebAssembly.validate(EXNREF_PROBE)) {
     missing.push('WebAssembly exception handling (exnref): use a current Chrome or Edge');
   }
-  if (!('gpu' in navigator)) {
-    missing.push('WebGPU: use a current Chrome or Edge, served over HTTPS or from localhost');
+  // WebGL2 is the fallback when there is no WebGPU (ADR-0049 §8).
+  if (!('gpu' in navigator) && !document.createElement('canvas').getContext('webgl2')) {
+    missing.push('WebGPU or WebGL2: use a current Chrome or Edge, served over HTTPS or from localhost');
   }
   return missing;
 }
