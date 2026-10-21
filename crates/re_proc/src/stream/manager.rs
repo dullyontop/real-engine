@@ -460,7 +460,8 @@ impl Streamer {
             .iter()
             .filter(|(k, l)| {
                 let covers = |s: &Source| parse_cell_key(k).is_some_and(|c| s.covers(c, size));
-                keep.contains(*k)
+                // Kept: near a focus, pinned, or with no focus at all.
+                (keep.contains(*k) || self.pinned.contains(*k) || focuses.is_empty())
                     && (sources
                         .iter()
                         .any(|s| covers(s) && l.inputs.get(&s.id) != Some(&s.inputs))
@@ -784,6 +785,10 @@ impl Streamer {
                     stamps.push(s.stamp.clone());
                 }
                 Err(e) => {
+                    // Nothing was applied; its earlier content goes, as for
+                    // a cell that fails to generate.
+                    let released = remove_content(world, &[s.entity], k);
+                    release(world, &released);
                     let d = re_core::Diagnostic::error(
                         codes::CELL_FAILED,
                         format!("{sid}: cell {k} could not be applied"),
