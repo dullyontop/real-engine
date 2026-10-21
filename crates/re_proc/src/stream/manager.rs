@@ -134,6 +134,12 @@ impl Streamer {
         &self.config
     }
 
+    /// True when nothing is loaded, requested or pinned: a world without
+    /// streamed sources can skip [`step`] while this holds.
+    pub fn is_idle(&self) -> bool {
+        self.loaded.is_empty() && self.pending.is_empty() && self.pinned.is_empty()
+    }
+
     /// The loaded cells, in key order.
     pub fn cells(&self) -> impl Iterator<Item = &StreamCell> {
         self.loaded.values().map(|l| &l.cell)

@@ -188,6 +188,16 @@ impl EditTarget for App {
     }
 }
 
+/// Gives `world` its streaming manager with `[stream]`, so `stream.load` works
+/// before the first step.
+fn ensure_streamer(world: &mut World, config: &AppConfig) -> Result<(), Diagnostic> {
+    if !world.ecs.contains_resource::<re_proc::stream::Streamer>() {
+        let streamer = re_proc::stream::Streamer::new(config.stream.clone())?;
+        world.ecs.insert_resource(streamer);
+    }
+    Ok(())
+}
+
 fn physics_config(config: &AppConfig) -> PhysicsConfig {
     PhysicsConfig {
         gravity: config.sim.gravity.into(),
@@ -260,6 +270,7 @@ impl App {
         commands: Arc<CommandRegistry<App>>,
     ) -> Result<App, Diagnostic> {
         let mut world = world;
+        ensure_streamer(&mut world, &config)?;
         let compat_config = crate::compat::compat_config(&config)?;
         let graph_inputs = procedural::inputs(&mut world);
         let physics = Physics::new(physics_config(&config), TaskPool::global())?;
@@ -363,6 +374,12 @@ impl App {
         if let Some(store) = self.world.ecs.get_resource::<re_proc::GraphStore>() {
             world.ecs.insert_resource(store.clone());
         }
+        // Streaming carries on from the live state too.
+        if !restarted
+            && let Some(streamer) = self.world.ecs.get_resource::<re_proc::stream::Streamer>()
+        {
+            world.ecs.insert_resource(streamer.clone());
+        }
         let mut copy = App::with_world(
             self.files.clone(),
             self.config.clone(),
@@ -371,6 +388,9 @@ impl App {
             Arc::clone(&self.commands),
         )?;
         copy.alpha = self.alpha;
+        if !restarted {
+            copy.stream_tick = self.stream_tick;
+        }
         copy.diagnostics.extend(problems);
         load_collider_sources(&mut copy.world, &mut copy.shapes, &mut self.media);
         physics::push(
@@ -1288,7 +1308,8 @@ impl App {
         let streams = self
             .world
             .ecs
-            .contains_resource::<re_proc::stream::Streamer>()
+            .get_resource::<re_proc::stream::Streamer>()
+            .is_some_and(|s| !s.is_idle())
             || self
                 .world
                 .ecs
@@ -2201,6 +2222,9 @@ impl App {
         match load_world(&self.files, &self.config) {
             Ok((world, problems)) => {
                 self.world = world;
+                if let Err(d) = ensure_streamer(&mut self.world, &self.config) {
+                    self.diagnostics.push(d);
+                }
                 self.diagnostics.extend(problems);
                 self.ground = None;
                 self.link_tried.clear();

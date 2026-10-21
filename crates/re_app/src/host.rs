@@ -249,7 +249,11 @@ impl re_script::ScriptHost for PlayHost<'_> {
         &mut self.services
     }
     fn stream(&mut self) -> Option<&'static dyn re_script::StreamAccess> {
-        Some(&WorldStream)
+        // Every App world has its streaming manager (`ensure_streamer`).
+        self.world
+            .ecs
+            .contains_resource::<re_proc::stream::Streamer>()
+            .then_some(&WorldStream as &'static dyn re_script::StreamAccess)
     }
 }
 

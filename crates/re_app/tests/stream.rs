@@ -235,3 +235,26 @@ end)
         report.output
     );
 }
+
+#[test]
+fn a_tools_script_loads_a_far_cell_before_the_first_step() {
+    let dir = project(CONFIG);
+    let mut app = open(dir.path());
+    app.exec_script(
+        re_script::ContextKind::Tools,
+        "probe",
+        r#"stream.load("c/6_6")"#,
+    )
+    .unwrap();
+    let report = app.run_headless(Some(10), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert!(app.world().entity("land/c/6_6/ground/terrain").is_ok());
+    app.exec_script(
+        re_script::ContextKind::Tools,
+        "probe",
+        r#"stream.release("c/6_6")"#,
+    )
+    .unwrap();
+    app.run_headless(Some(3), None).unwrap();
+    assert!(app.world().entity("land/c/6_6/ground/terrain").is_err());
+}
