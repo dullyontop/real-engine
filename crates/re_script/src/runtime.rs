@@ -385,6 +385,7 @@ impl ScriptRuntime {
                         scheduler::with(lua, |s| {
                             s.frame += 1;
                             s.frame_dt = dt;
+                            s.in_step = false;
                         })?;
                         for a in &pressed {
                             scheduler::fire(
@@ -415,11 +416,18 @@ impl ScriptRuntime {
                 }
                 for ctx in [&self.game, &self.tools] {
                     diags.extend(run_in(ctx, host, |lua| {
-                        scheduler::with(lua, |s| s.now += dt)?;
-                        if let Some((_, unloaded, loaded)) = &events {
-                            api::stream::fire(lua, unloaded, loaded)?;
-                        }
-                        fire_dt(lua, Signal::Step, dt)
+                        scheduler::with(lua, |s| {
+                            s.now += dt;
+                            s.in_step = true;
+                        })?;
+                        let fired = (|| {
+                            if let Some((_, unloaded, loaded)) = &events {
+                                api::stream::fire(lua, unloaded, loaded)?;
+                            }
+                            fire_dt(lua, Signal::Step, dt)
+                        })();
+                        scheduler::with(lua, |s| s.in_step = false)?;
+                        fired
                     }));
                 }
             }
@@ -427,12 +435,17 @@ impl ScriptRuntime {
                 let contacts = std::mem::take(&mut self.contacts);
                 for ctx in [&self.game, &self.tools] {
                     diags.extend(run_in(ctx, host, |lua| {
-                        for ev in &contacts {
-                            api::libs::fire_contact(lua, ev)?;
-                        }
-                        scheduler::drain_deferred(lua)?;
-                        scheduler::resume_due(lua)?;
-                        fire_dt(lua, Signal::PostStep, dt)
+                        scheduler::with(lua, |s| s.in_step = true)?;
+                        let fired = (|| {
+                            for ev in &contacts {
+                                api::libs::fire_contact(lua, ev)?;
+                            }
+                            scheduler::drain_deferred(lua)?;
+                            scheduler::resume_due(lua)?;
+                            fire_dt(lua, Signal::PostStep, dt)
+                        })();
+                        scheduler::with(lua, |s| s.in_step = false)?;
+                        fired
                     }));
                 }
             }

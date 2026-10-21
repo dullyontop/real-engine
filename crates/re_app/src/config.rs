@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use re_core::{Diagnostic, Location};
+use re_types::audio::AudioGraphDesc;
 use serde::{Deserialize, Serialize};
 
 use crate::codes;
@@ -14,7 +15,7 @@ pub const CONFIG_FILE: &str = "real.toml";
 /// How [`App::open`](crate::App::open) runs a project.
 ///
 /// The file sections (`project`, `sim`, `render`, `scripts`, `proc`, `input`,
-/// `verify`)
+/// `audio`, `verify`)
 /// come from `real.toml` through [`AppConfig::load`]; every field has a default,
 /// so a minimal `real.toml` is `[project]` with a name. The remaining fields are
 /// runtime options and are never read from the file.
@@ -43,6 +44,10 @@ pub struct AppConfig {
     /// `[input]`: the action bindings, read by `re_input::InputConfig`.
     #[serde(default)]
     pub input: re_input::InputConfig,
+    /// `[audio]`: the mixer graph (ADR-0041), checked by `re_audio` when the
+    /// app starts. Without it, the buses `music`, `sfx` and `ui`.
+    #[serde(default, skip_serializing_if = "AudioGraphDesc::is_default")]
+    pub audio: AudioGraphDesc,
     /// `[verify]`.
     #[serde(default)]
     pub verify: VerifyConfig,
@@ -78,6 +83,7 @@ impl Default for AppConfig {
             scripts: ScriptsConfig::default(),
             proc: ProcConfig::default(),
             input: re_input::InputConfig::default(),
+            audio: AudioGraphDesc::default(),
             verify: VerifyConfig::default(),
             stream: re_proc::stream::StreamConfig::default(),
             compat: None,
@@ -464,6 +470,57 @@ mod tests {
         // The compat layer's fixture project loads as a project.
         let fixture = include_str!("../../re_compat/tests/fixtures/scene/place/real.toml");
         assert!(AppConfig::parse(fixture).unwrap().compat.is_some());
+    }
+
+    /// ADR-0041's example `[audio]` section.
+    #[test]
+    fn audio_section_parses() {
+        let c = AppConfig::parse(
+            r#"
+[project]
+name = "p"
+
+[audio]
+default_bus = "sfx"
+
+[audio.buses.music]
+volume_db = -6.0
+
+[audio.buses.sfx]
+sends = { world_reverb = -9.0 }
+effects = [
+  { kind = "compressor", threshold_db = -18.0, ratio = 3.0 },
+]
+
+[audio.buses.footsteps]
+parent = "sfx"
+effects = [{ kind = "filter", mode = "high_pass", cutoff_hz = 120.0 }]
+
+[audio.sends.world_reverb]
+effects = [{ kind = "reverb", feedback = 0.85, damping = 0.3, mix = 1.0 }]
+
+[audio.snapshots.underwater]
+buses = { music = -12.0, sfx = -3.0 }
+effects = [{ bus = "sfx", effect = 0, cutoff_hz = 600.0 }]
+"#,
+        )
+        .unwrap();
+        assert_eq!(c.audio.buses.len(), 3);
+        assert_eq!(c.audio.buses["footsteps"].parent, "sfx");
+        assert_eq!(c.audio.sends["world_reverb"].effects[0].kind(), "reverb");
+        let snap = &c.audio.snapshots["underwater"];
+        assert_eq!(
+            snap.effects[0].params["cutoff_hz"],
+            re_types::audio::EffectParam::Number(600.0)
+        );
+        assert!(
+            AppConfig::parse("[project]\nname = \"p\"\n")
+                .unwrap()
+                .audio
+                .is_default()
+        );
+        let e = AppConfig::parse("[audio.buses.sfx]\nvolume = 1.0\n").unwrap_err();
+        assert_eq!(e.code, codes::CONFIG_INVALID);
     }
 
     #[test]

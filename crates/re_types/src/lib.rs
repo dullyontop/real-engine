@@ -21,7 +21,7 @@
 //! | [`mesh`] | [`MeshData`], [`Vertex`], [`Aabb`], [`SkinWeights`] |
 //! | [`anim`] | [`ClipData`], [`TargetChannels`], [`Channel`], [`SkinData`], [`JointDesc`], [`Trs`] |
 //! | [`physics`] | [`PhysicsCmd`], [`BodyDesc`], [`BodyKind`], [`ShapeDesc`], [`Layer`], [`GroupMask`], [`BodyPose`], [`ContactEvent`], [`RayHit`], [`CharacterDesc`], [`CharacterState`], [`ConstraintDesc`], [`ConstraintKind`], [`VehicleDesc`], [`VehicleKind`], [`WheelDesc`], [`WheelTester`], [`EngineDesc`], [`TransmissionDesc`], [`VehicleInput`], [`VehicleState`], [`WheelState`], [`WheelPose`] |
-//! | [`audio`] | [`AudioCmd`] |
+//! | [`audio`] | [`AudioCmd`], [`AudioGraphDesc`], [`EffectDesc`], [`EffectParam`], [`BusLevel`] |
 //! | [`input`] | [`ActionFrame`], [`ButtonState`], [`RawInputFrame`], [`InputEvent`], [`InputKind`], [`InputPhase`], [`MouseLock`] |
 //! | [`graph`] | [`GraphDoc`], [`NodeDoc`], [`EdgeDoc`] |
 //! | [`replay`] | [`ReplayDoc`] |
@@ -45,7 +45,7 @@ pub mod render;
 pub mod replay;
 
 pub use anim::{Channel, ClipData, Interpolation, JointDesc, SkinData, TargetChannels, Trs};
-pub use audio::AudioCmd;
+pub use audio::{AudioCmd, AudioGraphDesc, BusLevel, EffectDesc, EffectParam};
 pub use graph::{EdgeDoc, GraphDoc, GraphDocError, NodeDoc};
 pub use host::{HostError, HostResult, HostServices};
 pub use ids::EntityId;

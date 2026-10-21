@@ -232,6 +232,9 @@ component! {
         pub spatial: bool = true,
         /// Start playing when the entity appears.
         pub autoplay: bool = false,
+        /// The mixer bus it plays on (ADR-0041); empty for the project's
+        /// `default_bus`.
+        pub bus: String = String::new(),
     }
 }
 
