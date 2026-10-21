@@ -255,6 +255,7 @@ pub(crate) fn generate(
     let opts = EvalOptions {
         seed: Some(source.seed),
         root: store.root().map(Into::into),
+        files: store.files().cloned(),
         deadline: None,
         domain: Some(source.domain(cell)),
     };

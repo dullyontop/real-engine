@@ -14,8 +14,9 @@
 //!   same file, so both agree.
 //!
 //! Navigation may climb to the project root (that is where `.luaurc` lives), never
-//! above it. A module that resolves outside `scripts/` is refused with `RE3004`,
-//! and so is one whose real path (after symlinks) leaves `scripts/`.
+//! above it. A module that resolves outside `scripts/` is refused with `RE3004`.
+//! Modules are read through the project's [`ProjectFiles`], whose directory layer
+//! refuses a file whose real path (after symlinks) leaves the project.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -26,6 +27,7 @@ use std::result::Result as StdResult;
 
 use mlua::luau::{NavigateError, Require};
 use mlua::{Function, Lua, Result, Table, Value};
+use re_core::files::ProjectFiles;
 
 use crate::codes;
 use crate::vm::ContextKind;
@@ -49,7 +51,7 @@ pub(crate) fn slash(p: &Path) -> String {
 
 /// The `require` resolver of one context.
 pub struct ProjectRequirer {
-    root: Rc<PathBuf>,
+    files: ProjectFiles,
     kind: ContextKind,
     /// The current virtual location, relative to the root (a file or a folder).
     rel: PathBuf,
@@ -59,9 +61,9 @@ pub struct ProjectRequirer {
 }
 
 impl ProjectRequirer {
-    pub(crate) fn new(root: PathBuf, kind: ContextKind, loaded: Loaded) -> ProjectRequirer {
+    pub(crate) fn new(files: ProjectFiles, kind: ContextKind, loaded: Loaded) -> ProjectRequirer {
         ProjectRequirer {
-            root: Rc::new(root),
+            files,
             kind,
             rel: PathBuf::new(),
             resolved: None,
@@ -74,15 +76,15 @@ impl ProjectRequirer {
         if rel.file_name().is_some_and(|n| n != "init") {
             for ext in ["luau", "lua"] {
                 let candidate = rel.with_extension(ext);
-                if self.root.join(&candidate).is_file() {
+                if self.files.is_file(&slash(&candidate)) {
                     found.push(candidate);
                 }
             }
         }
-        if self.root.join(rel).is_dir() {
+        if rel.as_os_str().is_empty() || self.files.is_dir(&slash(rel)) {
             for init in ["init.luau", "init.lua"] {
                 let candidate = rel.join(init);
-                if self.root.join(&candidate).is_file() {
+                if self.files.is_file(&slash(&candidate)) {
                     found.push(candidate);
                 }
             }
@@ -167,7 +169,7 @@ impl Require for ProjectRequirer {
     fn has_module(&self) -> bool {
         self.resolved
             .as_ref()
-            .is_some_and(|p| self.root.join(p).is_file())
+            .is_some_and(|p| self.files.is_file(&slash(p)))
     }
 
     fn cache_key(&self) -> String {
@@ -175,12 +177,14 @@ impl Require for ProjectRequirer {
     }
 
     fn has_config(&self) -> bool {
-        let dir = self.root.join(&self.rel);
-        dir.is_dir() && dir.join(".luaurc").is_file()
+        self.files.is_file(&slash(&self.rel.join(".luaurc")))
     }
 
     fn config(&self) -> IoResult<Vec<u8>> {
-        std::fs::read(self.root.join(&self.rel).join(".luaurc"))
+        self.files
+            .read_source(&slash(&self.rel.join(".luaurc")))
+            .map(|b| b.to_vec())
+            .map_err(std::io::Error::other)
     }
 
     fn loader(&self, lua: &Lua) -> Result<Function> {
@@ -189,25 +193,27 @@ impl Require for ProjectRequirer {
             .clone()
             .ok_or_else(|| mlua::Error::runtime("module not resolved"))?;
         let key = slash(&rel);
-        let abs = self.root.join(&rel);
-        let scripts = self.root.join("scripts");
-        let inside = match (abs.canonicalize(), scripts.canonicalize()) {
-            (Ok(a), Ok(s)) => a.starts_with(s),
-            _ => false,
-        };
-        if !key.starts_with("scripts/") || !inside {
+        if !key.starts_with("scripts/") {
             return Err(crate::api::error(
                 codes::REQUIRE,
                 format!("require of {key:?} is refused: modules must be inside scripts/"),
             ));
         }
-        let source = std::fs::read(&abs).map_err(|e| {
-            crate::api::error(codes::SCRIPT_READ, format!("cannot read {key}: {e}"))
+        let data = self.files.read(&key).map_err(|e| match e {
+            re_core::files::FileError::Outside { .. } => crate::api::error(
+                codes::REQUIRE,
+                format!("require of {key:?} is refused: modules must be inside scripts/"),
+            ),
+            e => crate::api::error(codes::SCRIPT_READ, format!("cannot read {key}: {e}")),
+        })?;
+        let mode = crate::compile::chunk_mode(&data.form).map_err(|m| {
+            crate::api::error(codes::SCRIPT_READ, format!("cannot load {key}: {m}"))
         })?;
         self.loaded.borrow_mut().insert(key.clone());
         let env = crate::vm::new_env(lua, &key, self.kind, None)?;
-        lua.load(source)
+        lua.load(data.bytes.to_vec())
             .set_name(format!("@{key}"))
+            .set_mode(mode)
             .set_compiler(crate::compile::compiler())
             .set_environment(env)
             .into_function()

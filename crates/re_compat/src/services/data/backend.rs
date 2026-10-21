@@ -184,6 +184,29 @@ impl MemoryBackend {
         copy_tree(seed, seed, &mut m.files)?;
         Ok(m)
     }
+    /// A session that starts from a copy of the project files under `seed`
+    /// (ADR-0037); a missing directory gives an empty session.
+    ///
+    /// # Errors
+    ///
+    /// A listed file cannot be read.
+    pub fn seeded_from(
+        files: &re_core::files::ProjectFiles,
+        seed: &str,
+    ) -> Result<MemoryBackend, String> {
+        let mut m = MemoryBackend::new();
+        let prefix = format!("{}/", seed.trim_end_matches('/'));
+        for path in files.list(seed, "") {
+            let name = path.as_str().rsplit('/').next().unwrap_or_default();
+            if name.ends_with(".tmp") || name.contains(".bad") {
+                continue;
+            }
+            let bytes = files.read(path.as_str()).map_err(|e| e.to_string())?;
+            let rel = path.as_str().strip_prefix(&prefix).unwrap_or(path.as_str());
+            m.files.insert(rel.to_owned(), bytes.bytes.to_vec());
+        }
+        Ok(m)
+    }
 }
 
 fn copy_tree(root: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) -> io::Result<()> {

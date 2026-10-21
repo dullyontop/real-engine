@@ -29,6 +29,7 @@ pub mod gfx;
 pub mod host;
 pub mod hud;
 pub mod media;
+pub mod package;
 pub mod perf;
 pub mod play;
 pub mod procedural;
