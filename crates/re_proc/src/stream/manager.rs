@@ -134,6 +134,12 @@ impl Streamer {
         &self.config
     }
 
+    /// True when nothing is loaded, requested or pinned: a world without
+    /// streamed sources can skip [`step`] while this holds.
+    pub fn is_idle(&self) -> bool {
+        self.loaded.is_empty() && self.pending.is_empty() && self.pinned.is_empty()
+    }
+
     /// The loaded cells, in key order.
     pub fn cells(&self) -> impl Iterator<Item = &StreamCell> {
         self.loaded.values().map(|l| &l.cell)
@@ -157,6 +163,21 @@ impl Streamer {
     /// The current load radius (smaller than `radius` under memory pressure).
     pub fn radius(&self) -> f32 {
         self.radius
+    }
+
+    /// This manager for `to`, a fork of `from` ([`World::fork`]): the same
+    /// state, with the source entities it holds content of found again in
+    /// `to` by id (a fork gives every entity a new handle).
+    pub fn forked(&self, from: &World, to: &World) -> Streamer {
+        let mut out = self.clone();
+        for l in out.loaded.values_mut() {
+            l.sources = l
+                .sources
+                .iter()
+                .filter_map(|e| to.entity(from.id_of(*e)?).ok())
+                .collect();
+        }
+        out
     }
 
     /// Keeps cell `key` wanted whatever the focuses (the editor and tools'
