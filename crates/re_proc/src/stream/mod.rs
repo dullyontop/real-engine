@@ -28,12 +28,14 @@
 mod config;
 mod manager;
 mod source;
+mod terrain;
 
 pub use config::StreamConfig;
 pub use manager::{
     ENTITY_BYTES, Focus, Lateness, SHAPE_BYTES, StepReport, StreamEvents, Streamer, cell_at,
     focuses, step,
 };
+pub use terrain::{TerrainView, ViewChunk};
 
 #[cfg(test)]
 mod tests;

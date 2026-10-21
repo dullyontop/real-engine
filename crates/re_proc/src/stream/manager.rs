@@ -172,6 +172,9 @@ pub struct Streamer {
     pinned: BTreeSet<String>,
     /// The sources as last prepared.
     described: source::DescribeCache,
+    /// True while the terrain view is kept up to date.
+    view: bool,
+    terrain: super::terrain::TerrainState,
 }
 
 impl Streamer {
@@ -190,6 +193,8 @@ impl Streamer {
             reported: BTreeSet::new(),
             pinned: BTreeSet::new(),
             described: source::DescribeCache::new(),
+            view: false,
+            terrain: Default::default(),
         })
     }
 
@@ -210,13 +215,25 @@ impl Streamer {
         self.lateness
     }
 
+    /// Keeps the [`TerrainView`](super::TerrainView) of the world's terrain
+    /// sources up to date while `on` (off by default: only something that
+    /// draws needs it). The view is not simulation state.
+    pub fn set_view(&mut self, on: bool) {
+        self.view = on;
+    }
+
+    /// True while the terrain view is kept up to date.
+    pub fn view(&self) -> bool {
+        self.view
+    }
+
     fn pool(&self) -> &TaskPool {
         self.pool.as_deref().unwrap_or_else(|| TaskPool::global())
     }
 
     /// Generation jobs in flight.
     pub fn in_flight(&self) -> usize {
-        self.jobs.len()
+        self.jobs.len() + self.terrain.in_flight()
     }
 
     /// The settings.
@@ -283,6 +300,8 @@ impl Streamer {
             reported: self.reported.clone(),
             pinned: self.pinned.clone(),
             described: source::DescribeCache::new(),
+            view: self.view,
+            terrain: Default::default(),
         }
     }
 
@@ -767,6 +786,19 @@ impl Streamer {
         report.apply_time = apply_start.elapsed();
         // Start jobs for the next requests, nearest apply tick first.
         self.issue_next(world, &sources, &focuses);
+        // Then terrain chunks, with the workers cells leave.
+        if self.view {
+            let cap = self.config.jobs(self.pool().threads());
+            let free = cap.saturating_sub(self.jobs.len() + self.terrain.in_flight());
+            let at: Vec<Vec3> = focuses
+                .iter()
+                .map(|f| Vec3::new(f.position.x, 0.0, f.position.y))
+                .collect();
+            let pool = self.pool.clone();
+            let pool = pool.as_deref().unwrap_or_else(|| TaskPool::global());
+            self.terrain
+                .step(world, &sources, &at, self.config.terrain_view, pool, free);
+        }
         report.entities = done;
         report.resident = self.loaded.len();
         report.memory_bytes = self.memory_bytes();

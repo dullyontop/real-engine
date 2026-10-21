@@ -737,3 +737,164 @@ fn stream_waits_never_apply_a_job_issued_with_old_inputs() {
         assert_eq!(water_y(w, &c), 5.0, "{c} has the new water level");
     }
 }
+
+/// A height field drawn as level-of-detail chunks (levels 0 to 2: chunks of
+/// 256, 512 and 1024 m), with crates on it.
+fn chunked_graph() -> GraphDoc {
+    graph(
+        &[
+            (
+                "h",
+                "terrain.heightfield",
+                json!({ "cell": 4.0, "height": 40.0, "scale": 0.01 }),
+            ),
+            ("ground", "terrain.chunks", json!({ "max_level": 2 })),
+            (
+                "grid",
+                "scatter.grid_jitter",
+                json!({ "spacing": 16.0, "jitter": 0.8 }),
+            ),
+            (
+                "crates",
+                "points.instance",
+                json!({ "prefab": "prefabs/crate.prefab.json", "random_yaw": true }),
+            ),
+        ],
+        &[
+            ("h", "field", "ground", "field"),
+            ("h", "field", "grid", "field"),
+            ("grid", "points", "crates", "points"),
+        ],
+    )
+}
+
+fn terrain_config() -> StreamConfig {
+    StreamConfig {
+        terrain_view: 1024.0,
+        ..config()
+    }
+}
+
+/// Steps with the terrain view on until no terrain job is in flight; checks
+/// after every tick that no ground is drawn twice.
+fn settle_view(w: &mut World, from: u64) -> u64 {
+    if !w.ecs.contains_resource::<Streamer>() {
+        let mut s = Streamer::new(terrain_config()).unwrap();
+        s.set_view(true);
+        w.ecs.insert_resource(s);
+    }
+    for t in from..from + 2000 {
+        let r = step(w, t, &terrain_config());
+        assert!(r.diagnostics.is_empty(), "tick {t}: {:#?}", r.diagnostics);
+        w.update();
+        assert_no_overlap(w);
+        let busy = w.ecs.resource::<Streamer>().in_flight() > 0;
+        let shown = w
+            .ecs
+            .get_resource::<TerrainView>()
+            .map_or(0, TerrainView::len);
+        if !busy && shown > 0 && t > from + 10 {
+            return t + 1;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    panic!("the terrain view never settled");
+}
+
+fn assert_no_overlap(w: &World) {
+    let Some(view) = w.ecs.get_resource::<TerrainView>() else {
+        return;
+    };
+    let keys: Vec<_> = view.chunks().map(|c| c.key).collect();
+    for (i, a) in keys.iter().enumerate() {
+        for b in &keys[i + 1..] {
+            let (fine, coarse) = if a.level <= b.level { (a, b) } else { (b, a) };
+            let d = u32::from(coarse.level - fine.level);
+            assert!(
+                (fine.x >> d, fine.z >> d) != (coarse.x, coarse.z),
+                "{a:?} and {b:?} are both drawn"
+            );
+        }
+    }
+}
+
+#[test]
+fn stream_terrain_view_is_off_by_default() {
+    let mut st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    run(&mut st.world, 0..10);
+    assert!(!st.world.ecs.contains_resource::<TerrainView>());
+}
+
+#[test]
+fn stream_terrain_chunks_cover_the_source_with_matching_seams() {
+    let mut st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    let w = &mut st.world;
+    settle_view(w, 0);
+    let view = w.ecs.resource::<TerrainView>();
+    assert!(view.len() >= 4, "{} chunks", view.len());
+    // The finest chunks are under the focus.
+    assert!(view.chunks().any(|c| c.key.level == 0));
+    let terrain = w.entity("terrain").unwrap();
+    // Every vertex two chunks share has one height, and every chunk lies
+    // over the source's square (bounds 256 m).
+    let mut heights: std::collections::HashMap<(i64, i64), f32> = Default::default();
+    for c in view.chunks() {
+        assert_eq!(c.source, terrain);
+        assert!(c.mesh.starts_with("derived:terrain/terrain/"), "{}", c.mesh);
+        for v in &c.data().vertices {
+            let at = ((v.pos[0] * 16.0) as i64, (v.pos[2] * 16.0) as i64);
+            let y = *heights.entry(at).or_insert(v.pos[1]);
+            assert!(
+                (y - v.pos[1]).abs() < 1e-3,
+                "seam at {at:?}: {y} and {}",
+                v.pos[1]
+            );
+        }
+    }
+}
+
+#[test]
+fn stream_terrain_view_keeps_simulation_state_unchanged() {
+    let walk = |view: bool| {
+        let mut st = streamed(chunked_graph(), -100.0, -100.0, json!([]));
+        let w = &mut st.world;
+        let mut s = Streamer::new(terrain_config()).unwrap();
+        s.set_view(view);
+        w.ecs.insert_resource(s);
+        for t in 0..80u64 {
+            let p = -100.0 + t as f32 * 3.0;
+            move_to(w, p, p);
+            let r = step(w, t, &terrain_config());
+            assert!(r.diagnostics.is_empty(), "tick {t}: {:#?}", r.diagnostics);
+            w.update();
+        }
+        w.state_hash()
+    };
+    assert_eq!(walk(false), walk(true));
+}
+
+#[test]
+fn stream_terrain_follows_the_focus_without_drawing_ground_twice() {
+    let mut st = streamed(chunked_graph(), -200.0, -200.0, json!([]));
+    let w = &mut st.world;
+    let t = settle_view(w, 0);
+    let fine_at = |w: &World| -> Vec<(i32, i32)> {
+        let mut v: Vec<_> = w
+            .ecs
+            .resource::<TerrainView>()
+            .chunks()
+            .filter(|c| c.key.level == 0)
+            .map(|c| (c.key.x, c.key.z))
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(fine_at(w), [(-1, -1), (-1, 0), (0, -1), (0, 0)]);
+    // Far away, the source is drawn coarser; back again, finer.
+    move_to(w, 1200.0, 1200.0);
+    let t = settle_view(w, t);
+    assert_eq!(fine_at(w), []);
+    move_to(w, -200.0, -200.0);
+    settle_view(w, t);
+    assert_eq!(fine_at(w), [(-1, -1), (-1, 0), (0, -1), (0, 0)]);
+}
