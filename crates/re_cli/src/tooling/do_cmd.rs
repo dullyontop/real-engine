@@ -49,7 +49,10 @@ fn open(project: &Path) -> Result<App, Diagnostic> {
     };
     let mut app = App::open(project, config)?;
     crate::explain::register(app.commands_mut());
-    re_agent::register_commands(app.commands_mut(), &re_agent::Agent::new(project));
+    let agent = re_agent::Agent::new(project);
+    re_agent::register_commands(app.commands_mut(), &agent);
+    super::mcp::register_verify_diff(app.commands_mut(), &agent);
+    super::mcp::register_recipes(app.commands_mut(), project);
     app.add_verify_stage(Arc::new(super::check::ScanStage));
     // Last, so a Luau tool cannot take an engine command's name.
     let (_tools, problems) = re_agent::luau_tools::register(app.commands_mut(), project);

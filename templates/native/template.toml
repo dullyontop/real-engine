@@ -1,0 +1,23 @@
+name = "native"
+summary = "An empty native project: a camera, a sun, static ground and one box that falls onto it."
+render = ["real.toml"]
+folders = [
+    "scenes",
+    "prefabs",
+    "materials",
+    "graphs",
+    "scripts/game",
+    "scripts/tools",
+    "scripts/shared",
+    "assets",
+    "tests/replays",
+    "tests/goldens",
+]
+
+[[checks]]
+verify = "ok"
+
+[[checks]]
+command = "query"
+pointer = "/data/total"
+equals = 4

@@ -1,0 +1,26 @@
+[project]
+name = {{name|toml}}
+entry_scene = "scenes/main.scene.json"
+
+[sim]
+fixed_hz = 60
+max_steps_per_frame = 5
+
+[render]
+backends = ["vulkan", "gl"]
+
+[scripts]
+contexts = ["game", "tools"]
+cpu_budget_ms = 4
+memory_limit_mb = 256
+checker = "luau-lsp"
+
+[input.buttons]
+jump = ["key:Space", "pad:South"]
+
+[input.axes]
+move = [{ composite = ["key:KeyW", "key:KeyS", "key:KeyA", "key:KeyD"] }, { stick = "left", dead_zone = 0.15 }]
+look = [{ mouse_delta = 0.002 }, { stick = "right", dead_zone = 0.15 }]
+
+[verify.perf]
+frame_ms_p95 = 33.0
