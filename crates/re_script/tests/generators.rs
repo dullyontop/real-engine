@@ -23,6 +23,10 @@ fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
     dir
 }
 
+fn files(root: &Path) -> re_core::files::ProjectFiles {
+    re_core::files::ProjectFiles::project(root)
+}
+
 fn graph(seed: i64, nodes: &[(&str, &str, Json)], edges: &[(&str, &str, &str, &str)]) -> GraphDoc {
     let doc = json!({
         "format": "real-engine/graph",
@@ -40,7 +44,7 @@ fn graph(seed: i64, nodes: &[(&str, &str, Json)], edges: &[(&str, &str, &str, &s
 }
 
 fn declared(root: &Path, limits: Limits) -> (Declared, Arc<NodeRegistry>) {
-    let d = declare(root, &NodeRegistry::m1(), limits);
+    let d = declare(&files(root), &NodeRegistry::m1(), limits);
     let r = Arc::new(d.registry(&NodeRegistry::m1()));
     (d, r)
 }
@@ -413,16 +417,16 @@ fn editing_any_generator_script_changes_the_implementation_hash() {
         ("scripts/generators/shape.luau", SHAPE),
         ("scripts/generators/lib/util.luau", UTIL),
     ]);
-    let a = declare(dir.path(), &NodeRegistry::m1(), Limits::default()).implementation;
+    let a = declare(&files(dir.path()), &NodeRegistry::m1(), Limits::default()).implementation;
     std::fs::write(
         dir.path().join("scripts/generators/lib/util.luau"),
         UTIL.replace("Box", "Crate"),
     )
     .unwrap();
-    let b = declare(dir.path(), &NodeRegistry::m1(), Limits::default()).implementation;
+    let b = declare(&files(dir.path()), &NodeRegistry::m1(), Limits::default()).implementation;
     assert_ne!(a, b);
     let none = tempfile::tempdir().unwrap();
-    let d = declare(none.path(), &NodeRegistry::m1(), Limits::default());
+    let d = declare(&files(none.path()), &NodeRegistry::m1(), Limits::default());
     assert!(d.kinds.is_empty() && d.diagnostics.is_empty());
 }
 
@@ -625,7 +629,7 @@ fn a_declaration_key_with_tostring_cannot_hang_declare() {
         eval = function() return { items = {} } end }";
     let dir = project(&[("scripts/generators/x.luau", src)]);
     let d = declare(
-        dir.path(),
+        &files(dir.path()),
         &NodeRegistry::m1(),
         Limits {
             budget: 100_000,
@@ -640,13 +644,13 @@ fn a_declaration_key_with_tostring_cannot_hang_declare() {
 fn a_failed_redeclaration_keeps_the_last_good_kind() {
     let dir = project(&[("scripts/generators/shape.luau", SHAPE)]);
     let m1 = NodeRegistry::m1();
-    let first = declare(dir.path(), &m1, Limits::default()).registry(&m1);
+    let first = declare(&files(dir.path()), &m1, Limits::default()).registry(&m1);
     std::fs::write(
         dir.path().join("scripts/generators/shape.luau"),
         "return proc.node {",
     )
     .unwrap();
-    let again = declare(dir.path(), &m1, Limits::default());
+    let again = declare(&files(dir.path()), &m1, Limits::default());
     assert_eq!(again.diagnostics.len(), 1);
     assert!(again.registry(&m1).get("project.shape").is_none());
     assert!(

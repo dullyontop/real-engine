@@ -78,7 +78,8 @@ pub fn run(command: GraphCommand, project: &Path) -> ExitCode {
         .map(|c| c.proc.limits())
         .unwrap_or_default();
     let m1 = NodeRegistry::m1();
-    let declared = re_script::generator::declare(project, &m1, limits);
+    let declared =
+        re_script::generator::declare(&re_core::files::ProjectFiles::project(project), &m1, limits);
     let registry = Arc::new(declared.registry(&m1));
     let graph = match ProcGraph::from_doc(&doc, &registry) {
         Ok(g) => g,

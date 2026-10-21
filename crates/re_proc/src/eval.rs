@@ -18,6 +18,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use re_core::files::{ProjectFiles, ProjectPath, WritableDir};
 use re_core::time::Instant;
 use re_core::{Diagnostic, Location, TaskPool};
 use re_noise::Pcg32;
@@ -151,8 +152,12 @@ pub struct EvalOptions {
     /// The seed; the graph's own seed when `None`.
     pub seed: Option<u64>,
     /// The project root that file parameters (prefab paths) are relative
-    /// to; the current directory when `None`.
+    /// to; the current directory when `None`. Used only without
+    /// [`files`](Self::files).
     pub root: Option<PathBuf>,
+    /// The project's files: file parameters are read through them when set
+    /// (ADR-0037).
+    pub files: Option<ProjectFiles>,
     /// Stop before starting a level of nodes after this instant (`RE4016`).
     pub deadline: Option<Instant>,
     /// The window to evaluate, for streamed evaluation (ADR-0042). Part of
@@ -240,10 +245,17 @@ impl Evaluator {
         self
     }
 
-    /// Caches fields, meshes and points in `dir` (`<project>/.real/cache/proc`).
+    /// Caches fields, meshes and points in the directory `dir`
+    /// (`<project>/.real/cache/proc`).
     #[must_use]
-    pub fn with_disk_cache(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.disk = Some(DiskCache::new(dir.into()));
+    pub fn with_disk_cache(self, dir: impl Into<PathBuf>) -> Self {
+        self.with_disk_cache_in(WritableDir::dir(dir))
+    }
+
+    /// Caches fields, meshes and points in `dir` (the run's `proc` cache folder).
+    #[must_use]
+    pub fn with_disk_cache_in(mut self, dir: WritableDir) -> Self {
+        self.disk = Some(DiskCache::new(dir));
         self
     }
 
@@ -274,9 +286,9 @@ impl Evaluator {
         }
     }
 
-    /// The disk cache directory, if any.
+    /// The disk cache directory, if there is a disk cache and it is on disk.
     pub fn disk_cache_dir(&self) -> Option<&Path> {
-        self.disk.as_ref().map(DiskCache::dir)
+        self.disk.as_ref().and_then(|d| d.dir().path())
     }
 
     /// Empties the memory cache.
@@ -378,7 +390,7 @@ impl Evaluator {
                     continue;
                 };
                 let params = params.into_owned();
-                let files = load_files(def, &params, opts.root.as_deref());
+                let files = load_files(def, &params, opts);
                 let key = node_key(&KeyInputs {
                     id,
                     def,
@@ -622,11 +634,22 @@ fn file_paths(def: &NodeDef, params: &Json) -> Vec<String> {
 fn load_files(
     def: &NodeDef,
     params: &Json,
-    root: Option<&Path>,
+    opts: &EvalOptions,
 ) -> HashMap<String, Result<Arc<Vec<u8>>, String>> {
+    const LEAVES: &str = "paths are relative to the project root and may not leave it";
     file_paths(def, params)
         .into_iter()
         .map(|p| {
+            if let Some(files) = &opts.files {
+                let content = match ProjectPath::new(&p) {
+                    Ok(_) => files
+                        .read_source(&p)
+                        .map(|b| Arc::new(b.to_vec()))
+                        .map_err(|e| e.to_string()),
+                    Err(e) => Err(format!("{LEAVES} (`{p}`: {e})")),
+                };
+                return (p, content);
+            }
             let rel = Path::new(&p);
             let content = if rel.is_absolute()
                 || rel.components().any(|c| {
@@ -635,9 +658,12 @@ fn load_files(
                         Component::ParentDir | Component::Prefix(_) | Component::RootDir
                     )
                 }) {
-                Err("paths are relative to the project root and may not leave it".to_string())
+                Err(LEAVES.to_string())
             } else {
-                let full = root.map_or_else(|| rel.to_path_buf(), |r| r.join(rel));
+                let full = opts
+                    .root
+                    .as_deref()
+                    .map_or_else(|| rel.to_path_buf(), |r| r.join(rel));
                 std::fs::read(&full)
                     .map(Arc::new)
                     .map_err(|e| e.to_string())

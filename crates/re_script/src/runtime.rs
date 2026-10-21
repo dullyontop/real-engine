@@ -19,7 +19,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use mlua::chunk::ChunkMode;
 use mlua::{Lua, MultiValue, Value};
+use re_core::files::ProjectFiles;
 use re_core::{Diagnostic, Location, Phase};
 use re_scene::{Entity, ScriptRef, World};
 use re_types::graph::GraphDoc;
@@ -34,10 +36,14 @@ use crate::vm::{self, ContextKind, OutputLine};
 use crate::{ErrorKind, codes};
 
 /// How the runtime's contexts are set up (`real.toml [scripts]`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct RuntimeConfig {
-    /// The project root; `require` and script paths resolve under its `scripts/`.
+    /// The project directory (empty in a packaged game). Scripts are read
+    /// through [`files`](Self::files), not from here.
     pub project_root: PathBuf,
+    /// The project's files: `require` and script paths resolve under its
+    /// `scripts/` (ADR-0037).
+    pub files: ProjectFiles,
     /// The CPU time one resume of a script thread may use (`cpu_budget_ms`).
     pub cpu_budget: Duration,
     /// The memory each context's VM may allocate, in bytes (`memory_limit_mb`);
@@ -51,10 +57,20 @@ impl RuntimeConfig {
     /// The default `memory_limit_mb`.
     pub const DEFAULT_MEMORY_LIMIT_MB: usize = 256;
 
-    /// The defaults for a project at `project_root`.
+    /// The defaults for a project at `project_root`, read from that directory.
     pub fn new(project_root: impl Into<PathBuf>) -> RuntimeConfig {
+        let project_root = project_root.into();
+        RuntimeConfig::with_files(ProjectFiles::project(project_root))
+    }
+
+    /// The defaults for a project read through `files`.
+    pub fn with_files(files: ProjectFiles) -> RuntimeConfig {
         RuntimeConfig {
-            project_root: project_root.into(),
+            project_root: files
+                .project_dir()
+                .map(Path::to_path_buf)
+                .unwrap_or_default(),
+            files,
             cpu_budget: Duration::from_millis(Self::DEFAULT_CPU_BUDGET_MS),
             memory_limit: Self::DEFAULT_MEMORY_LIMIT_MB * 1024 * 1024,
         }
@@ -79,7 +95,7 @@ impl Context {
     fn new(config: &RuntimeConfig, kind: ContextKind) -> Result<Context, ScriptError> {
         let loaded = Loaded::default();
         let lua = vm::create(
-            &config.project_root,
+            &config.files,
             kind,
             config.cpu_budget,
             config.memory_limit,
@@ -489,7 +505,7 @@ impl ScriptRuntime {
         entity: Option<Entity>,
         owner: Owner,
     ) -> Vec<Diagnostic> {
-        let source = match read_script(&self.config.project_root, path) {
+        let (source, mode) = match read_script(&self.config.files, path) {
             Ok(s) => s,
             Err(d) => return vec![d],
         };
@@ -499,6 +515,7 @@ impl ScriptRuntime {
             let f = lua
                 .load(source)
                 .set_name(format!("@{path}"))
+                .set_mode(mode)
                 .set_compiler(crate::compile::compiler())
                 .set_environment(env)
                 .into_function()?;
@@ -552,13 +569,14 @@ impl ScriptRuntime {
         host: &mut dyn ScriptHost,
         path: &str,
     ) -> Result<GraphDoc, Vec<Diagnostic>> {
-        let source = read_script(&self.config.project_root, path).map_err(|d| vec![d])?;
+        let (source, mode) = read_script(&self.config.files, path).map_err(|d| vec![d])?;
         let mut graph = None;
         let mut diags = run_in(&self.tools, host, |lua| {
             let env = vm::new_env(lua, path, ContextKind::Tools, None)?;
             let f = lua
                 .load(source)
                 .set_name(format!("@{path}"))
+                .set_mode(mode)
                 .set_compiler(crate::compile::compiler())
                 .set_environment(env)
                 .into_function()?;
@@ -608,7 +626,7 @@ impl ScriptRuntime {
     /// A file that does not compile changes nothing and is reported.
     pub fn reload(&mut self, host: &mut dyn ScriptHost, path: &str) -> ReloadReport {
         let mut report = ReloadReport::default();
-        let source = match read_script(&self.config.project_root, path) {
+        let (source, _) = match read_script(&self.config.files, path) {
             Ok(s) => s,
             Err(d) => {
                 report.diagnostics.push(d);
@@ -700,8 +718,8 @@ fn attached_scripts(world: &mut World) -> Vec<(Entity, String, ContextKind)> {
     found.into_iter().map(|(_, e, p, k)| (e, p, k)).collect()
 }
 
-/// Reads a script under `scripts/`.
-fn read_script(root: &Path, path: &str) -> Result<Vec<u8>, Diagnostic> {
+/// A script under `scripts/`: its bytes and how to load them.
+fn read_script(files: &ProjectFiles, path: &str) -> Result<(Vec<u8>, ChunkMode), Diagnostic> {
     let fail = |message: String| {
         report(&ScriptError {
             kind: ErrorKind::Runtime,
@@ -718,5 +736,10 @@ fn read_script(root: &Path, path: &str) -> Result<Vec<u8>, Diagnostic> {
             "{path:?} is not a script path: scripts are project-relative paths under scripts/"
         )));
     }
-    std::fs::read(root.join(path)).map_err(|e| fail(format!("cannot read {path}: {e}")))
+    let data = files
+        .read(path)
+        .map_err(|e| fail(format!("cannot read {path}: {e}")))?;
+    let mode = crate::compile::chunk_mode(&data.form)
+        .map_err(|m| fail(format!("cannot load {path}: {m}")))?;
+    Ok((data.bytes.to_vec(), mode))
 }

@@ -48,8 +48,8 @@ mod marshal;
 mod params;
 mod vm;
 
+use re_core::files::ProjectFiles;
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use mlua::{Function, Lua, Table, UserData, UserDataMethods, Value};
@@ -148,36 +148,17 @@ fn declaration_error(path: &str, message: impl Into<String>) -> Diagnostic {
     Diagnostic::error(codes::LUAU_DECLARATION, message).at(Location::file(path.to_string()))
 }
 
-/// Every project path under `scripts/generators/` ending in `.luau`, sorted.
-fn generator_files(root: &Path) -> Vec<String> {
-    fn walk(dir: &Path, rel: &str, out: &mut Vec<String>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let path = format!("{rel}/{name}");
-            let Ok(ty) = entry.file_type() else { continue };
-            if ty.is_dir() {
-                walk(&entry.path(), &path, out);
-            } else if ty.is_file() && name.ends_with(".luau") {
-                out.push(path);
-            }
-        }
-    }
-    let mut out = Vec::new();
-    walk(&root.join(GENERATORS_DIR), GENERATORS_DIR, &mut out);
-    out.sort();
-    out
-}
-
-/// Declares the Luau node kinds of the project at `root`: compiles every
+/// Declares the Luau node kinds of `project`: compiles every
 /// script under `scripts/generators/` and runs each file directly in it to
 /// read its declaration. Kinds named in `base` are refused (`RE4100`), as
 /// are duplicates; the other kinds are returned even when one script fails.
-pub fn declare(root: &Path, base: &NodeRegistry, limits: Limits) -> Declared {
+pub fn declare(project: &ProjectFiles, base: &NodeRegistry, limits: Limits) -> Declared {
     let mut out = Declared::default();
-    let files = generator_files(root);
+    let files: Vec<String> = project
+        .list(GENERATORS_DIR, ".luau")
+        .iter()
+        .map(|p| p.as_str().to_string())
+        .collect();
     if files.is_empty() {
         return out;
     }
@@ -185,8 +166,8 @@ pub fn declare(root: &Path, base: &NodeRegistry, limits: Limits) -> Declared {
     let mut hasher = blake3::Hasher::new();
     hasher.update(CONTEXT_VERSION.as_bytes());
     for path in &files {
-        let source = match std::fs::read(root.join(path)) {
-            Ok(s) => s,
+        let data = match project.read(path) {
+            Ok(d) => d,
             Err(e) => {
                 out.diagnostics.push(declaration_error(
                     path,
@@ -197,15 +178,23 @@ pub fn declare(root: &Path, base: &NodeRegistry, limits: Limits) -> Declared {
         };
         hasher.update(&(path.len() as u64).to_le_bytes());
         hasher.update(path.as_bytes());
-        hasher.update(&(source.len() as u64).to_le_bytes());
-        hasher.update(&source);
-        match crate::compile::compiler().compile(&source) {
+        hasher.update(&(data.bytes.len() as u64).to_le_bytes());
+        hasher.update(&data.bytes);
+        // A packaged game holds bytecode compiled at build time.
+        let bytecode = match crate::compile::chunk_mode(&data.form) {
+            Ok(mlua::chunk::ChunkMode::Binary) => Ok(data.bytes.to_vec()),
+            Ok(mlua::chunk::ChunkMode::Text) => crate::compile::compiler()
+                .compile(&data.bytes)
+                .map_err(|e| short(&e)),
+            Err(m) => Err(m.to_string()),
+        };
+        match bytecode {
             Ok(bytecode) => {
                 scripts.insert(path.clone(), Arc::from(bytecode));
             }
-            Err(e) => out
+            Err(m) => out
                 .diagnostics
-                .push(declaration_error(path, format!("{path}: {}", short(&e)))),
+                .push(declaration_error(path, format!("{path}: {m}"))),
         }
     }
     out.implementation = *hasher.finalize().as_bytes();

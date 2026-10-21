@@ -223,6 +223,7 @@ pub(crate) fn load(lua: &Lua, scripts: &Scripts, path: &str) -> mlua::Result<Fun
         .get(path)
         .ok_or_else(|| mlua::Error::runtime(format!("no script {path}")))?;
     lua.load(&bytecode[..])
+        .set_mode(mlua::chunk::ChunkMode::Binary)
         .set_name(format!("@{path}"))
         .into_function()
 }

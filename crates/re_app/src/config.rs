@@ -320,7 +320,16 @@ impl AppConfig {
             )
             .with_hint("pass the project directory with `--project DIR`, or create one with `real new DIR`"));
         }
-        let text = std::fs::read_to_string(&path).map_err(|e| {
+        AppConfig::load_from(&re_core::files::ProjectFiles::project(project))
+    }
+
+    /// Reads `real.toml` through `files` (ADR-0037).
+    ///
+    /// # Errors
+    ///
+    /// `RE0501` when it cannot be read or has an unknown key or a wrong type.
+    pub fn load_from(files: &re_core::files::ProjectFiles) -> Result<AppConfig, Diagnostic> {
+        let text = files.read_str(CONFIG_FILE).map_err(|e| {
             Diagnostic::error(
                 codes::CONFIG_INVALID,
                 format!("cannot read {CONFIG_FILE}: {e}"),

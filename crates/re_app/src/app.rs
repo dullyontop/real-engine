@@ -9,6 +9,7 @@ use re_command::{
     CommandOutcome, CommandRegistry, EditTarget, EngineReceiver, EngineRequest, History, Origin,
     PolicyCheck,
 };
+use re_core::files::{ProjectFiles, Writable};
 use re_core::time::Instant;
 use re_core::{Diagnostic, FixedClock, Location, Phase, TaskPool};
 use re_input::{ActionMap, RawInput, Replay};
@@ -93,6 +94,8 @@ impl RunReport {
 /// [`App::run_headless`] drives them from a replay.
 pub struct App {
     project: PathBuf,
+    /// Every read of a project file goes through these (ADR-0037).
+    files: ProjectFiles,
     config: AppConfig,
     world: World,
     history: History,
@@ -115,6 +118,7 @@ pub struct App {
     shapes: ShapeLibrary,
     physics_cmds: Vec<PhysicsCmd>,
     poses: Vec<BodyPose>,
+    wheel_poses: Vec<re_types::WheelPose>,
     contacts: Vec<ContactEvent>,
 
     media: Media,
@@ -203,6 +207,25 @@ impl App {
     /// own diagnostic as `related`), `RE0501` when the `[input]` bindings are
     /// invalid, or the physics world's error.
     pub fn open(project: &Path, config: AppConfig) -> Result<App, Diagnostic> {
+        App::open_files(crate::package::dev_files(project), config)
+    }
+
+    /// Opens the project read through `files` (ADR-0037), as [`App::open`]
+    /// does for a directory; the engine layer
+    /// ([`crate::package::engine_layer`]) is put first unless `files` already
+    /// starts with an engine layer. Without a project directory
+    /// ([`ProjectFiles::project_dir`]) the app writes no project file:
+    /// `save_scene`, asset imports and hot reload are refused.
+    ///
+    /// # Errors
+    ///
+    /// As [`App::open`].
+    pub fn open_files(files: ProjectFiles, config: AppConfig) -> Result<App, Diagnostic> {
+        // Every run reads the engine's own files first.
+        let files = match files.layers().first().map(|l| l.kind()) {
+            Some(re_core::files::LayerKind::Engine) => files,
+            _ => crate::package::with_engine_layer(&files),
+        };
         let action_map = config.input.to_action_map().map_err(|ds| {
             let mut d = Diagnostic::error(
                 codes::CONFIG_INVALID,
@@ -214,19 +237,19 @@ impl App {
             }
             d
         })?;
-        let (world, problems) = load_world(project, &config)?;
+        let (world, problems) = load_world(&files, &config)?;
         let mut commands = CommandRegistry::new();
         re_command::register_builtin_commands(&mut commands);
         crate::commands::register(&mut commands);
         re_proc::register_commands(&mut commands);
-        let mut app = App::with_world(project, config, world, action_map, Arc::new(commands))?;
+        let mut app = App::with_world(files, config, world, action_map, Arc::new(commands))?;
         app.diagnostics.extend(problems);
         app.edit_frame();
         Ok(app)
     }
 
     fn with_world(
-        project: &Path,
+        files: ProjectFiles,
         config: AppConfig,
         world: World,
         action_map: ActionMap<String>,
@@ -238,7 +261,13 @@ impl App {
         let physics = Physics::new(physics_config(&config), TaskPool::global())?;
         let clock = FixedClock::new(config.sim.fixed_hz, config.sim.max_steps_per_frame);
         Ok(App {
-            project: project.to_path_buf(),
+            project: files
+                .project_dir()
+                .map(Path::to_path_buf)
+                .unwrap_or_default(),
+            media: Media::with_files(files.clone()),
+            audio: headless_audio(&files),
+            files,
             world,
             history: History::default(),
             commands,
@@ -256,8 +285,8 @@ impl App {
             shapes: ShapeLibrary::default(),
             physics_cmds: Vec::new(),
             poses: Vec::new(),
+            wheel_poses: Vec::new(),
             contacts: Vec::new(),
-            media: Media::new(project),
             graphics: None,
             render_assets: RenderAssets::default(),
             snapshot: RenderSnapshot::default(),
@@ -281,7 +310,6 @@ impl App {
             view_ppp: 1.0,
             script_output: Vec::new(),
             script_errors: Default::default(),
-            audio: headless_audio(project),
             audio_sync: AudioSync::new(),
             audio_cmds: Vec::new(),
             last_audio_cmds: Vec::new(),
@@ -322,7 +350,7 @@ impl App {
         // server's and the client's; the copy starts again from the scene.
         let restarted = self.compat.is_some();
         let (mut world, problems) = if restarted {
-            load_world(&self.project, &self.config)?
+            load_world(&self.files, &self.config)?
         } else {
             (self.world.fork(), Vec::new())
         };
@@ -330,7 +358,7 @@ impl App {
             world.ecs.insert_resource(store.clone());
         }
         let mut copy = App::with_world(
-            &self.project,
+            self.files.clone(),
             self.config.clone(),
             world,
             self.action_map.clone(),
@@ -392,9 +420,43 @@ impl App {
         App::open(project, AppConfig::load(project)?)
     }
 
-    /// The project directory.
+    /// The project directory (empty when the app reads no directory, as a
+    /// packaged game does).
     pub fn project(&self) -> &Path {
         &self.project
+    }
+
+    /// The project's files (ADR-0037).
+    pub fn files(&self) -> &ProjectFiles {
+        &self.files
+    }
+
+    /// Where an output a runtime command names (a screenshot path) is written:
+    /// relative to the project directory in a development run, else to the
+    /// run's output folder ([`Writable::Out`]).
+    ///
+    /// # Errors
+    ///
+    /// `RE0516` when the run has nowhere on disk to write.
+    pub fn output_path(&self, rel: impl AsRef<Path>) -> Result<PathBuf, Diagnostic> {
+        let rel = rel.as_ref();
+        if let Some(dir) = self.files.project_dir() {
+            return Ok(dir.join(rel));
+        }
+        let rel = rel.strip_prefix(".real/out").unwrap_or(rel);
+        self.files
+            .writable(Writable::Out)
+            .path()
+            .map(|dir| dir.join(rel))
+            .ok_or_else(|| {
+                Diagnostic::error(
+                    codes::SCREENSHOT_FAILED,
+                    format!(
+                        "cannot write {}: this run has no output folder on disk",
+                        rel.display()
+                    ),
+                )
+            })
     }
 
     /// The configuration the project was opened with.
@@ -487,7 +549,7 @@ impl App {
 
     /// Replaces the audio output (the windowed runner opens the device).
     pub fn set_audio(&mut self, mut audio: Audio) {
-        audio.set_asset_root(&self.project);
+        audio.set_files(self.files.clone());
         self.audio = audio;
         self.audio_sync = AudioSync::new();
     }
@@ -577,7 +639,7 @@ impl App {
         let gfx = self.graphics.as_mut().expect("ensured");
         self.diagnostics.extend(gfx.take_errors());
         if let Some(path) = path {
-            gfx::save_png(&image, &self.project.join(path))?;
+            gfx::save_png(&image, &self.output_path(path)?)?;
         }
         Ok(image)
     }
@@ -632,10 +694,11 @@ impl App {
     ///
     /// The watcher's error.
     pub fn enable_hot_reload(&mut self) -> Result<(), Diagnostic> {
-        self.watcher = Some(AssetWatcher::new(
-            &self.project,
-            AssetWatcher::DEFAULT_DEBOUNCE,
-        )?);
+        // Only a project directory changes under a running game.
+        let Some(dir) = self.files.project_dir() else {
+            return Ok(());
+        };
+        self.watcher = Some(AssetWatcher::new(dir, AssetWatcher::DEFAULT_DEBOUNCE)?);
         Ok(())
     }
 
@@ -836,7 +899,16 @@ impl App {
         let doc = self.world.save(SaveOptions::default());
         let text = re_scene::scene::to_json(&doc);
         let rel_path = self.config.project.entry_scene.clone();
-        let path = self.project.join(&rel_path);
+        // Only a development run writes project files (ADR-0037).
+        let Some(dir) = self.files.project_dir() else {
+            return Err(Diagnostic::error(
+                codes::SCENE_SAVE_FAILED,
+                format!(
+                    "cannot write the scene back to {rel_path}: this run has no project directory"
+                ),
+            ));
+        };
+        let path = dir.join(&rel_path);
         std::fs::write(&path, text).map_err(|e| {
             Diagnostic::error(
                 codes::SCENE_SAVE_FAILED,
@@ -873,7 +945,7 @@ impl App {
     /// upload).
     fn regenerate_changed(&mut self) {
         let problems =
-            procedural::refresh_graphs(&mut self.world, &self.project, &mut self.graph_inputs);
+            procedural::refresh_graphs(&mut self.world, &self.files, &mut self.graph_inputs);
         self.diagnostics.extend(problems);
         let report = self.world.regenerate_changed();
         self.diagnostics.extend(report.diagnostics.iter().cloned());
@@ -1179,6 +1251,7 @@ impl App {
         }
         self.perf.physics_step(step.elapsed());
         self.physics.poses_into(&mut self.poses);
+        self.physics.vehicle_poses_into(&mut self.wheel_poses);
         self.contacts.extend_from_slice(self.physics.events());
         self.diagnostics.extend(self.physics.take_diagnostics());
         self.perf.add(Phase::Physics, t.elapsed());
@@ -1187,6 +1260,7 @@ impl App {
         // and post-physics script updates.
         let t = Instant::now();
         physics::pull(&mut self.world, &mut self.physics_sync, &self.poses);
+        physics::pull_wheels(&mut self.world, &mut self.physics_sync, &self.wheel_poses);
         if let Some(scripts) = &mut self.scripts {
             scripts.push_contacts(self.physics.events());
         }
@@ -1194,11 +1268,11 @@ impl App {
         self.perf.add(Phase::PostSimulation, t.elapsed());
     }
 
-    /// Gives characters that appeared since the last physics push (the first
-    /// step, a spawn, a restart) their physics character now, so scripts can
-    /// move them in the step they appear.
+    /// Gives characters and vehicles that appeared since the last physics push
+    /// (the first step, a spawn, a restart) their physics character or vehicle
+    /// now, so scripts can move them in the step they appear.
     fn link_new_characters(&mut self) {
-        let unlinked: Vec<re_types::EntityId> = self
+        let mut unlinked: Vec<re_types::EntityId> = self
             .world
             .ecs
             .query_filtered::<re_scene::Entity, re_scene::ecs::query::With<re_scene::CharacterController>>()
@@ -1206,7 +1280,15 @@ impl App {
             .map(re_scene::entity_id)
             .filter(|&id| self.physics_sync.kind(id) != Some(physics::LinkKind::Character))
             .collect();
-        // A character that cannot be linked (reported by `push`) is tried
+        unlinked.extend(
+            self.world
+                .ecs
+                .query_filtered::<re_scene::Entity, re_scene::ecs::query::With<re_scene::Vehicle>>()
+                .iter(&self.world.ecs)
+                .map(re_scene::entity_id)
+                .filter(|&id| !self.physics_sync.is_vehicle(id)),
+        );
+        // A character or vehicle that cannot be linked (reported by `push`) is tried
         // once here, not on every step.
         let fresh = unlinked.iter().any(|id| !self.link_tried.contains(id));
         self.link_tried = unlinked.into_iter().collect();
@@ -1521,7 +1603,10 @@ impl App {
         for request in due {
             match &request.path {
                 Some(path) => {
-                    if let Err(d) = gfx::save_png(&image, &self.project.join(path)) {
+                    if let Err(d) = self
+                        .output_path(path)
+                        .and_then(|p| gfx::save_png(&image, &p))
+                    {
                         self.diagnostics.push(d);
                     }
                 }
@@ -1580,7 +1665,7 @@ impl App {
         if paths.iter().any(|p| procedural::is_generator_script(p)) {
             let declared = procedural::declare_generators(
                 &mut self.world,
-                &self.project,
+                &self.files,
                 self.config.proc.limits(),
             );
             self.diagnostics.extend(declared.iter().cloned());
@@ -1593,7 +1678,7 @@ impl App {
             .collect();
         if !graphs.is_empty() {
             let graph_problems =
-                procedural::load_graphs(&mut self.world, &self.project, Some(&graphs));
+                procedural::load_graphs(&mut self.world, &self.files, Some(&graphs));
             self.diagnostics.extend(graph_problems.iter().cloned());
             problems.extend(graph_problems);
         }
@@ -1624,7 +1709,7 @@ impl App {
             if self.scripts_failed {
                 return None;
             }
-            let config = RuntimeConfig::new(&self.project).with_limits(
+            let config = RuntimeConfig::with_files(self.files.clone()).with_limits(
                 self.config.scripts.cpu_budget_ms.max(0.0).ceil() as u64,
                 self.config.scripts.memory_limit_mb as usize,
             );
@@ -1715,7 +1800,7 @@ impl App {
             }
         }
         match crate::compat::CompatPlay::new(
-            &self.project,
+            &self.files,
             &self.config,
             &cfg,
             &mut self.world,
@@ -2055,7 +2140,7 @@ impl App {
     /// for): physics, audio and the undo history start over; the frame counter
     /// and the replay keep going.
     pub fn restart(&mut self) {
-        match load_world(&self.project, &self.config) {
+        match load_world(&self.files, &self.config) {
             Ok((world, problems)) => {
                 self.world = world;
                 self.diagnostics.extend(problems);
@@ -2124,9 +2209,9 @@ fn load_collider_sources(world: &mut World, shapes: &mut ShapeLibrary, media: &m
     }
 }
 
-fn headless_audio(project: &Path) -> Audio {
+fn headless_audio(files: &ProjectFiles) -> Audio {
     let mut audio = Audio::headless();
-    audio.set_asset_root(project);
+    audio.set_files(files.clone());
     audio
 }
 
@@ -2150,22 +2235,25 @@ pub(crate) fn content_world(config: &AppConfig) -> Result<World, Diagnostic> {
 /// A fresh World with the entry scene loaded and the graphs of its procedural
 /// sources in its store (they generate on the first `regenerate_changed`), with
 /// the problems making those graphs.
-fn load_world(project: &Path, config: &AppConfig) -> Result<(World, Vec<Diagnostic>), Diagnostic> {
+fn load_world(
+    files: &ProjectFiles,
+    config: &AppConfig,
+) -> Result<(World, Vec<Diagnostic>), Diagnostic> {
     let rel_path = &config.project.entry_scene;
-    let path = project.join(rel_path);
     let fail = |msg: String| Diagnostic::error(codes::ENTRY_SCENE_FAILED, msg).at(rel(rel_path));
-    let text = std::fs::read_to_string(&path)
+    let text = files
+        .read_str(rel_path)
         .map_err(|e| fail(format!("cannot read the entry scene {rel_path}: {e}")))?;
     let doc = re_scene::scene::from_json(&text).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not parse")).with_related(e.to_diagnostic())
     })?;
     let mut world = content_world(config).map_err(|e| fail(e.message.clone()))?;
-    procedural::install(&mut world, project);
-    let mut problems = procedural::declare_generators(&mut world, project, config.proc.limits());
+    procedural::install(&mut world, files);
+    let mut problems = procedural::declare_generators(&mut world, files, config.proc.limits());
     world.load(&doc).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not load")).with_related(e.to_diagnostic())
     })?;
     world.propagate_all();
-    problems.extend(procedural::load_graphs(&mut world, project, None));
+    problems.extend(procedural::load_graphs(&mut world, files, None));
     Ok((world, problems))
 }

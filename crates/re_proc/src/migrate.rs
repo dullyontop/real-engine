@@ -219,6 +219,7 @@ fn output(
     let opts = EvalOptions {
         seed: Some(seed as u64),
         root: store.root().map(Into::into),
+        files: store.files().cloned(),
         ..Default::default()
     };
     let (fragment, _) = store

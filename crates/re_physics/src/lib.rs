@@ -5,7 +5,9 @@
 //! [`PhysicsCmd`](re_types::physics::PhysicsCmd)s, steps, and reads back
 //! [`BodyPose`](re_types::physics::BodyPose)s,
 //! [`ContactEvent`](re_types::physics::ContactEvent)s and
-//! [`CharacterState`](re_types::physics::CharacterState)s:
+//! [`CharacterState`](re_types::physics::CharacterState)s, and for vehicles
+//! [`VehicleState`](re_types::physics::VehicleState)s and
+//! [`WheelPose`](re_types::physics::WheelPose)s (ADR-0040):
 //!
 //! ```
 //! use re_core::TaskPool;
@@ -59,6 +61,7 @@ mod jobs;
 pub mod parts;
 mod query;
 mod shapes;
+mod vehicle;
 mod world;
 
 pub use config::{LayerTable, PhysicsConfig};
@@ -157,6 +160,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::ASSEMBLY_INVALID,
         title: "Invalid assembly of parts",
         page: include_str!("../explain/RE5017.md"),
+    },
+    DiagInfo {
+        code: codes::VEHICLE_INVALID,
+        title: "Invalid vehicle",
+        page: include_str!("../explain/RE5018.md"),
     },
 ];
 

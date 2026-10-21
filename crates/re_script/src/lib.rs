@@ -48,7 +48,7 @@ pub mod sched {
 
 pub use api::{DEFINITIONS_PATH, definitions, write_definitions};
 pub use budget::untimed;
-pub use compile::compile_check;
+pub use compile::{COMPILER_ID, chunk_mode, compile_bytecode, compile_check, compiler};
 pub use diag::{ErrorKind, ScriptError};
 pub use host::{CommandHost, NoServices, ScriptHost, WorldHost};
 pub use modules::Reload;
