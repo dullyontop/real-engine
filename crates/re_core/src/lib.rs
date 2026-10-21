@@ -22,6 +22,7 @@
 pub mod codes;
 pub mod diag;
 pub mod events;
+pub mod files;
 pub mod log;
 pub mod phase;
 pub mod profile;
@@ -33,6 +34,7 @@ pub use diag::{
     validate_catalog,
 };
 pub use events::{EventCursor, Events};
+pub use files::{FileData, FileError, Form, ProjectFiles, ProjectPath, Writable, WritableDir};
 pub use log::{LogConfig, init_logging};
 pub use phase::Phase;
 pub use task::TaskPool;
