@@ -2,9 +2,10 @@
 //! (ADR-0042's acceptance walk) and checks the streaming budgets: no tick
 //! waiting on generation after the initial load, tick time, accounted memory,
 //! peak RSS, and the same `state_hash` from a cold and from a warm cache. The
-//! tick max is the best of three runs (a shared runner's steal-time spikes are
-//! not engine cost); every run's max is reported, as is the max time a tick
-//! spent applying cells.
+//! tick max is gated on each tick's main-thread CPU time (Linux schedstat), so
+//! a shared runner's wall-clock spikes are reported, not gated; wall p95 and
+//! waits still catch blocking. Each run's wall max and p99 are reported, as is
+//! the max time a tick spent applying cells.
 //!
 //! ```sh
 //! cargo run --release --locked -p re_proc --example stream_walk -- --json > out/stream.json
@@ -12,7 +13,7 @@
 //!
 //! Options: `--json` (the report as JSON on stdout), `--ticks N` (stop after
 //! N ticks of the walk; default: the whole diagonal, about 12.5 minutes per
-//! run, three runs), `--threads N` (worker threads; default: cores minus one) and
+//! run, two runs), `--threads N` (worker threads; default: cores minus one) and
 //! `--unpaced` (run ticks back to back instead of at 60 Hz; generation then
 //! falls behind and waits are expected). Headless, no rendering, no physics:
 //! a tick is the streaming step plus the scene update, run at the fixed
@@ -244,6 +245,9 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
     let total = ticks.unwrap_or((diagonal / per_tick) as u64);
     let mut times = Vec::with_capacity(total as usize);
     let mut apply_max_ms = 0.0f64;
+    // Each tick's main-thread CPU time, where the platform has the clock.
+    let mut cpu_times = Vec::with_capacity(total as usize);
+    let mut busiest = Json::Null;
     // The slowest ticks and what they did, to tell work from stalls.
     let mut slowest: Vec<Json> = Vec::new();
     let (mut waits, mut late, mut loaded, mut unloaded, mut deferred) = (0, 0, 0, 0, 0);
@@ -283,6 +287,21 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         let sched2 = schedstat();
         times.push(ms);
+        if let Some(cpu) = cpu_between(sched0, sched2) {
+            if cpu > busiest["cpu_ms"].as_f64().unwrap_or(-1.0) {
+                busiest = json!({
+                    "tick": tick,
+                    "cpu_ms": cpu,
+                    "ms": ms,
+                    "step_cpu_ms": cpu_between(sched0, sched1),
+                    "update_cpu_ms": cpu_between(sched1, sched2),
+                    "loaded": r.loaded.len(),
+                    "unloaded": r.unloaded.len(),
+                    "entities": r.entities,
+                });
+            }
+            cpu_times.push(cpu);
+        }
         if slowest.len() < 5 || ms > slowest[4]["ms"].as_f64().unwrap_or(0.0) {
             let after = os_ticks();
             slowest.push(json!({
@@ -294,9 +313,9 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
                 // In ms (Linux schedstat): this thread's CPU time in the
                 // step and in the world update, and its time waiting for a
                 // CPU in the run queue.
-                "step_cpu_ms": (sched1.0 - sched0.0) as f64 / 1.0e6,
-                "update_cpu_ms": (sched2.0 - sched1.0) as f64 / 1.0e6,
-                "runqueue_ms": (sched2.1 - sched0.1) as f64 / 1.0e6,
+                "step_cpu_ms": cpu_between(sched0, sched1),
+                "update_cpu_ms": cpu_between(sched1, sched2),
+                "runqueue_ms": sched0.zip(sched2).map(|(a, b)| (b.1 - a.1) as f64 / 1.0e6),
                 "tick": tick,
                 "ms": ms,
                 "step_ms": step_ms,
@@ -346,6 +365,16 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
                 "p99": percentile(&sorted, 0.99),
                 "max": sorted.last().copied().unwrap_or(0.0),
             },
+            "cpu_ms": (cpu_times.len() == times.len()).then(|| {
+                cpu_times.sort_by(f64::total_cmp);
+                json!({
+                    "p50": percentile(&cpu_times, 0.5),
+                    "p95": percentile(&cpu_times, 0.95),
+                    "p99": percentile(&cpu_times, 0.99),
+                    "max": cpu_times.last().copied().unwrap_or(0.0),
+                })
+            }),
+            "busiest": busiest,
             "apply_max_ms": apply_max_ms,
             "slowest": slowest,
             "peak_cells": peak_cells,
@@ -381,12 +410,6 @@ fn main() -> ExitCode {
     };
     let cold = walk(&root, cache.path(), &pool, &args);
     let warm = walk(&root, cache.path(), &pool, &args);
-    // A third run only for the tick max, which takes the best of three: a
-    // shared runner's steal-time spikes are not engine cost (ADR-0042).
-    let third = walk(&root, cache.path(), &pool, &args);
-    let max_of = |run: &Json| run["walk"]["tick_ms"]["max"].as_f64().unwrap_or(f64::MAX);
-    let maxima = [max_of(&cold), max_of(&warm), max_of(&third)];
-    let best_max = maxima.iter().copied().fold(f64::MAX, f64::min);
     let rss = peak_rss_mb();
     let config = StreamConfig::default();
     let budgets = {
@@ -396,10 +419,16 @@ fn main() -> ExitCode {
             out.push(json!({ "run": name, "check": "zero waits after the initial load", "value": w["waits"], "ok": w["waits"] == 0 }));
             let p95 = w["tick_ms"]["p95"].as_f64().unwrap_or(f64::MAX);
             out.push(json!({ "run": name, "check": format!("tick p95 <= {P95_MS} ms"), "value": p95, "ok": p95 <= P95_MS }));
+            // The max is gated on main-thread CPU time: a shared runner's
+            // wall-clock spikes (the host taking the CPU) are reported, not
+            // gated (ADR-0042). Without a thread CPU clock it is reported only.
+            match w["cpu_ms"]["max"].as_f64() {
+                Some(max) => out.push(json!({ "run": name, "check": format!("tick CPU max <= {MAX_MS} ms"), "value": max, "ok": max <= MAX_MS })),
+                None => out.push(json!({ "run": name, "check": format!("tick wall max (not gated: no thread CPU clock)"), "value": w["tick_ms"]["max"], "ok": true })),
+            }
             let mem = w["peak_memory_mib"].as_f64().unwrap_or(f64::MAX);
             out.push(json!({ "run": name, "check": format!("accounted memory <= {} MiB", config.memory_mb), "value": mem, "ok": mem <= f64::from(config.memory_mb) }));
         }
-        out.push(json!({ "check": format!("tick max <= {MAX_MS} ms (best of 3 runs)"), "value": best_max, "runs": maxima, "ok": best_max <= MAX_MS }));
         out.push(json!({ "check": format!("peak RSS <= {RSS_MB} MB"), "value": rss, "ok": rss <= RSS_MB }));
         out.push(json!({ "check": "same state_hash cold and warm", "value": [cold["state_hash"], warm["state_hash"]], "ok": cold["state_hash"] == warm["state_hash"] }));
         out
@@ -415,9 +444,10 @@ fn main() -> ExitCode {
         "stream": config,
         "cold": cold,
         "warm": warm,
-        "third": third,
-        "tick_max_ms": maxima,
-        "apply_max_ms": [cold["walk"]["apply_max_ms"], warm["walk"]["apply_max_ms"], third["walk"]["apply_max_ms"]],
+        "wall_max_ms": [cold["walk"]["tick_ms"]["max"], warm["walk"]["tick_ms"]["max"]],
+        "wall_p99_ms": [cold["walk"]["tick_ms"]["p99"], warm["walk"]["tick_ms"]["p99"]],
+        "cpu_max_ms": [cold["walk"]["cpu_ms"]["max"], warm["walk"]["cpu_ms"]["max"]],
+        "apply_max_ms": [cold["walk"]["apply_max_ms"], warm["walk"]["apply_max_ms"]],
         "peak_rss_mb": rss,
         "budgets": budgets,
         "ok": ok,
@@ -437,7 +467,9 @@ fn main() -> ExitCode {
                 b["value"]
             );
         }
-        println!("tick max per run (ms): {}", report["tick_max_ms"]);
+        println!("wall max per run (ms, reported): {}", report["wall_max_ms"]);
+        println!("wall p99 per run (ms): {}", report["wall_p99_ms"]);
+        println!("CPU max per run (ms): {}", report["cpu_max_ms"]);
         println!("apply max per run (ms): {}", report["apply_max_ms"]);
     }
     if ok {
@@ -447,12 +479,17 @@ fn main() -> ExitCode {
     }
 }
 
-/// This thread's CPU time and run-queue wait in nanoseconds, on Linux;
-/// zeros elsewhere.
-fn schedstat() -> (u64, u64) {
-    let text = std::fs::read_to_string("/proc/thread-self/schedstat").unwrap_or_default();
-    let mut f = text.split_whitespace().map(|v| v.parse().unwrap_or(0u64));
-    (f.next().unwrap_or(0), f.next().unwrap_or(0))
+/// This thread's CPU time and run-queue wait in nanoseconds (Linux
+/// schedstat); `None` without it.
+fn schedstat() -> Option<(u64, u64)> {
+    let text = std::fs::read_to_string("/proc/thread-self/schedstat").ok()?;
+    let mut f = text.split_whitespace().map(|v| v.parse::<u64>().ok());
+    Some((f.next()??, f.next()??))
+}
+
+/// CPU milliseconds between two [`schedstat`] readings.
+fn cpu_between(a: Option<(u64, u64)>, b: Option<(u64, u64)>) -> Option<f64> {
+    a.zip(b).map(|(a, b)| (b.0 - a.0) as f64 / 1.0e6)
 }
 
 /// This thread's CPU time and the system's steal time, in clock ticks, on
