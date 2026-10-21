@@ -683,6 +683,35 @@ mod tests {
         assert_eq!(plain.render.shadows, SunShadows::default());
     }
 
+    /// Every field `re_types` writes for the post and shadow settings is a key
+    /// the config accepts: a new `Option` or skipped field there would
+    /// otherwise be refused as unknown.
+    #[test]
+    fn every_post_and_shadow_field_is_a_known_key() {
+        let post = PostSettings {
+            grading: Some(re_types::render::ColorGrading::default()),
+            ..PostSettings::default()
+        };
+        let mut render = toml::Table::new();
+        render.insert("post".into(), toml::Value::try_from(post).unwrap());
+        render.insert(
+            "shadows".into(),
+            toml::Value::try_from(SunShadows::default()).unwrap(),
+        );
+        let mut root = toml::Table::new();
+        root.insert("render".into(), toml::Value::Table(render));
+        let text = format!(
+            "[project]\nname = \"p\"\n\n{}",
+            toml::to_string(&root).unwrap()
+        );
+        for key in ["sun_rays", "bloom", "grading", "brightness", "split_lambda"] {
+            assert!(text.contains(key), "{key} missing from\n{text}");
+        }
+        let c = AppConfig::parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        assert_eq!(c.render.post, post);
+        assert_eq!(c.render.shadows, SunShadows::default());
+    }
+
     #[test]
     fn unknown_post_and_shadow_keys_are_located() {
         for (text, key, section, line) in [
