@@ -171,6 +171,7 @@ pub struct Editor {
     pub(crate) viewport_texture: Option<(egui::TextureId, [u32; 2])>,
     pub(crate) viewport_px: Option<[u32; 2]>,
     pub(crate) gizmo: Gizmo,
+    pub(crate) debug: crate::debugger::DebugPanel,
     pub(crate) dock: egui_dock::DockState<PanelId>,
     /// The project whose layout the dock shows, once it has been read.
     layout_root: Option<PathBuf>,
@@ -223,6 +224,7 @@ impl Editor {
             viewport_texture: None,
             viewport_px: None,
             gizmo: Gizmo::default(),
+            debug: Default::default(),
             dock: layout::default_dock(),
             layout_root: None,
             layout_saved: String::new(),
@@ -325,13 +327,26 @@ impl Editor {
         crate::gizmo::handle_point(app, rect, &self.gizmo.settings, id, handle)
     }
 
+    /// Shows `debugger` in the debugger panel (`None`: no debugger). The
+    /// panel sends it commands and reads its state; whoever runs the scripts
+    /// attaches their VMs to it.
+    pub fn set_debugger(&mut self, debugger: Option<re_script::debug::Debugger>) {
+        self.debug.debugger = debugger;
+    }
+
+    /// The debugger shown in the debugger panel.
+    pub fn debugger(&self) -> Option<&re_script::debug::Debugger> {
+        self.debug.debugger.as_ref()
+    }
+
     /// The dock's layout: which panel is where.
     pub fn dock(&self) -> &egui_dock::DockState<PanelId> {
         &self.dock
     }
 
     /// The dock's layout, to rearrange panels; the change is saved after the
-    /// next frame, as a drag in the dock is.
+    /// next frame, as a drag in the dock is. (The first frame reads the
+    /// project's layout, replacing changes made before it.)
     pub fn dock_mut(&mut self) -> &mut egui_dock::DockState<PanelId> {
         self.layout_dirty = true;
         &mut self.dock
