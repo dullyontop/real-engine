@@ -22,7 +22,9 @@ use std::sync::Arc;
 
 use glam::{Affine3A, Quat, Vec3};
 use re_core::{Diagnostic, Location};
+use re_scene::ecs::change_detection::Tick;
 use re_scene::ecs::query::{Or, With};
+use re_scene::ecs::world::WorldId;
 use re_scene::{
     BodyKind as SceneBodyKind, CharacterController, Collider, ColliderShape, Entity,
     GlobalTransform, RigidBody, Transform, Vehicle, VehicleKind as SceneVehicleKind, VehicleWheel,
@@ -165,6 +167,10 @@ struct Link {
     /// World pose before and after the last step, for interpolation.
     prev: (Vec3, Quat),
     cur: (Vec3, Quat),
+    /// The entity had a `RigidBody` (its removal changes no other component).
+    rigid_body: bool,
+    /// The shape comes from the [`ShapeLibrary`].
+    library: bool,
 }
 
 /// A vehicle on a linked body.
@@ -197,6 +203,9 @@ pub struct PhysicsSync {
     /// collider is reported once, not every step.
     reported: BTreeSet<(EntityId, [u8; 32])>,
     shapes_generation: u64,
+    /// The world and change tick of the last [`push`]: a static body none of
+    /// whose components changed since is not looked at again.
+    last_push: Option<(WorldId, Tick)>,
 }
 
 impl PhysicsSync {
@@ -605,22 +614,38 @@ pub fn push(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     // A shape library change may fix a missing source: report again if still broken.
-    if sync.shapes_generation != shapes.generation {
+    let shapes_changed = sync.shapes_generation != shapes.generation;
+    if shapes_changed {
         sync.shapes_generation = shapes.generation;
         sync.reported.clear();
     }
+    // Changes since the last push in this world (a copied sync state in a
+    // forked world looks at everything once).
+    let now = world.ecs.change_tick();
+    let since = sync
+        .last_push
+        .filter(|(w, _)| *w == world.ecs.id())
+        .map(|(_, t)| t);
     let mut candidates: Vec<Entity> = world
         .ecs
         .query_filtered::<Entity, Or<(With<CharacterController>, With<Collider>)>>()
         .iter(&world.ecs)
         .collect();
     candidates.sort_by_key(|e| e.to_bits());
-    let world = &*world;
+    let world_mut = world;
+    let world = &*world_mut;
 
     let mut seen: BTreeSet<EntityId> = BTreeSet::new();
     let mut added: BTreeSet<EntityId> = BTreeSet::new();
     for entity in candidates {
         let id = entity_id(entity);
+        if let Some(since) = since
+            && let Some(link) = sync.links.get(&id)
+            && unchanged_static(world, entity, link, since, now, shapes_changed)
+        {
+            seen.insert(id);
+            continue;
+        }
         let mut world_pose = decompose(&world_affine(world, entity));
         // A vehicle chassis takes its scale from the Transforms: the scale of the
         // rotated world matrix rounds differently as the chassis turns, which
@@ -645,6 +670,8 @@ pub fn push(
         let Some(w) = wanted else {
             continue;
         };
+        let library = matches!(w, Wanted::Body(_, Some(_)));
+        let rigid_body = world.ecs.get::<RigidBody>(entity).is_some();
         seen.insert(id);
         let (pos, rot, _) = world_pose;
         let fp = fingerprint(&w);
@@ -698,6 +725,8 @@ pub fn push(
                         parent,
                         prev: (pos, rot),
                         cur: (pos, rot),
+                        rigid_body,
+                        library,
                     },
                 );
             }
@@ -715,6 +744,40 @@ pub fn push(
         }
     }
     push_vehicles(world, sync, &added, cmds);
+    // Changes from here on carry a later tick than the one recorded.
+    sync.last_push = Some((world.ecs.id(), now));
+    world_mut.ecs.increment_change_tick();
+}
+
+/// True when `entity` is a static body whose `Transform`, `Collider` and
+/// `RigidBody` have not changed since `since`, under a parent that has not
+/// moved: [`push`] would find its fingerprint and pose as they were.
+fn unchanged_static(
+    world: &World,
+    entity: Entity,
+    link: &Link,
+    since: Tick,
+    now: Tick,
+    shapes_changed: bool,
+) -> bool {
+    if link.entity != entity
+        || link.kind != LinkKind::Body(BodyKind::Static)
+        || (shapes_changed && link.library)
+    {
+        return false;
+    }
+    let Ok(e) = world.ecs.get_entity(entity) else {
+        return false;
+    };
+    let changed = |ticks: Option<re_scene::ecs::change_detection::ComponentTicks>| {
+        ticks.is_some_and(|t| t.is_changed(since, now))
+    };
+    e.contains::<RigidBody>() == link.rigid_body
+        && !e.contains::<CharacterController>()
+        && !changed(e.get_change_ticks::<Collider>())
+        && !changed(e.get_change_ticks::<RigidBody>())
+        && !changed(e.get_change_ticks::<Transform>())
+        && parent_affine(world, entity) == link.parent
 }
 
 fn vehicle_kind(kind: SceneVehicleKind) -> VehicleKind {
@@ -1014,5 +1077,65 @@ mod tests {
             "{desc:?}"
         );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+}
+
+#[cfg(test)]
+mod skip_tests {
+    use super::*;
+
+    fn replaced(cmds: &[PhysicsCmd]) -> bool {
+        cmds.iter().any(|c| matches!(c, PhysicsCmd::AddBody { .. }))
+    }
+
+    /// A static body is skipped while nothing about it changes, and every
+    /// kind of change is still seen.
+    #[test]
+    fn unchanged_static_bodies_are_skipped_and_changes_still_seen() {
+        let mut world = World::new();
+        let shapes = ShapeLibrary::default();
+        let e = world
+            .ecs
+            .spawn((Transform::default(), Collider::default()))
+            .id();
+        let mut sync = PhysicsSync::new();
+        let mut diagnostics = Vec::new();
+        let mut push_once = |world: &mut World| {
+            let mut cmds = Vec::new();
+            push(world, &mut sync, &shapes, &mut cmds, &mut diagnostics);
+            cmds
+        };
+        assert!(replaced(&push_once(&mut world)));
+        assert!(push_once(&mut world).is_empty());
+        assert!(push_once(&mut world).is_empty());
+        // A collider edit.
+        world.ecs.get_mut::<Collider>(e).unwrap().half_extents = Vec3::ONE;
+        assert!(replaced(&push_once(&mut world)));
+        assert!(push_once(&mut world).is_empty());
+        // A move is a teleport.
+        world.ecs.get_mut::<Transform>(e).unwrap().translation = Vec3::X;
+        let moved = push_once(&mut world);
+        assert!(
+            matches!(moved.as_slice(), [PhysicsCmd::SetTransform { .. }]),
+            "{moved:?}"
+        );
+        // A static RigidBody added, then removed: friction and the rest
+        // come and go with it.
+        world.ecs.entity_mut(e).insert(RigidBody {
+            kind: SceneBodyKind::Static,
+            friction: 0.1,
+            ..RigidBody::default()
+        });
+        assert!(replaced(&push_once(&mut world)));
+        world.ecs.entity_mut(e).remove::<RigidBody>();
+        assert!(replaced(&push_once(&mut world)));
+        assert!(push_once(&mut world).is_empty());
+        // Disabled: the body goes.
+        world.ecs.get_mut::<Collider>(e).unwrap().enabled = false;
+        let gone = push_once(&mut world);
+        assert!(
+            matches!(gone.as_slice(), [PhysicsCmd::RemoveBody { .. }]),
+            "{gone:?}"
+        );
     }
 }
