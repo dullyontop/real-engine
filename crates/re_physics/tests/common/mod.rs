@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+pub mod humanoid;
+
 use re_core::TaskPool;
 use re_physics::{Physics, PhysicsConfig};
 use re_types::EntityId;

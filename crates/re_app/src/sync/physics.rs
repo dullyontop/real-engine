@@ -265,7 +265,7 @@ impl PhysicsSync {
 /// The world pose of `entity`: its parent's global transform times its local
 /// `Transform` (read now, not from the last propagation, so a script's write
 /// in this frame counts).
-fn world_affine(world: &World, entity: Entity) -> Affine3A {
+pub(crate) fn world_affine(world: &World, entity: Entity) -> Affine3A {
     let local = world
         .ecs
         .get::<Transform>(entity)

@@ -65,11 +65,14 @@ impl Physics {
             Some(entry) => {
                 entry.groups.intersects(filter.groups) && (filter.sensors || !entry.sensor)
             }
-            // A character's inner body stands for the character and takes its groups.
+            // A character's inner body stands for the character and a ragdoll part for
+            // the ragdoll; both take their owner's groups.
             None => self
                 .characters
                 .get(&id)
-                .is_some_and(|ch| ch.groups.intersects(filter.groups)),
+                .map(|ch| ch.groups)
+                .or_else(|| self.ragdolls.get(&id).map(|r| r.groups))
+                .is_some_and(|groups| groups.intersects(filter.groups)),
         };
         seen.then_some(id)
     }

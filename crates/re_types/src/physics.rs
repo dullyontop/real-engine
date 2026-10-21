@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::EntityId;
 
+mod ragdoll;
+pub use ragdoll::*;
+
 /// How a body moves.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BodyKind {
@@ -755,6 +758,54 @@ pub enum PhysicsCmd {
         /// The input.
         input: VehicleInput,
     },
+    /// Remove an entity's ragdoll and its parts.
+    RemoveRagdoll {
+        /// The entity.
+        id: EntityId,
+    },
+    /// Build a ragdoll for an entity (ADR-0040), animated, in `pose` (or the
+    /// skeleton's neutral pose). An entity has a ragdoll or a body, not both.
+    AddRagdoll {
+        /// The entity.
+        id: EntityId,
+        /// The ragdoll.
+        desc: RagdollDesc,
+        /// World position of the skeleton's model space.
+        pos: Vec3,
+        /// World rotation of the skeleton's model space.
+        rot: Quat,
+        /// The starting pose, one model-space transform per skeleton joint.
+        pose: Option<Vec<JointPose>>,
+    },
+    /// Set how a ragdoll moves. Switching from animated keeps the parts' velocities.
+    SetRagdollMode {
+        /// The entity.
+        id: EntityId,
+        /// The mode.
+        mode: RagdollMode,
+    },
+    /// Set the pose an animated or powered ragdoll drives to, from this step until
+    /// the next target.
+    SetRagdollTarget {
+        /// The entity.
+        id: EntityId,
+        /// World position of the skeleton's model space.
+        pos: Vec3,
+        /// World rotation of the skeleton's model space.
+        rot: Quat,
+        /// One model-space transform per skeleton joint.
+        pose: Vec<JointPose>,
+    },
+    /// Apply an impulse (N·s) to the part on a joint, or on its nearest ancestor
+    /// with a part.
+    ApplyRagdollImpulse {
+        /// The entity.
+        id: EntityId,
+        /// The skeleton joint, by name.
+        joint: String,
+        /// The impulse.
+        impulse: Vec3,
+    },
 }
 
 impl PhysicsCmd {
@@ -775,7 +826,12 @@ impl PhysicsCmd {
             | PhysicsCmd::RemoveConstraint { id }
             | PhysicsCmd::RemoveVehicle { id }
             | PhysicsCmd::AddVehicle { id, .. }
-            | PhysicsCmd::SetVehicleInput { id, .. } => *id,
+            | PhysicsCmd::SetVehicleInput { id, .. }
+            | PhysicsCmd::RemoveRagdoll { id }
+            | PhysicsCmd::AddRagdoll { id, .. }
+            | PhysicsCmd::SetRagdollMode { id, .. }
+            | PhysicsCmd::SetRagdollTarget { id, .. }
+            | PhysicsCmd::ApplyRagdollImpulse { id, .. } => *id,
         }
     }
 
@@ -784,7 +840,8 @@ impl PhysicsCmd {
     /// their bodies), shape changes, teleports, targets, velocities, impulses and
     /// character moves; then the vehicle commands (ADR-0040), ranked after every
     /// earlier kind so those ranks never change: removals, creations (after the
-    /// chassis body) and inputs.
+    /// chassis body) and inputs; then the ragdoll commands (ADR-0040): removals,
+    /// creations, modes, targets and impulses.
     pub fn kind_rank(&self) -> u8 {
         match self {
             PhysicsCmd::RemoveConstraint { .. } => 0,
@@ -802,6 +859,11 @@ impl PhysicsCmd {
             PhysicsCmd::RemoveVehicle { .. } => 12,
             PhysicsCmd::AddVehicle { .. } => 13,
             PhysicsCmd::SetVehicleInput { .. } => 14,
+            PhysicsCmd::RemoveRagdoll { .. } => 15,
+            PhysicsCmd::AddRagdoll { .. } => 16,
+            PhysicsCmd::SetRagdollMode { .. } => 17,
+            PhysicsCmd::SetRagdollTarget { .. } => 18,
+            PhysicsCmd::ApplyRagdollImpulse { .. } => 19,
         }
     }
 

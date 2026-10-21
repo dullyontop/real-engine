@@ -16,7 +16,9 @@ use re_scene::{StreamCell, World};
 use re_types::audio::{AudioCmd, BusLevel};
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::input::ActionFrame;
-use re_types::physics::{CharacterState, GroupMask, RayHit, VehicleInput, VehicleState};
+use re_types::physics::{
+    CharacterState, GroupMask, RagdollMode, RagdollState, RayHit, VehicleInput, VehicleState,
+};
 use re_types::{EntityId, glam::Vec3};
 use serde_json::Value as Json;
 
@@ -160,6 +162,15 @@ impl HostServices for NoServices {
     }
     fn vehicle_state(&self, _: EntityId) -> HostResult<VehicleState> {
         Self::unavailable("physics.vehicle")
+    }
+    fn ragdoll_mode(&mut self, _: EntityId, _: RagdollMode) -> HostResult<()> {
+        Self::unavailable("physics.ragdoll")
+    }
+    fn ragdoll_state(&self, _: EntityId) -> HostResult<RagdollState> {
+        Self::unavailable("physics.ragdoll_state")
+    }
+    fn ragdoll_impulse(&mut self, _: EntityId, _: &str, _: Vec3) -> HostResult<()> {
+        Self::unavailable("physics.ragdoll_impulse")
     }
     fn play_sound(&mut self, _: &str, _: Option<Vec3>, _: f32) -> HostResult<()> {
         Self::unavailable("audio.play")

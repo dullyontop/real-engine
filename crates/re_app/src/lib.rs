@@ -197,6 +197,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE0528.md"),
     },
     DiagInfo {
+        code: codes::RAGDOLL_UNAVAILABLE,
+        title: "Ragdoll unavailable",
+        page: include_str!("../explain/RE0529.md"),
+    },
+    DiagInfo {
         code: codes::PACKAGE_UNREADABLE,
         title: "Unreadable game archive",
         page: include_str!("../explain/RE0600.md"),
