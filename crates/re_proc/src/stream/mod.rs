@@ -25,11 +25,13 @@
 //! overrides survive unloading. Authored `Streamed` roots are stashed with
 //! their cell and come back exactly.
 
+mod collision;
 mod config;
 mod manager;
 mod source;
 mod terrain;
 
+pub use collision::collider_precision;
 pub use config::StreamConfig;
 pub use manager::{
     ENTITY_BYTES, Focus, Lateness, SHAPE_BYTES, StepReport, StreamEvents, Streamer, cell_at,

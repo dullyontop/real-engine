@@ -362,6 +362,14 @@ fn all_shapes() -> Vec<ShapeDesc> {
             samples: vec![0.0, 1.0, 2.0, 3.0],
             spacing: 1.5,
             offset: Vec3::new(-1.0, 0.0, -1.0),
+            precision: None,
+        },
+        ShapeDesc::Heightfield {
+            n: 2,
+            samples: vec![0.0, 1.0, 2.0, 3.0],
+            spacing: 1.5,
+            offset: Vec3::ZERO,
+            precision: Some(HeightfieldPrecision::FINE),
         },
     ]
 }
@@ -556,7 +564,21 @@ fn malformed_shapes_are_detected() {
             n: 3,
             samples: vec![0.0; 8],
             spacing: 1.0,
-            offset: Vec3::ZERO
+            offset: Vec3::ZERO,
+            precision: None,
+        }
+        .is_well_formed()
+    );
+    assert!(
+        !ShapeDesc::Heightfield {
+            n: 2,
+            samples: vec![0.0; 4],
+            spacing: 1.0,
+            offset: Vec3::ZERO,
+            precision: Some(HeightfieldPrecision {
+                bits_per_sample: 17,
+                block_size: 4,
+            }),
         }
         .is_well_formed()
     );

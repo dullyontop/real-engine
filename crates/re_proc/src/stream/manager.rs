@@ -175,6 +175,8 @@ pub struct Streamer {
     /// True while the terrain view is kept up to date.
     view: bool,
     terrain: super::terrain::TerrainState,
+    /// Terrain collision chunks (simulation state).
+    collision: super::collision::CollisionState,
 }
 
 impl Streamer {
@@ -195,6 +197,7 @@ impl Streamer {
             described: source::DescribeCache::new(),
             view: false,
             terrain: Default::default(),
+            collision: Default::default(),
         })
     }
 
@@ -233,7 +236,7 @@ impl Streamer {
 
     /// Generation jobs in flight.
     pub fn in_flight(&self) -> usize {
-        self.jobs.len() + self.terrain.in_flight()
+        self.jobs.len() + self.terrain.in_flight() + self.collision.in_flight()
     }
 
     /// The settings.
@@ -244,7 +247,11 @@ impl Streamer {
     /// True when nothing is loaded, requested or pinned: a world without
     /// streamed sources can skip [`step`] while this holds.
     pub fn is_idle(&self) -> bool {
-        self.loaded.is_empty() && self.pending.is_empty() && self.pinned.is_empty()
+        self.loaded.is_empty()
+            && self.pending.is_empty()
+            && self.pinned.is_empty()
+            && self.collision.len() == 0
+            && self.collision.pending() == 0
     }
 
     /// The loaded cells, in key order.
@@ -264,7 +271,7 @@ impl Streamer {
 
     /// Accounted streamed bytes.
     pub fn memory_bytes(&self) -> u64 {
-        self.loaded.values().map(|l| l.bytes).sum()
+        self.loaded.values().map(|l| l.bytes).sum::<u64>() + self.collision.bytes()
     }
 
     /// The current load radius (smaller than `radius` under memory pressure).
@@ -302,6 +309,7 @@ impl Streamer {
             described: source::DescribeCache::new(),
             view: self.view,
             terrain: Default::default(),
+            collision: self.collision.clone(),
         }
     }
 
@@ -783,6 +791,22 @@ impl Streamer {
             }
             done += self.load(world, &sources, &k, c, outputs, &mut report, &mut events);
         }
+        // Terrain collision chunks near the focuses.
+        {
+            let at: Vec<Vec2> = focuses.iter().map(|f| f.position).collect();
+            let pool = self.pool.clone();
+            let pool = pool.as_deref().unwrap_or_else(|| TaskPool::global());
+            self.collision.step(
+                world,
+                &sources,
+                &at,
+                tick,
+                &self.config,
+                self.lateness,
+                pool,
+                &mut report,
+            );
+        }
         report.apply_time = apply_start.elapsed();
         // Start jobs for the next requests, nearest apply tick first.
         self.issue_next(world, &sources, &focuses);
@@ -803,7 +827,7 @@ impl Streamer {
         report.resident = self.loaded.len();
         report.memory_bytes = self.memory_bytes();
         report.pending = self.pending.len();
-        report.in_flight = self.jobs.len();
+        report.in_flight = self.jobs.len() + self.collision.in_flight();
         world.ecs.insert_resource(events);
         report
     }

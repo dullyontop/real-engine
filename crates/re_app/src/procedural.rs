@@ -333,6 +333,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
             samples,
             spacing,
             offset,
+            precision,
         }) = shape
         else {
             failed.insert(name);
@@ -346,6 +347,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
                 spacing,
                 offset,
                 samples,
+                precision,
             }),
         );
     }
@@ -366,8 +368,10 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
                         samples,
                         spacing,
                         offset,
+                        ..
                     } = h.to_shape()
                 {
+                    let precision = re_proc::stream::collider_precision(&name);
                     shapes.insert_heightfield(
                         name,
                         std::sync::Arc::new(HeightfieldData {
@@ -375,6 +379,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
                             spacing,
                             offset,
                             samples,
+                            precision,
                         }),
                     );
                 }
@@ -459,6 +464,7 @@ pub fn ground_span(world: &mut World) -> Option<(f32, f32)> {
             samples,
             spacing,
             offset,
+            ..
         } = h.to_shape()
         else {
             continue;

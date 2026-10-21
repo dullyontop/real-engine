@@ -88,7 +88,8 @@ pub use procedural::{
 };
 pub use scene::{EntityDoc, GeneratedDoc, SaveOptions, SceneDoc, Snapshot};
 pub use stream::{
-    LoadedCell, Stash, StashedRoot, StreamCell, StreamFocus, Streamed, cell_key, parse_cell_key,
+    LoadedCell, Stash, StashedRoot, StreamCell, StreamFocus, Streamed, TerrainChunk, cell_key,
+    chunk_key, parse_cell_key, parse_chunk_key,
 };
 pub use tags::{TagChanged, TagFeed, TagIndex, Tags};
 pub use world::World;

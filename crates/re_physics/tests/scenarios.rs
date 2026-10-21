@@ -73,6 +73,7 @@ fn terrain() -> (Vec<f32>, ShapeDesc) {
         samples: samples.clone(),
         spacing: HF_SPACING,
         offset: Vec3::ZERO,
+        precision: None,
     };
     (samples, shape)
 }
@@ -240,6 +241,45 @@ fn heightfield_matches_samples() {
     }
     assert_eq!(rays, 121);
     assert!(worst < 0.02, "heightfield ray error {worst} m");
+}
+
+/// With 16 bits per sample in blocks of 4 (`HeightfieldPrecision::FINE`, what
+/// world streaming's collision chunks use), rays land on the samples within a
+/// millimetre, far closer than the default 8 bits.
+#[test]
+fn fine_heightfield_matches_samples_closely() {
+    let mut p = world(1);
+    let (samples, hf) = terrain();
+    let ShapeDesc::Heightfield {
+        n, spacing, offset, ..
+    } = hf
+    else {
+        unreachable!()
+    };
+    let fine = ShapeDesc::Heightfield {
+        n,
+        samples: samples.clone(),
+        spacing,
+        offset,
+        precision: Some(re_types::physics::HeightfieldPrecision::FINE),
+    };
+    apply(
+        &mut p,
+        vec![add(1, body(BodyKind::Static, fine, Vec3::ZERO))],
+    );
+    let mut worst = 0f32;
+    for zi in 0..HF_N {
+        for xi in 0..HF_N {
+            let want = samples[(zi * HF_N + xi) as usize];
+            let at = Vec3::new(xi as f32 * HF_SPACING, 50.0, zi as f32 * HF_SPACING);
+            let hit = p
+                .raycast(at, Vec3::NEG_Y, 100.0, &QueryFilter::default())
+                .unwrap()
+                .unwrap_or_else(|| panic!("ray at {at} missed"));
+            worst = worst.max((hit.point.y - want).abs());
+        }
+    }
+    assert!(worst < 0.001, "fine heightfield ray error {worst} m");
 }
 
 /// Ray casts and shape casts hit the right entity at the right place; group masks,

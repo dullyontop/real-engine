@@ -1,6 +1,7 @@
 //! Streaming tests (ADR-0042). Names start with `stream` where the module
 //! path does not already say it, so `cargo test -p re_proc stream` runs them.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -897,4 +898,159 @@ fn stream_terrain_follows_the_focus_without_drawing_ground_twice() {
     move_to(w, -200.0, -200.0);
     settle_view(w, t);
     assert_eq!(fine_at(w), [(-1, -1), (-1, 0), (0, -1), (0, 0)]);
+}
+
+fn collision_config() -> StreamConfig {
+    StreamConfig {
+        physics_radius: 100.0,
+        apply_chunks: 1,
+        ..config()
+    }
+}
+
+/// The collision chunks of `terrain`: key and heightfield, in key order.
+fn collision_chunks(w: &World) -> Vec<(String, Arc<re_geom::Heightfield>)> {
+    let terrain = w.entity("terrain").unwrap();
+    let store = w.ecs.resource::<GraphStore>();
+    w.terrain_chunks(terrain)
+        .into_iter()
+        .map(|k| {
+            let e = w.terrain_chunk(terrain, &k).unwrap();
+            let c = w.ecs.get::<re_scene::Collider>(e).unwrap();
+            assert_eq!(c.shape, re_scene::ColliderShape::Heightfield);
+            assert!(collider_precision(&c.source).is_some(), "{}", c.source);
+            let h = store
+                .heightfield(&c.source)
+                .expect("the heightfield is stored");
+            (k, h)
+        })
+        .collect()
+}
+
+fn collider_names(w: &World) -> Vec<String> {
+    let terrain = w.entity("terrain").unwrap();
+    w.terrain_chunks(terrain)
+        .iter()
+        .map(|k| {
+            let e = w.terrain_chunk(terrain, k).unwrap();
+            w.ecs.get::<re_scene::Collider>(e).unwrap().source.clone()
+        })
+        .collect()
+}
+
+#[test]
+fn stream_terrain_collision_chunks_apply_at_their_tick_within_the_budget() {
+    let mut st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    let w = &mut st.world;
+    let cfg = collision_config();
+    let mut counts = Vec::new();
+    for t in 0..8u64 {
+        let r = step(w, t, &cfg);
+        assert!(r.diagnostics.is_empty(), "tick {t}: {:#?}", r.diagnostics);
+        w.update();
+        counts.push(collision_chunks(w).len());
+    }
+    // Requested at tick 0 (four 256 m chunks touch a focus at the origin),
+    // applied from tick 3, one per tick.
+    assert_eq!(counts, [0, 0, 0, 1, 2, 3, 4, 4]);
+    let keys: Vec<String> = collision_chunks(w).into_iter().map(|c| c.0).collect();
+    assert_eq!(keys, ["t/-1_-1", "t/-1_0", "t/0_-1", "t/0_0"]);
+    let names = collider_names(w);
+    // Far away, they go (one per tick) once past the margin.
+    move_to(w, 1200.0, 1200.0);
+    for t in 8..14u64 {
+        step(w, t, &cfg);
+        w.update();
+    }
+    assert!(collision_chunks(w).is_empty());
+    let store = w.ecs.resource::<GraphStore>();
+    assert!(names.iter().all(|n| store.heightfield(n).is_none()));
+}
+
+#[test]
+fn stream_terrain_collision_chunks_share_their_edges() {
+    let mut st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    let w = &mut st.world;
+    for t in 0..10u64 {
+        step(w, t, &collision_config());
+        w.update();
+    }
+    let chunks: BTreeMap<String, Arc<re_geom::Heightfield>> =
+        collision_chunks(w).into_iter().collect();
+    let n = 65usize;
+    let (a, b) = (&chunks["t/-1_0"], &chunks["t/0_0"]);
+    assert_eq!(a.n, 65);
+    assert_eq!(a.offset, Vec3::new(-256.0, 0.0, 0.0));
+    for z in 0..n {
+        // a's last column is b's first, bit for bit.
+        assert_eq!(
+            a.samples[z * n + n - 1].to_bits(),
+            b.samples[z * n].to_bits(),
+            "row {z}"
+        );
+    }
+    let c = &chunks["t/0_-1"];
+    for x in 0..n {
+        assert_eq!(c.samples[(n - 1) * n + x].to_bits(), b.samples[x].to_bits());
+    }
+}
+
+#[test]
+fn stream_terrain_collision_chunks_are_deterministic_and_regenerate_on_change() {
+    let walk = || {
+        let mut st = streamed(chunked_graph(), -300.0, -300.0, json!([]));
+        let w = &mut st.world;
+        let mut log = Vec::new();
+        for t in 0..60u64 {
+            let p = -300.0 + t as f32 * 10.0;
+            move_to(w, p, p);
+            step(w, t, &collision_config());
+            w.update();
+            log.push(
+                collision_chunks(w)
+                    .into_iter()
+                    .map(|c| c.0)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        (log, w.state_hash())
+    };
+    let (a, ha) = walk();
+    let (b, hb) = walk();
+    assert_eq!(a, b);
+    assert_eq!(ha, hb);
+    assert!(a.iter().any(|l| l.is_empty()) && a.iter().any(|l| !l.is_empty()));
+
+    // A new seed gives new heights at a deterministic tick, and the old
+    // heightfields are released.
+    let mut st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    let w = &mut st.world;
+    for t in 0..10u64 {
+        step(w, t, &collision_config());
+        w.update();
+    }
+    let before = collision_chunks(w);
+    let old = collider_names(w);
+    w.set("terrain", "Procedural", "seed", Value::Int(8))
+        .unwrap();
+    for t in 10..20u64 {
+        step(w, t, &collision_config());
+        w.update();
+    }
+    let after = collision_chunks(w);
+    assert_eq!(before.len(), after.len());
+    assert_ne!(before[0].1.samples, after[0].1.samples);
+    let store = w.ecs.resource::<GraphStore>();
+    for n in &old {
+        assert!(store.heightfield(n).is_none(), "{n} is kept");
+    }
+}
+
+#[test]
+fn stream_terrain_collision_precision_is_only_for_chunks() {
+    assert_eq!(
+        collider_precision("derived:terrain-collider/terrain/0_0/0123456789abcdef"),
+        Some(re_types::physics::HeightfieldPrecision::FINE)
+    );
+    assert_eq!(collider_precision("derived:0123"), None);
 }
