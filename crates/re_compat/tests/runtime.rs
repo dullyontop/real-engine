@@ -1305,4 +1305,43 @@ print("cancelled", made())
         no_errors(&h);
         assert_eq!(out(&mut h, Side::Server), ["new"]);
     }
+
+    /// Scripts and modules register their chunks with the debugger under
+    /// their source path (ADR-0045), and a restart swaps the old chunk for
+    /// the new one, so breakpoints keep working after a reload.
+    #[test]
+    fn breakpoints_reach_scripts_and_survive_a_reload() {
+        use re_script::debug::{self, Debugger};
+        let mut p = Project::new();
+        let sss = p.service("ServerScriptService");
+        let source = |step: u32| {
+            format!(
+                "local n = 0\ngame:GetService(\"RunService\").Heartbeat:Connect(function()\n    n += {step}\nend)\n"
+            )
+        };
+        p.script("Script", "Counter", sss, None, &source(1));
+        let path = p.last_path("Counter");
+        let dir = p.dir.path().to_path_buf();
+        let (mut h, _dir) = p.open();
+        let debugger = Debugger::new();
+        let lua = h.vm(Side::Server).context().lua().clone();
+        debugger.attach(&lua, "server", None).unwrap();
+        h.start();
+        debugger.set_breakpoints(&path, &[3]);
+        debug::service(&lua);
+        h.step(2);
+        let stop = debugger.last_unpaused().expect("a recorded stop");
+        let top = stop.top().unwrap();
+        assert_eq!(
+            (top.source.as_deref(), top.line),
+            (Some(path.as_str()), Some(3))
+        );
+
+        std::fs::write(dir.join(&path), source(2)).unwrap();
+        assert!(h.reload(std::slice::from_ref(&path)).is_empty());
+        debug::service(&lua);
+        h.step(2);
+        let stop = debugger.last_unpaused().expect("a stop after the reload");
+        assert_eq!(stop.top().unwrap().line, Some(3));
+    }
 }
