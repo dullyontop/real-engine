@@ -262,6 +262,7 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
         }
         position = (position + per_tick).min(END);
         let before = os_ticks();
+        let sched0 = schedstat();
         let t0 = Instant::now();
         w.set(
             "walker",
@@ -272,8 +273,10 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
         .expect("the walker moves");
         let r = step(w, tick, &config);
         let step_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let sched1 = schedstat();
         w.update();
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let sched2 = schedstat();
         times.push(ms);
         if slowest.len() < 5 || ms > slowest[4]["ms"].as_f64().unwrap_or(0.0) {
             let after = os_ticks();
@@ -283,6 +286,12 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
                 // far longer than its CPU time was descheduled, not working.
                 "thread_cpu_ticks": after.0.saturating_sub(before.0),
                 "steal_ticks": after.1.saturating_sub(before.1),
+                // In ms (Linux schedstat): this thread's CPU time in the
+                // step and in the world update, and its time waiting for a
+                // CPU in the run queue.
+                "step_cpu_ms": (sched1.0 - sched0.0) as f64 / 1.0e6,
+                "update_cpu_ms": (sched2.0 - sched1.0) as f64 / 1.0e6,
+                "runqueue_ms": (sched2.1 - sched0.1) as f64 / 1.0e6,
                 "tick": tick,
                 "ms": ms,
                 "step_ms": step_ms,
@@ -420,6 +429,14 @@ fn main() -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// This thread's CPU time and run-queue wait in nanoseconds, on Linux;
+/// zeros elsewhere.
+fn schedstat() -> (u64, u64) {
+    let text = std::fs::read_to_string("/proc/thread-self/schedstat").unwrap_or_default();
+    let mut f = text.split_whitespace().map(|v| v.parse().unwrap_or(0u64));
+    (f.next().unwrap_or(0), f.next().unwrap_or(0))
 }
 
 /// This thread's CPU time and the system's steal time, in clock ticks, on
