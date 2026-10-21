@@ -138,6 +138,9 @@ pub(crate) struct Scheduler {
     pub(crate) now: f64,
     pub(crate) frame_dt: f64,
     pub(crate) frame: u64,
+    /// True while a fixed step's callbacks and threads run, where nothing that
+    /// varies between runs (such as live audio levels) may be read.
+    pub(crate) in_step: bool,
     pub(crate) budget: Duration,
     seq: u64,
     heap: BinaryHeap<Reverse<(WakeTime, u64)>>,
@@ -217,6 +220,7 @@ impl Scheduler {
             now: 0.0,
             frame_dt: 0.0,
             frame: 0,
+            in_step: false,
             budget,
             seq: 0,
             heap: BinaryHeap::new(),

@@ -52,6 +52,8 @@ pub struct Host<'a> {
     pub audio_cmds: &'a mut Vec<AudioCmd>,
     /// Every mixer bus's level over the last frame.
     pub bus_levels: &'a [BusLevel],
+    /// The mixer graph the audio commands are checked against.
+    pub audio_graph: &'a re_types::AudioGraphDesc,
     /// End-of-frame requests.
     pub pending: &'a mut Pending,
 }
@@ -204,6 +206,23 @@ impl HostServices for Host<'_> {
                 Err(invalid(format!("seconds {seconds} must be 0 or more")))
             }
         };
+        let graph = self.audio_graph;
+        let bus_only = |bus: &str| {
+            named(bus, "bus")?;
+            if graph.buses.contains_key(bus) {
+                Ok(())
+            } else {
+                Err(no_such(format!("the mixer has no bus `{bus}`")))
+            }
+        };
+        let bus_or_send = |bus: &str| {
+            named(bus, "bus")?;
+            if graph.buses.contains_key(bus) || graph.sends.contains_key(bus) {
+                Ok(())
+            } else {
+                Err(no_such(format!("the mixer has no bus or send `{bus}`")))
+            }
+        };
         match &cmd {
             AudioCmd::PlayOneShotOnBus {
                 clip,
@@ -211,7 +230,7 @@ impl HostServices for Host<'_> {
                 volume,
                 bus,
             } => {
-                named(bus, "bus")?;
+                bus_only(bus)?;
                 // The same checks as an unrouted one-shot.
                 return self.play_sound(clip, *position, *volume).map(|()| {
                     if let Some(last) = self.audio_cmds.last_mut() {
@@ -224,7 +243,7 @@ impl HostServices for Host<'_> {
                 volume_db,
                 seconds,
             } => {
-                named(bus, "bus")?;
+                bus_or_send(bus)?;
                 if !volume_db.is_finite() {
                     return Err(invalid(format!("volume {volume_db} dB is not finite")));
                 }
@@ -232,12 +251,24 @@ impl HostServices for Host<'_> {
             }
             AudioCmd::SetEffectParam {
                 bus,
+                effect,
                 param,
                 value,
                 seconds,
-                ..
             } => {
-                named(bus, "bus")?;
+                bus_or_send(bus)?;
+                let effects = graph
+                    .buses
+                    .get(bus)
+                    .map(|b| b.effects.len())
+                    .or_else(|| graph.sends.get(bus).map(|s| s.effects.len()))
+                    .unwrap_or(0);
+                if *effect as usize >= effects {
+                    return Err(no_such(format!(
+                        "`{bus}` has {effects} effects, so there is no effect {}",
+                        u64::from(*effect) + 1
+                    )));
+                }
                 named(param, "parameter")?;
                 if let re_types::EffectParam::Number(v) = value
                     && !v.is_finite()
@@ -248,6 +279,9 @@ impl HostServices for Host<'_> {
             }
             AudioCmd::ApplySnapshot { name, seconds } => {
                 named(name, "snapshot")?;
+                if name != re_audio::DEFAULT_SNAPSHOT && !graph.snapshots.contains_key(name) {
+                    return Err(no_such(format!("the mixer has no snapshot `{name}`")));
+                }
                 tween(*seconds)?;
             }
             other => {

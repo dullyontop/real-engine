@@ -808,6 +808,7 @@ impl App {
             physics_cmds: &mut self.physics_cmds,
             audio_cmds: &mut self.audio_cmds,
             bus_levels: &self.bus_levels,
+            audio_graph: self.audio.graph(),
             pending: &mut self.pending,
         }
     }
@@ -1758,6 +1759,7 @@ impl App {
                 physics_cmds: &mut self.physics_cmds,
                 audio_cmds: &mut self.audio_cmds,
                 bus_levels: &self.bus_levels,
+                audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
             },
         };
@@ -2003,6 +2005,7 @@ impl App {
                 physics_cmds: &mut self.physics_cmds,
                 audio_cmds: &mut self.audio_cmds,
                 bus_levels: &self.bus_levels,
+                audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
             },
         };

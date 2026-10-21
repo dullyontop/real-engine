@@ -382,27 +382,43 @@ fn audio_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         "set_effect",
         "(bus: string, index: number, params: { [string]: number | string }, seconds: number?) -> ()",
         "Tweens parameters of a bus's effect over `seconds` (at once by default). `index` is the effect's place in the bus's `effects` list in real.toml, 1 for the first; `params` are its fields, such as `{ cutoff_hz = 600 }` or `{ mode = \"high_pass\" }`.",
-        |lua, (bus, index, params, seconds): (String, i64, Table, Option<f32>)| {
-            let effect = u32::try_from(index - 1).map_err(|_| {
-                mlua::Error::runtime(format!(
-                    "audio.set_effect: index {index} is not 1 or more"
-                ))
-            })?;
+        |lua, (bus, index, params, seconds): (String, f64, Table, Option<f32>)| {
+            if !(index.fract() == 0.0 && (1.0..=f64::from(u32::MAX)).contains(&index)) {
+                return Err(super::error(
+                    codes::BAD_ARGUMENT,
+                    format!("audio.set_effect: index {index} is not a whole number from 1"),
+                ));
+            }
+            let effect = index as u32 - 1;
             let mut values: Vec<(String, EffectParam)> = Vec::new();
             for pair in params.pairs::<String, Value>() {
                 let (param, value) = pair?;
-                let value = match value {
-                    Value::Integer(i) => EffectParam::Number(i as f32),
-                    Value::Number(n) => EffectParam::Number(n as f32),
-                    Value::String(s) => EffectParam::Choice(s.to_str()?.to_string()),
+                let number = match value {
+                    Value::Integer(i) => Some(crate::lua_int(i) as f32),
+                    Value::Number(n) => Some(n as f32),
+                    Value::String(s) => {
+                        values.push((param, EffectParam::Choice(s.to_str()?.to_string())));
+                        continue;
+                    }
                     other => {
-                        return Err(mlua::Error::runtime(format!(
-                            "audio.set_effect: `{param}` must be a number or a string, not {}",
-                            other.type_name()
-                        )));
+                        return Err(super::error(
+                            codes::BAD_ARGUMENT,
+                            format!(
+                                "audio.set_effect: `{param}` must be a number or a string, not {}",
+                                other.type_name()
+                            ),
+                        ));
                     }
                 };
-                values.push((param, value));
+                let n = number.unwrap_or(f32::NAN);
+                // Every value is checked before any command is sent.
+                if !n.is_finite() {
+                    return Err(super::error(
+                        codes::BAD_ARGUMENT,
+                        format!("audio.set_effect: `{param}` is {n}, which is not finite"),
+                    ));
+                }
+                values.push((param, EffectParam::Number(n)));
             }
             // Table order is not defined; the commands go in name order.
             values.sort_by(|a, b| a.0.cmp(&b.0));
@@ -440,8 +456,14 @@ fn audio_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         lua,
         "levels",
         "(bus: string) -> { peak_db: number, rms_db: number }",
-        "A mixer bus's (or send's) output over the last frame, after its effects and volume, in decibels (-60 is silence).",
+        "A mixer bus's (or send's) output over the last frame, after its effects and volume, in decibels (-60 is silence). It measures live audio, so it is frame-only: calling it during a fixed step (`time.on_step`, `time.on_post_step`, or a thread resumed there) is an error, because the simulation would no longer replay.",
         |lua, bus: String| {
+            if scheduler::with(lua, |s| s.in_step)? {
+                return Err(super::error(
+                    codes::SERVICE_UNAVAILABLE,
+                    "audio.levels is not available during a fixed step: it reads live audio, which a replay cannot reproduce; call it from time.on_frame",
+                ));
+            }
             let level = with_host(lua, |h| h.services().audio_level(&bus).map_err(host_err))?;
             let t = lua.create_table()?;
             t.raw_set("peak_db", level.peak_db)?;

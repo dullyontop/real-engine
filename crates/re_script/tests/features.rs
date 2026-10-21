@@ -974,16 +974,43 @@ fn audio_mixer_functions_send_mixer_commands() {
     assert_eq!(rig.services.sounds, ["assets/sfx/ui.wav"]);
     assert_eq!(rig.services.mix.len(), 5);
 
-    let d = rig.exec_err("audio.set_effect('sfx', 0, { mix = 1 })");
-    assert!(
-        d.message.contains("index 0 is not 1 or more"),
-        "{}",
-        d.message
-    );
+    for index in ["0", "1.5", "-1", "2^33", "0/0"] {
+        let d = rig.exec_err(&format!("audio.set_effect('sfx', {index}, {{ mix = 1 }})"));
+        assert_eq!(d.code, codes::BAD_ARGUMENT, "{index}");
+        assert!(
+            d.message.contains("is not a whole number from 1"),
+            "{}",
+            d.message
+        );
+    }
     let d = rig.exec_err("audio.set_effect('sfx', 1, { mix = true })");
+    assert_eq!(d.code, codes::BAD_ARGUMENT);
     assert!(d.message.contains("number or a string"), "{}", d.message);
+    // One bad value sends none of the others.
+    let d = rig.exec_err("audio.set_effect('sfx', 1, { a = 1, b = math.huge, c = 2 })");
+    assert_eq!(d.code, codes::BAD_ARGUMENT);
+    assert!(d.message.contains("not finite"), "{}", d.message);
+    assert_eq!(rig.services.mix.len(), 5);
     let d = rig.exec_err("return audio.levels('nowhere')");
     assert_eq!(d.code, codes::SERVICE_UNAVAILABLE);
+}
+
+#[test]
+fn audio_levels_are_frame_only() {
+    let mut rig = Rig::new();
+    rig.exec(
+        r#"
+        time.on_frame(function() print("frame", audio.levels("sfx").peak_db) end)
+        time.on_step(function()
+            local ok, err = pcall(audio.levels, "sfx")
+            print("step", ok, string.find(tostring(err), "fixed step") ~= nil)
+        end)
+        "#,
+    )
+    .unwrap();
+    let d = rig.step(1.0 / 60.0);
+    assert!(d.is_empty(), "{d:#?}");
+    assert_eq!(rig.output(), ["frame\t-6", "step\tfalse\ttrue"]);
 }
 
 #[test]

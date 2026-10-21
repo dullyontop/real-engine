@@ -18,11 +18,14 @@ const SCENE: &str = r#"{
 }
 "#;
 
-const MIX: &str = r#"time.on_step(function()
+const MIX: &str = r#"time.on_frame(function()
 	audio.set_bus_volume("music", -6, 0.5)
 	local l = audio.levels("footsteps")
 	print(`levels {l.peak_db} {l.rms_db}`)
 	print(`missing {pcall(audio.levels, "nowhere")}`)
+	-- Checked against the project graph: sfx has one effect and no snapshots.
+	print(`effect {pcall(audio.set_effect, "sfx", 1, { ratio = 4 })} {pcall(audio.set_effect, "sfx", 2, { mix = 1 })}`)
+	print(`bus {pcall(audio.set_bus_volume, "musik", 0)} snapshot {pcall(audio.snapshot, "default")} {pcall(audio.snapshot, "underwater")}`)
 end)
 "#;
 
@@ -97,7 +100,12 @@ fn the_project_graph_is_built_and_a_source_plays_on_its_bus() {
     // Nothing renders headless between frames, so the bus is silent.
     assert_eq!(
         report.output,
-        ["[game] levels -60 -60", "[game] missing false"],
+        [
+            "[game] levels -60 -60",
+            "[game] missing false",
+            "[game] effect true false",
+            "[game] bus false snapshot true false",
+        ],
         "{:?}",
         report.output
     );

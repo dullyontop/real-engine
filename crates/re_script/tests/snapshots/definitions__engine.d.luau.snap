@@ -177,7 +177,7 @@ declare audio: {
     set_effect: (bus: string, index: number, params: { [string]: number | string }, seconds: number?) -> (),
     -- Tweens the mixer to a snapshot from real.toml [audio.snapshots] over `seconds` (at once by default); `"default"` returns to the graph's own values.
     snapshot: (name: string, seconds: number?) -> (),
-    -- A mixer bus's (or send's) output over the last frame, after its effects and volume, in decibels (-60 is silence).
+    -- A mixer bus's (or send's) output over the last frame, after its effects and volume, in decibels (-60 is silence). It measures live audio, so it is frame-only: calling it during a fixed step (`time.on_step`, `time.on_post_step`, or a thread resumed there) is an error, because the simulation would no longer replay.
     levels: (bus: string) -> { peak_db: number, rms_db: number },
 }
 
