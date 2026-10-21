@@ -177,6 +177,7 @@ fn stream_windows_agree_on_shared_samples() {
         let opts = EvalOptions {
             seed: Some(7),
             root: Some(fixtures()),
+            files: None,
             deadline: None,
             domain: Some(Domain {
                 origin,
