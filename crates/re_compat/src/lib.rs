@@ -191,6 +191,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE9454.md"),
     },
     DiagInfo {
+        code: codes::NET_DIFFERS,
+        title: "Networked run differs from the in-process run",
+        page: include_str!("../explain/RE9455.md"),
+    },
+    DiagInfo {
         code: codes::DEPRECATED_MEMBER,
         title: "Deprecated member used",
         page: include_str!("../explain/RE9101.md"),

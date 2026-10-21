@@ -76,13 +76,27 @@ pub struct CompatRunInfo {
     pub unsupported: BTreeMap<String, u32>,
 }
 
+/// Which contexts of a compat game this process runs (ADR-0050 §6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// Both, in one process (play-testing, and a listen server).
+    InProcess,
+    /// The server only (`real run --server`): no client world or VM.
+    Server,
+    /// The client only (`real run --connect`): no server world or VM; the
+    /// client world starts as the local copy of the scene, which the server
+    /// binds to its own.
+    Client,
+}
+
 /// The compat side of a running game.
 pub struct CompatPlay {
-    /// The local player's world, the one that is rendered.
+    /// The local player's world, the one that is rendered (empty on a
+    /// dedicated server).
     pub client: World,
-    set: ReplicationSet,
-    pub(crate) server_vm: CompatVm,
-    pub(crate) client_vm: CompatVm,
+    pub(crate) set: ReplicationSet,
+    pub(crate) server_vm: Option<CompatVm>,
+    pub(crate) client_vm: Option<CompatVm>,
     /// The players joined so far (`Player1` to `Player<players>`).
     pub(crate) players: u32,
     uncaught: Vec<(ContextKind, Diagnostic)>,
@@ -106,8 +120,9 @@ pub fn setup() -> Result<Arc<CompatSetup>, Diagnostic> {
 
 impl CompatPlay {
     /// Splits `world` (the App's, which becomes the server world) and makes
-    /// the two contexts; `persist_data` is [`App::persist_data`](crate::App::persist_data). Nothing runs yet: [`CompatPlay::start_scripts`]
-    /// starts the game.
+    /// the contexts `role` runs; `persist_data` is [`App::persist_data`](crate::App::persist_data). Nothing runs yet: [`CompatPlay::start_scripts`]
+    /// starts the game. A client keeps no server world: `world` is left
+    /// empty.
     ///
     /// # Errors
     ///
@@ -119,6 +134,7 @@ impl CompatPlay {
         world: &mut World,
         clip_seconds: HashMap<String, f64>,
         persist_data: bool,
+        role: Role,
     ) -> Result<CompatPlay, Diagnostic> {
         let setup = setup()?;
         // Instances scripts make get ids from a fixed sequence, so a run
@@ -130,21 +146,50 @@ impl CompatPlay {
             .ecs
             .insert_resource(re_scene::IdGen::seeded(SERVER_ID_SEED));
         install_default_scripts(&mut server, &setup.classes)?;
-        let worlds = CompatWorlds::new(&setup, server)?;
-        let CompatWorlds {
-            server,
-            mut client,
-            set,
-        } = worlds;
-        *world = server;
         let runtime = RuntimeConfig::with_files(files.clone()).with_limits(
             config.scripts.cpu_budget_ms.max(0.0).ceil() as u64,
             config.scripts.memory_limit_mb as usize,
         );
-        let server_vm =
-            CompatVm::with_config(&setup, ContextKind::Server, world, &runtime, compat)?;
-        let client_vm =
-            CompatVm::with_config(&setup, ContextKind::Client, &mut client, &runtime, compat)?;
+        let (mut client, set) = if role == Role::Client {
+            // The same copy of the scene the server starts from, emptied as
+            // its client would be; the server's bind matches the two.
+            let set = compat.net.replication_set();
+            let mut client = re_compat::net::client_world(&setup, &mut server, &set)?;
+            re_compat::net::link_client(&mut client);
+            *world = World::new();
+            (client, set)
+        } else {
+            let CompatWorlds {
+                server,
+                client,
+                set,
+            } = CompatWorlds::new(&setup, server)?;
+            *world = server;
+            (client, set)
+        };
+        let server_vm = match role {
+            Role::Client => None,
+            _ => Some(CompatVm::with_config(
+                &setup,
+                ContextKind::Server,
+                world,
+                &runtime,
+                compat,
+            )?),
+        };
+        if role == Role::Server {
+            client = World::new();
+        }
+        let client_vm = match role {
+            Role::Server => None,
+            _ => Some(CompatVm::with_config(
+                &setup,
+                ContextKind::Client,
+                &mut client,
+                &runtime,
+                compat,
+            )?),
+        };
         let step = 1.0 / f64::from(config.sim.fixed_hz.max(1));
         let data = re_compat::services::data::DataSettings::from_config_in(
             &compat.data,
@@ -153,9 +198,11 @@ impl CompatPlay {
             persist_data,
         )
         .map_err(|m| Diagnostic::error(re_compat::codes::DATA_FILE, m))?;
-        re_compat::services::data::configure(server_vm.context().lua(), data);
+        if let Some(vm) = &server_vm {
+            re_compat::services::data::configure(vm.context().lua(), data);
+        }
         let clips = Arc::new(clip_seconds);
-        for vm in [&server_vm, &client_vm] {
+        for vm in server_vm.iter().chain(&client_vm) {
             let clips = Arc::clone(&clips);
             let lookup: Arc<re_compat::sound::ClipSecondsFn> =
                 Arc::new(move |path: &str| clips.get(path).copied());
@@ -175,11 +222,11 @@ impl CompatPlay {
         })
     }
 
-    /// The VM of a context.
-    pub fn vm(&self, kind: ContextKind) -> &CompatVm {
+    /// The VM of a context, if this process runs it.
+    pub fn vm(&self, kind: ContextKind) -> Option<&CompatVm> {
         match kind {
-            ContextKind::Client => &self.client_vm,
-            _ => &self.server_vm,
+            ContextKind::Client => self.client_vm.as_ref(),
+            _ => self.server_vm.as_ref(),
         }
     }
 
@@ -209,6 +256,9 @@ impl CompatPlay {
             (ContextKind::Server, &self.server_vm),
             (ContextKind::Client, &self.client_vm),
         ] {
+            let Some(vm) = vm else {
+                continue;
+            };
             let waits = re_script::sched::parked_waits(vm.context().lua()).unwrap_or_default();
             for (label, thread) in waits {
                 if label.contains(STUCK_LABEL) {
@@ -216,9 +266,11 @@ impl CompatPlay {
                 }
             }
         }
-        let mut unsupported = self.server_vm.unsupported();
-        for (k, n) in self.client_vm.unsupported() {
-            *unsupported.entry(k).or_default() += n;
+        let mut unsupported = BTreeMap::new();
+        for vm in self.server_vm.iter().chain(&self.client_vm) {
+            for (k, n) in vm.unsupported() {
+                *unsupported.entry(k).or_default() += n;
+            }
         }
         CompatRunInfo {
             uncaught: self
@@ -233,8 +285,10 @@ impl CompatPlay {
 
     /// Drains what both contexts printed.
     pub fn take_output(&self) -> Vec<OutputLine> {
-        let mut out = self.server_vm.take_output();
-        out.extend(self.client_vm.take_output());
+        let mut out = Vec::new();
+        for vm in self.server_vm.iter().chain(&self.client_vm) {
+            out.extend(vm.take_output());
+        }
         out
     }
 }

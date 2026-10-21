@@ -110,8 +110,8 @@ impl Default for ReplicationSet {
 /// What an owner may change in a networked game unless `[compat.net]
 /// upstream` says otherwise (ADR-0050 §2): a part's position and
 /// orientation, the joints its animations pose, the `Humanoid`'s movement
-/// input, and its animation tracks. A `Component.field` entry lets only that
-/// field through.
+/// input and the floor its controller stands on, and its animation tracks.
+/// A `Component.field` entry lets only that field through.
 pub const NETWORK_UPSTREAM: &[&str] = &[
     "Transform",
     "Compat_Motor6D",
@@ -120,6 +120,7 @@ pub const NETWORK_UPSTREAM: &[&str] = &[
     "Compat_Humanoid.Jump",
     "Compat_Humanoid.Sit",
     "Compat_Humanoid.PlatformStand",
+    "Compat_Humanoid.FloorMaterial",
 ];
 
 /// The `[compat.net]` section of `real.toml`: what a networked game lets

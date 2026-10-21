@@ -180,7 +180,9 @@ impl Runner<'_> {
     }
 
     fn done(&self) -> bool {
-        self.fatal.is_some() || self.options.frames.is_some_and(|n| self.report.frames >= n)
+        self.fatal.is_some()
+            || self.app.stopped()
+            || self.options.frames.is_some_and(|n| self.report.frames >= n)
     }
 }
 

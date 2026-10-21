@@ -856,18 +856,22 @@ impl Replica {
                 Up::Fields(f) => !f.contains(&schema.fields[i].name.as_str()),
                 _ => true,
             };
-            let differs = now
+            let fields: Vec<&str> = now
                 .iter()
                 .zip(sent)
                 .enumerate()
-                .any(|(i, (a, b))| a != b && kept(i));
-            if differs {
+                .filter(|(i, (a, b))| a != b && kept(*i))
+                .map(|(i, _)| schema.fields[i].name.as_str())
+                .collect();
+            if !fields.is_empty() {
                 self.warned.insert(name.clone());
                 self.warnings.push(Diagnostic::warning(
                     codes::OWNED_WRITE,
                     format!(
-                        "a client change to {name} on an owned instance stays on this client: \
-                         networked games send only [compat.net] upstream components to the server"
+                        "a client change to {name} ({}) on an owned instance stays on this \
+                         client: networked games send only [compat.net] upstream components \
+                         to the server",
+                        fields.join(", ")
                     ),
                 ));
             }

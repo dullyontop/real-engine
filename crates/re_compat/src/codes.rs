@@ -124,3 +124,8 @@ pub const REMOTE_RATE: Code = Code::new("RE9453");
 /// An `UnreliableRemoteEvent` message was too large for one datagram and was
 /// dropped.
 pub const UNRELIABLE_SIZE: Code = Code::new("RE9454");
+
+/// `real verify`'s `net` stage: a replay played by a server and a client
+/// over loopback in lockstep did not end where the in-process run did, or
+/// the two could not run.
+pub const NET_DIFFERS: Code = Code::new("RE9455");

@@ -30,7 +30,9 @@
 //! * **Lockstep** (§7): server frame N runs once every network player's
 //!   frame N arrived, and a client frame N once the server's frame N arrived;
 //!   a client's frame 0 is sent once its scripts started. A side that waits
-//!   longer than the timeout fails the run.
+//!   longer than the timeout with no traffic moving fails the run.
+//! * **Parts.** A message larger than a transport message (a large game's
+//!   first frame) crosses in pieces that the other end joins.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
@@ -68,6 +70,67 @@ enum NetMsg {
     Welcome { player: String, bind: Frame },
     /// Either way, once a frame.
     Frame(Frame),
+    /// A piece of a message too large for one transport message (a large
+    /// game's first frame); the pieces up to `last` join into it.
+    Part { last: bool, bytes: Vec<u8> },
+}
+
+/// The most bytes of a message one [`NetMsg::Part`] carries.
+const PART: usize = re_net::MAX_MESSAGE - 1024;
+
+/// The largest message a server takes from a client in parts.
+const MAX_CLIENT_JOINED: usize = 4 * re_net::MAX_MESSAGE;
+
+/// The largest message a client takes from its server in parts.
+const MAX_SERVER_JOINED: usize = 256 * re_net::MAX_MESSAGE;
+
+/// Joins [`NetMsg::Part`]s back into the message they carry.
+#[derive(Default)]
+struct Parts(Vec<u8>);
+
+impl Parts {
+    /// The message `bytes` is or completes: `Ok(None)` while parts are
+    /// missing, `Err` for a message that does not decode or would be larger
+    /// than `max`.
+    fn take(&mut self, bytes: &[u8], max: usize) -> Result<Option<NetMsg>, ()> {
+        match NetMsg::decode(bytes) {
+            Some(NetMsg::Part { last, bytes }) => {
+                if self.0.len() + bytes.len() > max {
+                    return Err(());
+                }
+                self.0.extend_from_slice(&bytes);
+                if !last {
+                    return Ok(None);
+                }
+                match NetMsg::decode(&std::mem::take(&mut self.0)) {
+                    Some(NetMsg::Part { .. }) | None => Err(()),
+                    Some(m) => Ok(Some(m)),
+                }
+            }
+            Some(m) if self.0.is_empty() => Ok(Some(m)),
+            _ => Err(()),
+        }
+    }
+}
+
+/// Sends `msg` reliably to `peer`, in parts when it is too large for one
+/// transport message. True when the endpoint refused it.
+fn send_msg<T: Transport>(end: &mut Endpoint<T>, peer: PeerId, msg: &NetMsg) -> bool {
+    let bytes = msg.encode();
+    if bytes.len() <= PART {
+        return end.send(peer, Channel::Reliable, &bytes).is_err();
+    }
+    let count = bytes.len().div_ceil(PART);
+    for (i, chunk) in bytes.chunks(PART).enumerate() {
+        let part = NetMsg::Part {
+            last: i + 1 == count,
+            bytes: chunk.to_vec(),
+        };
+        if end.send(peer, Channel::Reliable, &part.encode()).is_err() {
+            return true;
+        }
+    }
+    false
 }
 
 impl NetMsg {
@@ -112,8 +175,7 @@ fn send_frame<T: Transport>(
         }
         let _ = end.send(peer, Channel::Unreliable, &bytes);
     }
-    end.send(peer, Channel::Reliable, &NetMsg::Frame(frame).encode())
-        .is_err()
+    send_msg(end, peer, &NetMsg::Frame(frame))
 }
 
 // ------------------------------------------------------------------ server
@@ -138,6 +200,8 @@ struct Remote {
     rate: (u64, u32, u32),
     /// The second `RE9452` was last reported.
     speed_reported: Option<u64>,
+    /// A message arriving in parts.
+    parts: Parts,
 }
 
 impl Remote {
@@ -152,6 +216,7 @@ impl Remote {
             since: 0.0,
             rate: (0, 0, 0),
             speed_reported: None,
+            parts: Parts::default(),
         }
     }
 }
@@ -227,6 +292,15 @@ impl<T: Transport> ServerNet<T> {
         self.clock.elapsed()
     }
 
+    /// What changes while traffic moves: each connection's unacked backlog
+    /// and what arrived from it.
+    fn progress(&self) -> Vec<(usize, usize, usize)> {
+        self.remotes
+            .iter()
+            .map(|(p, r)| (self.end.backlog(*p), r.parts.0.len(), r.frames.len()))
+            .collect()
+    }
+
     /// Waits, in real time, until `n` network players joined (a lockstep
     /// server before its first frame). `players` counts the players joined
     /// so far, in this process too, and names the next.
@@ -279,7 +353,10 @@ impl<T: Transport> ServerNet<T> {
     ) -> Result<Vec<Diagnostic>, Diagnostic> {
         let mut out = self.poll(vm, host, players);
         if self.lockstep {
-            let start = Instant::now();
+            // The timeout counts from the last progress: a large frame takes
+            // a while to cross, and its acks show it moving.
+            let mut start = Instant::now();
+            let mut mark = self.progress();
             loop {
                 let tick = self.tick;
                 let missing = self
@@ -297,6 +374,11 @@ impl<T: Transport> ServerNet<T> {
                 }
                 sleep();
                 out.extend(self.poll(vm, host, players));
+                let now = self.progress();
+                if now != mark {
+                    mark = now;
+                    start = Instant::now();
+                }
             }
         }
         let tick = self.tick;
@@ -364,7 +446,18 @@ impl<T: Transport> ServerNet<T> {
             out.extend(remove_remote(vm, host, &id, p));
         }
         let now = self.now();
-        for e in self.end.poll(now) {
+        let mut events = self.end.poll(now);
+        let mut flushed = false;
+        while !events.is_empty() || !flushed {
+            if events.is_empty() {
+                // What the joins queued (a welcome) and the acks go out now:
+                // a lockstep server waits in `receive` for frames that need
+                // them.
+                flushed = true;
+                events = self.end.flush(now);
+                continue;
+            }
+            let e = events.remove(0);
             match e {
                 Event::Connected(peer) => {
                     self.remotes
@@ -381,18 +474,24 @@ impl<T: Transport> ServerNet<T> {
                         r.unreliable.push(bytes);
                     }
                 }
-                Event::Message { peer, bytes, .. } => match NetMsg::decode(&bytes) {
-                    Some(NetMsg::Join { name }) => {
+                Event::Message { peer, bytes, .. } => match self
+                    .remotes
+                    .get_mut(&peer)
+                    .map(|r| r.parts.take(&bytes, MAX_CLIENT_JOINED))
+                {
+                    Some(Ok(None)) => {}
+                    Some(Ok(Some(NetMsg::Join { name }))) => {
                         out.extend(self.join(peer, name, vm, host, players));
                     }
-                    Some(NetMsg::Frame(f)) => {
+                    Some(Ok(Some(NetMsg::Frame(f)))) => {
                         if let Some(r) = self.remotes.get_mut(&peer)
                             && r.player.is_some()
                         {
                             r.frames.push_back(f);
                         }
                     }
-                    Some(NetMsg::Welcome { .. }) | None => {
+                    None => {}
+                    Some(_) => {
                         self.end
                             .disconnect(now, peer, "not a message a client sends");
                         out.extend(self.leave(peer, vm, host));
@@ -481,7 +580,7 @@ impl<T: Transport> ServerNet<T> {
         };
         let r = self.remotes.get_mut(&peer).expect("checked above");
         r.player = Some((id, p));
-        let _ = self.end.send(peer, Channel::Reliable, &welcome.encode());
+        let _ = send_msg(&mut self.end, peer, &welcome);
         diags
     }
 
@@ -721,6 +820,8 @@ pub struct ClientNet<T: Transport> {
     tick: u64,
     /// The newest server frame applied.
     applied: Option<u64>,
+    /// A message arriving in parts.
+    parts: Parts,
 }
 
 impl<T: Transport> ClientNet<T> {
@@ -741,6 +842,7 @@ impl<T: Transport> ClientNet<T> {
             clock: Instant::now(),
             tick: 0,
             applied: None,
+            parts: Parts::default(),
         }
     }
 
@@ -752,6 +854,15 @@ impl<T: Transport> ClientNet<T> {
     /// Where the session is.
     pub fn state(&self) -> &ClientState {
         &self.state
+    }
+
+    /// What changes while traffic moves (see [`ServerNet`]'s).
+    fn progress(&self) -> (usize, usize, usize) {
+        (
+            self.end.backlog(PeerId(0)),
+            self.parts.0.len(),
+            self.frames.len(),
+        )
     }
 
     fn now(&self) -> Duration {
@@ -777,12 +888,13 @@ impl<T: Transport> ClientNet<T> {
                     bytes,
                     ..
                 } => self.unreliable.push(bytes),
-                Event::Message { bytes, .. } => match NetMsg::decode(&bytes) {
-                    Some(NetMsg::Welcome { player, bind }) => {
+                Event::Message { bytes, .. } => match self.parts.take(&bytes, MAX_SERVER_JOINED) {
+                    Ok(None) => {}
+                    Ok(Some(NetMsg::Welcome { player, bind })) => {
                         self.welcome = Some((player, bind));
                     }
-                    Some(NetMsg::Frame(f)) => self.frames.push_back(f),
-                    Some(NetMsg::Join { .. }) | None => {
+                    Ok(Some(NetMsg::Frame(f))) => self.frames.push_back(f),
+                    Ok(Some(_)) | Err(()) => {
                         self.end
                             .disconnect(now, PeerId(0), "not a message a server sends");
                         self.state = ClientState::Closed(Diagnostic::error(
@@ -811,8 +923,14 @@ impl<T: Transport> ClientNet<T> {
     /// The connection failed (`RE8902` to `RE8907`) or no welcome came
     /// within the timeout (`RE8906`).
     pub fn join(&mut self, client: &mut World) -> Result<(), Diagnostic> {
-        let start = Instant::now();
+        let mut start = Instant::now();
+        let mut mark = self.progress();
         while !self.poll_join(client)? {
+            let now = self.progress();
+            if now != mark {
+                mark = now;
+                start = Instant::now();
+            }
             if start.elapsed() > self.timeout {
                 return Err(Diagnostic::error(
                     re_net::codes::TIMED_OUT,
@@ -864,7 +982,8 @@ impl<T: Transport> ClientNet<T> {
         self.poll();
         if self.lockstep && self.state == ClientState::Joined {
             let want = self.applied.map_or(0, |t| t + 1);
-            let start = Instant::now();
+            let mut start = Instant::now();
+            let mut mark = self.progress();
             while !self.frames.iter().any(|f| f.tick >= want) {
                 if let ClientState::Closed(d) = &self.state {
                     return Err(d.clone());
@@ -877,6 +996,11 @@ impl<T: Transport> ClientNet<T> {
                 }
                 sleep();
                 self.poll();
+                let now = self.progress();
+                if now != mark {
+                    mark = now;
+                    start = Instant::now();
+                }
             }
         }
         let mut rep = client.ecs.remove_resource::<Replica>().unwrap_or_default();
@@ -952,5 +1076,74 @@ impl<T: Transport> ClientNet<T> {
                 "this player left the game",
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod part_tests {
+    use super::*;
+    use re_net::{Config, MemoryNet};
+
+    #[test]
+    fn a_message_larger_than_the_transport_takes_crosses_in_parts() {
+        let net = MemoryNet::new();
+        let mut config = Config::server(1, 7);
+        config.send_rate = 64.0 * 1024.0 * 1024.0;
+        let mut server = Endpoint::server(net.bind(), config);
+        let mut client = Endpoint::client(net.bind(), server.local_addr(), Config::client(1, 7));
+        let clock = Instant::now();
+        let mut peer = None;
+        while peer.is_none() {
+            let now = clock.elapsed();
+            client.poll(now);
+            client.flush(now);
+            for e in server.poll(now) {
+                if let Event::Connected(p) = e {
+                    peer = Some(p);
+                }
+            }
+            server.flush(now);
+        }
+        let peer = peer.expect("connected");
+        let frame = Frame {
+            tick: 3,
+            msgs: vec![vec![7; 900 * 1024], vec![9; 900 * 1024]],
+            ..Frame::default()
+        };
+        assert!(!send_msg(&mut server, peer, &NetMsg::Frame(frame)));
+        let mut parts = Parts::default();
+        let mut got = None;
+        let mut pieces = 0;
+        for _ in 0..100_000 {
+            let now = clock.elapsed();
+            server.poll(now);
+            server.flush(now);
+            for e in client.poll(now) {
+                if let Event::Message { bytes, .. } = e {
+                    pieces += 1;
+                    if let Ok(Some(m)) = parts.take(&bytes, MAX_SERVER_JOINED) {
+                        got = Some(m);
+                    }
+                }
+            }
+            client.flush(now);
+            if got.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_micros(200));
+        }
+        let Some(NetMsg::Frame(f)) = got else {
+            panic!("the frame did not arrive");
+        };
+        assert_eq!(pieces, 2);
+        assert_eq!(f.tick, 3);
+        assert_eq!(f.msgs[1].len(), 900 * 1024);
+        // A joined message past the limit is refused.
+        let mut small = Parts::default();
+        let part = NetMsg::Part {
+            last: false,
+            bytes: vec![0; 2048],
+        };
+        assert!(small.take(&part.encode(), 1024).is_err());
     }
 }
