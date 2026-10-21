@@ -3831,6 +3831,7 @@ dependencies = [
  "egui-winit",
  "egui_dock",
  "glam 0.34.1",
+ "libm",
  "re_agent",
  "re_app",
  "re_command",
