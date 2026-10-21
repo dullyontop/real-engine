@@ -26,3 +26,8 @@ pub const KEYFRAME_CLIP_MALFORMED: Code = Code::new("RE7604");
 
 /// An animation priority name is not one of [`Priority`](crate::Priority)'s.
 pub const UNKNOWN_PRIORITY: Code = Code::new("RE7605");
+
+/// A skin cannot be evaluated: its joint, inverse bind and bound lists differ
+/// in length, a joint's parent does not come before it, or it has more than
+/// 65,535 joints (ADR-0039).
+pub const SKIN_MALFORMED: Code = Code::new("RE7606");

@@ -94,6 +94,15 @@ impl InstanceRaw {
             ],
         }
     }
+
+    /// Sets a skinned instance's first joint palette matrix (`flags.w`, read by
+    /// skin.wgsl). The renderer keeps palettes below 2^24 matrices, so it is exact.
+    pub fn with_palette(mut self, palette: Option<u32>) -> InstanceRaw {
+        if let Some(first) = palette {
+            self.flags[3] = first as f32;
+        }
+        self
+    }
 }
 
 /// `struct Material` in forward.wgsl.

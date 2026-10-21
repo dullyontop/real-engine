@@ -13,12 +13,15 @@
 //! * [`keyframes`] animates jointed rigs from keyframe poses: a
 //!   [`KeyframeClip`] is played by [`Track`]s (fades, speed, looping, events)
 //!   and a [`Mixer`] blends the tracks of one rig by [`Priority`].
+//! * [`skin`] poses skins (ADR-0039): [`skin::BoundClip`] samples a clip onto
+//!   a skin's joints by index, [`skin::ModelPose`] gives the joints' model
+//!   matrices, and [`skin::palette_into`] the joint palette the renderer skins
+//!   with.
 //! * [`ik`] aims joints ([`ik::look_at_delta`]) and bends two-bone chains to
 //!   reach a target ([`ik::two_bone`]).
 //!
 //! `re_app` matches a clip's targets to entities by name below the animated root
-//! and writes the sampled values into their transforms; skinning and blend trees
-//! are not part of M1.
+//! and writes the sampled values into their transforms.
 //!
 //! Errors are [`re_core::Diagnostic`]s with codes RE7600–RE7699; each has an
 //! explain page listed in [`DIAGNOSTICS`].
@@ -30,6 +33,7 @@ pub mod codes;
 pub mod ik;
 pub mod keyframes;
 mod sampler;
+pub mod skin;
 mod tween;
 
 pub use keyframes::{
@@ -74,6 +78,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::UNKNOWN_PRIORITY,
         title: "Unknown animation priority",
         page: include_str!("../explain/RE7605.md"),
+    },
+    DiagInfo {
+        code: codes::SKIN_MALFORMED,
+        title: "Malformed skin",
+        page: include_str!("../explain/RE7606.md"),
     },
 ];
 

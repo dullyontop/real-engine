@@ -1,6 +1,6 @@
 [package]
 name = "re_anim"
-description = "Real Engine animation-lite: sampling glTF node clips, and tweens."
+description = "Real Engine animation: glTF node clips, skeletal poses for skins, keyframe tracks, IK and tweens."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

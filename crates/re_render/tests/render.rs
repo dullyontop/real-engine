@@ -71,7 +71,7 @@ fn golden_lit_cube_grid() {
         items,
         debug_lines: Vec::new(),
         clear: CLEAR,
-        ..RenderSnapshot::default()
+        ..Default::default()
     };
     let image = render_image(&gpu, &mut renderer, &snapshot, 320, 240);
     let stats = image.stats(clear_srgb8());
@@ -113,7 +113,7 @@ fn shadow_scene(renderer: &mut Renderer, shadows: bool) -> RenderSnapshot {
         ],
         debug_lines: Vec::new(),
         clear: CLEAR,
-        ..RenderSnapshot::default()
+        ..Default::default()
     }
 }
 
@@ -212,7 +212,7 @@ fn golden_debug_lines() {
         items: vec![item(1, plane_mesh, ground, Mat4::IDENTITY, DrawFlags::NONE)],
         debug_lines: lines,
         clear: CLEAR,
-        ..RenderSnapshot::default()
+        ..Default::default()
     };
     let image = render_image(&gpu, &mut renderer, &snapshot, 256, 192);
     assert_eq!(renderer.stats().last_frame.debug_lines, 16);
@@ -318,7 +318,7 @@ fn golden_textured_mesh() {
         ],
         debug_lines: Vec::new(),
         clear: CLEAR,
-        ..RenderSnapshot::default()
+        ..Default::default()
     };
     let image = render_image(&gpu, &mut renderer, &snapshot, 256, 192);
     assert!(image.stats(clear_srgb8()).distinct_colors > 300);
@@ -427,7 +427,7 @@ fn lit_scene_is_depth_tested_and_shaded() {
         ],
         debug_lines: Vec::new(),
         clear: CLEAR,
-        ..RenderSnapshot::default()
+        ..Default::default()
     };
     let (w, h) = (150, 100);
     let image = render_image(&gpu, &mut renderer, &snapshot, w, h);
@@ -566,7 +566,7 @@ fn one_mesh_drawn_a_thousand_times() {
         items,
         debug_lines: Vec::new(),
         clear: CLEAR,
-        ..RenderSnapshot::default()
+        ..Default::default()
     };
     let start = re_core::time::Instant::now();
     let image = render_image(&gpu, &mut renderer, &snapshot, 320, 240);
