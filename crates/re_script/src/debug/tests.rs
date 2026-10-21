@@ -771,10 +771,11 @@ fn debug_a_dap_client_that_drops_its_connection_leaves_no_breakpoints() {
         "setBreakpoints",
         json!({ "source": { "path": file }, "breakpoints": [{ "line": 1 }] }),
     );
-    assert_eq!(
-        r["body"]["breakpoints"][0]["source"]["path"],
-        json!(file.to_string_lossy())
-    );
+    let shown = r["body"]["breakpoints"][0]["source"]["path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(std::path::PathBuf::from(shown), dap::canonical(&file));
     assert_eq!(debugger.breakpoints().len(), 1);
     drop(c);
     let deadline = Instant::now() + Duration::from_secs(10);

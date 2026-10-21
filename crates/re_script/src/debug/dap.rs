@@ -206,6 +206,29 @@ fn serve(
     let mut reader = BufReader::new(stream);
     let result = (|| {
         while !stop.load(Ordering::Relaxed) && !done.load(Ordering::Relaxed) {
+            // Wait for the next message in short slices, so that dropping the
+            // server is seen: shutting the socket down does not wake a
+            // blocked read on Windows.
+            if reader.buffer().is_empty() {
+                let s = reader.get_ref();
+                s.set_read_timeout(Some(Duration::from_millis(50)))?;
+                let idle = match s.peek(&mut [0]) {
+                    Ok(_) => false,
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        true
+                    }
+                    Err(e) => return Err(e),
+                };
+                s.set_read_timeout(None)?;
+                if idle {
+                    continue;
+                }
+            }
             let Some(request) = read_message(&mut reader)? else {
                 break;
             };
@@ -309,7 +332,7 @@ enum After {
 
 /// `path` made absolute and free of symbolic links, without Windows'
 /// verbatim prefix (`\\?\C:\…`), which clients do not map to their files.
-fn canonical(path: &Path) -> PathBuf {
+pub(super) fn canonical(path: &Path) -> PathBuf {
     let p = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let text = p.to_string_lossy();
     if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
@@ -332,7 +355,7 @@ fn source(root: &Path, rel: &str) -> Json {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     // A file outside the project keeps the absolute path it was given.
     let path = if Path::new(rel).is_absolute() {
-        PathBuf::from(rel)
+        PathBuf::from(rel.replace('/', std::path::MAIN_SEPARATOR_STR))
     } else {
         rel.split('/')
             .fold(root.to_path_buf(), |p, part| p.join(part))
