@@ -595,9 +595,12 @@ fn build_in(
     }
     // The parts to look at: all of them on the first frame, then what the
     // world's change journal names.
-    let full = !hub.parts.ready || !w.records_changes();
+    // A journal that overflowed (no build drained it for a long time) names
+    // nothing: look at everything once.
+    let recorded = w.records_changes();
     w.record_changes();
     let journal = w.drain_changes();
+    let full = !hub.parts.ready || !recorded || journal.overflowed;
     let dirty: HashSet<Entity> = if full {
         instances_of(w, "BasePart").into_iter().collect()
     } else {

@@ -225,3 +225,26 @@ fn random_edits_give_the_frame_of_a_full_rebuild() {
     // Far fewer visits than rebuilding every part each frame.
     assert!(visited_on_edits < 240 * 61 / 2, "{visited_on_edits}");
 }
+
+#[test]
+fn a_journal_that_overflowed_gives_a_full_pass() {
+    let mut p: Place = place_in(
+        SignalBehavior::Deferred,
+        &["Workspace", "ReplicatedStorage", "Lighting"],
+    );
+    p.run(SETUP);
+    p.lua(|lua| render::verify_every(lua, 1));
+    p.frame(1.0 / 60.0);
+    assert!(p.render(&input()).stats.full);
+    // More writes than the journal keeps, with no build to drain them (a
+    // hidden window, a headless replay after one screenshot).
+    p.run(
+        "for i = 1, 70000 do S.parts[1 + i % 60].Transparency = (i // 60 % 2) * 0.5 end \
+         S.parts[1].Color = Color3.new(1, 0, 0)",
+    );
+    p.frame(1.0 / 60.0);
+    let f = p.render(&input());
+    assert!(f.stats.full, "an overflowed journal names nothing");
+    p.frame(1.0 / 60.0);
+    assert!(!p.render(&input()).stats.full);
+}

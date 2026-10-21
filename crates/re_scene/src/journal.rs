@@ -12,7 +12,9 @@
 //!   reports with [`note_moved`].
 //!
 //! A world without the resource records nothing, and its registry has no
-//! hook installed.
+//! hook installed. A journal nobody drains keeps at most
+//! [`ChangeJournal::CAP`] entries: past that it empties itself and says it
+//! overflowed, so its reader looks at everything once.
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::hierarchy::ChildOf;
@@ -33,9 +35,16 @@ pub struct ChangeJournal {
     pub structure: Vec<Entity>,
     /// Entities whose `Transform` was written outside the registry.
     pub moved: Vec<Entity>,
+    /// More than [`ChangeJournal::CAP`] entries came in since the last
+    /// drain (no reader drained for a long time): the lists were cleared
+    /// and stay empty, and the reader must look at everything.
+    pub overflowed: bool,
 }
 
 impl ChangeJournal {
+    /// The most entries kept between two drains, in all three lists.
+    pub const CAP: usize = 65_536;
+
     /// Takes everything recorded.
     pub fn drain(&mut self) -> ChangeJournal {
         std::mem::take(self)
@@ -43,7 +52,26 @@ impl ChangeJournal {
 
     /// True when nothing is recorded.
     pub fn is_empty(&self) -> bool {
-        self.fields.is_empty() && self.structure.is_empty() && self.moved.is_empty()
+        !self.overflowed
+            && self.fields.is_empty()
+            && self.structure.is_empty()
+            && self.moved.is_empty()
+    }
+
+    /// True when one more entry may be kept; past [`ChangeJournal::CAP`] the
+    /// journal clears its lists and marks itself overflowed.
+    fn admit(&mut self) -> bool {
+        if self.overflowed {
+            return false;
+        }
+        if self.fields.len() + self.structure.len() + self.moved.len() >= Self::CAP {
+            *self = ChangeJournal {
+                overflowed: true,
+                ..ChangeJournal::default()
+            };
+            return false;
+        }
+        true
     }
 }
 
@@ -53,19 +81,25 @@ struct JournalObservers;
 
 /// The registry's change hook while the journal records.
 pub(crate) fn field_changed(world: &mut EcsWorld, entity: Entity, key: ComponentKey) {
-    if let Some(mut j) = world.get_resource_mut::<ChangeJournal>() {
+    if let Some(mut j) = world.get_resource_mut::<ChangeJournal>()
+        && j.admit()
+    {
         j.fields.push((entity, key));
     }
 }
 
 fn parented(ev: On<Insert<ChildOf>>, journal: Option<ResMut<ChangeJournal>>) {
-    if let Some(mut j) = journal {
+    if let Some(mut j) = journal
+        && j.admit()
+    {
         j.structure.push(ev.event().entity);
     }
 }
 
 fn unparented(ev: On<Discard<ChildOf>>, journal: Option<ResMut<ChangeJournal>>) {
-    if let Some(mut j) = journal {
+    if let Some(mut j) = journal
+        && j.admit()
+    {
         j.structure.push(ev.event().entity);
     }
 }
@@ -83,7 +117,40 @@ pub(crate) fn install(world: &mut EcsWorld) {
 /// Records that `entity`'s `Transform` was written without the registry (a
 /// physics write-back). Does nothing when the world keeps no journal.
 pub fn note_moved(world: &mut EcsWorld, entity: Entity) {
-    if let Some(mut j) = world.get_resource_mut::<ChangeJournal>() {
+    if let Some(mut j) = world.get_resource_mut::<ChangeJournal>()
+        && j.admit()
+    {
         j.moved.push(entity);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_journal_nobody_drains_stops_at_its_cap() {
+        let mut w = EcsWorld::new();
+        install(&mut w);
+        let e = w.spawn_empty().id();
+        for _ in 0..ChangeJournal::CAP {
+            note_moved(&mut w, e);
+        }
+        let j = w.resource::<ChangeJournal>();
+        assert_eq!(j.moved.len(), ChangeJournal::CAP);
+        assert!(!j.overflowed);
+
+        note_moved(&mut w, e);
+        note_moved(&mut w, e);
+        let j = w.resource::<ChangeJournal>();
+        assert!(j.overflowed && j.moved.is_empty());
+        assert!(!j.is_empty());
+
+        let drained = w.resource_mut::<ChangeJournal>().drain();
+        assert!(drained.overflowed);
+        note_moved(&mut w, e);
+        let j = w.resource::<ChangeJournal>();
+        assert!(!j.overflowed);
+        assert_eq!(j.moved, [e]);
     }
 }
