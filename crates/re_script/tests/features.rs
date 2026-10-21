@@ -11,6 +11,8 @@ use re_core::time::Instant;
 use re_core::{Location, Phase};
 use re_scene::{ScriptContext, ScriptRef, StableId};
 use re_script::{ContextKind, Reload, RuntimeConfig, codes};
+use re_types::HostServices;
+use re_types::audio::{AudioCmd, EffectParam};
 use re_types::glam::Vec3;
 use re_types::physics::ContactEvent;
 use serde_json::json;
@@ -920,4 +922,121 @@ fn vehicle_functions_are_refused_without_a_host() {
     let d = rig.exec_err("return physics.vehicle(world.get('car'))");
     assert_eq!(d.code, codes::SERVICE_UNAVAILABLE);
     assert!(d.message.contains("physics.vehicle"), "{}", d.message);
+}
+
+#[test]
+fn audio_mixer_functions_send_mixer_commands() {
+    let mut rig = Rig::new();
+    rig.exec(
+        r#"
+        audio.play("assets/sfx/step.wav", nil, 0.5, "footsteps")
+        audio.set_bus_volume("music", -12, 0.5)
+        audio.set_effect("sfx", 1, { mode = "high_pass", cutoff_hz = 600 }, 0.25)
+        audio.snapshot("underwater")
+        local l = audio.levels("sfx")
+        print(l.peak_db, l.rms_db)
+        "#,
+    )
+    .unwrap();
+    assert_eq!(rig.output(), ["-6\t-12"]);
+    let effect = |param: &str, value: EffectParam| AudioCmd::SetEffectParam {
+        bus: "sfx".into(),
+        effect: 0,
+        param: param.into(),
+        value,
+        seconds: 0.25,
+    };
+    assert_eq!(
+        rig.services.mix,
+        [
+            AudioCmd::PlayOneShotOnBus {
+                clip: "assets/sfx/step.wav".into(),
+                position: None,
+                volume: 0.5,
+                bus: "footsteps".into(),
+            },
+            AudioCmd::SetBusVolume {
+                bus: "music".into(),
+                volume_db: -12.0,
+                seconds: 0.5,
+            },
+            // In parameter-name order, whatever the table's order.
+            effect("cutoff_hz", EffectParam::Number(600.0)),
+            effect("mode", EffectParam::Choice("high_pass".into())),
+            AudioCmd::ApplySnapshot {
+                name: "underwater".into(),
+                seconds: 0.0,
+            },
+        ]
+    );
+    // Without a bus, `audio.play` stays an unrouted one-shot.
+    rig.exec("audio.play('assets/sfx/ui.wav')").unwrap();
+    assert_eq!(rig.services.sounds, ["assets/sfx/ui.wav"]);
+    assert_eq!(rig.services.mix.len(), 5);
+
+    for index in ["0", "1.5", "-1", "2^33", "0/0"] {
+        let d = rig.exec_err(&format!("audio.set_effect('sfx', {index}, {{ mix = 1 }})"));
+        assert_eq!(d.code, codes::BAD_ARGUMENT, "{index}");
+        assert!(
+            d.message.contains("is not a whole number from 1"),
+            "{}",
+            d.message
+        );
+    }
+    let d = rig.exec_err("audio.set_effect('sfx', 1, { mix = true })");
+    assert_eq!(d.code, codes::BAD_ARGUMENT);
+    assert!(d.message.contains("number or a string"), "{}", d.message);
+    // One bad value sends none of the others.
+    let d = rig.exec_err("audio.set_effect('sfx', 1, { a = 1, b = math.huge, c = 2 })");
+    assert_eq!(d.code, codes::BAD_ARGUMENT);
+    assert!(d.message.contains("not finite"), "{}", d.message);
+    assert_eq!(rig.services.mix.len(), 5);
+    let d = rig.exec_err("return audio.levels('nowhere')");
+    assert_eq!(d.code, codes::SERVICE_UNAVAILABLE);
+}
+
+#[test]
+fn audio_levels_are_frame_only() {
+    let mut rig = Rig::new();
+    rig.exec(
+        r#"
+        time.on_frame(function() print("frame", audio.levels("sfx").peak_db) end)
+        time.on_step(function()
+            local ok, err = pcall(audio.levels, "sfx")
+            print("step", ok, string.find(tostring(err), "fixed step") ~= nil)
+        end)
+        "#,
+    )
+    .unwrap();
+    let d = rig.step(1.0 / 60.0);
+    assert!(d.is_empty(), "{d:#?}");
+    assert_eq!(rig.output(), ["frame\t-6", "step\tfalse\ttrue"]);
+}
+
+#[test]
+fn audio_mixer_functions_are_refused_without_a_host() {
+    let mut none = re_script::NoServices::default();
+    for (cmd, name) in [
+        (
+            AudioCmd::SetBusVolume {
+                bus: "music".into(),
+                volume_db: 0.0,
+                seconds: 0.0,
+            },
+            "audio.set_bus_volume",
+        ),
+        (
+            AudioCmd::ApplySnapshot {
+                name: "default".into(),
+                seconds: 0.0,
+            },
+            "audio.snapshot",
+        ),
+    ] {
+        let e = none.audio_mix(cmd).unwrap_err();
+        assert_eq!(e.code, codes::SERVICE_UNAVAILABLE_STR);
+        assert!(e.message.contains(name), "{}", e.message);
+    }
+    let e = none.audio_level("sfx").unwrap_err();
+    assert!(e.message.contains("audio.levels"), "{}", e.message);
 }

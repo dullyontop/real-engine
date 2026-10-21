@@ -624,6 +624,11 @@
           "type": "boolean",
           "default": false,
           "description": "Start playing when the entity appears."
+        },
+        "bus": {
+          "type": "string",
+          "default": "",
+          "description": "The mixer bus it plays on (ADR-0041); empty for the project's\n`default_bus`."
         }
       },
       "additionalProperties": false

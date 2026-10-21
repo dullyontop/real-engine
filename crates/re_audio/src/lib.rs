@@ -10,8 +10,15 @@
 //! * Clips are named by project asset path (`assets/sfx/pickup.wav`). They are
 //!   loaded from the asset root on first use, or registered up front with
 //!   [`Audio::insert_clip`] (generated sounds such as [`sine`] need no file).
-//! * Spatial sounds play on kira spatial tracks: their volume falls with distance
-//!   from the listener and they pan by direction. The listener faces −Z.
+//! * Sounds play on named buses (ADR-0041): a tree of kira sub-tracks with
+//!   kira's built-in effects, plus send tracks, built from an
+//!   [`AudioGraphDesc`] (the `[audio]` section of `real.toml`) by
+//!   [`Audio::set_graph`]. Commands tween bus volumes and effect parameters, or
+//!   apply a mixer snapshot; [`Audio::bus_levels`] meters every bus. The
+//!   headless backend runs the same graph, so tests check levels without a device.
+//! * Spatial sounds play on kira spatial tracks under their bus: their volume
+//!   falls with distance from the listener and they pan by direction. The
+//!   listener faces −Z.
 //!
 //! kira 0.12.5 uses glam 0.33 while the engine uses glam 0.34, so positions and
 //! rotations cross into kira only as plain arrays.
@@ -24,13 +31,16 @@
 
 mod capture;
 pub mod codes;
+mod graph;
+mod meter;
 mod mixer;
 mod wav;
 
 pub use capture::{CaptureBackend, CaptureSettings};
+pub use graph::{DEFAULT_SNAPSHOT, MAX_SENDS};
 pub use kira::sound::static_sound::StaticSoundData;
 pub use mixer::{Audio, linear_to_decibels, rms, sine};
-pub use re_types::audio::AudioCmd;
+pub use re_types::audio::{AudioCmd, AudioGraphDesc, BusLevel};
 
 use re_core::DiagInfo;
 
@@ -65,6 +75,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::INVALID_RATE,
         title: "Invalid playback rate",
         page: include_str!("../explain/RE7405.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_EFFECT,
+        title: "Invalid audio effect",
+        page: include_str!("../explain/RE7406.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_GRAPH,
+        title: "Invalid audio bus graph",
+        page: include_str!("../explain/RE7407.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_BUS,
+        title: "Unknown audio bus or snapshot",
+        page: include_str!("../explain/RE7408.md"),
     },
 ];
 
