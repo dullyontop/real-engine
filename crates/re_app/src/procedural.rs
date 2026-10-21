@@ -18,10 +18,11 @@ use crate::codes;
 use crate::media::{DERIVED, Media};
 use crate::sync::physics::{HeightfieldData, ShapeLibrary};
 
-/// Registers the `graph` generator and gives the World an empty store for the
-/// project at `project`.
+/// Registers the `graph` generator and the validator of open graph documents,
+/// and gives the World an empty store for the project at `project`.
 pub fn install(world: &mut World, project: &Path) {
     re_proc::register_generator(&mut world.generators);
+    re_proc::register_doc_validators(world);
     world
         .ecs
         .insert_resource(GraphStore::for_project(project.to_path_buf()));

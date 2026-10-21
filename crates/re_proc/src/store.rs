@@ -1,14 +1,18 @@
 //! [`GraphStore`]: the world resource the `graph` generator reads.
 
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
 use re_geom::Heightfield;
+use re_reflect::Value;
+use re_scene::World;
 use re_scene::ecs as bevy_ecs;
 use re_types::graph::GraphDoc;
 use re_types::mesh::MeshData;
+use serde::Deserialize;
 
 use crate::eval::{EvalReport, Evaluator};
 use crate::value::DerivedAsset;
@@ -30,6 +34,10 @@ pub struct Budget {
 /// file or `builder` script) and inserts it as a world resource; the `graph`
 /// generator reads it through `GenContext::resource`.
 ///
+/// A source whose graph file is open in the World (ADR-0044) is generated
+/// from the open document instead, so regeneration sees unsaved edits
+/// ([`GraphStore::current`]).
+///
 /// **Cloning** (for a world copy, `World::fork`): the documents, the derived
 /// assets (cheap: each is an `Arc`) and the last reports are copied, so
 /// generating or releasing in the copy never changes the original; the
@@ -42,6 +50,42 @@ pub struct GraphStore {
     derived: Arc<Mutex<HashMap<String, DerivedAsset>>>,
     reports: Mutex<HashMap<String, EvalReport>>,
     budget: Budget,
+    /// Open graph documents as parsed, by path, with the revision parsed.
+    open: Mutex<HashMap<String, (u64, Arc<GraphDoc>)>>,
+}
+
+/// A procedural source's graph as generation sees it ([`GraphStore::current`]).
+#[derive(Clone, Debug)]
+pub enum CurrentGraph<'a> {
+    /// The document stored for the source.
+    Stored(&'a GraphDoc),
+    /// The source's graph file, open in the World (possibly with unsaved edits).
+    Open(Arc<GraphDoc>),
+}
+
+impl Deref for CurrentGraph<'_> {
+    type Target = GraphDoc;
+
+    fn deref(&self) -> &GraphDoc {
+        match self {
+            CurrentGraph::Stored(doc) => doc,
+            CurrentGraph::Open(doc) => doc,
+        }
+    }
+}
+
+/// The validator of open `*.graph.json` documents: the document parses as a
+/// [`GraphDoc`] and passes [`GraphDoc::validate`].
+pub fn validate_graph_json(value: &serde_json::Value) -> Result<(), String> {
+    let doc = GraphDoc::deserialize(value).map_err(|e| format!("invalid graph file: {e}"))?;
+    doc.validate().map_err(|e| e.to_string())
+}
+
+/// Registers the validator of open graph documents (suffix `.graph.json`,
+/// [`validate_graph_json`]) with `world` (ADR-0044), so a transaction that
+/// leaves a graph file invalid is rejected.
+pub fn register_doc_validators(world: &mut World) {
+    world.register_doc_validator(".graph.json", validate_graph_json);
 }
 
 impl Default for GraphStore {
@@ -59,6 +103,7 @@ impl Clone for GraphStore {
             derived: Arc::new(Mutex::new(self.lock_derived().clone())),
             reports: Mutex::new(self.lock_reports().clone()),
             budget: self.budget,
+            open: Mutex::new(self.lock_open().clone()),
         }
     }
 }
@@ -97,6 +142,7 @@ impl GraphStore {
             derived: Arc::default(),
             reports: Mutex::default(),
             budget: Budget::default(),
+            open: Mutex::default(),
         }
     }
 
@@ -114,6 +160,41 @@ impl GraphStore {
     /// The graph of `source_id`.
     pub fn graph(&self, source_id: &str) -> Option<&GraphDoc> {
         self.graphs.get(source_id)
+    }
+
+    /// The graph of `source_id` as generation sees it: when its
+    /// `GraphSource.graph` file is open in `world` (ADR-0044) and is a valid
+    /// graph, the open document, unsaved edits included; otherwise the
+    /// stored one. The parsed open document is kept until its revision
+    /// changes.
+    pub fn current(&self, world: &World, source_id: &str) -> Option<CurrentGraph<'_>> {
+        match self.open_graph(world, source_id) {
+            Some(doc) => Some(CurrentGraph::Open(doc)),
+            None => self.graph(source_id).map(CurrentGraph::Stored),
+        }
+    }
+
+    fn open_graph(&self, world: &World, source_id: &str) -> Option<Arc<GraphDoc>> {
+        let Ok(Value::Str(path)) = world.get(source_id, "GraphSource", "graph") else {
+            return None;
+        };
+        let path = re_scene::doc_path(&path).ok()?;
+        let open = world.doc(&path)?;
+        let mut parsed = self.lock_open();
+        if let Some((revision, doc)) = parsed.get(&path)
+            && *revision == open.revision
+        {
+            return Some(doc.clone());
+        }
+        let doc = GraphDoc::deserialize(&open.value).ok()?;
+        doc.validate().ok()?;
+        let doc = Arc::new(doc);
+        parsed.insert(path, (open.revision, doc.clone()));
+        Some(doc)
+    }
+
+    fn lock_open(&self) -> std::sync::MutexGuard<'_, HashMap<String, (u64, Arc<GraphDoc>)>> {
+        self.open.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Every `(source id, graph)`, in insertion order.

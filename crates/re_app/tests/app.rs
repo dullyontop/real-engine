@@ -406,6 +406,58 @@ fn dispatch_edits_and_persists_only_when_asked() {
 }
 
 #[test]
+fn saving_writes_open_documents_and_status_reports_them() {
+    let dir = project();
+    std::fs::create_dir_all(dir.path().join("graphs")).unwrap();
+    let path = "graphs/g.graph.json";
+    let file = dir.path().join(path);
+    let original = re_types::graph::GraphDoc::new("g", 3).to_json();
+    std::fs::write(&file, &original).unwrap();
+    let mut app = open(dir.path());
+    let value = serde_json::from_str(&original).unwrap();
+    app.world_mut().open_doc(path, value).unwrap();
+    let edit = |app: &mut App, ops: serde_json::Value| {
+        app.dispatch(
+            "scene.apply",
+            json!({ "ops": ops }),
+            false,
+            &AllowAll,
+            Origin::User,
+        )
+    };
+    // The app registered the graph validator: an invalid graph is refused.
+    let bad = edit(
+        &mut app,
+        json!([{ "op": "set_doc", "doc": path, "pointer": "/version", "value": 0 }]),
+    );
+    assert!(!bad.ok);
+    let out = edit(
+        &mut app,
+        json!([{ "op": "set_doc", "doc": path, "pointer": "/layout", "value": { "n": [1.0, 2.0] } }]),
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    let status = app.dispatch("project.status", json!({}), false, &AllowAll, Origin::User);
+    assert_eq!(status.data["unsaved"], json!([path]));
+    // Without persist_edits, the file changes only on save.
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    app.save_scene().unwrap();
+    let saved = std::fs::read_to_string(&file).unwrap();
+    let doc = re_types::graph::GraphDoc::from_json(&saved).unwrap();
+    assert_eq!(doc.layout["n"], [1.0, 2.0]);
+    assert_eq!(saved, doc.to_json(), "written as graph files are");
+    assert!(app.world().unsaved_docs().is_empty());
+    let status = app.dispatch("project.status", json!({}), false, &AllowAll, Origin::User);
+    assert_eq!(status.data["unsaved"], json!([]));
+    // Undo and save again: the file is back, byte for byte.
+    assert!(
+        app.dispatch("undo", json!({}), false, &AllowAll, Origin::User)
+            .ok
+    );
+    app.save_scene().unwrap();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+}
+
+#[test]
 fn serve_answers_requests_from_another_thread() {
     let dir = project();
     let config = AppConfig {

@@ -242,14 +242,14 @@ fn run(ctx: &GenContext) -> Result<SceneFragment, Diagnostic> {
         .resource::<GraphStore>()
         .ok_or_else(|| no_graph(source, "the world has no GraphStore resource"))?;
     let doc = store
-        .graph(source)
+        .current(ctx.world(), source)
         .ok_or_else(|| no_graph(source, "the GraphStore has no entry for it"))?;
     let registry = store.evaluator().registry();
     let text: String = ctx.param("params")?;
     let (doc, mut warnings) = match parse_overrides(&text) {
-        Ok(o) => apply_overrides(doc, &o, registry, source),
+        Ok(o) => apply_overrides(&doc, &o, registry, source),
         Err(e) => (
-            doc.clone(),
+            GraphDoc::clone(&doc),
             vec![
                 Diagnostic::warning(
                     codes::UNKNOWN_OVERRIDE,
@@ -340,12 +340,12 @@ fn fingerprint(ctx: &GenContext) -> u64 {
     let Some(store) = ctx.resource::<GraphStore>() else {
         return 0;
     };
-    let Some(doc) = store.graph(ctx.source_id()) else {
+    let Some(doc) = store.current(ctx.world(), ctx.source_id()) else {
         return 0;
     };
     let mut h = blake3::Hasher::new();
-    h.update(doc_hash(doc).as_bytes());
-    h.update(version_stamp(doc, store.evaluator().registry()).as_bytes());
+    h.update(doc_hash(&doc).as_bytes());
+    h.update(version_stamp(&doc, store.evaluator().registry()).as_bytes());
     let h = h.finalize();
     let mut b = [0u8; 8];
     b.copy_from_slice(&h.as_bytes()[..8]);

@@ -9,6 +9,13 @@
 //! Generated entities (ADR-0017): `set_field` on one also records an override
 //! on its source; `despawn` of one records a deletion override; `reparent`,
 //! `rename`, `add_component` and `remove_component` on one are refused.
+//!
+//! Open documents (ADR-0044): `set_doc` edits a project file the World holds
+//! open (a graph file, for example) at a JSON pointer:
+//!
+//! ```json
+//! {"op": "set_doc", "doc": "graphs/island.graph.json", "pointer": "/layout/h", "value": [0, 120]}
+//! ```
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -21,7 +28,8 @@ use re_scene::{
     validate_id,
 };
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value as Json;
 
 use crate::error::OpError;
 
@@ -155,6 +163,142 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         index: Option<usize>,
     },
+    /// Add, replace or remove the JSON value at `pointer` (RFC 6901) in an
+    /// open document (ADR-0044). With `value`, as JSON Patch's `add`: an
+    /// object member is added or replaced, and an array element is inserted
+    /// at its index (`-` appends); the empty pointer replaces the whole
+    /// document. Without `value`, the value at `pointer` is removed. The
+    /// document must be open (`World::open_doc`). A transaction whose
+    /// resulting document fails its kind's validator is rejected.
+    SetDoc {
+        /// The document's project-relative path (`graphs/island.graph.json`).
+        doc: String,
+        /// Where in the document, as a JSON pointer (`/nodes/0/params/size`).
+        pointer: String,
+        /// The value to add or replace (`null` included); omitted to remove.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "some_json"
+        )]
+        value: Option<Json>,
+    },
+}
+
+/// Deserializes a present value, `null` included, as `Some` (an absent one
+/// is `None` through `#[serde(default)]`).
+fn some_json<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Json>, D::Error> {
+    Json::deserialize(d).map(Some)
+}
+
+/// The tokens of an RFC 6901 JSON pointer (`""` is the whole document).
+fn pointer_tokens(pointer: &str) -> Result<Vec<String>, String> {
+    if pointer.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(rest) = pointer.strip_prefix('/') else {
+        return Err("a JSON pointer must be empty or start with `/`".into());
+    };
+    rest.split('/')
+        .map(|t| {
+            if t.replace("~0", "").replace("~1", "").contains('~') {
+                Err("in a JSON pointer, `~` must be followed by `0` or `1`".into())
+            } else {
+                Ok(t.replace("~1", "/").replace("~0", "~"))
+            }
+        })
+        .collect()
+}
+
+/// The JSON pointer of `tokens`.
+fn pointer_of(tokens: &[String]) -> String {
+    tokens
+        .iter()
+        .map(|t| format!("/{}", t.replace('~', "~0").replace('/', "~1")))
+        .collect()
+}
+
+/// An array index token: `0`, or digits without a leading zero.
+fn array_index(token: &str) -> Option<usize> {
+    let digits = !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit());
+    if !digits || (token.len() > 1 && token.starts_with('0')) {
+        return None;
+    }
+    token.parse().ok()
+}
+
+/// Sets (`Some`) or removes (`None`) the value at `tokens` in `root`, as
+/// JSON Patch's `add` and `remove`. Returns the inverse `(pointer, value)`;
+/// on error `root` is unchanged.
+fn edit_json(
+    root: &mut Json,
+    tokens: &[String],
+    value: Option<Json>,
+) -> Result<(String, Option<Json>), String> {
+    let Some((last, parents)) = tokens.split_last() else {
+        return match value {
+            Some(v) => Ok((String::new(), Some(std::mem::replace(root, v)))),
+            None => Err("the whole document cannot be removed".into()),
+        };
+    };
+    let mut parent = &mut *root;
+    for (i, t) in parents.iter().enumerate() {
+        let missing = || format!("no value at {}", pointer_of(&tokens[..=i]));
+        parent = match parent {
+            Json::Object(m) => m.get_mut(t).ok_or_else(missing)?,
+            Json::Array(a) => array_index(t)
+                .and_then(|i| a.get_mut(i))
+                .ok_or_else(missing)?,
+            _ => return Err(missing()),
+        };
+    }
+    let here = pointer_of(tokens);
+    match (parent, value) {
+        (Json::Object(m), Some(v)) => {
+            // An existing member is replaced in place (key order kept).
+            let old = m.insert(last.clone(), v);
+            Ok((here, old))
+        }
+        (Json::Object(m), None) => {
+            let position = m
+                .keys()
+                .position(|k| k == last)
+                .ok_or_else(|| format!("no value at {here}"))?;
+            if position + 1 == m.len() {
+                // The last member: adding it back puts it where it was.
+                let old = m.shift_remove(last);
+                Ok((here, old))
+            } else {
+                // A member before others: only the whole object restores
+                // the member order exactly.
+                let before = Json::Object(m.clone());
+                m.shift_remove(last);
+                Ok((pointer_of(parents), Some(before)))
+            }
+        }
+        (Json::Array(a), Some(v)) => {
+            let index = match last.as_str() {
+                "-" => Some(a.len()),
+                t => array_index(t).filter(|i| *i <= a.len()),
+            }
+            .ok_or_else(|| format!("{here} is not a position where an element can be inserted"))?;
+            a.insert(index, v);
+            let mut at = parents.to_vec();
+            at.push(index.to_string());
+            Ok((pointer_of(&at), None))
+        }
+        (Json::Array(a), None) => {
+            let index = array_index(last)
+                .filter(|i| *i < a.len())
+                .ok_or_else(|| format!("no value at {here}"))?;
+            let old = a.remove(index);
+            Ok((here, Some(old)))
+        }
+        _ => Err(format!(
+            "{} is neither an object nor an array",
+            pointer_of(parents)
+        )),
+    }
 }
 
 /// The schema of one `restore.generated` entry ([`GeneratedDoc`]).
@@ -563,6 +707,30 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
                 None => hierarchy::remove_parent(&mut world.ecs, e),
             }
             Ok((op.clone(), vec![inverse]))
+        }
+        Op::SetDoc {
+            doc,
+            pointer,
+            value,
+        } => {
+            let invalid = |e: String| OpError::Invalid(format!("set_doc {doc} {pointer:?}: {e}"));
+            let tokens = pointer_tokens(pointer).map_err(invalid)?;
+            let (at, old) = world
+                .edit_doc(doc, |root| edit_json(root, &tokens, value.clone()))
+                .ok_or_else(|| {
+                    OpError::Invalid(format!(
+                        "set_doc: the document {doc:?} is not open (open it with World::open_doc)"
+                    ))
+                })?
+                .map_err(invalid)?;
+            Ok((
+                op.clone(),
+                vec![Op::SetDoc {
+                    doc: doc.clone(),
+                    pointer: at,
+                    value: old,
+                }],
+            ))
         }
         Op::Rename { id, name } => {
             let e = world.entity(id)?;

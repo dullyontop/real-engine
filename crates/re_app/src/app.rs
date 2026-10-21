@@ -829,23 +829,35 @@ impl App {
         }
     }
 
-    /// Writes the World's authored entities back to the entry scene file.
+    /// Writes the World's authored entities back to the entry scene file,
+    /// and each open document with unsaved changes back to its file
+    /// (ADR-0044), which clears its dirty flag.
     ///
     /// # Errors
     ///
-    /// `RE0518` when the file cannot be written.
+    /// `RE0518` when a file cannot be written.
     pub fn save_scene(&mut self) -> Result<(), Diagnostic> {
         let doc = self.world.save(SaveOptions::default());
         let text = re_scene::scene::to_json(&doc);
         let rel_path = self.config.project.entry_scene.clone();
-        let path = self.project.join(&rel_path);
-        std::fs::write(&path, text).map_err(|e| {
+        let failed = |what: &str, rel_path: &str, e: std::io::Error| {
             Diagnostic::error(
                 codes::SCENE_SAVE_FAILED,
-                format!("cannot write the scene back to {rel_path}: {e}"),
+                format!("cannot write {what} back to {rel_path}: {e}"),
             )
-            .at(rel(&rel_path))
-        })
+            .at(rel(rel_path))
+        };
+        std::fs::write(self.project.join(&rel_path), text)
+            .map_err(|e| failed("the scene", &rel_path, e))?;
+        for path in self.world.unsaved_docs() {
+            let Some(text) = self.world.doc_text(&path) else {
+                continue;
+            };
+            std::fs::write(self.project.join(&path), text)
+                .map_err(|e| failed("the open document", &path, e))?;
+            self.world.mark_doc_saved(&path);
+        }
+        Ok(())
     }
 
     /// The work an edit needs outside the simulation: regenerate procedural

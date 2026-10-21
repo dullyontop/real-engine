@@ -30,3 +30,7 @@ pub const ENGINE_UNAVAILABLE: Code = Code::new("RE2006");
 /// An undo or redo, or the rollback of a rejected transaction or a dry run,
 /// could not be applied (the world changed underneath the history).
 pub const UNDO_FAILED: Code = Code::new("RE2007");
+
+/// A transaction left an open document in a state its kind's validator
+/// refuses (ADR-0044), so the transaction was rolled back.
+pub const INVALID_DOCUMENT: Code = Code::new("RE2008");

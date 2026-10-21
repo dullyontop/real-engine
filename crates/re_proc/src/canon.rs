@@ -71,9 +71,13 @@ pub fn hash64(text: &str) -> u64 {
     u64::from_le_bytes(b)
 }
 
-/// The hash of a graph document's canonical JSON.
+/// The hash of a graph document's canonical JSON, without its `layout`:
+/// moving a node on the canvas regenerates nothing (ADR-0044).
 pub fn doc_hash(doc: &GraphDoc) -> blake3::Hash {
-    let json = serde_json::to_value(doc).unwrap_or(Json::Null);
+    let mut json = serde_json::to_value(doc).unwrap_or(Json::Null);
+    if let Some(obj) = json.as_object_mut() {
+        obj.shift_remove("layout");
+    }
     blake3::hash(canonical_json(&json).as_bytes())
 }
 
