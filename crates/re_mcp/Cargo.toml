@@ -1,6 +1,6 @@
 [package]
 name = "re_mcp"
-description = "Real Engine MCP server: one MCP tool per registered command, over stdio, using rmcp."
+description = "Real Engine MCP server: one MCP tool per registered command, over stdio or streamable HTTP on localhost, using rmcp."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,7 +14,10 @@ re_core.workspace = true
 re_command.workspace = true
 re_agent.workspace = true
 rmcp.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+hyper.workspace = true
+hyper-util.workspace = true
+tokio = { workspace = true, features = ["sync", "net"] }
+uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
