@@ -88,6 +88,10 @@ pub(crate) enum Signal {
     ContactEnd,
     /// A contact involving this entity began: `(other, info)`.
     Touch(Entity),
+    /// A streamed cell loaded: `(cell)`.
+    StreamLoaded,
+    /// A streamed cell unloaded: `(cell)`.
+    StreamUnloaded,
 }
 
 impl Signal {
@@ -101,6 +105,8 @@ impl Signal {
             Signal::Contact => "physics.on_contact".into(),
             Signal::ContactEnd => "physics.on_contact_end".into(),
             Signal::Touch(_) => "physics.on_touch".into(),
+            Signal::StreamLoaded => "stream.on_loaded".into(),
+            Signal::StreamUnloaded => "stream.on_unloaded".into(),
         }
     }
 }

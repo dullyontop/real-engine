@@ -34,6 +34,7 @@
 pub mod codes;
 pub mod commands;
 pub mod compat;
+pub mod eval;
 mod glob;
 pub mod guard;
 pub mod init;
@@ -176,6 +177,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::RECIPE_CHECK_FAILED,
         title: "Recipe check failed",
         page: include_str!("../explain/RE8024.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_EVAL_TASK,
+        title: "Invalid evaluation task",
+        page: include_str!("../explain/RE8025.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_EVAL_AGENT,
+        title: "Unknown evaluation agent",
+        page: include_str!("../explain/RE8026.md"),
+    },
+    DiagInfo {
+        code: codes::EVAL_RUN_FAILED,
+        title: "Evaluation run failed",
+        page: include_str!("../explain/RE8027.md"),
     },
 ];
 

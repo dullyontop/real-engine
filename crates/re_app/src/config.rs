@@ -46,11 +46,18 @@ pub struct AppConfig {
     /// `[verify]`.
     #[serde(default)]
     pub verify: VerifyConfig,
+    /// `[stream]`: world streaming's cell grid, radii and per-tick budgets
+    /// (ADR-0042), read by `re_proc::stream`.
+    #[serde(default)]
+    pub stream: re_proc::stream::StreamConfig,
     /// `[compat]`: present in a project in the Roblox-style compat layout
     /// (docs/M2_PLAN.md, WP9). Kept as written; `re_compat::CompatConfig`
     /// reads and checks it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compat: Option<toml::Table>,
+    /// `[package]`: how `real build` packs the game (ADR-0037).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<crate::package::PackageConfig>,
     /// Runtime option: run without a window. Headless runs use a fixed frame
     /// time of one simulation step.
     #[serde(skip)]
@@ -72,7 +79,9 @@ impl Default for AppConfig {
             proc: ProcConfig::default(),
             input: re_input::InputConfig::default(),
             verify: VerifyConfig::default(),
+            stream: re_proc::stream::StreamConfig::default(),
             compat: None,
+            package: None,
             headless: true,
             persist_edits: false,
         }
@@ -387,6 +396,10 @@ impl AppConfig {
         if self.project.entry_scene.is_empty() {
             return bad("[project] entry_scene is empty".into());
         }
+        // A bad `[stream]` value is `RE4300`, from re_proc.
+        self.stream
+            .validate()
+            .map_err(|d| d.at(Location::file(CONFIG_FILE)))?;
         Ok(())
     }
 

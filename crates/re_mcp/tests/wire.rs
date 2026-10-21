@@ -147,7 +147,11 @@ impl Client {
             .build()
             .unwrap();
         let handle = engine(dir.path(), policy);
-        let options = re_mcp::McpOptions::new(dir.path()).with_resources(resources());
+        // Every call is recorded, as `real mcp --record` does.
+        let recorder = re_mcp::record::Recorder::create(&dir.path().join("transcript.jsonl"));
+        let options = re_mcp::McpOptions::new(dir.path())
+            .with_resources(resources())
+            .with_recorder(std::sync::Arc::new(recorder.unwrap()));
         let wire = match transport {
             Transport::Stdio => {
                 let (client, server) = tokio::io::duplex(1 << 20);
@@ -194,6 +198,11 @@ impl Client {
 
     fn project(&self) -> &Path {
         self._dir.path()
+    }
+
+    /// The tool calls recorded so far.
+    fn transcript(&self) -> Vec<re_mcp::record::TranscriptEntry> {
+        re_mcp::record::read_transcript(&self.project().join("transcript.jsonl")).unwrap()
     }
 
     /// Starts a server and completes the 2025-11-25 handshake.
@@ -421,6 +430,20 @@ fn edit_call_with_read_policy_is_refused_but_dry_run_works(t: Transport) {
     // Nothing was applied.
     let get = c.call(3, "entity_get", json!({ "id": "rock" }));
     assert_eq!(get["isError"], true);
+
+    // The server recorded each call with its outcome.
+    let calls = c.transcript();
+    let seen: Vec<(&str, bool, Option<&str>)> = calls
+        .iter()
+        .map(|e| (e.tool.as_str(), e.ok, e.code.as_deref()))
+        .collect();
+    assert_eq!(seen[0], ("entity_spawn", false, Some("RE8001")));
+    assert_eq!(seen[1], ("entity_spawn", true, None));
+    assert_eq!(seen[2].0, "entity_get");
+    assert!(!seen[2].1);
+    assert_eq!(calls[1].arguments, json!({ "id": "rock", "dry_run": true }));
+    assert_eq!(calls[1].command.as_deref(), Some("entity.spawn"));
+    assert!(calls[0].t_ms <= calls[1].t_ms);
 }
 
 fn scene_apply_is_atomic_and_one_undo_reverts_it(t: Transport) {
@@ -519,6 +542,14 @@ fn bad_input_and_unknown_tools(t: Transport) {
     // Missing arguments are an empty object.
     let describe = c.request(4, "tools/call", json!({ "name": "describe" }));
     assert_eq!(describe["result"]["isError"], false);
+    // An unknown tool is recorded with no command.
+    let unknown: Vec<_> = c
+        .transcript()
+        .into_iter()
+        .filter(|e| e.command.is_none())
+        .collect();
+    assert_eq!(unknown.len(), 2);
+    assert!(unknown.iter().all(|e| e.is_error && e.code.is_none()));
 }
 
 fn stateless_2026_07_28_requests_carry_meta(t: Transport) {

@@ -1,18 +1,22 @@
-//! A small blocking MCP client over streamable HTTP, for tests and the
-//! evaluation harness (ADR-0046). It writes the protocol as any client does:
-//! one POST per JSON-RPC message, `Mcp-Session-Id` kept from `initialize`,
-//! `MCP-Protocol-Version` once negotiated, and, for revision 2026-07-28, the
-//! `Mcp-Method` and `Mcp-Name` headers. Responses are read as JSON or as SSE
-//! `data:` lines.
+//! Small blocking MCP clients, for tests and the evaluation harness
+//! (ADR-0046): [`HttpClient`] over streamable HTTP and [`StdioClient`] for a
+//! `real mcp` child process.
 //!
-//! It speaks plain HTTP/1.1 over `std::net`, so it reaches only `http://`
-//! URLs; that is all `real mcp --http` serves. It never answers requests the
-//! server sends inside a response stream (sampling, roots, elicitation);
-//! `RealEngineServer` sends none.
+//! The HTTP client writes the protocol as any client does: one POST per
+//! JSON-RPC message, `Mcp-Session-Id` kept from `initialize`,
+//! `MCP-Protocol-Version` once negotiated, and, for revision 2026-07-28,
+//! the `Mcp-Method` and `Mcp-Name` headers. Responses are read as JSON or
+//! as SSE `data:` lines. It speaks plain HTTP/1.1 over `std::net`, so it
+//! reaches only `http://` URLs; that is all `real mcp --http` serves.
+//!
+//! Neither client answers requests the server sends (sampling, roots,
+//! elicitation); `RealEngineServer` sends none.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::time::Duration;
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value as Json, json};
 
@@ -291,6 +295,133 @@ fn read_reply(stream: TcpStream) -> anyhow::Result<(HttpReply, Option<String>)> 
         },
         session,
     ))
+}
+
+/// A blocking client for `real mcp` over stdio, as a child process: one
+/// JSON-RPC message per line on its stdin and stdout. Its stderr is left as
+/// the caller set it.
+#[derive(Debug)]
+pub struct StdioClient {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    lines: mpsc::Receiver<String>,
+    timeout: Duration,
+}
+
+impl StdioClient {
+    /// Starts `command` with piped stdin and stdout.
+    ///
+    /// # Errors
+    ///
+    /// When it cannot be started.
+    pub fn spawn(mut command: Command) -> anyhow::Result<StdioClient> {
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let stdin = child.stdin.take();
+        let stdout = child.stdout.take().expect("stdout is piped");
+        let (send, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if send.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(StdioClient {
+            child,
+            stdin,
+            lines,
+            timeout: Duration::from_secs(600),
+        })
+    }
+
+    /// Gives up on a response after `timeout` from now on.
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+    }
+
+    fn send(&mut self, message: &Json) -> anyhow::Result<()> {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("the server's stdin is closed"))?;
+        let mut line = serde_json::to_vec(message)?;
+        line.push(b'\n');
+        stdin.write_all(&line)?;
+        stdin.flush()?;
+        Ok(())
+    }
+
+    /// Sends a JSON-RPC request and returns its response; other messages
+    /// before it are dropped.
+    ///
+    /// # Errors
+    ///
+    /// When the server cannot be written to, ends, or does not answer in
+    /// time.
+    pub fn request(&mut self, id: u64, method: &str, params: Json) -> anyhow::Result<Json> {
+        self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
+        let deadline = Instant::now() + self.timeout;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let line = self.lines.recv_timeout(left).map_err(|e| match e {
+                mpsc::RecvTimeoutError::Timeout => {
+                    anyhow::anyhow!("no response to {method} (id {id}) in {:?}", self.timeout)
+                }
+                mpsc::RecvTimeoutError::Disconnected => {
+                    anyhow::anyhow!("the server ended before answering {method} (id {id})")
+                }
+            })?;
+            let Ok(message) = serde_json::from_str::<Json>(&line) else {
+                continue;
+            };
+            if message["id"] == id && message.get("method").is_none() {
+                return Ok(message);
+            }
+        }
+    }
+
+    /// Sends a JSON-RPC notification.
+    ///
+    /// # Errors
+    ///
+    /// When the server cannot be written to.
+    pub fn notify(&mut self, method: &str, params: Json) -> anyhow::Result<()> {
+        self.send(&json!({ "jsonrpc": "2.0", "method": method, "params": params }))
+    }
+
+    /// Closes the server's stdin, which ends it, and waits up to `wait`;
+    /// after that the server is killed.
+    ///
+    /// # Errors
+    ///
+    /// When waiting for it fails.
+    pub fn finish(mut self, wait: Duration) -> std::io::Result<ExitStatus> {
+        drop(self.stdin.take());
+        wait_or_kill(&mut self.child, wait)
+    }
+}
+
+/// Waits up to `wait` for `child`, then kills it and reaps it.
+///
+/// # Errors
+///
+/// When waiting for it fails.
+pub fn wait_or_kill(child: &mut Child, wait: Duration) -> std::io::Result<ExitStatus> {
+    let deadline = Instant::now() + wait;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            return child.wait();
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn read_chunked(reader: &mut impl BufRead) -> anyhow::Result<Vec<u8>> {

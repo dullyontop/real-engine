@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "seed": 1,
+  "frames": 900,
+  "input": [
+    {
+      "frame": 60,
+      "action": "move",
+      "axis": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "frame": 130,
+      "action": "move",
+      "axis": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "frame": 140,
+      "action": "use",
+      "down": true
+    },
+    {
+      "frame": 142,
+      "action": "use",
+      "down": false
+    },
+    {
+      "frame": 160,
+      "action": "move",
+      "axis": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "frame": 400,
+      "action": "move",
+      "axis": [
+        0.3,
+        1.0
+      ]
+    },
+    {
+      "frame": 440,
+      "action": "move",
+      "axis": [
+        -0.3,
+        1.0
+      ]
+    },
+    {
+      "frame": 480,
+      "action": "move",
+      "axis": [
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "frame": 560,
+      "action": "move",
+      "axis": [
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "frame": 720,
+      "action": "move",
+      "axis": [
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "frame": 400,
+      "screenshot": "tests/goldens/{backend}/drive_f400.png"
+    },
+    {
+      "frame": 899,
+      "screenshot": "tests/goldens/{backend}/drive_f899.png"
+    }
+  ]
+}

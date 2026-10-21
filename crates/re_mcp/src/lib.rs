@@ -40,6 +40,7 @@
 pub mod client;
 pub mod codes;
 pub mod http;
+pub mod record;
 mod server;
 
 use std::path::PathBuf;
@@ -67,6 +68,8 @@ pub struct McpOptions {
     pub instructions: String,
     /// The resources served (none by default).
     pub resources: Arc<ResourceSet>,
+    /// Where each tool call is recorded (`real mcp --record`), if anywhere.
+    pub recorder: Option<Arc<record::Recorder>>,
 }
 
 impl McpOptions {
@@ -77,12 +80,19 @@ impl McpOptions {
             name: re_agent::init::SERVER_NAME.to_string(),
             instructions: DEFAULT_INSTRUCTIONS.to_string(),
             resources: Arc::new(ResourceSet::new()),
+            recorder: None,
         }
     }
 
     /// The same options, serving `resources`.
     pub fn with_resources(mut self, resources: Arc<ResourceSet>) -> McpOptions {
         self.resources = resources;
+        self
+    }
+
+    /// The same options, recording every tool call with `recorder`.
+    pub fn with_recorder(mut self, recorder: Arc<record::Recorder>) -> McpOptions {
+        self.recorder = Some(recorder);
         self
     }
 }

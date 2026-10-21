@@ -4,6 +4,7 @@
 
 use re_core::Diagnostic;
 
+use crate::place::dom::PlaceValue;
 use crate::report::Unrecognised;
 
 /// How an instance of the input finds its counterpart in the project.
@@ -42,6 +43,10 @@ pub struct Node {
     pub properties: Vec<(String, serde_json::Value)>,
     /// Attributes to set, from JSON.
     pub attributes: Vec<(String, serde_json::Value)>,
+    /// Property values from a place file, under the property's name, set
+    /// through the class layer after `properties`; a reference holds the
+    /// target's node.
+    pub place: Vec<(String, PlaceValue)>,
     /// Destroyed by a later statement of the input itself.
     pub destroyed: bool,
 }
@@ -103,6 +108,7 @@ impl Tree {
             tags_if_created: Vec::new(),
             properties: Vec::new(),
             attributes: Vec::new(),
+            place: Vec::new(),
             destroyed: false,
         })
     }
