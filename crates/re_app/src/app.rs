@@ -103,6 +103,8 @@ pub struct App {
     clock: FixedClock,
     /// Fixed steps taken since the scene was loaded: world streaming's tick.
     stream_tick: u64,
+    /// How world streaming treats a cell generated too late for its tick.
+    stream_lateness: re_proc::stream::Lateness,
     frame: u64,
     alpha: f32,
 
@@ -293,6 +295,7 @@ impl App {
             commands,
             clock,
             stream_tick: 0,
+            stream_lateness: re_proc::stream::Lateness::Wait,
             frame: 0,
             alpha: 0.0,
             action_map,
@@ -745,6 +748,19 @@ impl App {
         };
         self.watcher = Some(AssetWatcher::new(dir, AssetWatcher::DEFAULT_DEBOUNCE)?);
         Ok(())
+    }
+
+    /// Sets how world streaming treats a cell whose generation is not done
+    /// at its apply tick (ADR-0042). [`Lateness::Wait`] (the default) waits
+    /// for it, so `real verify`, replays and `play.run` load the same cells at
+    /// the same ticks on every machine. Only a live run, which must not stall
+    /// a frame, sets [`Lateness::Late`]: the cell applies when it is ready,
+    /// reported as `RE4305`.
+    ///
+    /// [`Lateness::Wait`]: re_proc::stream::Lateness::Wait
+    /// [`Lateness::Late`]: re_proc::stream::Lateness::Late
+    pub fn set_stream_lateness(&mut self, lateness: re_proc::stream::Lateness) {
+        self.stream_lateness = lateness;
     }
 
     /// Makes a compat game's `DataStoreService` and `MemoryStoreService`
@@ -1363,6 +1379,14 @@ impl App {
                 .next()
                 .is_some();
         if streams {
+            if let Some(mut s) = self
+                .world
+                .ecs
+                .get_resource_mut::<re_proc::stream::Streamer>()
+                && s.lateness() != self.stream_lateness
+            {
+                s.set_lateness(self.stream_lateness);
+            }
             let report =
                 re_proc::stream::step(&mut self.world, self.stream_tick, &self.config.stream);
             self.diagnostics.extend(report.diagnostics);

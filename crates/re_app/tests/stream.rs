@@ -258,3 +258,20 @@ fn a_tools_script_loads_a_far_cell_before_the_first_step() {
     app.run_headless(Some(3), None).unwrap();
     assert!(app.world().entity("land/c/6_6/ground/terrain").is_err());
 }
+
+#[test]
+fn only_a_live_run_applies_late_cells() {
+    use re_proc::stream::{Lateness, Streamer};
+    let dir = project(CONFIG);
+    let mut app = open(dir.path());
+    app.run_headless(Some(2), None).unwrap();
+    let lateness = |app: &App| app.world().ecs.resource::<Streamer>().lateness();
+    assert_eq!(lateness(&app), Lateness::Wait, "the default waits");
+    app.set_stream_lateness(Lateness::Late);
+    app.run_headless(Some(2), None).unwrap();
+    assert_eq!(lateness(&app), Lateness::Late);
+    // A play copy is a check: it waits, whatever the live run does.
+    let (report, _, _) = app.play_copy(5, None, &[], false).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert_eq!(lateness(&app), Lateness::Late);
+}

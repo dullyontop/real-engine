@@ -276,6 +276,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "Content beyond the precision limit",
         page: include_str!("../explain/RE4309.md"),
     },
+    DiagInfo {
+        code: codes::CANCELLED,
+        title: "Streaming job cancelled",
+        page: include_str!("../explain/RE4310.md"),
+    },
 ];
 
 /// The code range this crate uses: `RE4000`–`RE4499`, the part of the
