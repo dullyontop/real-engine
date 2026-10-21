@@ -34,6 +34,7 @@ use re_physics::Physics;
 use re_scene::{Entity, World};
 
 pub use pose::{cframe_value, pose_of, world_pose};
+pub(crate) use query::first_hit;
 pub use sim::{
     CELL_SIZE, Cell, CellId, CharacterDriven, CharacterLoose, CompatPhysics, MAX_GROUPS,
     StaticCells,
