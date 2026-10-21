@@ -1,0 +1,37 @@
+//! The diagnostic codes `re_net` owns (range `RE8900`–`RE8999`).
+//!
+//! Each code has an explain page in `crates/re_net/explain/` and an entry in
+//! [`DIAGNOSTICS`](crate::DIAGNOSTICS). A code is never reused for a different
+//! meaning (ADR-0004).
+
+use re_core::Code;
+
+/// A socket could not be opened or bound to the address asked for.
+pub const BIND: Code = Code::new("RE8900");
+
+/// An address does not parse or does not resolve.
+pub const ADDRESS: Code = Code::new("RE8901");
+
+/// The server did not answer the handshake in time.
+pub const NO_ANSWER: Code = Code::new("RE8902");
+
+/// The server runs another network protocol version.
+pub const VERSION_MISMATCH: Code = Code::new("RE8903");
+
+/// The server already has as many players as it allows.
+pub const SERVER_FULL: Code = Code::new("RE8904");
+
+/// The server runs a different game (another build or other content).
+pub const GAME_MISMATCH: Code = Code::new("RE8905");
+
+/// A connection went silent past the timeout, or stopped acknowledging what
+/// it was sent.
+pub const TIMED_OUT: Code = Code::new("RE8906");
+
+/// The other end closed the connection (a kick, a server shutting down, a
+/// player leaving).
+pub const CLOSED: Code = Code::new("RE8907");
+
+/// A message cannot be sent: it is too large for its channel, or the
+/// connection does not exist.
+pub const SEND: Code = Code::new("RE8908");

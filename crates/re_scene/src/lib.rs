@@ -66,7 +66,7 @@ pub use attributes::{AttributeChanged, AttributeFeed, Attributes};
 pub use components::{
     AnimPlayer, AudioSource, BodyKind, Camera, CharacterController, Collider, ColliderShape,
     GlobalTransform, HudAnchor, HudText, Light, LightKind, MaterialRef, MeshRef, Name, RigidBody,
-    ScriptContext, ScriptRef, Transform, Visible, register_builtins,
+    ScriptContext, ScriptRef, SkinnedMesh, Transform, Visible, register_builtins,
 };
 pub use error::SceneError;
 pub use ids::{IdGen, IdIndex, StableId, validate_id};

@@ -198,6 +198,10 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         },
         None => None,
     };
+    // A replay must repeat its recording, so only a live run keeps data.
+    if replay.is_none() {
+        app.persist_data();
+    }
     let (frames, mut diagnostics, mut report) = if args.headless {
         match app.run_headless(args.frames, replay) {
             Ok(r) => (

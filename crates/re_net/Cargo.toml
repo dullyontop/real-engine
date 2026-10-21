@@ -1,0 +1,14 @@
+[package]
+name = "re_net"
+description = "Real Engine networking: connections over UDP with our own reliability, polled from the frame (ADR-0050)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Subsystem crate: depends only on the contract layer and third-party crates
+# (ARCHITECTURE §2; `cargo xtask check-graph` enforces it). No async runtime,
+# no threads: the frame loop polls it (ADR-0050 §1).
+[dependencies]
+re_core.workspace = true

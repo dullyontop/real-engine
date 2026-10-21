@@ -34,10 +34,18 @@ fn config(filter: &str, json: bool, span_timings: bool) -> LogConfig {
     }
 }
 
+/// tracing caches each callsite's interest process-wide, so tests that install
+/// subscribers with different filters on parallel threads can see each other's
+/// verdicts (a span or event dropped under the wrong filter). The tests take
+/// this lock and rebuild the cache under their own subscriber.
+static SERIAL: Mutex<()> = Mutex::new(());
+
 fn run(config: LogConfig) -> String {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let buf = Buf::default();
     let sub = subscriber(&config, buf.clone()).expect("valid filter");
     tracing::subscriber::with_default(sub, || {
+        tracing::callsite::rebuild_interest_cache();
         let span = tracing::info_span!("load_asset", path = "meshes/tree.glb", bytes = 1024u64);
         let _g = span.enter();
         tracing::debug!(target: "re_assets", "parsing");

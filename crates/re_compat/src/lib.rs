@@ -141,6 +141,26 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE9352.md"),
     },
     DiagInfo {
+        code: codes::DATA_REQUEST,
+        title: "Data store request rejected",
+        page: include_str!("../explain/RE9400.md"),
+    },
+    DiagInfo {
+        code: codes::DATA_QUEUE_FULL,
+        title: "Data store request queue full",
+        page: include_str!("../explain/RE9401.md"),
+    },
+    DiagInfo {
+        code: codes::DATA_FILE,
+        title: "Data file unreadable",
+        page: include_str!("../explain/RE9402.md"),
+    },
+    DiagInfo {
+        code: codes::MEMORY_REQUEST,
+        title: "Memory store request failed",
+        page: include_str!("../explain/RE9403.md"),
+    },
+    DiagInfo {
         code: codes::DEPRECATED_MEMBER,
         title: "Deprecated member used",
         page: include_str!("../explain/RE9101.md"),

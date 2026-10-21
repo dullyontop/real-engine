@@ -110,6 +110,7 @@ impl Bindings {
         crate::net::register(&mut b);
         crate::players::register(&mut b);
         crate::services::extra::register(&mut b);
+        crate::services::data::register(&mut b);
         Ok(b)
     }
 

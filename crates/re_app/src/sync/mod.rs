@@ -4,6 +4,7 @@
 //! `re_scene::World::ecs`, never by-name access.
 
 pub mod anim;
+pub mod anim_skin;
 pub mod audio;
 pub mod physics;
 pub mod render;
