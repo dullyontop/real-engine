@@ -17,6 +17,7 @@ use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, ServiceExt};
 use serde_json::{Value as Json, json};
 
+use crate::record::{TranscriptEntry, millis};
 use crate::{McpOptions, codes};
 
 /// The longest tool description sent (clients truncate at 4096 characters).
@@ -404,17 +405,65 @@ impl ServerHandler for RealEngineServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let _turn = self.order.lock().await;
-        let Some(command) = self.command_for(&request.name).await? else {
+        let started = std::time::Instant::now();
+        let recorder = self.options.recorder.clone();
+        let entry = |command: Option<&str>, args: &Json, outcome: Option<&CommandOutcome>| {
+            let recorder = recorder.as_ref()?;
+            Some((
+                recorder,
+                TranscriptEntry {
+                    t_ms: millis(recorder.elapsed().saturating_sub(started.elapsed())),
+                    tool: request.name.to_string(),
+                    command: command.map(str::to_string),
+                    arguments: args.clone(),
+                    ok: outcome.is_some_and(|o| o.ok),
+                    code: outcome.and_then(|o| {
+                        o.diagnostics
+                            .iter()
+                            .find(|d| d.severity == re_core::Severity::Error)
+                            .map(|d| d.code.to_string())
+                    }),
+                    is_error: outcome.is_none_or(|o| !o.ok),
+                    duration_ms: millis(started.elapsed()),
+                },
+            ))
+        };
+        let args = Json::Object(request.arguments.clone().unwrap_or_default());
+        let found = self.command_for(&request.name).await;
+        if found.is_err()
+            && let Some((r, e)) = entry(None, &args, None)
+        {
+            r.record(&e);
+        }
+        let Some(command) = found? else {
+            if let Some((r, e)) = entry(None, &args, None) {
+                r.record(&e);
+            }
             return Err(McpError::invalid_params(
                 Cow::Owned(format!("tool not found: {}", request.name)),
                 None,
             ));
         };
-        let args = Json::Object(request.arguments.unwrap_or_default());
         let handle = self.handle.clone();
-        let outcome = tokio::task::spawn_blocking(move || handle.call(&command, args, false))
-            .await
-            .map_err(|e| McpError::internal_error(format!("engine call failed: {e}"), None))?;
+        let call_args = args.clone();
+        let name = command.clone();
+        let joined =
+            tokio::task::spawn_blocking(move || handle.call(&name, call_args, false)).await;
+        let outcome = match joined {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                if let Some((r, e)) = entry(Some(&command), &args, None) {
+                    r.record(&e);
+                }
+                return Err(McpError::internal_error(
+                    format!("engine call failed: {e}"),
+                    None,
+                ));
+            }
+        };
+        if let Some((r, e)) = entry(Some(&command), &args, Some(&outcome)) {
+            r.record(&e);
+        }
         Ok(result_for(outcome, &self.options.project).into())
     }
 }

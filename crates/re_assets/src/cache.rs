@@ -42,6 +42,30 @@ pub fn cache_key(importer: &str, version: u32, settings: &[u8], sources: &[&[u8]
     h.finalize()
 }
 
+/// `value` as a cache entry: the header, then postcard. A packaged archive
+/// stores processed assets in this encoding (ADR-0037).
+pub fn encode_entry<T: Serialize>(value: &T) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(64);
+    bytes.extend_from_slice(MAGIC);
+    bytes.extend_from_slice(&CACHE_FORMAT_VERSION.to_le_bytes());
+    postcard::to_extend(value, bytes).expect("cache values always serialize")
+}
+
+/// Decodes an entry written by [`encode_entry`].
+///
+/// # Errors
+///
+/// The header is wrong, or the body does not decode as `T`.
+pub fn decode_entry<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+    let (header, body) = bytes
+        .split_at_checked(8)
+        .ok_or("the entry is shorter than its header")?;
+    if &header[..4] != MAGIC || header[4..] != CACHE_FORMAT_VERSION.to_le_bytes() {
+        return Err("the entry has another format version".to_owned());
+    }
+    postcard::from_bytes(body).map_err(|e| e.to_string())
+}
+
 /// Whether a lookup found an entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheOutcome {
@@ -113,11 +137,7 @@ impl ProcessedCache {
     /// as a hit or miss.
     pub fn get<T: DeserializeOwned>(&self, key: &blake3::Hash) -> Option<T> {
         let bytes = self.dir.read(&Self::entry_path(key)).ok()??;
-        let (header, body) = bytes.split_at_checked(8)?;
-        if &header[..4] != MAGIC || header[4..] != CACHE_FORMAT_VERSION.to_le_bytes() {
-            return None;
-        }
-        match postcard::from_bytes(body) {
+        match decode_entry(&bytes) {
             Ok(v) => Some(v),
             Err(e) => {
                 tracing::warn!(key = %key.to_hex(), error = %e, "corrupt cache entry; it will be rebuilt");
@@ -133,10 +153,7 @@ impl ProcessedCache {
     /// [`codes::WRITE_FAILED`](crate::codes::WRITE_FAILED) when the entry cannot
     /// be written.
     pub fn put<T: Serialize>(&self, key: &blake3::Hash, value: &T) -> Result<(), Diagnostic> {
-        let mut bytes = Vec::with_capacity(64);
-        bytes.extend_from_slice(MAGIC);
-        bytes.extend_from_slice(&CACHE_FORMAT_VERSION.to_le_bytes());
-        let bytes = postcard::to_extend(value, bytes).expect("cache values always serialize");
+        let bytes = encode_entry(value);
         let path = Self::entry_path(key);
         self.dir.write(&path, &bytes).map_err(|e| {
             let shown = match self.dir.path() {

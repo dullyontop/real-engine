@@ -1,0 +1,26 @@
+prompt = "Make the hills of this landscape about twice as tall."
+project = { template = "terrain", params = { seed = 3 } }
+budget = { tool_calls = 20, seconds = 300 }
+
+[[checks]]
+command = "entity.get"
+args = { id = "terrain", components = ["GraphSource"] }
+pointer = "/data/components/GraphSource/params"
+contains = "32"
+
+[[checks]]
+command = "query"
+args = { generated = true }
+pointer = "/data/total"
+at_least = 2
+
+[[checks]]
+no_regressions = true
+
+[[reference]]
+command = "graph.set_param"
+args = { source = "terrain", node = "height", param = "height", value = 32.0 }
+
+[[reference]]
+command = "graph.regenerate"
+args = { source = "terrain" }

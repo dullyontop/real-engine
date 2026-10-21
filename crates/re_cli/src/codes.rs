@@ -15,3 +15,28 @@ pub const WRITE_FAILED: Code = Code::new("RE0902");
 /// Scripts use a global or member the engine does not provide (a warning from
 /// `real check` and verify's `scan` stage).
 pub const SCRIPT_API_GAP: Code = Code::new("RE0903");
+
+/// `[package]` in `real.toml` has an invalid value, or a default `real build`
+/// had to choose (no `identifier`: a warning).
+pub const PACKAGE_CONFIG: Code = Code::new("RE0950");
+
+/// `real build` stopped because the project has errors.
+pub const BUILD_STOPPED: Code = Code::new("RE0951");
+
+/// Two project paths `real build` would pack differ only by case.
+pub const CASE_COLLISION: Code = Code::new("RE0952");
+
+/// The game runtime could not be built, or a `--runtime` binary does not match
+/// this engine.
+pub const RUNTIME_FAILED: Code = Code::new("RE0953");
+
+/// The third-party notices could not be gathered, or a license is not allowed.
+pub const NOTICES_FAILED: Code = Code::new("RE0954");
+
+/// A step of laying out the game folder failed (or `--out` is not a folder
+/// `real build` may write).
+pub const BUNDLE_FAILED: Code = Code::new("RE0955");
+
+/// A packaged run ended differently from the project's run (`real verify
+/// --package`).
+pub const PACKAGE_DIFFERS: Code = Code::new("RE0956");

@@ -197,6 +197,41 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE0528.md"),
     },
     DiagInfo {
+        code: codes::PACKAGE_UNREADABLE,
+        title: "Unreadable game archive",
+        page: include_str!("../explain/RE0600.md"),
+    },
+    DiagInfo {
+        code: codes::PACKAGE_ENTRY_CORRUPT,
+        title: "Damaged entry in a game archive",
+        page: include_str!("../explain/RE0601.md"),
+    },
+    DiagInfo {
+        code: codes::PACKAGE_VERSION_MISMATCH,
+        title: "Game archive built for another runtime",
+        page: include_str!("../explain/RE0602.md"),
+    },
+    DiagInfo {
+        code: codes::PACKAGE_CASE_MATCH,
+        title: "File found only by ignoring case",
+        page: include_str!("../explain/RE0603.md"),
+    },
+    DiagInfo {
+        code: codes::PACKAGE_MISSING,
+        title: "No game archive beside the game",
+        page: include_str!("../explain/RE0604.md"),
+    },
+    DiagInfo {
+        code: codes::NO_USER_FOLDER,
+        title: "No folder for the game's user data",
+        page: include_str!("../explain/RE0605.md"),
+    },
+    DiagInfo {
+        code: codes::PACKAGED_WRITE,
+        title: "A packaged game cannot write project files",
+        page: include_str!("../explain/RE0606.md"),
+    },
+    DiagInfo {
         code: codes::WEB_NO_GPU,
         title: "No WebGPU in this browser",
         page: include_str!("../explain/RE0620.md"),

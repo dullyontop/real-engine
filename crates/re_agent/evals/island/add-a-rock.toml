@@ -1,0 +1,28 @@
+prompt = "Put a rock called Lookout Rock on the island."
+project = { example = "island" }
+budget = { tool_calls = 30, seconds = 600 }
+
+[[checks]]
+command = "query"
+args = { name = "Lookout Rock" }
+pointer = "/data/total"
+equals = 1
+
+# A visible edit changes the golden images, so the goldens stage is
+# expected to fail; everything else must still pass.
+[[checks]]
+verify_stage = "compile"
+
+[[checks]]
+verify_stage = "boot"
+
+[[checks]]
+verify_stage = "replays"
+
+[[checks]]
+diff_stage = "goldens"
+changed = true
+
+[[reference]]
+command = "entity.spawn"
+args = { id = "lookout_rock", name = "Lookout Rock", components = { MeshRef = { asset = "builtin:cube" }, Transform = { translation = [4.0, 8.0, 4.0], scale = [2.0, 1.5, 2.0] } } }

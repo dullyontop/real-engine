@@ -864,6 +864,56 @@ fn a_second_headless_writer_is_refused(t: Transport) {
     first.finish();
 }
 
+/// `real agent eval` runs the starter suite's reference calls over the
+/// transport and scores every task as passed (ADR-0046): the harness
+/// serves MCP, records the transcript and checks the result.
+fn the_starter_eval_suite_passes(t: Transport) {
+    let suite = Path::new(env!("CARGO_MANIFEST_DIR")).join("../re_agent/evals/starter");
+    let out = tempfile::tempdir().unwrap();
+    let transport = match t {
+        Transport::Stdio => "stdio",
+        Transport::Http => "http",
+    };
+    let run = Command::new(env!("CARGO_BIN_EXE_real"))
+        .args(["agent", "eval"])
+        .arg(&suite)
+        .args(["--transport", transport, "--out"])
+        .arg(out.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        run.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let summary: Value = serde_json::from_str(
+        &std::fs::read_to_string(out.path().join("starter/summary.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(summary["transport"], transport);
+    let tasks = summary["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 3, "{summary}");
+    for task in tasks {
+        assert_eq!(task["passed"], 1, "{summary}");
+        let run = out
+            .path()
+            .join("starter")
+            .join(task["task"].as_str().unwrap())
+            .join("run-1");
+        let score: Value =
+            serde_json::from_str(&std::fs::read_to_string(run.join("score.json")).unwrap())
+                .unwrap();
+        // The server recorded every reference call.
+        let calls = std::fs::read_to_string(run.join("transcript.jsonl")).unwrap();
+        assert_eq!(score["tool_calls"], calls.lines().count(), "{score}");
+        assert!(score["tool_calls"].as_u64().unwrap() >= 1, "{score}");
+        for file in ["verify.json", "verify-diff.json"] {
+            assert!(run.join(file).is_file(), "{file}");
+        }
+    }
+}
+
 /// Each test, once per transport.
 macro_rules! over_both_transports {
     ($($name:ident),* $(,)?) => {
@@ -880,5 +930,6 @@ over_both_transports!(
     an_agent_edits_checks_and_restores_the_island,
     an_agent_uses_luau_tools_resources_and_verify_diff,
     an_agent_imports_a_loader_into_a_place_and_plays_it,
-    a_second_headless_writer_is_refused
+    a_second_headless_writer_is_refused,
+    the_starter_eval_suite_passes
 );

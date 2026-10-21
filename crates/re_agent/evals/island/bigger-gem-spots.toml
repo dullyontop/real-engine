@@ -1,0 +1,32 @@
+prompt = "On the island, spread the gems over a wider area around each spot."
+project = { example = "island" }
+budget = { tool_calls = 30, seconds = 600 }
+
+[[checks]]
+command = "query"
+args = { generated = true }
+pointer = "/data/total"
+at_least = 1
+
+# A visible edit changes the golden images, so the goldens stage is
+# expected to fail; everything else must still pass.
+[[checks]]
+verify_stage = "compile"
+
+[[checks]]
+verify_stage = "boot"
+
+[[checks]]
+verify_stage = "replays"
+
+[[checks]]
+diff_stage = "goldens"
+changed = true
+
+[[reference]]
+command = "graph.set_param"
+args = { source = "island", node = "gem_spots", param = "radius", value = 12.0 }
+
+[[reference]]
+command = "graph.regenerate"
+args = { source = "island" }
