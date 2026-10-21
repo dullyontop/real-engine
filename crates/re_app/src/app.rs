@@ -154,7 +154,7 @@ pub struct App {
     compat_config: Option<re_compat::CompatConfig>,
     compat: Option<crate::compat::CompatPlay>,
     compat_failed: bool,
-    /// Whether the compat data services keep their data in `.real/data/`
+    /// Whether the compat data services keep their data in the run's data folder
     /// ([`App::persist_data`]).
     persist_data: bool,
     /// A compat game's 3D view and UI on the renderer.
@@ -748,8 +748,9 @@ impl App {
     }
 
     /// Makes a compat game's `DataStoreService` and `MemoryStoreService`
-    /// keep their data in the project's `.real/data/` with the wall clock, as
-    /// `real run` does (ADR-0048). Without it, each run starts from
+    /// keep their data in the run's data folder (`.real/data/` on desktop,
+    /// IndexedDB in a browser) with the wall clock, as `real run` does
+    /// (ADR-0048). Without it, each run starts from
     /// `data/seed/` on a fixed clock so it repeats. Call it before the first
     /// frame.
     pub fn persist_data(&mut self) {

@@ -59,7 +59,9 @@ impl Session {
     }
 
     /// Opens the project for play, with the saved files added so far and every
-    /// later change of saved data and crash reports sent to `sink`.
+    /// later change of saved data and crash reports sent to `sink`. A compat
+    /// game keeps its data as `real run` does ([`App::persist_data`]), in the
+    /// saved files.
     ///
     /// # Errors
     ///
@@ -67,7 +69,9 @@ impl Session {
     pub fn open_for_play(&self, sink: re_app::web::Sink) -> Result<App, re_core::Diagnostic> {
         let files = self.project_files(re_app::web::browser_dirs(self.saved.clone(), sink));
         let config = AppConfig::load_from(&files)?;
-        App::open_files(files, config)
+        let mut app = App::open_files(files, config)?;
+        app.persist_data();
+        Ok(app)
     }
 
     /// The project's name from `real.toml`, which names its saved data in the
