@@ -286,8 +286,10 @@ jobs:
           dist/island/island --runtime-info
           dist/island/island --version
       - name: The packaged game in a window under Xvfb
+        # xvfb-run merges the command's stderr into its stdout, so the game's log
+        # lines go to their own file and stdout stays one JSON document.
         run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" dist/island/island --frames 300 --json > out/run.json
+          xvfb-run -a -s "-screen 0 1280x720x24" sh -c 'dist/island/island --frames 300 --json 2> out/run.log' > out/run.json
           jq -e '.frames == 300 and ([.diagnostics[] | select(.severity == "error")] | length == 0)' out/run.json
       - uses: actions/upload-artifact@v7
         if: always()
