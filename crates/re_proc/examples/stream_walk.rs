@@ -240,6 +240,8 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
     let per_tick = SPEED / HZ / std::f32::consts::SQRT_2;
     let total = ticks.unwrap_or((diagonal / per_tick) as u64);
     let mut times = Vec::with_capacity(total as usize);
+    // The slowest ticks and what they did, to tell work from stalls.
+    let mut slowest: Vec<Json> = Vec::new();
     let (mut waits, mut late, mut loaded, mut unloaded, mut deferred) = (0, 0, 0, 0, 0);
     let mut peak_bytes = 0u64;
     let mut peak_entities = 0usize;
@@ -259,6 +261,7 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
             }
         }
         position = (position + per_tick).min(END);
+        let before = os_ticks();
         let t0 = Instant::now();
         w.set(
             "walker",
@@ -268,8 +271,33 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
         )
         .expect("the walker moves");
         let r = step(w, tick, &config);
+        let step_ms = t0.elapsed().as_secs_f64() * 1000.0;
         w.update();
-        times.push(t0.elapsed().as_secs_f64() * 1000.0);
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        times.push(ms);
+        if slowest.len() < 5 || ms > slowest[4]["ms"].as_f64().unwrap_or(0.0) {
+            let after = os_ticks();
+            slowest.push(json!({
+                // In 10 ms clock ticks (Linux): this thread's CPU time, and
+                // the time the host took from the VM's CPUs (steal). A tick
+                // far longer than its CPU time was descheduled, not working.
+                "thread_cpu_ticks": after.0.saturating_sub(before.0),
+                "steal_ticks": after.1.saturating_sub(before.1),
+                "tick": tick,
+                "ms": ms,
+                "step_ms": step_ms,
+                "loaded": r.loaded.len(),
+                "unloaded": r.unloaded.len(),
+                "entities": r.entities,
+            }));
+            slowest.sort_by(|a, b| {
+                b["ms"]
+                    .as_f64()
+                    .unwrap_or(0.0)
+                    .total_cmp(&a["ms"].as_f64().unwrap_or(0.0))
+            });
+            slowest.truncate(5);
+        }
         assert!(
             r.diagnostics.is_empty(),
             "tick {tick}: {:#?}",
@@ -304,6 +332,7 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
                 "p99": percentile(&sorted, 0.99),
                 "max": sorted.last().copied().unwrap_or(0.0),
             },
+            "slowest": slowest,
             "peak_cells": peak_cells,
             "peak_entities": peak_entities,
             "peak_memory_mib": peak_bytes as f64 / (1 << 20) as f64,
@@ -391,4 +420,27 @@ fn main() -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// This thread's CPU time and the system's steal time, in clock ticks, on
+/// Linux; zeros elsewhere.
+fn os_ticks() -> (u64, u64) {
+    let field = |text: &str, i: usize| -> u64 {
+        text.split_whitespace()
+            .nth(i)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    };
+    let cpu = std::fs::read_to_string("/proc/thread-self/stat")
+        .map(|t| {
+            // After the command name's closing parenthesis: utime and stime
+            // are fields 14 and 15 of the whole line.
+            let rest = t.rsplit_once(')').map_or("", |(_, r)| r);
+            field(rest, 11) + field(rest, 12)
+        })
+        .unwrap_or(0);
+    let steal = std::fs::read_to_string("/proc/stat")
+        .map(|t| t.lines().next().map_or(0, |l| field(l, 8)))
+        .unwrap_or(0);
+    (cpu, steal)
 }
