@@ -4,7 +4,8 @@
 # and verify-plaza (all on Ubuntu; verify-plaza by ADR-0023's M2 amendment), and
 # build-windows and build-macos (the whole suite and `real verify` on the island
 # and the plaza; ADR-0023's M3 amendment, WP18 PR "blocking"), and build-web
-# (ADR-0023's M3 amendment, WP29 PR "portable").
+# (ADR-0023's M3 amendment, WP29 PR "portable"), and d2 (the state_hash of every
+# island and plaza replay agrees on the three platforms; ADR-0036, WP18 PR "d2").
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
@@ -365,8 +366,8 @@ jobs:
           name: d2-${{ runner.os }}
           path: out/d2.json
 
-  # Linux x86_64 and Windows x86_64 must agree checkpoint for checkpoint; macOS
-  # arm64 is reported until its hashes match (ADR-0036).
+  # Linux x86_64, Windows x86_64 and macOS arm64 must agree checkpoint for
+  # checkpoint (ADR-0036; macOS matched from this PR's first run on).
   d2:
     needs: d2-run
     if: success() || failure()
@@ -379,4 +380,4 @@ jobs:
           pattern: d2-*
           path: out
       - name: Compare the platforms
-        run: cargo xtask d2 compare out/*/d2.json --require linux-x86_64,windows-x86_64
+        run: cargo xtask d2 compare out/*/d2.json --require linux-x86_64,windows-x86_64,macos-aarch64
