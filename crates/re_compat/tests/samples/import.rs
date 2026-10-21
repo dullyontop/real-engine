@@ -509,6 +509,7 @@ fn variant(ctx: &mut Ctx, args: &J) -> Result<(), String> {
             .get("keep_stale")
             .and_then(J::as_bool)
             .unwrap_or(ctx.expect.import.keep_stale),
+        ..ImportOptions::default()
     };
     let result = re_import::import(&input, &project, &ctx.classes, &opts);
     let expect = &args["expect"];

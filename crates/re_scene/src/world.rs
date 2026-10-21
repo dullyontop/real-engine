@@ -101,6 +101,28 @@ impl World {
             .unwrap_or_default()
     }
 
+    /// Starts recording what changes in the [`ChangeJournal`] (a no-op if
+    /// already recording): registry writes, parent changes and reported
+    /// moves. Until then nothing is kept and registry writes pay nothing.
+    pub fn record_changes(&mut self) {
+        crate::journal::install(&mut self.ecs);
+        self.registry
+            .set_change_hook(Some(crate::journal::field_changed));
+    }
+
+    /// True while the world records a [`ChangeJournal`].
+    pub fn records_changes(&self) -> bool {
+        self.ecs.contains_resource::<crate::ChangeJournal>()
+    }
+
+    /// What changed since the last call (empty when not recording).
+    pub fn drain_changes(&mut self) -> crate::ChangeJournal {
+        self.ecs
+            .get_resource_mut::<crate::ChangeJournal>()
+            .map(|mut j| j.drain())
+            .unwrap_or_default()
+    }
+
     /// Starts recording [`TagChanged`] events (a no-op if already
     /// recording). Until then none are kept.
     pub fn record_tag_changes(&mut self) {

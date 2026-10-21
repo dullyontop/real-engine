@@ -127,6 +127,7 @@ impl Ctx {
         ImportOptions {
             dry_run: false,
             keep_stale: self.expect.import.keep_stale,
+            ..ImportOptions::default()
         }
     }
 

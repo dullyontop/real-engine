@@ -59,6 +59,11 @@ oxijolt = { version = "=1.1.0", default-features = false }
 # Scripting and script tooling.
 mlua = { version = "=0.12.2", features = ["luau"] }
 full_moon = { version = "=3.0.0", features = ["luau"] }
+# Place files (WP27 "place files", ADR-0048): re_import only.
+lz4_flex = { version = "=0.14.0", default-features = false, features = ["std", "safe-decode", "checked-decode"] }
+ruzstd = { version = "=0.9.1", default-features = false, features = ["std"] }
+quick-xml = "=0.41.0"
+base64 = "=0.23.1"
 
 # Core, data and serialization.
 bevy_ecs = { version = "=0.20.0", default-features = false, features = ["std", "multi_threaded"] }
@@ -69,6 +74,8 @@ schemars = { version = "=1.2.3", features = ["derive"] }
 toml = "=1.1.8"
 postcard = { version = "=1.1.3", features = ["use-std"] }
 blake3 = "=1.8.7"
+zstd = { version = "=0.14.2", default-features = false }
+windows-sys = { version = "=0.61.2", features = ["Win32_System_Console"] }
 uuid = { version = "=1.28.0", features = ["v4", "serde", "js"] }
 indexmap = { version = "=2.14.2", features = ["serde"] }
 thiserror = "=2.0.21"
@@ -112,6 +119,13 @@ oxijolt-sys = { path = "third_party/oxijolt-sys" }
 
 [profile.dev]
 debug = "line-tables-only"
+
+# The packaged game's runtime (ADR-0037; cargo reserves the name `package`):
+# `real build` builds it with `--no-default-features --features game`. Debug
+# info is stripped but symbols stay, so crash backtraces keep function names.
+[profile.packaged]
+inherits = "release"
+strip = "debuginfo"
 
 # The browser build (ADR-0049): `cargo build --profile web --target wasm32-unknown-unknown`,
 # then wasm-opt -Oz. Smaller than release: 6.9 MB gzip against 9.1 MB for the full runtime

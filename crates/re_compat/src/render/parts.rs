@@ -2,7 +2,6 @@
 //! merged into one mesh per material.
 
 use std::collections::{BTreeMap, HashSet};
-use std::hash::{Hash, Hasher};
 
 use glam::{Affine3A, Mat4, Quat, Vec3};
 use re_physics::{PartGeom, PartShape};
@@ -12,7 +11,7 @@ use re_types::mesh::MeshData;
 use super::{
     CellRender, FrameItem, Hub, MaterialKey, RenderFrame, ShapeKey, looks, material_index, mesh,
 };
-use crate::gui::props::{Rgba, Scope};
+use crate::gui::props::{FxMap, Rgba, Scope};
 use crate::physics::{Cell, CellId};
 
 /// What a part is drawn as.
@@ -34,23 +33,6 @@ impl Info {
                 super::MATERIALS[usize::from(self.key.material)],
                 "Neon" | "ForceField"
             )
-    }
-
-    fn hash_into(&self, h: &mut impl Hasher) {
-        self.e.to_bits().hash(h);
-        (self.geom.shape as u8).hash(h);
-        for f in self
-            .geom
-            .size
-            .to_array()
-            .into_iter()
-            .chain(self.pos.to_array())
-            .chain(self.rot.to_array())
-        {
-            f.to_bits().hash(h);
-        }
-        self.key.hash(h);
-        self.cast_shadow.hash(h);
     }
 }
 
@@ -109,56 +91,137 @@ fn shape_key(g: &PartGeom) -> ShapeKey {
     ShapeKey(g.shape as u8, s)
 }
 
-/// Adds the draw items of the parts, merging static cells.
+/// What the view keeps about the parts from frame to frame, so a frame
+/// visits only the parts that changed (ADR-0048 amendment).
+#[derive(Default)]
+pub(super) struct Retained {
+    /// False until the first full pass.
+    pub(super) ready: bool,
+    /// The drawn parts in `Workspace` and how they look.
+    infos: FxMap<Entity, Info>,
+    /// The cell of every member of a static cell.
+    cell_of: FxMap<Entity, CellId>,
+    /// The members version each cell was built from.
+    versions: FxMap<CellId, u64>,
+    /// The parts merged into a cell's meshes, and that cell.
+    merged: FxMap<Entity, CellId>,
+    /// The drawn parts not merged into a cell, in entity order.
+    loose: BTreeMap<Entity, Info>,
+    /// The highlighted parts of the last frame.
+    highlighted: HashSet<Entity>,
+}
+
+/// Adds the draw items of the parts, merging static cells. `dirty` names
+/// the entities to look at again (every part on a full pass); everything
+/// else is drawn as the last frame kept it. Returns the parts visited.
 pub(super) fn draw(
     s: &Scope,
     hub: &mut Hub,
-    parts: &[Entity],
+    dirty: &HashSet<Entity>,
     cells: &BTreeMap<CellId, Cell>,
     in_workspace: &dyn Fn(Entity) -> bool,
     highlighted: &HashSet<Entity>,
     out: &mut RenderFrame,
-) {
-    let mut infos: crate::gui::props::FxMap<Entity, Info> = Default::default();
-    let mut order = Vec::new();
-    for &e in parts {
-        if !in_workspace(e) {
-            continue;
-        }
-        if let Some(i) = info(s, e) {
-            infos.insert(e, i);
-            order.push(e);
+) -> u32 {
+    let mut r = std::mem::take(&mut hub.parts);
+    let mut visited = 0u32;
+    // Parts whose cell must be rebuilt, and parts whose loose item may change.
+    let mut touched_cells: HashSet<CellId> = HashSet::new();
+    let mut touched: HashSet<Entity> = HashSet::new();
+    for &e in dirty {
+        let drawn = if s.w.ecs.get_entity(e).is_ok() && s.is_a(e, "BasePart") {
+            visited += 1;
+            if in_workspace(e) { info(s, e) } else { None }
+        } else {
+            None
+        };
+        let had = match drawn {
+            Some(i) => r.infos.insert(e, i).is_some(),
+            None => r.infos.remove(&e).is_some(),
+        };
+        if drawn.is_some() || had {
+            touched.insert(e);
+            if let Some(c) = r.cell_of.get(&e) {
+                touched_cells.insert(*c);
+            }
         }
     }
+    for e in r.highlighted.symmetric_difference(highlighted) {
+        touched.insert(*e);
+        if let Some(c) = r.cell_of.get(e) {
+            touched_cells.insert(*c);
+        }
+    }
+    r.highlighted.clone_from(highlighted);
 
-    // Static cells: rebuilt when a member or its look changed.
-    let mut merged: HashSet<Entity> = HashSet::new();
-    let mut live = HashSet::new();
+    // Static cells: rebuilt when their members or a member's look changed.
     for (id, cell) in cells {
-        live.insert(*id);
+        let fresh = r.versions.get(id) == Some(&cell.version)
+            && hub.cells.contains_key(id)
+            && !touched_cells.contains(id);
+        if fresh {
+            continue;
+        }
+        if let Some(old) = hub.cells.remove(id) {
+            out.released_meshes.extend(old.batches.iter().map(|b| b.0));
+            for m in &old.merged {
+                r.merged.remove(m);
+                touched.insert(*m);
+            }
+        }
+        for m in &cell.members {
+            r.cell_of.insert(*m, *id);
+        }
         let members: Vec<&Info> = cell
             .members
             .iter()
-            .filter_map(|e| infos.get(e))
+            .filter_map(|e| r.infos.get(e))
             .filter(|i| i.mergeable() && !highlighted.contains(&i.e))
             .collect();
-        let mut h = crate::gui::props::Fx::default();
-        for m in &members {
-            m.hash_into(&mut h);
+        let built = build_cell(hub, out, &members);
+        for m in &built.merged {
+            r.merged.insert(*m, *id);
+            touched.insert(*m);
         }
-        let signature = h.finish();
-        let fresh = hub.cells.get(id).is_some_and(|c| c.signature == signature);
-        if !fresh {
-            let old = hub.cells.remove(id).unwrap_or_default();
+        hub.cells.insert(*id, built);
+        r.versions.insert(*id, cell.version);
+    }
+    let gone: Vec<CellId> = hub
+        .cells
+        .keys()
+        .filter(|id| !cells.contains_key(id))
+        .copied()
+        .collect();
+    for id in gone {
+        if let Some(old) = hub.cells.remove(&id) {
             out.released_meshes.extend(old.batches.iter().map(|b| b.0));
-            let r = build_cell(hub, out, signature, &members);
-            hub.cells.insert(*id, r);
+            for m in &old.merged {
+                r.merged.remove(m);
+                touched.insert(*m);
+            }
         }
-        let r = &hub.cells[id];
-        merged.extend(r.merged.iter().copied());
-        let batches = r.batches.clone();
-        for (mesh, key, entity, cast_shadow) in batches {
-            hub.use_material(out, key);
+        r.versions.remove(&id);
+    }
+    // A part that left a cell keeps a stale entry until it is looked at.
+    for e in &touched {
+        if r.cell_of.get(e).is_some_and(|c| !cells.contains_key(c)) {
+            r.cell_of.remove(e);
+        }
+    }
+    for e in touched {
+        match r.infos.get(&e) {
+            Some(i) if !r.merged.contains_key(&e) => {
+                r.loose.insert(e, *i);
+            }
+            _ => {
+                r.loose.remove(&e);
+            }
+        }
+    }
+
+    let first = out.items.len();
+    for cell in cells.keys().filter_map(|id| hub.cells.get(id)) {
+        for &(mesh, key, entity, cast_shadow) in &cell.batches {
             out.items.push(FrameItem {
                 entity,
                 mesh,
@@ -168,25 +231,9 @@ pub(super) fn draw(
             });
         }
     }
-    let gone: Vec<CellId> = hub
-        .cells
-        .keys()
-        .filter(|id| !live.contains(id))
-        .copied()
-        .collect();
-    for id in gone {
-        if let Some(old) = hub.cells.remove(&id) {
-            out.released_meshes.extend(old.batches.iter().map(|b| b.0));
-        }
-    }
-
-    for e in order {
-        if merged.contains(&e) {
-            continue;
-        }
-        let i = infos[&e];
+    let frame = hub.frame;
+    for i in r.loose.values() {
         let sk = shape_key(&i.geom);
-        let frame = hub.frame;
         let mesh = match hub.shapes.get_mut(&sk) {
             Some((key, last)) => {
                 *last = frame;
@@ -198,25 +245,26 @@ pub(super) fn draw(
                 key
             }
         };
-        hub.use_material(out, i.key);
         out.items.push(FrameItem {
-            entity: re_scene::entity_id(e),
+            entity: re_scene::entity_id(i.e),
             mesh,
             material: i.key,
             world: Mat4::from_rotation_translation(i.rot, i.pos),
             cast_shadow: i.cast_shadow,
         });
     }
+    let used: Vec<MaterialKey> = out.items[first..].iter().map(|i| i.material).collect();
+    for key in used {
+        hub.use_material(out, key);
+    }
+    r.ready = true;
+    hub.parts = r;
+    visited
 }
 
 /// One mesh per material (and shadow casting) of a cell's mergeable
 /// members, with their colours in the vertices.
-fn build_cell(
-    hub: &mut Hub,
-    out: &mut RenderFrame,
-    signature: u64,
-    members: &[&Info],
-) -> CellRender {
+fn build_cell(hub: &mut Hub, out: &mut RenderFrame, members: &[&Info]) -> CellRender {
     let mut groups: BTreeMap<(MaterialKey, bool), (MeshData, Entity)> = BTreeMap::new();
     let mut merged = HashSet::new();
     for m in members {
@@ -249,9 +297,5 @@ fn build_cell(
             )
         })
         .collect();
-    CellRender {
-        signature,
-        batches,
-        merged,
-    }
+    CellRender { batches, merged }
 }

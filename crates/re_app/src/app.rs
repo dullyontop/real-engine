@@ -101,6 +101,8 @@ pub struct App {
     history: History,
     commands: Arc<CommandRegistry<App>>,
     clock: FixedClock,
+    /// Fixed steps taken since the scene was loaded: world streaming's tick.
+    stream_tick: u64,
     frame: u64,
     alpha: f32,
 
@@ -186,6 +188,16 @@ impl EditTarget for App {
     }
 }
 
+/// Gives `world` its streaming manager with `[stream]`, so `stream.load` works
+/// before the first step.
+fn ensure_streamer(world: &mut World, config: &AppConfig) -> Result<(), Diagnostic> {
+    if !world.ecs.contains_resource::<re_proc::stream::Streamer>() {
+        let streamer = re_proc::stream::Streamer::new(config.stream.clone())?;
+        world.ecs.insert_resource(streamer);
+    }
+    Ok(())
+}
+
 fn physics_config(config: &AppConfig) -> PhysicsConfig {
     PhysicsConfig {
         gravity: config.sim.gravity.into(),
@@ -258,6 +270,7 @@ impl App {
         commands: Arc<CommandRegistry<App>>,
     ) -> Result<App, Diagnostic> {
         let mut world = world;
+        ensure_streamer(&mut world, &config)?;
         let compat_config = crate::compat::compat_config(&config)?;
         let graph_inputs = procedural::inputs(&mut world);
         let physics = Physics::new(physics_config(&config), TaskPool::global())?;
@@ -274,6 +287,7 @@ impl App {
             history: History::default(),
             commands,
             clock,
+            stream_tick: 0,
             frame: 0,
             alpha: 0.0,
             action_map,
@@ -360,6 +374,14 @@ impl App {
         if let Some(store) = self.world.ecs.get_resource::<re_proc::GraphStore>() {
             world.ecs.insert_resource(store.clone());
         }
+        // Streaming carries on from the live state too.
+        if !restarted
+            && let Some(streamer) = self.world.ecs.get_resource::<re_proc::stream::Streamer>()
+        {
+            world
+                .ecs
+                .insert_resource(streamer.forked(&self.world, &world));
+        }
         let mut copy = App::with_world(
             self.files.clone(),
             self.config.clone(),
@@ -368,6 +390,9 @@ impl App {
             Arc::clone(&self.commands),
         )?;
         copy.alpha = self.alpha;
+        if !restarted {
+            copy.stream_tick = self.stream_tick;
+        }
         copy.diagnostics.extend(problems);
         load_collider_sources(&mut copy.world, &mut copy.shapes, &mut self.media);
         physics::push(
@@ -911,7 +936,7 @@ impl App {
         // Only a development run writes project files (ADR-0037).
         let Some(dir) = self.files.project_dir().map(Path::to_path_buf) else {
             return Err(Diagnostic::error(
-                codes::SCENE_SAVE_FAILED,
+                codes::PACKAGED_WRITE,
                 format!(
                     "cannot write the scene back to {rel_path}: this run has no project directory"
                 ),
@@ -1237,6 +1262,7 @@ impl App {
         // PreSimulation: fixed-update script callbacks; what they queue reaches
         // this step's physics.
         let t = Instant::now();
+        self.stream_step();
         self.link_new_characters();
         self.run_scripts(Phase::PreSimulation, self.clock.dt_secs().into());
         self.perf.add(Phase::PreSimulation, t.elapsed());
@@ -1298,6 +1324,31 @@ impl App {
         }
         self.run_scripts(Phase::PostSimulation, self.clock.dt_secs().into());
         self.perf.add(Phase::PostSimulation, t.elapsed());
+    }
+
+    /// World streaming (ADR-0042): loads and unloads the cells of `Streamed`
+    /// procedural sources around the focuses, before scripts' fixed update
+    /// sees this tick's stream events. A world with no streamed source pays a
+    /// query.
+    fn stream_step(&mut self) {
+        let streams = self
+            .world
+            .ecs
+            .get_resource::<re_proc::stream::Streamer>()
+            .is_some_and(|s| !s.is_idle())
+            || self
+                .world
+                .ecs
+                .query_filtered::<(), re_scene::ecs::query::With<re_scene::Streamed>>()
+                .iter(&self.world.ecs)
+                .next()
+                .is_some();
+        if streams {
+            let report =
+                re_proc::stream::step(&mut self.world, self.stream_tick, &self.config.stream);
+            self.diagnostics.extend(report.diagnostics);
+        }
+        self.stream_tick += 1;
     }
 
     /// Gives characters and vehicles that appeared since the last physics push
@@ -2244,6 +2295,9 @@ impl App {
         match load_world(&self.files, &self.config) {
             Ok((world, problems)) => {
                 self.world = world;
+                if let Err(d) = ensure_streamer(&mut self.world, &self.config) {
+                    self.diagnostics.push(d);
+                }
                 self.diagnostics.extend(problems);
                 self.ground = None;
                 self.link_tried.clear();
@@ -2283,6 +2337,7 @@ impl App {
                 // The fresh game VM is attached in place of the old one.
                 self.attach_debugger();
                 self.clock.reset();
+                self.stream_tick = 0;
                 self.edit_frame();
             }
             Err(d) => self.diagnostics.push(d),

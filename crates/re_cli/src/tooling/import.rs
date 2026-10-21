@@ -1,6 +1,7 @@
-//! `real import <INPUT> --project <DIR> [--dry-run] [--keep-stale] [--json]`
-//! (WP16): bring a Rojo-style project or a Studio loader script into a compat
-//! project with `re_import`, and print its `ImportReport`.
+//! `real import <INPUT> --project <DIR> [--parent <PATH>] [--dry-run]
+//! [--keep-stale] [--json]` (WP16, WP27): bring a Rojo-style project, a Studio
+//! loader script or a place or model file into a compat project with
+//! `re_import`, and print its `ImportReport`.
 //!
 //! Importing into an existing project takes the headless project lock for
 //! the import's duration, so it never writes under a running editor.
@@ -16,8 +17,13 @@ use re_import::{ImportOptions, ImportReport};
 #[derive(clap::Args, Debug)]
 pub struct ImportArgs {
     /// A `*.project.json` file, a directory holding `default.project.json`,
-    /// or a Luau loader script.
+    /// a Luau loader script, or a place or model file (`.rbxl`, `.rbxlx`,
+    /// `.rbxm`, `.rbxmx`).
     pub input: PathBuf,
+    /// Where a model file's instances go, as a dotted path from a service
+    /// (`ReplicatedStorage.Maps`); `Workspace` by default.
+    #[arg(long, value_name = "PATH")]
+    pub parent: Option<String>,
     /// Report what would change without writing anything.
     #[arg(long)]
     pub dry_run: bool,
@@ -69,6 +75,7 @@ pub fn run(args: ImportArgs, project: &Path) -> anyhow::Result<ExitCode> {
             &ImportOptions {
                 dry_run: args.dry_run,
                 keep_stale: args.keep_stale,
+                parent: args.parent.clone(),
             },
         )
     });

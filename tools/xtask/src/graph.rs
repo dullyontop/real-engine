@@ -379,7 +379,9 @@ pub fn run(root: &Path) -> Result<()> {
     let graph = Graph::from_metadata(&metadata)?;
     let (mut violations, mut applied) = check(&graph, &rules());
 
-    // `re_cli --no-default-features` (the runtime-only build) reaches no tooling.
+    // `re_cli --no-default-features` (the runtime-only build) reaches no tooling,
+    // and neither does the packaged game's runtime, which adds the `game`
+    // feature (ADR-0037).
     if graph.members.contains("re_cli") {
         applied += 1;
         let mut cmd = cargo();
@@ -389,6 +391,8 @@ pub fn run(root: &Path) -> Result<()> {
             "-p",
             "re_cli",
             "--no-default-features",
+            "--features",
+            "game",
             "-e",
             "normal,build",
             "--prefix",
@@ -404,8 +408,8 @@ pub fn run(root: &Path) -> Result<()> {
         for forbidden in RUNTIME_FORBIDDEN {
             if reached.contains(forbidden) {
                 violations.push(format!(
-                    "re_cli --no-default-features reaches {forbidden} (the runtime-only build \
-                     links no tooling, ADR-0027)"
+                    "re_cli --no-default-features --features game reaches {forbidden} (the \
+                     runtime-only build links no tooling, ADR-0027 and ADR-0037)"
                 ));
             }
         }
