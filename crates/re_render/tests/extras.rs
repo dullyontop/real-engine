@@ -84,6 +84,7 @@ fn scene(renderer: &mut Renderer) -> Scene {
             ],
             debug_lines: Vec::new(),
             clear: CLEAR,
+            ..Default::default()
         },
         cube,
     }

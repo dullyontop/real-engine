@@ -73,3 +73,11 @@ pub const IMAGE_SIZE_MISMATCH: Code = Code::new("RE6023");
 
 /// A WGSL `#include` names an unknown file or forms a cycle.
 pub const SHADER_INCLUDE: Code = Code::new("RE6030");
+
+/// The adapter cannot read storage buffers in vertex shaders, so skinned items
+/// are drawn in their bind pose.
+pub const SKINNING_UNSUPPORTED: Code = Code::new("RE6040");
+
+/// A skinned draw item is not drawable: its mesh has no skin, or its palette
+/// range is outside the snapshot's joint palette or too short for the mesh.
+pub const BAD_SKINNED_ITEM: Code = Code::new("RE6041");

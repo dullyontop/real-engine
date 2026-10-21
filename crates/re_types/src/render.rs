@@ -29,6 +29,14 @@ pub struct RenderSnapshot {
     pub debug_lines: Vec<DebugLine>,
     /// The clear colour, linear RGBA.
     pub clear: [f32; 4],
+    /// The skinned objects to draw (ADR-0039).
+    #[serde(default)]
+    pub skinned: Vec<SkinnedDrawItem>,
+    /// The joint matrices of every skinned item, one run per item
+    /// ([`SkinnedDrawItem::palette`]): `joint_model * inverse_bind`, in the skinned
+    /// mesh's model space.
+    #[serde(default)]
+    pub joint_palette: Vec<Mat4>,
 }
 
 // The snapshot must stay `Send` (ADR-0007): it is the seam for a render thread.
@@ -132,6 +140,28 @@ pub struct DrawItem {
     pub world: Mat4,
     /// Per-item flags.
     pub flags: DrawFlags,
+}
+
+/// One skinned object to draw: a skinned mesh posed by a run of
+/// [`RenderSnapshot::joint_palette`] (ADR-0039).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SkinnedDrawItem {
+    /// The entity the item comes from (for picking and debugging).
+    pub entity: EntityId,
+    /// The uploaded skinned mesh (`Renderer::upload_skinned_mesh`).
+    pub mesh: MeshHandle,
+    /// The uploaded material.
+    pub material: MaterialHandle,
+    /// Model-to-world transform, applied after skinning.
+    pub world: Mat4,
+    /// Per-item flags.
+    pub flags: DrawFlags,
+    /// The index of the item's first matrix in [`RenderSnapshot::joint_palette`].
+    pub palette: u32,
+    /// The number of palette matrices (the skin's joint count).
+    pub joints: u32,
+    /// A conservative world-space bound of the posed mesh, for culling.
+    pub bounds: crate::mesh::Aabb,
 }
 
 /// Per-item draw flags, a small bit set.

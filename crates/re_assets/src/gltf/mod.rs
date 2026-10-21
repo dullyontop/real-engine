@@ -1,5 +1,5 @@
-//! glTF 2.0 import into engine data: meshes, materials, textures, the node tree
-//! and node animations.
+//! glTF 2.0 import into engine data: meshes, materials, textures, the node tree,
+//! node animations and skins ([`skin`]).
 //!
 //! The importer does not use `gltf::import` or `gltf::import_buffers`, which read
 //! files themselves. It parses the document, gets each external buffer and image
@@ -12,17 +12,21 @@ use std::path::Path;
 
 use glam::{Quat, Vec3};
 use re_core::{Code, Diagnostic, Location, Severity};
-use re_types::anim::{Channel, ClipData, Interpolation, TargetChannels};
-use re_types::mesh::{MeshData, Vertex};
+use re_types::anim::{Channel, ClipData, Interpolation, SkinData, TargetChannels};
+use re_types::mesh::{MeshData, SkinWeights, Vertex};
 use re_types::render::{AlphaMode, MaterialDesc, TextureData, TextureFormat, TextureRef};
 use serde::{Deserialize, Serialize};
+
+mod skin;
 
 use crate::image_decode::decode_image;
 use crate::{AssetId, codes};
 
 /// The version of the glTF importer. Bump it whenever its output changes, so
-/// cached imports are rebuilt.
-pub const GLTF_IMPORTER_VERSION: u32 = 1;
+/// cached imports are rebuilt. This includes new fields: the cache is postcard,
+/// which ignores `#[serde(default)]`, so an old cache never reads into a new
+/// struct.
+pub const GLTF_IMPORTER_VERSION: u32 = 2;
 
 /// Everything imported from one glTF file.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -37,8 +41,10 @@ pub struct ImportedGltf {
     pub nodes: Vec<ImportedNode>,
     /// The root nodes of the default scene.
     pub roots: Vec<usize>,
-    /// The node animations.
+    /// The node animations. They animate skin joints too, by joint name.
     pub clips: Vec<ClipData>,
+    /// The skins (ADR-0039), in file order.
+    pub skins: Vec<SkinData>,
     /// Parts that were skipped, as warnings.
     pub warnings: Vec<Diagnostic>,
 }
@@ -47,6 +53,25 @@ impl ImportedGltf {
     /// The clip with this name.
     pub fn clip(&self, name: &str) -> Option<&ClipData> {
         self.clips.iter().find(|c| c.name == name)
+    }
+
+    /// The skin with this name.
+    pub fn skin(&self, name: &str) -> Option<&SkinData> {
+        self.skins.iter().find(|s| s.name == name)
+    }
+
+    /// The meshes a skin draws: every mesh of every node that uses skin `index`
+    /// and has skin weights, in node order, without repeats.
+    pub fn skinned_meshes(&self, index: usize) -> Vec<usize> {
+        let mut out = Vec::new();
+        for n in self.nodes.iter().filter(|n| n.skin == Some(index)) {
+            for &m in &n.meshes {
+                if self.meshes[m].skin_weights.is_some() && !out.contains(&m) {
+                    out.push(m);
+                }
+            }
+        }
+        out
     }
 
     /// The texture with this id.
@@ -65,6 +90,10 @@ pub struct ImportedMesh {
     pub mesh: MeshData,
     /// Index into [`ImportedGltf::materials`]; `None` for the default material.
     pub material: Option<usize>,
+    /// The skin weights, when the primitive has `JOINTS_0` and `WEIGHTS_0`. On a
+    /// mesh drawn by a skinned node, joint indices refer to that node's skin.
+    #[serde(default)]
+    pub skin_weights: Option<SkinWeights>,
 }
 
 /// A material, with textures as [`TextureRef::Asset`] holding derived ids.
@@ -105,6 +134,9 @@ pub struct ImportedNode {
     pub rotation: Quat,
     /// Local scale.
     pub scale: Vec3,
+    /// Index into [`ImportedGltf::skins`] when the node draws its meshes skinned.
+    #[serde(default)]
+    pub skin: Option<usize>,
 }
 
 /// Imports a `.glb`, or a `.gltf` whose external files are resolved against
@@ -115,7 +147,8 @@ pub struct ImportedNode {
 ///
 /// [`codes::GLTF_INVALID`] for an invalid document or unloadable buffers,
 /// [`codes::IMAGE_INVALID`] for an image that cannot be decoded and
-/// [`codes::MISSING_POSITIONS`] for a primitive without positions. Skipped parts
+/// [`codes::MISSING_POSITIONS`] for a primitive without positions and
+/// [`codes::SKIN_INVALID`] for a malformed skin or skin weights. Skipped parts
 /// are warnings in [`ImportedGltf::warnings`].
 pub fn import_gltf(
     bytes: &[u8],
@@ -150,6 +183,8 @@ pub(crate) fn import_gltf_with(
     let buffers = load_buffers(&document, blob, read).map_err(|e| invalid(&e))?;
     let buffer = |b: gltf::Buffer<'_>| buffers.get(b.index()).map(|d| &d[..]);
     let mut warnings = Vec::new();
+    let mut skin_warnings = Vec::new();
+    let names = skin::node_names(&document, file, &mut skin_warnings);
     let mut warn = |message: String| {
         warnings.push(Diagnostic::warning(codes::GLTF_PART_SKIPPED, message).at(at()));
     };
@@ -318,20 +353,31 @@ pub(crate) fn import_gltf_with(
             if normals.is_none() {
                 compute_normals(&mut vertices, &indices);
             }
+            let mut too_many = 0;
+            let skin_weights = skin::read_weights(&prim, &reader, n, &name, file, &mut too_many)?;
+            if too_many > 0 {
+                skin_warnings.push(
+                    Diagnostic::warning(
+                        codes::SKIN_TOO_MANY_INFLUENCES,
+                        format!(
+                            "mesh `{name}`: {too_many} vertices have more than four joint influences; each keeps its four largest"
+                        ),
+                    )
+                    .at(at()),
+                );
+            }
             ours.push(meshes.len());
             meshes.push(ImportedMesh {
                 name,
                 mesh: MeshData { vertices, indices },
                 material: prim.material().index(),
+                skin_weights,
             });
         }
         mesh_map.push(ours);
     }
 
-    let node_name = |n: &gltf::Node<'_>| {
-        n.name()
-            .map_or_else(|| format!("node_{}", n.index()), str::to_owned)
-    };
+    let node_name = |n: &gltf::Node<'_>| names[n.index()].clone();
     let mut nodes: Vec<ImportedNode> = document
         .nodes()
         .map(|n| {
@@ -347,6 +393,7 @@ pub(crate) fn import_gltf_with(
                 translation: Vec3::from_array(t),
                 rotation: Quat::from_array(r).normalize(),
                 scale: Vec3::from_array(s),
+                skin: None,
             }
         })
         .collect();
@@ -434,6 +481,17 @@ pub(crate) fn import_gltf_with(
         });
     }
 
+    let skins = skin::import_skins(
+        &document,
+        buffer,
+        &names,
+        &mut meshes,
+        &mut nodes,
+        file,
+        &mut skin_warnings,
+    )?;
+    warnings.extend(skin_warnings);
+
     Ok(ImportedGltf {
         meshes,
         materials,
@@ -441,6 +499,7 @@ pub(crate) fn import_gltf_with(
         nodes,
         roots,
         clips,
+        skins,
         warnings,
     })
 }
@@ -599,6 +658,7 @@ pub(crate) struct CachedGltf {
     nodes: Vec<ImportedNode>,
     roots: Vec<usize>,
     clips: Vec<ClipData>,
+    skins: Vec<SkinData>,
     warnings: Vec<(u16, String)>,
 }
 
@@ -620,6 +680,7 @@ impl CachedGltf {
             nodes: g.nodes.clone(),
             roots: g.roots.clone(),
             clips: g.clips.clone(),
+            skins: g.skins.clone(),
             warnings: g
                 .warnings
                 .iter()
@@ -657,6 +718,7 @@ impl CachedGltf {
             nodes: self.nodes,
             roots: self.roots,
             clips: self.clips,
+            skins: self.skins,
             warnings,
         })
     }

@@ -13,7 +13,7 @@ use re_types::anim::ClipData;
 use re_types::render::{MaterialDesc, TextureData, TextureFormat, TextureRef};
 
 use crate::cache::{ProcessedCache, cache_key};
-use crate::gltf_import::{
+use crate::gltf::{
     CachedGltf, GLTF_IMPORTER_VERSION, ImportedGltf, external_uris, import_gltf_with,
 };
 use crate::image_decode::decode_image;
