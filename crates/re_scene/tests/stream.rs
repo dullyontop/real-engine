@@ -349,7 +349,11 @@ fn stashed_ids_stay_taken_and_references_follow() {
     w.spawn_docs(&docs, None).unwrap();
     let before = scene_json(&mut w);
     let tower = w.entity("zz_tower").unwrap();
-    w.stash(tower, "c/1_0").unwrap();
+    assert_eq!(
+        w.stash(tower, "c/1_0").unwrap(),
+        1,
+        "zz_rope refers into it"
+    );
 
     // The ids stay reserved while stashed.
     let err = w

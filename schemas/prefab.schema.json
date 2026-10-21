@@ -712,7 +712,13 @@
     "Streamed": {
       "type": "object",
       "description": "Streams this entity by cell (ADR-0042). On a procedural source (which\nmust have an identity transform), its generator's output is applied\nper cell; on an authored root entity, the entity and its subtree are\nunloaded with the cell holding its translation.",
-      "properties": {},
+      "properties": {
+        "bounds": {
+          "type": "number",
+          "default": 0.0,
+          "description": "For a procedural source: the half side, in metres, of the square\naround the world origin it generates (cells touching it are its\ncells); 0 is unbounded. Unused on authored entities."
+        }
+      },
       "additionalProperties": false
     },
     "StreamFocus": {

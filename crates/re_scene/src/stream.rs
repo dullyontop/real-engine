@@ -49,7 +49,12 @@ component! {
     /// must have an identity transform), its generator's output is applied
     /// per cell; on an authored root entity, the entity and its subtree are
     /// unloaded with the cell holding its translation.
-    pub struct Streamed {}
+    pub struct Streamed {
+        /// For a procedural source: the half side, in metres, of the square
+        /// around the world origin it generates (cells touching it are its
+        /// cells); 0 is unbounded. Unused on authored entities.
+        pub bounds: f32 = 0.0,
+    }
 }
 
 component! {
@@ -517,8 +522,11 @@ impl World {
     /// Unloads the authored [`Streamed`] root `root` into cell `cell`'s stash:
     /// its subtree is snapshotted exactly (play state included) and despawned.
     /// Only root entities (no parent) can be stashed. [`World::save`] still
-    /// writes the stashed authored entities.
-    pub fn stash(&mut self, root: Entity, cell: &str) -> Result<(), SceneError> {
+    /// writes the stashed authored entities. Returns how many entities
+    /// outside the subtree reference into it: those references read as empty
+    /// until it comes back (`RE4303` for the streaming manager), then point at
+    /// it again.
+    pub fn stash(&mut self, root: Entity, cell: &str) -> Result<usize, SceneError> {
         let id = self
             .id_of(root)
             .ok_or_else(|| invalid("a streamed root needs a stable id".into()))?
@@ -540,6 +548,7 @@ impl World {
         let snapshot = self.snapshot_subtree(root);
         let inside: HashSet<Entity> = hierarchy::subtree(&self.ecs, root).into_iter().collect();
         let holders = self.holders_of(&inside);
+        let outside = holders.len();
         let gone: Vec<(Entity, String)> = inside
             .iter()
             .filter_map(|e| Some((*e, self.id_of(*e)?.to_string())))
@@ -556,7 +565,7 @@ impl World {
             },
         );
         self.ecs.insert_resource(stash);
-        Ok(())
+        Ok(outside)
     }
 
     /// Brings back every authored root stashed for cell `cell`, in id order,
