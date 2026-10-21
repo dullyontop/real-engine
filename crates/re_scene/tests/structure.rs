@@ -208,3 +208,57 @@ fn changing_structure_regenerates_and_field_overrides_do_not() {
     assert!(!w.regenerate_changed().is_empty());
     assert_eq!(children(&w, "src/a"), ["src/b"]);
 }
+
+#[test]
+fn a_structural_override_never_hides_a_broken_generator_output() {
+    let moved = json!([{ "target": "b", "moved": { "parent": null } }]);
+    // A duplicate key, a child before its parent, and a parent never
+    // generated: each fails with or without the override.
+    for list in ["a,b,a", "a:b,a", "x:b"] {
+        for overrides in [json!([]), moved.clone()] {
+            let mut w = world(list, overrides.clone());
+            let report = w.regenerate_changed();
+            assert_eq!(report.diagnostics.len(), 1, "{list} {overrides}");
+            assert_eq!(
+                report.diagnostics[0].code.to_string(),
+                "RE1207",
+                "{list} {overrides}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_replacement_keeps_inserts_under_it_and_reports_those_it_drops() {
+    let mut w = world(
+        "a,a:x",
+        json!([
+            { "insert": "lamp", "parent": "x", "components": {} },
+            { "target": "a", "replaced": { "components": {} } }
+        ]),
+    );
+    let report = w.regenerate_changed();
+    assert!(report.diagnostics.is_empty(), "{:#?}", report.diagnostics);
+    let orphans: Vec<(String, String)> = report
+        .orphans
+        .iter()
+        .map(|o| (o.target.clone(), o.structural.unwrap().to_string()))
+        .collect();
+    assert_eq!(orphans, [("+lamp".to_string(), "insert".to_string())]);
+    assert!(w.entity("src/+lamp").is_err());
+    assert!(w.entity("src/x").is_err());
+
+    // An insert directly under the replaced entity is not generated, so it
+    // stays.
+    let mut w = world(
+        "a,a:x",
+        json!([
+            { "insert": "lamp", "parent": "a", "components": {} },
+            { "target": "a", "replaced": { "components": {} } }
+        ]),
+    );
+    let report = w.regenerate_changed();
+    assert!(report.diagnostics.is_empty(), "{:#?}", report.diagnostics);
+    assert!(report.orphans.is_empty(), "{:#?}", report.orphans);
+    assert_eq!(children(&w, "src/a"), ["src/+lamp"]);
+}

@@ -431,7 +431,7 @@ impl Registry {
                     "additionalProperties": false,
                     "properties": {
                         "parent": { "type": ["string", "null"] },
-                        "index": { "type": "integer", "minimum": 0 }
+                        "index": { "type": ["integer", "null"], "minimum": 0 }
                     }
                 }
             }
@@ -454,9 +454,9 @@ impl Registry {
         });
         let mut insert_props = replacement_props;
         insert_props["insert"] = json!({ "type": "string", "pattern": "^[^/+~][^/]*$" });
-        insert_props["parent"] = json!({ "type": "string" });
-        insert_props["index"] = json!({ "type": "integer", "minimum": 0 });
-        insert_props["name"] = json!({ "type": "string" });
+        insert_props["parent"] = json!({ "type": ["string", "null"] });
+        insert_props["index"] = json!({ "type": ["integer", "null"], "minimum": 0 });
+        insert_props["name"] = json!({ "type": ["string", "null"] });
         let insert_override = json!({
             "type": "object",
             "required": ["insert"],

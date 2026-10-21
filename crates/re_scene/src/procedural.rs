@@ -976,6 +976,37 @@ pub(crate) fn apply_output(
             None,
         ));
     }
+    // The generator's own output must be well formed before structural
+    // overrides rearrange it, so an override never hides a broken output.
+    let mut seen_raw: HashSet<&str> = HashSet::with_capacity(nodes.len());
+    for node in nodes {
+        if node.key.is_empty() {
+            return Err(generator_failed(
+                &src_id,
+                format!("generator {generator} produced an empty key"),
+                None,
+            ));
+        }
+        if !seen_raw.insert(node.key.as_str()) {
+            return Err(generator_failed(
+                &src_id,
+                format!("generator {generator} produced key {:?} twice", node.key),
+                None,
+            ));
+        }
+        if let Some(k) = &node.parent_key
+            && (k == &node.key || !seen_raw.contains(k.as_str()))
+        {
+            return Err(generator_failed(
+                &src_id,
+                format!(
+                    "node {:?}: parent key {k:?} not generated before it",
+                    node.key
+                ),
+                None,
+            ));
+        }
+    }
     let overrides = world
         .ecs
         .get::<Overrides>(source)

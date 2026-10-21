@@ -255,7 +255,10 @@
                           ]
                         },
                         "index": {
-                          "type": "integer",
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
                           "minimum": 0
                         }
                       }
@@ -354,14 +357,23 @@
                       "pattern": "^[^/+~][^/]*$"
                     },
                     "parent": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     },
                     "index": {
-                      "type": "integer",
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
                       "minimum": 0
                     },
                     "name": {
-                      "type": "string"
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   }
                 }

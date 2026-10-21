@@ -193,6 +193,12 @@ impl From<Insert> for RawInsert {
     }
 }
 
+/// True if `key` is an inserted entity itself (`+lamp`), not something
+/// under one (`+rock/~pebble`).
+fn is_insert_root(key: &str) -> bool {
+    key.starts_with(INSERTED_PREFIX) && !key.contains('/')
+}
+
 /// Checks the key an insert is written with (`lamp1` for `+lamp1`).
 pub fn check_insert_key(key: &str) -> Result<(), String> {
     if key.is_empty() || key.contains('/') || !is_generator_key(key) {
@@ -362,16 +368,19 @@ impl Tree {
         }
     }
 
-    /// Removes the descendants of `key`.
-    fn remove_descendants(&mut self, key: &str) {
+    /// Removes the descendants of `key`; returns their keys.
+    fn remove_descendants(&mut self, key: &str) -> Vec<String> {
+        let mut removed = Vec::new();
         let mut stack = self
             .children
             .remove(&Some(key.to_string()))
             .unwrap_or_default();
         while let Some(k) = stack.pop() {
             self.nodes.remove(&k);
-            stack.extend(self.children.remove(&Some(k)).unwrap_or_default());
+            stack.extend(self.children.remove(&Some(k.clone())).unwrap_or_default());
+            removed.push(k);
         }
+        removed
     }
 
     /// True if `key` is `of` or one of its descendants.
@@ -478,7 +487,28 @@ pub(crate) fn apply_structure(
             }
         };
         if !replace.keep_children {
-            tree.remove_descendants(target);
+            // Only the generated descendants go (ADR-0043 §3): an insert
+            // directly under the replaced entity stays, and an insert under
+            // one of the dropped descendants loses its parent, so it is kept
+            // in the list and reported like any other orphan.
+            let kept: Vec<String> = tree
+                .children
+                .get(&Some(target.clone()))
+                .map(|c| c.iter().filter(|k| is_insert_root(k)).cloned().collect())
+                .unwrap_or_default();
+            if let Some(list) = tree.children.get_mut(&Some(target.clone())) {
+                list.retain(|k| !is_insert_root(k));
+            }
+            let mut gone: Vec<String> = tree
+                .remove_descendants(target)
+                .into_iter()
+                .filter(|k| is_insert_root(k))
+                .collect();
+            gone.sort();
+            for k in gone {
+                applied.missing.push(missing(&k, StructuralKind::Inserted));
+            }
+            tree.children.insert(Some(target.clone()), kept);
         }
         let mut nodes = nodes.into_iter();
         let root = nodes.next().expect("resolve returns the entity first");
