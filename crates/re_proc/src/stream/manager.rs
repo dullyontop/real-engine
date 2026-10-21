@@ -165,6 +165,8 @@ pub struct Streamer {
     reported: BTreeSet<(String, String)>,
     /// Cells loaded by hand (`stream.load`), kept until released.
     pinned: BTreeSet<String>,
+    /// The sources as last prepared.
+    described: source::DescribeCache,
 }
 
 impl Streamer {
@@ -182,6 +184,7 @@ impl Streamer {
             lateness: Lateness::default(),
             reported: BTreeSet::new(),
             pinned: BTreeSet::new(),
+            described: source::DescribeCache::new(),
         })
     }
 
@@ -527,8 +530,11 @@ impl Streamer {
 
         // The sources, checked.
         let mut sources: Vec<Source> = Vec::new();
-        for (id, e) in source_entities(world) {
-            match source::describe(world, e, &self.config) {
+        let entities = source_entities(world);
+        self.described
+            .retain(|e, _| entities.iter().any(|(_, s)| s == e));
+        for (id, e) in entities {
+            match source::describe(world, e, &self.config, &mut self.described) {
                 Ok(s) => sources.push(s),
                 Err(d) => self.report_once(&mut report.diagnostics, &id, d),
             }

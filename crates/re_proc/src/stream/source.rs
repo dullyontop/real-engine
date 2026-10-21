@@ -1,6 +1,7 @@
 //! A streamed procedural source, checked and ready to be evaluated cell by
 //! cell, and the evaluation of one cell.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -72,10 +73,15 @@ fn located(d: Diagnostic, id: &str) -> Diagnostic {
 /// unless it and its parents have identity transforms, `RE4301` for a node
 /// that does not stream or a spacing that does not divide `cell_size`, and
 /// the graph's own errors.
+///
+/// The prepared source is kept in `cache` and reused while its graph, seed,
+/// overrides, bounds, evaluator and `cell_size` stay the same, so a tick
+/// with nothing changed builds no graph.
 pub(crate) fn describe(
     world: &World,
     entity: Entity,
     config: &StreamConfig,
+    cache: &mut DescribeCache,
 ) -> Result<Source, Diagnostic> {
     let id = world.id_of(entity).unwrap_or_default().to_string();
     let procedural = world
@@ -107,15 +113,81 @@ pub(crate) fn describe(
         )
         .at(Location::entity(id.clone()))
     })??;
-    let registry = store.evaluator().registry();
+    let doc: &GraphDoc = &doc;
     let params = world
         .ecs
         .get::<GraphSource>(entity)
-        .map(|g| g.params.clone())
-        .unwrap_or_default();
-    let doc = match parse_overrides(&params) {
-        Ok(o) => apply_overrides(&doc, &o, registry, &id).0,
-        Err(_) => GraphDoc::clone(&doc),
+        .map_or("", |g| g.params.as_str());
+    if let Some(c) = cache.get(&entity)
+        && c.id == id
+        && c.seed == procedural.seed
+        && c.params == params
+        && c.bounds.to_bits() == bounds.to_bits()
+        && c.cell_size.to_bits() == config.cell_size.to_bits()
+        && Arc::ptr_eq(&c.evaluator, store.evaluator())
+        && c.doc == *doc
+    {
+        return c.result.clone();
+    }
+    let result = prepare(
+        store,
+        doc,
+        &id,
+        params,
+        procedural.seed,
+        bounds,
+        entity,
+        config,
+    );
+    cache.insert(
+        entity,
+        Described {
+            id,
+            seed: procedural.seed,
+            params: params.to_string(),
+            bounds,
+            cell_size: config.cell_size,
+            evaluator: store.evaluator().clone(),
+            doc: doc.clone(),
+            result: result.clone(),
+        },
+    );
+    result
+}
+
+/// Prepared sources by entity, with what they were prepared from.
+pub(crate) type DescribeCache = BTreeMap<Entity, Described>;
+
+#[derive(Clone, Debug)]
+pub(crate) struct Described {
+    id: String,
+    seed: i64,
+    params: String,
+    bounds: f32,
+    cell_size: f32,
+    evaluator: Arc<Evaluator>,
+    doc: GraphDoc,
+    result: Result<Source, Diagnostic>,
+}
+
+/// [`describe`] past its cache: the graph with its overrides, checked and
+/// built.
+#[allow(clippy::too_many_arguments)]
+fn prepare(
+    store: &GraphStore,
+    doc: &GraphDoc,
+    id: &str,
+    params: &str,
+    seed: i64,
+    bounds: f32,
+    entity: Entity,
+    config: &StreamConfig,
+) -> Result<Source, Diagnostic> {
+    let id = id.to_string();
+    let registry = store.evaluator().registry();
+    let doc = match parse_overrides(params) {
+        Ok(o) => apply_overrides(doc, &o, registry, &id).0,
+        Err(_) => doc.clone(),
     };
     for node in &doc.nodes {
         if let Some(def) = registry.get(&node.kind)
@@ -147,7 +219,7 @@ pub(crate) fn describe(
         located(first, &id)
     })?;
     let stamp = version_stamp(&doc, registry).to_hex().to_string();
-    let seed = procedural.seed as u64;
+    let seed = seed as u64;
     let mut h = blake3::Hasher::new();
     h.update(doc_hash(&doc).as_bytes());
     h.update(stamp.as_bytes());
