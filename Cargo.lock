@@ -5387,6 +5387,7 @@ dependencies = [
 name = "web-test"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "mlua",
  "re_core",
  "re_physics",
