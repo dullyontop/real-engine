@@ -459,11 +459,16 @@ impl Streamer {
             .loaded
             .iter()
             .filter(|(k, l)| {
+                let covers = |s: &Source| parse_cell_key(k).is_some_and(|c| s.covers(c, size));
                 keep.contains(*k)
-                    && sources.iter().any(|s| {
-                        parse_cell_key(k).is_some_and(|c| s.covers(c, size))
-                            && l.inputs.get(&s.id) != Some(&s.inputs)
-                    })
+                    && (sources
+                        .iter()
+                        .any(|s| covers(s) && l.inputs.get(&s.id) != Some(&s.inputs))
+                        // A source that held content here no longer covers
+                        // the cell or is no longer valid.
+                        || l.sources.iter().any(|e| {
+                            !sources.iter().any(|s| s.entity == *e && covers(s))
+                        }))
             })
             .map(|(k, _)| k.clone())
             .collect();
@@ -713,6 +718,10 @@ impl Streamer {
             let out = match out {
                 Ok(o) => o,
                 Err(d) => {
+                    // Its earlier content goes too: the cell holds what
+                    // these inputs make, which is nothing.
+                    let released = remove_content(world, &[s.entity], k);
+                    release(world, &released);
                     self.report_once(
                         &mut report.diagnostics,
                         &format!("{sid}/{k}/{}", s.inputs),

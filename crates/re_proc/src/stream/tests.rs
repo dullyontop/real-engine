@@ -574,6 +574,33 @@ fn stream_unloads_the_cells_of_a_source_that_stops_streaming() {
 }
 
 #[test]
+fn stream_removes_a_stopped_source_from_cells_another_keeps() {
+    let rocks = json!([{
+        "id": "rocks",
+        "name": "Rocks",
+        "components": {
+            "GraphSource": { "builder": "scripts/tools/world.luau" },
+            "Procedural": { "generator": "graph", "seed": 9 },
+            "Streamed": { "bounds": 256.0 },
+            "Transform": {}
+        }
+    }]);
+    let mut st = streamed(world_graph(), 32.0, 32.0, rocks);
+    let w = &mut st.world;
+    w.ecs
+        .resource_mut::<GraphStore>()
+        .insert("rocks", world_graph());
+    run(w, 0..12);
+    assert!(w.entity("rocks/c/0_0/ground/terrain").is_ok());
+    w.set("rocks", "Transform", "translation", Value::Vec3(Vec3::X))
+        .unwrap();
+    run(w, 12..20);
+    assert!(loaded(w).contains(&"c/0_0".to_string()));
+    assert!(w.entity("terrain/c/0_0/ground/terrain").is_ok());
+    assert!(w.entity("rocks/c/0_0/ground/terrain").is_err());
+}
+
+#[test]
 fn stream_refuses_meshes_made_at_the_origin() {
     let doc = graph(&[("rock", "mesh.primitive", json!({}))], &[]);
     let mut st = streamed(doc, 0.0, 0.0, json!([]));
