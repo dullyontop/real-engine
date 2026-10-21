@@ -1,0 +1,32 @@
+{
+  "$comment": "Place files save some properties under older names. `renames` maps a saved name to the property's name, for every class (\"name\") or one class and its subclasses (\"Class.name\"); `ignored` lists saved names that are file metadata, not properties, and are skipped without a report.",
+  "renames": {
+    "archivable": "Archivable",
+    "size": "Size",
+    "Color3uint8": "Color",
+    "shape": "Shape",
+    "formFactorRaw": "FormFactor",
+    "Velocity": "AssemblyLinearVelocity",
+    "RotVelocity": "AssemblyAngularVelocity",
+    "MaterialVariantSerialized": "MaterialVariant",
+    "WorldPivotData": "WorldPivot",
+    "Health_XML": "Health",
+    "xmlRead_MaxDistance_3": "RollOffMaxDistance",
+    "size_xml": "Size",
+    "heat_xml": "Heat",
+    "opacity_xml": "Opacity",
+    "riseVelocity_xml": "RiseVelocity",
+    "Fire.size_xml": "Size",
+    "Smoke.size_xml": "Size"
+  },
+  "ignored": [
+    "UniqueId",
+    "HistoryId",
+    "SourceAssetId",
+    "Capabilities",
+    "DefinesCapabilities",
+    "ScriptGuid",
+    "LinkedSource",
+    "NeedsPivotMigration"
+  ]
+}
