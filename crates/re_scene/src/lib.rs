@@ -10,6 +10,8 @@
 //!   and transform propagation;
 //! * [`components`]: the built-in components of ARCHITECTURE §4;
 //! * [`attributes`]: [`Attributes`] and the [`AttributeChanged`] events;
+//! * [`journal`]: the [`ChangeJournal`] of what changed, for readers that
+//!   keep state per entity;
 //! * [`tags`]: [`Tags`], the hook-maintained [`TagIndex`] and the
 //!   [`TagChanged`] events;
 //! * [`scene`]: [`SceneDoc`] load and save, JSON text, `migrate`;
@@ -52,6 +54,7 @@ pub mod error;
 mod hash;
 pub mod hierarchy;
 pub mod ids;
+pub mod journal;
 pub mod prefab;
 pub mod procedural;
 pub mod scene;
@@ -76,6 +79,7 @@ pub use components::{
 pub use docs::{DocMarks, DocValidator, OpenDoc, OpenDocs, doc_path};
 pub use error::SceneError;
 pub use ids::{IdGen, IdIndex, StableId, validate_id};
+pub use journal::{ChangeJournal, note_moved};
 pub use prefab::{PREFAB_FORMAT, PrefabFile};
 pub use procedural::{
     FingerprintFn, GenContext, GenNode, Generated, GeneratorFn, GeneratorInfo, Generators,

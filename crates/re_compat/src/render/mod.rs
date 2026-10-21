@@ -258,6 +258,16 @@ pub struct EffectStats {
     pub dropped: u32,
 }
 
+/// How much work a frame's build did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BuildStats {
+    /// Parts looked at again: every part on a full pass, only the changed
+    /// ones otherwise (zero on an idle frame).
+    pub parts_visited: u32,
+    /// True when the frame rebuilt every part (the first frame).
+    pub full: bool,
+}
+
 /// What the host gives a frame.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderInput {
@@ -326,6 +336,8 @@ pub struct RenderFrame {
     pub released_materials: Vec<MaterialKey>,
     /// Warnings (`RE9351`, once per budget overflow streak).
     pub diagnostics: Vec<Diagnostic>,
+    /// The work the build did.
+    pub stats: BuildStats,
 }
 
 /// What the view needs from the project's configuration.
@@ -360,7 +372,6 @@ struct ShapeKey(u8, [u32; 3]);
 /// What a merged cell is drawn with.
 #[derive(Clone, Debug, Default)]
 struct CellRender {
-    signature: u64,
     batches: Vec<(MeshKey, MaterialKey, EntityId, bool)>,
     /// The members drawn in the batches.
     merged: HashSet<Entity>,
@@ -380,17 +391,63 @@ pub(crate) struct Hub {
     pub(crate) viewport: Vec2,
     pub(crate) inset: f32,
     pub(crate) effects: effects::State,
+    /// The parts as the last frame drew them.
+    parts: parts::Retained,
+    /// Every how many frames the build is checked against a full rebuild
+    /// (0: never). `REAL_RENDER_VERIFY=1` sets 60 in debug builds.
+    verify_every: u64,
+    /// A content hash of each uploaded mesh, for the check.
+    mesh_sigs: FxMap<MeshKey, u64>,
+}
+
+/// The variable that turns on the check against a full rebuild every 60th
+/// frame, in debug builds.
+pub const VERIFY_ENV: &str = "REAL_RENDER_VERIFY";
+
+fn new_hub() -> Hub {
+    let verify_every =
+        if cfg!(debug_assertions) && std::env::var(VERIFY_ENV).is_ok_and(|v| v == "1") {
+            60
+        } else {
+            0
+        };
+    Hub {
+        viewport: RenderInput::default().viewport,
+        verify_every,
+        ..Hub::default()
+    }
 }
 
 pub(crate) fn hub_mut<R>(lua: &Lua, f: impl FnOnce(&mut Hub) -> R) -> R {
     if lua.app_data_ref::<Hub>().is_none() {
-        lua.set_app_data(Hub {
-            viewport: RenderInput::default().viewport,
-            ..Hub::default()
-        });
+        lua.set_app_data(new_hub());
     }
     let mut h = lua.app_data_mut::<Hub>().expect("installed above");
     f(&mut h)
+}
+
+/// Checks every `every`-th frame's parts against a full rebuild (0 turns the
+/// check off); [`build`] fails on a difference. For tests: the check rebuilds
+/// every part.
+pub fn verify_every(lua: &Lua, every: u64) {
+    hub_mut(lua, |h| {
+        h.verify_every = every;
+    });
+}
+
+/// A hash of a mesh's content.
+fn mesh_signature(data: &MeshData) -> u64 {
+    use std::hash::Hasher;
+    let mut h = crate::gui::props::Fx::default();
+    for v in &data.vertices {
+        for f in v.pos.iter().chain(&v.normal).chain(&v.uv).chain(&v.color) {
+            h.write_u32(f.to_bits());
+        }
+    }
+    for i in &data.indices {
+        h.write_u32(*i);
+    }
+    h.finish()
 }
 
 /// Installs the view's settings for this VM.
@@ -405,6 +462,7 @@ impl Hub {
     fn new_mesh(&mut self, out: &mut RenderFrame, data: MeshData) -> MeshKey {
         self.next_mesh += 1;
         let key = MeshKey(self.next_mesh);
+        self.mesh_sigs.insert(key, mesh_signature(&data));
         out.new_meshes.push((key, data));
         key
     }
@@ -507,10 +565,7 @@ pub fn build(lua: &Lua, input: &RenderInput) -> mlua::Result<RenderFrame> {
     let st = state(lua)?;
     let classes = st.setup.classes.clone();
     let game = st.game;
-    let mut hub = lua.remove_app_data::<Hub>().unwrap_or_else(|| Hub {
-        viewport: RenderInput::default().viewport,
-        ..Hub::default()
-    });
+    let mut hub = lua.remove_app_data::<Hub>().unwrap_or_else(new_hub);
     let out = with_world(lua, |w| build_in(w, &classes, game, &mut hub, input));
     lua.set_app_data(hub);
     out?
@@ -538,16 +593,31 @@ fn build_in(
         let v = crate::gui::props::vec2_value(input.viewport);
         let _ = crate::tween::set_own(w, cam, "Camera", "ViewportSize", v);
     }
-    let part_list = instances_of(w, "BasePart");
+    // The parts to look at: all of them on the first frame, then what the
+    // world's change journal names.
+    let full = !hub.parts.ready || !w.records_changes();
+    w.record_changes();
+    let journal = w.drain_changes();
+    let dirty: HashSet<Entity> = if full {
+        instances_of(w, "BasePart").into_iter().collect()
+    } else {
+        dirty_of(w, &journal)
+    };
+    let check = hub.verify_every > 0 && hub.frame.is_multiple_of(hub.verify_every);
+    let all_parts = if check {
+        instances_of(w, "BasePart").into_iter().collect()
+    } else {
+        HashSet::new()
+    };
     let light_list = instances_of(w, "Light");
     let effect_lists = effects::Lists::find(w);
-    let cells = w
-        .ecs
-        .get_resource::<crate::physics::StaticCells>()
-        .map(|c| c.cells().clone())
-        .unwrap_or_default();
 
     let s = Scope::new(w, classes);
+    let no_cells = std::collections::BTreeMap::new();
+    let cells =
+        s.w.ecs
+            .get_resource::<crate::physics::StaticCells>()
+            .map_or(&no_cells, |c| c.cells());
     let cam = camera::read(&s, camera_entity);
     let env = lighting::environment(&s, lighting, camera_entity);
     let mut out = RenderFrame {
@@ -577,6 +647,10 @@ fn build_in(
         new_materials: Vec::new(),
         released_materials: Vec::new(),
         diagnostics: Vec::new(),
+        stats: BuildStats {
+            parts_visited: 0,
+            full,
+        },
     };
     let in_workspace =
         |e: Entity| workspace.is_some_and(|ws| tree::ancestors(s.w, e).contains(&ws));
@@ -587,15 +661,21 @@ fn build_in(
     lighting::lights(&s, &lights, &mut out.lights, &mut out.spot_lights);
 
     let highlights = effects::highlights(&s, &effect_lists, &in_workspace, &mut out);
-    parts::draw(
-        &s,
-        hub,
-        &part_list,
-        &cells,
-        &in_workspace,
-        &highlights,
-        &mut out,
-    );
+    let first_item = out.items.len();
+    out.stats.parts_visited =
+        parts::draw(&s, hub, &dirty, cells, &in_workspace, &highlights, &mut out);
+    if check {
+        verify(
+            &s,
+            hub,
+            &all_parts,
+            cells,
+            &in_workspace,
+            &highlights,
+            &out,
+            first_item,
+        )?;
+    }
     effects::draw(
         &s,
         hub,
@@ -606,7 +686,105 @@ fn build_in(
         &mut out,
     );
     hub.collect(&mut out);
+    for k in &out.released_meshes {
+        hub.mesh_sigs.remove(k);
+    }
     Ok(out)
+}
+
+/// The entities a journal says may draw differently: each one written, and
+/// with every descendant those that moved or changed parent (their pose and
+/// whether they are in `Workspace` follow their ancestors).
+fn dirty_of(w: &World, journal: &re_scene::ChangeJournal) -> HashSet<Entity> {
+    let transform = w.registry.try_key("Transform");
+    let mut out = HashSet::new();
+    let mut roots = Vec::new();
+    for &(e, key) in &journal.fields {
+        if Some(key) == transform {
+            roots.push(e);
+        } else {
+            out.insert(e);
+        }
+    }
+    roots.extend(&journal.structure);
+    roots.extend(&journal.moved);
+    let mut seen = HashSet::new();
+    for e in roots {
+        if seen.insert(e) {
+            out.insert(e);
+            for d in re_scene::hierarchy::subtree(&w.ecs, e) {
+                out.insert(d);
+            }
+        }
+    }
+    out
+}
+
+/// The parts' items of a frame without the hub's mesh numbering: the mesh as
+/// its content's hash.
+fn normalized(
+    hub: &Hub,
+    items: &[FrameItem],
+) -> Vec<(EntityId, u64, MaterialKey, [u32; 16], bool)> {
+    items
+        .iter()
+        .map(|i| {
+            (
+                i.entity,
+                hub.mesh_sigs.get(&i.mesh).copied().unwrap_or(u64::MAX),
+                i.material,
+                i.world.to_cols_array().map(f32::to_bits),
+                i.cast_shadow,
+            )
+        })
+        .collect()
+}
+
+/// Rebuilds every part from scratch and fails when the frame's parts differ
+/// ([`VERIFY_ENV`], [`verify_every`]).
+#[allow(clippy::too_many_arguments)]
+fn verify(
+    s: &Scope,
+    hub: &Hub,
+    all_parts: &HashSet<Entity>,
+    cells: &std::collections::BTreeMap<CellId, crate::physics::Cell>,
+    in_workspace: &dyn Fn(Entity) -> bool,
+    highlights: &HashSet<Entity>,
+    out: &RenderFrame,
+    first_item: usize,
+) -> mlua::Result<()> {
+    let mut scratch = Hub {
+        settings: hub.settings,
+        frame: hub.frame,
+        verify_every: 1,
+        ..Hub::default()
+    };
+    let mut tmp = out.clone();
+    tmp.items.clear();
+    parts::draw(
+        s,
+        &mut scratch,
+        all_parts,
+        cells,
+        in_workspace,
+        highlights,
+        &mut tmp,
+    );
+    let want = normalized(&scratch, &tmp.items);
+    let got = normalized(hub, &out.items[first_item..]);
+    if want != got {
+        let at = want.iter().zip(&got).position(|(a, b)| a != b);
+        return Err(mlua::Error::runtime(format!(
+            "the incremental 3D view differs from a full rebuild on frame {}: {} part items against {} rebuilt, first difference at {:?} ({:?} against {:?}); a write skipped the change journal",
+            hub.frame,
+            got.len(),
+            want.len(),
+            at,
+            at.and_then(|i| got.get(i)),
+            at.and_then(|i| want.get(i)),
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
