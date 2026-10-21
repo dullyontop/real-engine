@@ -228,6 +228,15 @@ fn no_graph(source_id: &str, why: &str) -> Diagnostic {
 }
 
 fn run(ctx: &GenContext) -> Result<SceneFragment, Diagnostic> {
+    // A streamed source generates per cell (`crate::stream`), never whole.
+    if ctx
+        .world()
+        .ecs
+        .get::<re_scene::Streamed>(ctx.source())
+        .is_some()
+    {
+        return Ok(SceneFragment::new());
+    }
     let source = ctx.source_id();
     let store = ctx
         .resource::<GraphStore>()

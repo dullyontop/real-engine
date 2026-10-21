@@ -16,7 +16,9 @@
 //! * [`register_generator`]: the `graph` generator for `re_scene`'s
 //!   procedural sources (StableKeys `<node id>/<local key>`);
 //! * [`register_commands`]: `graph.set_param`, `graph.regenerate`,
-//!   `graph.generate` and `graph.report`.
+//!   `graph.generate` and `graph.report`;
+//! * [`stream`]: world streaming (ADR-0042), cells generated and applied
+//!   around focus points at deterministic ticks.
 //!
 //! # Ports and the graph's output
 //!
@@ -52,6 +54,7 @@ mod graph;
 pub mod migrate;
 pub mod nodes;
 mod store;
+pub mod stream;
 pub mod value;
 
 pub use canon::version_stamp;
@@ -195,6 +198,56 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::OPEN_GRAPH_DIFFERS,
         title: "Open graph differs from its file",
         page: include_str!("../explain/RE4022.md"),
+    },
+    DiagInfo {
+        code: codes::STREAM_CONFIG,
+        title: "Invalid [stream] settings",
+        page: include_str!("../explain/RE4300.md"),
+    },
+    DiagInfo {
+        code: codes::NOT_STREAMABLE,
+        title: "Node does not stream",
+        page: include_str!("../explain/RE4301.md"),
+    },
+    DiagInfo {
+        code: codes::STREAMED_SOURCE_MOVED,
+        title: "Streamed source is not at the origin",
+        page: include_str!("../explain/RE4302.md"),
+    },
+    DiagInfo {
+        code: codes::REFERENCE_INTO_UNLOADED,
+        title: "Reference into an unloaded cell",
+        page: include_str!("../explain/RE4303.md"),
+    },
+    DiagInfo {
+        code: codes::IN_UNLOADED_CELL,
+        title: "Entity in an unloaded cell",
+        page: include_str!("../explain/RE4304.md"),
+    },
+    DiagInfo {
+        code: codes::LATE_CELL,
+        title: "Cell applied late",
+        page: include_str!("../explain/RE4305.md"),
+    },
+    DiagInfo {
+        code: codes::STREAM_MEMORY,
+        title: "Streaming memory budget too small",
+        page: include_str!("../explain/RE4306.md"),
+    },
+    DiagInfo {
+        code: codes::CELL_FAILED,
+        title: "Cell generation failed",
+        page: include_str!("../explain/RE4307.md"),
+    },
+    DiagInfo {
+        code: codes::ORIGIN_RANGE,
+        title: "Floating origin cannot cover every focus",
+        page: include_str!("../explain/RE4308.md"),
+    },
+    DiagInfo {
+        code: codes::PRECISION_LIMIT,
+        title: "Content beyond the precision limit",
+        page: include_str!("../explain/RE4309.md"),
     },
 ];
 

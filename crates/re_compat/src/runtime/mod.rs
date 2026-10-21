@@ -319,6 +319,11 @@ pub fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
             .into_iter()
             .map(|(p, a)| ("DataModel", p, a)),
     );
+    out.extend(
+        scripts::accessors()
+            .into_iter()
+            .map(|(p, a)| ("BaseScript", p, a)),
+    );
     out.extend(crate::physics::accessors());
     out.extend(crate::gui::accessors());
     out.extend(crate::physics::accessors());
@@ -475,6 +480,7 @@ impl CompatVm {
     ) -> Vec<Diagnostic> {
         let kind = self.state.kind;
         let game = self.state.game;
+        scripts::set_options(self.ctx.lua(), opts);
         let list = scripts::startable(host.world(), &self.state.setup.classes, game, kind, opts);
         let mut out = Vec::new();
         for e in list {
@@ -486,6 +492,25 @@ impl CompatVm {
     /// Starts script instance `e` now (whatever its place in the tree).
     pub fn start_script(&self, host: &mut dyn ScriptHost, e: Entity) -> Vec<Diagnostic> {
         self.run(host, |lua| scripts::start(lua, e))
+    }
+
+    /// Restarts the scripts whose source file changed, and the scripts that
+    /// required a changed module (ADR-0048 §3; [`scripts::reload`]):
+    /// `paths` are project-relative. A changed source that does not compile
+    /// restarts nothing and is reported as `RE9420`. Returns those reports
+    /// and the errors raised while restarting.
+    pub fn reload(&self, host: &mut dyn ScriptHost, paths: &[String]) -> Vec<Diagnostic> {
+        let mut list = Vec::new();
+        let mut reports = Vec::new();
+        let mut out = self.run(host, |lua| {
+            (list, reports) = scripts::reload(lua, paths)?;
+            Ok(())
+        });
+        out.extend(reports);
+        for e in list {
+            out.extend(self.run(host, |lua| scripts::restart(lua, e)));
+        }
+        out
     }
 
     /// Advances the simulation time by `dt` seconds, resumes the threads that

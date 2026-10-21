@@ -21,7 +21,7 @@
 //! The own component is named `Compat_<Class>` rather than `Compat.<Class>`,
 //! because component names are identifiers (ADR-0032).
 
-mod access;
+pub(crate) mod access;
 mod trace;
 
 use std::collections::{BTreeMap, HashMap};

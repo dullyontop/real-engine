@@ -161,6 +161,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE9403.md"),
     },
     DiagInfo {
+        code: codes::RELOAD_COMPILE,
+        title: "Changed script did not compile",
+        page: include_str!("../explain/RE9420.md"),
+    },
+    DiagInfo {
         code: codes::DEPRECATED_MEMBER,
         title: "Deprecated member used",
         page: include_str!("../explain/RE9101.md"),

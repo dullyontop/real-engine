@@ -112,6 +112,10 @@ impl egui_dock::TabViewer for Tabs<'_> {
                 console(ed, ui);
                 Panel::Console
             }
+            PanelId::Debugger => {
+                crate::debugger::ui(&mut ed.debug, ui);
+                return;
+            }
         };
         ed.rects.set(panel, rect);
     }

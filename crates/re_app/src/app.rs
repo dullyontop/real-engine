@@ -1555,6 +1555,7 @@ impl App {
             self.shapes.remove(key);
         }
         self.diagnostics.extend(report.problems);
+        self.reload_compat(&report.scripts);
         for path in report.scripts {
             self.reload_script(&path);
             self.changed_scripts.push(path);
@@ -1975,9 +1976,40 @@ impl App {
         }
     }
 
+    /// Restarts a running compat game's changed scripts, and the scripts
+    /// that required a changed module (ADR-0048 §3), in both contexts. Only
+    /// while files are watched ([`App::enable_hot_reload`], so `real run` and
+    /// the editor): `real verify`, replays and `play.run` read files once.
+    /// A changed source that does not compile keeps the old run (`RE9420`).
+    fn reload_compat(&mut self, paths: &[String]) {
+        if paths.is_empty() || self.compat.is_none() || self.watcher.is_none() {
+            return;
+        }
+        let mut reports: Vec<Diagnostic> = Vec::new();
+        for kind in [ContextKind::Server, ContextKind::Client] {
+            self.compat_call(kind, |vm, h| {
+                let (r, errors): (Vec<_>, Vec<_>) = vm
+                    .reload(h, paths)
+                    .into_iter()
+                    .partition(|d| d.code == re_compat::codes::RELOAD_COMPILE);
+                // Both contexts compile the file; one report is enough.
+                for d in r {
+                    if !reports.contains(&d) {
+                        reports.push(d);
+                    }
+                }
+                errors
+            });
+        }
+        for d in &reports {
+            tracing::warn!(target: "script", "{}", d.message);
+        }
+        self.diagnostics.extend(reports);
+    }
+
     /// Reloads a changed script (hot reload): modules are patched or replaced,
-    /// entry scripts restart. A `[compat]` project's scripts do not hot
-    /// reload: a changed script takes effect at the next `world.restart`.
+    /// entry scripts restart. A `[compat]` project's scripts restart instead
+    /// (`reload_compat`).
     pub fn reload_script(&mut self, path: &str) {
         if self.scripts.is_none() {
             // Nothing runs yet; the new version is what starts.

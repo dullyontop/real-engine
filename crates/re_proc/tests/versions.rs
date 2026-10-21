@@ -419,7 +419,7 @@ fn describe_lists_versions_and_streaming() {
     assert_eq!(d["streaming"], "pointwise");
     assert_eq!(
         NodeRegistry::m1()
-            .get("terrain.heightfield")
+            .get("terrain.island_mask")
             .unwrap()
             .describe()["streaming"],
         "whole"

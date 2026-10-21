@@ -44,18 +44,12 @@ fn effect(in: VsOut) -> vec4<f32> {
     let fog = fog_amount(distance(frame.camera_pos.xyz, in.world_pos));
     // Fog hides additive light rather than tinting it.
     alpha *= 1.0 - fog * in.params.x;
-    let rgb = grade(mix(in.color.rgb, frame.fog_color.rgb, fog));
+    let rgb = mix(in.color.rgb, frame.fog_color.rgb, fog);
     return vec4<f32>(rgb, alpha);
 }
 
 @fragment
-fn fs_effect_linear(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_effect(in: VsOut) -> @location(0) vec4<f32> {
     let c = effect(in);
     return vec4<f32>(c.rgb * c.a, c.a * (1.0 - in.params.x));
-}
-
-@fragment
-fn fs_effect_gamma(in: VsOut) -> @location(0) vec4<f32> {
-    let c = effect(in);
-    return vec4<f32>(srgb_from_linear(c.rgb) * c.a, c.a * (1.0 - in.params.x));
 }

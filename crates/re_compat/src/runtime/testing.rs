@@ -380,6 +380,29 @@ impl Harness {
         }
     }
 
+    /// Restarts, in both contexts, the scripts whose source is one of
+    /// `paths` and the ones that required such a module, as a running game
+    /// does when files change ([`CompatVm::reload`]). Returns the reports
+    /// (`RE9420`) and the errors raised; the errors are also kept in
+    /// [`Harness::uncaught`].
+    pub fn reload(&mut self, paths: &[String]) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        for side in Side::BOTH {
+            let d = self.ctx(side).with(|vm, h| vm.reload(h, paths));
+            let (reports, errors): (Vec<_>, Vec<_>) = d
+                .into_iter()
+                .partition(|d| d.code == crate::codes::RELOAD_COMPILE);
+            // Both contexts compile the file; one report is enough.
+            for r in reports {
+                if !out.contains(&r) {
+                    out.push(r);
+                }
+            }
+            out.extend(self.keep(side, errors));
+        }
+        out
+    }
+
     /// Runs Luau `source` as a new thread in one context (its `script` is
     /// nil); returns the errors it raised.
     pub fn exec(&mut self, side: Side, name: &str, source: &str) -> Vec<Diagnostic> {
