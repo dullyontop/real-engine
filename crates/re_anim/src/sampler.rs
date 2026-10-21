@@ -307,10 +307,10 @@ fn sample<T: Key + std::ops::Mul<f32, Output = T>>(c: &Channel<T>, time: f32) ->
     }
 }
 
-fn sample_vec3(c: &Channel<Vec3>, time: f32) -> Vec3 {
+pub(crate) fn sample_vec3(c: &Channel<Vec3>, time: f32) -> Vec3 {
     sample(c, time)
 }
 
-fn sample_quat(c: &Channel<Quat>, time: f32) -> Quat {
+pub(crate) fn sample_quat(c: &Channel<Quat>, time: f32) -> Quat {
     sample(c, time).normalize()
 }

@@ -130,8 +130,27 @@ fn render() {
             color: [1.0, 0.0, 0.0, 1.0],
         }],
         clear: [0.1, 0.2, 0.3, 1.0],
+        skinned: vec![SkinnedDrawItem {
+            entity: EntityId(10),
+            mesh: MeshHandle::new(5, 1),
+            material: MaterialHandle::new(3, 4),
+            world: mat(),
+            flags: DrawFlags::CAST_SHADOWS,
+            palette: 0,
+            joints: 2,
+            bounds: Aabb::new(Vec3::NEG_ONE, Vec3::ONE),
+        }],
+        joint_palette: vec![mat(), Mat4::IDENTITY],
     };
     round_trip(&snapshot);
+    // A snapshot written before skinning existed still loads.
+    let mut old = serde_json::to_value(RenderSnapshot::default()).unwrap();
+    old.as_object_mut().unwrap().remove("skinned");
+    old.as_object_mut().unwrap().remove("joint_palette");
+    assert_eq!(
+        serde_json::from_value::<RenderSnapshot>(old).unwrap(),
+        RenderSnapshot::default()
+    );
     round_trip(&RenderSnapshot::default());
     round_trip(&TextureHandle::new(5, 6));
     round_trip(&MaterialDesc::default());
@@ -799,4 +818,57 @@ fn vehicle_types_take_defaults_and_check_input() {
     let car = VehicleDesc::car(Vec3::new(0.9, -0.1, 1.4), 0.35);
     assert_eq!(car.wheels.len(), 4);
     assert_eq!(car.wheels.iter().filter(|w| w.driven).count(), 2);
+}
+
+#[test]
+fn skins() {
+    let skin = SkinData {
+        name: "hero".into(),
+        joints: vec![
+            JointDesc {
+                name: "hips".into(),
+                parent: None,
+                rest: Trs::IDENTITY,
+                parent_offset: Some(mat()),
+            },
+            JointDesc {
+                name: "spine".into(),
+                parent: Some(0),
+                rest: Trs {
+                    translation: Vec3::Y,
+                    ..Trs::IDENTITY
+                },
+                parent_offset: None,
+            },
+        ],
+        inverse_bind: vec![Mat4::IDENTITY, Mat4::from_translation(Vec3::NEG_Y)],
+        joint_bounds: vec![None, Some(Aabb::new(Vec3::ZERO, Vec3::ONE))],
+    };
+    round_trip(&skin);
+    assert!(skin.is_well_formed());
+    assert_eq!(skin.joint("spine"), Some(1));
+    let mut bad = skin.clone();
+    bad.joints[0].parent = Some(1);
+    assert!(!bad.is_well_formed(), "a parent after its child");
+    bad = skin.clone();
+    bad.inverse_bind.pop();
+    assert!(!bad.is_well_formed());
+
+    let mesh = MeshData {
+        vertices: vec![Vertex::default(); 2],
+        indices: Vec::new(),
+    };
+    let weights = SkinWeights {
+        joints: vec![[0, 1, 0, 0], [1, 0, 0, 0]],
+        weights: vec![[32768, 32767, 0, 0], [65535, 0, 0, 0]],
+    };
+    round_trip(&weights);
+    assert!(weights.is_well_formed(&mesh, 2));
+    assert!(!weights.is_well_formed(&mesh, 1), "joint 1 out of range");
+    let mut short = weights.clone();
+    short.weights[1][0] = 65534;
+    assert!(!short.is_well_formed(&mesh, 2), "weights must sum to 65535");
+    assert_eq!(Trs::IDENTITY.to_mat4(), Mat4::IDENTITY);
+    let moved = Aabb::new(Vec3::ZERO, Vec3::ONE).transformed(&Mat4::from_translation(Vec3::X));
+    assert_eq!(moved, Aabb::new(Vec3::X, Vec3::new(2.0, 1.0, 1.0)));
 }

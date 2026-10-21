@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod skin_glb;
+
 pub const POSITIONS: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
 pub const NORMALS: [[f32; 3]; 3] = [[0.0, 0.0, 1.0]; 3];
 pub const UVS: [[f32; 2]; 3] = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];

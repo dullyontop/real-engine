@@ -51,3 +51,16 @@ pub const UNSUPPORTED_ASSET: Code = Code::new("RE7042");
 
 /// A changed asset failed to re-import; the last good version stays loaded (a warning).
 pub const RELOAD_FAILED: Code = Code::new("RE7050");
+
+/// A glTF skin or its skin weights are malformed (ADR-0039).
+pub const SKIN_INVALID: Code = Code::new("RE7060");
+
+/// Some vertices have more than four joint influences; each keeps its four
+/// largest (a warning).
+pub const SKIN_TOO_MANY_INFLUENCES: Code = Code::new("RE7061");
+
+/// Several nodes share a joint's name, so the joints are renamed (a warning).
+pub const SKIN_DUPLICATE_JOINT_NAME: Code = Code::new("RE7062");
+
+/// A mesh on a skinned node has no skin weights and is drawn unskinned (a warning).
+pub const SKIN_UNWEIGHTED_MESH: Code = Code::new("RE7063");

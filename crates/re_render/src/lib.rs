@@ -95,6 +95,8 @@ diagnostics! {
     IMAGE_READ_FAILED, "Image file could not be read", "../explain/RE6022.md";
     IMAGE_SIZE_MISMATCH, "Compared images differ in size", "../explain/RE6023.md";
     SHADER_INCLUDE, "Shader include error", "../explain/RE6030.md";
+    SKINNING_UNSUPPORTED, "GPU skinning unsupported", "../explain/RE6040.md";
+    BAD_SKINNED_ITEM, "Undrawable skinned item", "../explain/RE6041.md";
 }
 
 /// The code range this crate owns (ARCHITECTURE §7).
