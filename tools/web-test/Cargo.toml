@@ -1,0 +1,20 @@
+[package]
+name = "web-test"
+description = "Smoke checks of Luau and Jolt compiled for wasm32-unknown-unknown, run in Node and compared with the same checks natively (ADR-0049)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+re_core.workspace = true
+re_physics.workspace = true
+re_types.workspace = true
+mlua.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true

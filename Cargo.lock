@@ -2596,8 +2596,6 @@ dependencies = [
 [[package]]
 name = "mlua"
 version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a7ae6b65bf54b7fdd4cf5b6f44f60862350ebf3fe3779b3a9cc005e7fa14f81"
 dependencies = [
  "bstr",
  "either",
@@ -3246,8 +3244,6 @@ dependencies = [
 [[package]]
 name = "oxijolt-sys"
 version = "1.1.0+jolt-5.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3c0dd5f7bb20177655091e4e1c291779d1e4408509f30b4920a82c5e79967db"
 dependencies = [
  "anyhow",
  "cmake",
@@ -5315,6 +5311,17 @@ dependencies = [
  "async-task",
  "cfg-if",
  "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "web-test"
+version = "0.1.0"
+dependencies = [
+ "mlua",
+ "re_core",
+ "re_physics",
+ "re_types",
  "wasm-bindgen",
 ]
 
