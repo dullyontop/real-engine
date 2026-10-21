@@ -102,3 +102,28 @@ pub const STUCK_YIELD: Code = Code::new("RE0526");
 /// A `play.run` step could not run: it needs a `[compat]` project, or its
 /// path names no instance.
 pub const PLAY_STEP_FAILED: Code = Code::new("RE0527");
+
+/// A game archive (`game.rpak`) cannot be read: not an archive, truncated, or
+/// its index is damaged (ADR-0037).
+pub const PACKAGE_UNREADABLE: Code = Code::new("RE0600");
+
+/// An entry of a game archive does not match its hash.
+pub const PACKAGE_ENTRY_CORRUPT: Code = Code::new("RE0601");
+
+/// A game archive was built by another engine, Luau, bytecode version or
+/// compiler than the runtime reading it.
+pub const PACKAGE_VERSION_MISMATCH: Code = Code::new("RE0602");
+
+/// A packaged game read a file under a spelling that differs from the stored
+/// one only by case (a warning).
+pub const PACKAGE_CASE_MATCH: Code = Code::new("RE0603");
+
+/// A game executable has no `game.rpak` beside it.
+pub const PACKAGE_MISSING: Code = Code::new("RE0604");
+
+/// No per-user folder can be found or created for a packaged game's data.
+pub const NO_USER_FOLDER: Code = Code::new("RE0605");
+
+/// A packaged game was asked to write a project file (a missing sidecar,
+/// `save_scene`), which only development runs do.
+pub const PACKAGED_WRITE: Code = Code::new("RE0606");
