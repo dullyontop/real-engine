@@ -163,13 +163,41 @@ impl ProcGraph {
                         node.kind, node.version, def.version
                     ),
                 ));
+                continue;
             }
-            if let Err(e) = def.check(&node.params) {
-                out.push(diag(
-                    codes::INVALID_PARAMS,
+            if !def.supports(node.version) {
+                out.push(
+                    diag(
+                        codes::RETIRED_NODE_VERSION,
+                        g,
+                        format!(
+                            "node `{id}` ({}): version {} is retired; this engine evaluates versions {} to {}",
+                            node.kind, node.version, def.oldest, def.version
+                        ),
+                    )
+                    .with_hint("run `real migrate-graph` with an engine release that still evaluates it"),
+                );
+                continue;
+            }
+            match def.migrate(node.version, &node.params) {
+                Ok(params) => {
+                    if let Err(e) = def.check(&params) {
+                        out.push(diag(
+                            codes::INVALID_PARAMS,
+                            g,
+                            format!("node `{id}` ({}): {e}", node.kind),
+                        ));
+                    }
+                }
+                Err((from, e)) => out.push(diag(
+                    codes::MIGRATION_FAILED,
                     g,
-                    format!("node `{id}` ({}): {e}", node.kind),
-                ));
+                    format!(
+                        "node `{id}` ({}): its parameters could not be migrated from version {from} to {}: {e}",
+                        node.kind,
+                        from + 1
+                    ),
+                )),
             }
         }
         // Edges: ports and types.
@@ -279,6 +307,29 @@ impl ProcGraph {
         out
     }
 
+    /// A warning (`RE4019`) for each node written for an older version of
+    /// its kind than this engine's current one. The node still evaluates at
+    /// its own version; `real migrate-graph` upgrades it.
+    pub fn outdated(&self, registry: &NodeRegistry) -> Vec<Diagnostic> {
+        outdated_nodes(
+            &self.id,
+            self.nodes
+                .iter()
+                .map(|(id, n)| (id.as_str(), n.kind.as_str(), n.version)),
+            registry,
+        )
+    }
+
+    /// The graph's version stamp ([`crate::version_stamp`]).
+    pub fn version_stamp(&self, registry: &NodeRegistry) -> blake3::Hash {
+        crate::canon::stamp(
+            self.nodes
+                .iter()
+                .map(|(id, n)| (id.as_str(), n.kind.as_str(), n.version)),
+            registry,
+        )
+    }
+
     /// The nodes grouped by depth: level 0 has no inputs, and each node is
     /// one level after its deepest input. Within a level, nodes keep document
     /// order. `Err` lists the nodes on or after a cycle.
@@ -355,4 +406,29 @@ impl ProcGraph {
         let id = self.nodes.get_index(index).map(|(k, _)| k.as_str());
         !self.edges.iter().any(|e| Some(e.from.0.as_str()) == id)
     }
+}
+
+/// `RE4019` warnings for nodes `(id, kind, version)` older than their kind.
+pub(crate) fn outdated_nodes<'a>(
+    graph: &str,
+    nodes: impl Iterator<Item = (&'a str, &'a str, u32)>,
+    registry: &NodeRegistry,
+) -> Vec<Diagnostic> {
+    nodes
+        .filter_map(|(id, kind, version)| {
+            let def = registry.get(kind)?;
+            (version >= 1 && version < def.version).then(|| {
+                Diagnostic::warning(
+                    codes::OUTDATED_NODE_VERSION,
+                    format!(
+                        "graph `{graph}`: node `{id}` ({kind}) is written for version {version}; this engine's current version is {}",
+                        def.version
+                    ),
+                )
+                .with_hint(format!(
+                    "it still evaluates as version {version}; run `real migrate-graph` to upgrade it and see what changes"
+                ))
+            })
+        })
+        .collect()
 }

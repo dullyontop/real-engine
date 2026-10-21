@@ -2,9 +2,9 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1750,
-    "partial": 222,
-    "stub-error": 53,
+    "implemented": 1780,
+    "partial": 235,
+    "stub-error": 43,
     "missing": 3
   },
   "classes": [
@@ -1343,35 +1343,80 @@
       ]
     },
     {
+      "name": "DataStore",
+      "superclass": "GlobalDataStore",
+      "status": "partial",
+      "members": [
+        {
+          "name": "GetVersionAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "Earlier versions are not kept, so only the current version is found."
+        },
+        {
+          "name": "ListKeysAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "Returns a pages table; the cursor and excludeDeleted are not read."
+        },
+        {
+          "name": "ListVersionsAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "Earlier versions are not kept; the filters are not read."
+        }
+      ]
+    },
+    {
       "name": "DataStoreService",
       "superclass": "Instance",
       "service": true,
-      "status": "stub-error",
+      "status": "implemented",
       "members": [
         {
           "name": "GetDataStore",
           "kind": "method",
-          "status": "stub-error"
+          "status": "implemented",
+          "note": "The options instance is accepted and not read."
         },
         {
           "name": "GetGlobalDataStore",
           "kind": "method",
-          "status": "stub-error"
+          "status": "implemented"
         },
         {
           "name": "GetOrderedDataStore",
           "kind": "method",
-          "status": "stub-error"
+          "status": "implemented"
         },
         {
           "name": "GetRequestBudgetForRequestType",
           "kind": "method",
-          "status": "stub-error"
+          "status": "implemented"
         },
         {
           "name": "ListDataStoresAsync",
           "kind": "method",
-          "status": "stub-error"
+          "status": "partial",
+          "note": "Returns a pages table (IsFinished, GetCurrentPage, AdvanceToNextPageAsync), not a DataStoreListingPages instance; the cursor is not read."
+        }
+      ]
+    },
+    {
+      "name": "DataStoreSetOptions",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "GetMetadata",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "SetMetadata",
+          "kind": "method",
+          "status": "implemented"
         }
       ]
     },
@@ -1419,6 +1464,42 @@
       "creatable": true,
       "status": "implemented",
       "members": []
+    },
+    {
+      "name": "GlobalDataStore",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "GetAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "The key info is a table with Version, CreatedTime, UpdatedTime, GetUserIds and GetMetadata, not a DataStoreKeyInfo instance."
+        },
+        {
+          "name": "IncrementAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "The key info is a table, as for GetAsync."
+        },
+        {
+          "name": "RemoveAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "The key info is a table, as for GetAsync."
+        },
+        {
+          "name": "SetAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "UpdateAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "The key info is a table, as for GetAsync."
+        }
+      ]
     },
     {
       "name": "GuiBase2d",
@@ -3101,25 +3182,124 @@
       ]
     },
     {
+      "name": "MemoryStoreHashMap",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "GetAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ListItemsAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "Returns a pages table, not a MemoryStoreHashMapPages instance."
+        },
+        {
+          "name": "RemoveAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "SetAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "UpdateAsync",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "MemoryStoreQueue",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AddAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetSizeAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "ReadAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "A waitTimeout of -1 (the default) waits until items arrive; the wait looks again every 2 s at one unit a look and ends empty when units run out."
+        },
+        {
+          "name": "RemoveAsync",
+          "kind": "method",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
       "name": "MemoryStoreService",
       "superclass": "Instance",
       "service": true,
-      "status": "stub-error",
+      "status": "implemented",
       "members": [
         {
           "name": "GetHashMap",
           "kind": "method",
-          "status": "stub-error"
+          "status": "implemented"
         },
         {
           "name": "GetQueue",
           "kind": "method",
-          "status": "stub-error"
+          "status": "implemented"
         },
         {
           "name": "GetSortedMap",
           "kind": "method",
-          "status": "stub-error"
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "MemoryStoreSortedMap",
+      "superclass": "Instance",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "GetAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "GetRangeAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "Sort keys order numbers before strings; that order is our choice."
+        },
+        {
+          "name": "GetSizeAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "RemoveAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "SetAsync",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "UpdateAsync",
+          "kind": "method",
+          "status": "implemented"
         }
       ]
     },
@@ -3240,6 +3420,19 @@
           "name": "Transform",
           "kind": "property",
           "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "OrderedDataStore",
+      "superclass": "GlobalDataStore",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "GetSortedAsync",
+          "kind": "method",
+          "status": "partial",
+          "note": "Returns a pages table, not a DataStorePages instance."
         }
       ]
     },

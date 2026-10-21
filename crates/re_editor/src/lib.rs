@@ -16,6 +16,15 @@
 //! * **command palette** (`Ctrl+P`): any registered command with JSON
 //!   arguments.
 //!
+//! The panels other than the toolbar and the palette are tabs in a dock
+//! (egui_dock): they can be dragged into other splits, stacked or floated.
+//! The arrangement and the gizmo settings are saved per project in
+//! `.real/editor/layout.json` ([`layout`]), as editor state, not as commands.
+//!
+//! The game view carries translate, rotate and scale gizmos for the selected
+//! entity ([`gizmo`]; `W`, `E`, `R`). A drag only moves the gizmo's preview;
+//! its release sends one `scene.apply`, so a drag is one undo step.
+//!
 //! Every action is a command dispatched through
 //! [`App::dispatch`](re_app::App::dispatch), so each one is a single undo step
 //! and lands in the transaction log. Other writers reach the editor through
@@ -34,7 +43,9 @@
 
 pub mod codes;
 mod editor;
+pub mod gizmo;
 mod headless;
+pub mod layout;
 mod panels;
 mod socket;
 mod view;
@@ -123,6 +134,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::INVALID_FIELD_TEXT,
         title: "Inspector text is not a valid value",
         page: include_str!("../explain/RE8803.md"),
+    },
+    DiagInfo {
+        code: codes::LAYOUT_UNREADABLE,
+        title: "The editor layout could not be read",
+        page: include_str!("../explain/RE8804.md"),
     },
 ];
 

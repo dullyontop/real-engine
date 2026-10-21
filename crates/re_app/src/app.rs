@@ -34,6 +34,7 @@ use crate::media::Media;
 use crate::perf::{PerfCounts, PerfRecorder, PerfReport};
 use crate::procedural;
 use crate::sync::anim::{self, AnimSync};
+use crate::sync::anim_skin::{self, SkinSync};
 use crate::sync::audio::{self, AudioSync};
 use crate::sync::physics::{self, PhysicsSync, ShapeLibrary};
 use crate::sync::render::{self, RenderAssets, RenderInputs};
@@ -126,6 +127,7 @@ pub struct App {
     changed_scripts: Vec<String>,
 
     anim_sync: AnimSync,
+    skin_sync: SkinSync,
 
     /// The `derived:` heightfields colliders used at the last step: when they
     /// change during play, characters are put back on the new ground.
@@ -145,6 +147,9 @@ pub struct App {
     compat_config: Option<re_compat::CompatConfig>,
     compat: Option<crate::compat::CompatPlay>,
     compat_failed: bool,
+    /// Whether the compat data services keep their data in `.real/data/`
+    /// ([`App::persist_data`]).
+    persist_data: bool,
     /// A compat game's 3D view and UI on the renderer.
     compat_view: crate::compat_view::CompatView,
     /// The size (physical pixels) and scale of the last window draw.
@@ -262,6 +267,7 @@ impl App {
             watcher: None,
             changed_scripts: Vec::new(),
             anim_sync: AnimSync::new(),
+            skin_sync: SkinSync::new(),
             ground: None,
             graph_inputs,
             restarts: 0,
@@ -271,6 +277,7 @@ impl App {
             compat_config,
             compat: None,
             compat_failed: false,
+            persist_data: false,
             compat_view: Default::default(),
             view_size: [config.render.width, config.render.height],
             view_ppp: 1.0,
@@ -557,6 +564,7 @@ impl App {
         let inputs = RenderInputs {
             assets: &self.render_assets,
             physics: &self.physics_sync,
+            skins: &self.skin_sync,
             alpha: self.alpha,
             clear: self.config.render.clear,
         };
@@ -633,6 +641,15 @@ impl App {
         Ok(())
     }
 
+    /// Makes a compat game's `DataStoreService` and `MemoryStoreService`
+    /// keep their data in the project's `.real/data/` with the wall clock, as
+    /// `real run` does (ADR-0048). Without it, each run starts from
+    /// `data/seed/` on a fixed clock so it repeats. Call it before the first
+    /// frame.
+    pub fn persist_data(&mut self) {
+        self.persist_data = true;
+    }
+
     /// Scripts under `scripts/` that changed on disk since the last call.
     pub fn take_changed_scripts(&mut self) -> Vec<String> {
         std::mem::take(&mut self.changed_scripts)
@@ -641,6 +658,11 @@ impl App {
     /// Animation playback state.
     pub fn anim_sync(&self) -> &AnimSync {
         &self.anim_sync
+    }
+
+    /// Skeleton poses of the world's skinned meshes.
+    pub fn skin_sync(&self) -> &SkinSync {
+        &self.skin_sync
     }
 
     /// The contact events of the last frame's physics steps.
@@ -839,6 +861,7 @@ impl App {
             let inputs = RenderInputs {
                 assets: &self.render_assets,
                 physics: &self.physics_sync,
+                skins: &self.skin_sync,
                 alpha: self.alpha,
                 clear: self.config.render.clear,
             };
@@ -1047,6 +1070,7 @@ impl App {
         let inputs = RenderInputs {
             assets: &self.render_assets,
             physics: &self.physics_sync,
+            skins: &self.skin_sync,
             alpha: self.alpha,
             clear: self.config.render.clear,
         };
@@ -1091,6 +1115,13 @@ impl App {
         anim::step(
             &mut self.world,
             &mut self.anim_sync,
+            &mut self.media,
+            self.clock.dt_secs(),
+            &mut self.diagnostics,
+        );
+        anim_skin::step(
+            &mut self.world,
+            &mut self.skin_sync,
             &mut self.media,
             self.clock.dt_secs(),
             &mut self.diagnostics,
@@ -1544,6 +1575,7 @@ impl App {
             gfx.invalidate(&mut self.render_assets, &stale, &mut self.diagnostics);
         }
         self.anim_sync.invalidate(&stale);
+        self.skin_sync.invalidate(&stale);
         // A changed graph file or builder script rebuilds that source's graph
         // (the new graph's hash regenerates it); a changed prefab regenerates
         // every source, since prefab contents are not part of a fingerprint.
@@ -1690,6 +1722,7 @@ impl App {
             &cfg,
             &mut self.world,
             clips,
+            self.persist_data,
         ) {
             Ok(play) => self.compat = Some(play),
             Err(d) => {
@@ -2011,6 +2044,7 @@ impl App {
                 self.audio_cmds.push(AudioCmd::StopAll);
                 self.audio_sync = AudioSync::new();
                 self.anim_sync = AnimSync::new();
+                self.skin_sync = SkinSync::new();
                 self.script_errors.clear();
                 // The compat contexts start again on the next frame.
                 self.compat = None;

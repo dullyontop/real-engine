@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use re_reflect::Value;
-use re_scene::{Entity, Name, StableId, World, hierarchy};
+use re_scene::{Attributes, Entity, Name, StableId, World, hierarchy};
 
 use crate::class::own_component_name;
 
@@ -65,8 +65,15 @@ pub fn clone_subtree(w: &mut World, e: Entity) -> Option<Entity> {
             .collect();
         for (key, values) in comps {
             let values = values.into_iter().map(|v| remap(v, &map)).collect();
-            // Same registry, values read from it: the insert cannot fail.
+            // Same registry, values read from it: the insert cannot fail,
+            // except for the attributes copied below.
             let _ = w.registry.insert(&mut w.ecs, new, key, values);
+        }
+        // Attributes hold what scripts stored, which the registry's map type
+        // may refuse (`math.huge`, an infinite Vector3), so they are copied
+        // as they are rather than through it.
+        if let Some(a) = w.ecs.get::<Attributes>(old).cloned() {
+            w.ecs.entity_mut(new).insert(a);
         }
     }
     map.get(&e).copied()

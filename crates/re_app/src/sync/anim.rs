@@ -6,6 +6,9 @@
 //! that matches no name animates the player entity itself. Playback time is
 //! runtime state kept here, advanced in the PreAnimation phase of each fixed
 //! step.
+//!
+//! A player on an entity with a `SkinnedMesh` poses that skin's joints instead
+//! (`anim_skin`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -13,7 +16,8 @@ use std::sync::Arc;
 use re_anim::{Playhead, Sampler, TargetPose};
 use re_core::{Diagnostic, Location};
 use re_scene::ecs::entity::Entity;
-use re_scene::{AnimPlayer, Name, Transform, World, entity_id, hierarchy};
+use re_scene::ecs::query::Without;
+use re_scene::{AnimPlayer, Name, SkinnedMesh, Transform, World, entity_id, hierarchy};
 use re_types::EntityId;
 
 use crate::codes;
@@ -154,7 +158,7 @@ pub fn step(
 ) {
     let mut found: Vec<(Entity, AnimPlayer)> = world
         .ecs
-        .query::<(Entity, &AnimPlayer)>()
+        .query_filtered::<(Entity, &AnimPlayer), Without<SkinnedMesh>>()
         .iter(&world.ecs)
         .filter(|(_, p)| !p.clip.is_empty())
         .map(|(e, p)| (e, p.clone()))

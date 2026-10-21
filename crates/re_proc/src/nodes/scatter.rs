@@ -327,6 +327,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "scatter.poisson",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "Points at least `radius` apart (Poisson disc), on a field's surface, filtered by height and slope.",
             inputs: ON_FIELD,
             variadic: None,
@@ -340,6 +343,9 @@ pub(super) fn register(r: &mut NodeRegistry) {
         NodeSpec {
             kind: "scatter.grid_jitter",
             version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Whole,
             doc: "One point per grid cell, moved randomly by up to `jitter` of the spacing, on a field's surface, filtered by height and slope.",
             inputs: ON_FIELD,
             variadic: None,

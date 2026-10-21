@@ -71,6 +71,7 @@ declare extern type Graph with
     read name: string
     read seed: number
     -- Adds a node. `inputs` maps input ports to nodes or ports; `id` defaults to n1, n2, ...
+    -- The node records version 1 of its kind; write 'kind@2' to ask for version 2.
     function node(self, kind: string, params: { [string]: any }?, inputs: { [string]: GraphNode | GraphPort }?, id: string?): GraphNode
     -- Connects an output to a node's input port.
     function connect(self, from: GraphNode | GraphPort, to: GraphNode, port: string): ()

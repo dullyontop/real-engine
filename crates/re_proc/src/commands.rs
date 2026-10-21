@@ -1,5 +1,6 @@
 //! The `graph.*` commands (ARCHITECTURE §6): `graph.set_param` and
-//! `graph.regenerate` (edit), `graph.generate` and `graph.report` (read).
+//! `graph.regenerate` (edit), `graph.generate`, `graph.report` and
+//! `graph.migration_report` (read).
 
 use re_command::{Call, CommandRegistry, EditTarget, Op, Tier};
 use re_core::{Diagnostic, Location};
@@ -70,6 +71,15 @@ pub struct GenerateArgs {
 pub struct ReportArgs {
     /// The procedural source's id.
     pub source: String,
+}
+
+/// Arguments of `graph.migration_report`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MigrationReportArgs {
+    /// Only this procedural source (default: every graph source).
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// What a command needs about its graph source.
@@ -425,6 +435,36 @@ fn report<C: EditTarget>(
     }))
 }
 
+fn migration_report<C: EditTarget>(
+    target: &mut C,
+    a: MigrationReportArgs,
+    _call: &mut Call,
+) -> Result<Json, Diagnostic> {
+    let world = target.world();
+    if let Some(id) = &a.source {
+        graph_source(world, id)?;
+    }
+    let root: Option<std::path::PathBuf> = world
+        .ecs
+        .get_resource::<GraphStore>()
+        .and_then(|s| s.root().map(Into::into));
+    let mut report = crate::migrate::migration_report(world, root.as_deref());
+    if let Some(id) = &a.source {
+        report.sources.retain(|s| &s.source == id);
+        report.files.retain(|f| f.sources.contains(id));
+        report.ok = report
+            .sources
+            .iter()
+            .all(|s| !s.diagnostics.iter().any(Diagnostic::is_error));
+    }
+    serde_json::to_value(&report).map_err(|e| {
+        Diagnostic::error(
+            codes::NO_GRAPH,
+            format!("cannot write the migration report: {e}"),
+        )
+    })
+}
+
 /// Registers `graph.set_param` and `graph.regenerate` (edit tier) and
 /// `graph.generate` and `graph.report` (read tier).
 ///
@@ -443,6 +483,10 @@ fn report<C: EditTarget>(
 ///   cloned in) within a time and entity budget, and returns the evaluation
 ///   report; nothing in the project changes.
 /// * `graph.report {source}` returns the source's last evaluation report.
+/// * `graph.migration_report {source?}` returns
+///   [`migration_report`](crate::migrate::migration_report): what upgrading
+///   every node to its kind's current version would change. It changes
+///   nothing; `real migrate-graph` writes the files.
 pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry<C>) {
     registry.register_typed::<SetParamArgs, _>(
         "graph.set_param",
@@ -471,5 +515,12 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
         Tier::Read,
         true,
         report::<C>,
+    );
+    registry.register_typed::<MigrationReportArgs, _>(
+        "graph.migration_report",
+        "What upgrading every node to its kind's current version would change, per procedural source: nodes, output, keys added and removed, orphaned overrides. Changes nothing; `real migrate-graph` writes it.",
+        Tier::Read,
+        true,
+        migration_report::<C>,
     );
 }

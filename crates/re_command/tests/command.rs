@@ -855,6 +855,8 @@ fn despawn_with_a_generated_referrer_undoes_exactly() {
             }])
         }),
         fingerprint_extra: None,
+        version: 1,
+        oldest: 1,
     });
     let src = entity(
         "src",

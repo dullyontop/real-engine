@@ -42,6 +42,12 @@ pub enum AgentCommand {
         /// The program MCP clients start.
         #[arg(long, default_value = "real")]
         program: String,
+        /// Point Claude Code at `real mcp --http ADDR` (a loopback address
+        /// with a fixed port; 127.0.0.1:8765 when no ADDR is given) instead
+        /// of starting `real mcp` over stdio. The token comes from
+        /// REAL_MCP_TOKEN.
+        #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8765")]
+        http: Option<String>,
     },
     /// Show the agent policy, the project lock and the agent sessions.
     Status,
@@ -63,13 +69,46 @@ fn fail(d: &Diagnostic) -> ExitCode {
 /// Runs `real agent` for the project at `project`.
 pub fn run(args: AgentArgs, project: &Path) -> anyhow::Result<ExitCode> {
     Ok(match args.command.unwrap_or(AgentCommand::Status) {
-        AgentCommand::Init { force, program } => cmd_init(project, InitOptions { program, force }),
+        AgentCommand::Init {
+            force,
+            program,
+            http,
+        } => {
+            let http = match http.as_deref().map(http_url).transpose() {
+                Ok(url) => url,
+                Err(d) => return Ok(fail(&d)),
+            };
+            cmd_init(
+                project,
+                InitOptions {
+                    program,
+                    force,
+                    http,
+                },
+            )
+        }
         AgentCommand::Status => cmd_status(project),
         AgentCommand::Rollback {
             session,
             checkpoint,
         } => cmd_rollback(project, session, checkpoint),
     })
+}
+
+/// The URL of `real mcp --http ADDR`: a loopback address with a fixed port,
+/// since client configs name it (`RE8502`).
+fn http_url(addr: &str) -> Result<String, Diagnostic> {
+    let addr = re_mcp::http::parse_addr(addr)?;
+    if addr.port() == 0 {
+        return Err(Diagnostic::error(
+            re_mcp::codes::NOT_LOOPBACK,
+            "client configs need a fixed port, not 0",
+        )
+        .with_hint(
+            "pass an address such as 127.0.0.1:8765, and start `real mcp --http` with the same one",
+        ));
+    }
+    Ok(format!("http://{addr}{}", re_mcp::http::ENDPOINT))
 }
 
 fn cmd_init(project: &Path, options: InitOptions) -> ExitCode {

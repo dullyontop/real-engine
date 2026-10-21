@@ -5,6 +5,10 @@
 //! return to the session's start with `checkpoint.restore` (the state hash
 //! comes back). The demo is copied first, because `real mcp` saves edits.
 //!
+//! Every test runs twice (ADR-0046): over stdio, and over streamable HTTP
+//! (`real mcp --http 127.0.0.1:0`, the URL read from `.real/mcp-http.json`,
+//! requests from `re_mcp::client`). The assertions are the same.
+//!
 //! Run with `--test-threads=1` (the screenshot needs the GPU).
 #![cfg(feature = "tooling")]
 
@@ -97,18 +101,36 @@ fn session_start_hash(project: &Path) -> String {
     start["state_hash"].as_str().unwrap().to_string()
 }
 
-/// A `real mcp` process and the JSON-RPC lines it writes.
+/// The transport a test drives `real mcp` over.
+#[derive(Clone, Copy, Debug)]
+enum Transport {
+    /// JSON-RPC lines on the process's stdin and stdout.
+    Stdio,
+    /// `real mcp --http 127.0.0.1:0`, with a token from `REAL_MCP_TOKEN`.
+    Http,
+}
+
+/// A `real mcp` process and the way its answers come back.
 struct Server {
     child: Child,
     stdin: Option<ChildStdin>,
-    lines: Receiver<String>,
+    /// Stdio: the JSON-RPC lines it writes.
+    lines: Option<Receiver<String>>,
+    /// HTTP: the client, and the state file the server removes when it stops.
+    http: Option<(re_mcp::client::HttpClient, PathBuf)>,
 }
 
 impl Server {
-    fn start(project: &Path) -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_real"))
-            .args(["mcp", "--project"])
-            .arg(project)
+    fn start(project: &Path, transport: Transport) -> Server {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_real"));
+        command.args(["mcp", "--project"]).arg(project);
+        let token = re_mcp::http::generate_token();
+        if let Transport::Http = transport {
+            command
+                .args(["--http", "127.0.0.1:0"])
+                .env("REAL_MCP_TOKEN", &token);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -125,14 +147,54 @@ impl Server {
             }
         });
         let stdin = child.stdin.take();
+        let http = match transport {
+            Transport::Stdio => None,
+            Transport::Http => {
+                // The server writes its URL once it listens.
+                let state = project.join(".real/mcp-http.json");
+                let deadline = std::time::Instant::now() + TIMEOUT;
+                let url = loop {
+                    if let Ok(text) = std::fs::read_to_string(&state)
+                        && let Ok(v) = serde_json::from_str::<Value>(&text)
+                    {
+                        assert_eq!(v["token"], token.as_str());
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let mode = std::fs::metadata(&state).unwrap().permissions().mode();
+                            assert_eq!(mode & 0o777, 0o600, "the token is the user's only");
+                        }
+                        break v["url"].as_str().unwrap().to_string();
+                    }
+                    if let Some(status) = child.try_wait().unwrap() {
+                        panic!("real mcp --http exited with {status} before listening");
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "real mcp --http did not start"
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                };
+                let client = re_mcp::client::HttpClient::new(&url, Some(&token)).unwrap();
+                Some((client, state))
+            }
+        };
         Server {
             child,
             stdin,
-            lines,
+            lines: http.is_none().then_some(lines),
+            http,
         }
     }
 
     fn send(&mut self, msg: &Value) {
+        if let Some((client, _)) = &mut self.http {
+            assert!(msg.get("id").is_none(), "send is for notifications");
+            let method = msg["method"].as_str().unwrap();
+            let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
+            client.notify(method, params).unwrap();
+            return;
+        }
         let stdin = self.stdin.as_mut().expect("stdin is open");
         writeln!(stdin, "{msg}").unwrap();
         stdin.flush().unwrap();
@@ -147,9 +209,21 @@ impl Server {
 
     #[track_caller]
     fn request_within(&mut self, id: u64, method: &str, params: Value, limit: Duration) -> Value {
-        self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
+        if let Some((client, _)) = &mut self.http {
+            client.set_timeout(limit);
+            let response = client
+                .request(id, method, params)
+                .unwrap_or_else(|e| panic!("{method} (id {id}) over HTTP: {e:#}"));
+            assert_eq!(response["jsonrpc"], "2.0", "{response}");
+            return response;
+        }
+        let msg = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+        let stdin = self.stdin.as_mut().expect("stdin is open");
+        writeln!(stdin, "{msg}").unwrap();
+        stdin.flush().unwrap();
+        let lines = self.lines.as_ref().expect("stdio has lines");
         loop {
-            let line = match self.lines.recv_timeout(limit) {
+            let line = match lines.recv_timeout(limit) {
                 Ok(line) => line,
                 Err(RecvTimeoutError::Timeout) => {
                     panic!("no response to {method} (id {id}) within {limit:?}")
@@ -189,12 +263,16 @@ impl Server {
             .unwrap_or_else(|| panic!("{tool} gave a protocol error: {resp}"))
     }
 
-    /// Closes stdin and waits for a clean exit.
+    /// Closes stdin and waits for a clean exit (over HTTP too: the server
+    /// stops when its stdin closes, and removes its state file).
     fn finish(mut self) {
         drop(self.stdin.take());
         for _ in 0..600 {
             if let Some(status) = self.child.try_wait().unwrap() {
                 assert!(status.success(), "real mcp exited with {status}");
+                if let Some((_, state)) = &self.http {
+                    assert!(!state.exists(), "{} is left behind", state.display());
+                }
                 return;
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -222,14 +300,13 @@ fn ok(tool: &str, result: &Value) -> Value {
     body(result)
 }
 
-#[test]
-fn an_agent_edits_checks_and_restores_the_island() {
+fn an_agent_edits_checks_and_restores_the_island(t: Transport) {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("island");
     copy_project(&island(), &project);
     let scene_before = std::fs::read(project.join("scenes/main.scene.json")).unwrap();
 
-    let mut s = Server::start(&project);
+    let mut s = Server::start(&project, t);
     let init = s.request(
         1,
         "initialize",
@@ -252,8 +329,8 @@ fn an_agent_edits_checks_and_restores_the_island() {
         .collect();
     // The 25 of M1, plus WP17's resource.list, resource.read,
     // checkpoint.create, compat.coverage, scene.dump_tree, verify.diff and
-    // project.import.
-    assert_eq!(names.len(), 32, "{names:?}");
+    // project.import, plus WP24's graph.migration_report.
+    assert_eq!(names.len(), 33, "{names:?}");
     for tool in [
         "entity_spawn",
         "graph_set_param",
@@ -408,7 +485,7 @@ fn an_agent_edits_checks_and_restores_the_island() {
     assert_eq!(ids(&scene_after), ids(&scene_before));
 
     // The saved project opens again, generation included.
-    let mut again = Server::start(&project);
+    let mut again = Server::start(&project, t);
     again.request(
         1,
         "initialize",
@@ -461,8 +538,7 @@ return {
 }
 "#;
 
-#[test]
-fn an_agent_uses_luau_tools_resources_and_verify_diff() {
+fn an_agent_uses_luau_tools_resources_and_verify_diff(t: Transport) {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("island");
     copy_project(&island(), &project);
@@ -471,7 +547,7 @@ fn an_agent_uses_luau_tools_resources_and_verify_diff() {
     std::fs::write(tools.join("markers.luau"), MARKERS).unwrap();
     std::fs::write(tools.join("wipe.luau"), WIPE).unwrap();
 
-    let mut s = Server::start(&project);
+    let mut s = Server::start(&project, t);
     let init = s.request(
         1,
         "initialize",
@@ -612,8 +688,7 @@ fn an_agent_uses_luau_tools_resources_and_verify_diff() {
     s.finish();
 }
 
-#[test]
-fn an_agent_imports_a_loader_into_a_place_and_plays_it() {
+fn an_agent_imports_a_loader_into_a_place_and_plays_it(t: Transport) {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("place");
     let made = Command::new(env!("CARGO_BIN_EXE_real"))
@@ -637,7 +712,7 @@ fn an_agent_imports_a_loader_into_a_place_and_plays_it() {
     let scene = project.join("scenes/main.scene.json");
     let scene_before = std::fs::read(&scene).unwrap();
 
-    let mut s = Server::start(&project);
+    let mut s = Server::start(&project, t);
     s.request(
         1,
         "initialize",
@@ -743,12 +818,11 @@ fn an_agent_imports_a_loader_into_a_place_and_plays_it() {
     s.finish();
 }
 
-#[test]
-fn a_second_headless_writer_is_refused() {
+fn a_second_headless_writer_is_refused(t: Transport) {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("island");
     copy_project(&island(), &project);
-    let mut first = Server::start(&project);
+    let mut first = Server::start(&project, t);
     // Wait until the first server has the project.
     first.request(
         1,
@@ -785,3 +859,22 @@ fn a_second_headless_writer_is_refused() {
     assert!(second.stdout.is_empty());
     first.finish();
 }
+
+/// Each test, once per transport.
+macro_rules! over_both_transports {
+    ($($name:ident),* $(,)?) => {
+        mod stdio {
+            $(#[test] fn $name() { super::$name(super::Transport::Stdio) })*
+        }
+        mod http {
+            $(#[test] fn $name() { super::$name(super::Transport::Http) })*
+        }
+    };
+}
+
+over_both_transports!(
+    an_agent_edits_checks_and_restores_the_island,
+    an_agent_uses_luau_tools_resources_and_verify_diff,
+    an_agent_imports_a_loader_into_a_place_and_plays_it,
+    a_second_headless_writer_is_refused
+);

@@ -252,6 +252,19 @@ component! {
     }
 }
 
+component! {
+    /// A skinned mesh from a glTF asset, posed by its skeleton (ADR-0039).
+    ///
+    /// The skeleton starts at its rest pose; an [`AnimPlayer`] on the same
+    /// entity plays a clip onto its joints, matched by joint name. Joints are
+    /// not entities.
+    pub struct SkinnedMesh {
+        /// `<model asset path>#<skin name>`, e.g. `assets/models/hero.glb#Armature`;
+        /// the skin name is `SkinData.name` (the glTF skin name, or `skin_<index>`).
+        pub asset: String = String::new(),
+    }
+}
+
 field_enum! {
     /// Where a [`HudText`] is anchored on screen.
     pub enum HudAnchor { TopLeft, Top, TopRight, Center, BottomLeft, Bottom, BottomRight }
@@ -344,8 +357,8 @@ component! {
 /// Registers every built-in component, in a fixed order: `Transform`,
 /// `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light`, `RigidBody`,
 /// `Collider`, `CharacterController`, `ScriptRef`, `AudioSource`, `AnimPlayer`,
-/// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `Vehicle`,
-/// `VehicleWheel`.
+/// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `SkinnedMesh`,
+/// `Vehicle`, `VehicleWheel`.
 pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<Transform>(world);
     registry.register::<MeshRef>(world);
@@ -364,6 +377,8 @@ pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<GraphSource>(world);
     registry.register::<crate::Attributes>(world);
     registry.register::<crate::Tags>(world);
+    // Added in M3, after the M2 set, so earlier registration order is kept.
+    registry.register::<SkinnedMesh>(world);
     registry.register::<Vehicle>(world);
     registry.register::<VehicleWheel>(world);
 }
