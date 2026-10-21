@@ -41,6 +41,10 @@ pub const BUNDLE_FAILED: Code = Code::new("RE0955");
 /// --package`).
 pub const PACKAGE_DIFFERS: Code = Code::new("RE0956");
 
+/// A scene, prefab or other packed JSON file names a project file that is
+/// not packed (`real build`).
+pub const NOT_PACKED: Code = Code::new("RE0957");
+
 /// `real build --target web` needs a tool that is not installed: Rust's
 /// `wasm32-unknown-unknown` target, wasi-sdk, or the wasm-bindgen CLI.
 pub const WEB_TOOLCHAIN_MISSING: Code = Code::new("RE0970");

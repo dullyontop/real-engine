@@ -164,6 +164,63 @@ fn a_script_that_does_not_compile_stops_the_build() {
     assert!(!out.join(ARCHIVE_NAME).exists());
 }
 
+/// A scene that names a project file the archive would leave out stops the
+/// build, and including the file fixes it.
+#[test]
+fn a_scene_naming_an_unpacked_file_stops_the_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("island");
+    std::fs::create_dir_all(&project).unwrap();
+    copy_project(&example("island"), &project);
+    std::fs::create_dir_all(project.join("art")).unwrap();
+    std::fs::copy(
+        project.join("materials/hero.material.json"),
+        project.join("art/hero.material.json"),
+    )
+    .unwrap();
+    let scene = project.join("scenes/main.scene.json");
+    let text_before = std::fs::read_to_string(&scene).unwrap();
+    assert!(text_before.contains("\"materials/hero.material.json\""));
+    std::fs::write(
+        &scene,
+        text_before.replace(
+            "\"materials/hero.material.json\"",
+            "\"art/hero.material.json\"",
+        ),
+    )
+    .unwrap();
+    let out = dir.path().join("out");
+    let build = || {
+        real(&[
+            "build",
+            "--project",
+            project.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--archive-only",
+        ])
+    };
+    let o = build();
+    assert!(!o.status.success());
+    let t = text(&o);
+    assert!(
+        t.contains("RE0957") && t.contains("art/hero.material.json"),
+        "{t}"
+    );
+    assert!(t.contains("[package] include"), "{t}");
+
+    let toml = project.join("real.toml");
+    let mut config = std::fs::read_to_string(&toml).unwrap();
+    if config.contains("[package]") {
+        config = config.replace("[package]", "[package]\ninclude = [\"art/**\"]");
+    } else {
+        config.push_str("\n[package]\ninclude = [\"art/**\"]\n");
+    }
+    std::fs::write(&toml, config).unwrap();
+    let o = build();
+    assert!(o.status.success(), "{}", text(&o));
+}
+
 #[test]
 fn out_must_not_hold_other_files() {
     let dir = tempfile::tempdir().unwrap();

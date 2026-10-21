@@ -89,6 +89,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE0956.md"),
     },
     DiagInfo {
+        code: codes::NOT_PACKED,
+        title: "A packed file names a file that is not packed",
+        page: include_str!("../explain/RE0957.md"),
+    },
+    DiagInfo {
         code: codes::WEB_TOOLCHAIN_MISSING,
         title: "The web build's toolchain is missing",
         page: include_str!("../explain/RE0970.md"),
