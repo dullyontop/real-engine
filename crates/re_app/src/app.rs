@@ -1188,6 +1188,13 @@ impl App {
         {
             re_script::debug::service(scripts.context(ContextKind::Game).lua());
         }
+        if self.debugger.is_some()
+            && let Some(c) = &self.compat
+        {
+            for kind in [ContextKind::Server, ContextKind::Client] {
+                re_script::debug::service(c.vm(kind).context().lua());
+            }
+        }
 
         // Input.
         let t = Instant::now();
@@ -2010,16 +2017,22 @@ impl App {
         self.scripts.as_ref()
     }
 
-    /// Attaches the game context's VM to `debugger` (ADR-0045), now if the
-    /// scripts are running and again whenever the VM is replaced; `None`
-    /// detaches it. Breakpoint changes and commands for a parked script are
+    /// Attaches the game context's VM, and a compat project's server and
+    /// client VMs, to `debugger` (ADR-0045), now if the scripts are running
+    /// and again whenever a VM is replaced; `None` detaches them. Breakpoint changes and commands for a parked script are
     /// carried out at the start of each frame.
     pub fn set_debugger(&mut self, debugger: Option<re_script::debug::Debugger>) {
         if let (Some(old), Some(scripts)) = (&self.debugger, &self.scripts) {
             old.detach(scripts.context(ContextKind::Game).lua());
         }
+        if let (Some(old), Some(c)) = (&self.debugger, &self.compat) {
+            for kind in [ContextKind::Server, ContextKind::Client] {
+                old.detach(c.vm(kind).context().lua());
+            }
+        }
         self.debugger = debugger;
         self.attach_debugger();
+        self.attach_compat_debugger();
     }
 
     /// The debugger set with [`App::set_debugger`].
@@ -2035,6 +2048,20 @@ impl App {
         if let Err(e) = debugger.attach(lua, ContextKind::Game.name(), None) {
             self.diagnostics
                 .push(ScriptError::from_mlua(ContextKind::Game.name(), &e).to_diagnostic());
+        }
+    }
+
+    /// Attaches the compat server and client VMs to the debugger, with the
+    /// scripts they already run.
+    fn attach_compat_debugger(&mut self) {
+        let (Some(debugger), Some(c)) = (&self.debugger, &self.compat) else {
+            return;
+        };
+        for kind in [ContextKind::Server, ContextKind::Client] {
+            if let Err(e) = c.vm(kind).attach_debugger(debugger) {
+                self.diagnostics
+                    .push(ScriptError::from_mlua(kind.name(), &e).to_diagnostic());
+            }
         }
     }
 
@@ -2124,6 +2151,8 @@ impl App {
                 return;
             }
         }
+        // Attached before the scripts start, so their first lines can stop.
+        self.attach_compat_debugger();
         for kind in [ContextKind::Server, ContextKind::Client] {
             self.compat_call(kind, |vm, h| crate::compat::start_scripts(vm, h));
         }
