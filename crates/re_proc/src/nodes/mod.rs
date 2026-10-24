@@ -12,7 +12,9 @@ mod field;
 mod fragment;
 mod mesh;
 mod points;
+mod road;
 mod scatter;
+mod shape;
 mod terrain;
 
 use std::collections::HashMap;
@@ -25,7 +27,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::{Value as Json, json};
 
-use crate::value::{Field, MeshValue, Output, Points, PortType};
+use crate::value::{Field, MeshValue, Output, Points, PortType, RoadPath, Shapes};
 
 pub use fragment::{mesh_item, sink_fragment};
 
@@ -59,6 +61,15 @@ pub struct NodeError {
     pub code: re_core::Code,
     /// What went wrong.
     pub message: String,
+}
+
+impl From<re_geom::GeomError> for NodeError {
+    fn from(e: re_geom::GeomError) -> Self {
+        NodeError {
+            code: e.code(),
+            message: e.to_string(),
+        }
+    }
 }
 
 impl From<String> for NodeError {
@@ -537,7 +548,8 @@ impl NodeRegistry {
         Self::default()
     }
 
-    /// The registry with the 16 M1 node kinds.
+    /// The registry with the built-in node kinds: the 16 of M1 (hence the
+    /// name) and the 10 polygon and road kinds of ADR-0043 §5.
     pub fn m1() -> Self {
         let mut r = Self::new();
         terrain::register(&mut r);
@@ -547,6 +559,8 @@ impl NodeRegistry {
         points::register(&mut r);
         mesh::register(&mut r);
         fragment::register(&mut r);
+        shape::register(&mut r);
+        road::register(&mut r);
         r
     }
 
@@ -755,6 +769,42 @@ impl NodeCtx<'_> {
         }
     }
 
+    /// The shapes on `port`, if connected.
+    pub fn shapes(&self, port: &str) -> Option<&Arc<Shapes>> {
+        match self.input(port) {
+            Some(Output::Shapes(s)) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The road path on `port`, if connected.
+    pub fn path(&self, port: &str) -> Option<&Arc<RoadPath>> {
+        match self.input(port) {
+            Some(Output::Path(p)) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// The required shapes on `port`.
+    pub fn need_shapes(&self, port: &str) -> Result<&Arc<Shapes>, String> {
+        self.shapes(port)
+            .ok_or_else(|| format!("input `{port}` has no shapes"))
+    }
+
+    /// Every road path on the variadic ports, in natural port-name order.
+    pub fn paths(&self) -> Vec<&Arc<RoadPath>> {
+        let mut paths: Vec<(&str, &Arc<RoadPath>)> = self
+            .inputs
+            .iter()
+            .filter_map(|(port, o)| match o {
+                Output::Path(p) => Some((port.as_str(), p)),
+                _ => None,
+            })
+            .collect();
+        paths.sort_by(|a, b| natural_cmp(a.0, b.0));
+        paths.into_iter().map(|(_, p)| p).collect()
+    }
+
     /// The required field on `port` (validation guarantees it).
     pub fn need_field(&self, port: &str) -> Result<&Arc<Field>, String> {
         self.field(port)
@@ -901,10 +951,10 @@ mod tests {
     }
 
     #[test]
-    fn m1_has_eighteen_kinds() {
+    fn the_registry_has_twenty_eight_kinds() {
         let r = NodeRegistry::m1();
-        assert_eq!(r.len(), 18);
+        assert_eq!(r.len(), 28);
         let schema = r.graph_json_schema();
-        assert!(schema.pointer("/$defs/NodeDoc/allOf/17").is_some());
+        assert!(schema.pointer("/$defs/NodeDoc/allOf/27").is_some());
     }
 }

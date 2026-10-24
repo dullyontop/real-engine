@@ -9,7 +9,7 @@
 //!     version = 1, oldest = 1,         -- `oldest` defaults to 1
 //!     doc = "Scatters rocks on a field.",
 //!     inputs = { { name = "field", type = "field", required = true, doc = "The ground." } },
-//!     output = "fragment",             -- field, points, mesh or fragment
+//!     output = "fragment",             -- field, points, mesh, fragment, shapes or path
 //!     params = { count = proc.param.integer { default = 10, min = 0, max = 1000 } },
 //!     uses_seed = true,
 //!     migrate = function(from, params) return params end, -- optional
@@ -448,9 +448,11 @@ fn read_declaration(scripts: &Arc<Scripts>, path: &str, limits: Limits) -> Resul
         "points" => PortType::Points,
         "mesh" => PortType::Mesh,
         "fragment" => PortType::Fragment,
+        "shapes" => PortType::Shapes,
+        "path" => PortType::Path,
         other => {
             return Err(format!(
-                "`output` must be field, points, mesh or fragment (found `{other}`)"
+                "`output` must be field, points, mesh, fragment, shapes or path (found `{other}`)"
             ));
         }
     };
@@ -515,9 +517,11 @@ fn port_type(s: &str) -> Result<PortType, String> {
         "field" => Ok(PortType::Field),
         "points" => Ok(PortType::Points),
         "mesh" => Ok(PortType::Mesh),
+        "shapes" => Ok(PortType::Shapes),
+        "path" => Ok(PortType::Path),
         "fragment" => Err("fragment inputs are not supported for Luau nodes".into()),
         other => Err(format!(
-            "unknown port type `{other}` (field, points or mesh)"
+            "unknown port type `{other}` (field, points, mesh, shapes or path)"
         )),
     }
 }

@@ -395,8 +395,10 @@ component! {
 
 field_enum! {
     /// How a [`Ragdoll`] moves (ADR-0040): following its animation with
-    /// kinematic parts, limp, or holding the animation with joint motors.
-    pub enum RagdollMode { Animated, Simulated, Powered }
+    /// kinematic parts, limp, or holding the animation with joint motors. It is
+    /// the scene's field; `re_types::physics::RagdollMode` is the physics mode,
+    /// which carries the strength.
+    pub enum RagdollControl { Animated, Simulated, Powered }
 }
 
 component! {
@@ -414,7 +416,7 @@ component! {
         /// Total mass, in kilograms.
         pub total_mass: f32 = 70.0,
         /// How it moves when the scene starts, and after each edit of this field.
-        pub mode: RagdollMode = RagdollMode::Animated,
+        pub mode: RagdollControl = RagdollControl::Animated,
         /// Motor strength in `Powered` mode, 0 (limp) to 1.
         pub strength: f32 = 1.0,
         /// Seconds the shown pose takes to blend from the animation to the ragdoll

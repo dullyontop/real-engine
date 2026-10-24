@@ -61,7 +61,7 @@ pub struct ScreenshotRequest {
 pub struct RunReport {
     /// Frames run.
     pub frames: u64,
-    /// The world's [`state_hash`](re_scene::World::state_hash) after the last frame, as hex.
+    /// The game's [`state_hash`](App::state_hash) after the last frame, as hex.
     pub state_hash: String,
     /// Everything reported during the run (subsystem errors, failed replay
     /// commands, script errors).
@@ -557,6 +557,36 @@ impl App {
         &self.physics
     }
 
+    /// A hash of the game state, for determinism checks: the world's
+    /// [`state_hash`](re_scene::World::state_hash), and with any ragdolls also their
+    /// physics state, which the scene does not hold (the skin shows it), and with
+    /// any animation graphs also their parameters, states and times (ADR-0039).
+    /// A game without ragdolls or graphs hashes as its world.
+    pub fn state_hash(&self) -> blake3::Hash {
+        let world = self.world.state_hash();
+        let ragdolls = self.physics.ragdoll_state_bytes();
+        let base = if ragdolls.is_empty() {
+            world
+        } else {
+            let mut h = blake3::Hasher::new();
+            h.update(b"real-engine/state-hash+ragdolls/1");
+            h.update(world.as_bytes());
+            h.update(&ragdolls);
+            h.finalize()
+        };
+        if !self.skin_sync.has_graphs() {
+            return base;
+        }
+        let mut bytes = Vec::new();
+        self.skin_sync.write_state(&mut bytes);
+        let mut h = blake3::Hasher::new();
+        h.update(b"real-engine/state-hash/anim/1");
+        h.update(base.as_bytes());
+        h.update(&(bytes.len() as u64).to_le_bytes());
+        h.update(&bytes);
+        h.finalize()
+    }
+
     /// Which entity has which body or character.
     pub fn physics_sync(&self) -> &PhysicsSync {
         &self.physics_sync
@@ -794,25 +824,6 @@ impl App {
     /// Skeleton poses and animation graphs, to set graph parameters.
     pub fn skin_sync_mut(&mut self) -> &mut SkinSync {
         &mut self.skin_sync
-    }
-
-    /// The run's state hash: the world's
-    /// [`state_hash`](re_scene::World::state_hash), combined with every
-    /// animation graph's parameters, states and times when some entity plays
-    /// one (ADR-0039). Without graphs it is the world's hash.
-    pub fn state_hash(&self) -> blake3::Hash {
-        let world = self.world.state_hash();
-        if !self.skin_sync.has_graphs() {
-            return world;
-        }
-        let mut bytes = Vec::new();
-        self.skin_sync.write_state(&mut bytes);
-        let mut h = blake3::Hasher::new();
-        h.update(b"real-engine/state-hash/anim/1");
-        h.update(world.as_bytes());
-        h.update(&(bytes.len() as u64).to_le_bytes());
-        h.update(&bytes);
-        h.finalize()
     }
 
     /// The ragdolls built for `Ragdoll` components, with their blend weights.

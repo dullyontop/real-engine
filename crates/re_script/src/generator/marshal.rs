@@ -17,11 +17,19 @@
 //!   `<node id>/<key>`); `parent` names an earlier item; `mesh` (a mesh
 //!   table) makes the item draw it; `components` is `{ Name = { field =
 //!   value } }`, converted as attribute values are.
+//! * shapes: `{ { outer = { {x, z}, ... }, holes = { { {x, z}, ... } } } }`,
+//!   one table per polygon, points as `{x, z}` in metres. `holes` may be left
+//!   out. An output is simplified like every shapes output (ADR-0043 §5).
+//! * path: `{ closed, samples = { { x, y, z, width, bank, distance } } }`:
+//!   a road centreline's samples. `distance` may be left out of an output
+//!   (it is then measured along the samples).
 
 use std::sync::Arc;
 
 use mlua::{Buffer, Lua, Table, Value, Vector};
-use re_proc::{Field, FragItem, Fragment, MeshValue, Output, Point, Points, PortType};
+use re_proc::{
+    Field, FragItem, Fragment, MeshValue, Output, Point, Points, PortType, RoadPath, Shapes,
+};
 use re_types::glam::Vec3;
 use re_types::mesh::{MeshData, Vertex};
 
@@ -114,6 +122,40 @@ pub(crate) fn to_lua(lua: &Lua, output: &Output) -> mlua::Result<Value> {
                 "fragments are not passed to Luau nodes",
             ));
         }
+        Output::Shapes(shapes) => {
+            let ring = |c: &[[f64; 2]]| -> mlua::Result<Table> {
+                let r = lua.create_table_with_capacity(c.len(), 0)?;
+                for (i, p) in c.iter().enumerate() {
+                    r.raw_set(i + 1, lua.create_sequence_from(p.iter().copied())?)?;
+                }
+                Ok(r)
+            };
+            for (i, s) in shapes.shapes.iter().enumerate() {
+                let shape = lua.create_table()?;
+                shape.raw_set("outer", ring(&s.outer)?)?;
+                let holes = lua.create_table()?;
+                for (j, h) in s.holes.iter().enumerate() {
+                    holes.raw_set(j + 1, ring(h)?)?;
+                }
+                shape.raw_set("holes", holes)?;
+                t.raw_set(i + 1, shape)?;
+            }
+        }
+        Output::Path(path) => {
+            let samples = lua.create_table_with_capacity(path.samples.len(), 0)?;
+            for (i, s) in path.samples.iter().enumerate() {
+                let r = lua.create_table()?;
+                r.raw_set("x", s.position[0])?;
+                r.raw_set("y", s.position[1])?;
+                r.raw_set("z", s.position[2])?;
+                r.raw_set("width", s.width)?;
+                r.raw_set("bank", s.bank)?;
+                r.raw_set("distance", s.distance)?;
+                samples.raw_set(i + 1, r)?;
+            }
+            t.raw_set("closed", path.closed)?;
+            t.raw_set("samples", samples)?;
+        }
     }
     Ok(Value::Table(t))
 }
@@ -177,7 +219,104 @@ pub(crate) fn from_lua(
         PortType::Fragment => {
             Output::Fragment(Arc::new(fragment(&table(v, "fragment")?, node, key)?))
         }
+        PortType::Shapes => Output::Shapes(Arc::new(shapes(&table(v, "shapes")?)?)),
+        PortType::Path => Output::Path(Arc::new(path(&table(v, "path")?)?)),
     })
+}
+
+/// A sequence table's values, checked to be tables.
+fn list(t: &Table, what: &str) -> Result<Vec<Table>, String> {
+    let mut out = Vec::with_capacity(t.raw_len());
+    for i in 1..=t.raw_len() {
+        out.push(table(
+            t.raw_get::<Value>(i).map_err(|e| e.to_string())?,
+            &format!("{what}[{i}]"),
+        )?);
+    }
+    Ok(out)
+}
+
+fn ring(v: Value, what: &str) -> Result<Vec<[f64; 2]>, String> {
+    let mut out = Vec::new();
+    for (i, p) in list(&table(v, what)?, what)?.iter().enumerate() {
+        let at = |k: usize| -> Result<f64, String> {
+            match p.raw_get::<Value>(k).map_err(|e| e.to_string())? {
+                Value::Integer(n) => Ok(crate::lua_int(n) as f64),
+                Value::Number(n) => Ok(n),
+                other => Err(format!(
+                    "{what}[{}][{k}]: expected a number, found {}",
+                    i + 1,
+                    other.type_name()
+                )),
+            }
+        };
+        out.push([at(1)?, at(2)?]);
+    }
+    Ok(out)
+}
+
+fn shapes(t: &Table) -> Result<Shapes, String> {
+    let mut out = Shapes::new();
+    for (i, s) in list(t, "shapes")?.iter().enumerate() {
+        let what = format!("shapes[{}]", i + 1);
+        let outer = ring(
+            s.raw_get::<Value>("outer").map_err(|e| e.to_string())?,
+            &format!("{what}.outer"),
+        )?;
+        let holes = match s.raw_get::<Value>("holes").map_err(|e| e.to_string())? {
+            Value::Nil => Vec::new(),
+            v => {
+                let hw = format!("{what}.holes");
+                list(&table(v, &hw)?, &hw)?
+                    .into_iter()
+                    .enumerate()
+                    .map(|(j, h)| ring(Value::Table(h), &format!("{hw}[{}]", j + 1)))
+                    .collect::<Result<_, _>>()?
+            }
+        };
+        out.shapes.push(re_geom::Shape { outer, holes });
+    }
+    out.simplified().map_err(|e| e.to_string())
+}
+
+fn path(t: &Table) -> Result<RoadPath, String> {
+    let closed = match t.raw_get::<Value>("closed").map_err(|e| e.to_string())? {
+        Value::Nil => false,
+        Value::Boolean(b) => b,
+        other => {
+            return Err(format!(
+                "path.closed: expected a boolean, found {}",
+                other.type_name()
+            ));
+        }
+    };
+    let samples_t = table(
+        t.raw_get::<Value>("samples").map_err(|e| e.to_string())?,
+        "path.samples",
+    )?;
+    let mut samples: Vec<re_geom::road::PathSample> = Vec::new();
+    for (i, s) in list(&samples_t, "path.samples")?.iter().enumerate() {
+        let what = format!("path.samples[{}]", i + 1);
+        let get = |k: &str| need(number(s, k, &what)?, &what, k);
+        let position = [get("x")?, get("y")?, get("z")?];
+        let distance = match number(s, "distance", &what)? {
+            Some(d) => d,
+            None => samples.last().map_or(0.0, |last| {
+                let p = last.position;
+                let (dx, dy, dz) = (position[0] - p[0], position[1] - p[1], position[2] - p[2]);
+                last.distance + (dx * dx + dy * dy + dz * dz).sqrt()
+            }),
+        };
+        samples.push(re_geom::road::PathSample {
+            position,
+            width: get("width")?,
+            bank: number(s, "bank", &what)?.unwrap_or(0.0),
+            distance,
+        });
+    }
+    let path = RoadPath { samples, closed };
+    path.validate().map_err(|e| e.to_string())?;
+    Ok(path)
 }
 
 fn field(t: &Table) -> Result<Field, String> {

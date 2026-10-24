@@ -183,10 +183,10 @@ fn all_problems_are_reported_at_once() {
 }
 
 #[test]
-fn the_registry_describes_18_kinds_with_schemas() {
+fn the_registry_describes_28_kinds_with_schemas() {
     let r = NodeRegistry::m1();
     let kinds: Vec<&str> = r.kinds().collect();
-    assert_eq!(kinds.len(), 18, "{kinds:?}");
+    assert_eq!(kinds.len(), 28, "{kinds:?}");
     for kind in &kinds {
         let d = r.get(kind).unwrap().describe();
         assert_eq!(d["kind"], json!(kind));

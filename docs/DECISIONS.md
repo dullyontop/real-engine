@@ -829,7 +829,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - **A closed set of field types**: `bool`, `i32`, `i64`, `f32`, `f64`, `vec3`, `quat`, `color`, `string`, `entity`, and unit enums. They map one-to-one onto Luau values, JSON and the typed properties the M2 layer needs. One dynamic `Value` type carries them.
 - **Central coercion rules**: integer to float; integral float to integer; f64 to f32 with a range check; non-finite floats rejected; quaternions normalised; enums checked against their variants. A Luau `0.1` written to an f32 field reads back as f32 `0.1`.
 - **Exact f32 text round trip.** Parsing text as f64 and casting to f32 is wrong for exactly 2 of the 4,278,190,080 finite f32 values (`7.038531e-26` and its negative, bits `0x15ae43fd` and `0x95ae43fd`). `f32_from_parsed_f64` re-parses the shortest decimal form when the cast is not exact; the spike's exhaustive check then found 0 mismatches over every finite f32. This fix comes with a required test.
-- **Native components** are declared with the `component!` macro (fields, docs, defaults, and a `requires(...)` clause), which implements the `Reflect` trait. A derive macro is later work.
+- **Native components** are declared with the `component!` macro (fields, docs, defaults, and a `requires(...)` clause), which implements the `Reflect` trait. Since M3 (entity-core track), `#[derive(Reflect)]` from `re_reflect_derive` (syn 2, quote, proc-macro2; re-exported as `re_reflect::Reflect`) does the same for an ordinary struct: field docs from `///`, defaults from the type's own `Default`, `#[reflect(skip)]` for fields that are not data (caches, handles), and `#[reflect(crate = "...")]` when `re_reflect` is reached through another crate. The struct derives `Component`, `Clone` and `Default` itself; `requires` is bevy's own `#[require(...)]` attribute. `component!` stays for the built-ins.
 - **Script-defined components** are registered at run time with `Registry::register_script`. Each gets a real bevy_ecs `ComponentId` (through `ComponentDescriptor::new_with_layout`) whose storage is a `Vec<Value>`, so it is visible to queries, change detection, saving, despawn and undo exactly like a native component.
 - **Access by name** (`World::get(id, "RigidBody", "mass")`), or by a key resolved once for hot paths. Writing a value equal to the current one does not trip change detection.
 - **Errors name the fix**: unknown names come with a "did you mean" suggestion and the list of valid fields, for example `component RigidBody has no field "mas" (did you mean "mass"?); fields are: kind, mass, friction, restitution`.
@@ -844,7 +844,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
   - bevy_remote's JSON schema export has no docs or defaults and pulls 278 to 322 crates.
 
   Its field access speed is comparable to ours (169 to 209 ns per fully dynamic write plus read, against about 107 ns for our by-name read).
-- **A derive macro now** (`re_reflect_derive` with syn). Better errors and nested structs, but not needed for M1's built-ins; the `component!` macro works today.
+- **A derive macro in M1** (`re_reflect_derive` with syn). Better errors and ordinary Rust structs, but not needed for M1's built-ins, so it waited for M3's entity-core track.
 
 **Consequences.**
 - The registry is about 400 lines, with our own error messages and coercion rules, and one model for native and script components.

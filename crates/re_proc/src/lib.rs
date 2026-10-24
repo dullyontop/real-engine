@@ -2,7 +2,8 @@
 //!
 //! * [`ProcGraph`]: the validated IR of a `*.graph.json` document
 //!   ([`re_types::graph::GraphDoc`]), with errors `RE4000`–`RE4007`;
-//! * [`NodeRegistry`]: the 16 M1 node kinds ([`NodeRegistry::m1`]), each
+//! * [`NodeRegistry`]: the 28 built-in node kinds ([`NodeRegistry::m1`]:
+//!   M1's 16, the two terrain kinds and ADR-0043 §5's polygon and road kinds), each
 //!   with typed ports and a schemars parameter schema
 //!   ([`NodeRegistry::graph_json_schema`] gives `graph.schema.json`);
 //! * [`Evaluator`]: topological, parallel evaluation on the
@@ -83,6 +84,7 @@ pub use nodes::{
 pub use store::{Budget, CurrentGraph, GraphStore, register_doc_validators, validate_graph_json};
 pub use value::{
     DerivedAsset, Field, FragItem, Fragment, MeshValue, Output, Point, Points, PortType, PrefabUse,
+    RoadPath, Shapes,
 };
 
 use re_core::DiagInfo;
