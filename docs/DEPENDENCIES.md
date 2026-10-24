@@ -4,7 +4,7 @@ This file lists every third-party crate Real Engine plans to use in M1: its exac
 
 ## Policy
 
-1. **Only crates.io.** No git dependencies, no path dependencies outside the workspace, and no build scripts that download things. This is why `oxijolt` is used with `default-features = false`: its default `prebuilt` feature downloads binaries at build time.
+1. **Only crates.io.** No git dependencies, no path dependencies outside the workspace, and no build scripts that download things. One exception, approved by the owner (ADR-0049 §2): `third_party/` holds temporary patched copies of `mlua` and `oxijolt-sys`, with their licence files, used through `[patch.crates-io]` until crates.io releases carry the changes. This is why `oxijolt` is used with `default-features = false`: its default `prebuilt` feature downloads binaries at build time.
 2. **Adding a dependency needs a DECISIONS entry.** A PR that adds a crate to any `Cargo.toml` must add or amend an ADR in [DECISIONS.md](DECISIONS.md) and a row in this file. Upgrading within the same minor version only needs a row update.
 3. **Exact versions.** The workspace sets every dependency in `[workspace.dependencies]` as `"=X.Y.Z"`. Member crates write `foo.workspace = true`. `Cargo.lock` is committed. CI builds with `--locked`.
 4. **License allow-list**, enforced by `cargo deny check licenses`: MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, BSL-1.0, ISC, Zlib, CC0-1.0, Unicode-3.0. (BSL-1.0 is for `clipboard-win` and `error-code`, which egui-winit pulls on Windows.) Per-crate exceptions, and nothing else (ADR-0019):
@@ -58,7 +58,7 @@ There is no `eframe`. We own the wgpu device and pass `(&Device, &Queue, &Textur
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| oxijolt | 1.1.0+jolt-5.6.0 (pin `=1.1.0`) | MIT OR Apache-2.0 | 1.88 | Rust bindings to Jolt Physics 5.6.0. Bodies, shapes, constraints, CharacterVirtual, queries, sensors, state save. | `default-features = false`, `cross-platform-deterministic` (always on since WP18 PR "d2", ADR-0036) | physics spike, 12 scenarios plus a bench; source build about 55 s | Verified |
+| oxijolt | 1.1.0+jolt-5.6.0 (pin `=1.1.0`) | MIT OR Apache-2.0 | 1.88 | Rust bindings to Jolt Physics 5.6.0. Bodies, shapes, constraints, CharacterVirtual, queries, sensors, state save. | `default-features = false`, `cross-platform-deterministic` (always on since WP18 PR "d2", ADR-0036). `oxijolt-sys` is a temporary patched copy in `third_party/oxijolt-sys`, removed when upstream releases carry ADR-0049 §2 | physics spike, 12 scenarios plus a bench; source build about 55 s | Verified |
 
 Notes:
 - The available features are `asserts`, `bindgen`, `cross-platform-deterministic`, `debug-renderer`, `double-precision`, `glam032`, `mint` and `prebuilt`. We leave `glam032` off, because it would pull a third glam version. Conversion is a two-line function in `re_physics`.
@@ -69,7 +69,7 @@ Notes:
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| mlua | 0.12.2 | MIT | 1.88 | Embeds Luau (vendored Luau 0.740 through mlua-sys 0.13.0 and luau0-src 0.22.0+luau740; no Analysis module) | `luau` only. Not `vendored` (it does nothing for Luau) and not `send`. `luau-jit` only through `re_script`'s opt-in `jit` feature. | scripting spike: 14 feature tests in the default, `send` and `jit` builds, benchmarks, and a corpus compile | Verified |
+| mlua | 0.12.2 | MIT | 1.88 | Embeds Luau (vendored Luau 0.740 through mlua-sys 0.13.0 and luau0-src 0.22.0+luau740; no Analysis module) | `luau` only. Not `vendored` (it does nothing for Luau) and not `send`. `luau-jit` only through `re_script`'s opt-in `jit` feature. A temporary patched copy in `third_party/mlua`, removed when upstream releases carry ADR-0049 §2. | scripting spike: 14 feature tests in the default, `send` and `jit` builds, benchmarks, and a corpus compile | Verified |
 | full_moon | 3.0.0 | MPL-2.0 | none | Luau parser for the static API-gap scan (validation tier 2). Tooling only (`re_script_check`). | `luau` | design-phase probe in this container: `parse_fallible(code, LuaVersion::luau())` parsed an external Roblox-style corpus with no failures | Verified; MPL exception (ADR-0019) |
 
 ### Place-file import (M3, tooling only)
@@ -78,10 +78,10 @@ Used only by `re_import`, a tooling crate, so none of them ships in a packaged g
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| lz4_flex | 0.14.0 | MIT | 1.81 | LZ4 block bodies of binary place-file chunks | `default-features = false`, `std`, `safe-decode`, `checked-decode` | WP27 probe in this container (LZ4 block round trip) | Verified (probe); lands with WP27 PR "place files" |
-| ruzstd | 0.9.1 | MIT | 1.87 | ZSTD frame bodies of binary place-file chunks, pure Rust | `default-features = false`, `std` | WP27 probe (ZSTD frame decode) | Verified (probe); lands with WP27 PR "place files" |
-| quick-xml | 0.41.0 | MIT | 1.79 | `.rbxlx`/`.rbxmx` reader | defaults | WP27 probe; already in the lockfile through `wayland-scanner`, so no new duplicate | Verified (probe); lands with WP27 PR "place files" |
-| base64 | 0.23.1 | MIT OR Apache-2.0 | 1.71 | binary and shared strings in XML place files | defaults | WP27 probe; already in the lockfile through `rmcp` | Verified (probe); lands with WP27 PR "place files" |
+| lz4_flex | 0.14.0 | MIT | 1.81 | LZ4 block bodies of binary place-file chunks | `default-features = false`, `std`, `safe-decode`, `checked-decode` | WP27 probe in this container (LZ4 block round trip) | Landed (WP27 PR "place files", #112) |
+| ruzstd | 0.9.1 | MIT | 1.87 | ZSTD frame bodies of binary place-file chunks, pure Rust | `default-features = false`, `std` | WP27 probe (ZSTD frame decode) | Landed (WP27 PR "place files", #112) |
+| quick-xml | 0.41.0 | MIT | 1.79 | `.rbxlx`/`.rbxmx` reader | defaults | WP27 probe; already in the lockfile through `wayland-scanner`, so no new duplicate | Landed (WP27 PR "place files", #112) |
+| base64 | 0.23.1 | MIT OR Apache-2.0 | 1.71 | binary and shared strings in XML place files | defaults | WP27 probe; already in the lockfile through `rmcp` | Landed (WP27 PR "place files", #112) |
 
 ### Polygon booleans and roads (M3, runtime)
 
@@ -106,23 +106,23 @@ ADR-0047. Checked against crates.io on 2026-10-15; `cargo deny check` passes wit
 
 ### Package archive (M3, runtime)
 
-Used by `re_app::package` to read and write `game.rpak` (ADR-0037). With `default-features = false` it builds the bundled libzstd with `cc` (no pkg-config, no system library) and drops the legacy decoders and the dictionary builder. Checked against crates.io on 2026-10-15.
+Used by `re_app::package` to read and write `game.rpak` (ADR-0037), on desktop and in the web runtime, where zstd-sys is built with wasi-sdk's clang (ADR-0049 §6). With `default-features = false` it builds the bundled libzstd with `cc` (no pkg-config, no system library) and drops the legacy decoders and the dictionary builder. Checked against crates.io on 2026-10-15.
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| zstd | 0.14.2 | BSD-3-Clause | 1.64 | per-entry and index compression in `game.rpak` | `default-features = false` | WP19 measurements (decode 400–700 MB/s at levels 3–9; `ldd` shows only libc and libgcc_s) | Verified (probe); lands with WP19 PR "archive" |
-| zstd-safe, zstd-sys | 8.1.0, 2.1.1+zstd.1.5.7 | BSD-3-Clause | ≤ 1.64 | zstd's bindings and the vendored C library | defaults of `zstd` | WP19 measurements | Verified (probe); transitive |
+| zstd | 0.14.2 | BSD-3-Clause | 1.64 | per-entry and index compression in `game.rpak` | `default-features = false` | WP19 measurements (decode 400–700 MB/s at levels 3–9; `ldd` shows only libc and libgcc_s) | Landed (WP19 PR "archive", #121) |
+| zstd-safe, zstd-sys | 8.1.0, 2.1.1+zstd.1.5.7 | BSD-3-Clause | ≤ 1.64 | zstd's bindings and the vendored C library | defaults of `zstd` | WP19 measurements | Landed (#121); transitive |
 
-blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile; `re_cli` takes `image` and `windows-sys` as direct dependencies in WP19's PRs.
+blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile. `windows-sys` is a direct dependency of `re_cli` on Windows since PR "archive" (`Win32_System_Console`, to attach the game to its parent's console); `re_cli` takes `image` in PR "bundles".
 
 ### Editor node canvas and docking (M3, tooling only)
 
-Used only by `re_editor`, a tooling crate, so the runtime-only binary does not link them (ADR-0044, ADR-0027). Pinned exactly; an egui-snarl upgrade re-checks its list of direct edits (ADR-0044). Checked against crates.io on 2026-10-15. With them the lockfile gains three transitive crates, all MIT OR Apache-2.0 and none a new duplicate: egui-scale 0.6.1, duplicate 2.0.1 and proc-macro2-diagnostics 0.10.1. ahash, slab, smallvec, paste, heck and thiserror 2 are already in the lockfile. Gizmos are our own code; transform-gizmo-egui is not used (ADR-0044).
+Used only by `re_editor`, a tooling crate, so the runtime-only binary does not link them (ADR-0044, ADR-0027). Pinned exactly; an egui-snarl upgrade re-checks its list of direct edits (ADR-0044). Checked against crates.io on 2026-10-15. With them the lockfile gains four transitive crates, none a new duplicate: egui-scale 0.6.1 (through egui-snarl), duplicate 2.0.1 and proc-macro2-diagnostics 0.10.1 (through egui_dock), and enumn 0.1.14 (MIT OR Apache-2.0, a proc macro: egui_dock's `serde` feature turns on `egui/serde`, which turns on `accesskit/serde`, which pulls it in). ahash, slab, smallvec, paste, heck and thiserror 2 are already in the lockfile. Gizmos are our own code; transform-gizmo-egui is not used (ADR-0044).
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| egui-snarl | 0.12.0 | MIT OR Apache-2.0 | 1.92 | node canvas for ProcGraph (and later AnimGraph), as a read-only view-model | `serde` | WP25 `cratecheck` (built with egui 0.36.2, one egui in the tree) | Verified (probe); lands with WP25's canvas PR |
-| egui_dock | 0.21.1 | MIT | 1.95 | dockable editor panels with floating windows; layout saved as UI state | `serde` | WP25 `cratecheck` | Verified (probe); lands with WP25's docking PR |
+| egui-snarl | 0.12.0 | MIT OR Apache-2.0 | 1.92 | node canvas for ProcGraph (and later AnimGraph), as a read-only view-model | `serde` | WP25 `cratecheck` (built with egui 0.36.2, one egui in the tree) | Landed (WP25 PR "canvas", #123) |
+| egui_dock | 0.21.1 | MIT | 1.95 | dockable editor panels with floating windows; layout saved as UI state | `serde` | WP25 `cratecheck` | Landed (WP25, #91) |
 
 ### MCP over HTTP (M3, tooling only)
 
@@ -169,7 +169,7 @@ The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each fa
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | 1.71 | Scene, prefab, graph and material files; command and log JSON; CLI JSON output | `preserve_order`, `float_roundtrip` | AI spike (default features); core spike (`float_roundtrip`: exact float parsing, byte-identical scene round trips); WP0 (`preserve_order`: graph parameters keep file order, test `graph` in `crates/re_types/tests/roundtrip.rs`) | Verified |
 | schemars | 1.2.3 | MIT | 1.74 | JSON Schema for MCP tool inputs and the statically typed file formats (materials, graphs, verify report, agent policy). Scene and prefab schemas come from the component registry instead (ADR-0016). | `derive` | AI spike (MCP tool schemas); WP0 `re_types` optional `schemars` feature (`GraphDoc`, `ReplayDoc`; `crates/re_types/tests/schema.rs`); WP5 `re_assets` optional `schemars` feature (`MaterialFile` and `AlphaModeName`, for `material.schema.json`; `crates/re_assets/tests/schema.rs`) | Verified |
 | toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 | 1.85 | `real.toml`, `.real/agent-policy.toml` | default | WP0: `cargo xtask dupes` reads `deny.toml` with it (test `reads_every_skip_form` in `tools/xtask/src/dupes.rs`) | Verified |
-| postcard | 1.1.3 | MIT OR Apache-2.0 | none | Binary cache blobs (processed meshes, EvalReport cache). Replaces bincode. | `use-std` | WP4 and WP5: `re_proc`'s node cache and `re_assets`' processed cache round-trip through it (their crate tests) | Verified |
+| postcard | 1.1.3 | MIT OR Apache-2.0 | none | Binary cache blobs (processed meshes, EvalReport cache), the `game.rpak` index, and `re_compat`'s replication frames (ADR-0050 §3, #117). Replaces bincode. | `use-std` | WP4 and WP5: `re_proc`'s node cache and `re_assets`' processed cache round-trip through it (their crate tests) | Verified |
 | blake3 | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception | none | Asset cache keys, ProcGraph node keys, `state_hash` | default | platform spike (`assets.rs` cache key) | Verified |
 | uuid | 1.28.0 | Apache-2.0 OR MIT | 1.89 | Asset ids (`.meta.json`). Entity ids are short strings made by `re_scene::IdGen`, not uuids. | `v4`, `serde`, `js` (randomness from the browser on wasm32, ADR-0049) | WP5: `re_assets` sidecar ids (`.meta.json`, its import tests) | Verified |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | 1.85 | Ordered maps in documents, commands and the registry (deterministic file output) | `serde` | core spike | Verified |

@@ -3,7 +3,7 @@
 Real Engine is an open-source 3D game engine written in Rust. It is built around three ideas:
 
 - **Procedural first.** Worlds are described by node graphs (built from Luau or JSON), generated deterministically, and edited by hand on top. Hand edits survive regeneration.
-- **Luau scripting.** An engine-native API now, with a compatibility layer for Roblox-style projects next (M2).
+- **Luau scripting.** An engine-native API, and a compatibility layer for Roblox-style projects (M2).
 - **Agent-ready, AI optional.** Every edit goes through one command registry, shared by the CLI, the editor and an MCP server. `real verify --json` gives a pass/fail for the whole project, with a stable `RE####` code and a `real explain` page for every error. Everything an agent can do is also an ordinary engine feature, and no AI provider is required.
 
 ## Status
@@ -12,18 +12,30 @@ Real Engine is an open-source 3D game engine written in Rust. It is built around
 
 **M2 done** (2026-10-20). Roblox-style projects run on Real Engine through `re_compat`, and every item of [M2's definition of done](docs/M2_PLAN.md#definition-of-done-for-m2) holds: the owner's private sample checks pass, `examples/plaza` is verified in CI, and a test reaches every implemented compat member. M2 includes container field types, attributes and tags, the `re_compat` class layer and data formats, the Roblox-style datatypes and enums, the instance data model with signals, the script runtime (`require`, `RunService`, `task`) with a headless test harness, server and client worlds with replication, players and remotes, physics for parts with static cells for large maps, characters, animation and input, tweens and sound, the 2D UI and the 3D view, `real import` for Rojo-style projects and Studio loader scripts, and running imported projects with `real run`, `real verify` and `play.run`. M3 (shipping games, browser builds and online play) is planned in [M3_PLAN.md](docs/M3_PLAN.md).
 
+**M3 in progress.** Merged so far:
+- Replays end with the same `state_hash` on Linux, Windows and macOS, and a required CI check compares them (D2, ADR-0036).
+- `examples/valley` is a streamed world: you can walk it and drive a car through it, and cells load and unload around you (ADR-0042).
+- `real build` packs a game into `game.rpak` with a runtime-only player, and `real verify --package` checks that it plays like the project (ADR-0037).
+- `real build --target web` makes a folder any static server can host; the game runs in the browser with WebGPU or WebGL2, and saves last across page loads (ADR-0049).
+- The editor has dockable panels, a node canvas over graph files (every edit an undoable `graph.*` command), and translate, rotate and scale gizmos (W, E, R) that move entities live, one undo step per drag (ADR-0044). It also has a script debugger, served over DAP with `--debug` (ADR-0045).
+- The HDR post chain and cascaded shadows, configured in `[render.post]` and `[render.shadows]`; glTF skins; vehicles and ragdolls on Jolt; audio buses, effects and snapshots.
+- Generator versions with `real migrate-graph`, `proc.bake`, and node kinds written in Luau.
+- Project templates (`real new DIR --template native|roblox|terrain`, `--set KEY=VALUE`, `--list-templates`; the format is in [templates/README.md](templates/README.md)), generator recipes, `real agent eval`, and MCP over streamable HTTP on localhost (`real mcp --http`).
+- For Roblox-style projects: saved data, script reload during play, SurfaceGui and ViewportFrame, and `real import` of `.rbxl`, `.rbxlx`, `.rbxm` and `.rbxmx` files (with `--parent`).
+- `re_net`, our reliable UDP transport, and replication as server diffs and client applies over postcard frames (ADR-0050). Online sessions come next.
+
 The workspace holds:
 
 - The contract layer: `re_core`, `re_noise` and `re_types`.
 - The entity model: `re_reflect` (the component registry), `re_scene` (the World facade over bevy_ecs, scenes, prefabs and procedural sources) and `re_command` (edit operations, undo and redo, and the command registry).
-- The subsystems: `re_render` (wgpu), `re_physics` (Jolt), `re_assets`, `re_input`, `re_audio` and `re_anim`.
+- The subsystems: `re_render` (wgpu), `re_physics` (Jolt), `re_assets`, `re_input`, `re_audio`, `re_anim` and `re_net` (UDP transport).
 - Procedural generation: `re_geom` and `re_proc` (the ProcGraph).
 - Scripting: `re_script` (Luau through mlua) and `re_script_check` (the validation suite).
-- The runtime and CLI: `re_app` and `re_cli` (the `real` binary).
-- Tooling: `re_agent`, `re_mcp` (the MCP server) and `re_editor` (editor-lite).
+- The runtime and CLI: `re_app` and `re_cli` (the `real` binary), and `re_web` (the browser runtime).
+- Tooling: `re_agent`, `re_mcp` (the MCP server) and `re_editor` (the editor).
 - Compatibility (M2): `re_compat`, the Roblox-style layer.
 
-Try it with `cargo run --release -p re_cli -- run --project examples/island`, or `real verify --project examples/island --json` for the headless checks.
+Try it with `cargo run --release -p re_cli -- run --project examples/island` (or `examples/plaza`, or `examples/valley`), or `real verify --project examples/island --json` for the headless checks.
 
 The license is not final: see [DECISIONS.md, open questions](docs/DECISIONS.md#open-questions-for-the-owner). The crates declare `MIT OR Apache-2.0` until the owner decides.
 
@@ -41,7 +53,7 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 | Script tooling | full_moon 3.0.0 (static scan); luau-lsp 1.70.1 as the external type checker |
 | Assets, audio, input | gltf 1.4.1, image 0.25.10, kira 0.12.5, gilrs 0.11.2, notify 8.2.0 |
 | Data | serde 1.0.229, serde_json 1.0.154, toml 1.1.8, postcard 1.1.3, blake3 1.8.7 |
-| Agents | rmcp 3.5.1 (MCP over stdio), tokio 1.53.3 |
+| Agents | rmcp 3.5.1 (MCP over stdio and streamable HTTP), tokio 1.53.3 |
 
 ## Documents
 
@@ -51,7 +63,7 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0 to M3+, their exit criteria, and why they are in this order |
 | [docs/M1_PLAN.md](docs/M1_PLAN.md) | The first milestone as nine self-contained work packages, with owned paths, cross-package contracts, acceptance commands, and the definition of done |
 | [docs/M2_PLAN.md](docs/M2_PLAN.md) | The second milestone, the Roblox-style compatibility layer, as work packages WP9–WP17 in the same shape |
-| [docs/M3_PLAN.md](docs/M3_PLAN.md) | Draft of the third milestone (ship games: platforms and D2, export, rendering, skinning, vehicles, streaming, the procedural workflow, the editor, the AI track, compat follow-ups and `examples/valley`), as work packages WP18–WP28 |
+| [docs/M3_PLAN.md](docs/M3_PLAN.md) | The third milestone (ship games: platforms and D2, export, rendering, skinning, vehicles, streaming, the procedural workflow, the editor, the AI track, compat follow-ups, `examples/valley`, browser builds and online play), as work packages WP18–WP30 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records, plus open questions for the project owner |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Every dependency with its version, license, MSRV and verification status; system packages |
 | [docs/research/core.md](docs/research/core.md) | Findings from the entity-core spike (bevy_ecs, the component registry, scene files) |
@@ -73,7 +85,7 @@ cargo run --locked --release -p re_cli -- verify --project examples/island --jso
 cargo deny check         # needs cargo-deny 0.20.2: cargo install cargo-deny --version 0.20.2 --locked
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same checks, the demo's `real verify` (with assertions on its JSON) and a windowed smoke run under Xvfb, plus a build with Rust 1.95.0 and builds on Windows and macOS (ADR-0023). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
+CI (`.github/workflows/ci.yml`) runs the same checks, `real verify` on the island, the plaza and the valley (with assertions on the JSON) and windowed smoke runs under Xvfb, plus a build with Rust 1.95.0, the whole suite on Windows and macOS, the browser build, and the cross-platform `state_hash` check. 14 of its checks are required for a merge (ADR-0023). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
 
 ## Running the renderer tests
 
