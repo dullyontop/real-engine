@@ -187,6 +187,7 @@ pub fn entity(id: &str, parent: Option<&str>, components: &[(&str, &[(&str, Doc)
     EntityDoc {
         id: id.into(),
         name: id.to_uppercase(),
+        note: String::new(),
         parent: parent.map(Into::into),
         components: comps(components),
         overrides: Vec::new(),

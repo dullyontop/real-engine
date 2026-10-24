@@ -232,6 +232,44 @@ fn scene_round_trip_is_byte_identical() {
     assert_eq!(scene_json(&mut c), json);
 }
 
+/// An entity's `note` is the scene file's comment: it loads, saves back
+/// byte for byte, survives a fork and a subtree snapshot, and never changes
+/// the state hash.
+#[test]
+fn notes_round_trip_and_stay_out_of_the_state_hash() {
+    let mut docs = sample_docs();
+    let plain_hash = {
+        let mut w = world();
+        w.spawn_docs(&docs, None).unwrap();
+        w.state_hash()
+    };
+    docs[2].note = "Keep this crate clear of the spawn point.".into();
+    let mut w = world();
+    w.spawn_docs(&docs, None).unwrap();
+    assert_eq!(w.state_hash(), plain_hash, "a note is not simulation state");
+    let crate_e = w.entity(&docs[2].id).unwrap();
+    assert_eq!(
+        w.note_of(crate_e),
+        "Keep this crate clear of the spawn point."
+    );
+
+    let json = scene_json(&mut w);
+    assert!(json.contains("\"note\": \"Keep this crate clear"), "{json}");
+    assert_eq!(
+        json.matches("\"note\"").count(),
+        1,
+        "empty notes are omitted"
+    );
+    let mut back = world();
+    back.load(&scene::from_json(&json).unwrap()).unwrap();
+    assert_eq!(scene_json(&mut back), json);
+
+    let mut fork = w.fork();
+    assert_eq!(scene_json(&mut fork), json);
+    let snap = w.snapshot_subtree(crate_e);
+    assert_eq!(snap.entities[0].note, docs[2].note);
+}
+
 #[test]
 fn load_errors_name_the_place() {
     let mut w = world();

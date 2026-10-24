@@ -50,6 +50,7 @@ object with an `op` tag:
 | `remove_component` | `id`, `component` | Remove a component |
 | `reparent` | `id`, `parent` (`null` for a root), `index`? | Move an entity |
 | `rename` | `id`, `name` | Change the display name |
+| `set_note` | `id`, `note` | Set the comment kept with the entity in the scene file (`""` removes it) |
 | `set_override` | `source`, `target`, `component`?, `field`?, `value`?, `deleted`? | Keep a change to a generated entity across regenerations |
 
 Values use the file form: vectors and colours are arrays (`[x, y, z]`,
