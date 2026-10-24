@@ -2,6 +2,8 @@
 //! standalone game folder, and check that the packaged game plays as the
 //! project does.
 
+pub mod bundle;
+pub mod notices;
 pub mod pack;
 pub mod verify;
 pub mod web;
@@ -10,11 +12,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use re_app::AppConfig;
-use re_app::package::{ARCHIVE_NAME, RuntimeVersions};
+use re_app::package::{ARCHIVE_NAME, PackageWriter, RuntimeVersions};
 use re_core::Diagnostic;
 use serde::Serialize;
 
 use crate::codes;
+use notices::{NOTICES_FILE, NoticesReport};
 
 /// The file that marks a folder `real build` wrote, listing what it wrote.
 pub const MARKER: &str = ".real-build";
@@ -27,17 +30,23 @@ pub struct BuildArgs {
     #[arg(long)]
     out: PathBuf,
     /// The target to build for, such as `x86_64-unknown-linux-gnu` (default:
-    /// this machine's), or `web` for a folder a static web server hosts. A
-    /// runtime for another OS needs `--runtime`.
+    /// this machine's, or the `--runtime`'s own), or `web` for a folder a
+    /// static web server hosts. A runtime for another OS needs `--runtime`.
     #[arg(long)]
     target: Option<String>,
-    /// Use this prebuilt game runtime instead of building one with cargo (for
-    /// `--target web`, a folder holding a web runtime).
+    /// Use this prebuilt game runtime instead of building one with cargo: the
+    /// `real` of a runtime folder (from `--runtime-only` or a release), which
+    /// holds its notices. For `--target web`, a folder holding a web runtime.
     #[arg(long, value_name = "PATH")]
     runtime: Option<PathBuf>,
     /// Write only `game.rpak`.
     #[arg(long)]
     archive_only: bool,
+    /// Write only a runtime folder for the target: the game runtime, its
+    /// `runtime.json` and its notices, for `--runtime` on another machine. No
+    /// project is read.
+    #[arg(long, conflicts_with_all = ["runtime", "archive_only"])]
+    runtime_only: bool,
     /// Print the build report as JSON.
     #[arg(long)]
     json: bool,
@@ -48,7 +57,7 @@ pub struct BuildArgs {
 pub struct BuildReport {
     /// True when the build finished without errors.
     pub ok: bool,
-    /// The game folder's files, relative to `--out`.
+    /// The game folder's files, relative to `--out` (a macOS app is one).
     pub files: Vec<String>,
     /// Every archive entry with its form, sizes and compression.
     pub entries: Vec<re_app::package::archive::WrittenEntry>,
@@ -57,6 +66,8 @@ pub struct BuildReport {
     pub pack: pack::PackReport,
     /// The target the runtime is for.
     pub target: Option<String>,
+    /// The third-party notices.
+    pub notices: Option<NoticesReport>,
     /// Steps not done for this target, and why.
     pub notes: Vec<String>,
 }
@@ -81,6 +92,15 @@ fn target_os(triple: &str) -> &'static str {
     }
 }
 
+/// The runtime binary's name in a runtime folder.
+fn runtime_name(triple: &str) -> &'static str {
+    if target_os(triple) == "windows" {
+        "real.exe"
+    } else {
+        "real"
+    }
+}
+
 /// Runs `real build`.
 pub fn run(args: BuildArgs, project: &Path) -> ExitCode {
     let (report, ok) = build(&args, project);
@@ -97,7 +117,14 @@ pub fn run(args: BuildArgs, project: &Path) -> ExitCode {
         for note in &report.notes {
             println!("note: {note}");
         }
-        if ok {
+        if ok && args.runtime_only {
+            println!(
+                "built the runtime for {} ({}) into {}",
+                report.target.as_deref().unwrap_or("?"),
+                report.files.join(", "),
+                args.out.display()
+            );
+        } else if ok {
             let stored: u64 = report.entries.iter().map(|e| e.stored_size).sum();
             println!(
                 "built {} ({} entries, {:.1} MB) into {}",
@@ -117,156 +144,275 @@ pub fn run(args: BuildArgs, project: &Path) -> ExitCode {
 
 fn build(args: &BuildArgs, project: &Path) -> (BuildReport, bool) {
     let mut report = BuildReport::default();
-    let stop = |report: &mut BuildReport, d: Diagnostic| {
-        report.pack.diagnostics.push(d);
-        report.ok = false;
-        false
+    let built = if args.runtime_only {
+        runtime_only(args, &mut report)
+    } else {
+        build_game(args, project, &mut report)
     };
-    let config = match AppConfig::load(project) {
-        Ok(c) => c,
+    report.ok = match built {
+        Ok(()) => finish(&args.out, &mut report),
         Err(d) => {
-            let ok = stop(&mut report, d);
-            return (report, ok);
+            report.pack.diagnostics.push(d);
+            false
         }
     };
-    let earlier = match check_out(&args.out) {
-        Ok(listed) => listed,
-        Err(d) => {
-            let ok = stop(&mut report, d);
-            return (report, ok);
-        }
-    };
+    let ok = report.ok;
+    (report, ok)
+}
 
-    // 1. The checks `real verify` runs on the files.
-    let scan = crate::tooling::check::ScanStage;
-    let stages = re_app::verify::content_stages(project, &config, &[&scan]);
-    for stage in stages {
-        report.pack.diagnostics.extend(stage.diagnostics);
-    }
+/// What the game folder is built around.
+enum Target {
+    /// Only the archive.
+    ArchiveOnly,
+    /// A web runtime folder.
+    Web(web::WebRuntime),
+    /// A desktop game runtime.
+    Desktop(ReadyRuntime),
+}
 
-    // 2. The archive.
-    let mut web_runtime = None;
-    let mut errors = report
+/// A desktop game runtime ready to copy, with its target and the runtime's
+/// part of the notices.
+struct ReadyRuntime {
+    binary: PathBuf,
+    triple: String,
+    notices: String,
+    report: NoticesReport,
+}
+
+/// `RE0951` when the report holds errors.
+fn stop_on_errors(report: &BuildReport) -> Result<(), Diagnostic> {
+    let errors = report
         .pack
         .diagnostics
         .iter()
         .filter(|d| d.is_error())
         .count();
     if errors == 0 {
-        let (writer, pack_report) = pack::pack(project, &config);
-        report.pack.package = pack_report.package.clone();
-        report.pack.assets = pack_report.assets;
-        report.pack.created_sidecars = pack_report.created_sidecars;
-        report.pack.dropped = pack_report.dropped;
-        report.pack.diagnostics.extend(pack_report.diagnostics);
-        errors = report
-            .pack
-            .diagnostics
-            .iter()
-            .filter(|d| d.is_error())
-            .count();
-        if errors == 0 {
-            // The web runtime is ready before `out` is cleared, so a missing
-            // toolchain leaves an earlier build in place.
-            if args.target.as_deref().is_some_and(web::is_web) && !args.archive_only {
-                let runtime = web::runtime(
-                    &args.out,
-                    args.runtime.as_deref(),
-                    &mut report.pack.diagnostics,
-                );
-                match runtime {
-                    Ok(dir) => web_runtime = Some(dir),
-                    Err(d) => {
-                        let ok = stop(&mut report, d);
-                        return (report, ok);
-                    }
-                }
+        return Ok(());
+    }
+    Err(Diagnostic::error(
+        codes::BUILD_STOPPED,
+        format!(
+            "real build stopped: the project has {errors} error{}",
+            if errors == 1 { "" } else { "s" }
+        ),
+    ))
+}
+
+fn build_game(
+    args: &BuildArgs,
+    project: &Path,
+    report: &mut BuildReport,
+) -> Result<(), Diagnostic> {
+    let config = AppConfig::load(project)?;
+    let earlier = check_out(&args.out)?;
+
+    // 1. The checks `real verify` runs on the files.
+    let scan = crate::tooling::check::ScanStage;
+    for stage in re_app::verify::content_stages(project, &config, &[&scan]) {
+        report.pack.diagnostics.extend(stage.diagnostics);
+    }
+    stop_on_errors(report)?;
+
+    // 2. The archive.
+    let (writer, pack_report) = pack::pack(project, &config);
+    report.pack.package = pack_report.package.clone();
+    report.pack.assets = pack_report.assets;
+    report.pack.created_sidecars = pack_report.created_sidecars;
+    report.pack.dropped = pack_report.dropped;
+    report.pack.diagnostics.extend(pack_report.diagnostics);
+    stop_on_errors(report)?;
+
+    // 3. The runtime and the notices, ready before `out` is cleared, so a
+    // runtime that cannot be built leaves an earlier build in place.
+    let target = if args.archive_only {
+        Target::ArchiveOnly
+    } else if args.target.as_deref().is_some_and(web::is_web) {
+        Target::Web(web::runtime(
+            &args.out,
+            args.runtime.as_deref(),
+            &mut report.pack.diagnostics,
+        )?)
+    } else {
+        Target::Desktop(desktop_runtime(args)?)
+    };
+    let game_notices = match target {
+        Target::ArchiveOnly => String::new(),
+        _ => {
+            let patterns = config
+                .package
+                .as_ref()
+                .map(|p| p.notices.clone())
+                .unwrap_or_default();
+            let (text, listed) =
+                notices::game_part(&re_app::package::dev_files(project), &patterns)?;
+            report.notices = Some(NoticesReport {
+                game_files: listed,
+                ..NoticesReport::default()
+            });
+            text
+        }
+    };
+
+    // 4. The game folder.
+    prepare_out(&args.out, &earlier)?;
+    match target {
+        Target::ArchiveOnly => write_archive(&args.out, ARCHIVE_NAME, &writer, report),
+        Target::Web(runtime) => {
+            report.target = Some(web::TARGET.to_owned());
+            write_archive(&args.out, ARCHIVE_NAME, &writer, report)?;
+            if let Some(n) = &mut report.notices {
+                n.crates = runtime.notices.as_ref().and_then(|r| r.crates);
+                n.texts = runtime.notices.as_ref().and_then(|r| r.texts);
+                n.standard_texts = runtime
+                    .notices
+                    .map(|r| r.standard_texts)
+                    .unwrap_or_default();
             }
-            let written = match prepare_out(&args.out, &earlier) {
-                Ok(()) => writer.write(&archive_path(&args.out)),
-                Err(d) => {
-                    let ok = stop(&mut report, d);
-                    return (report, ok);
-                }
-            };
-            match written {
-                Ok(entries) => report.entries = entries,
-                Err(e) => {
-                    let ok = stop(
-                        &mut report,
-                        Diagnostic::error(
-                            codes::BUNDLE_FAILED,
-                            format!("cannot write {ARCHIVE_NAME}: {e}"),
-                        ),
-                    );
-                    return (report, ok);
-                }
+            web::lay_out(&args.out, &runtime.dir, &config, &game_notices, report)
+        }
+        Target::Desktop(runtime) => {
+            report.target = Some(runtime.triple.clone());
+            if let Some(n) = &mut report.notices {
+                n.crates = runtime.report.crates;
+                n.texts = runtime.report.texts;
+                n.standard_texts = runtime.report.standard_texts.clone();
             }
+            let layout = bundle::layout(&config, target_os(&runtime.triple));
+            write_archive(&args.out, &layout.archive, &writer, report)?;
+            lay_out(
+                &args.out,
+                &layout,
+                &runtime,
+                &game_notices,
+                &config,
+                project,
+                report,
+            )
         }
     }
-    if errors > 0 {
-        let ok = stop(
-            &mut report,
-            Diagnostic::error(
-                codes::BUILD_STOPPED,
-                format!(
-                    "real build stopped: the project has {errors} error{}",
-                    if errors == 1 { "" } else { "s" }
-                ),
-            ),
-        );
-        return (report, ok);
-    }
-    report.files.push(ARCHIVE_NAME.to_owned());
-    if args.archive_only {
-        report.ok = finish(&args.out, &mut report);
-        let ok = report.ok;
-        return (report, ok);
-    }
+}
 
-    // 3. The runtime.
+/// Writes the archive at `rel` in `out`; lists it unless it is inside a
+/// macOS app, which is listed whole.
+fn write_archive(
+    out: &Path,
+    rel: &str,
+    writer: &PackageWriter,
+    report: &mut BuildReport,
+) -> Result<(), Diagnostic> {
+    report.entries = writer.write(&out.join(rel)).map_err(|e| {
+        Diagnostic::error(
+            codes::BUNDLE_FAILED,
+            format!("cannot write {ARCHIVE_NAME}: {e}"),
+        )
+    })?;
+    if !rel.contains('/') {
+        report.files.push(rel.to_owned());
+    }
+    Ok(())
+}
+
+/// `real build --runtime-only`: a runtime folder, as `--runtime` takes it.
+fn runtime_only(args: &BuildArgs, report: &mut BuildReport) -> Result<(), Diagnostic> {
+    let earlier = check_out(&args.out)?;
+    let failed = |what: &str, e: std::io::Error| {
+        Diagnostic::error(codes::BUNDLE_FAILED, format!("cannot write {what}: {e}"))
+    };
+    if args.target.as_deref().is_some_and(web::is_web) {
+        report.target = Some(web::TARGET.to_owned());
+        let runtime = web::runtime(&args.out, None, &mut report.pack.diagnostics)?;
+        prepare_out(&args.out, &earlier)?;
+        for name in web::RUNTIME_FILES {
+            std::fs::copy(runtime.dir.join(name), args.out.join(name))
+                .map_err(|e| failed(name, e))?;
+            report.files.push((*name).to_owned());
+        }
+        report.notices = runtime.notices;
+        return Ok(());
+    }
     let triple = args
         .target
         .clone()
         .unwrap_or_else(crate::game::target_triple);
     report.target = Some(triple.clone());
-    if let Some(runtime) = web_runtime {
-        report.target = Some(web::TARGET.to_owned());
-        report.ok = web::lay_out(&args.out, &runtime, &config, &mut report)
-            && finish(&args.out, &mut report);
-        let ok = report.ok;
-        return (report, ok);
-    }
-    let runtime = match &args.runtime {
-        Some(path) => check_runtime(path, &triple).map(|()| path.clone()),
-        None => build_runtime(&triple),
-    };
-    let runtime = match runtime {
-        Ok(p) => p,
-        Err(d) => {
-            let ok = stop(&mut report, d);
-            return (report, ok);
-        }
-    };
-
-    // 4. The game folder.
-    match lay_out(&args.out, &runtime, &triple, &config, project, &mut report) {
-        Ok(()) => {}
-        Err(d) => {
-            let ok = stop(&mut report, d);
-            return (report, ok);
-        }
-    }
-    report.ok = finish(&args.out, &mut report);
-    let ok = report.ok;
-    (report, ok)
+    let (binary, ws) = build_runtime(&triple)?;
+    let (text, notices_report) = notices::runtime_notices(&ws, notices::Runtime::Desktop, &triple)?;
+    prepare_out(&args.out, &earlier)?;
+    let exe = runtime_name(&triple);
+    copy_executable(&binary, &args.out.join(exe)).map_err(|e| failed(exe, e))?;
+    let mut info = serde_json::to_value(RuntimeVersions::current()).unwrap_or_default();
+    info["target"] = triple.clone().into();
+    let info = serde_json::to_string_pretty(&info).unwrap_or_default() + "\n";
+    std::fs::write(args.out.join(web::RUNTIME_INFO), info)
+        .map_err(|e| failed(web::RUNTIME_INFO, e))?;
+    std::fs::write(args.out.join(NOTICES_FILE), text).map_err(|e| failed(NOTICES_FILE, e))?;
+    report.files = vec![
+        exe.to_owned(),
+        web::RUNTIME_INFO.to_owned(),
+        NOTICES_FILE.to_owned(),
+    ];
+    report.notices = Some(notices_report);
+    Ok(())
 }
 
-/// Where the archive goes in the game folder: beside the executable in every
-/// layout of this version (a macOS app keeps it in `Contents/Resources/` from
-/// WP19 PR "bundles").
-fn archive_path(out: &Path) -> PathBuf {
-    out.join(ARCHIVE_NAME)
+/// Copies an executable, keeping it executable on Unix.
+fn copy_executable(from: &Path, to: &Path) -> std::io::Result<()> {
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::copy(from, to)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(to, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(())
+}
+
+/// The desktop runtime for the build: the `--runtime` binary, checked and
+/// with the notices of its folder, or one built with cargo, with notices
+/// listed from the workspace.
+fn desktop_runtime(args: &BuildArgs) -> Result<ReadyRuntime, Diagnostic> {
+    let Some(path) = &args.runtime else {
+        let triple = args
+            .target
+            .clone()
+            .unwrap_or_else(crate::game::target_triple);
+        let (binary, ws) = build_runtime(&triple)?;
+        let (notices, report) = notices::runtime_notices(&ws, notices::Runtime::Desktop, &triple)?;
+        return Ok(ReadyRuntime {
+            binary,
+            triple,
+            notices,
+            report,
+        });
+    };
+    let info = runtime_info(path)?;
+    let triple = args
+        .target
+        .clone()
+        .or_else(|| info["target"].as_str().map(str::to_owned))
+        .unwrap_or_else(crate::game::target_triple);
+    check_runtime(&info, path, &triple)?;
+    let beside = re_app::package::archive_beside(path).with_file_name(NOTICES_FILE);
+    let text = std::fs::read_to_string(&beside).map_err(|e| {
+        Diagnostic::error(
+            codes::NOTICES_FAILED,
+            format!(
+                "the runtime at {} has no {NOTICES_FILE} beside it ({}: {e})",
+                path.display(),
+                beside.display()
+            ),
+        )
+        .with_hint("use the runtime folder `real build --runtime-only` writes, or a release's: it holds the notices of the crates the runtime was built with")
+    })?;
+    Ok(ReadyRuntime {
+        binary: path.clone(),
+        triple,
+        notices: notices::runtime_part(&text),
+        report: NoticesReport::default(),
+    })
 }
 
 /// Checks that `out` is a folder `real build` may write: missing, empty, or one
@@ -348,8 +494,9 @@ fn engine_workspace() -> Option<PathBuf> {
         .then_some(root)
 }
 
-/// Builds the game runtime for `triple` with cargo in the engine workspace.
-fn build_runtime(triple: &str) -> Result<PathBuf, Diagnostic> {
+/// Builds the game runtime for `triple` with cargo in the engine workspace;
+/// returns the binary and the workspace.
+fn build_runtime(triple: &str) -> Result<(PathBuf, PathBuf), Diagnostic> {
     let failed = |msg: String| Diagnostic::error(codes::RUNTIME_FAILED, msg);
     let Some(ws) = engine_workspace() else {
         return Err(failed("this `real` cannot build a game runtime: the engine's source is not where it was built".into())
@@ -393,34 +540,52 @@ fn build_runtime(triple: &str) -> Result<PathBuf, Diagnostic> {
             "cargo could not build the game runtime ({status})"
         )));
     }
-    let exe = if target_os(triple) == "windows" {
-        "real.exe"
-    } else {
-        "real"
-    };
-    let built = target_dir.join(triple).join("packaged").join(exe);
+    let built = target_dir
+        .join(triple)
+        .join("packaged")
+        .join(runtime_name(triple));
     if !built.is_file() {
         return Err(failed(format!(
             "cargo finished but {} is missing",
             built.display()
         )));
     }
-    Ok(built)
+    Ok((built, ws))
 }
 
-/// Checks a prebuilt runtime's `--runtime-info` against this engine.
-fn check_runtime(path: &Path, triple: &str) -> Result<(), Diagnostic> {
+/// What a prebuilt runtime says of itself: its `--runtime-info`, or the
+/// `runtime.json` beside it when it cannot run here (a runtime for another
+/// platform).
+fn runtime_info(path: &Path) -> Result<serde_json::Value, Diagnostic> {
     let failed = |msg: String| Diagnostic::error(codes::RUNTIME_FAILED, msg);
-    let output = Command::new(path)
-        .arg("--runtime-info")
-        .output()
-        .map_err(|e| failed(format!("cannot run {} --runtime-info: {e}", path.display())))?;
-    let info: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|_| {
-        failed(format!(
-            "{} is not a game runtime: its --runtime-info did not print the versions",
-            path.display()
-        ))
-    })?;
+    match Command::new(path).arg("--runtime-info").output() {
+        Ok(output) => serde_json::from_slice(&output.stdout).map_err(|_| {
+            failed(format!(
+                "{} is not a game runtime: its --runtime-info did not print the versions",
+                path.display()
+            ))
+        }),
+        Err(e) => {
+            let beside = path.with_file_name(web::RUNTIME_INFO);
+            let text = std::fs::read_to_string(&beside).map_err(|_| {
+                failed(format!("cannot run {} --runtime-info: {e}", path.display())).with_hint(
+                    "a runtime for another platform needs the `runtime.json` of its runtime folder beside it",
+                )
+            })?;
+            serde_json::from_str(&text).map_err(|e| {
+                failed(format!(
+                    "{} is not a runtime's {}: {e}",
+                    beside.display(),
+                    web::RUNTIME_INFO
+                ))
+            })
+        }
+    }
+}
+
+/// Checks what a prebuilt runtime said of itself against this engine and
+/// `triple`.
+fn check_runtime(info: &serde_json::Value, path: &Path, triple: &str) -> Result<(), Diagnostic> {
     let ours = serde_json::to_value(RuntimeVersions::current()).unwrap_or_default();
     let mut differ = Vec::new();
     for key in ["engine", "luau", "bytecode_version", "compiler"] {
@@ -445,61 +610,96 @@ fn check_runtime(path: &Path, triple: &str) -> Result<(), Diagnostic> {
     if differ.is_empty() {
         Ok(())
     } else {
-        Err(failed(format!(
-            "the runtime at {} does not match: {}",
-            path.display(),
-            differ.join(", ")
-        )))
+        Err(Diagnostic::error(
+            codes::RUNTIME_FAILED,
+            format!(
+                "the runtime at {} does not match: {}",
+                path.display(),
+                differ.join(", ")
+            ),
+        ))
     }
 }
 
-/// Lays out the game folder for the target's OS around the archive.
+/// Lays out the game folder for the target's OS around the archive: the
+/// executable, the notices, and the Linux desktop entry or the macOS app's
+/// `Info.plist` and icon.
 fn lay_out(
     out: &Path,
-    runtime: &Path,
-    triple: &str,
+    layout: &bundle::Layout,
+    runtime: &ReadyRuntime,
+    game_notices: &str,
     config: &AppConfig,
     project: &Path,
     report: &mut BuildReport,
 ) -> Result<(), Diagnostic> {
-    let failed = |what: String, e: std::io::Error| {
+    let failed = |what: &str, e: std::io::Error| {
         Diagnostic::error(codes::BUNDLE_FAILED, format!("cannot write {what}: {e}"))
     };
     let name = executable_name(&config.project.name);
-    let os = target_os(triple);
-    let exe = if os == "windows" {
-        format!("{name}.exe")
-    } else {
-        name.clone()
-    };
-    std::fs::copy(runtime, out.join(&exe)).map_err(|e| failed(exe.clone(), e))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(out.join(&exe), std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| failed(exe.clone(), e))?;
-    }
-    report.files.push(exe);
     let pc = config.package.clone().unwrap_or_default();
-    match os {
-        "linux" => {
-            let display = pc.display_name.clone().unwrap_or_else(|| config.project.name.clone());
-            let mut desktop = format!(
-                "[Desktop Entry]\nType=Application\nName={display}\nExec={name}\nTerminal=false\nCategories=Game;\n"
-            );
-            if let Some(icon) = &pc.icon {
-                let png = format!("{name}.png");
-                std::fs::copy(project.join(icon), out.join(&png)).map_err(|e| failed(png.clone(), e))?;
-                report.files.push(png);
-                desktop.push_str(&format!("Icon={name}\n"));
+    let display = bundle::display_name(config);
+    copy_executable(&runtime.binary, &out.join(&layout.exe)).map_err(|e| failed(&layout.exe, e))?;
+    std::fs::write(
+        out.join(&layout.notices),
+        format!("{}{game_notices}", runtime.notices),
+    )
+    .map_err(|e| failed(&layout.notices, e))?;
+
+    if let Some(app) = &layout.app {
+        let contents = out.join(app).join("Contents");
+        let icon_file = format!("{name}.icns");
+        let icon = match &pc.icon {
+            Some(icon) => {
+                let image = pack::icon_image(&re_app::package::dev_files(project), icon)?;
+                let icns = bundle::icns(&image).map_err(|why| {
+                    Diagnostic::error(
+                        codes::BUNDLE_FAILED,
+                        format!("cannot write {icon_file}: {why}"),
+                    )
+                })?;
+                std::fs::write(contents.join("Resources").join(&icon_file), icns)
+                    .map_err(|e| failed(&icon_file, e))?;
+                Some(icon_file.as_str())
             }
-            let file = format!("{name}.desktop");
-            std::fs::write(out.join(&file), desktop).map_err(|e| failed(file.clone(), e))?;
-            report.files.push(file);
+            None => None,
+        };
+        let (package, _) = pack::package_info(config);
+        let plist = bundle::info_plist(&bundle::AppInfo {
+            executable: &name,
+            identifier: &package.identifier,
+            name: &display,
+            version: &package.version,
+            icon,
+            minimum_system: bundle::minimum_macos(&runtime.triple),
+        });
+        std::fs::write(contents.join("Info.plist"), plist).map_err(|e| failed("Info.plist", e))?;
+        report.files.push(app.clone());
+        if cfg!(target_os = "macos") {
+            bundle::seal(&out.join(app))?;
+        } else {
+            report.notes.push(format!(
+                "{app} is not sealed: `real build` seals a macOS app (`codesign --force --sign -`) only when it runs on a Mac"
+            ));
         }
-        other => report.notes.push(format!(
-            "the {other} layout is a plain folder in this version; the platform bundle and the third-party notices arrive with WP19 PR \"bundles\""
-        )),
+        return Ok(());
+    }
+
+    report.files.push(layout.exe.clone());
+    report.files.push(layout.notices.clone());
+    if layout.os == "linux" {
+        let mut desktop = format!(
+            "[Desktop Entry]\nType=Application\nName={display}\nExec={name}\nTerminal=false\nCategories=Game;\n"
+        );
+        if let Some(icon) = &pc.icon {
+            let png = format!("{name}.png");
+            std::fs::copy(project.join(icon), out.join(&png)).map_err(|e| failed(&png, e))?;
+            report.files.push(png);
+            desktop.push_str(&format!("Icon={name}\n"));
+        }
+        let file = format!("{name}.desktop");
+        std::fs::write(out.join(&file), desktop).map_err(|e| failed(&file, e))?;
+        report.files.push(file);
     }
     Ok(())
 }

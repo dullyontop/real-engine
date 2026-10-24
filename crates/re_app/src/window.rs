@@ -73,6 +73,77 @@ struct Runner<'a> {
     fatal: Option<Diagnostic>,
 }
 
+/// The largest window icon handed to the OS, in pixels across.
+const ICON_SIZE: u32 = 256;
+
+/// The window icon from `[package] icon` (ADR-0037), shrunk to at most
+/// [`ICON_SIZE`] pixels. A missing or unreadable icon only logs a warning:
+/// `real build` reports it as an error. macOS ignores it (an app's icon is
+/// its bundle's).
+fn window_icon(app: &App) -> Option<winit::window::Icon> {
+    let path = app.config().package.as_ref()?.icon.clone()?;
+    let icon = app
+        .files()
+        .read_source(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|bytes| {
+            re_assets::decode_image(
+                &bytes,
+                re_types::render::TextureFormat::Rgba8Srgb,
+                "the window icon",
+                &path,
+            )
+            .map_err(|d| d.message)
+        })
+        .and_then(|image| {
+            let (width, height, pixels) =
+                shrink(image.width, image.height, &image.pixels, ICON_SIZE);
+            winit::window::Icon::from_rgba(pixels, width, height).map_err(|e| e.to_string())
+        });
+    match icon {
+        Ok(icon) => Some(icon),
+        Err(why) => {
+            tracing::warn!(icon = %path, "the window icon is not set: {why}");
+            None
+        }
+    }
+}
+
+/// RGBA8 `pixels` (`width` × `height`) shrunk by a whole factor until no
+/// side is over `max`: each pixel is the mean of its block, colours weighted
+/// by alpha.
+fn shrink(width: u32, height: u32, pixels: &[u8], max: u32) -> (u32, u32, Vec<u8>) {
+    let k = width.max(height).div_ceil(max).max(1);
+    if k == 1 {
+        return (width, height, pixels.to_vec());
+    }
+    let (w, h) = ((width / k).max(1), (height / k).max(1));
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for oy in 0..h {
+        for ox in 0..w {
+            let mut sum = [0u64; 4];
+            let mut count = 0u64;
+            for y in oy * k..((oy + 1) * k).min(height) {
+                for x in ox * k..((ox + 1) * k).min(width) {
+                    let i = ((y * width + x) * 4) as usize;
+                    let a = u64::from(pixels[i + 3]);
+                    for c in 0..3 {
+                        sum[c] += u64::from(pixels[i + c]) * a;
+                    }
+                    sum[3] += a;
+                    count += 1;
+                }
+            }
+            for c in 0..3 {
+                let mean = (sum[c] + sum[3] / 2).checked_div(sum[3]).unwrap_or(0);
+                out.push(mean as u8);
+            }
+            out.push(((sum[3] + count / 2) / count.max(1)) as u8);
+        }
+    }
+    (w, h, out)
+}
+
 fn window_failed(message: impl Into<String>) -> Diagnostic {
     Diagnostic::error(codes::WINDOW_FAILED, message).with_hint(
         "run with --headless, or under a virtual display: xvfb-run -a -s \"-screen 0 1280x720x24\" real run",
@@ -87,7 +158,8 @@ impl Runner<'_> {
             .with_inner_size(winit::dpi::PhysicalSize::new(
                 config.render.width,
                 config.render.height,
-            ));
+            ))
+            .with_window_icon(window_icon(self.app));
         let window = Arc::new(
             event_loop
                 .create_window(attrs)
@@ -280,4 +352,26 @@ fn apply_mouse(window: &winit::window::Window, lock: re_types::input::MouseLock,
         let _ = window.set_cursor_grab(CursorGrabMode::Confined);
     }
     window.set_cursor_visible(icon);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn big_icons_shrink_by_a_whole_factor() {
+        // 4×2 pixels: left half opaque red, right half transparent.
+        let mut pixels = Vec::new();
+        for _ in 0..2 {
+            pixels.extend([255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 0, 0, 0, 255, 0]);
+        }
+        assert_eq!(shrink(4, 2, &pixels, 4), (4, 2, pixels.clone()));
+        let (w, h, out) = shrink(4, 2, &pixels, 2);
+        assert_eq!((w, h), (2, 1));
+        // A transparent pixel's colour does not tint its block.
+        assert_eq!(out, [255, 0, 0, 255, 0, 0, 0, 0]);
+        let (w, h, out) = shrink(1024, 3, &vec![200; 1024 * 3 * 4], ICON_SIZE);
+        assert_eq!((w, h, out.len()), (256, 1, 256 * 4));
+        assert!(out.iter().all(|&v| v == 200));
+    }
 }

@@ -113,7 +113,7 @@ Used by `re_app::package` to read and write `game.rpak` (ADR-0037), on desktop a
 | zstd | 0.14.2 | BSD-3-Clause | 1.64 | per-entry and index compression in `game.rpak` | `default-features = false` | WP19 measurements (decode 400–700 MB/s at levels 3–9; `ldd` shows only libc and libgcc_s) | Landed (WP19 PR "archive", #121) |
 | zstd-safe, zstd-sys | 8.1.0, 2.1.1+zstd.1.5.7 | BSD-3-Clause | ≤ 1.64 | zstd's bindings and the vendored C library | defaults of `zstd` | WP19 measurements | Landed (#121); transitive |
 
-blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile. `windows-sys` is a direct dependency of `re_cli` on Windows since PR "archive" (`Win32_System_Console`, to attach the game to its parent's console); `re_cli` takes `image` in PR "bundles".
+blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile. `windows-sys` is a direct dependency of `re_cli` on Windows since PR "archive" (`Win32_System_Console`, to attach the game to its parent's console); `re_cli` takes `image` since PR "bundles" (#PRNUM), in its `tooling` feature, to resize the game's icon for the macOS app's `.icns` (the runtime has it through `re_assets` already).
 
 ### Editor node canvas and docking (M3, tooling only)
 
@@ -184,7 +184,7 @@ The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each fa
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
 | gltf | 1.4.1 | MIT OR Apache-2.0 | 1.61 | glTF 2.0 import | `default-features = false`, `import`, `utils`, `names`, `KHR_materials_emissive_strength` | platform spike `gltf_import` tests | Verified |
-| image | 0.25.10 | MIT OR Apache-2.0 | 1.88 | Texture decode | `default-features = false`, `png`, `jpeg` | platform spike | Verified |
+| image | 0.25.10 | MIT OR Apache-2.0 | 1.88 | Texture decode; `real build`'s `.icns` sizes | `default-features = false`, `png`, `jpeg` | platform spike | Verified |
 | notify | 8.2.0 | CC0-1.0 | 1.77 | File watching for hot reload | default | platform spike `watch` tests | Verified |
 | notify-debouncer-full | 0.7.0 | MIT OR Apache-2.0 | 1.85 | Debounced file events | default | platform spike | Verified |
 | kira | 0.12.5 | MIT OR Apache-2.0 | none | Audio playback and mixing | `default-features = false`, `cpal`. Not `wav`: it enables symphonia's RIFF container without the PCM codec, so it cannot decode WAV anyway; `re_audio` has its own WAV reader | platform spike (`CaptureBackend`, headless fallback); WP5 (`re_audio` tests) | Verified. Pulls MPL-2.0 `triple_buffer` (always); see policy 4 and ADR-0019 |
