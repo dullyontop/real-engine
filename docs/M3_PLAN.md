@@ -158,7 +158,7 @@ out/island-build/island --headless --frames 600
 - The packaged island and plaza boot and replay with the same `state_hash` as `real verify` on the project.
 - The build contains no tooling crate (`cargo xtask check-graph` on the runtime binary).
 
-**Progress (2026-10-24).** "files" (#95), "archive" (#121) and "bundles" (#PRNUM) have merged, with the changes in ADR-0037's amendments. `real build --runtime-only` writes the prebuilt runtime folders that release CI publishes, and `--runtime` lays out a game for another OS from one. The notices also list build-dependencies, since Luau's sources come in through one. `build-package`, `build-package-windows` and `build-package-macos` are required (ADR-0023), so the definition of done below holds.
+**Progress (2026-10-24).** "files" (#95), "archive" (#121) and "bundles" (#161) have merged, with the changes in ADR-0037's amendments. `real build --runtime-only` writes the prebuilt runtime folders that release CI publishes, and `--runtime` lays out a game for another OS from one. The notices also list build-dependencies, since Luau's sources come in through one. `build-package`, `build-package-windows` and `build-package-macos` are required (ADR-0023), so the definition of done below holds.
 
 **Definition of done:** both PRs merged, with a `build-package` CI job on all three platforms.
 
@@ -469,9 +469,9 @@ real build --project examples/island --out out/island-web --target web
 **Progress (2026-10-24).** "portable" (#89), "toolchain" (#99), "runtime" (#119) and "build" (#132) have merged, with these changes to the plan:
 - The panic code is `RE0622` (not `RE0623`), and `RE0621` is the canvas failing; `RE0623`–`RE0625` stay free (ADR-0049's amendment).
 - `cargo xtask web-test` and WebGL2 moved from "runtime" to "build". The static server stays in Node (`tools/web-test/serve.mjs`), not xtask.
-- `RE0975` waits for WP30's server role, since nothing triggers it yet. The notices file in the web folder came with WP19 PR "bundles" (#PRNUM).
+- `RE0975` waits for WP30's server role, since nothing triggers it yet. The notices file in the web folder came with WP19 PR "bundles" (#161).
 - Saved data on the web is persisted since WP27's "saved data" (#131).
-- Release CI publishing the prebuilt web runtime: `.github/workflows/release.yml` builds it on a `v*` tag and attaches `real-web-runtime-<version>.tar.gz` (the runtime files) to the release, for `real build --target web --runtime DIR`. Since WP19 PR "bundles" (#PRNUM), the desktop runtimes are published beside it, as `real-runtime-<version>-<triple>` for Linux x86_64, Windows x86_64 and macOS arm64, and every runtime folder is written by `real build --runtime-only`.
+- Release CI publishing the prebuilt web runtime: `.github/workflows/release.yml` builds it on a `v*` tag and attaches `real-web-runtime-<version>.tar.gz` (the runtime files) to the release, for `real build --target web --runtime DIR`. Since WP19 PR "bundles" (#161), the desktop runtimes are published beside it, as `real-runtime-<version>-<triple>` for Linux x86_64, Windows x86_64 and macOS arm64, and every runtime folder is written by `real build --runtime-only`.
 
 **Definition of done:** PRs "portable", "toolchain", "runtime" and "build" merged; `build-web` and `web` CI jobs required and green; ADR-0049 Accepted with the full runtime's size and the private-sample results recorded under `research/m3/wp29/`.
 
