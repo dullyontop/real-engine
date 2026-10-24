@@ -737,6 +737,10 @@ time.on_step(function()
 		print(`unknown: {ok} {err}`)
 		ok, err = pcall(anim.set, hero, "waving", 3)
 		print(`mistyped: {ok} {err}`)
+		ok, err = pcall(anim.set, hero, "speed", 0 / 0)
+		print(`nan: {ok} {err}`)
+		ok, err = pcall(anim.set, hero, "speed", 1e39)
+		print(`huge: {ok} {err}`)
 	elseif steps == 30 then
 		print(`speed {anim.get(hero, "speed")} waving {anim.get(hero, "waving")} jump {anim.get(hero, "jump")}`)
 		print(`states {anim.state(hero)} {anim.state(hero, "arm")}`)
@@ -771,6 +775,8 @@ fn scripts_drive_graphs_through_the_anim_library() {
         ),
         "{out}"
     );
+    assert!(out.contains("`speed` is NaN, which is not finite"), "{out}");
+    assert!(out.contains("`speed` is inf, which is not finite"), "{out}");
     assert!(out.contains("speed 0.69999"), "{out}");
     assert!(out.contains("waving true jump true"), "{out}");
     assert!(out.contains("states move up"), "{out}");

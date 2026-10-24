@@ -1,6 +1,6 @@
-//! The libraries other than `world`: `input`, `physics`, `audio`, `anim`, `ui`, `time`,
-//! `task`, `quat`, `color`, `proc`, `stream`, `command` (tools only), and the `print`,
-//! `warn` and `script` globals.
+//! The libraries other than `world`: `input`, `physics`, `audio`, `anim`, `ui`,
+//! `time`, `task`, `quat`, `color`, `proc`, `stream`, `command` (tools only), and
+//! the `print`, `warn` and `script` globals.
 
 use mlua::{Function, IntoLua, Lua, MultiValue, Result, Table, Value};
 use re_command::Origin;

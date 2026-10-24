@@ -19,10 +19,20 @@ pub(crate) fn lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         "Sets a float (number) or bool parameter of the graph `e`'s Animator plays, at once. An unknown parameter or a value of the wrong type is an error listing the graph's parameters.",
         |lua, (e, param, value): (Value, String, Value)| {
             let e = entity_arg(&e, "anim.set")?;
+            let number = |n: f32| {
+                if n.is_finite() {
+                    Ok(AnimValue::Float(n))
+                } else {
+                    Err(super::error(
+                        codes::BAD_ARGUMENT,
+                        format!("anim.set: `{param}` is {n}, which is not finite"),
+                    ))
+                }
+            };
             let value = match value {
                 Value::Boolean(b) => AnimValue::Bool(b),
-                Value::Number(n) => AnimValue::Float(n as f32),
-                Value::Integer(n) => AnimValue::Float(n as f32),
+                Value::Number(n) => number(n as f32)?,
+                Value::Integer(n) => number(crate::lua_int(n) as f32)?,
                 other => {
                     return Err(super::error(
                         codes::BAD_ARGUMENT,
