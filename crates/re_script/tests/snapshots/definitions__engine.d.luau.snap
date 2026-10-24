@@ -187,6 +187,20 @@ declare audio: {
     levels: (bus: string) -> { peak_db: number, rms_db: number },
 }
 
+-- Animation graphs: parameters, states and joints.
+declare anim: {
+    -- Sets a float (number) or bool parameter of the graph `e`'s Animator plays, at once. An unknown parameter or a value of the wrong type is an error listing the graph's parameters.
+    set: (e: Entity, param: string, value: number | boolean) -> (),
+    -- A parameter of `e`'s graph: a number for a float parameter, a boolean for a bool, and for a trigger whether it is set.
+    get: (e: Entity, param: string) -> number | boolean,
+    -- Sets a trigger of `e`'s graph; it stays set until a transition that tests it fires.
+    trigger: (e: Entity, param: string) -> (),
+    -- The state a layer of `e`'s graph is in, or fading into (the first layer by default).
+    state: (e: Entity, layer: string?) -> string,
+    -- A joint of `e`'s skin in world space: the last step's pose, placed by `e`'s transform from the start of that step (so it trails that step's root motion). Its position and rotation.
+    joint: (e: Entity, joint: string) -> (vector, Quat),
+}
+
 -- The heads-up display.
 declare ui: {
     -- Sets the text of an entity's HudText component.

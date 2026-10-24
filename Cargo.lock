@@ -3739,6 +3739,7 @@ dependencies = [
  "re_core",
  "re_types",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

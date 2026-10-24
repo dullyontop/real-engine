@@ -217,6 +217,31 @@ impl BoundClip {
     }
 }
 
+impl BoundClip {
+    /// Joint `joint`'s value at `time`, starting from `rest` for the
+    /// properties the clip does not animate.
+    pub fn sample_joint(&self, joint: usize, time: f32, rest: Trs) -> Trs {
+        let mut out = rest;
+        let targets = &self.sampler.clip().targets;
+        for &(j, t) in &self.channels {
+            if j as usize != joint {
+                continue;
+            }
+            let target = &targets[t];
+            if let Some(c) = &target.translation {
+                out.translation = sample_vec3(c, time);
+            }
+            if let Some(c) = &target.rotation {
+                out.rotation = sample_quat(c, time);
+            }
+            if let Some(c) = &target.scale {
+                out.scale = sample_vec3(c, time);
+            }
+        }
+        out
+    }
+}
+
 /// Every joint's model matrix: `model(parent) * parent_offset * local`, in the
 /// skin's space. WP22's ragdolls read and overwrite it before the palette is
 /// built.

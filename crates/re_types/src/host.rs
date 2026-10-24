@@ -7,9 +7,10 @@
 
 use std::fmt;
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use serde::Serialize;
 
+use crate::anim::AnimValue;
 use crate::audio::{AudioCmd, BusLevel};
 use crate::ids::EntityId;
 use crate::input::{ActionFrame, MouseLock, RawInputFrame};
@@ -140,4 +141,27 @@ pub trait HostServices {
         let _ = (lock, icon_visible);
         Ok(())
     }
+
+    /// Sets a float or bool parameter of the animation graph the entity's
+    /// `Animator` plays (ADR-0039). An unknown or mistyped parameter is an
+    /// error whose message lists the graph's parameters. Implemented by
+    /// `re_app`'s host (WP21).
+    fn anim_set(&mut self, entity: EntityId, param: &str, value: AnimValue) -> HostResult<()>;
+
+    /// A parameter of the entity's animation graph; a trigger reads as a bool
+    /// (whether it is set).
+    fn anim_get(&self, entity: EntityId, param: &str) -> HostResult<AnimValue>;
+
+    /// Sets a trigger of the entity's animation graph, which stays set until
+    /// a transition consumes it.
+    fn anim_trigger(&mut self, entity: EntityId, param: &str) -> HostResult<()>;
+
+    /// The state a layer of the entity's graph is in (or fading into): the
+    /// first layer when `layer` is `None`.
+    fn anim_state(&self, entity: EntityId, layer: Option<&str>) -> HostResult<String>;
+
+    /// A joint of the entity's skin in world space: the last step's pose,
+    /// placed by the entity's transform from the start of that step (so it
+    /// trails that step's root motion). `(position, rotation)`.
+    fn anim_joint(&self, entity: EntityId, joint: &str) -> HostResult<(Vec3, Quat)>;
 }

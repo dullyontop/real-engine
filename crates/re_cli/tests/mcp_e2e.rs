@@ -334,8 +334,10 @@ fn an_agent_edits_checks_and_restores_the_island(t: Transport) {
     // proc.clear_structure, plus WP26's template.list, recipe.list and
     // recipe.apply, plus project.status (ADR-0044), plus WP25's
     // graph.add_node, graph.remove_node, graph.connect, graph.disconnect,
-    // graph.move_nodes and graph.set_default (ADR-0044).
-    assert_eq!(names.len(), 49, "{names:?}");
+    // graph.move_nodes and graph.set_default (ADR-0044), plus WP21's
+    // animgraph.create, animgraph.edit, animgraph.validate and
+    // anim.set_param (ADR-0039).
+    assert_eq!(names.len(), 53, "{names:?}");
     for tool in [
         "entity_spawn",
         "graph_set_param",

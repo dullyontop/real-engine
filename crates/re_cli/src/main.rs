@@ -490,7 +490,8 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
     ExitCode::SUCCESS
 }
 
-/// One `checkpoints` entry: the frames run so far and the world's state hash.
+/// One `checkpoints` entry: the frames run so far and the run's state hash
+/// (the report's hash, animation graphs included).
 fn checkpoint(app: &App) -> serde_json::Value {
     serde_json::json!({
         "frame": app.frame_count(),

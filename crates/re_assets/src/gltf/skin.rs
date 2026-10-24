@@ -272,12 +272,20 @@ where
             parent.push(found);
             offset.push(m);
         }
-        // Keep the file's order when it already has parents first; otherwise
-        // order by depth, which does (stable, so siblings keep their order).
-        let ordered = parent
-            .iter()
-            .enumerate()
-            .all(|(k, p)| p.is_none_or(|p| p < k));
+        // The skin's `skeleton`, when it is a root joint, becomes joint 0: the
+        // root that root motion reads (ADR-0039).
+        let root = skin
+            .skeleton()
+            .and_then(|n| position.get(&n.index()).copied())
+            .filter(|&k| parent[k].is_none());
+        // Keep the file's order when it already has parents first (and the
+        // skeleton first); otherwise order by depth, which does (stable, so
+        // siblings keep their order).
+        let ordered = root.is_none_or(|r| r == 0)
+            && parent
+                .iter()
+                .enumerate()
+                .all(|(k, p)| p.is_none_or(|p| p < k));
         let order: Vec<usize> = if ordered {
             (0..gltf_joints.len()).collect()
         } else {
@@ -300,7 +308,7 @@ where
                 }
             }
             let mut order: Vec<usize> = (0..gltf_joints.len()).collect();
-            order.sort_by_key(|&k| depth[k]);
+            order.sort_by_key(|&k| (depth[k], Some(k) != root));
             order
         };
         let mut remap = vec![0u16; gltf_joints.len()];
