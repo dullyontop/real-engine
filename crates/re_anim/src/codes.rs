@@ -31,3 +31,24 @@ pub const UNKNOWN_PRIORITY: Code = Code::new("RE7605");
 /// in length, a joint's parent does not come before it, or it has more than
 /// 65,535 joints (ADR-0039).
 pub const SKIN_MALFORMED: Code = Code::new("RE7606");
+
+/// An animation graph is not valid: a wrong format or version, a duplicate
+/// id, a reference to a missing parameter, node, state or mask, a parameter of
+/// the wrong type, or a value out of range. The message names the element by
+/// its path in the file (ADR-0039).
+pub const GRAPH_INVALID: Code = Code::new("RE7607");
+
+/// A clip an animation graph's node plays cannot be loaded or sampled.
+pub const GRAPH_CLIP_MISSING: Code = Code::new("RE7608");
+
+/// A script or command named a graph parameter the graph does not have, or
+/// gave it a value of the wrong type. The message lists the graph's
+/// parameters.
+pub const GRAPH_PARAM_UNKNOWN: Code = Code::new("RE7609");
+
+/// A joint mask names a joint the skeleton does not have (a warning: one mask
+/// can serve several skeletons).
+pub const GRAPH_MASK_JOINT_MISSING: Code = Code::new("RE7610");
+
+/// An animation graph's blend tree has a cycle: a node is its own descendant.
+pub const GRAPH_CYCLE: Code = Code::new("RE7611");
