@@ -1090,3 +1090,47 @@ fn a_coalesced_run_merges_set_fields_by_field() {
     assert!(h.redo(&mut w).unwrap());
     assert_eq!(scene_json(&mut w), s3);
 }
+
+/// `set_note` sets, replaces and removes an entity's note; each undoes
+/// exactly, a despawn's undo brings the note back, and a generated entity
+/// refuses one (it is not saved, so its note would be lost).
+#[test]
+fn set_note_round_trips_through_undo() {
+    let (mut w, mut h) = sample();
+    let s0 = scene_json(&mut w);
+    let note = |text: &str| Op::SetNote {
+        id: "crate".into(),
+        note: text.into(),
+    };
+    h.execute(&mut w, tx(vec![note("Heavy: two people lift it.")]))
+        .unwrap();
+    let s1 = scene_json(&mut w);
+    assert!(
+        s1.contains("\"note\": \"Heavy: two people lift it.\""),
+        "{s1}"
+    );
+    h.execute(&mut w, tx(vec![Op::Despawn { id: "crate".into() }]))
+        .unwrap();
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s1, "the despawn's undo keeps the note");
+    h.execute(&mut w, tx(vec![note("")])).unwrap();
+    assert_eq!(scene_json(&mut w), s0, "an empty note removes it");
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s1);
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s0);
+
+    h.execute(&mut w, tx(vec![spawn_op(grid_doc(2, 2))]))
+        .unwrap();
+    w.update();
+    let err = h
+        .execute(
+            &mut w,
+            tx(vec![Op::SetNote {
+                id: "grid/pillar_0_0".into(),
+                note: "x".into(),
+            }]),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("generated"), "{err}");
+}

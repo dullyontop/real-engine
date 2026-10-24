@@ -459,7 +459,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Consequences.**
 - `real check` validates every content file against its schema.
 - The JSON schemas are published in `schemas/`.
-- JSON has no comments. A per-entity note field or accepting JSONC on load are the candidates; this is decided before the editor writes scenes that people edit by hand.
+- JSON has no comments, so each entity may carry a `note` string, its comment (entity-core track, M3). The editor rewrites scene files on every edit, so a JSONC comment would be lost at the first save; a `note` is kept by every save, by forks, snapshots and undo, and is set with the `set_note` operation. It is never simulation state: the game does not read it and it is not part of `state_hash`. Generated entities are not saved and refuse a note.
 - At 100,100 entities the spike saved a scene to JSON text in about 0.9 s (40.5 MB; 21.3 MB with defaults omitted) and loaded it in about 1 s, dominated by the generic document tree. A typed fast path is a later optimisation.
 
 **Evidence.** The core spike's format comparison and round-trip tests (research bundle `spikes/core/`; published as `docs/research/core.md` in M1 WP0).
