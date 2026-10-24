@@ -741,5 +741,5 @@ fn hinge_angle_from_poses(w: &World, e: Entity) -> f32 {
     if yb.length_squared() < 1e-12 {
         return 0.0;
     }
-    ya.cross(yb).dot(axis).atan2(ya.dot(yb))
+    libm::atan2f(ya.cross(yb).dot(axis), ya.dot(yb))
 }

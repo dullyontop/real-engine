@@ -11,7 +11,8 @@
 //!   [`ShapeLibrary`] by the collider's `source` (`RE0506` when missing);
 //! - a `CharacterController` wins over a `Collider` on the same entity.
 //!
-//! Shapes are in the entity's local space and scaled by its world scale. A body's
+//! Shapes are in the entity's local space and scaled by its world scale (the
+//! product of its and its ancestors' `Transform` scales). A body's
 //! pose is the entity's world pose; a character's pose is its capsule's centre.
 //! Any change to a body's description replaces the body (remove, then add at the
 //! current pose); a `Transform` written by anything other than [`pull`] (a
@@ -279,9 +280,23 @@ fn parent_affine(world: &World, entity: Entity) -> Affine3A {
         .map_or(Affine3A::IDENTITY, |g| g.0)
 }
 
-/// The world scale of `entity`: the product of the `Transform` scales from the
-/// entity up through its parents, rather than the scale of the rotated world
-/// matrix.
+/// The entity's world pose. The scale is the product of the `Transform` scales
+/// (see [`world_scale`]) whenever that product is the matrix's scale up to
+/// rounding: the matrix's column lengths round differently as the body turns,
+/// which would change its shape's fingerprint and replace the body every few
+/// steps. Under a non-uniformly scaled parent with a rotation in between, the
+/// product is on the wrong axes, and the matrix's scale is used.
+fn world_pose(world: &World, entity: Entity) -> (Vec3, Quat, Vec3) {
+    let (s, r, t) = world_affine(world, entity).to_scale_rotation_translation();
+    let product = world_scale(world, entity);
+    let close = (s.abs() - product.abs())
+        .abs()
+        .cmple(product.abs() * 1e-4 + Vec3::splat(1e-6))
+        .all();
+    (t, r.normalize(), if close { product } else { s })
+}
+
+/// The product of the `Transform` scales from the root down to `entity`.
 pub(crate) fn world_scale(world: &World, entity: Entity) -> Vec3 {
     let mut scale = Vec3::ONE;
     let mut at = Some(entity);
@@ -292,11 +307,6 @@ pub(crate) fn world_scale(world: &World, entity: Entity) -> Vec3 {
         at = hierarchy::parent(&world.ecs, e);
     }
     scale
-}
-
-fn decompose(a: &Affine3A) -> (Vec3, Quat, Vec3) {
-    let (s, r, t) = a.to_scale_rotation_translation();
-    (t, r.normalize(), s)
 }
 
 fn layer_of(value: i32, id: &str, component: &str) -> Result<Layer, Diagnostic> {
@@ -646,15 +656,7 @@ pub fn push(
             seen.insert(id);
             continue;
         }
-        let mut world_pose = decompose(&world_affine(world, entity));
-        // A vehicle chassis takes its scale from the Transforms: the scale of the
-        // rotated world matrix rounds differently as the chassis turns, which
-        // would replace the body (and drop its vehicle) every few steps. Other
-        // bodies keep the matrix scale for now, because the M2 samples' replays
-        // were recorded with it.
-        if world.ecs.get::<Vehicle>(entity).is_some() {
-            world_pose.2 = world_scale(world, entity);
-        }
+        let world_pose = world_pose(world, entity);
         let wanted = match wanted(world, entity, shapes, world_pose) {
             Ok(w) => w,
             Err(d) => {
@@ -1004,6 +1006,88 @@ pub fn pull_wheels(world: &mut World, sync: &mut PhysicsSync, poses: &[WheelPose
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A rotated child of a stretched parent keeps the shape that is drawn: the
+    /// parent's (4, 1, 1) lies along the child's z after a quarter turn about y.
+    #[test]
+    fn a_rotated_child_of_a_stretched_parent_is_stretched_along_world_x() {
+        let mut world = World::new();
+        let parent = world
+            .ecs
+            .spawn(Transform {
+                scale: Vec3::new(4.0, 1.0, 1.0),
+                ..Default::default()
+            })
+            .id();
+        world.ecs.spawn((
+            Transform {
+                rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                ..Default::default()
+            },
+            Collider::default(),
+            re_scene::ecs::hierarchy::ChildOf(parent),
+        ));
+        world.update();
+        let mut sync = PhysicsSync::default();
+        let (mut cmds, mut diagnostics) = (Vec::new(), Vec::new());
+        push(
+            &mut world,
+            &mut sync,
+            &ShapeLibrary::default(),
+            &mut cmds,
+            &mut diagnostics,
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let [PhysicsCmd::AddBody { desc, .. }] = &cmds[..] else {
+            panic!("{cmds:?}");
+        };
+        let ShapeDesc::Box { half_extents } = desc.shape else {
+            panic!("{desc:?}");
+        };
+        assert!(
+            half_extents.abs_diff_eq(Vec3::new(0.5, 0.5, 2.0), 1e-5),
+            "{half_extents}"
+        );
+    }
+
+    /// A turning body keeps its shape: the scale comes from the `Transform`s, not
+    /// from the decomposed world matrix, whose column lengths round differently at
+    /// each rotation (0.3 becomes 0.29999998) and would replace the body.
+    #[test]
+    fn a_rotation_moves_a_scaled_body_without_replacing_it() {
+        let mut world = World::new();
+        let e = world
+            .ecs
+            .spawn((
+                Transform {
+                    scale: Vec3::new(0.3, 0.7, 1.1),
+                    ..Default::default()
+                },
+                RigidBody {
+                    kind: SceneBodyKind::Dynamic,
+                    ..Default::default()
+                },
+                Collider::default(),
+            ))
+            .id();
+        let mut sync = PhysicsSync::default();
+        let shapes = ShapeLibrary::default();
+        let (mut cmds, mut diagnostics) = (Vec::new(), Vec::new());
+        push(&mut world, &mut sync, &shapes, &mut cmds, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(cmds.len(), 1, "{cmds:?}");
+        for i in 1..=64 {
+            let angle = i as f32 * 0.37;
+            world.ecs.get_mut::<Transform>(e).unwrap().rotation =
+                Quat::from_euler(glam::EulerRot::XYZ, angle, angle * 0.5, angle * 0.25);
+            cmds.clear();
+            push(&mut world, &mut sync, &shapes, &mut cmds, &mut diagnostics);
+            assert!(
+                matches!(cmds[..], [PhysicsCmd::SetTransform { .. }]),
+                "step {i}: {cmds:?}"
+            );
+        }
+    }
 
     fn field(height: f32) -> Arc<HeightfieldData> {
         Arc::new(HeightfieldData {

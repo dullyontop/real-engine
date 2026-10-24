@@ -784,8 +784,8 @@ fn golden_effects() {
             &mut p,
             &format!(
                 "S.mover.Position = Vector3.new({}, {}, 0)",
-                2.0 + 3.0 * a.sin(),
-                4.0 + 2.0 * (a * 0.5).cos()
+                2.0 + 3.0 * libm::sinf(a),
+                4.0 + 2.0 * libm::cosf(a * 0.5)
             ),
         );
         f = p.render(&v.input());

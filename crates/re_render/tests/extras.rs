@@ -133,7 +133,7 @@ fn golden_scene_extras() {
         .map(|i| {
             let t = i as f32 / 24.0;
             Sprite {
-                position: Vec3::new(-2.2 + 0.4 * (t * 9.0).sin(), 0.3 + 2.0 * t, 0.5),
+                position: Vec3::new(-2.2 + 0.4 * libm::sinf(t * 9.0), 0.3 + 2.0 * t, 0.5),
                 size: 0.5 - 0.3 * t,
                 rotation: t,
                 color: [1.0, 0.6 - 0.4 * t, 0.1, 1.0 - t],
@@ -147,7 +147,7 @@ fn golden_scene_extras() {
             .map(|i| {
                 let t = i as f32 / 12.0;
                 RibbonPoint {
-                    position: Vec3::new(-2.0 + 4.0 * t, 2.2 + 0.4 * (t * 6.0).sin(), -1.0),
+                    position: Vec3::new(-2.0 + 4.0 * t, 2.2 + 0.4 * libm::sinf(t * 6.0), -1.0),
                     width: 0.15 + 0.2 * t,
                     color: [0.2 + 0.8 * t, 0.9, 1.0 - 0.6 * t, 0.8],
                 }

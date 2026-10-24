@@ -48,9 +48,13 @@ fn walks_up_a_30_degree_slope_and_stops_at_a_wall() {
     let angle = 30f32.to_radians();
     let rot = Quat::from_rotation_z(angle);
     let length = 6.0;
-    let top_mid = Vec3::new(length * 0.5 * angle.cos(), length * 0.5 * angle.sin(), 0.0);
+    let top_mid = Vec3::new(
+        length * 0.5 * libm::cosf(angle),
+        length * 0.5 * libm::sinf(angle),
+        0.0,
+    );
     let ramp_centre = top_mid - rot * Vec3::new(0.0, 0.25, 0.0);
-    let top_x = length * angle.cos();
+    let top_x = length * libm::cosf(angle);
     apply(
         &mut p,
         vec![

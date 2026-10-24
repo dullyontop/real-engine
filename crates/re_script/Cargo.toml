@@ -22,6 +22,7 @@ re_noise.workspace = true
 mlua.workspace = true
 blake3.workspace = true
 glam.workspace = true
+libm.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 

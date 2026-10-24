@@ -166,9 +166,9 @@ pub fn sphere(rings: u32, segments: u32) -> MeshData {
         for s in 0..=segments {
             let phi = std::f32::consts::TAU * s as f32 / segments as f32;
             let n = Vec3::new(
-                theta.sin() * phi.cos(),
-                theta.cos(),
-                -theta.sin() * phi.sin(),
+                libm::sinf(theta) * libm::cosf(phi),
+                libm::cosf(theta),
+                -libm::sinf(theta) * libm::sinf(phi),
             );
             mesh.vertices.push(vertex(
                 n * 0.5,

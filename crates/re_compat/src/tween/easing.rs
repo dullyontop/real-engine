@@ -84,7 +84,7 @@ impl EasingStyle {
     fn ease_in(self, t: f64) -> f64 {
         match self {
             EasingStyle::Linear => t,
-            EasingStyle::Sine => 1.0 - (t * PI / 2.0).cos(),
+            EasingStyle::Sine => 1.0 - libm::cos(t * PI / 2.0),
             EasingStyle::Back => {
                 const C1: f64 = 1.70158;
                 (C1 + 1.0) * t * t * t - C1 * t * t
@@ -99,14 +99,15 @@ impl EasingStyle {
                     t.clamp(0.0, 1.0)
                 } else {
                     let p = 0.3;
-                    -(2f64.powf(10.0 * t - 10.0)) * ((t - 1.0 - p / 4.0) * 2.0 * PI / p).sin()
+                    -(libm::pow(2f64, 10.0 * t - 10.0))
+                        * libm::sin((t - 1.0 - p / 4.0) * 2.0 * PI / p)
                 }
             }
             EasingStyle::Exponential => {
                 if t <= 0.0 {
                     0.0
                 } else {
-                    2f64.powf(10.0 * t - 10.0)
+                    libm::pow(2f64, 10.0 * t - 10.0)
                 }
             }
             EasingStyle::Circular => 1.0 - (1.0 - t * t).max(0.0).sqrt(),
