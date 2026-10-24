@@ -175,7 +175,7 @@ The MCP tool of each is its name with `_` for `.` (`entity.spawn` is `entity_spa
 | `entity.set` | `id`, `component`, `field`, `value` | Set one field of one component. On a generated entity this also records an override on its source. |
 | `entity.spawn` | `id`?, `name`?, `parent`?, `index`?, `components`? | Create an entity with components; returns its id (generated when not given). |
 | `redo` | none | Redo the last undone transaction. |
-| `scene.apply` | `label`?, `ops` | Apply a list of operations as one atomic transaction: if any fails, nothing changes. |
+| `scene.apply` | `label`?, `ops`, `coalesce`? | Apply a list of operations as one atomic transaction: if any fails, nothing changes. |
 | `script.write` | `path`, `source` | Write a Luau script file (create or replace) after checking that it compiles; with compile errors nothing is written and the errors are returned. The agent session keeps the old contents. |
 | `undo` | none | Undo the last transaction. |
 

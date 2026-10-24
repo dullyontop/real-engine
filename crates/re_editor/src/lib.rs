@@ -28,8 +28,9 @@
 //! `.real/editor/layout.json` ([`layout`]), as editor state, not as commands.
 //!
 //! The game view carries translate, rotate and scale gizmos for the selected
-//! entity ([`gizmo`]; `W`, `E`, `R`). A drag only moves the gizmo's preview;
-//! its release sends one `scene.apply`, so a drag is one undo step.
+//! entity ([`gizmo`]; `W`, `E`, `R`). A drag moves the entity as it goes,
+//! with `scene.apply` edits that share one coalesce key, so the drag is one
+//! undo step; Escape puts the entity back.
 //!
 //! Every action is a command dispatched through
 //! [`App::dispatch`](re_app::App::dispatch), so each one is a single undo step
