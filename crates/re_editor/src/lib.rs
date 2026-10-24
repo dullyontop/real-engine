@@ -16,6 +16,12 @@
 //! * **command palette** (`Ctrl+P`): any registered command with JSON
 //!   arguments.
 //!
+//! The **node graph** panel ([`CanvasSpot`]; ADR-0044) draws a procedural
+//! source's graph file as nodes and wires (egui-snarl). It never edits the
+//! file itself: connecting, cutting, moving, adding and removing nodes are
+//! the `graph.*` commands, each one undo step, and the graph stays an
+//! unsaved open document until the scene is saved.
+//!
 //! The panels other than the toolbar and the palette are tabs in a dock
 //! (egui_dock): they can be dragged into other splits, stacked or floated.
 //! The arrangement and the gizmo settings are saved per project in
@@ -41,6 +47,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod canvas;
 pub mod codes;
 mod debugger;
 mod editor;
@@ -52,6 +59,7 @@ mod socket;
 mod view;
 mod windowed;
 
+pub use canvas::CanvasSpot;
 pub use editor::{ConsoleLine, Editor, LineKind, Panel, PanelRects};
 pub use headless::HeadlessEditor;
 pub use socket::EditorSocket;

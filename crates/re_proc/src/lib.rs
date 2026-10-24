@@ -49,6 +49,7 @@ mod cache;
 pub mod canon;
 pub mod codes;
 mod commands;
+mod edit;
 mod eval;
 mod generator;
 mod glb;
@@ -64,6 +65,7 @@ pub use commands::{
     DEFAULT_GENERATE_ENTITIES, DEFAULT_GENERATE_MS, GenerateArgs, MigrationReportArgs,
     RegenerateArgs, ReportArgs, SetParamArgs, register_commands,
 };
+pub use edit::{AddNodeArgs, ConnectArgs, MoveNodesArgs, RemoveNodeArgs, SetDefaultArgs};
 pub use eval::{
     CacheState, DEFAULT_MEMORY_BUDGET, EvalOptions, EvalReport, Evaluation, Evaluator, NodeReport,
     OutputInfo, fragment_hash_hex, to_scene_fragment,
@@ -275,6 +277,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::PRECISION_LIMIT,
         title: "Content beyond the precision limit",
         page: include_str!("../explain/RE4309.md"),
+    },
+    DiagInfo {
+        code: codes::CANCELLED,
+        title: "Streaming job cancelled",
+        page: include_str!("../explain/RE4310.md"),
     },
 ];
 

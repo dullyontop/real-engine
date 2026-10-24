@@ -132,6 +132,65 @@ fn parts_become_items_with_shared_meshes_and_materials() {
 }
 
 #[test]
+fn viewport_frames_show_their_parts_through_their_camera() {
+    let mut p = place();
+    script(
+        &mut p,
+        r#"
+        local holder = new("Folder", {Name = "Holder"}, game:GetService("ReplicatedStorage"))
+        local vf = new("ViewportFrame", {Ambient = Color3.new(0, 0, 0),
+            LightColor = Color3.new(1, 1, 1), LightDirection = Vector3.new(0, -2, 0)}, holder)
+        local model = new("WorldModel", {}, vf)
+        new("Part", {Size = Vector3.new(2, 2, 2), Color = Color3.fromRGB(10, 200, 30)}, model)
+        new("Part", {Shape = Enum.PartType.Ball, Size = Vector3.new(3, 3, 3), Position = Vector3.new(4, 0, 0)}, vf)
+        new("Part", {Size = Vector3.new(2, 2, 2), Transparency = 1}, vf)
+        S.vf, S.model = vf, model
+        new("Part", {Size = Vector3.new(2, 2, 2), Position = Vector3.new(0, 5, 0)}, workspace)
+        "#,
+    );
+    // Without a camera it shows nothing.
+    let f = p.render(&input());
+    assert_eq!(f.items.len(), 1);
+    assert_eq!(f.viewports.len(), 1);
+    assert!(f.viewports[0].camera.is_none() && f.viewports[0].items.is_empty());
+    script(
+        &mut p,
+        r#"
+        local cam = new("Camera", {CFrame = CFrame.lookAt(Vector3.new(0, 0, 10), Vector3.zero),
+            FieldOfView = 40}, S.vf)
+        S.vf.CurrentCamera = cam
+        "#,
+    );
+    let f = p.render(&input());
+    // Its parts are not in the 3D view; the transparent one is not drawn.
+    assert_eq!(f.items.len(), 1);
+    let v = &f.viewports[0];
+    let cam = v.camera.unwrap();
+    assert!((cam.fov_y_radians - 40f32.to_radians()).abs() < 1e-5);
+    assert_eq!(cam.world.w_axis.truncate(), Vec3::new(0.0, 0.0, 10.0));
+    assert_eq!(v.items.len(), 2);
+    assert!(v.items.iter().any(|i| i.material.color == [10, 200, 30]));
+    assert_eq!(v.ambient, [0.0; 3]);
+    assert_eq!(v.light.color, [1.0; 3]);
+    assert_eq!(v.light.direction, Vec3::NEG_Y);
+    assert!(!v.light.shadows);
+    // Their meshes and materials come with the frame like the view's.
+    for i in &v.items {
+        let sent = |k| f.new_meshes.iter().any(|(m, _)| *m == k);
+        assert!(sent(i.mesh) || f.items.iter().any(|j| j.mesh == i.mesh));
+    }
+    // A WorldModel holds parts but answers no spatial queries.
+    let out = eval(
+        &mut p,
+        "print(pcall(function() return S.model:Raycast(Vector3.zero, Vector3.yAxis) end))",
+    );
+    assert!(
+        out[0].starts_with("false") && out[0].contains("RE9001"),
+        "{out:?}"
+    );
+}
+
+#[test]
 fn static_cells_merge_into_one_mesh_per_material() {
     let mut p = place();
     script(
@@ -777,6 +836,7 @@ fn golden_billboard_distances() {
             roots: vec![ws],
             camera: Some(f.gui_camera),
             input: Default::default(),
+            images: Default::default(),
         };
         let mut raw = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(

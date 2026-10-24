@@ -1,15 +1,17 @@
 // Plays a project's replays with the browser runtime in headless Chromium with WebGPU
 // (ADR-0049) and prints each run as JSON. Usage:
-//   node browser.mjs [--expect FILE [--reported]] <engine dir> <project dir> <replay path>...
+//   node browser.mjs [--expect FILE [--reported]] <web build dir> <project dir> <replay path>...
 // It fails when a run reports an error or its last frame is blank. With --expect, each run's state_hash must also
 // equal the one in FILE, the JSON lines `cargo run -p re_web --example replay` prints;
 // --reported prints a different hash without failing (until Jolt and glam are
 // deterministic across platforms, WP18 PR "d2").
-// The engine dir holds wasm-bindgen's `--target web --out-name real` output for re_web.
-// A small server serves it with re_web's boot script under /engine/ and the project
-// under /project/ (with the files.json manifest the boot script reads); the page boots
-// the engine like a game page, then runs each replay with `runReplayGpu`.
-import { readFileSync } from 'node:fs';
+// The web build dir is a folder `real build --target web` wrote; the page boots its
+// game.rpak like the game's own page and adds the replays from the project folder
+// (archives hold no tests/). A dir with no game.rpak, such as wasm-bindgen's output
+// for re_web, boots the project's loose files instead. A small server serves the build
+// under /engine/ and the project under /project/; each replay runs with `runReplayGpu`.
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { serve } from './serve.mjs';
 
@@ -24,9 +26,13 @@ while (args[0]?.startsWith('--')) {
 }
 const [engineDir, projectDir, ...replays] = args;
 if (!engineDir || !projectDir || replays.length === 0 || (reportedOnly && !expectFile)) {
-  console.error('usage: node browser.mjs [--expect FILE [--reported]] <engine dir> <project dir> <replay path>...');
+  console.error('usage: node browser.mjs [--expect FILE [--reported]] <web build dir> <project dir> <replay path>...');
   process.exit(2);
 }
+const encode = (path) => path.split('/').map(encodeURIComponent).join('/');
+const bootOptions = existsSync(join(engineDir, 'game.rpak'))
+  ? { archive: '/engine/game.rpak', extra: replays.map((r) => [r, `/project/${encode(r)}`]) }
+  : { project: '/project/' };
 const page = `<!doctype html><meta charset="utf-8"><title>web-test</title>
 <script type="importmap">{"imports":{"wasi_snapshot_preview1":"/engine/wasi.js"}}</script>
 <script>Error.stackTraceLimit = 60; console.trace = (m) => console.error(m + ' STACK ' + new Error().stack);</script>
@@ -37,7 +43,7 @@ try {
   const { boot, missingFeatures } = await import('/engine/boot.js');
   const missing = missingFeatures();
   if (missing.length) throw new Error('missing: ' + missing.join('; '));
-  const { session } = await boot({ project: '/project/' });
+  const { session } = await boot(${JSON.stringify(bootOptions)});
   console.log('booted');
   const runs = [];
   for (const replay of replays) {

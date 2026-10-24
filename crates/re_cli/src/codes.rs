@@ -40,3 +40,23 @@ pub const BUNDLE_FAILED: Code = Code::new("RE0955");
 /// A packaged run ended differently from the project's run (`real verify
 /// --package`).
 pub const PACKAGE_DIFFERS: Code = Code::new("RE0956");
+
+/// `real build --target web` needs a tool that is not installed: Rust's
+/// `wasm32-unknown-unknown` target, wasi-sdk, or the wasm-bindgen CLI.
+pub const WEB_TOOLCHAIN_MISSING: Code = Code::new("RE0970");
+
+/// The web runtime could not be built, or a `--runtime` folder is not a web
+/// runtime of this engine.
+pub const WEB_RUNTIME_FAILED: Code = Code::new("RE0971");
+
+/// The installed wasm-bindgen CLI is not the version the engine's lockfile
+/// pins.
+pub const WASM_BINDGEN_MISMATCH: Code = Code::new("RE0972");
+
+/// binaryen's `wasm-opt` is not installed, so the web runtime is copied
+/// unoptimised (a warning).
+pub const BINARYEN_MISSING: Code = Code::new("RE0973");
+
+/// The web build's archive is over 256 MiB, more than some browsers give a
+/// page (a warning).
+pub const WEB_ARCHIVE_LARGE: Code = Code::new("RE0974");

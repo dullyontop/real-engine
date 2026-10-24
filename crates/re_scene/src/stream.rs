@@ -499,24 +499,24 @@ impl World {
     }
 
     /// The assets of `candidates` that no entity references any more, sorted.
-    fn unreferenced(&mut self, candidates: BTreeSet<String>) -> Vec<String> {
-        if candidates.is_empty() {
-            return Vec::new();
-        }
-        let mut live = HashSet::new();
-        let mut q = self.ecs.query::<(Option<&MeshRef>, Option<&MaterialRef>)>();
-        for (m, mat) in q.iter(&self.ecs) {
-            if let Some(m) = m {
-                live.insert(m.asset.clone());
+    fn unreferenced(&mut self, mut candidates: BTreeSet<String>) -> Vec<String> {
+        // Only entities with a reference are visited, and nothing is cloned:
+        // this runs on every cell unload, over the whole world.
+        let mut meshes = self.ecs.query::<&MeshRef>();
+        for m in meshes.iter(&self.ecs) {
+            if candidates.is_empty() {
+                return Vec::new();
             }
-            if let Some(mat) = mat {
-                live.insert(mat.asset.clone());
-            }
+            candidates.remove(&m.asset);
         }
-        candidates
-            .into_iter()
-            .filter(|a| !live.contains(a))
-            .collect()
+        let mut materials = self.ecs.query::<&MaterialRef>();
+        for m in materials.iter(&self.ecs) {
+            if candidates.is_empty() {
+                return Vec::new();
+            }
+            candidates.remove(&m.asset);
+        }
+        candidates.into_iter().collect()
     }
 
     /// Unloads the authored [`Streamed`] root `root` into cell `cell`'s stash:

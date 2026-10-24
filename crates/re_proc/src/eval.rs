@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -163,6 +164,13 @@ pub struct EvalOptions {
     /// The window to evaluate, for streamed evaluation (ADR-0042). Part of
     /// every node's key when set.
     pub domain: Option<Domain>,
+    /// Runs every node on the calling thread, one after another, with no
+    /// fan-out on the pool: a streaming job is serial (ADR-0042). The output
+    /// is the same either way.
+    pub serial: bool,
+    /// Stops before the next level of nodes once this flag is set (`RE4310`);
+    /// a streaming job's request was cancelled.
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 struct MemEntry {
@@ -370,6 +378,17 @@ impl Evaluator {
                 );
                 break 'levels;
             }
+            if opts
+                .cancel
+                .as_ref()
+                .is_some_and(|c| c.load(Ordering::Relaxed))
+            {
+                report.diagnostics.push(Diagnostic::error(
+                    codes::CANCELLED,
+                    format!("evaluation of `{}` was cancelled", graph.id),
+                ));
+                break 'levels;
+            }
             let mut jobs: Vec<Job> = Vec::new();
             for &index in &level {
                 let (id, node) = graph
@@ -439,14 +458,16 @@ impl Evaluator {
             }
             let results: Vec<Mutex<Option<JobResult>>> =
                 jobs.iter().map(|_| Mutex::new(None)).collect();
-            if jobs.len() == 1 {
-                *results[0].lock().unwrap_or_else(|e| e.into_inner()) =
-                    Some(self.run_job(graph, &jobs[0], pool, opts.domain));
+            if jobs.len() == 1 || opts.serial {
+                for (job, slot) in jobs.iter().zip(&results) {
+                    *slot.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(self.run_job(graph, job, pool, opts));
+                }
             } else if !jobs.is_empty() {
                 pool.scope(|s| {
                     for (job, slot) in jobs.iter().zip(&results) {
                         s.spawn(move |_| {
-                            let r = self.run_job(graph, job, pool, opts.domain);
+                            let r = self.run_job(graph, job, pool, opts);
                             *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
                         });
                     }
@@ -502,7 +523,7 @@ impl Evaluator {
         graph: &ProcGraph,
         job: &Job,
         pool: &TaskPool,
-        domain: Option<Domain>,
+        opts: &EvalOptions,
     ) -> JobResult {
         let start = Instant::now();
         let (id, node) = graph
@@ -531,7 +552,8 @@ impl Evaluator {
             node_id: id,
             key: job.key,
             version: node.version,
-            domain,
+            domain: opts.domain,
+            serial: opts.serial,
             seed: job.seed,
             inputs: job.inputs.clone(),
             files: job.files.clone(),

@@ -104,6 +104,8 @@ pub struct App {
     clock: FixedClock,
     /// Fixed steps taken since the scene was loaded: world streaming's tick.
     stream_tick: u64,
+    /// How world streaming treats a cell generated too late for its tick.
+    stream_lateness: re_proc::stream::Lateness,
     frame: u64,
     alpha: f32,
 
@@ -295,6 +297,7 @@ impl App {
             commands,
             clock,
             stream_tick: 0,
+            stream_lateness: re_proc::stream::Lateness::Wait,
             frame: 0,
             alpha: 0.0,
             action_map,
@@ -748,6 +751,19 @@ impl App {
         };
         self.watcher = Some(AssetWatcher::new(dir, AssetWatcher::DEFAULT_DEBOUNCE)?);
         Ok(())
+    }
+
+    /// Sets how world streaming treats a cell whose generation is not done
+    /// at its apply tick (ADR-0042). [`Lateness::Wait`] (the default) waits
+    /// for it, so `real verify`, replays and `play.run` load the same cells at
+    /// the same ticks on every machine. Only a live run, which must not stall
+    /// a frame, sets [`Lateness::Late`]: the cell applies when it is ready,
+    /// reported as `RE4305`.
+    ///
+    /// [`Lateness::Wait`]: re_proc::stream::Lateness::Wait
+    /// [`Lateness::Late`]: re_proc::stream::Lateness::Late
+    pub fn set_stream_lateness(&mut self, lateness: re_proc::stream::Lateness) {
+        self.stream_lateness = lateness;
     }
 
     /// Makes a compat game's `DataStoreService` and `MemoryStoreService`
@@ -1386,6 +1402,14 @@ impl App {
                 .next()
                 .is_some();
         if streams {
+            if let Some(mut s) = self
+                .world
+                .ecs
+                .get_resource_mut::<re_proc::stream::Streamer>()
+                && s.lateness() != self.stream_lateness
+            {
+                s.set_lateness(self.stream_lateness);
+            }
             let report =
                 re_proc::stream::step(&mut self.world, self.stream_tick, &self.config.stream);
             self.diagnostics.extend(report.diagnostics);
@@ -1619,28 +1643,43 @@ impl App {
         let time = self.clock.tick() as f64 * f64::from(self.clock.dt_secs());
         let raw = hud::raw_input(size_px, pixels_per_point, time);
         let hud_lines = self.hud.clone();
-        let last_camera = self.compat_view.frame().map(|f| f.gui_camera);
-        let mut built = None;
+        if let Some(cfg) = &self.compat_config {
+            self.compat_view.surface_budget = cfg.gui.surface_redraws_per_frame as usize;
+        }
+        // Building advances effects and the camera's viewport, so it happens
+        // once a frame unless the size changes.
+        if build {
+            let mut built = None;
+            self.compat_call(ContextKind::Client, |vm, h| {
+                vm.run(h, |lua| {
+                    built = Some(re_compat::render::build(lua, &input)?);
+                    Ok(())
+                })
+            });
+            if let Some(mut frame) = built {
+                self.diagnostics.append(&mut frame.diagnostics);
+                self.compat_view.take(frame);
+            }
+        }
+        let camera = self.compat_view.frame().map(|f| f.gui_camera);
+        // The viewports need their textures before the UI pass shows them.
+        if let Some(gfx) = self.graphics.as_mut()
+            && let Err(d) = gfx.compat_images(&mut self.compat_view)
+        {
+            self.diagnostics.push(d);
+        }
+        let gui = re_compat::gui::GuiFrame {
+            viewport: input.viewport / pixels_per_point,
+            top_inset: 0.0,
+            roots,
+            camera,
+            input: re_compat::gui::GuiInput::default(),
+            images: self.compat_view.images(),
+        };
         let mut ui = Vec::new();
+        let mut textured = None;
         self.compat_call(ContextKind::Client, |vm, h| {
             vm.run(h, |lua| {
-                // Building advances effects and the camera's viewport, so it
-                // happens once a frame unless the size changes.
-                let camera = if build {
-                    let frame = re_compat::render::build(lua, &input)?;
-                    let camera = frame.gui_camera;
-                    built = Some(frame);
-                    Some(camera)
-                } else {
-                    last_camera
-                };
-                let gui = re_compat::gui::GuiFrame {
-                    viewport: input.viewport / pixels_per_point,
-                    top_inset: 0.0,
-                    roots,
-                    camera,
-                    input: re_compat::gui::GuiInput::default(),
-                };
                 for _ in 0..passes {
                     let mut failed = None;
                     let out = ctx.run_ui(raw.clone(), |ui| {
@@ -1648,6 +1687,7 @@ impl App {
                             Ok(o) => {
                                 re_compat::gui::paint(ui.ctx(), o.shapes);
                                 hud::draw(ui.ctx(), &hud_lines);
+                                textured = Some((o.surfaces, o.viewports, o.diagnostics));
                             }
                             Err(e) => failed = Some(e),
                         }
@@ -1660,9 +1700,9 @@ impl App {
                 Ok(())
             })
         });
-        if let Some(mut frame) = built {
-            self.diagnostics.append(&mut frame.diagnostics);
-            self.compat_view.take(frame);
+        if let Some((surfaces, viewports, mut diagnostics)) = textured {
+            self.diagnostics.append(&mut diagnostics);
+            self.compat_view.set_textured(surfaces, viewports);
         }
         for out in ui {
             self.compat_view.set_ui(out);

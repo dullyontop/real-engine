@@ -1,7 +1,9 @@
 //! A streamed procedural source, checked and ready to be evaluated cell by
 //! cell, and the evaluation of one cell.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use glam::{Quat, Vec3};
 use re_core::{Diagnostic, Location};
@@ -13,8 +15,8 @@ use serde_json::Value as Json;
 use super::StreamConfig;
 use crate::canon::{doc_hash, version_stamp};
 use crate::generator::{GENERATOR, apply_overrides, parse_overrides};
-use crate::value::DerivedAsset;
-use crate::{Domain, EvalOptions, GraphStore, ProcGraph, Streaming, codes};
+use crate::value::{DerivedAsset, Fragment};
+use crate::{Domain, EvalOptions, Evaluator, GraphStore, ProcGraph, Streaming, codes};
 
 /// A streamed procedural source of the `graph` generator, as the manager sees
 /// it at one tick.
@@ -71,10 +73,15 @@ fn located(d: Diagnostic, id: &str) -> Diagnostic {
 /// unless it and its parents have identity transforms, `RE4301` for a node
 /// that does not stream or a spacing that does not divide `cell_size`, and
 /// the graph's own errors.
+///
+/// The prepared source is kept in `cache` and reused while its graph, seed,
+/// overrides, bounds, evaluator and `cell_size` stay the same, so a tick
+/// with nothing changed builds no graph.
 pub(crate) fn describe(
     world: &World,
     entity: Entity,
     config: &StreamConfig,
+    cache: &mut DescribeCache,
 ) -> Result<Source, Diagnostic> {
     let id = world.id_of(entity).unwrap_or_default().to_string();
     let procedural = world
@@ -106,15 +113,81 @@ pub(crate) fn describe(
         )
         .at(Location::entity(id.clone()))
     })??;
-    let registry = store.evaluator().registry();
+    let doc: &GraphDoc = &doc;
     let params = world
         .ecs
         .get::<GraphSource>(entity)
-        .map(|g| g.params.clone())
-        .unwrap_or_default();
-    let doc = match parse_overrides(&params) {
-        Ok(o) => apply_overrides(&doc, &o, registry, &id).0,
-        Err(_) => GraphDoc::clone(&doc),
+        .map_or("", |g| g.params.as_str());
+    if let Some(c) = cache.get(&entity)
+        && c.id == id
+        && c.seed == procedural.seed
+        && c.params == params
+        && c.bounds.to_bits() == bounds.to_bits()
+        && c.cell_size.to_bits() == config.cell_size.to_bits()
+        && Arc::ptr_eq(&c.evaluator, store.evaluator())
+        && c.doc == *doc
+    {
+        return c.result.clone();
+    }
+    let result = prepare(
+        store,
+        doc,
+        &id,
+        params,
+        procedural.seed,
+        bounds,
+        entity,
+        config,
+    );
+    cache.insert(
+        entity,
+        Described {
+            id,
+            seed: procedural.seed,
+            params: params.to_string(),
+            bounds,
+            cell_size: config.cell_size,
+            evaluator: store.evaluator().clone(),
+            doc: doc.clone(),
+            result: result.clone(),
+        },
+    );
+    result
+}
+
+/// Prepared sources by entity, with what they were prepared from.
+pub(crate) type DescribeCache = BTreeMap<Entity, Described>;
+
+#[derive(Clone, Debug)]
+pub(crate) struct Described {
+    id: String,
+    seed: i64,
+    params: String,
+    bounds: f32,
+    cell_size: f32,
+    evaluator: Arc<Evaluator>,
+    doc: GraphDoc,
+    result: Result<Source, Diagnostic>,
+}
+
+/// [`describe`] past its cache: the graph with its overrides, checked and
+/// built.
+#[allow(clippy::too_many_arguments)]
+fn prepare(
+    store: &GraphStore,
+    doc: &GraphDoc,
+    id: &str,
+    params: &str,
+    seed: i64,
+    bounds: f32,
+    entity: Entity,
+    config: &StreamConfig,
+) -> Result<Source, Diagnostic> {
+    let id = id.to_string();
+    let registry = store.evaluator().registry();
+    let doc = match parse_overrides(params) {
+        Ok(o) => apply_overrides(doc, &o, registry, &id).0,
+        Err(_) => doc.clone(),
     };
     for node in &doc.nodes {
         if let Some(def) = registry.get(&node.kind)
@@ -146,7 +219,7 @@ pub(crate) fn describe(
         located(first, &id)
     })?;
     let stamp = version_stamp(&doc, registry).to_hex().to_string();
-    let seed = procedural.seed as u64;
+    let seed = seed as u64;
     let mut h = blake3::Hasher::new();
     h.update(doc_hash(&doc).as_bytes());
     h.update(stamp.as_bytes());
@@ -230,12 +303,59 @@ pub(crate) struct CellOutput {
     pub assets: Vec<(String, DerivedAsset)>,
 }
 
-/// Evaluates `source`'s graph over cell `cell` (`RE4307` on failure, with
-/// the cause as a related diagnostic).
-pub(crate) fn generate(
+/// One cell's evaluation for one source, owned, so it can run on a worker
+/// (ADR-0042): serial, cancellable, with the shared evaluator and its caches.
+pub(crate) struct CellJob {
+    evaluator: Arc<Evaluator>,
+    graph: Arc<ProcGraph>,
+    opts: EvalOptions,
+}
+
+/// The raw result of a [`CellJob`]: the graph's output fragment, before
+/// prefabs are instantiated and keys are put under the cell.
+pub(crate) type RawCell = Result<Fragment, Diagnostic>;
+
+impl CellJob {
+    /// The job for `source`'s cell `cell`, stopping when `cancel` is set.
+    pub fn new(
+        world: &World,
+        source: &Source,
+        cell: [i32; 2],
+        cancel: Option<Arc<AtomicBool>>,
+    ) -> Result<CellJob, Diagnostic> {
+        let store = world
+            .ecs
+            .get_resource::<GraphStore>()
+            .ok_or_else(|| Diagnostic::error(codes::NO_GRAPH, "the world has no GraphStore"))?;
+        Ok(CellJob {
+            evaluator: store.evaluator().clone(),
+            graph: source.graph.clone(),
+            opts: EvalOptions {
+                seed: Some(source.seed),
+                root: store.root().map(Into::into),
+                files: store.files().cloned(),
+                domain: Some(source.domain(cell)),
+                serial: true,
+                cancel,
+                ..Default::default()
+            },
+        })
+    }
+
+    /// Evaluates the graph over the cell's window.
+    pub fn run(self) -> RawCell {
+        self.evaluator.evaluate(&self.graph, &self.opts).fragment()
+    }
+}
+
+/// Turns a job's result into the cell's content, on the main thread:
+/// prefabs instantiated against the world's registry and keys put under the
+/// cell (`RE4307` on failure, with the cause as a related diagnostic).
+pub(crate) fn finish(
     world: &World,
     source: &Source,
     cell: [i32; 2],
+    raw: RawCell,
 ) -> Result<CellOutput, Diagnostic> {
     let key = re_scene::cell_key(cell[0], cell[1]);
     let failed = |cause: Diagnostic| {
@@ -246,21 +366,9 @@ pub(crate) fn generate(
         .at(Location::entity(source.id.clone()))
         .with_related(cause)
     };
-    let store = world.ecs.get_resource::<GraphStore>().ok_or_else(|| {
-        failed(Diagnostic::error(
-            codes::NO_GRAPH,
-            "the world has no GraphStore",
-        ))
-    })?;
-    let opts = EvalOptions {
-        seed: Some(source.seed),
-        root: store.root().map(Into::into),
-        files: store.files().cloned(),
-        deadline: None,
-        domain: Some(source.domain(cell)),
-    };
-    let evaluation = store.evaluator().evaluate(&source.graph, &opts);
-    let (fragment, assets) = evaluation.scene_fragment(&world.registry).map_err(failed)?;
+    let raw = raw.map_err(failed)?;
+    let fragment =
+        crate::to_scene_fragment(&source.graph.id, &raw, &world.registry).map_err(failed)?;
     let fragment = fragment
         .into_iter()
         .map(|n| GenNode {
@@ -269,5 +377,8 @@ pub(crate) fn generate(
             ..n
         })
         .collect();
-    Ok(CellOutput { fragment, assets })
+    Ok(CellOutput {
+        fragment,
+        assets: raw.assets,
+    })
 }

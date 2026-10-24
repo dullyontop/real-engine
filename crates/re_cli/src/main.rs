@@ -88,6 +88,31 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "Packaged run differs from the project",
         page: include_str!("../explain/RE0956.md"),
     },
+    DiagInfo {
+        code: codes::WEB_TOOLCHAIN_MISSING,
+        title: "The web build's toolchain is missing",
+        page: include_str!("../explain/RE0970.md"),
+    },
+    DiagInfo {
+        code: codes::WEB_RUNTIME_FAILED,
+        title: "Web runtime build or check failed",
+        page: include_str!("../explain/RE0971.md"),
+    },
+    DiagInfo {
+        code: codes::WASM_BINDGEN_MISMATCH,
+        title: "wasm-bindgen CLI version differs",
+        page: include_str!("../explain/RE0972.md"),
+    },
+    DiagInfo {
+        code: codes::BINARYEN_MISSING,
+        title: "wasm-opt is not installed",
+        page: include_str!("../explain/RE0973.md"),
+    },
+    DiagInfo {
+        code: codes::WEB_ARCHIVE_LARGE,
+        title: "The web build's archive is large",
+        page: include_str!("../explain/RE0974.md"),
+    },
 ];
 
 #[derive(Parser, Debug)]
@@ -340,6 +365,11 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
             // which must repeat; a played game keeps its data.
             Live::Packaged if !options.headless => app.persist_data(),
             Live::Packaged => {}
+        }
+        // A live window never stalls a frame on a streamed cell; headless
+        // runs wait for it, so they repeat (ADR-0042).
+        if !options.headless {
+            app.set_stream_lateness(re_proc::stream::Lateness::Late);
         }
     }
     let (frames, mut diagnostics, mut report) = if options.headless {

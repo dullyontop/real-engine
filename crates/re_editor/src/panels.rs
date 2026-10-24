@@ -116,6 +116,10 @@ impl egui_dock::TabViewer for Tabs<'_> {
                 crate::debugger::ui(&mut ed.debug, ui);
                 return;
             }
+            PanelId::Canvas => {
+                crate::canvas::ui(ed, ui, app, actions);
+                Panel::Canvas
+            }
         };
         ed.rects.set(panel, rect);
     }
