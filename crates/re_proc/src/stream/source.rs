@@ -1,7 +1,7 @@
 //! A streamed procedural source, checked and ready to be evaluated cell by
 //! cell, and the evaluation of one cell.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -16,7 +16,7 @@ use super::StreamConfig;
 use crate::canon::{doc_hash, version_stamp};
 use crate::generator::{GENERATOR, apply_overrides, parse_overrides};
 use crate::value::{DerivedAsset, Fragment};
-use crate::{Domain, EvalOptions, Evaluator, GraphStore, ProcGraph, Streaming, codes};
+use crate::{Domain, EvalOptions, Evaluator, GraphStore, PortType, ProcGraph, Streaming, codes};
 
 /// A streamed procedural source of the `graph` generator, as the manager sees
 /// it at one tick.
@@ -37,6 +37,22 @@ pub(crate) struct Source {
     /// Everything that decides its cells' content; when it changes, its
     /// loaded cells are generated again.
     pub inputs: blake3::Hash,
+    /// Its `terrain.chunks` terrain, if its graph has one.
+    pub terrain: Option<Arc<TerrainSource>>,
+}
+
+/// The terrain of a streamed source: the field reaching its `terrain.chunks`
+/// node, which world streaming evaluates per chunk (ADR-0042).
+#[derive(Debug)]
+pub(crate) struct TerrainSource {
+    /// The nodes that compute the field, and nothing else.
+    pub graph: Arc<ProcGraph>,
+    /// The id of the node whose output is the field.
+    pub field: String,
+    /// The material file chunks are drawn with, or empty.
+    pub material: String,
+    /// The coarsest level of detail.
+    pub max_level: u8,
 }
 
 impl Source {
@@ -200,6 +216,7 @@ fn prepare(
         }
     }
     let spacing = graph_spacing(&doc).map_err(|e| not_streamable(&id, e))?;
+    let (cells, terrain) = split_terrain(&doc, registry).map_err(|e| not_streamable(&id, e))?;
     let steps = config.cell_size / spacing;
     let whole = steps.round();
     if (steps - whole).abs() > 1.0e-4 || !(1.0..=16_384.0).contains(&whole) {
@@ -211,13 +228,27 @@ fn prepare(
             ),
         ));
     }
-    let graph = ProcGraph::from_doc(&doc, registry).map_err(|mut problems| {
-        let mut first = problems.remove(0);
-        for d in problems {
-            first = first.with_related(d);
-        }
-        located(first, &id)
-    })?;
+    let build = |doc: &GraphDoc| {
+        ProcGraph::from_doc(doc, registry).map_err(|mut problems| {
+            let mut first = problems.remove(0);
+            for d in problems {
+                first = first.with_related(d);
+            }
+            located(first, &id)
+        })
+    };
+    // The graph cells evaluate: without the terrain branch, which streaming
+    // evaluates per chunk instead.
+    let graph = build(&cells)?;
+    let terrain = match terrain {
+        Some((doc, field, material, max_level)) => Some(Arc::new(TerrainSource {
+            graph: Arc::new(build(&doc)?),
+            field,
+            material,
+            max_level,
+        })),
+        None => None,
+    };
     let stamp = version_stamp(&doc, registry).to_hex().to_string();
     let seed = seed as u64;
     let mut h = blake3::Hasher::new();
@@ -235,7 +266,105 @@ fn prepare(
         steps: whole as u32,
         stamp,
         inputs: h.finalize(),
+        terrain,
     })
+}
+
+/// The terrain branch of `doc`, split off: the graph cells evaluate (without
+/// the `terrain.chunks` node, and without the nodes that only fed it), and,
+/// when there is a `terrain.chunks` node, the graph of its field with the
+/// field node's id, the material and `max_level`.
+#[allow(clippy::type_complexity)]
+fn split_terrain(
+    doc: &GraphDoc,
+    registry: &crate::NodeRegistry,
+) -> Result<(GraphDoc, Option<(GraphDoc, String, String, u8)>), String> {
+    let chunks: Vec<&re_types::graph::NodeDoc> = doc
+        .nodes
+        .iter()
+        .filter(|n| n.kind == "terrain.chunks")
+        .collect();
+    let chunk = match chunks.as_slice() {
+        [] => return Ok((doc.clone(), None)),
+        [one] => *one,
+        _ => {
+            return Err(format!(
+                "a streamed graph has at most one `terrain.chunks` node; it has {}",
+                chunks.len()
+            ));
+        }
+    };
+    let Some(field) = doc
+        .edges
+        .iter()
+        .find(|e| e.to.0 == chunk.id && e.to.1 == "field")
+        .map(|e| e.from.0.clone())
+    else {
+        return Err(format!("node `{}` (terrain.chunks) has no field", chunk.id));
+    };
+    // The field's graph: the field node and everything upstream of it.
+    let mut keep: BTreeSet<&str> = BTreeSet::from([field.as_str()]);
+    loop {
+        let before = keep.len();
+        for e in &doc.edges {
+            if keep.contains(e.to.0.as_str()) {
+                keep.insert(e.from.0.as_str());
+            }
+        }
+        if keep.len() == before {
+            break;
+        }
+    }
+    let field_doc = GraphDoc {
+        nodes: doc
+            .nodes
+            .iter()
+            .filter(|n| keep.contains(n.id.as_str()))
+            .cloned()
+            .collect(),
+        edges: doc
+            .edges
+            .iter()
+            .filter(|e| keep.contains(e.to.0.as_str()))
+            .cloned()
+            .collect(),
+        ..doc.clone()
+    };
+    // The cells' graph: without the chunks node, then without every field
+    // or points node whose output nothing uses any more (a mesh or fragment
+    // left unused is output, so it stays).
+    let mut cells = doc.clone();
+    cells.nodes.retain(|n| n.id != chunk.id);
+    cells.edges.retain(|e| e.to.0 != chunk.id);
+    loop {
+        let used: BTreeSet<&str> = cells.edges.iter().map(|e| e.from.0.as_str()).collect();
+        let dead: BTreeSet<String> = cells
+            .nodes
+            .iter()
+            .filter(|n| {
+                !used.contains(n.id.as_str())
+                    && registry
+                        .get(&n.kind)
+                        .is_some_and(|d| matches!(d.output, PortType::Field | PortType::Points))
+            })
+            .map(|n| n.id.clone())
+            .collect();
+        if dead.is_empty() {
+            break;
+        }
+        cells.nodes.retain(|n| !dead.contains(&n.id));
+        cells.edges.retain(|e| !dead.contains(&e.to.0));
+    }
+    let param = |k: &str| chunk.params.get(k);
+    let material = param("material")
+        .and_then(Json::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let max_level = param("max_level")
+        .and_then(Json::as_u64)
+        .unwrap_or(5)
+        .min(8) as u8;
+    Ok((cells, Some((field_doc, field, material, max_level))))
 }
 
 fn not_streamable(id: &str, why: String) -> Diagnostic {

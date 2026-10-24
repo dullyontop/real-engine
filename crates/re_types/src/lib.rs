@@ -55,10 +55,10 @@ pub use input::{
 pub use mesh::{Aabb, MeshData, SkinWeights, Vertex};
 pub use physics::{
     BodyDesc, BodyKind, BodyPose, CharacterDesc, CharacterState, ConstraintDesc, ConstraintKind,
-    ContactEvent, EngineDesc, GroundState, GroupMask, JointPose, Layer, PhysicsCmd, RagdollBlend,
-    RagdollConstraint, RagdollDesc, RagdollMode, RagdollPartDesc, RagdollSkeleton, RagdollState,
-    RayHit, ShapeDesc, SkeletonJoint, TransmissionDesc, VehicleDesc, VehicleInput, VehicleKind,
-    VehicleState, WheelDesc, WheelPose, WheelState, WheelTester,
+    ContactEvent, EngineDesc, GroundState, GroupMask, HeightfieldPrecision, JointPose, Layer,
+    PhysicsCmd, RagdollBlend, RagdollConstraint, RagdollDesc, RagdollMode, RagdollPartDesc,
+    RagdollSkeleton, RagdollState, RayHit, ShapeDesc, SkeletonJoint, TransmissionDesc, VehicleDesc,
+    VehicleInput, VehicleKind, VehicleState, WheelDesc, WheelPose, WheelState, WheelTester,
 };
 pub use render::{
     AlphaMode, Camera, DebugLine, DrawFlags, DrawItem, Light, LightKind, MaterialDesc,

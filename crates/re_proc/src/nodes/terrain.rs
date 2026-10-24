@@ -1,5 +1,5 @@
-//! `terrain.heightfield`, `terrain.island_mask`, `terrain.mesh` and
-//! `terrain.water_plane`.
+//! `terrain.heightfield`, `terrain.island_mask`, `terrain.mesh`,
+//! `terrain.chunks` and `terrain.water_plane`.
 
 use std::sync::Arc;
 
@@ -325,6 +325,59 @@ fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, S
     })))
 }
 
+/// Parameters of `terrain.chunks`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct ChunksParams {
+    /// A material file (`materials/grass.material.json`), or empty.
+    pub material: String,
+    /// The coarsest level of detail (0 to 8): root tiles are 64 × 2^max_level
+    /// samples of the field's spacing.
+    pub max_level: u32,
+    /// The entity's name when the graph is not streamed.
+    pub name: String,
+}
+
+impl Default for ChunksParams {
+    fn default() -> Self {
+        ChunksParams {
+            material: String::new(),
+            max_level: 5,
+            name: "Terrain".into(),
+        }
+    }
+}
+
+impl Params for ChunksParams {
+    fn validate(&self) -> Result<(), String> {
+        if self.max_level > 8 {
+            return Err(format!(
+                "`max_level` must be 0 to 8, got {}",
+                self.max_level
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// `terrain.chunks`: in a streamed window it adds nothing, because world
+/// streaming draws the field as level-of-detail chunks and adds collision
+/// chunks near the focuses (ADR-0042). Not streamed, it is one mesh, as
+/// `terrain.mesh` without a collider.
+fn terrain_chunks(ctx: &super::NodeCtx, p: &ChunksParams) -> Result<Output, String> {
+    if ctx.domain.is_some() {
+        return Ok(Output::Fragment(Arc::new(Fragment::default())));
+    }
+    terrain_mesh(
+        ctx,
+        &TerrainMeshParams {
+            collider: false,
+            material: p.material.clone(),
+            name: p.name.clone(),
+        },
+    )
+}
+
 /// Parameters of `terrain.water_plane`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
@@ -442,6 +495,27 @@ pub(super) fn register(r: &mut NodeRegistry) {
             file_params: &[],
         },
         terrain_mesh,
+    ));
+    r.register(NodeDef::new(
+        NodeSpec {
+            kind: "terrain.chunks",
+            version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Cell,
+            doc: "The terrain of a streamed world: world streaming draws its field as level-of-detail chunks (64 × 64 cells each, stitched to coarser neighbours) and gives the chunks near each focus heightfield colliders. Not streamed, it is one mesh with the material.",
+            inputs: &[PortDef {
+                name: "field",
+                accepts: FIELD,
+                required: true,
+                doc: "The heights, in metres.",
+            }],
+            variadic: None,
+            output: PortType::Fragment,
+            uses_seed: false,
+            file_params: &[],
+        },
+        terrain_chunks,
     ));
     r.register(NodeDef::new(
         NodeSpec {

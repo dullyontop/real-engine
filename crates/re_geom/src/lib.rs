@@ -5,7 +5,9 @@
 //! * [`Heightfield`]: an `n × n` grid of heights in Jolt's layout
 //!   (`samples[z * n + x]`), with [`Heightfield::to_mesh`],
 //!   [`Heightfield::height_at`] and [`Heightfield::to_shape`];
-//! * [`ops`]: [`compute_normals`], [`transform`] and [`merge`].
+//! * [`ops`]: [`compute_normals`], [`transform`] and [`merge`];
+//! * [`terrain`]: the level-of-detail chunk quadtree, stitched chunk meshes
+//!   and hydraulic erosion on region tiles, for streamed worlds (ADR-0042).
 //!
 //! Everything here is plain computation with no GPU, physics or scripting
 //! dependency. Results are **bit-identical on every platform**: angles come
@@ -27,6 +29,7 @@ mod heightfield;
 pub mod math;
 pub mod ops;
 pub mod primitives;
+pub mod terrain;
 
 pub use error::GeomError;
 pub use heightfield::Heightfield;
