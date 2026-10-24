@@ -51,15 +51,19 @@ package folder.
   `cross` (turn round and walk 70 s west along the valley floor, from the
   cell border at x = 0 across the one at x = -256 while cells load ahead).
   `real verify` runs each twice with the same `state_hash` and checks goldens
-  for Vulkan (lavapipe) and GL; `cargo xtask d2` checks the hashes match on
-  every platform. `cross`'s stick inputs were recorded from a run that
-  steered towards the low ground.
+  for Vulkan (lavapipe) and GL. CI's `d2` job records every replay's
+  `state_hash` checkpoints with `cargo xtask d2` on Linux, Windows and macOS,
+  and `d2 compare` checks they match. `cross`'s stick inputs were recorded
+  from a run that steered towards the low ground.
 
 Everything here is made by the engine's generators or by the script in
 `tools/`; there are no third-party assets.
 
 ## Not yet
 
-- Erosion, roads, an animation graph and audio buses come as WP23, WP24, WP21
-  and WP22 land them.
+- The engine has erosion, roads, animation graphs and audio buses, but the
+  valley does not use them yet.
 - Shadows use the renderer's default cascades (`[render.shadows]` is not set).
+- There are no DX12 or Metal goldens yet, so with those backends (the
+  defaults on Windows and macOS) `real verify` fails its `goldens` stage with
+  `RE0510`.
