@@ -47,6 +47,15 @@ impl HostServices for Services {
     fn vehicle_state(&self, e: EntityId) -> HostResult<VehicleState> {
         self.base.vehicle_state(e)
     }
+    fn ragdoll_mode(&mut self, e: EntityId, m: re_types::physics::RagdollMode) -> HostResult<()> {
+        self.base.ragdoll_mode(e, m)
+    }
+    fn ragdoll_state(&self, e: EntityId) -> HostResult<re_types::physics::RagdollState> {
+        self.base.ragdoll_state(e)
+    }
+    fn ragdoll_impulse(&mut self, e: EntityId, j: &str, i: Vec3) -> HostResult<()> {
+        self.base.ragdoll_impulse(e, j, i)
+    }
     fn play_sound(&mut self, c: &str, a: Option<Vec3>, v: f32) -> HostResult<()> {
         self.base.play_sound(c, a, v)
     }

@@ -187,6 +187,9 @@
               },
               "VehicleWheel": {
                 "$ref": "#/$defs/VehicleWheel"
+              },
+              "Ragdoll": {
+                "$ref": "#/$defs/Ragdoll"
               }
             },
             "additionalProperties": false
@@ -971,6 +974,45 @@
           "type": "boolean",
           "default": false,
           "description": "True if the engine drives this wheel."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Ragdoll": {
+      "type": "object",
+      "description": "Gives a [`SkinnedMesh`] a ragdoll on its skeleton (ADR-0040). Once the skin\nloads, `re_app` generates the parts (one capsule per listed joint along its\nbone, humanoid joint limits, the mass split by volume), keeps an animated\nragdoll on the animation, and shows the simulated pose blended in while it is\nsimulated or powered. Scripts switch it with `physics.ragdoll`. The entity\nhas no `RigidBody`; a `CharacterController` on it is fine and never collides\nwith its own ragdoll.",
+      "properties": {
+        "joints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "The joints that get parts, by name; empty finds a humanoid's hips, spine,\nhead, upper arms, forearms, thighs and shins by name."
+        },
+        "total_mass": {
+          "type": "number",
+          "default": 70.0,
+          "description": "Total mass, in kilograms."
+        },
+        "mode": {
+          "enum": [
+            "Animated",
+            "Simulated",
+            "Powered"
+          ],
+          "default": "Animated",
+          "description": "How it moves when the scene starts, and after each edit of this field."
+        },
+        "strength": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Motor strength in `Powered` mode, 0 (limp) to 1."
+        },
+        "blend_seconds": {
+          "type": "number",
+          "default": 0.20000000298023224,
+          "description": "Seconds the shown pose takes to blend from the animation to the ragdoll\nand back; 0 switches at once."
         }
       },
       "additionalProperties": false
