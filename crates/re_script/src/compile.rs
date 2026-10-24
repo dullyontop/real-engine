@@ -12,16 +12,20 @@ use crate::codes;
 use crate::diag::ScriptError;
 
 /// The compiler every context uses, native and compat: optimisation level 1 and
-/// debug level 1 (line info and function names, enough for tracebacks). These
-/// are Luau's defaults. [`COMPILER_ID`] names these options.
+/// debug level 1 (line info and function names, enough for tracebacks), which are
+/// Luau's defaults, with the builtins that [`crate::portable_math`] replaces
+/// disabled (ADR-0036). [`COMPILER_ID`] names these options.
 pub fn compiler() -> Compiler {
-    Compiler::new().set_optimization_level(1).set_debug_level(1)
+    Compiler::new()
+        .set_optimization_level(1)
+        .set_debug_level(1)
+        .set_disabled_builtins(crate::portable_math::DISABLED_BUILTINS)
 }
 
 /// The id of [`compiler`]'s options, stored with packaged bytecode (ADR-0037).
 /// A packaged game refuses bytecode compiled with another id, so this changes
 /// whenever the options do.
-pub const COMPILER_ID: &str = "o1d1";
+pub const COMPILER_ID: &str = "o1d1-m";
 
 /// The version of the Luau the engine links, such as `"0.740"`, stored with
 /// packaged bytecode (ADR-0037). `"unknown"` when mlua was built without it,
@@ -150,9 +154,10 @@ mod tests {
         let expected = Compiler::new()
             .set_optimization_level(1)
             .set_debug_level(1)
+            .set_disabled_builtins(crate::portable_math::DISABLED_BUILTINS)
             .compile(probe)
             .unwrap();
-        assert_eq!(COMPILER_ID, "o1d1");
+        assert_eq!(COMPILER_ID, "o1d1-m");
         assert_eq!(compile_bytecode(probe, "scripts/p.luau").unwrap(), expected);
     }
 

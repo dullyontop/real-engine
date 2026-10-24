@@ -1,5 +1,5 @@
-//! `terrain.heightfield`, `terrain.island_mask`, `terrain.mesh` and
-//! `terrain.water_plane`.
+//! `terrain.heightfield`, `terrain.island_mask`, `terrain.mesh`,
+//! `terrain.chunks` and `terrain.water_plane`.
 
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use re_reflect::Value;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
+use super::{Migration, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
 use crate::value::{
     DerivedAsset, FragItem, Fragment, MeshValue, Output, PortType, collider_name, derived_name,
 };
@@ -285,11 +285,27 @@ impl Params for TerrainMeshParams {}
 
 fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, String> {
     let field = ctx.need_field("field")?;
-    let hf = &field.0;
+    // Streamed (version 2), the entity sits at the window's corner and the
+    // mesh and collider are local to it, so both keep their precision
+    // kilometres out (ADR-0042's floating origin). Version 1 stays in world
+    // space.
+    let (hf, transform) = match ctx.domain {
+        Some(_) if ctx.version >= 2 => {
+            let mut local = field.0.clone();
+            let corner = Vec3::new(local.offset.x, 0.0, local.offset.z);
+            local.offset -= corner;
+            (
+                local,
+                vec![("translation".to_string(), Value::Vec3(corner))],
+            )
+        }
+        _ => (field.0.clone(), Vec::new()),
+    };
+    let hf = &hf;
     let mesh = Arc::new(hf.to_mesh());
     let mesh_name = derived_name(&ctx.key);
     let mut components = vec![
-        ("Transform".to_string(), Vec::new()),
+        ("Transform".to_string(), transform),
         (
             "MeshRef".to_string(),
             vec![("asset".to_string(), Value::Str(mesh_name.clone()))],
@@ -323,6 +339,59 @@ fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, S
         }],
         assets,
     })))
+}
+
+/// Parameters of `terrain.chunks`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct ChunksParams {
+    /// A material file (`materials/grass.material.json`), or empty.
+    pub material: String,
+    /// The coarsest level of detail (0 to 8): root tiles are 64 × 2^max_level
+    /// samples of the field's spacing.
+    pub max_level: u32,
+    /// The entity's name when the graph is not streamed.
+    pub name: String,
+}
+
+impl Default for ChunksParams {
+    fn default() -> Self {
+        ChunksParams {
+            material: String::new(),
+            max_level: 5,
+            name: "Terrain".into(),
+        }
+    }
+}
+
+impl Params for ChunksParams {
+    fn validate(&self) -> Result<(), String> {
+        if self.max_level > 8 {
+            return Err(format!(
+                "`max_level` must be 0 to 8, got {}",
+                self.max_level
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// `terrain.chunks`: in a streamed window it adds nothing, because world
+/// streaming draws the field as level-of-detail chunks and adds collision
+/// chunks near the focuses (ADR-0042). Not streamed, it is one mesh, as
+/// `terrain.mesh` without a collider.
+fn terrain_chunks(ctx: &super::NodeCtx, p: &ChunksParams) -> Result<Output, String> {
+    if ctx.domain.is_some() {
+        return Ok(Output::Fragment(Arc::new(Fragment::default())));
+    }
+    terrain_mesh(
+        ctx,
+        &TerrainMeshParams {
+            collider: false,
+            material: p.material.clone(),
+            name: p.name.clone(),
+        },
+    )
 }
 
 /// Parameters of `terrain.water_plane`.
@@ -425,9 +494,14 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         NodeSpec {
             kind: "terrain.mesh",
-            version: 1,
+            version: 2,
             oldest: 1,
-            migrations: &[],
+            migrations: &[Migration {
+                from: 1,
+                note: "streamed cells put the entity at the window's corner, with the mesh and collider local to it",
+                changes_output: true,
+                params: |_| Ok(()),
+            }],
             streaming: super::Streaming::Cell,
             doc: "Turns a field into a terrain entity: a derived mesh, an optional material and an optional heightfield collider.",
             inputs: &[PortDef {
@@ -442,6 +516,27 @@ pub(super) fn register(r: &mut NodeRegistry) {
             file_params: &[],
         },
         terrain_mesh,
+    ));
+    r.register(NodeDef::new(
+        NodeSpec {
+            kind: "terrain.chunks",
+            version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: super::Streaming::Cell,
+            doc: "The terrain of a streamed world: world streaming draws its field as level-of-detail chunks (64 × 64 cells each, stitched to coarser neighbours) and gives the chunks near each focus heightfield colliders. Not streamed, it is one mesh with the material.",
+            inputs: &[PortDef {
+                name: "field",
+                accepts: FIELD,
+                required: true,
+                doc: "The heights, in metres.",
+            }],
+            variadic: None,
+            output: PortType::Fragment,
+            uses_seed: false,
+            file_params: &[],
+        },
+        terrain_chunks,
     ));
     r.register(NodeDef::new(
         NodeSpec {

@@ -11,6 +11,7 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+libm.workspace = true
 re_core.workspace = true
 re_physics.workspace = true
 re_types.workspace = true

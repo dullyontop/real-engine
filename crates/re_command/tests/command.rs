@@ -369,7 +369,7 @@ fn procedural_sources_overrides_and_regeneration() {
         .unwrap_err();
     assert_eq!(
         err.to_string(),
-        r#"command 0: "grid/pillar_0_1" is generated: change its source's generator parameters instead"#
+        r#"command 0: "grid/pillar_0_1" is generated: move it within its source's output with `proc.move`"#
     );
     assert_eq!(err.error.code().to_string(), "RE2003");
     for op in [
@@ -453,6 +453,9 @@ fn despawn_of_generated_entity_records_deletion_override() {
             value: None,
             deleted: Some(true),
             index: None,
+            moved: None,
+            replaced: None,
+            insert: None,
         }]),
     )
     .unwrap();
@@ -801,6 +804,9 @@ fn undo_restores_override_order() {
         value: None,
         deleted,
         index: None,
+        moved: None,
+        replaced: None,
+        insert: None,
     };
     h.execute(
         &mut w,
@@ -929,4 +935,202 @@ fn typed_output_commands_carry_an_output_schema() {
     let mut s = EditState::new();
     let out = reg.dispatch(&mut s, "typed", json!({}), false, &AllowAll);
     assert_eq!(out.data, json!({ "count": 2 }));
+}
+
+/// A drag's live edits share a coalescing key: they are one undo step, the
+/// log still has each, and a seal, another transaction or an undo ends the
+/// run.
+#[test]
+fn coalescing_transactions_are_one_undo_step() {
+    let (mut w, mut h) = sample();
+    let s0 = scene_json(&mut w);
+    let drag =
+        |v: i64| tx(vec![set("lamp", "PointLight", "intensity", Doc::Int(v))]).coalescing("gizmo");
+    let logged = h.log().len();
+    for v in [100, 200, 300] {
+        h.execute(&mut w, drag(v)).unwrap();
+    }
+    assert_eq!(h.log().len(), logged + 3, "every edit is logged");
+    // Same fields: the step keeps the last value and the first inverse.
+    assert_eq!(h.peek_undo().unwrap().len(), 1);
+    let s3 = scene_json(&mut w);
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s0, "one undo reverts the whole drag");
+    assert!(h.redo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s3);
+
+    // After a redo the step is sealed: a new drag is a new step.
+    h.execute(&mut w, drag(400)).unwrap();
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s3);
+
+    // A seal ends the run.
+    h.execute(&mut w, drag(500)).unwrap();
+    h.seal();
+    h.execute(&mut w, drag(600)).unwrap();
+    assert!(h.undo(&mut w).unwrap());
+    let s5 = scene_json(&mut w);
+    assert!(s5.contains("500"), "{s5}");
+
+    // Another key, or another origin, starts a new step.
+    h.execute(&mut w, drag(700)).unwrap();
+    h.execute(
+        &mut w,
+        tx(vec![set("lamp", "PointLight", "intensity", Doc::Int(800))]).coalescing("other"),
+    )
+    .unwrap();
+    assert!(h.undo(&mut w).unwrap());
+    assert!(scene_json(&mut w).contains("700"));
+    let mut by_user = Transaction::new(
+        "test",
+        Origin::User,
+        vec![set("lamp", "PointLight", "intensity", Doc::Int(900))],
+    );
+    by_user.coalesce = Some("gizmo".into());
+    h.execute(&mut w, by_user).unwrap();
+    assert!(h.undo(&mut w).unwrap());
+    assert!(scene_json(&mut w).contains("700"));
+
+    // Different operations in one run are kept in full and undone together.
+    h.seal();
+    let before = scene_json(&mut w);
+    h.execute(&mut w, drag(1000)).unwrap();
+    h.execute(
+        &mut w,
+        tx(vec![Op::Rename {
+            id: "crate".into(),
+            name: "Box".into(),
+        }])
+        .coalescing("gizmo"),
+    )
+    .unwrap();
+    assert_eq!(h.peek_undo().unwrap().len(), 2);
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), before);
+}
+
+/// A coalesced drag on a generated entity records overrides as it goes; when
+/// it starts setting a second field, that field's override restore joins
+/// the step, so one undo removes every override the drag made.
+#[test]
+fn a_coalesced_drag_on_a_generated_entity_undoes_its_overrides() {
+    let (mut w, mut h) = sample();
+    h.execute(&mut w, tx(vec![spawn_op(grid_doc(2, 3))]))
+        .unwrap();
+    assert!(w.update().warnings().is_empty());
+    let before = scene_json(&mut w);
+    let id = "grid/pillar_0_0";
+    let colour = |r: f32| {
+        set(
+            id,
+            "Primitive",
+            "color",
+            Doc::List(vec![
+                Doc::F32(r),
+                Doc::F32(0.0),
+                Doc::F32(0.0),
+                Doc::F32(1.0),
+            ]),
+        )
+    };
+    let moved = |x: f32| {
+        set(
+            id,
+            "Transform",
+            "translation",
+            Doc::List(vec![Doc::F32(x), Doc::F32(0.0), Doc::F32(0.0)]),
+        )
+    };
+    let key = "gizmo:pillar:1";
+    h.execute(&mut w, tx(vec![colour(0.5)]).coalescing(key))
+        .unwrap();
+    h.execute(&mut w, tx(vec![colour(0.7), moved(2.0)]).coalescing(key))
+        .unwrap();
+    h.execute(&mut w, tx(vec![colour(0.9), moved(3.0)]).coalescing(key))
+        .unwrap();
+    assert_eq!(overrides_of(&w, "grid").len(), 2, "one override per field");
+    let text = scene_json(&mut w);
+    assert!(text.contains("\"translation\""), "{text}");
+    assert!(h.undo(&mut w).unwrap());
+    assert!(
+        overrides_of(&w, "grid").is_empty(),
+        "{:?}",
+        overrides_of(&w, "grid")
+    );
+    assert_eq!(scene_json(&mut w), before);
+}
+
+/// A drag whose edits set a growing set of fields (a gizmo drag that starts
+/// changing a second field) stays one operation per field: each keeps its
+/// latest value and its first inverse, and one undo restores every field.
+#[test]
+fn a_coalesced_run_merges_set_fields_by_field() {
+    let (mut w, mut h) = sample();
+    let s0 = scene_json(&mut w);
+    let intensity = |v: i64| set("lamp", "PointLight", "intensity", Doc::Int(v));
+    let range = |v: i64| set("lamp", "PointLight", "range", Doc::Int(v));
+    h.execute(&mut w, tx(vec![intensity(100)]).coalescing("gizmo:lamp:1"))
+        .unwrap();
+    h.execute(
+        &mut w,
+        tx(vec![intensity(200), range(5)]).coalescing("gizmo:lamp:1"),
+    )
+    .unwrap();
+    h.execute(
+        &mut w,
+        tx(vec![intensity(300), range(6)]).coalescing("gizmo:lamp:1"),
+    )
+    .unwrap();
+    assert_eq!(h.undo_key(), Some("gizmo:lamp:1"));
+    assert_eq!(h.peek_undo().unwrap().len(), 2, "{:?}", h.peek_undo());
+    let s3 = scene_json(&mut w);
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s0, "one undo restores both fields");
+    assert_eq!(h.undo_key(), None);
+    assert!(h.redo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s3);
+}
+
+/// `set_note` sets, replaces and removes an entity's note; each undoes
+/// exactly, a despawn's undo brings the note back, and a generated entity
+/// refuses one (it is not saved, so its note would be lost).
+#[test]
+fn set_note_round_trips_through_undo() {
+    let (mut w, mut h) = sample();
+    let s0 = scene_json(&mut w);
+    let note = |text: &str| Op::SetNote {
+        id: "crate".into(),
+        note: text.into(),
+    };
+    h.execute(&mut w, tx(vec![note("Heavy: two people lift it.")]))
+        .unwrap();
+    let s1 = scene_json(&mut w);
+    assert!(
+        s1.contains("\"note\": \"Heavy: two people lift it.\""),
+        "{s1}"
+    );
+    h.execute(&mut w, tx(vec![Op::Despawn { id: "crate".into() }]))
+        .unwrap();
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s1, "the despawn's undo keeps the note");
+    h.execute(&mut w, tx(vec![note("")])).unwrap();
+    assert_eq!(scene_json(&mut w), s0, "an empty note removes it");
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s1);
+    assert!(h.undo(&mut w).unwrap());
+    assert_eq!(scene_json(&mut w), s0);
+
+    h.execute(&mut w, tx(vec![spawn_op(grid_doc(2, 2))]))
+        .unwrap();
+    w.update();
+    let err = h
+        .execute(
+            &mut w,
+            tx(vec![Op::SetNote {
+                id: "grid/pillar_0_0".into(),
+                note: "x".into(),
+            }]),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("generated"), "{err}");
 }

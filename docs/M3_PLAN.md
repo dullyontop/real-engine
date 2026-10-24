@@ -56,7 +56,7 @@ The M1 and M2 ownership rules carry over, with these changes:
   - `examples/valley/` to WP28;
   - `crates/re_web/` (new), `crates/re_app/src/web/` (new), `crates/re_cli/src/build/web.rs` (inside WP19's `build/`, WP19 reviews), `tools/web-test/` (new) and `tools/ci/wasi-sdk.sh` (new) to WP29;
   - `re_net` (new) and `re_compat/src/net/` (from WP27) to WP30.
-- `re_app` and `re_cli` are shared. WP19 owns `re_app/src/package.rs` and `re_cli/src/build/`; every other change to them, such as WP24's `real migrate-graph` and WP26's new `real new` templates, goes through a small PR that the maintainer reviews, as M2 did for `re_compat`'s shared files.
+- `re_app` and `re_cli` are shared. WP19 owns `re_app/src/package/` and `re_cli/src/build/`; every other change to them, such as WP24's `real migrate-graph` and WP26's new `real new` templates, goes through a small PR that the maintainer reviews, as M2 did for `re_compat`'s shared files.
 - **Planned edits across owners.** Each is a small PR in the owner's paths, reviewed by the owner:
   - WP21's GPU skinning path in `re_render` (WP20 reviews);
   - WP24's generator versions, the losing-`Procedural` rule and structural overrides in `re_scene` and `re_command` (the maintainer reviews; ADR-0043, section 7);
@@ -83,7 +83,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | Contract | Defined in | Defined by | Frozen at | Consumed by |
 |---|---|---|---|---|
 | D2 harness: `cargo xtask d2` input (project, replay, frames) and its JSON report (`state_hash` per platform and frame) | `tools/xtask/src/d2.rs` | WP18 | WP18 PR "d2" | every WP that changes simulation |
-| Package layout: the archive format, its index, the runtime-only binary's lookup order (archive, then project directory) and `real build` options | `crates/re_app/src/package.rs`, `crates/re_core/src/files.rs` (`ProjectFiles`, maintainer-reviewed, frozen at WP19 PR "files" except `writable()`, which returns a `WritableDir` and freezes at WP29 PR "portable", ADR-0049 §6), `docs/ARCHITECTURE.md` §8 | WP19 | WP19 PR "archive" | WP23, WP28 |
+| Package layout: the archive format, its index, the runtime-only binary's lookup order (archive, then project directory) and `real build` options | `crates/re_app/src/package/`, `crates/re_core/src/files.rs` (`ProjectFiles`, maintainer-reviewed, frozen at WP19 PR "files" (#95), `writable()` and its `WritableDir` included, in the ADR-0049 §6 shape; WP29 PR "portable" had merged), `docs/ARCHITECTURE.md` §8 | WP19 | WP19 PR "archive" | WP23, WP28 |
 | Post-processing settings in `RenderSnapshot` (exposure, tone mapping, bloom, colour grading) and the cascade settings of the sun | `crates/re_types/src/render.rs` | WP20 | WP20 PR "post" | WP27 (compat effects), WP28 |
 | Skins: `SkinData` (joints, inverse bind matrices, per-vertex weights) and the skinned draw item | `crates/re_types/src/render.rs` | WP21 | WP21 PR "skins" | WP20 (skinning path), WP22 (ragdolls), WP27, WP28 |
 | Animation graphs: `AnimGraph` (states, transitions, blend nodes) as plain data, and its parameters | `crates/re_types/src/anim.rs` | WP21 | WP21 PR "graphs" | WP25 (editing), WP28 |
@@ -133,7 +133,7 @@ cargo xtask d2 --project examples/plaza --json
 
 **Goal.** `real build` turns a project into a standalone game: a runtime-only binary, a packed asset archive and the platform's bundle, with no tooling linked.
 
-**Owned paths:** `crates/re_cli/src/build/`, `crates/re_app/src/package.rs`, `tests/build/` under `re_cli`.
+**Owned paths:** `crates/re_cli/src/build/`, `crates/re_app/src/package/` (was `package.rs` until PR "archive"), `tests/build/` under `re_cli`.
 
 **Starts after:** ADR-0037 is accepted. It needs WP18 PR "blocking" to test the bundles on all three platforms.
 
@@ -215,6 +215,8 @@ cargo test --locked -p re_anim
 
 **Definition of done:** both PRs merged.
 
+**Progress (2026-10-24).** Done: "skins" (#97, with the `SkinnedMesh` component in #101) and "graphs" (#145: `Animator`, `BoneAttachment`, the `anim` library and the `animgraph.*` commands; ADR-0039's amendment).
+
 ---
 
 ## WP22: Vehicles, ragdolls and audio effects
@@ -241,6 +243,8 @@ cargo test --locked -p re_audio
 - Effect graph tests compare rendered buffers against reference buffers.
 
 **Definition of done:** the three PRs merged.
+
+**Progress (2026-10-24).** Done: "vehicles" (#94), "audio" (#115) and "ragdolls" (#134), with review follow-ups in #143 (snapshots restore ragdoll modes and targets, and `state_hash` covers ragdolls).
 
 ---
 
@@ -298,6 +302,8 @@ cargo test --locked -p re_geom
 - A Luau node and the same node in Rust give identical output on the test graphs.
 
 **Definition of done:** the five PRs merged.
+
+**Progress (2026-10-24).** Done: "versioning" (#93), "bake" (#105), "luau" (#125), "overrides" (#136) and "booleans and roads" (#142).
 
 ---
 
@@ -383,6 +389,8 @@ real verify --project examples/plaza --json
 
 **Definition of done:** the six PRs merged; `verify-plaza` stays green.
 
+**Progress (2026-10-24).** Merged: "persistence" (#96), "reload" (#107), "place files" (#112), "incremental render" (#127), "saved data" (#131: compat data writes through `writable(Data)`, so browser saves last across page loads, which closes the gap WP29's runtime PR named) and "surfaces" (#137: `SurfaceGui` and `ViewportFrame` are drawn through render-to-texture). "skins and effects" (#153: skinned `MeshPart`s, and bloom, blur and sun rays). Outside the six, "debug hooks" (#146) registers compat scripts with the debugger, and #154 attaches the compat `server` and `client` contexts to the app's debugger (ADR-0045's amendments). WP27 is complete.
+
 ---
 
 ## WP28: The valley example
@@ -456,6 +464,13 @@ real build --project examples/island --out out/island-web --target web
 - The private samples run in the web build and play their scripted checks (private sample checks: passing).
 - `cargo xtask check-graph` passes for `re_web`: no tooling crate and no tokio.
 
+**Progress (2026-10-24).** "portable" (#89), "toolchain" (#99), "runtime" (#119) and "build" (#132) have merged, with these changes to the plan:
+- The panic code is `RE0622` (not `RE0623`), and `RE0621` is the canvas failing; `RE0623`–`RE0625` stay free (ADR-0049's amendment).
+- `cargo xtask web-test` and WebGL2 moved from "runtime" to "build". The static server stays in Node (`tools/web-test/serve.mjs`), not xtask.
+- `RE0975` waits for WP30's server role, since nothing triggers it yet. The notices file in the web folder arrives with WP19 PR "bundles".
+- Saved data on the web is persisted since WP27's "saved data" (#131).
+- Release CI publishing the prebuilt web runtime: `.github/workflows/release.yml` builds it on a `v*` tag and attaches `real-web-runtime-<version>.tar.gz` (the runtime files) to the release, for `real build --target web --runtime DIR`. Desktop runtimes are not published yet.
+
 **Definition of done:** PRs "portable", "toolchain", "runtime" and "build" merged; `build-web` and `web` CI jobs required and green; ADR-0049 Accepted with the full runtime's size and the private-sample results recorded under `research/m3/wp29/`.
 
 ---
@@ -471,7 +486,7 @@ real build --project examples/island --out out/island-web --target web
 **Build, PR "transport":**
 - The crate `re_net` (ADR-0050 §1): a non-blocking UDP endpoint polled from the frame, packets of at most 1,200 bytes with a versioned header, acks, an unreliable and a reliable ordered channel with fragmentation and resend, the Hello/Challenge/Response/Accept handshake with Deny reasons, keepalive and timeout, a token bucket per connection and a backlog read for backpressure.
 - The transport seam with UDP, an in-memory pair and a seeded link conditioner (loss, delay, duplication, reordering).
-- Codes `RE8900`–`RE8907` with explain pages; `re_net` added to ARCHITECTURE §2 as a subsystem crate (maintainer).
+- Codes `RE8900`–`RE8908` with explain pages (`RE8908`: a reliable send past `max_backlog` is refused, ADR-0050's amendment); `re_net` added to ARCHITECTURE §2 as a subsystem crate (maintainer).
 - Tests: delivery in order and intact under 0 to 30 % loss, reordering and duplication through the conditioner; a seeded fuzz of malformed and truncated packets that must never panic or allocate without bound; version mismatch, server full, handshake timeout and connection timeout; and the spike's two-process loopback run as an integration test.
 
 **Build, PR "wire":**

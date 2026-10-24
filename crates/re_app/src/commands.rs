@@ -319,4 +319,5 @@ pub fn register(registry: &mut CommandRegistry<App>) {
             })
         },
     );
+    crate::animgraph::register(registry);
 }

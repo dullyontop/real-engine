@@ -2,9 +2,9 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1785,
-    "partial": 232,
-    "stub-error": 43,
+    "implemented": 1816,
+    "partial": 234,
+    "stub-error": 50,
     "missing": 3
   },
   "classes": [
@@ -999,25 +999,22 @@
       "name": "BloomEffect",
       "superclass": "PostEffect",
       "creatable": true,
-      "status": "partial",
+      "status": "implemented",
       "members": [
         {
           "name": "Intensity",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
         },
         {
           "name": "Size",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
         },
         {
           "name": "Threshold",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
         }
       ]
     },
@@ -1025,13 +1022,25 @@
       "name": "BlurEffect",
       "superclass": "PostEffect",
       "creatable": true,
-      "status": "partial",
+      "status": "implemented",
       "members": [
         {
           "name": "Size",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Bone",
+      "superclass": "Attachment",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Transform",
+          "kind": "property",
+          "status": "implemented"
         }
       ]
     },
@@ -1445,6 +1454,38 @@
           "name": "MaxItems",
           "kind": "property",
           "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "DepthOfFieldEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "FarIntensity",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "FocusDistance",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "InFocusRadius",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "NearIntensity",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
         }
       ]
     },
@@ -3314,6 +3355,25 @@
       ]
     },
     {
+      "name": "MeshPart",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "MeshId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextureID",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn. The part's Color and Material are used."
+        }
+      ]
+    },
+    {
       "name": "MessagingService",
       "superclass": "Instance",
       "service": true,
@@ -5008,19 +5068,17 @@
       "name": "SunRaysEffect",
       "superclass": "PostEffect",
       "creatable": true,
-      "status": "partial",
+      "status": "implemented",
       "members": [
         {
           "name": "Intensity",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
         },
         {
           "name": "Spread",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
         }
       ]
     },
@@ -5028,8 +5086,81 @@
       "name": "SurfaceGui",
       "superclass": "LayerCollector",
       "creatable": true,
-      "status": "stub-error",
-      "members": []
+      "status": "partial",
+      "members": [
+        {
+          "name": "Active",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Adornee",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "AlwaysOnTop",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Brightness",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CanvasSize",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ClipsDescendants",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Face",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightInfluence",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "MaxDistance",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "PixelsPerStud",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Shape",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; the canvas is always flat."
+        },
+        {
+          "name": "SizingMode",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ToolPunchThroughDistance",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored only: there are no tools."
+        },
+        {
+          "name": "ZOffset",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "SurfaceLight",
@@ -6333,8 +6464,39 @@
       "name": "ViewportFrame",
       "superclass": "GuiObject",
       "creatable": true,
-      "status": "stub-error",
-      "members": []
+      "status": "partial",
+      "members": [
+        {
+          "name": "Ambient",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "CurrentCamera",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ImageColor3",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "ImageTransparency",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "LightDirection",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
     },
     {
       "name": "WedgePart",
@@ -6404,6 +6566,59 @@
           "name": "Terrain",
           "kind": "property",
           "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "WorldModel",
+      "superclass": "WorldRoot",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "Blockcast",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "BulkMoveTo",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "FindPartOnRay",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetPartBoundsInBox",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetPartBoundsInRadius",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "GetPartsInPart",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "Raycast",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "Shapecast",
+          "kind": "method",
+          "status": "stub-error"
+        },
+        {
+          "name": "Spherecast",
+          "kind": "method",
+          "status": "stub-error"
         }
       ]
     },

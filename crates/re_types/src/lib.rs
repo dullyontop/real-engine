@@ -19,7 +19,7 @@
 //! | [`ids`] | [`EntityId`] |
 //! | [`render`] | [`RenderSnapshot`], [`Camera`], [`Light`], [`DrawItem`], [`SkinnedDrawItem`], [`DrawFlags`], [`DebugLine`], [`MeshHandle`], [`MaterialHandle`], [`TextureHandle`], [`TextureRef`], [`MaterialDesc`], [`TextureData`] |
 //! | [`mesh`] | [`MeshData`], [`Vertex`], [`Aabb`], [`SkinWeights`] |
-//! | [`anim`] | [`ClipData`], [`TargetChannels`], [`Channel`], [`SkinData`], [`JointDesc`], [`Trs`] |
+//! | [`anim`] | [`ClipData`], [`TargetChannels`], [`Channel`], [`SkinData`], [`JointDesc`], [`Trs`], [`AnimGraph`] |
 //! | [`physics`] | [`PhysicsCmd`], [`BodyDesc`], [`BodyKind`], [`ShapeDesc`], [`Layer`], [`GroupMask`], [`BodyPose`], [`ContactEvent`], [`RayHit`], [`CharacterDesc`], [`CharacterState`], [`ConstraintDesc`], [`ConstraintKind`], [`VehicleDesc`], [`VehicleKind`], [`WheelDesc`], [`WheelTester`], [`EngineDesc`], [`TransmissionDesc`], [`VehicleInput`], [`VehicleState`], [`WheelState`], [`WheelPose`] |
 //! | [`audio`] | [`AudioCmd`], [`AudioGraphDesc`], [`EffectDesc`], [`EffectParam`], [`BusLevel`] |
 //! | [`input`] | [`ActionFrame`], [`ButtonState`], [`RawInputFrame`], [`InputEvent`], [`InputKind`], [`InputPhase`], [`MouseLock`] |
@@ -44,7 +44,9 @@ pub mod physics;
 pub mod render;
 pub mod replay;
 
-pub use anim::{Channel, ClipData, Interpolation, JointDesc, SkinData, TargetChannels, Trs};
+pub use anim::{
+    AnimGraph, Channel, ClipData, Interpolation, JointDesc, SkinData, TargetChannels, Trs,
+};
 pub use audio::{AudioCmd, AudioGraphDesc, BusLevel, EffectDesc, EffectParam};
 pub use graph::{EdgeDoc, GraphDoc, GraphDocError, NodeDoc};
 pub use host::{HostError, HostResult, HostServices};
@@ -55,9 +57,10 @@ pub use input::{
 pub use mesh::{Aabb, MeshData, SkinWeights, Vertex};
 pub use physics::{
     BodyDesc, BodyKind, BodyPose, CharacterDesc, CharacterState, ConstraintDesc, ConstraintKind,
-    ContactEvent, EngineDesc, GroundState, GroupMask, Layer, PhysicsCmd, RayHit, ShapeDesc,
-    TransmissionDesc, VehicleDesc, VehicleInput, VehicleKind, VehicleState, WheelDesc, WheelPose,
-    WheelState, WheelTester,
+    ContactEvent, EngineDesc, GroundState, GroupMask, HeightfieldPrecision, JointPose, Layer,
+    PhysicsCmd, RagdollBlend, RagdollConstraint, RagdollDesc, RagdollMode, RagdollPartDesc,
+    RagdollSkeleton, RagdollState, RayHit, ShapeDesc, SkeletonJoint, TransmissionDesc, VehicleDesc,
+    VehicleInput, VehicleKind, VehicleState, WheelDesc, WheelPose, WheelState, WheelTester,
 };
 pub use render::{
     AlphaMode, Camera, DebugLine, DrawFlags, DrawItem, Light, LightKind, MaterialDesc,

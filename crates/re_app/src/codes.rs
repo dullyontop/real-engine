@@ -108,6 +108,11 @@ pub const PLAY_STEP_FAILED: Code = Code::new("RE0527");
 /// gone or invalid (ADR-0044).
 pub const OPEN_DOC_CHANGED_ON_DISK: Code = Code::new("RE0528");
 
+/// A `Ragdoll` cannot be built on its skinned mesh: no joint has a humanoid
+/// name, a listed joint is missing, or the entity's scale is not uniform
+/// (ADR-0040).
+pub const RAGDOLL_UNAVAILABLE: Code = Code::new("RE0529");
+
 /// A game archive (`game.rpak`) cannot be read: not an archive, truncated, or
 /// its index is damaged (ADR-0037).
 pub const PACKAGE_UNREADABLE: Code = Code::new("RE0600");

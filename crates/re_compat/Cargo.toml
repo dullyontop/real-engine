@@ -25,6 +25,7 @@ re_anim.workspace = true
 re_physics.workspace = true
 mlua.workspace = true
 glam.workspace = true
+libm.workspace = true
 indexmap.workspace = true
 serde.workspace = true
 postcard.workspace = true

@@ -7,8 +7,10 @@
 //! cargo xtask schemas [--check]  regenerate (or check) the JSON Schemas in schemas/
 //! cargo xtask coverage [--check] regenerate (or check) crates/re_compat/coverage.json
 //! cargo xtask members DIR      every implemented compat member is called from a fixture
-//! cargo xtask clippy-web       the wasm clippy settings are clippy.toml plus the clock bans
-//! cargo xtask check            all of the above except members, with `--check`
+//! cargo xtask clippy-web       the wasm clippy settings are clippy.toml plus the web-only bans
+//! cargo xtask web-test [--reported]  build the island and the plaza for the web and play them in Chromium
+//! cargo xtask check            all of the above except members, web-test and d2, with `--check`
+//! cargo xtask d2 ...           cross-machine determinism runs and comparison (ADR-0036)
 //! ```
 //!
 //! The alias lives in `.cargo/config.toml`. xtask links no engine crate: it reads
@@ -16,11 +18,13 @@
 
 mod clippy_web;
 mod coverage;
+mod d2;
 mod dupes;
 mod explain;
 mod graph;
 mod members;
 mod schemas;
+mod web_test;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -42,9 +46,18 @@ commands:
                      test fixture, from traces the tests wrote to DIR with
                      REAL_COMPAT_MEMBER_TRACE=DIR
   clippy-web         check that tools/ci/clippy-web/clippy.toml is clippy.toml plus
-                     the two clock entries (ADR-0049)
+                     the web-only entries (ADR-0049)
+  web-test [--reported]
+                     build the island and the plaza with `real build --target web`
+                     and play their replays in headless Chromium (ADR-0049 §8);
+                     --reported prints state_hash differences without failing
   check              run check-graph, dupes, explain, schemas --check,
                      coverage --check and clippy-web
+  d2 --project P [--project P]... [--replay R]... [--checkpoints K] [--json] [--out FILE]
+                     run each replay with `real run --headless` and report the
+                     state hash every K frames (default 60) on this platform
+  d2 compare REPORT... [--require linux-x86_64,windows-x86_64]
+                     compare d2 reports; fail when required platforms differ
 ";
 
 fn main() -> ExitCode {
@@ -65,7 +78,10 @@ fn main() -> ExitCode {
         ["coverage", "--check"] => coverage::run(&root, true),
         ["members", dir] => members::run(&root, Path::new(dir)),
         ["clippy-web"] => clippy_web::run(&root),
+        ["web-test"] => web_test::run(&root, false),
+        ["web-test", "--reported"] => web_test::run(&root, true),
         ["check"] => check_all(&root),
+        ["d2", rest @ ..] => d2::run(&root, rest),
         ["help" | "--help" | "-h"] => {
             print!("{USAGE}");
             return ExitCode::SUCCESS;

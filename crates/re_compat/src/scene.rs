@@ -109,6 +109,7 @@ pub fn instance_doc(
     Ok(EntityDoc {
         id: id.to_string(),
         name: name.to_string(),
+        note: String::new(),
         parent: parent.map(str::to_string),
         components,
         overrides: Vec::new(),
@@ -316,6 +317,9 @@ pub struct CompatConfig {
     /// What a networked game lets clients do (`[compat.net]`, ADR-0050 §2).
     #[serde(default, skip_serializing_if = "crate::net::NetSettings::is_default")]
     pub net: crate::net::NetSettings,
+    /// How surfaces and viewports are drawn (`[compat.gui]`, ADR-0048).
+    #[serde(default, skip_serializing_if = "GuiConfig::is_default")]
+    pub gui: GuiConfig,
 }
 
 fn one_player() -> u32 {
@@ -335,6 +339,7 @@ impl Default for CompatConfig {
             players: one_player(),
             data: DataConfig::default(),
             net: Default::default(),
+            gui: GuiConfig::default(),
         }
     }
 }
@@ -429,6 +434,30 @@ impl DataConfig {
     /// True for the defaults, which `real.toml` leaves out.
     pub fn is_default(&self) -> bool {
         *self == DataConfig::default()
+    }
+}
+
+/// The `[compat.gui]` section.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct GuiConfig {
+    /// `SurfaceGui` textures painted again per frame; changed surfaces over
+    /// it keep last frame's texture until their turn.
+    pub surface_redraws_per_frame: u32,
+}
+
+impl Default for GuiConfig {
+    fn default() -> Self {
+        GuiConfig {
+            surface_redraws_per_frame: 8,
+        }
+    }
+}
+
+impl GuiConfig {
+    /// True for the defaults, which `real.toml` leaves out.
+    pub fn is_default(&self) -> bool {
+        *self == GuiConfig::default()
     }
 }
 

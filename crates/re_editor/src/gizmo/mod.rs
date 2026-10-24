@@ -1,11 +1,14 @@
 //! Translate, rotate and scale gizmos in the viewport (ADR-0044).
 //!
 //! The gizmo works on the selected entity's world transform. While a handle
-//! is dragged only the gizmo preview moves; when the drag ends the editor
-//! sends one `scene.apply` transaction of `set_field` ops on the entity's
-//! local `Transform` (converted through its parent), so a drag is one undo
-//! step and lands in the log like any edit. A generated entity's edit
-//! records an override, as every `set_field` on one does (ADR-0017).
+//! is dragged the entity moves with it: the editor sends a `scene.apply` of
+//! `set_field` ops on the entity's local `Transform` (converted through its
+//! parent) whenever the drag changed, at most every [`LIVE_INTERVAL`]
+//! seconds, and once more on release. Every one carries the drag's own
+//! `coalesce` key, so the history merges them and the whole drag is one undo
+//! step; each lands in the log like any edit. Escape puts the entity back
+//! (undoing the drag's step). A generated entity's edit records an
+//! override, as every `set_field` on one does (ADR-0017).
 //!
 //! The geometry, picking and drag maths are in the `math` module, without egui.
 
@@ -23,6 +26,10 @@ use math::{Drag, Frame, Screen};
 
 use crate::editor::{Action, command};
 
+/// The shortest time between two live edits of one drag, in seconds; every
+/// edit rewrites the scene file.
+pub(crate) const LIVE_INTERVAL: f64 = 0.05;
+
 /// The gizmo's state: its settings and the drag in progress.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Gizmo {
@@ -30,6 +37,8 @@ pub(crate) struct Gizmo {
     pub drag: Option<Active>,
     /// The handle under the cursor in the last frame.
     pub hovered: Option<Handle>,
+    /// Drags started so far; each drag's coalesce key is unique.
+    pub drags: u64,
 }
 
 /// A drag in progress on one entity.
@@ -47,6 +56,15 @@ pub(crate) struct Active {
     pub orientation: Orientation,
     /// The change so far.
     pub delta: Delta,
+    /// The key the drag's edits coalesce under.
+    pub key: String,
+    /// The change the last edit sent, and when (egui time), or `None`
+    /// before the first.
+    pub sent: Option<(Delta, f64)>,
+    /// The fields the drag has set so far (translation, rotation, scale);
+    /// once set, a field is sent with every later edit, so a handle dragged
+    /// back to its start puts that field back too.
+    pub fields: [bool; 3],
 }
 
 const AXIS_COLOURS: [Color32; 3] = [
@@ -74,8 +92,12 @@ fn transforms(world: &World, id: &str) -> Option<(Affine3A, Affine3A, (Vec3, Qua
 /// last drawn with.
 fn screen(app: &App, rect: egui::Rect) -> Option<Screen> {
     let cam = app.snapshot().camera;
+    // The snapshot is relative to the render origin; the gizmo works in the
+    // world.
+    let mut world = cam.world;
+    world.w_axis += app.render_origin().extend(0.0);
     Screen::new(
-        cam.world,
+        world,
         cam.fov_y_radians,
         cam.near,
         cam.far,
@@ -94,7 +116,7 @@ fn vec(p: Pos2) -> Vec2 {
 
 impl Gizmo {
     /// Draws the gizmo for the entity `selected` over the viewport at `rect`
-    /// and handles its drags. A finished drag pushes one `scene.apply`.
+    /// and handles its drags, pushing the edits that move the entity.
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -122,18 +144,24 @@ impl Gizmo {
         }
         let cursor = ui.input(|i| i.pointer.interact_pos()).map(vec);
 
-        // A drag in progress: follow the cursor, commit on release, cancel on Escape.
+        // A drag in progress: follow the cursor and move the entity, finish
+        // on release, put it back on Escape.
         if let Some(active) = &mut self.drag {
             if let Some(c) = cursor {
                 active.delta = active.drag.delta(&screen, c, &self.settings);
             }
+            let now = ui.input(|i| i.time);
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                self.drag = None;
-            } else if response.drag_stopped() || !ui.input(|i| i.pointer.primary_down()) {
                 let active = self.drag.take().expect("a drag");
-                if let Some(a) = commit(&active) {
-                    actions.push(a);
-                }
+                actions.extend(cancel(&active, app));
+            } else if response.drag_stopped() || !ui.input(|i| i.pointer.primary_down()) {
+                let mut active = self.drag.take().expect("a drag");
+                actions.extend(edit(&mut active, now));
+            } else if active
+                .sent
+                .is_none_or(|(_, at)| now - at >= LIVE_INTERVAL || now < at)
+            {
+                actions.extend(edit(active, now));
             }
         } else if let Some(c) = cursor {
             let frame = Frame::new(
@@ -153,6 +181,7 @@ impl Gizmo {
                     frame,
                     start,
                 };
+                self.drags += 1;
                 self.drag = Some(Active {
                     delta: drag.delta(&screen, c, &self.settings),
                     drag,
@@ -161,6 +190,9 @@ impl Gizmo {
                     parent,
                     local,
                     orientation: self.settings.orientation,
+                    key: format!("gizmo:{id}:{}", self.drags),
+                    sent: None,
+                    fields: [false; 3],
                 });
             }
         }
@@ -213,37 +245,30 @@ pub(crate) fn handle_point(
         .map(pos)
 }
 
-/// The `scene.apply` that makes a finished drag permanent, or `None` when it
-/// changed nothing.
-pub(crate) fn commit(active: &Active) -> Option<Action> {
-    if active.delta.is_identity() {
+/// The `scene.apply` that brings the entity to where the drag has it now,
+/// under the drag's coalesce key, or `None` when nothing changed since the
+/// last one (or, before the first, since the drag started).
+pub(crate) fn edit(active: &mut Active, now: f64) -> Option<Action> {
+    if active.sent.is_some_and(|(d, _)| d == active.delta)
+        || (active.sent.is_none() && active.delta.is_identity())
+    {
         return None;
     }
     let (s0, r0, t0) = active.local;
     let (s, r, t) = math::apply_local(active.local, &active.parent, &active.delta);
-    let mut ops = Vec::new();
-    let mut field = |name: &str, value: Json| {
-        ops.push(json!({
-            "op": "set_field",
-            "id": active.id,
-            "component": "Transform",
-            "field": name,
-            "value": value,
-        }));
-    };
-    let v3 = |v: Vec3| json!([v.x, v.y, v.z]);
-    if t.distance(t0) > 1e-6 {
-        field("translation", v3(t));
+    let changed = [
+        t.distance(t0) > 1e-6,
+        !math::same_rotation(r, r0),
+        s.distance(s0) > 1e-6,
+    ];
+    for (set, changed) in active.fields.iter_mut().zip(changed) {
+        *set |= changed;
     }
-    if !math::same_rotation(r, r0) {
-        field("rotation", json!(r.to_array()));
-    }
-    if s.distance(s0) > 1e-6 {
-        field("scale", v3(s));
-    }
+    let ops = transform_ops(&active.id, active.fields, (s, r, t));
     if ops.is_empty() {
         return None;
     }
+    active.sent = Some((active.delta, now));
     let verb = match active.drag.mode {
         GizmoMode::Translate => "move",
         GizmoMode::Rotate => "rotate",
@@ -251,8 +276,53 @@ pub(crate) fn commit(active: &Active) -> Option<Action> {
     };
     Some(command(
         "scene.apply",
-        json!({ "label": format!("{verb} {}", active.id), "ops": ops }),
+        json!({
+            "label": format!("{verb} {}", active.id),
+            "ops": ops,
+            "coalesce": active.key,
+        }),
     ))
+}
+
+/// What puts the entity back where a cancelled drag started: an undo of the
+/// drag's step while it is the latest, otherwise an edit setting the fields
+/// back (another writer's edit came between). `None` when the drag sent
+/// nothing.
+fn cancel(active: &Active, app: &App) -> Option<Action> {
+    active.sent?;
+    if app.history().undo_key() == Some(active.key.as_str()) {
+        return Some(command("undo", json!({})));
+    }
+    let ops = transform_ops(&active.id, active.fields, active.local);
+    Some(command(
+        "scene.apply",
+        json!({ "label": format!("cancel the drag of {}", active.id), "ops": ops }),
+    ))
+}
+
+/// `set_field` ops setting the `fields` (translation, rotation, scale) of
+/// entity `id`'s `Transform` to `local` (scale, rotation, translation).
+fn transform_ops(id: &str, fields: [bool; 3], (s, r, t): (Vec3, Quat, Vec3)) -> Vec<Json> {
+    let v3 = |v: Vec3| json!([v.x, v.y, v.z]);
+    let values = [
+        ("translation", v3(t)),
+        ("rotation", json!(r.to_array())),
+        ("scale", v3(s)),
+    ];
+    values
+        .into_iter()
+        .zip(fields)
+        .filter(|(_, set)| *set)
+        .map(|((name, value), _)| {
+            json!({
+                "op": "set_field",
+                "id": id,
+                "component": "Transform",
+                "field": name,
+                "value": value,
+            })
+        })
+        .collect()
 }
 
 fn draw(

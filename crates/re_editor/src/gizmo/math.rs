@@ -197,7 +197,7 @@ impl Frame {
         (0..=RING_SEGMENTS)
             .map(|k| {
                 let a = k as f32 / RING_SEGMENTS as f32 * std::f32::consts::TAU;
-                self.origin + (u * a.cos() + v * a.sin()) * r
+                self.origin + (u * libm::cosf(a) + v * libm::sinf(a)) * r
             })
             .collect()
     }
@@ -425,7 +425,7 @@ impl Drag {
                 }
                 // Counter-clockwise on screen (y is down) is a positive turn
                 // about an axis pointing at the camera.
-                let ccw = -v0.perp_dot(v1).atan2(v0.dot(v1));
+                let ccw = -libm::atan2f(v0.perp_dot(v1), v0.dot(v1));
                 let facing = normal.dot(screen.eye - f.origin);
                 let mut angle = if facing >= 0.0 { ccw } else { -ccw };
                 if settings.snap {
@@ -678,7 +678,7 @@ mod tests {
         }
         // Snapped to 15°: 50° becomes 45°.
         let a = 50f32.to_radians();
-        let to = o + Vec2::new(a.cos(), -a.sin()) * 90.0;
+        let to = o + Vec2::new(libm::cosf(a), -libm::sinf(a)) * 90.0;
         let snapped = GizmoSettings {
             snap: true,
             ..GizmoSettings::default()

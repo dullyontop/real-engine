@@ -202,6 +202,7 @@ impl Heightfield {
             samples: self.samples.clone(),
             spacing: self.spacing,
             offset: self.offset,
+            precision: None,
         }
     }
 }

@@ -12,8 +12,11 @@ publish.workspace = true
 re_core.workspace = true
 re_types.workspace = true
 glam.workspace = true
+libm.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+i_overlay.workspace = true
+earcut.workspace = true
 
 [dev-dependencies]
 blake3.workspace = true

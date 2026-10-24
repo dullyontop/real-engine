@@ -121,7 +121,7 @@ pub fn pile_hash(bodies: u32, steps: u32) -> Result<String, String> {
             ..BodyDesc::default()
         },
     }];
-    let side = (f64::from(bodies)).cbrt().ceil() as u32;
+    let side = libm::cbrt(f64::from(bodies)).ceil() as u32;
     for i in 0..bodies {
         let (x, y, z) = (i % side, i / (side * side), (i / side) % side);
         let shape = if i % 2 == 0 {

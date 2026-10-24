@@ -136,6 +136,7 @@ fn run(opened: Package, args: GameArgs) -> ExitCode {
         json: args.json,
         live: Live::Packaged,
         paced: false,
+        checkpoints: None,
     };
     let archive = opened.archive.clone();
     play(app, options, &mut || archive.take_case_matches())

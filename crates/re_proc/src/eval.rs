@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -31,7 +32,7 @@ use crate::cache::DiskCache;
 use crate::canon::{canonical_json, fragment_hash, hash64};
 use crate::codes;
 use crate::graph::ProcGraph;
-use crate::nodes::{Domain, NodeCtx, NodeDef, NodeRegistry, natural_cmp, sink_fragment};
+use crate::nodes::{Domain, NodeCtx, NodeDef, NodeRegistry, Streaming, natural_cmp, sink_fragment};
 use crate::value::{DerivedAsset, Fragment, Output, PortType};
 
 /// Where a node's output came from.
@@ -163,6 +164,13 @@ pub struct EvalOptions {
     /// The window to evaluate, for streamed evaluation (ADR-0042). Part of
     /// every node's key when set.
     pub domain: Option<Domain>,
+    /// Runs every node on the calling thread, one after another, with no
+    /// fan-out on the pool: a streaming job is serial (ADR-0042). The output
+    /// is the same either way.
+    pub serial: bool,
+    /// Stops before the next level of nodes once this flag is set (`RE4310`);
+    /// a streaming job's request was cancelled.
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 struct MemEntry {
@@ -370,6 +378,17 @@ impl Evaluator {
                 );
                 break 'levels;
             }
+            if opts
+                .cancel
+                .as_ref()
+                .is_some_and(|c| c.load(Ordering::Relaxed))
+            {
+                report.diagnostics.push(Diagnostic::error(
+                    codes::CANCELLED,
+                    format!("evaluation of `{}` was cancelled", graph.id),
+                ));
+                break 'levels;
+            }
             let mut jobs: Vec<Job> = Vec::new();
             for &index in &level {
                 let (id, node) = graph
@@ -439,14 +458,16 @@ impl Evaluator {
             }
             let results: Vec<Mutex<Option<JobResult>>> =
                 jobs.iter().map(|_| Mutex::new(None)).collect();
-            if jobs.len() == 1 {
-                *results[0].lock().unwrap_or_else(|e| e.into_inner()) =
-                    Some(self.run_job(graph, &jobs[0], pool, opts.domain));
+            if jobs.len() == 1 || opts.serial {
+                for (job, slot) in jobs.iter().zip(&results) {
+                    *slot.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(self.run_job(graph, job, pool, opts));
+                }
             } else if !jobs.is_empty() {
                 pool.scope(|s| {
                     for (job, slot) in jobs.iter().zip(&results) {
                         s.spawn(move |_| {
-                            let r = self.run_job(graph, job, pool, opts.domain);
+                            let r = self.run_job(graph, job, pool, opts);
                             *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
                         });
                     }
@@ -502,7 +523,7 @@ impl Evaluator {
         graph: &ProcGraph,
         job: &Job,
         pool: &TaskPool,
-        domain: Option<Domain>,
+        opts: &EvalOptions,
     ) -> JobResult {
         let start = Instant::now();
         let (id, node) = graph
@@ -527,16 +548,47 @@ impl Evaluator {
                 Err(e) => warnings.push(cache_warning(id, e)),
             }
         }
+        // A region node reads its inputs over its tiles' windows: the graph
+        // upstream of it, evaluated again with the tile as the domain.
+        let sub = (job.def.streaming == Streaming::Region && opts.domain.is_some())
+            .then(|| upstream_graph(graph, job.index));
+        let read = |port: &str, domain: Domain| -> Result<Arc<crate::value::Field>, String> {
+            let Some(sub) = &sub else {
+                return Err("not a streamed region node".into());
+            };
+            let from = graph
+                .inputs_of(job.index)
+                .into_iter()
+                .find(|(p, _)| *p == port)
+                .and_then(|(_, from)| graph.nodes.get_index(from))
+                .map(|(id, _)| id.clone())
+                .ok_or_else(|| format!("input `{port}` is not connected"))?;
+            let opts = EvalOptions {
+                domain: Some(domain),
+                ..opts.clone()
+            };
+            let e = self.evaluate(sub, &opts);
+            match e.output(&from) {
+                Some(Output::Field(f)) => Ok(f.clone()),
+                _ => Err(e
+                    .report
+                    .first_error()
+                    .map(|d| d.message.clone())
+                    .unwrap_or_else(|| format!("input `{port}` has no field"))),
+            }
+        };
         let ctx = NodeCtx {
             node_id: id,
             key: job.key,
             version: node.version,
-            domain,
+            domain: opts.domain,
+            serial: opts.serial,
             seed: job.seed,
             inputs: job.inputs.clone(),
             files: job.files.clone(),
             pool,
             logs: Default::default(),
+            upstream: sub.as_ref().map(|_| &read as &crate::nodes::Upstream),
         };
         let output = job.def.eval(&ctx, &job.params).map_err(|e| {
             Diagnostic::error(
@@ -888,4 +940,31 @@ pub fn to_scene_fragment(
 /// The hash (hex) of a scene fragment, as in [`EvalReport::fragment_hash`].
 pub fn fragment_hash_hex(fragment: &SceneFragment) -> String {
     fragment_hash(fragment).to_hex().to_string()
+}
+
+/// The part of `graph` that node `index` depends on: its ancestors, without
+/// the node itself.
+fn upstream_graph(graph: &ProcGraph, index: usize) -> ProcGraph {
+    let mut keep: std::collections::BTreeSet<usize> = graph
+        .inputs_of(index)
+        .into_iter()
+        .map(|(_, from)| from)
+        .collect();
+    let mut todo: Vec<usize> = keep.iter().copied().collect();
+    while let Some(i) = todo.pop() {
+        for (_, from) in graph.inputs_of(i) {
+            if keep.insert(from) {
+                todo.push(from);
+            }
+        }
+    }
+    let mut sub = graph.clone();
+    let ids: std::collections::BTreeSet<String> = keep
+        .iter()
+        .filter_map(|i| graph.nodes.get_index(*i).map(|(id, _)| id.clone()))
+        .collect();
+    sub.nodes.retain(|id, _| ids.contains(id));
+    sub.edges
+        .retain(|e| ids.contains(&e.from.0) && ids.contains(&e.to.0));
+    sub
 }

@@ -453,9 +453,156 @@
       "name": "SurfaceGui",
       "superclass": "LayerCollector",
       "creatable": true,
-      "status": "stub-error",
-      "note": "Not drawn: SurfaceGui is a non-goal in M2.",
-      "doc": "UI drawn on a part's face."
+      "status": "partial",
+      "note": "A SurfaceGui in Workspace is drawn but takes no input; only one in the local player's PlayerGui does.",
+      "doc": "UI drawn on a face of a part, depth-tested with the 3D view.",
+      "properties": [
+        {
+          "name": "Adornee",
+          "type": "Instance",
+          "storage": {
+            "kind": "own"
+          },
+          "default": null,
+          "status": "implemented",
+          "doc": "The part it is drawn on; when empty, its parent is used."
+        },
+        {
+          "name": "Face",
+          "type": "Enum.NormalId",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Front",
+          "status": "implemented",
+          "doc": "The face of the part it is drawn on."
+        },
+        {
+          "name": "SizingMode",
+          "type": "Enum.SurfaceGuiSizingMode",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "FixedSize",
+          "status": "implemented",
+          "doc": "FixedSize lays the UI out on a canvas of CanvasSize pixels; PixelsPerStud on the face's size in studs times PixelsPerStud."
+        },
+        {
+          "name": "CanvasSize",
+          "type": "Vector2",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            800,
+            600
+          ],
+          "status": "implemented",
+          "doc": "The canvas size in pixels when SizingMode is FixedSize."
+        },
+        {
+          "name": "PixelsPerStud",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 50,
+          "status": "implemented",
+          "doc": "Canvas pixels per stud of the face when SizingMode is PixelsPerStud."
+        },
+        {
+          "name": "ZOffset",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Lifts the UI off the face towards the camera; higher values draw over lower ones on the same face."
+        },
+        {
+          "name": "LightInfluence",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "0 draws the UI unlit; 1 lights it like the part's surface."
+        },
+        {
+          "name": "Brightness",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 1,
+          "status": "implemented",
+          "doc": "Multiplies the unlit part of the UI's colour."
+        },
+        {
+          "name": "AlwaysOnTop",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": false,
+          "status": "implemented",
+          "doc": "When true, the UI draws over the 3D view instead of being hidden by parts in front of it."
+        },
+        {
+          "name": "MaxDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "Studs from the camera beyond which it is not drawn; 0 means no limit."
+        },
+        {
+          "name": "ClipsDescendants",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When true, descendants are cut at the canvas."
+        },
+        {
+          "name": "Active",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When true, it takes mouse input on its face."
+        },
+        {
+          "name": "Shape",
+          "type": "Enum.SurfaceGuiShape",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "Flat",
+          "status": "partial",
+          "note": "Stored; the canvas is always flat.",
+          "doc": "The shape of the canvas."
+        },
+        {
+          "name": "ToolPunchThroughDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "partial",
+          "note": "Stored only: there are no tools.",
+          "doc": "Stored only."
+        }
+      ]
     },
     {
       "name": "GuiObject",
@@ -1817,9 +1964,305 @@
       "name": "ViewportFrame",
       "superclass": "GuiObject",
       "creatable": true,
-      "status": "stub-error",
-      "note": "Not drawn: ViewportFrame is a non-goal in M2.",
-      "doc": "A frame that draws 3D objects."
+      "status": "partial",
+      "note": "Lit by Ambient and one light, without shadows, particles, beams, sky or post effects. Parts in it are never simulated.",
+      "doc": "A frame that draws the parts inside it with its own camera.",
+      "properties": [
+        {
+          "name": "CurrentCamera",
+          "type": "Instance<Camera>",
+          "storage": {
+            "kind": "own"
+          },
+          "default": null,
+          "status": "implemented",
+          "doc": "The camera the parts are seen through; without one nothing is drawn."
+        },
+        {
+          "name": "Ambient",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.7843137254901961,
+            0.7843137254901961,
+            0.7843137254901961
+          ],
+          "status": "implemented",
+          "doc": "Light added everywhere in the frame."
+        },
+        {
+          "name": "LightColor",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            0.5490196078431373,
+            0.5490196078431373,
+            0.5490196078431373
+          ],
+          "status": "implemented",
+          "doc": "The colour of the frame's one light."
+        },
+        {
+          "name": "LightDirection",
+          "type": "Vector3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            -1,
+            -1,
+            -1
+          ],
+          "status": "implemented",
+          "doc": "The direction the frame's light travels."
+        },
+        {
+          "name": "ImageColor3",
+          "type": "Color3",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1,
+            1,
+            1
+          ],
+          "status": "implemented",
+          "doc": "A tint multiplied into the drawn parts."
+        },
+        {
+          "name": "ImageTransparency",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0,
+          "status": "implemented",
+          "doc": "How see-through the drawn parts are."
+        }
+      ]
+    },
+    {
+      "name": "WorldModel",
+      "superclass": "WorldRoot",
+      "creatable": true,
+      "status": "partial",
+      "note": "Its parts are drawn by a ViewportFrame but never simulated; spatial queries are not available.",
+      "doc": "Holds parts inside a ViewportFrame.",
+      "methods": [
+        {
+          "name": "Raycast",
+          "params": [
+            {
+              "name": "origin",
+              "type": "Vector3"
+            },
+            {
+              "name": "direction",
+              "type": "Vector3"
+            },
+            {
+              "name": "raycastParams",
+              "type": "RaycastParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "RaycastResult"
+          ],
+          "status": "stub-error",
+          "doc": "Not available on a WorldModel: raises RE9001."
+        },
+        {
+          "name": "Blockcast",
+          "params": [
+            {
+              "name": "cframe",
+              "type": "CFrame"
+            },
+            {
+              "name": "size",
+              "type": "Vector3"
+            },
+            {
+              "name": "direction",
+              "type": "Vector3"
+            },
+            {
+              "name": "params",
+              "type": "RaycastParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "RaycastResult"
+          ],
+          "status": "stub-error",
+          "doc": "Not available on a WorldModel: raises RE9001."
+        },
+        {
+          "name": "Spherecast",
+          "params": [
+            {
+              "name": "position",
+              "type": "Vector3"
+            },
+            {
+              "name": "radius",
+              "type": "number"
+            },
+            {
+              "name": "direction",
+              "type": "Vector3"
+            },
+            {
+              "name": "params",
+              "type": "RaycastParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "RaycastResult"
+          ],
+          "status": "stub-error",
+          "doc": "Not available on a WorldModel: raises RE9001."
+        },
+        {
+          "name": "Shapecast",
+          "params": [
+            {
+              "name": "part",
+              "type": "BasePart"
+            },
+            {
+              "name": "direction",
+              "type": "Vector3"
+            },
+            {
+              "name": "params",
+              "type": "RaycastParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "RaycastResult"
+          ],
+          "status": "stub-error",
+          "doc": "Not available on a WorldModel: raises RE9001."
+        },
+        {
+          "name": "GetPartBoundsInBox",
+          "params": [
+            {
+              "name": "cframe",
+              "type": "CFrame"
+            },
+            {
+              "name": "size",
+              "type": "Vector3"
+            },
+            {
+              "name": "overlapParams",
+              "type": "OverlapParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "status": "stub-error",
+          "doc": "Not available on a WorldModel: raises RE9001."
+        },
+        {
+          "name": "GetPartBoundsInRadius",
+          "params": [
+            {
+              "name": "position",
+              "type": "Vector3"
+            },
+            {
+              "name": "radius",
+              "type": "number"
+            },
+            {
+              "name": "overlapParams",
+              "type": "OverlapParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "status": "stub-error",
+          "doc": "Not available on a WorldModel: raises RE9001."
+        },
+        {
+          "name": "GetPartsInPart",
+          "params": [
+            {
+              "name": "part",
+              "type": "BasePart"
+            },
+            {
+              "name": "overlapParams",
+              "type": "OverlapParams",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "table"
+          ],
+          "status": "stub-error",
+          "doc": "Not available on a WorldModel: raises RE9001."
+        },
+        {
+          "name": "BulkMoveTo",
+          "params": [
+            {
+              "name": "partList",
+              "type": "table"
+            },
+            {
+              "name": "cframeList",
+              "type": "table"
+            },
+            {
+              "name": "eventMode",
+              "type": "Enum.BulkMoveMode",
+              "optional": true
+            }
+          ],
+          "status": "stub-error",
+          "doc": "Not available on a WorldModel: raises RE9001."
+        },
+        {
+          "name": "FindPartOnRay",
+          "params": [
+            {
+              "name": "ray",
+              "type": "Ray"
+            },
+            {
+              "name": "ignoreDescendantsInstance",
+              "type": "Instance",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "BasePart",
+            "Vector3",
+            "Vector3",
+            "Enum.Material"
+          ],
+          "deprecated": "Raycast",
+          "status": "stub-error",
+          "doc": "Not available on a WorldModel: raises RE9001."
+        }
+      ]
     },
     {
       "name": "UIBase",

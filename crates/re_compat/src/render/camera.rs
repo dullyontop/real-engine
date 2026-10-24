@@ -58,7 +58,7 @@ impl View {
 
     /// Pixels per unit of tangent at the centre of a `viewport`-high view.
     fn focal(&self, viewport: Vec2) -> f32 {
-        viewport.y * 0.5 / (self.fov_y * 0.5).tan()
+        viewport.y * 0.5 / libm::tanf(self.fov_y * 0.5)
     }
 
     /// The viewport point of `p` (x right, y down, in pixels) and its depth

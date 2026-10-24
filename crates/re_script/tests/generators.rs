@@ -622,6 +622,62 @@ fn script_mistakes_are_node_errors_not_crashes() {
     }
 }
 
+/// A generator's transcendental maths is libm's on every machine (ADR-0036),
+/// whether the argument is a variable or a constant the compiler could fold.
+#[test]
+fn a_generator_computes_math_with_libm() {
+    let src = bad(
+        "for _, x in { 0.5, 1.5, 2.75, -7.25, 1e6, 123456.789 } do
+            ctx:log(string.format(\"%.17g %.17g %.17g %.17g %.17g %.17g\",
+                math.sin(x), math.cos(x), math.tan(x), math.exp(x / 1e5),
+                math.atan2(x, 3), math.pow(math.abs(x), 1.3)))
+        end
+        ctx:log(string.format(\"%.17g %.17g\", math.sin(1e6), math.log(123456.789, 10)))
+        return { items = {} }",
+        "fragment",
+    );
+    let dir = project(&[("scripts/generators/bad.luau", &src)]);
+    let (_, registry) = declared(dir.path(), Limits::default());
+    let g = ProcGraph::from_doc(
+        &graph(1, &[("n", "project.bad", json!({}))], &[]),
+        &registry,
+    )
+    .unwrap();
+    let e = evaluator(registry, 1).evaluate(&g, &EvalOptions::default());
+    assert!(e.ok(), "{:#?}", e.report.diagnostics);
+    let logs = &e.report.node("n").unwrap().logs;
+    let mut want: Vec<String> = [0.5, 1.5, 2.75, -7.25, 1e6, 123_456.789]
+        .iter()
+        .map(|&x: &f64| {
+            [
+                libm::sin(x),
+                libm::cos(x),
+                libm::tan(x),
+                libm::exp(x / 1e5),
+                libm::atan2(x, 3.0),
+                libm::pow(x.abs(), 1.3),
+            ]
+            .map(|v| format!("{v:e}"))
+            .join(" ")
+        })
+        .collect();
+    want.push(format!(
+        "{:e} {:e}",
+        libm::sin(1e6),
+        libm::log10(123_456.789)
+    ));
+    let got: Vec<String> = logs
+        .iter()
+        .map(|l| {
+            l.split(' ')
+                .map(|v| format!("{:e}", v.parse::<f64>().unwrap()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    assert_eq!(got, want);
+}
+
 #[test]
 fn tostring_never_shows_an_address_and_logs_are_capped() {
     let src = bad(
@@ -684,4 +740,74 @@ fn a_failed_redeclaration_keeps_the_last_good_kind() {
             .get("project.shape")
             .is_some()
     );
+}
+
+/// Shapes and paths cross the Luau boundary both ways (ADR-0043 §5): a Luau
+/// node that returns its input unchanged gives what the Rust nodes made.
+#[test]
+fn shapes_and_paths_cross_into_luau_and_back() {
+    let dir = project(&[
+        (
+            "scripts/generators/same_shapes.luau",
+            r#"
+return proc.node {
+    kind = "project.same_shapes", version = 1, doc = "Passes shapes on.",
+    inputs = { { name = "shapes", type = "shapes", required = true } },
+    output = "shapes",
+    eval = function(ctx, inputs, params) return inputs.shapes end,
+}
+"#,
+        ),
+        (
+            "scripts/generators/same_path.luau",
+            r#"
+return proc.node {
+    kind = "project.same_path", version = 1, doc = "Passes a path on.",
+    inputs = { { name = "path", type = "path", required = true } },
+    output = "path",
+    eval = function(ctx, inputs, params)
+        -- Distances may be left out: they are measured along the samples.
+        for _, s in inputs.path.samples do s.distance = nil end
+        return inputs.path
+    end,
+}
+"#,
+        ),
+    ]);
+    let (d, r) = declared(dir.path(), Limits::default());
+    assert!(d.diagnostics.is_empty(), "{:#?}", d.diagnostics);
+    let doc = graph(
+        1,
+        &[
+            (
+                "poly",
+                "shape.polygon",
+                json!({ "points": [[0, 0], [10, 0], [10, 10], [0, 10]], "holes": [[[2, 2], [4, 2], [3, 4]]] }),
+            ),
+            ("s", "project.same_shapes", json!({})),
+            (
+                "line",
+                "path.spline",
+                json!({ "points": [[0, 0, 0], [20, 1, 5], [40, 0, 0]], "bank": 3 }),
+            ),
+            ("p", "project.same_path", json!({})),
+        ],
+        &[
+            ("poly", "shapes", "s", "shapes"),
+            ("line", "path", "p", "path"),
+        ],
+    );
+    let g = ProcGraph::from_doc(&doc, &r).unwrap();
+    let e = evaluator(r, 2).evaluate(&g, &EvalOptions::default());
+    assert!(e.ok(), "{:#?}", e.report);
+    assert_eq!(e.output("poly"), e.output("s"));
+    let (Some(Output::Path(a)), Some(Output::Path(b))) = (e.output("line"), e.output("p")) else {
+        panic!("not paths");
+    };
+    assert_eq!(a.samples.len(), b.samples.len());
+    for (x, y) in a.samples.iter().zip(&b.samples) {
+        assert_eq!((x.position, x.width, x.bank), (y.position, y.width, y.bank));
+        // Measured along the chords rather than the curve: a little shorter.
+        assert!((x.distance - y.distance).abs() <= 1e-3 * x.distance + 1e-9);
+    }
 }

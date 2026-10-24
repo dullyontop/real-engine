@@ -19,6 +19,7 @@
 
 #![warn(missing_docs)]
 
+pub mod animgraph;
 pub mod app;
 pub mod codes;
 pub mod commands;
@@ -197,6 +198,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::OPEN_DOC_CHANGED_ON_DISK,
         title: "Open document changed on disk",
         page: include_str!("../explain/RE0528.md"),
+    },
+    DiagInfo {
+        code: codes::RAGDOLL_UNAVAILABLE,
+        title: "Ragdoll unavailable",
+        page: include_str!("../explain/RE0529.md"),
     },
     DiagInfo {
         code: codes::PACKAGE_UNREADABLE,

@@ -2,7 +2,8 @@
 //!
 //! Everything a scene file, script or agent can name is declared with
 //! [`component!`] and registered by [`register_builtins`]. `Name` (the file's
-//! `name`), [`StableId`](crate::StableId) (the file's `id`), [`GlobalTransform`],
+//! `name`), [`Note`] (the file's `note`), [`StableId`](crate::StableId) (the
+//! file's `id`), [`GlobalTransform`],
 //! [`Generated`](crate::Generated) and the hierarchy are not registry
 //! components.
 
@@ -16,6 +17,13 @@ use crate::procedural::{GraphSource, Procedural};
 /// Display name. Not unique; written to scene files as the entity's `name`.
 #[derive(Component, Clone, Debug, PartialEq, Eq, Default)]
 pub struct Name(pub String);
+
+/// A comment on an entity: written to scene and prefab files as its `note`
+/// (JSON has no comments), kept by every save, and never part of the
+/// simulation or its [`state_hash`](crate::World::state_hash). Present only
+/// when not empty.
+#[derive(Component, Clone, Debug, PartialEq, Eq, Default)]
+pub struct Note(pub String);
 
 component! {
     /// Position, rotation and scale relative to the parent entity (or to the
@@ -268,6 +276,34 @@ component! {
     }
 }
 
+component! {
+    /// Plays an animation graph (ADR-0039, `*.animgraph.json`) on the
+    /// [`SkinnedMesh`] of the same entity, in place of an [`AnimPlayer`].
+    /// Parameters and state-machine state are runtime state in `re_app`;
+    /// scripts reach them through the `anim` library.
+    pub struct Animator {
+        /// The graph file, e.g. `anims/hero.animgraph.json`.
+        pub graph: String = String::new(),
+        /// Whether the graph advances; while false the pose holds.
+        pub playing: bool = true,
+        /// Playback speed multiplier for the whole graph (0 or more).
+        pub speed: f32 = 1.0,
+    }
+}
+
+component! {
+    /// Places this entity at a joint of its parent's [`SkinnedMesh`] each
+    /// fixed step: its `Transform` becomes the joint's model-space transform,
+    /// which is relative to the parent because the skin's space is the
+    /// parent's (ADR-0039). Put an offset on a child of this entity. It is
+    /// placed at the end of the step, after physics and the ragdoll blend, so
+    /// `PostSimulation` scripts see the previous step's placement.
+    pub struct BoneAttachment {
+        /// The joint's name in the parent's skin.
+        pub joint: String = String::new(),
+    }
+}
+
 field_enum! {
     /// Where a [`HudText`] is anchored on screen.
     pub enum HudAnchor { TopLeft, Top, TopRight, Center, BottomLeft, Bottom, BottomRight }
@@ -357,11 +393,44 @@ component! {
     }
 }
 
+field_enum! {
+    /// How a [`Ragdoll`] moves (ADR-0040): following its animation with
+    /// kinematic parts, limp, or holding the animation with joint motors. It is
+    /// the scene's field; `re_types::physics::RagdollMode` is the physics mode,
+    /// which carries the strength.
+    pub enum RagdollControl { Animated, Simulated, Powered }
+}
+
+component! {
+    /// Gives a [`SkinnedMesh`] a ragdoll on its skeleton (ADR-0040). Once the skin
+    /// loads, `re_app` generates the parts (one capsule per listed joint along its
+    /// bone, humanoid joint limits, the mass split by volume), keeps an animated
+    /// ragdoll on the animation, and shows the simulated pose blended in while it is
+    /// simulated or powered. Scripts switch it with `physics.ragdoll`. The entity
+    /// has no `RigidBody`; a `CharacterController` on it is fine and never collides
+    /// with its own ragdoll.
+    pub struct Ragdoll {
+        /// The joints that get parts, by name; empty finds a humanoid's hips, spine,
+        /// head, upper arms, forearms, thighs and shins by name.
+        pub joints: Vec<String> = Vec::new(),
+        /// Total mass, in kilograms.
+        pub total_mass: f32 = 70.0,
+        /// How it moves when the scene starts, and after each edit of this field.
+        pub mode: RagdollControl = RagdollControl::Animated,
+        /// Motor strength in `Powered` mode, 0 (limp) to 1.
+        pub strength: f32 = 1.0,
+        /// Seconds the shown pose takes to blend from the animation to the ragdoll
+        /// and back; 0 switches at once.
+        pub blend_seconds: f32 = 0.2,
+    }
+}
+
 /// Registers every built-in component, in a fixed order: `Transform`,
 /// `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light`, `RigidBody`,
 /// `Collider`, `CharacterController`, `ScriptRef`, `AudioSource`, `AnimPlayer`,
 /// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `SkinnedMesh`,
-/// `Streamed`, `StreamFocus`, `Vehicle`, `VehicleWheel`.
+/// `Streamed`, `StreamFocus`, `Vehicle`, `VehicleWheel`, `Ragdoll`, `Animator`,
+/// `BoneAttachment`.
 pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<Transform>(world);
     registry.register::<MeshRef>(world);
@@ -386,4 +455,7 @@ pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<crate::stream::StreamFocus>(world);
     registry.register::<Vehicle>(world);
     registry.register::<VehicleWheel>(world);
+    registry.register::<Ragdoll>(world);
+    registry.register::<Animator>(world);
+    registry.register::<BoneAttachment>(world);
 }

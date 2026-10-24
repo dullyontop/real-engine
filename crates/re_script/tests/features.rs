@@ -925,6 +925,41 @@ fn vehicle_functions_are_refused_without_a_host() {
 }
 
 #[test]
+fn ragdoll_functions_reach_the_host() {
+    let mut rig = Rig::new();
+    rig.exec(
+        r#"
+        local man = world.spawn({ id = 'man' })
+        physics.ragdoll(man, "powered", 0.5)
+        physics.ragdoll(man, "powered")
+        physics.ragdoll(man, "simulated")
+        physics.ragdoll_impulse(man, "head", vector.create(0, 0, 3))
+        local s = physics.ragdoll_state(man)
+        print(s.mode, s.strength, s.calm, s.root_position.y)
+        "#,
+    )
+    .unwrap();
+    assert_eq!(rig.output(), ["powered\t0.5\ttrue\t2"]);
+    let id = rig.services.ragdolls[0]
+        .split(' ')
+        .nth(1)
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        rig.services.ragdolls,
+        [
+            format!("mode {id} Powered {{ strength: 0.5 }}"),
+            format!("mode {id} Powered {{ strength: 1.0 }}"),
+            format!("mode {id} Simulated"),
+            format!("impulse {id} head [0, 0, 3]"),
+        ]
+    );
+    let d = rig.exec_err("physics.ragdoll(world.get('man'), 'floppy')");
+    assert_eq!(d.code, codes::BAD_ARGUMENT);
+    assert!(d.message.contains("`floppy`"), "{}", d.message);
+}
+
+#[test]
 fn audio_mixer_functions_send_mixer_commands() {
     let mut rig = Rig::new();
     rig.exec(

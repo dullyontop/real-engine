@@ -61,3 +61,8 @@ pub const ASSEMBLY_INVALID: Code = Code::new("RE5017");
 /// A vehicle could not be created or driven: no dynamic chassis body, no wheels or
 /// driven wheels, an input or setting out of range.
 pub const VEHICLE_INVALID: Code = Code::new("RE5018");
+
+/// A ragdoll could not be created, posed or driven: a part names a missing joint, the
+/// parts have no single root, limits or masses are out of range, or a pose does not
+/// fit the skeleton.
+pub const RAGDOLL_INVALID: Code = Code::new("RE5019");

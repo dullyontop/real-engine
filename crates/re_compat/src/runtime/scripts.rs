@@ -180,9 +180,9 @@ pub fn startable(
         .collect()
 }
 
-/// The chunk name (the instance's full name), bytes and load mode of a script
-/// instance's source.
-fn source_of(lua: &Lua, e: Entity) -> Result<(String, Vec<u8>, ChunkMode)> {
+/// The chunk name (the instance's full name), the source path (project
+/// relative), and the bytes and load mode of a script instance's source.
+fn source_of(lua: &Lua, e: Entity) -> Result<(String, String, Vec<u8>, ChunkMode)> {
     let files = state(lua)?.files.clone();
     let (name, path) = with_world(lua, |w| {
         (
@@ -208,16 +208,52 @@ fn source_of(lua: &Lua, e: Entity) -> Result<(String, Vec<u8>, ChunkMode)> {
             format!("cannot load {path} (the source of {name}): {err}"),
         )
     })?;
-    Ok((name, data.bytes.to_vec(), mode))
+    Ok((name, path, data.bytes.to_vec(), mode))
 }
 
+/// The chunk each script or module instance last loaded in this context and
+/// its source path, registered with the debugger (ADR-0045) so its file's
+/// breakpoints reach it.
+#[derive(Default)]
+struct Chunks(HashMap<Entity, (String, Function)>);
+
 /// Compiles script instance `e` with its own environment (`script` is its
-/// handle).
+/// handle), and registers the chunk with the debugger under its source path
+/// (in place of the one `e` loaded before).
 fn compile(lua: &Lua, e: Entity) -> Result<(String, Function)> {
-    let (name, bytes, mode) = source_of(lua, e)?;
+    let (name, path, bytes, mode) = source_of(lua, e)?;
     let env = re_script::vm::environment(lua, instance::push(lua, e)?)?;
     let f = super::load_chunk(lua, &name, &bytes, mode, env)?;
+    forget_chunk(lua, e);
+    re_script::debug::register_chunk(lua, &path, &f);
+    if let Some(mut c) = lua.app_data_mut::<Chunks>() {
+        c.0.insert(e, (path, f.clone()));
+    }
     Ok((name, f))
+}
+
+/// Registers every live script and module chunk with the debugger just
+/// attached to this context, so scripts that started before the attach stop
+/// at breakpoints too.
+pub(crate) fn register_live_chunks(lua: &Lua) {
+    let live: Vec<(String, Function)> = lua
+        .app_data_ref::<Chunks>()
+        .map(|c| c.0.values().cloned().collect())
+        .unwrap_or_default();
+    for (path, f) in live {
+        re_script::debug::register_chunk(lua, &path, &f);
+    }
+}
+
+/// Unregisters the chunk `e` loaded, if any (the script stopped, the module
+/// left the cache).
+fn forget_chunk(lua: &Lua, e: Entity) {
+    let old = lua
+        .app_data_mut::<Chunks>()
+        .and_then(|mut c| c.0.remove(&e));
+    if let Some((_, f)) = old {
+        re_script::debug::unregister_chunk(lua, &f);
+    }
 }
 
 /// The owner id of the threads a script starts.
@@ -313,6 +349,7 @@ pub(crate) fn stop(lua: &Lua, e: Entity) -> Result<()> {
         s.running.remove(&e);
         s.pending.remove(&e);
     }
+    forget_chunk(lua, e);
     let owner = owner_of(e);
     crate::signal::disconnect_owner(lua, owner)?;
     crate::services::core::run_service::drop_owner(lua, owner)?;
@@ -440,6 +477,7 @@ pub(crate) fn reload(
     })?;
     // Every module that required a changed one, round to the scripts.
     let mut restart: std::collections::HashSet<Entity> = scripts.into_iter().collect();
+    let mut dropped = Vec::new();
     {
         let mut mods = lua.app_data_mut::<Modules>().expect("installed");
         let mut todo = modules;
@@ -449,6 +487,7 @@ pub(crate) fn reload(
                 continue;
             }
             mods.by_entity.remove(&m);
+            dropped.push(m);
             for user in mods.users.get(&m).into_iter().flatten() {
                 match user {
                     User::Module(x) => todo.push(*x),
@@ -458,6 +497,9 @@ pub(crate) fn reload(
                 }
             }
         }
+    }
+    for m in dropped {
+        forget_chunk(lua, m);
     }
     let running: std::collections::HashSet<Entity> = lua
         .app_data_ref::<Started>()
@@ -524,6 +566,7 @@ struct Modules {
 pub(crate) fn install(lua: &Lua) -> Result<()> {
     lua.set_app_data(Modules::default());
     lua.set_app_data(Started::default());
+    lua.set_app_data(Chunks::default());
     Ok(())
 }
 

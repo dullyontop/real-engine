@@ -4,7 +4,7 @@ This file lists every third-party crate Real Engine plans to use in M1: its exac
 
 ## Policy
 
-1. **Only crates.io.** No git dependencies, no path dependencies outside the workspace, and no build scripts that download things. This is why `oxijolt` is used with `default-features = false`: its default `prebuilt` feature downloads binaries at build time.
+1. **Only crates.io.** No git dependencies, no path dependencies outside the workspace, and no build scripts that download things. One exception, approved by the owner (ADR-0049 §2): `third_party/` holds temporary patched copies of `mlua` and `oxijolt-sys`, with their licence files, used through `[patch.crates-io]` until crates.io releases carry the changes. This is why `oxijolt` is used with `default-features = false`: its default `prebuilt` feature downloads binaries at build time.
 2. **Adding a dependency needs a DECISIONS entry.** A PR that adds a crate to any `Cargo.toml` must add or amend an ADR in [DECISIONS.md](DECISIONS.md) and a row in this file. Upgrading within the same minor version only needs a row update.
 3. **Exact versions.** The workspace sets every dependency in `[workspace.dependencies]` as `"=X.Y.Z"`. Member crates write `foo.workspace = true`. `Cargo.lock` is committed. CI builds with `--locked`.
 4. **License allow-list**, enforced by `cargo deny check licenses`: MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, BSL-1.0, ISC, Zlib, CC0-1.0, Unicode-3.0. (BSL-1.0 is for `clipboard-win` and `error-code`, which egui-winit pulls on Windows.) Per-crate exceptions, and nothing else (ADR-0019):
@@ -47,7 +47,7 @@ The `msrv` CI job builds with exactly 1.95.0 (`rustup toolchain install 1.95.0 -
 | egui | 0.36.2 | MIT OR Apache-2.0 | 1.95 | Immediate-mode UI for the HUD, debug overlay and editor-lite | default (its `default_fonts` pulls `epaint_default_fonts`: OFL-1.1 and Ubuntu-font-1.0, an ADR-0019 exception) | render prototype `gui_offscreen` | Verified |
 | egui-wgpu | 0.36.2 | MIT OR Apache-2.0 | 1.95 | egui renderer on our wgpu device | default | render prototype | Verified |
 | egui-winit | 0.36.2 | MIT OR Apache-2.0 | 1.95 | egui input from winit. Only a dev-dependency of `re_render` so far (its `windowed_smoke` example); `re_app` and `re_editor` will use it. | default (its `clipboard` feature pulls `arboard`, and on Windows `clipboard-win` and `error-code`, BSL-1.0) | render prototype, then `re_render`'s `windowed_smoke` | Verified |
-| glam | 0.34.1 | MIT OR Apache-2.0 | 1.85 | Math (Vec3, Quat, Mat4, Affine3A) | `bytemuck`, `mint-05`, `serde` | render prototype (`bytemuck`), platform spike (`mint-05`), scripting spike (default); WP0 builds the combined feature set and round-trips every `re_types` contract type through serde (`crates/re_types/tests/roundtrip.rs`) | Verified |
+| glam | 0.34.1 | MIT OR Apache-2.0 | 1.85 | Math (Vec3, Quat, Mat4, Affine3A) | `bytemuck`, `libm`, `mint-05`, `scalar-math`, `serde`. `libm` and `scalar-math` since WP18 PR "d2" (ADR-0036, ADR-0049 §11): glam's own trigonometry goes through libm, and its maths is the same scalar code on every target, so x86_64, arm64 and wasm agree bit for bit | render prototype (`bytemuck`), platform spike (`mint-05`), scripting spike (default); WP0 builds the combined feature set and round-trips every `re_types` contract type through serde (`crates/re_types/tests/roundtrip.rs`) | Verified |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT | none | POD casts for GPU buffers | `derive` | render prototype | Verified |
 | pollster | 1.0.1 | Apache-2.0 OR MIT | 1.69 | Blocks on wgpu futures (adapter, device, map_async) | default | render prototype | Verified |
 | png | 0.18.1 | MIT OR Apache-2.0 | 1.73 | Writes golden images and readback output | default | render prototype | Verified |
@@ -58,11 +58,10 @@ There is no `eframe`. We own the wgpu device and pass `(&Device, &Queue, &Textur
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| oxijolt | 1.1.0+jolt-5.6.0 (pin `=1.1.0`) | MIT OR Apache-2.0 | 1.88 | Rust bindings to Jolt Physics 5.6.0. Bodies, shapes, constraints, CharacterVirtual, queries, sensors, state save. | `default-features = false`. M3: `cross-platform-deterministic`, always on (ADR-0036, lands with WP18 PR "d2") | physics spike, 12 scenarios plus a bench; source build about 55 s | Verified |
+| oxijolt | 1.1.0+jolt-5.6.0 (pin `=1.1.0`) | MIT OR Apache-2.0 | 1.88 | Rust bindings to Jolt Physics 5.6.0. Bodies, shapes, constraints, CharacterVirtual, queries, sensors, state save. | `default-features = false`, `cross-platform-deterministic` (always on since WP18 PR "d2", ADR-0036). `oxijolt-sys` is a temporary patched copy in `third_party/oxijolt-sys`, removed when upstream releases carry ADR-0049 §2 | physics spike, 12 scenarios plus a bench; source build about 55 s | Verified |
 
 Notes:
 - The available features are `asserts`, `bindgen`, `cross-platform-deterministic`, `debug-renderer`, `double-precision`, `glam032`, `mint` and `prebuilt`. We leave `glam032` off, because it would pull a third glam version. Conversion is a two-line function in `re_physics`.
-- `libm` 0.2.16 (MIT, already in the lockfile through naga and num-traits) becomes a workspace dependency, and glam gets its `libm` feature, with WP18 PR "d2": every transcendental function in the workspace goes through it, and a root `clippy.toml` bans the platform ones (ADR-0036). That PR adds its full row.
 - A source build needs `cmake` and a C++17 compiler (see System packages). It does not need libclang: `oxijolt-sys` ships committed bindings for the Linux, Windows and macOS targets, and `bindgen` is an optional build dependency behind its `bindgen` feature, which we leave off (physics spike §1).
 - The crate has few downloads (464 when checked). We pin it exactly and hide it entirely behind `re_physics` (ADR-0008).
 
@@ -70,7 +69,7 @@ Notes:
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| mlua | 0.12.2 | MIT | 1.88 | Embeds Luau (vendored Luau 0.740 through mlua-sys 0.13.0 and luau0-src 0.22.0+luau740; no Analysis module) | `luau` only. Not `vendored` (it does nothing for Luau) and not `send`. `luau-jit` only through `re_script`'s opt-in `jit` feature. | scripting spike: 14 feature tests in the default, `send` and `jit` builds, benchmarks, and a corpus compile | Verified |
+| mlua | 0.12.2 | MIT | 1.88 | Embeds Luau (vendored Luau 0.740 through mlua-sys 0.13.0 and luau0-src 0.22.0+luau740; no Analysis module) | `luau` only. Not `vendored` (it does nothing for Luau) and not `send`. `luau-jit` only through `re_script`'s opt-in `jit` feature. A temporary patched copy in `third_party/mlua`, removed when upstream releases carry ADR-0049 §2. | scripting spike: 14 feature tests in the default, `send` and `jit` builds, benchmarks, and a corpus compile | Verified |
 | full_moon | 3.0.0 | MPL-2.0 | none | Luau parser for the static API-gap scan (validation tier 2). Tooling only (`re_script_check`). | `luau` | design-phase probe in this container: `parse_fallible(code, LuaVersion::luau())` parsed an external Roblox-style corpus with no failures | Verified; MPL exception (ADR-0019) |
 
 ### Place-file import (M3, tooling only)
@@ -79,10 +78,10 @@ Used only by `re_import`, a tooling crate, so none of them ships in a packaged g
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| lz4_flex | 0.14.0 | MIT | 1.81 | LZ4 block bodies of binary place-file chunks | `default-features = false`, `std`, `safe-decode`, `checked-decode` | WP27 probe in this container (LZ4 block round trip) | Verified (probe); lands with WP27 PR "place files" |
-| ruzstd | 0.9.1 | MIT | 1.87 | ZSTD frame bodies of binary place-file chunks, pure Rust | `default-features = false`, `std` | WP27 probe (ZSTD frame decode) | Verified (probe); lands with WP27 PR "place files" |
-| quick-xml | 0.41.0 | MIT | 1.79 | `.rbxlx`/`.rbxmx` reader | defaults | WP27 probe; already in the lockfile through `wayland-scanner`, so no new duplicate | Verified (probe); lands with WP27 PR "place files" |
-| base64 | 0.23.1 | MIT OR Apache-2.0 | 1.71 | binary and shared strings in XML place files | defaults | WP27 probe; already in the lockfile through `rmcp` | Verified (probe); lands with WP27 PR "place files" |
+| lz4_flex | 0.14.0 | MIT | 1.81 | LZ4 block bodies of binary place-file chunks | `default-features = false`, `std`, `safe-decode`, `checked-decode` | WP27 probe in this container (LZ4 block round trip) | Landed (WP27 PR "place files", #112) |
+| ruzstd | 0.9.1 | MIT | 1.87 | ZSTD frame bodies of binary place-file chunks, pure Rust | `default-features = false`, `std` | WP27 probe (ZSTD frame decode) | Landed (WP27 PR "place files", #112) |
+| quick-xml | 0.41.0 | MIT | 1.79 | `.rbxlx`/`.rbxmx` reader | defaults | WP27 probe; already in the lockfile through `wayland-scanner`, so no new duplicate | Landed (WP27 PR "place files", #112) |
+| base64 | 0.23.1 | MIT OR Apache-2.0 | 1.71 | binary and shared strings in XML place files | defaults | WP27 probe; already in the lockfile through `rmcp` | Landed (WP27 PR "place files", #112) |
 
 ### Polygon booleans and roads (M3, runtime)
 
@@ -90,9 +89,9 @@ Used only inside `re_geom::polygon`, never in its public types (ADR-0043). Pinne
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| i_overlay | 9.1.0 | MIT OR Apache-2.0 | 1.88 | integer-core polygon booleans, offsets and strokes on a fixed 1 mm grid | `default-features = false` | WP24 `overlay-probe` (road strokes, union and intersection, 5,000-square union; identical hashes across runs) | Verified (probe); lands with WP24 PR "booleans and roads" |
-| i_float, i_shape, i_key_sort, i_tree | 5.0.0, 5.0.0, 0.12.0, 0.20.0 | MIT | ≤ 1.88 | i_overlay's own building blocks (same author) | defaults | WP24 probe (resolved with i_overlay) | Verified (probe); transitive |
-| earcut | 0.4.11 | MIT OR Apache-2.0 | ≤ 1.95 | triangulating road unions, junction caps and shapes | defaults | WP24 probe (240-point road union, area matches) | Verified (probe); lands with WP24 PR "booleans and roads" |
+| i_overlay | 9.1.0 | MIT OR Apache-2.0 | 1.88 | integer-core polygon booleans, offsets and strokes on a fixed 1 mm grid | `default-features = false` | WP24 `overlay-probe` (road strokes, union and intersection, 5,000-square union; identical hashes across runs); `re_geom` polygon tests and goldens | Verified; landed with WP24 PR "booleans and roads" |
+| i_float, i_shape, i_key_sort, i_tree | 5.0.0, 5.0.0, 0.12.0, 0.20.0 | MIT | 1.85, 1.85, none, none | i_overlay's own building blocks (same author) | defaults | WP24 probe (resolved with i_overlay) | Verified; transitive |
+| earcut | 0.4.11 | MIT OR Apache-2.0 | none | triangulating road unions, junction caps and shapes | defaults | WP24 probe (240-point road union, area matches); `re_geom` triangulation tests and goldens | Verified; landed with WP24 PR "booleans and roads" |
 
 `libm` 0.2.16 and `num-traits` 0.2.19, which these pull, are already in the lockfile.
 
@@ -107,23 +106,23 @@ ADR-0047. Checked against crates.io on 2026-10-15; `cargo deny check` passes wit
 
 ### Package archive (M3, runtime)
 
-Used by `re_app::package` to read and write `game.rpak` (ADR-0037). With `default-features = false` it builds the bundled libzstd with `cc` (no pkg-config, no system library) and drops the legacy decoders and the dictionary builder. Checked against crates.io on 2026-10-15.
+Used by `re_app::package` to read and write `game.rpak` (ADR-0037), on desktop and in the web runtime, where zstd-sys is built with wasi-sdk's clang (ADR-0049 §6). With `default-features = false` it builds the bundled libzstd with `cc` (no pkg-config, no system library) and drops the legacy decoders and the dictionary builder. Checked against crates.io on 2026-10-15.
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| zstd | 0.14.2 | BSD-3-Clause | 1.64 | per-entry and index compression in `game.rpak` | `default-features = false` | WP19 measurements (decode 400–700 MB/s at levels 3–9; `ldd` shows only libc and libgcc_s) | Verified (probe); lands with WP19 PR "archive" |
-| zstd-safe, zstd-sys | 8.1.0, 2.1.1+zstd.1.5.7 | BSD-3-Clause | ≤ 1.64 | zstd's bindings and the vendored C library | defaults of `zstd` | WP19 measurements | Verified (probe); transitive |
+| zstd | 0.14.2 | BSD-3-Clause | 1.64 | per-entry and index compression in `game.rpak` | `default-features = false` | WP19 measurements (decode 400–700 MB/s at levels 3–9; `ldd` shows only libc and libgcc_s) | Landed (WP19 PR "archive", #121) |
+| zstd-safe, zstd-sys | 8.1.0, 2.1.1+zstd.1.5.7 | BSD-3-Clause | ≤ 1.64 | zstd's bindings and the vendored C library | defaults of `zstd` | WP19 measurements | Landed (#121); transitive |
 
-blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile; `re_cli` takes `image` and `windows-sys` as direct dependencies in WP19's PRs.
+blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile. `windows-sys` is a direct dependency of `re_cli` on Windows since PR "archive" (`Win32_System_Console`, to attach the game to its parent's console); `re_cli` takes `image` in PR "bundles".
 
 ### Editor node canvas and docking (M3, tooling only)
 
-Used only by `re_editor`, a tooling crate, so the runtime-only binary does not link them (ADR-0044, ADR-0027). Pinned exactly; an egui-snarl upgrade re-checks its list of direct edits (ADR-0044). Checked against crates.io on 2026-10-15. With them the lockfile gains three transitive crates, all MIT OR Apache-2.0 and none a new duplicate: egui-scale 0.6.1, duplicate 2.0.1 and proc-macro2-diagnostics 0.10.1. ahash, slab, smallvec, paste, heck and thiserror 2 are already in the lockfile. Gizmos are our own code; transform-gizmo-egui is not used (ADR-0044).
+Used only by `re_editor`, a tooling crate, so the runtime-only binary does not link them (ADR-0044, ADR-0027). Pinned exactly; an egui-snarl upgrade re-checks its list of direct edits (ADR-0044). Checked against crates.io on 2026-10-15. With them the lockfile gains four transitive crates, none a new duplicate: egui-scale 0.6.1 (through egui-snarl), duplicate 2.0.1 and proc-macro2-diagnostics 0.10.1 (through egui_dock), and enumn 0.1.14 (MIT OR Apache-2.0, a proc macro: egui_dock's `serde` feature turns on `egui/serde`, which turns on `accesskit/serde`, which pulls it in). ahash, slab, smallvec, paste, heck and thiserror 2 are already in the lockfile. Gizmos are our own code; transform-gizmo-egui is not used (ADR-0044).
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| egui-snarl | 0.12.0 | MIT OR Apache-2.0 | 1.92 | node canvas for ProcGraph (and later AnimGraph), as a read-only view-model | `serde` | WP25 `cratecheck` (built with egui 0.36.2, one egui in the tree) | Verified (probe); lands with WP25's canvas PR |
-| egui_dock | 0.21.1 | MIT | 1.95 | dockable editor panels with floating windows; layout saved as UI state | `serde` | WP25 `cratecheck` | Verified (probe); lands with WP25's docking PR |
+| egui-snarl | 0.12.0 | MIT OR Apache-2.0 | 1.92 | node canvas for ProcGraph (and later AnimGraph), as a read-only view-model | `serde` | WP25 `cratecheck` (built with egui 0.36.2, one egui in the tree) | Landed (WP25 PR "canvas", #123) |
+| egui_dock | 0.21.1 | MIT | 1.95 | dockable editor panels with floating windows; layout saved as UI state | `serde` | WP25 `cratecheck` | Landed (WP25, #91) |
 
 ### MCP over HTTP (M3, tooling only)
 
@@ -165,15 +164,19 @@ The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each fa
 |---|---|---|---|---|---|---|---|
 | bevy_ecs | 0.20.0 (released 2026-10-08; pin `=0.20.0`) | MIT OR Apache-2.0 | 1.95.0 | Entity storage, hierarchy (`ChildOf` / `Children`), hooks, change ticks and runtime-defined components, used standalone inside the model crates (`re_reflect`, `re_scene`, `re_command`) behind our own API (ADR-0005) | `default-features = false`, `std`, `multi_threaded`. Not `bevy_reflect` (ADR-0032), `async_executor`, `backtrace`, `debug` or `serialize`. | core spike: a 2,600-line prototype with 15 passing tests and a 100k-entity benchmark; five-crate comparison | Verified |
 | rayon | 1.12.0 | MIT OR Apache-2.0 | 1.80 | The one worker pool. Shared with Jolt through `oxijolt::JobSystem`. | default | WP0: `re_core::TaskPool` (`crates/re_core/tests/task.rs`: named `re-worker-N` threads, `spawn`, `scope`, the global pool). WP2: the rayon adapter for Jolt, `re_physics::jobs` (`crates/re_physics/tests/job_threads.rs`: only `re-worker-N` threads and the caller run Jolt jobs) | Verified |
+| libm | 0.2.16 | MIT | 1.63 | Portable transcendental maths (sin, atan2, pow, ...): the same bits on every platform, unlike the C library std calls. Every engine call goes through it, Luau's `math` library included, and a root `clippy.toml` bans std's versions (ADR-0036). | default | WP18 PR "d2": `crates/re_script/tests/portable_math.rs` (Luau's maths give libm's bits; an input where glibc rounds differently), the `d2` CI job (the same replay hashes on Linux and Windows); already in the lockfile through naga and num-traits | Verified |
 | serde | 1.0.229 | MIT OR Apache-2.0 | 1.56 | Serialization traits | `derive` | AI spike | Verified |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | 1.71 | Scene, prefab, graph and material files; command and log JSON; CLI JSON output | `preserve_order`, `float_roundtrip` | AI spike (default features); core spike (`float_roundtrip`: exact float parsing, byte-identical scene round trips); WP0 (`preserve_order`: graph parameters keep file order, test `graph` in `crates/re_types/tests/roundtrip.rs`) | Verified |
 | schemars | 1.2.3 | MIT | 1.74 | JSON Schema for MCP tool inputs and the statically typed file formats (materials, graphs, verify report, agent policy). Scene and prefab schemas come from the component registry instead (ADR-0016). | `derive` | AI spike (MCP tool schemas); WP0 `re_types` optional `schemars` feature (`GraphDoc`, `ReplayDoc`; `crates/re_types/tests/schema.rs`); WP5 `re_assets` optional `schemars` feature (`MaterialFile` and `AlphaModeName`, for `material.schema.json`; `crates/re_assets/tests/schema.rs`) | Verified |
 | toml | 1.1.8+spec-1.1.0 | MIT OR Apache-2.0 | 1.85 | `real.toml`, `.real/agent-policy.toml` | default | WP0: `cargo xtask dupes` reads `deny.toml` with it (test `reads_every_skip_form` in `tools/xtask/src/dupes.rs`) | Verified |
-| postcard | 1.1.3 | MIT OR Apache-2.0 | none | Binary cache blobs (processed meshes, EvalReport cache). Replaces bincode. | `use-std` | WP4 and WP5: `re_proc`'s node cache and `re_assets`' processed cache round-trip through it (their crate tests) | Verified |
+| postcard | 1.1.3 | MIT OR Apache-2.0 | none | Binary cache blobs (processed meshes, EvalReport cache), the `game.rpak` index, and `re_compat`'s replication frames (ADR-0050 §3, #117). Replaces bincode. | `use-std` | WP4 and WP5: `re_proc`'s node cache and `re_assets`' processed cache round-trip through it (their crate tests) | Verified |
 | blake3 | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception | none | Asset cache keys, ProcGraph node keys, `state_hash` | default | platform spike (`assets.rs` cache key) | Verified |
 | uuid | 1.28.0 | Apache-2.0 OR MIT | 1.89 | Asset ids (`.meta.json`). Entity ids are short strings made by `re_scene::IdGen`, not uuids. | `v4`, `serde`, `js` (randomness from the browser on wasm32, ADR-0049) | WP5: `re_assets` sidecar ids (`.meta.json`, its import tests) | Verified |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | 1.85 | Ordered maps in documents, commands and the registry (deterministic file output) | `serde` | core spike | Verified |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 | 1.77 | Library error types | default | WP0, WP4, WP5: `re_reflect`, `re_scene`, `re_command`, `re_geom`, `re_proc`, `re_assets` | Verified |
+| proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | 1.56 | Token streams for `re_reflect_derive` (compile time only) | default | `re_reflect_derive` tests (`re_reflect/tests/derive.rs`); already in the lockfile through bevy_ecs_macros | Verified |
+| quote | 1.0.47 | MIT OR Apache-2.0 | 1.56 | Code generation for `re_reflect_derive` (compile time only) | default | as above | Verified |
+| syn | 2.0.119 | MIT OR Apache-2.0 | 1.61 | Parsing the derive input of `re_reflect_derive` (compile time only) | default | as above | Verified |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | 1.68 | Binaries only (`real`, tools) | default | WP0: `tools/xtask` (`cargo xtask check` and its unit tests) | Verified |
 
 ### Assets, input, audio, platform
@@ -215,7 +218,7 @@ These come from `cargo tree -d -e normal --target <triple>` for the three deskto
 | glam | 0.33.12 and 0.34.1 | kira 0.12.5 (0.33) | runtime | Accept. Never pass kira's glam types across our API; `re_audio` converts with plain arrays. Drop the duplicate when kira moves to 0.34. |
 | hashbrown | 0.16.1 and 0.17.1 | gpu-allocator → wgpu-hal and bevy_platform (0.16); indexmap 2 → naga, wgpu and others (0.17) | runtime | Accept. Drop when those move to one version. |
 | hashbrown, indexmap | 0.12.3 / 1.9.3 next to 0.16–0.17 / 2.14.2 | full_moon_derive | compile-time | Accept |
-| syn | 1.0.109, 2.0.119, 3.0.9 | full_moon_derive (1); gltf-derive, tracing-attributes, thiserror-impl, zerocopy-derive, derive_more-impl, bevy_ecs_macros (2); bytemuck_derive, clap_derive, darling (3) | compile-time | Accept |
+| syn | 1.0.109, 2.0.119, 3.0.9 | full_moon_derive (1); re_reflect_derive, gltf-derive, tracing-attributes, thiserror-impl, zerocopy-derive, derive_more-impl, bevy_ecs_macros (2); bytemuck_derive, clap_derive, darling (3) | compile-time | Accept |
 | derive_more, derive_more-impl | 1.0.0 and 2.1.1 | full_moon (1.0, tooling only); bevy_ecs and bevy_tasks (2.1) | runtime (2.1); tooling (1.0) | Accept. Drop when full_moon moves to derive_more 2. |
 | thiserror, thiserror-impl | 1.0.69 and 2.0.21 | calloop 0.13 (through winit's Wayland stack) | runtime | Accept |
 | getrandom | 0.3.4 and 0.4.3 | ahash through egui (0.3); uuid (0.4) | runtime | Accept |
@@ -246,7 +249,7 @@ Never accepted: a second `wgpu`, `winit`, `egui` or `mlua` version, or a second 
 | naga_oil 0.23.0 | Our own `#include` preprocessor is enough for a small shader set |
 | egui_dock 0.21.1 | egui panels are enough for editor-lite. Taken in M3 (ADR-0044). |
 | transform-gizmo-egui 0.11.0 | Gizmos are cut from M1. It also needs Rust 1.96 and pulls glam 0.32; M3 writes its own gizmos (ADR-0044). |
-| i_overlay 9.1.0 | Deferred. Published on 2026-10-14, the day we checked, and not needed until polygon boolean nodes (M3). |
+| i_overlay 9.1.0 | Deferred. Published on 2026-10-14, the day we checked, and not needed until polygon boolean nodes (M3). Taken in M3 (ADR-0043 §5). |
 | meshopt 0.6.2, spade, manifold3d, egui-snarl, zstd, libm | Not needed in M1. egui-snarl (ADR-0044) and zstd (ADR-0037) are taken in M3. |
 | hecs 0.11.2, sparsey 0.13.4, shipyard 0.11.5, flecs_ecs 0.2.2 | Entity storage alternatives measured by the core spike; rejected in ADR-0005 (no hierarchy, hooks or per-component change ticks in hecs and sparsey; no hierarchy in shipyard; flecs is C and segfaulted from safe Rust) |
 | bevy_reflect 0.20.0 (bevy_ecs's default `bevy_reflect` feature) | Reflecting glam types needs bevy_reflect's optional `glam` feature, which ties it to glam 0.33.x (0.33.12 resolved; bevy_ecs's `bevy_reflect` feature does not turn it on by itself); no f64 → f32 coercion, `ReflectComponent::apply` panics on a type mismatch; rejected in ADR-0032 |

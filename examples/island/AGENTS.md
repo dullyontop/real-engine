@@ -48,6 +48,7 @@ object with an `op` tag:
 | `remove_component` | `id`, `component` | Remove a component |
 | `reparent` | `id`, `parent` (`null` for a root), `index`? | Move an entity |
 | `rename` | `id`, `name` | Change the display name |
+| `set_note` | `id`, `note` | Set the comment kept with the entity in the scene file (`""` removes it) |
 | `set_override` | `source`, `target`, `component`?, `field`?, `value`?, `deleted`? | Keep a change to a generated entity across regenerations |
 
 Values use the file form: vectors and colours are arrays (`[x, y, z]`,
@@ -128,7 +129,7 @@ The MCP tool of each is its name with `_` for `.` (`entity.spawn` is `entity_spa
 | `graph.regenerate` | `source`, `seed`? | Regenerate a procedural source now, optionally with a new seed, and report what changed. |
 | `graph.set_param` | `source`, `node`, `param`, `value` | Set one parameter of one node of a procedural source's graph (stored on the source, undoable). |
 | `redo` | none | Redo the last undone transaction. |
-| `scene.apply` | `label`?, `ops` | Apply a list of operations as one atomic transaction: if any fails, nothing changes. |
+| `scene.apply` | `label`?, `ops`, `coalesce`? | Apply a list of operations as one atomic transaction: if any fails, nothing changes. |
 | `script.write` | `path`, `source` | Write a Luau script file (create or replace) after checking that it compiles; with compile errors nothing is written and the errors are returned. The agent session keeps the old contents. |
 | `undo` | none | Undo the last transaction. |
 

@@ -232,6 +232,44 @@ fn scene_round_trip_is_byte_identical() {
     assert_eq!(scene_json(&mut c), json);
 }
 
+/// An entity's `note` is the scene file's comment: it loads, saves back
+/// byte for byte, survives a fork and a subtree snapshot, and never changes
+/// the state hash.
+#[test]
+fn notes_round_trip_and_stay_out_of_the_state_hash() {
+    let mut docs = sample_docs();
+    let plain_hash = {
+        let mut w = world();
+        w.spawn_docs(&docs, None).unwrap();
+        w.state_hash()
+    };
+    docs[2].note = "Keep this crate clear of the spawn point.".into();
+    let mut w = world();
+    w.spawn_docs(&docs, None).unwrap();
+    assert_eq!(w.state_hash(), plain_hash, "a note is not simulation state");
+    let crate_e = w.entity(&docs[2].id).unwrap();
+    assert_eq!(
+        w.note_of(crate_e),
+        "Keep this crate clear of the spawn point."
+    );
+
+    let json = scene_json(&mut w);
+    assert!(json.contains("\"note\": \"Keep this crate clear"), "{json}");
+    assert_eq!(
+        json.matches("\"note\"").count(),
+        1,
+        "empty notes are omitted"
+    );
+    let mut back = world();
+    back.load(&scene::from_json(&json).unwrap()).unwrap();
+    assert_eq!(scene_json(&mut back), json);
+
+    let mut fork = w.fork();
+    assert_eq!(scene_json(&mut fork), json);
+    let snap = w.snapshot_subtree(crate_e);
+    assert_eq!(snap.entities[0].note, docs[2].note);
+}
+
 #[test]
 fn load_errors_name_the_place() {
     let mut w = world();
@@ -428,6 +466,57 @@ fn state_hash_is_deterministic_and_bit_sensitive() {
     c.set("crate", "RigidBody", "mass", Value::Float(mass))
         .unwrap();
     assert_eq!(a.state_hash(), c.state_hash());
+}
+
+/// Every NaN hashes as one: which NaN an operation returns differs between
+/// x86, arm64 and wasm (ADR-0036). Reflected writes refuse NaN, so this goes
+/// through the component, as a physics write-back could.
+#[test]
+fn state_hash_treats_every_nan_as_one() {
+    let quiet = f32::NAN;
+    let other = f32::from_bits(quiet.to_bits() | 1 | (1 << 31));
+    assert!(other.is_nan() && other.to_bits() != quiet.to_bits());
+    let with_x = |x: f32| {
+        let mut w = built();
+        let e = w.entity("crate").unwrap();
+        w.ecs
+            .get_mut::<re_scene::Transform>(e)
+            .unwrap()
+            .translation
+            .x = x;
+        w.state_hash()
+    };
+    assert_eq!(with_x(quiet), with_x(other));
+    assert_ne!(with_x(quiet), with_x(0.0));
+}
+
+#[test]
+fn a_new_defaulted_field_leaves_state_hash_unchanged() {
+    // The same world, with Health declared as today and with one more field.
+    let with = |extra: Option<FieldSchema>, armor: Option<Value>| {
+        let mut w = grid_world(2, 2);
+        let mut schema = health_schema();
+        schema.fields.extend(extra);
+        let key = w.registry.register_script(&mut w.ecs, schema).unwrap();
+        let e = w.entity("crate").unwrap();
+        let mut values = w.registry.schema(key).defaults();
+        values[0] = Value::Float(42.0);
+        if let Some(armor) = armor {
+            values[2] = armor;
+        }
+        w.registry.insert(&mut w.ecs, e, key, values).unwrap();
+        w.update();
+        w.state_hash()
+    };
+    let armor = || FieldSchema {
+        name: "armor".into(),
+        ty: FieldType::F32,
+        doc: String::new(),
+        default: Value::Float(0.0),
+    };
+    let today = with(None, None);
+    assert_eq!(with(Some(armor()), None), today);
+    assert_ne!(with(Some(armor()), Some(Value::Float(5.0))), today);
 }
 
 #[test]

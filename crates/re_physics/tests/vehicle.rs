@@ -209,7 +209,7 @@ fn removing_the_chassis_removes_the_vehicle_and_remove_vehicle_keeps_the_body() 
         &mut p,
         vec![
             chassis(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY),
-            add_car(CAR, car_desc(WheelTester::Ray)),
+            add_car(CAR, car_desc(WheelTester::default())),
         ],
     );
     let left = errors(
@@ -235,7 +235,7 @@ fn a_vehicle_replaced_in_one_apply_keeps_its_input() {
         &mut p,
         vec![
             PhysicsCmd::RemoveVehicle { id: CAR },
-            add_car(CAR, car_desc(WheelTester::Ray)),
+            add_car(CAR, car_desc(WheelTester::default())),
         ],
     );
     assert_eq!(p.vehicle(CAR).unwrap().input.throttle, 1.0);
@@ -440,7 +440,7 @@ fn path_world(threads: usize) -> Physics {
                 ),
             ),
             chassis(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY),
-            add_car(CAR, car_desc(WheelTester::Ray)),
+            add_car(CAR, car_desc(WheelTester::default())),
         ],
     );
     p
@@ -470,10 +470,10 @@ fn drive_path(threads: usize) -> ((Vec3, Quat), Vec<u32>, f32) {
 }
 
 /// The end pose of the path, recorded in the reference container (Linux x86_64) with
-/// Jolt's default build. Jolt's cross-platform-deterministic build (WP18's PR "d2")
-/// ends 4 cm from it; re-record it then (the test prints the pose).
-const REFERENCE_POS: Vec3 = Vec3::new(-50.13417, 4.995464, 59.87319);
-const REFERENCE_ROT: Quat = Quat::from_xyzw(3.212139e-5, -0.7627902, 3.7909456e-5, 0.6466461);
+/// Jolt's cross-platform-deterministic build (WP18's PR "d2"; the test prints the
+/// pose).
+const REFERENCE_POS: Vec3 = Vec3::new(-50.152733, 4.995464, 59.908962);
+const REFERENCE_ROT: Quat = Quat::from_xyzw(3.0249626e-5, -0.76230896, 3.5547266e-5, 0.64721334);
 
 /// Position and rotation tolerance before D2 (ADR-0040). Measured on this path with
 /// the ray tester: the cross-platform-deterministic build moves the end 4 cm, a start
@@ -518,4 +518,33 @@ fn a_restored_snapshot_replays_the_drive_exactly() {
     steps(&mut p, 90);
     let second = (p.pose(CAR).unwrap(), p.vehicle(CAR).unwrap());
     assert_eq!(first, second);
+}
+
+/// A car parked near zero while the floating origin is kilometres away
+/// waits with its chassis and is built when the origin comes back.
+#[test]
+fn a_car_waiting_out_of_reach_is_built_when_the_origin_returns() {
+    let mut p = world(1);
+    p.set_origin(Vec3::new(7168.0, 0.0, 0.0)).unwrap();
+    p.apply(&mut vec![
+        floor(1, 0.0, 0.0, 0.0, 30.0),
+        chassis(Vec3::new(0.0, 0.8, 0.0), Quat::IDENTITY),
+        add_car(CAR, car_desc(WheelTester::default())),
+        input(0.5, 0.0, 0.0),
+    ]);
+    let d = p.take_diagnostics();
+    assert!(
+        d.iter()
+            .all(|d| d.code == codes::OUTSIDE_WORLD && !d.is_error()),
+        "{d:?}"
+    );
+    assert!(!p.has_vehicle(CAR));
+    p.set_origin(Vec3::ZERO).unwrap();
+    assert!(p.has_vehicle(CAR), "{:?}", p.take_diagnostics());
+    assert!(p.take_diagnostics().is_empty());
+    // It drives off with the input it was given while it waited.
+    for _ in 0..60 {
+        p.step(1.0 / 60.0).unwrap();
+    }
+    assert!(p.pose(CAR).unwrap().0.z > 0.05, "{:?}", p.pose(CAR));
 }

@@ -30,6 +30,9 @@ pub fn install(world: &mut World, files: &ProjectFiles) {
     world
         .ecs
         .insert_resource(GraphStore::for_files(files.clone()));
+    world
+        .ecs
+        .insert_resource(re_scene::structure::SceneFiles(files.clone()));
 }
 
 /// Declares the project's Luau node kinds (`scripts/generators/`, ADR-0043
@@ -263,13 +266,22 @@ pub fn heightfield_changed(world: &mut World, path: &str) {
 /// and forgets the derived ones nothing names any more (whatever released them:
 /// a regeneration, a `graph.regenerate` command, a play copy).
 pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibrary) {
-    let meshes: BTreeSet<String> = world
+    let mut meshes: BTreeSet<String> = world
         .ecs
         .query::<&MeshRef>()
         .iter(&world.ecs)
         .filter(|m| m.asset.starts_with(DERIVED))
         .map(|m| m.asset.clone())
         .collect();
+    // Streamed terrain chunks (ADR-0042) carry their meshes.
+    if let Some(view) = world.ecs.get_resource::<re_proc::stream::TerrainView>() {
+        for c in view.chunks() {
+            if !media.has_derived_mesh(&c.mesh) {
+                media.insert_derived_mesh(c.mesh.clone(), c.data().clone());
+            }
+            meshes.insert(c.mesh.clone());
+        }
+    }
     let colliders: Vec<(ColliderShape, String)> = world
         .ecs
         .query::<&Collider>()
@@ -324,6 +336,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
             samples,
             spacing,
             offset,
+            precision,
         }) = shape
         else {
             failed.insert(name);
@@ -337,6 +350,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
                 spacing,
                 offset,
                 samples,
+                precision,
             }),
         );
     }
@@ -357,8 +371,10 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
                         samples,
                         spacing,
                         offset,
+                        ..
                     } = h.to_shape()
                 {
+                    let precision = re_proc::stream::collider_precision(&name);
                     shapes.insert_heightfield(
                         name,
                         std::sync::Arc::new(HeightfieldData {
@@ -366,6 +382,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
                             spacing,
                             offset,
                             samples,
+                            precision,
                         }),
                     );
                 }
@@ -450,6 +467,7 @@ pub fn ground_span(world: &mut World) -> Option<(f32, f32)> {
             samples,
             spacing,
             offset,
+            ..
         } = h.to_shape()
         else {
             continue;

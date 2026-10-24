@@ -154,6 +154,11 @@ pub struct SceneApplyArgs {
     pub label: Option<String>,
     /// The operations, applied in order as one atomic transaction.
     pub ops: Vec<Op>,
+    /// Merges this transaction into the previous undo step when that step
+    /// has the same key and origin and nothing came between (a drag sends
+    /// one per frame under one key, and the drag is one undo step).
+    #[serde(default)]
+    pub coalesce: Option<String>,
 }
 
 fn changed_ids(ops: &[Op]) -> Json {
@@ -412,7 +417,7 @@ pub fn register_builtin_commands<C: EditTarget + 'static>(registry: &mut Command
         false,
         |target, args, call| {
             let label = args.label.unwrap_or_else(|| "scene.apply".into());
-            let applied = call.transact(target, label, args.ops)?;
+            let applied = call.transact_coalescing(target, label, args.ops, args.coalesce)?;
             let spawned: Vec<&str> = applied
                 .iter()
                 .filter_map(|op| match op {

@@ -438,3 +438,35 @@ fn a_changed_compat_script_restarts_while_files_are_watched() {
     let (output, _) = until(&mut app, &|o, _| !o.is_empty());
     assert_eq!(output, ["[server] v3"]);
 }
+
+#[test]
+fn the_compat_contexts_attach_to_the_debugger_before_and_during_play() {
+    let names = |d: &re_script::debug::Debugger| {
+        let mut n: Vec<String> = d
+            .contexts()
+            .into_iter()
+            .map(|c| c.name)
+            .filter(|n| n != "game")
+            .collect();
+        n.sort();
+        n
+    };
+    let dir = project(SERVER, CLIENT);
+    let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+    let debugger = re_script::debug::Debugger::new();
+    app.set_debugger(Some(debugger.clone()));
+    app.frame(std::time::Duration::from_millis(16));
+    assert_eq!(names(&debugger), ["client", "server"]);
+
+    // A restart makes new VMs: the old contexts end, the new ones attach.
+    app.restart();
+    app.frame(std::time::Duration::from_millis(16));
+    assert_eq!(names(&debugger), ["client", "server"]);
+
+    // A debugger set while the game runs attaches the running VMs.
+    app.set_debugger(None);
+    assert!(names(&debugger).is_empty());
+    let late = re_script::debug::Debugger::new();
+    app.set_debugger(Some(late.clone()));
+    assert_eq!(names(&late), ["client", "server"]);
+}

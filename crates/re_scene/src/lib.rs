@@ -59,6 +59,7 @@ pub mod prefab;
 pub mod procedural;
 pub mod scene;
 pub mod stream;
+pub mod structure;
 pub mod tags;
 pub mod world;
 
@@ -71,10 +72,10 @@ pub use bevy_ecs::entity::Entity;
 
 pub use attributes::{AttributeChanged, AttributeFeed, Attributes};
 pub use components::{
-    AnimPlayer, AudioSource, BodyKind, Camera, CharacterController, Collider, ColliderShape,
-    GlobalTransform, HudAnchor, HudText, Light, LightKind, MaterialRef, MeshRef, Name, RigidBody,
-    ScriptContext, ScriptRef, SkinnedMesh, Transform, Vehicle, VehicleKind, VehicleWheel, Visible,
-    WheelTester, register_builtins,
+    AnimPlayer, Animator, AudioSource, BodyKind, BoneAttachment, Camera, CharacterController,
+    Collider, ColliderShape, GlobalTransform, HudAnchor, HudText, Light, LightKind, MaterialRef,
+    MeshRef, Name, Note, Ragdoll, RagdollControl, RigidBody, ScriptContext, ScriptRef, SkinnedMesh,
+    Transform, Vehicle, VehicleKind, VehicleWheel, Visible, WheelTester, register_builtins,
 };
 pub use docs::{DocMarks, DocValidator, OpenDoc, OpenDocs, doc_path};
 pub use error::SceneError;
@@ -88,7 +89,8 @@ pub use procedural::{
 };
 pub use scene::{EntityDoc, GeneratedDoc, SaveOptions, SceneDoc, Snapshot};
 pub use stream::{
-    LoadedCell, Stash, StashedRoot, StreamCell, StreamFocus, Streamed, cell_key, parse_cell_key,
+    LoadedCell, Stash, StashedRoot, StreamCell, StreamFocus, Streamed, TerrainChunk, cell_key,
+    chunk_key, parse_cell_key, parse_chunk_key,
 };
 pub use tags::{TagChanged, TagFeed, TagIndex, Tags};
 pub use world::World;

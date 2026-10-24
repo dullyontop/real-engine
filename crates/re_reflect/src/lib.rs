@@ -34,6 +34,10 @@ pub mod value;
 
 pub use doc::{Doc, f32_from_parsed_f64};
 pub use error::{ReflectError, suggest};
+/// `#[derive(Reflect)]`, the derive form of [`component!`]: field docs from
+/// `///`, defaults from the type's `Default`, `#[reflect(skip)]` for fields that
+/// are not data.
+pub use re_reflect_derive::Reflect;
 pub use record::{RecordField, RecordId, RecordSchema};
 pub use registry::{
     ChangeHook, ComponentKey, ComponentOrigin, ComponentSchema, FieldSchema, Reflect, Registry,

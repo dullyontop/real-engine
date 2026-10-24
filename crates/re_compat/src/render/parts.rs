@@ -16,13 +16,13 @@ use crate::physics::{Cell, CellId};
 
 /// What a part is drawn as.
 #[derive(Clone, Copy, Debug)]
-struct Info {
-    e: Entity,
-    geom: PartGeom,
-    pos: Vec3,
-    rot: Quat,
-    key: MaterialKey,
-    cast_shadow: bool,
+pub(super) struct Info {
+    pub(super) e: Entity,
+    pub(super) geom: PartGeom,
+    pub(super) pos: Vec3,
+    pub(super) rot: Quat,
+    pub(super) key: MaterialKey,
+    pub(super) cast_shadow: bool,
 }
 
 impl Info {
@@ -56,7 +56,7 @@ fn byte(x: f32) -> u8 {
 
 /// The part's look, `None` when it is not drawn (fully transparent, or not a
 /// drawn part).
-fn info(s: &Scope, e: Entity) -> Option<Info> {
+pub(super) fn info(s: &Scope, e: Entity) -> Option<Info> {
     if s.is_a(e, "Terrain") {
         return None;
     }
@@ -89,6 +89,33 @@ fn info(s: &Scope, e: Entity) -> Option<Info> {
 fn shape_key(g: &PartGeom) -> ShapeKey {
     let s = g.size.to_array().map(f32::to_bits);
     ShapeKey(g.shape as u8, s)
+}
+
+impl Info {
+    /// The part drawn on its own, with the mesh of its shape and size
+    /// (shared, sent the first time it is used).
+    pub(super) fn item(&self, hub: &mut Hub, out: &mut RenderFrame) -> FrameItem {
+        let frame = hub.frame;
+        let sk = shape_key(&self.geom);
+        let mesh = match hub.shapes.get_mut(&sk) {
+            Some((key, last)) => {
+                *last = frame;
+                *key
+            }
+            None => {
+                let key = hub.new_mesh(out, mesh::part(&self.geom));
+                hub.shapes.insert(sk, (key, frame));
+                key
+            }
+        };
+        FrameItem {
+            entity: re_scene::entity_id(self.e),
+            mesh,
+            material: self.key,
+            world: Mat4::from_rotation_translation(self.rot, self.pos),
+            cast_shadow: self.cast_shadow,
+        }
+    }
 }
 
 /// What the view keeps about the parts from frame to frame, so a frame
@@ -131,7 +158,12 @@ pub(super) fn draw(
     for &e in dirty {
         let drawn = if s.w.ecs.get_entity(e).is_ok() && s.is_a(e, "BasePart") {
             visited += 1;
-            if in_workspace(e) { info(s, e) } else { None }
+            // A `MeshPart` with a model is drawn by the models pass.
+            if in_workspace(e) && hub.models.path_of(s, e).is_none() {
+                info(s, e)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -231,27 +263,9 @@ pub(super) fn draw(
             });
         }
     }
-    let frame = hub.frame;
     for i in r.loose.values() {
-        let sk = shape_key(&i.geom);
-        let mesh = match hub.shapes.get_mut(&sk) {
-            Some((key, last)) => {
-                *last = frame;
-                *key
-            }
-            None => {
-                let key = hub.new_mesh(out, mesh::part(&i.geom));
-                hub.shapes.insert(sk, (key, frame));
-                key
-            }
-        };
-        out.items.push(FrameItem {
-            entity: re_scene::entity_id(i.e),
-            mesh,
-            material: i.key,
-            world: Mat4::from_rotation_translation(i.rot, i.pos),
-            cast_shadow: i.cast_shadow,
-        });
+        let item = i.item(hub, out);
+        out.items.push(item);
     }
     let used: Vec<MaterialKey> = out.items[first..].iter().map(|i| i.material).collect();
     for key in used {

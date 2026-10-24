@@ -225,7 +225,7 @@ fn with_override(
     overrides
 }
 
-fn regen_json(report: &RegenReport) -> Json {
+pub(crate) fn regen_json(report: &RegenReport) -> Json {
     json!({
         "sources": report.sources,
         "spawned": report.spawned,
@@ -237,6 +237,7 @@ fn regen_json(report: &RegenReport) -> Json {
             "target": o.target,
             "component": o.component,
             "field": o.field,
+            "structural": o.structural.map(|k| k.to_string()),
         })).collect::<Vec<_>>(),
     })
 }
@@ -244,7 +245,7 @@ fn regen_json(report: &RegenReport) -> Json {
 /// The warnings of a regeneration for `source`: orphaned overrides
 /// (`RE4010`), overrides that could not be applied, and the graph's own
 /// warnings. The first error, if the source's generator failed.
-fn regen_diagnostics(
+pub(crate) fn regen_diagnostics(
     world: &World,
     source: &str,
     report: &RegenReport,
@@ -763,12 +764,82 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
         true,
         report::<C>,
     );
+    registry.register_typed::<crate::AddNodeArgs, _>(
+        "graph.add_node",
+        "Add a node to a graph file (opened for editing, saved by scene.save): its kind and parameters are checked; a fresh id is chosen when none is given, so a retry without an id adds another node.",
+        Tier::Edit,
+        false,
+        crate::edit::add_node::<C>,
+    );
+    registry.register_typed::<crate::RemoveNodeArgs, _>(
+        "graph.remove_node",
+        "Remove a node from a graph file, with its edges, its canvas position and the procedural sources' parameter overrides of it, in one undoable step. Its generated entities' keys go away; overrides of them are listed and kept.",
+        Tier::Edit,
+        true,
+        crate::edit::remove_node::<C>,
+    );
+    registry.register_typed::<crate::ConnectArgs, _>(
+        "graph.connect",
+        "Connect a node's output to another node's input in a graph file; ports and types are checked, cycles refused, and an edge already into that input is replaced.",
+        Tier::Edit,
+        true,
+        crate::edit::connect::<C>,
+    );
+    registry.register_typed::<crate::ConnectArgs, _>(
+        "graph.disconnect",
+        "Remove the edge from a node's output to another node's input in a graph file.",
+        Tier::Edit,
+        true,
+        crate::edit::disconnect::<C>,
+    );
+    registry.register_typed::<crate::MoveNodesArgs, _>(
+        "graph.move_nodes",
+        "Set the canvas positions of nodes in a graph file (layout only: nothing regenerates).",
+        Tier::Edit,
+        true,
+        crate::edit::move_nodes::<C>,
+    );
+    registry.register_typed::<crate::SetDefaultArgs, _>(
+        "graph.set_default",
+        "Set a node's parameter in the graph file itself (checked against the node kind; null removes it). graph.set_param sets a per-source override instead.",
+        Tier::Edit,
+        true,
+        crate::edit::set_default::<C>,
+    );
     registry.register_typed::<crate::bake::BakeArgs, _>(
         "proc.bake",
         "Turn a procedural source's generated entities into authored ones (ids `<source>.<key>`, a `Baked` record each, derived meshes and heightfields written under assets/baked/), as one undoable transaction. By default the source stops generating; with `keys` or `keep_source` it keeps generating the rest.",
         Tier::Edit,
         false,
         crate::bake::bake::<C>,
+    );
+    registry.register_typed::<crate::structure::MoveArgs, _>(
+        "proc.move",
+        "Move a generated entity under another entity of its source's output (or the source itself), kept across regenerations as an override; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::move_entity::<C>,
+    );
+    registry.register_typed::<crate::structure::ReplaceArgs, _>(
+        "proc.replace",
+        "Replace what a generated entity is with a prefab or components, keeping its key, id and generated Transform; kept across regenerations; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::replace::<C>,
+    );
+    registry.register_typed::<crate::structure::InsertArgs, _>(
+        "proc.insert",
+        "Add an authored entity (a prefab or components) to a procedural source's output with id `<source>/+<key>`, kept across regenerations; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::insert::<C>,
+    );
+    registry.register_typed::<crate::structure::ClearStructureArgs, _>(
+        "proc.clear_structure",
+        "Remove a procedural source's structural overrides (moves, replacements, inserts), all or one key's; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::clear_structure::<C>,
     );
     registry.register_typed::<MigrationReportArgs, _>(
         "graph.migration_report",

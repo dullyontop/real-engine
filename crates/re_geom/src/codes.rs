@@ -16,3 +16,14 @@ pub const INVALID_PRIMITIVE: Code = Code::new("RE4501");
 
 /// A merged mesh would have more vertices than a `u32` index can name.
 pub const MESH_TOO_LARGE: Code = Code::new("RE4502");
+
+/// A coordinate is too far from the origin for the 1 mm grid of polygon
+/// operations (about ±1,000 km).
+pub const OUT_OF_RANGE: Code = Code::new("RE4503");
+
+/// A polygon or path is unusable: too few points, a non-finite point, or a
+/// non-positive width.
+pub const INVALID_POLYGON: Code = Code::new("RE4504");
+
+/// A polygon could not be triangulated.
+pub const TRIANGULATION_FAILED: Code = Code::new("RE4505");

@@ -1,5 +1,6 @@
 //! `Lighting` and the lights: the sun from `ClockTime`, the ambient light,
-//! fog, `Atmosphere`, `Sky`, `ColorCorrectionEffect`, and `PointLight`,
+//! fog, `Atmosphere`, `Sky`, the post effects (`ColorCorrectionEffect`,
+//! `BloomEffect`, `BlurEffect`, `SunRaysEffect`), and `PointLight`,
 //! `SpotLight` and `SurfaceLight` under parts and attachments.
 
 use std::f32::consts::{PI, TAU};
@@ -9,7 +10,7 @@ use glam::{Quat, Vec3};
 use mlua::{Lua, MultiValue, Value as LuaValue};
 use re_reflect::Value;
 use re_scene::{Entity, World};
-use re_types::render::{Light, LightKind};
+use re_types::render::{Bloom, Light, LightKind, SunRays};
 
 use super::{ColorGrading, Fog, Sky, SpotLight};
 use crate::class::Accessor;
@@ -48,7 +49,12 @@ pub fn sun_direction(clock: f32, latitude: f32) -> Vec3 {
         0.0
     };
     let h = (clock / 24.0 - 0.5) * TAU;
-    Vec3::new(-h.sin(), lat.cos() * h.cos(), lat.sin() * h.cos()).normalize_or(Vec3::Y)
+    Vec3::new(
+        -libm::sinf(h),
+        libm::cosf(lat) * libm::cosf(h),
+        libm::sinf(lat) * libm::cosf(h),
+    )
+    .normalize_or(Vec3::Y)
 }
 
 /// `ClockTime` from a `TimeOfDay` string (`"HH:MM:SS"`, minutes and seconds
@@ -172,7 +178,21 @@ pub(crate) struct Environment {
     pub exposure: f32,
     pub fog: Option<Fog>,
     pub sky: Sky,
+    pub effects: PostEffects,
+}
+
+/// The post effects of a frame, in the renderer's terms.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PostEffects {
+    /// Colour correction (`ColorCorrectionEffect`).
     pub grading: Option<ColorGrading>,
+    /// Glow (`BloomEffect`).
+    pub bloom: Option<Bloom>,
+    /// The full-screen blur's radius in fractions of the view's height
+    /// (`BlurEffect`); 0 is off.
+    pub blur_radius: f32,
+    /// Light shafts from the sun (`SunRaysEffect`).
+    pub sun_rays: Option<SunRays>,
 }
 
 fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
@@ -229,7 +249,7 @@ pub(crate) fn environment(
         add(ambient, outdoor, outdoor_scale * 0.6),
         add(ambient, outdoor, outdoor_scale * 0.25),
     );
-    let exposure = 2f32.powf(f("ExposureCompensation", 0.0).clamp(-5.0, 5.0));
+    let exposure = libm::powf(2f32, f("ExposureCompensation", 0.0).clamp(-5.0, 5.0));
 
     // Sky by time of day.
     let dusk = 1.0 - smoothstep(0.0, 0.3, to_sun.y.abs());
@@ -280,32 +300,100 @@ pub(crate) fn environment(
         sun: (celestial && to_sun.y > -0.05).then_some((to_sun, [4.0, 3.6, 3.0])),
     };
 
-    let mut grading: Option<ColorGrading> = None;
-    for parent in [lighting, camera].into_iter().flatten() {
-        for k in tree::children(s.w, parent) {
-            if !s.is_a(k, "ColorCorrectionEffect") {
-                continue;
-            }
-            let e = s.props(k);
-            if !e.bool("Enabled", true) {
-                continue;
-            }
-            let g = grading.get_or_insert_with(ColorGrading::default);
-            g.brightness += e.f32("Brightness", 0.0);
-            g.contrast += e.f32("Contrast", 0.0);
-            g.saturation += e.f32("Saturation", 0.0);
-            let t = linear(e.color("TintColor", Rgba::WHITE));
-            g.tint = [g.tint[0] * t[0], g.tint[1] * t[1], g.tint[2] * t[2]];
-        }
-    }
+    let effects = effects(s, lighting, camera);
     Environment {
         sun,
         ambient,
         exposure,
         fog,
         sky,
-        grading,
+        effects,
     }
+}
+
+/// How many studs of `Size` make one target height of blur or glow radius:
+/// the default `Size` of 24 is a radius of 5% of the view's height, the
+/// renderer's default bloom radius.
+const SIZE_PER_HEIGHT: f32 = 480.0;
+
+/// The enabled post effects under `Lighting` and the camera, combined: colour
+/// corrections add (tints multiply); blooms add their intensities and take
+/// the widest size and lowest threshold; blurs combine as Gaussians do (the
+/// radii add in squares); sun rays add their intensities and take the
+/// widest spread.
+pub(crate) fn effects(s: &Scope, lighting: Option<Entity>, camera: Option<Entity>) -> PostEffects {
+    let mut out = PostEffects::default();
+    let mut blur2 = 0.0f32;
+    for parent in [lighting, camera].into_iter().flatten() {
+        for k in tree::children(s.w, parent) {
+            let kind = if s.is_a(k, "ColorCorrectionEffect") {
+                0
+            } else if s.is_a(k, "BloomEffect") {
+                1
+            } else if s.is_a(k, "BlurEffect") {
+                2
+            } else if s.is_a(k, "SunRaysEffect") {
+                3
+            } else {
+                continue;
+            };
+            let e = s.props(k);
+            if !e.bool("Enabled", true) {
+                continue;
+            }
+            match kind {
+                0 => {
+                    let g = out.grading.get_or_insert_with(ColorGrading::default);
+                    g.brightness += e.f32("Brightness", 0.0);
+                    g.contrast += e.f32("Contrast", 0.0);
+                    g.saturation += e.f32("Saturation", 0.0);
+                    let t = linear(e.color("TintColor", Rgba::WHITE));
+                    g.tint = [g.tint[0] * t[0], g.tint[1] * t[1], g.tint[2] * t[2]];
+                }
+                1 => {
+                    let intensity = finite(e.f32("Intensity", 1.0)).max(0.0);
+                    let radius = finite(e.f32("Size", 24.0)).clamp(0.0, 56.0) / SIZE_PER_HEIGHT;
+                    let threshold = finite(e.f32("Threshold", 2.0)).max(0.0);
+                    match &mut out.bloom {
+                        Some(b) => {
+                            b.intensity += intensity;
+                            b.radius = b.radius.max(radius);
+                            b.threshold = b.threshold.min(threshold);
+                        }
+                        None => {
+                            out.bloom = Some(Bloom {
+                                intensity,
+                                threshold,
+                                radius,
+                                ..Bloom::default()
+                            })
+                        }
+                    }
+                }
+                2 => {
+                    let r = finite(e.f32("Size", 24.0)).clamp(0.0, 56.0) / SIZE_PER_HEIGHT;
+                    blur2 += r * r;
+                }
+                _ => {
+                    let intensity = finite(e.f32("Intensity", 0.25)).max(0.0);
+                    let spread = finite(e.f32("Spread", 1.0)).clamp(0.0, 1.0);
+                    match &mut out.sun_rays {
+                        Some(r) => {
+                            r.intensity += intensity;
+                            r.spread = r.spread.max(spread);
+                        }
+                        None => out.sun_rays = Some(SunRays { intensity, spread }),
+                    }
+                }
+            }
+        }
+    }
+    out.blur_radius = blur2.sqrt();
+    out
+}
+
+fn finite(x: f32) -> f32 {
+    if x.is_finite() { x } else { 0.0 }
 }
 
 /// The unit axis of a `NormalId` item in a part's frame.

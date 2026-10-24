@@ -191,7 +191,7 @@ impl UserData for Vector2 {
             Ok(others.iter().fold(*v, |a, b| a.zip(*b, f32::max)))
         });
         methods.add_method("Angle", |_, v, (o, signed): (Vector2, Option<bool>)| {
-            let a = (v.cross(o) as f64).atan2(v.dot(o) as f64);
+            let a = libm::atan2(v.cross(o) as f64, v.dot(o) as f64);
             Ok(if signed.unwrap_or(false) { a } else { a.abs() })
         });
         methods.add_method("FuzzyEq", |_, v, (o, eps): (Vector2, Option<f64>)| {

@@ -1,0 +1,67 @@
+# Release assets for Real Engine.
+#
+# The prebuilt web runtime (ADR-0049, WP29 PR "runtime"): `real build --target web
+# --runtime DIR` takes it when the `real` that runs has no engine source to build
+# one from. This builds the island for the web, which builds the runtime once, and
+# packs the runtime's files (`RUNTIME_FILES` in crates/re_cli/src/build/web.rs) into
+# real-web-runtime-<version>.tar.gz. A tag `v*` attaches it to that tag's GitHub
+# release (creating the release if needed); a manual run keeps it as a workflow
+# artifact only. Tools and versions are build-web's in ci.yml.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 2
+
+jobs:
+  web-runtime:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/linux-setup
+      - run: rustup target add wasm32-unknown-unknown
+      - name: Install wasi-sdk 34
+        run: tools/ci/wasi-sdk.sh
+      - name: Install wasm-bindgen-cli 0.2.129
+        run: cargo install --locked wasm-bindgen-cli --version 0.2.129
+      - name: Install binaryen 133
+        run: tools/ci/binaryen.sh
+      - name: Build the web runtime
+        run: |
+          cargo build --locked --release -p re_cli
+          target/release/real --project examples/island build --target web --out target/web-release
+      - name: Pack the runtime
+        id: pack
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_REF_TYPE" != tag ]; then version="$(git rev-parse --short HEAD)"; fi
+          name="real-web-runtime-$version"
+          mkdir -p "target/$name"
+          for f in index.html boot.js wasi.js real.js real_bg.wasm runtime.json; do
+            cp "target/web-release/$f" "target/$name/"
+          done
+          tar -C target -czf "target/$name.tar.gz" "$name"
+          echo "file=target/$name.tar.gz" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-runtime
+          path: ${{ steps.pack.outputs.file }}
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes ""
+          gh release upload "$GITHUB_REF_NAME" "${{ steps.pack.outputs.file }}" --clobber

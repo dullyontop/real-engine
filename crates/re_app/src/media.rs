@@ -16,7 +16,9 @@ use std::sync::Arc;
 use glam::{Affine3A, Vec3};
 use re_assets::{AssetChange, AssetServer, ReloadReport};
 use re_core::{Diagnostic, Location};
-use re_types::{ClipData, MaterialDesc, MeshData, SkinData, SkinWeights, TextureData, Vertex};
+use re_types::{
+    AnimGraph, ClipData, MaterialDesc, MeshData, SkinData, SkinWeights, TextureData, Vertex,
+};
 
 use crate::codes;
 
@@ -65,6 +67,7 @@ pub struct Media {
     materials: HashMap<String, LoadedMaterial>,
     clips: HashMap<String, Arc<ClipData>>,
     skins: HashMap<String, LoadedSkin>,
+    graphs: HashMap<String, Arc<AnimGraph>>,
     /// Loads that failed, so a broken file is not read again every frame; a
     /// change to any file forgets them.
     failed: HashMap<String, Diagnostic>,
@@ -86,6 +89,7 @@ impl Media {
             materials: HashMap::new(),
             clips: HashMap::new(),
             skins: HashMap::new(),
+            graphs: HashMap::new(),
             failed: HashMap::new(),
             reported: HashSet::new(),
         }
@@ -298,6 +302,41 @@ impl Media {
         }
     }
 
+    /// The animation graph file named by an `Animator.graph`, parsed (it is
+    /// validated when it binds to a skin).
+    ///
+    /// # Errors
+    ///
+    /// `RE0520` when the file cannot be read or is not an animation graph.
+    pub fn anim_graph(&mut self, path: &str) -> Result<Arc<AnimGraph>, Diagnostic> {
+        if let Some(g) = self.graphs.get(path) {
+            return Ok(g.clone());
+        }
+        if let Some(d) = self.failed.get(path) {
+            return Err(d.clone());
+        }
+        let loaded = self
+            .server
+            .files()
+            .read_str(path)
+            .map_err(|e| unknown_asset(path, &format!("cannot be read: {e}")))
+            .and_then(|text| {
+                serde_json::from_str::<AnimGraph>(&text)
+                    .map_err(|e| unknown_asset(path, &format!("is not an animation graph: {e}")))
+            });
+        match loaded {
+            Ok(g) => {
+                let g = Arc::new(g);
+                self.graphs.insert(path.to_string(), g.clone());
+                Ok(g)
+            }
+            Err(d) => {
+                self.failed.insert(path.to_string(), d.clone());
+                Err(d)
+            }
+        }
+    }
+
     /// The skin named by a `SkinnedMesh.asset` (`<glTF path>#<skin name>`), with
     /// every mesh drawn by it merged in bind space (glTF ignores a skinned
     /// node's own transform).
@@ -416,6 +455,7 @@ impl Media {
                     .keys()
                     .filter(|k| changed.contains(&file_of(k)) || textures_changed),
             )
+            .chain(self.graphs.keys().filter(|k| changed.contains(*k)))
             .cloned()
             .collect();
         stale.retain(|k| !k.starts_with(DERIVED));
@@ -428,6 +468,7 @@ impl Media {
             self.materials.remove(key);
             self.clips.remove(key);
             self.skins.remove(key);
+            self.graphs.remove(key);
             self.reported.remove(key);
         }
         (report, stale)
@@ -536,7 +577,11 @@ fn capsule(radius: f32, cylinder: f32, segments: u32, rings: u32) -> MeshData {
     for &(offset, phi, v) in &rows {
         for s in 0..=segments {
             let theta = TAU * s as f32 / segments as f32;
-            let n = Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin());
+            let n = Vec3::new(
+                libm::sinf(phi) * libm::cosf(theta),
+                libm::cosf(phi),
+                libm::sinf(phi) * libm::sinf(theta),
+            );
             let p = n * radius + Vec3::Y * offset;
             mesh.vertices
                 .push(vertex(p, n, [s as f32 / segments as f32, v]));
