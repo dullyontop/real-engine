@@ -14,3 +14,19 @@ brake = ["key:Space", "pad:RightTrigger"]
 [input.axes]
 move = [{ composite = ["key:KeyW", "key:KeyS", "key:KeyA", "key:KeyD"] }, { stick = "left", dead_zone = 0.15 }]
 look = [{ mouse_delta = 0.003 }, { stick = "right", dead_zone = 0.15 }]
+
+# Mild post-processing (ADR-0038): neutral tone mapping, a little bloom on
+# the brightest highlights, and slightly richer colour.
+[render.post]
+tone_mapping = "PbrNeutral"
+
+[render.post.bloom]
+intensity = 0.08
+threshold = 1.0
+
+[render.post.grading]
+saturation = 0.1
+
+# models/ (the walker) is not a default package folder.
+[package]
+include = ["models/**"]
