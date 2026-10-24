@@ -175,6 +175,21 @@ fn synced<R>(lua: &Lua, f: impl FnOnce(&mut Sim, &mut World) -> R) -> mlua::Resu
     })
 }
 
+/// The first part a ray from `origin` along `direction` (its length is the
+/// reach) enters, and how far along it is, with `Workspace:Raycast`'s
+/// default filter. For the UI's pointer on surfaces.
+pub(crate) fn first_hit(w: &mut World, origin: Vec3, direction: Vec3) -> Option<(Entity, f32)> {
+    with_sim(w, |sim, w| {
+        sim.sync(w, false);
+        let f = Filter::of_raycast(w, sim, None);
+        let hit = sim
+            .physics
+            .raycast_parts(origin, direction, &mut |v: &PartView| f.accept(v))?;
+        Some((entity_of(hit.part)?, hit.distance))
+    })
+    .flatten()
+}
+
 fn material(w: &World, e: Entity) -> String {
     Layout::find(w)
         .and_then(|l| l.material.str(w, e))

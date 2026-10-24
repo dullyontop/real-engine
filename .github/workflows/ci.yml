@@ -432,10 +432,10 @@ jobs:
   # ADR-0049 (WP29): the browser build. Type-checks and lints the runtime for
   # wasm32-unknown-unknown (the std::time ban runs only here, ADR-0049 §5), then links
   # tools/web-test with Luau and Jolt built by wasi-sdk and compares its report under
-  # Node with the native one. Then it builds the browser runtime (re_web, profile
-  # `web` and wasm-opt, failing above 8 MB gzipped) and, in
-  # headless Chromium with WebGPU, plays the island's and the plaza's replays (no
-  # error, a drawn last frame) and starts the island's game page. The pile hash and
+  # Node with the native one. Then `real build --target web` builds the island and the
+  # plaza (the runtime with profile `web` and wasm-opt, failing above 8 MB gzipped)
+  # and, serving each folder in headless Chromium with WebGPU, plays their replays
+  # from game.rpak (no error, a drawn last frame) and starts the island's game page. The pile hash and
   # the replays' state_hash against native are reported only until WP18 PR "d2".
   # actions/setup-node v7 (949feb24) verified with `git ls-remote` on 2026-10-20.
   build-web:
@@ -470,34 +470,13 @@ jobs:
           node --experimental-wasm-exnref tools/web-test/smoke.mjs --reported "pile " target/web-test target/web-test/native.txt
       - name: Install binaryen 133
         run: tools/ci/binaryen.sh
-      - name: Build the browser runtime, within the 8 MB gzip budget
-        run: |
-          cargo build --locked --profile web --target wasm32-unknown-unknown -p re_web
-          wasm-bindgen --target web --out-name real --out-dir target/re-web target/wasm32-unknown-unknown/web/re_web.wasm
-          wasm-opt -Oz --strip-debug --strip-producers --enable-exception-handling \
-            --enable-reference-types --enable-bulk-memory --enable-nontrapping-float-to-int \
-            --enable-sign-ext --enable-mutable-globals --enable-multivalue \
-            target/re-web/real_bg.wasm -o target/re-web/real_bg.wasm
-          size=$(gzip -9 -c target/re-web/real_bg.wasm | wc -c)
-          echo "real_bg.wasm: $(wc -c < target/re-web/real_bg.wasm) bytes, $size gzipped"
-          if [ "$size" -gt 8000000 ]; then
-            echo "::error::real_bg.wasm is $size bytes gzipped, over the 8 MB budget (ADR-0049)"
-            exit 1
-          fi
       - name: Install Playwright's Chromium
         working-directory: tools/web-test
         run: |
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
-      - name: The island and the plaza in headless Chromium with WebGPU
-        run: |
-          cargo run --locked --release -p re_web --example replay -- examples/island \
-            tests/replays/walk_collect.replay.json tests/replays/full_game.replay.json \
-            tests/replays/regenerate.replay.json > target/re-web/island.jsonl
-          cargo run --locked --release -p re_web --example replay -- examples/plaza \
-            tests/replays/idle.replay.json tests/replays/walk.replay.json > target/re-web/plaza.jsonl
-          node tools/web-test/browser.mjs --expect target/re-web/island.jsonl --reported target/re-web examples/island \
-            tests/replays/walk_collect.replay.json tests/replays/full_game.replay.json tests/replays/regenerate.replay.json
-          node tools/web-test/browser.mjs --expect target/re-web/plaza.jsonl --reported target/re-web examples/plaza \
-            tests/replays/idle.replay.json tests/replays/walk.replay.json
-          node tools/web-test/play.mjs target/re-web examples/island
+      # real build --target web for the island and the plaza (failing above the 8 MB
+      # gzip budget), their replays from game.rpak in headless Chromium with WebGPU,
+      # and the island's game page.
+      - name: cargo xtask web-test
+        run: cargo xtask web-test --reported

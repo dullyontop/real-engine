@@ -1,5 +1,5 @@
-//! The 2D UI: `ScreenGui` and `BillboardGui` trees laid out, painted as
-//! egui shapes and given pointer, keyboard and selection input.
+//! The 2D UI: `ScreenGui`, `BillboardGui` and `SurfaceGui` trees laid out,
+//! painted as egui shapes and given pointer, keyboard and selection input.
 //!
 //! The host calls [`step`] once a frame inside its egui pass with the
 //! containers to draw (the local player's `PlayerGui`), the viewport, the
@@ -8,13 +8,26 @@
 //! `TextBounds` and the rest, only when they change), fires the input
 //! events, and returns the shapes for the host to paint over the 3D view
 //! (re_render's UI pass). Fonts come from [`install_fonts`].
+//!
+//! Surfaces and viewports render to textures (ADR-0048 §2). Each enabled
+//! `SurfaceGui` (in a container, or anywhere in `Workspace`) is laid out on
+//! its canvas and returned as a [`SurfaceDraw`]: the host paints its shapes
+//! into a texture, when [`SurfaceRedraws`] says the picture changed, and
+//! shows it on the part's face. A click on a face carrying a `SurfaceGui` in
+//! a container (not in `Workspace`) goes to its elements, unless screen UI
+//! under the pointer takes it first. Each drawn `ViewportFrame` is returned
+//! as a [`ViewportDraw`]; the host draws its parts
+//! ([`RenderFrame::viewports`](crate::render::RenderFrame)) into a texture
+//! and passes the texture back in [`GuiFrame::images`].
 
 mod fonts;
 mod layout;
 mod paint;
 pub(crate) mod props;
+mod surface;
 mod text;
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use glam::Vec2;
@@ -23,6 +36,7 @@ use re_reflect::Value;
 use re_scene::{Entity, World};
 
 pub use layout::GuiCamera;
+pub use surface::{MAX_TEXTURE, SurfaceDraw, SurfacePlan, SurfaceRedraws};
 
 use crate::class::Accessor;
 use crate::instance::tree;
@@ -31,6 +45,8 @@ use crate::{CompatError, signal};
 use layout::{Item, Kind, Layout, Root};
 use paint::{Looks, Painter};
 use props::{Scope, vec2_value};
+use re_core::Diagnostic;
+use surface::Placement;
 
 /// Gives `ctx` egui's default fonts plus the bundled substitutes
 /// (ADR-0035), replacing its fonts. Call it once before the first frame that
@@ -94,6 +110,10 @@ pub struct GuiFrame {
     pub camera: Option<GuiCamera>,
     /// The frame's input.
     pub input: GuiInput,
+    /// The texture the host drew each `ViewportFrame` into (from the
+    /// frame's [`GuiOutput::viewports`]); a frame without one shows only
+    /// its background.
+    pub images: HashMap<Entity, egui::TextureId>,
 }
 
 /// What one UI frame produced.
@@ -110,7 +130,31 @@ pub struct GuiOutput {
     pub sinks_pointer: bool,
     /// The text box that has the keyboard, if any.
     pub text_focus: Option<Entity>,
+    /// The `SurfaceGui`s to show on parts.
+    pub surfaces: Vec<SurfaceDraw>,
+    /// The `ViewportFrame`s drawn, for the host to render their parts.
+    pub viewports: Vec<ViewportDraw>,
+    /// Warnings (`RE9410`, once per surface).
+    pub diagnostics: Vec<Diagnostic>,
 }
+
+/// A drawn `ViewportFrame`: the host renders its parts into a texture of
+/// `size` times the pixels per point of where it is drawn (the window's, or
+/// the surface's [`SurfaceDraw::pixels_per_point`]), capped at
+/// [`MAX_VIEWPORT`] pixels a side.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewportDraw {
+    /// The `ViewportFrame`.
+    pub entity: Entity,
+    /// Its drawn size, in the pixels of the screen UI or of the surface's
+    /// canvas.
+    pub size: Vec2,
+    /// The `SurfaceGui` it is drawn on, `None` on the screen.
+    pub surface: Option<Entity>,
+}
+
+/// The largest side of a `ViewportFrame`'s texture, in pixels.
+pub const MAX_VIEWPORT: f32 = 1024.0;
 
 /// What the input pass keeps from frame to frame.
 #[derive(Default)]
@@ -127,6 +171,23 @@ struct Hub {
     /// The read-only values written last frame, so an unchanged one is not
     /// written again.
     written: props::FxMap<(Entity, usize), Value>,
+    /// The surfaces warned about, and why.
+    warned: HashSet<(Entity, Warning)>,
+}
+
+/// Why a surface was warned about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Warning {
+    NoPart,
+    Scaled,
+}
+
+/// A `SurfaceGui` to lay out this frame.
+struct SurfaceRoot {
+    root: Root,
+    at: Placement,
+    /// Texture pixels per canvas pixel.
+    k: f32,
 }
 
 /// The properties the step writes that scripts can write too; they are
@@ -374,6 +435,98 @@ fn roots(s: &Scope, frame: &GuiFrame, boards_in_world: &[Entity]) -> Vec<Root> {
         .collect()
 }
 
+/// The `SurfaceGui`s to draw: enabled, inside a container or `Workspace`,
+/// on a part, and within their `MaxDistance` of the camera. Only those in a
+/// container (and not in `Workspace`) take input.
+fn surface_roots(
+    s: &Scope,
+    frame: &GuiFrame,
+    list: &[Entity],
+    workspace: Option<Entity>,
+    warned: &mut HashSet<(Entity, Warning)>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<SurfaceRoot> {
+    let w = s.w;
+    let enabled = |e: Entity| s.props(e).bool("Enabled", true);
+    let mut out = Vec::new();
+    let mut warn = |e: Entity, why: Warning, msg: String| {
+        if warned.insert((e, why)) {
+            let hint = match why {
+                Warning::NoPart => "set its Adornee to a part, or parent it to one".to_string(),
+                Warning::Scaled => format!(
+                    "a canvas of at most {MAX_TEXTURE} pixels a side is drawn at full resolution"
+                ),
+            };
+            diagnostics.push(Diagnostic::warning(crate::codes::SURFACE, msg).with_hint(hint));
+        }
+    };
+    for &e in list {
+        if !tree::alive(w, e) || tree::is_destroyed(w, e) || !enabled(e) {
+            continue;
+        }
+        let ancestors = tree::ancestors(w, e);
+        let in_world = workspace.is_some_and(|ws| ancestors.contains(&ws));
+        let in_container = frame.roots.iter().any(|c| ancestors.contains(c));
+        if !in_world && !in_container {
+            continue;
+        }
+        if ancestors
+            .iter()
+            .any(|&a| s.is_a(a, "LayerCollector") && !enabled(a))
+        {
+            continue;
+        }
+        let Some(at) = Placement::of(s, e) else {
+            warn(
+                e,
+                Warning::NoPart,
+                format!(
+                    "SurfaceGui {} has no part to be drawn on",
+                    tree::full_name(w, e)
+                ),
+            );
+            continue;
+        };
+        let p = s.props(e);
+        let max = p.f32("MaxDistance", 0.0);
+        if max > 0.0
+            && let Some(cam) = frame.camera.as_ref()
+            && (at.center() - cam.position).length() > max
+        {
+            continue;
+        }
+        let (canvas, k) = surface::canvas(s, e, &at);
+        if k < 1.0 {
+            warn(
+                e,
+                Warning::Scaled,
+                format!(
+                    "SurfaceGui {}'s canvas of {}x{} pixels is drawn scaled down to fit a \
+                     {MAX_TEXTURE}-pixel texture",
+                    tree::full_name(w, e),
+                    canvas.x.round(),
+                    canvas.y.round()
+                ),
+            );
+        }
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(canvas.x, canvas.y));
+        out.push(SurfaceRoot {
+            root: Root {
+                e,
+                origin: Vec2::ZERO,
+                abs_origin: Vec2::ZERO,
+                size: canvas,
+                global_z: p.item("ZIndexBehavior", "Sibling") == "Global",
+                clip: Some(rect),
+                input: in_container && !in_world && p.bool("Active", true),
+            },
+            at,
+            k,
+        });
+    }
+    out
+}
+
 /// True if screen point `p` is inside the drawn item.
 fn contains(it: &Item, p: Vec2) -> bool {
     if it.clip.is_some_and(|c| !c.contains(egui::pos2(p.x, p.y))) {
@@ -418,6 +571,7 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
                 focused: h.focused,
                 requests: Vec::new(),
                 written: std::mem::take(&mut h.written),
+                warned: std::mem::take(&mut h.warned),
             },
         )
     });
@@ -426,6 +580,44 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
     let out = with_world(lua, |w| {
         let classes = &*classes;
         let boards_in_world = billboards(w);
+        let surface_list = crate::render::instances_of(w, "SurfaceGui");
+        let workspace = crate::services::core::find_service(w, game, "Workspace");
+        let mut diagnostics = Vec::new();
+        // The surfaces, and the face under the pointer among those that take
+        // input.
+        let (surfaces, pointer_hit) = {
+            let scope = Scope::new(w, classes);
+            let found = surface_roots(
+                &scope,
+                frame,
+                &surface_list,
+                workspace,
+                &mut hub.warned,
+                &mut diagnostics,
+            );
+            let hit = match (input.pointer, frame.camera.as_ref()) {
+                (Some(p), Some(cam)) if found.iter().any(|r| r.root.input) => {
+                    let dir = cam.ray(p, frame.viewport);
+                    found
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| r.root.input)
+                        .filter_map(|(i, r)| r.at.hit(cam.position, dir).map(|(t, at)| (i, t, at)))
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                        .map(|h| (h, cam.position, dir))
+                }
+                _ => None,
+            };
+            (found, hit)
+        };
+        // Another part in front of the face hides it from the pointer.
+        let surface_hit = pointer_hit.and_then(|((i, t, at), origin, dir)| {
+            let r = &surfaces[i];
+            match crate::physics::first_hit(w, origin, dir * (t + 0.01)) {
+                Some((e, d)) if e != r.at.part && d < t - 1e-3 => None,
+                _ => Some((i, at * r.root.size)),
+            }
+        });
         let mut resolved = Vec::new();
         let mut selection = None;
         let out = {
@@ -441,21 +633,46 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
                 mine.sort_by_key(|it| it.key);
                 items.extend(mine);
             }
+            // The surfaces' elements follow the screen's, each surface's in
+            // its own span and in canvas pixels.
+            let n_screen = items.len();
+            let mut spans = Vec::with_capacity(surfaces.len());
+            for r in &surfaces {
+                let start = items.len();
+                lay.root(&r.root);
+                let mut mine = std::mem::take(&mut lay.items);
+                mine.sort_by_key(|it| it.key);
+                items.extend(mine);
+                spans.push(start..items.len());
+            }
             let mut writes = std::mem::take(&mut lay.writes);
             drop(lay);
 
             // Hover: every element under the pointer; the topmost takes input.
-            let under: Vec<usize> = match input.pointer {
-                Some(p) => (0..items.len())
+            // Screen UI under the pointer comes first; otherwise the surface
+            // face under it, at its canvas point.
+            let under_at = |range: std::ops::Range<usize>, p: Vec2| -> Vec<usize> {
+                range
                     .rev()
                     .filter(|&i| items[i].interactable && contains(&items[i], p))
-                    .collect(),
-                None => Vec::new(),
+                    .collect()
+            };
+            let screen_under = input
+                .pointer
+                .map_or_else(Vec::new, |p| under_at(0..n_screen, p));
+            let (under, event_at) = match surface_hit {
+                Some((i, at)) if screen_under.is_empty() => (under_at(spans[i].clone(), at), at),
+                _ => (
+                    screen_under,
+                    input.pointer.unwrap_or_default() - Vec2::new(0.0, frame.top_inset),
+                ),
             };
             let target = under.iter().copied().find(|&i| takes_input(s, &items[i]));
-            let pxy = |p: Option<Vec2>| {
-                let p = p.unwrap_or_default() - Vec2::new(0.0, frame.top_inset);
-                vec![Arg::Int(p.x.round() as i64), Arg::Int(p.y.round() as i64)]
+            let pxy = |_: Option<Vec2>| {
+                vec![
+                    Arg::Int(event_at.x.round() as i64),
+                    Arg::Int(event_at.y.round() as i64),
+                ]
             };
             let now: Vec<Entity> = under.iter().map(|&i| items[i].e).collect();
             for &e in &hub.hovered {
@@ -658,7 +875,7 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
                 && dir.length_squared() > 0.0
                 && let Some(g) = service
             {
-                let selectable: Vec<&Item> = items
+                let selectable: Vec<&Item> = items[..n_screen]
                     .iter()
                     .filter(|it| it.interactable && s.props(it.e).bool("Selectable", false))
                     .collect();
@@ -709,17 +926,65 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
                     egui::vec2(frame.viewport.x, frame.viewport.y),
                 ),
                 shapes: Vec::new(),
+                images: &frame.images,
             };
-            for it in &items {
+            for it in &items[..n_screen] {
                 painter.item(it, &looks);
             }
             let shapes = std::mem::take(&mut painter.shapes);
+            let finite = |x: f32, or: f32| if x.is_finite() { x } else { or };
+            let mut drawn_surfaces = Vec::with_capacity(surfaces.len());
+            for (r, span) in surfaces.iter().zip(&spans) {
+                let canvas = r.root.size;
+                let mut painter = Painter {
+                    s,
+                    screen: egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(canvas.x, canvas.y),
+                    ),
+                    shapes: Vec::new(),
+                    images: &frame.images,
+                };
+                for it in &items[span.clone()] {
+                    painter.item(it, &looks);
+                }
+                let p = s.props(r.root.e);
+                drawn_surfaces.push(SurfaceDraw {
+                    entity: r.root.e,
+                    part: r.at.part,
+                    canvas,
+                    texture_px: surface::texture_px(canvas, r.k),
+                    pixels_per_point: r.k,
+                    shapes: painter.shapes,
+                    world: r.at.world(),
+                    size: r.at.size,
+                    depth: surface::depth(s, r.root.e),
+                    light_influence: finite(p.f32("LightInfluence", 1.0), 1.0).clamp(0.0, 1.0),
+                    brightness: finite(p.f32("Brightness", 1.0), 1.0).max(0.0),
+                });
+            }
+            let viewports = items
+                .iter()
+                .enumerate()
+                .filter(|(_, it)| it.kind == Kind::Viewport)
+                .map(|(i, it)| ViewportDraw {
+                    entity: it.e,
+                    size: it.size,
+                    surface: spans
+                        .iter()
+                        .position(|span| span.contains(&i))
+                        .map(|k| surfaces[k].root.e),
+                })
+                .collect();
             let out = GuiOutput {
                 shapes,
                 drawn: items.len(),
                 hovered: under.first().map(|&i| items[i].e),
                 sinks_pointer: target.is_some(),
                 text_focus: hub.focused,
+                surfaces: drawn_surfaces,
+                viewports,
+                diagnostics: std::mem::take(&mut diagnostics),
             };
             // Where each write goes, while the scope can say.
             let mut written = props::FxMap::default();

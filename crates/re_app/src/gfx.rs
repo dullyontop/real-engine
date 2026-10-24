@@ -327,8 +327,21 @@ impl Graphics {
         hud_lines: &[HudLine],
     ) -> Result<(), Diagnostic> {
         let (device, queue) = (&self.gpu.device, &self.gpu.queue);
-        match view.prepare(&mut self.renderer)? {
-            Some((snapshot, extras)) => {
+        let prepared = view.prepare(&mut self.renderer)?;
+        let mut ui = view.take_ui();
+        // The surfaces and viewports are drawn into their textures first.
+        view.draw_textured(
+            device,
+            queue,
+            &mut self.renderer,
+            &self.egui,
+            ui.as_mut(),
+            pixels_per_point,
+        )?;
+        match prepared {
+            Some((mut snapshot, extras)) => {
+                // Surfaces painted for the first time this frame get quads now.
+                snapshot.quads = view.quads();
                 self.renderer
                     .render_with(device, queue, target, &snapshot, &extras)?;
             }
@@ -337,7 +350,7 @@ impl Graphics {
                     .render(device, queue, target, &RenderSnapshot::default())?;
             }
         }
-        let mut output = match view.take_ui() {
+        let mut output = match ui {
             Some(o) => o,
             None if hud_lines.is_empty() => return Ok(()),
             None => {
@@ -363,6 +376,16 @@ impl Graphics {
         let capture = Capture::new(&self.gpu.device, size[0], size[1])?;
         self.draw_compat(capture.view(), size, 1.0, view, hud_lines)?;
         capture.read(&self.gpu.device, &self.gpu.queue)
+    }
+
+    /// Gives each of a compat view's `ViewportFrame`s a texture before its UI
+    /// pass ([`CompatView::prepare_images`]).
+    ///
+    /// # Errors
+    ///
+    /// A capture cannot be made.
+    pub fn compat_images(&mut self, view: &mut CompatView) -> Result<(), Diagnostic> {
+        view.prepare_images(&self.gpu.device, &mut self.renderer)
     }
 
     /// The egui context the HUD and a compat game's UI are laid out with.

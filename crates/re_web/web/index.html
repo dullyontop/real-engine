@@ -29,7 +29,6 @@ if (missing.length) {
 } else {
   try {
     const { session } = await boot({
-      project: 'project/',
       onProgress: (done, total) => { fill.style.width = `${(100 * done) / Math.max(total, 1)}%`; },
     });
     message.textContent = 'Click to start';
@@ -41,6 +40,7 @@ if (missing.length) {
             if (kind === 'warning') return console.warn(text);
             if (kind === 'problem') return console.error(text);
             document.body.dataset.state = kind;
+            if (kind === 'running') document.body.dataset.adapter = text;
             if (kind === 'error') fail(text);
           },
         });
