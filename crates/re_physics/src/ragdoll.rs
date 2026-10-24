@@ -311,7 +311,10 @@ impl Physics {
         rot: Quat,
         pose: Option<&[JointPose]>,
     ) -> Result<(), Diagnostic> {
-        if self.bodies.contains_key(&id) || self.ragdolls.contains_key(&id) {
+        if self.bodies.contains_key(&id)
+            || self.waiting.contains_key(&id)
+            || self.ragdolls.contains_key(&id)
+        {
             return Err(Diagnostic::error(
                 codes::DUPLICATE_ENTITY,
                 format!("entity {id} already has a body or ragdoll"),

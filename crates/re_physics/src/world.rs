@@ -76,9 +76,12 @@ pub struct Physics {
     /// when a later move of the origin, or a new transform, brings them in
     /// reach (ADR-0042).
     pub(crate) waiting: BTreeMap<EntityId, BodyDesc>,
-    /// Bodies and characters whose out-of-reach writes were already reported
-    /// at the current origin.
-    pub(crate) far_reported: BTreeSet<EntityId>,
+    /// The latest position (or kinematic target, `true`) each body or
+    /// character out of reach was given, applied once it is in reach.
+    pub(crate) far_writes: BTreeMap<EntityId, (Vec3, Quat, bool)>,
+    /// Vehicles and constraints on bodies that wait, in arrival order, added
+    /// once their bodies join.
+    pub(crate) deferred: Vec<PhysicsCmd>,
 }
 
 /// What the world knows about one body.
@@ -153,6 +156,7 @@ pub struct PhysicsSnapshot {
     origin: Vec3,
     ragdolls: BTreeMap<EntityId, RagdollSaved>,
     waiting: BTreeMap<EntityId, BodyDesc>,
+    deferred: Vec<PhysicsCmd>,
 }
 
 impl std::fmt::Debug for PhysicsSnapshot {
@@ -427,7 +431,8 @@ impl Physics {
             scratch_poses: Vec::new(),
             parts,
             waiting: BTreeMap::new(),
-            far_reported: BTreeSet::new(),
+            far_writes: BTreeMap::new(),
+            deferred: Vec::new(),
         })
     }
 
@@ -456,21 +461,28 @@ impl Physics {
         if let Some(result) = self.apply_waiting(&cmd) {
             return result;
         }
+        if self.defers(&cmd) {
+            self.deferred.push(cmd);
+            return Ok(());
+        }
         match cmd {
             PhysicsCmd::AddBody { id, desc } => self.add_body(id, &desc),
-            PhysicsCmd::RemoveBody { id } => self.remove_body(id),
+            PhysicsCmd::RemoveBody { id } => {
+                self.drop_deferred(&cmd);
+                self.remove_body(id)
+            }
             PhysicsCmd::SetTransform { id, pos, rot } => self.set_transform(id, pos, rot),
             PhysicsCmd::SetKinematicTarget { id, pos, rot } => {
                 let entry = self.bodies.get(&id).ok_or_else(|| unknown(id, "body"))?;
                 if entry.kind != BodyKind::Kinematic {
                     return Err(wrong_kind(id, "a kinematic target", entry.kind));
                 }
-                if !self.in_reach(pos) {
-                    return self.far_write(id, "target", pos);
-                }
                 let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
+                if !self.in_reach(pos) {
+                    return self.far_write(id, "target", pos, rot, true);
+                }
                 self.state.kin_targets.insert(id, (pos, rot));
-                self.far_reported.remove(&id);
+                self.far_writes.remove(&id);
                 Ok(())
             }
             PhysicsCmd::ApplyImpulse { id, impulse } => {
@@ -732,40 +744,127 @@ impl Physics {
     }
 
     /// A new position or target out of reach: an error at the world origin;
-    /// with the origin moved, the write is dropped and reported once per
-    /// entity and origin, since the body or character only waits for the
-    /// origin to come back (ADR-0042).
-    fn far_write(&mut self, id: EntityId, what: &str, p: Vec3) -> Result<(), Diagnostic> {
+    /// with the origin moved, it is kept (the latest one per entity) and
+    /// applied once a move of the origin brings it in reach, reported once
+    /// until then (ADR-0042).
+    fn far_write(
+        &mut self,
+        id: EntityId,
+        what: &str,
+        p: Vec3,
+        rot: Quat,
+        target: bool,
+    ) -> Result<(), Diagnostic> {
+        if !self.bodies.contains_key(&id) && !self.characters.contains_key(&id) {
+            return Err(unknown(id, "body or character"));
+        }
         let d = self.out_of_reach(id, what, p);
         if self.parts.origin == Vec3::ZERO {
             return Err(d);
         }
-        if self.far_reported.insert(id) {
+        if self.far_writes.insert(id, (p, rot, target)).is_none() {
             self.diagnostics.push(Diagnostic {
                 severity: Severity::Warning,
-                message: format!("{}; it stays where it is until it is in reach", d.message),
+                message: format!(
+                    "{}; it stays where it is and moves there once in reach",
+                    d.message
+                ),
                 ..d
             });
         }
         Ok(())
     }
 
+    /// After a move of the origin: the kept writes now in reach apply, and
+    /// the vehicles and constraints whose bodies joined are added.
+    pub(crate) fn catch_up(&mut self) {
+        let due: Vec<(EntityId, (Vec3, Quat, bool))> = self
+            .far_writes
+            .iter()
+            .filter(|(_, w)| self.in_reach(w.0))
+            .map(|(e, w)| (*e, *w))
+            .collect();
+        for (id, (pos, rot, target)) in due {
+            self.far_writes.remove(&id);
+            let cmd = if target {
+                PhysicsCmd::SetKinematicTarget { id, pos, rot }
+            } else {
+                PhysicsCmd::SetTransform { id, pos, rot }
+            };
+            if let Err(d) = self.apply_one(cmd) {
+                self.diagnostics.push(d);
+            }
+        }
+        self.replay_deferred();
+    }
+
+    /// True when `cmd` adds a vehicle or constraint on a body that waits.
+    fn defers(&self, cmd: &PhysicsCmd) -> bool {
+        match cmd {
+            PhysicsCmd::AddVehicle { id, .. } => self.waiting.contains_key(id),
+            PhysicsCmd::AddConstraint { desc, .. } => {
+                self.waiting.contains_key(&desc.a) || self.waiting.contains_key(&desc.b)
+            }
+            _ => false,
+        }
+    }
+
+    /// Adds the deferred vehicles and constraints whose bodies no longer wait.
+    fn replay_deferred(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred);
+        for cmd in deferred {
+            if let Err(d) = self.apply_one(cmd) {
+                self.diagnostics.push(d);
+            }
+        }
+    }
+
+    /// Drops a deferred vehicle or constraint `cmd` removes, returning true
+    /// when there was one.
+    fn drop_deferred(&mut self, cmd: &PhysicsCmd) -> bool {
+        let before = self.deferred.len();
+        match cmd {
+            PhysicsCmd::RemoveVehicle { id } => self
+                .deferred
+                .retain(|c| !matches!(c, PhysicsCmd::AddVehicle { id: v, .. } if v == id)),
+            PhysicsCmd::RemoveConstraint { id } => self
+                .deferred
+                .retain(|c| !matches!(c, PhysicsCmd::AddConstraint { id: k, .. } if k == id)),
+            PhysicsCmd::RemoveBody { id } => self.deferred.retain(|c| match c {
+                PhysicsCmd::AddVehicle { id: v, .. } => v != id,
+                PhysicsCmd::AddConstraint { desc, .. } => desc.a != *id && desc.b != *id,
+                _ => true,
+            }),
+            _ => {}
+        }
+        self.deferred.len() != before
+    }
+
     /// Applies `cmd` to a body waiting out of reach, or `None` when `cmd` is
     /// not for one.
     fn apply_waiting(&mut self, cmd: &PhysicsCmd) -> Option<Result<(), Diagnostic>> {
+        if matches!(
+            cmd,
+            PhysicsCmd::RemoveVehicle { .. } | PhysicsCmd::RemoveConstraint { .. }
+        ) && self.drop_deferred(cmd)
+        {
+            return Some(Ok(()));
+        }
         let id = match cmd {
             PhysicsCmd::RemoveBody { id }
             | PhysicsCmd::SetTransform { id, .. }
             | PhysicsCmd::SetKinematicTarget { id, .. }
             | PhysicsCmd::ApplyImpulse { id, .. }
             | PhysicsCmd::SetVelocity { id, .. }
-            | PhysicsCmd::SetShape { id, .. } => *id,
+            | PhysicsCmd::SetShape { id, .. }
+            | PhysicsCmd::SetVehicleInput { id, .. } => *id,
             _ => return None,
         };
         let desc = self.waiting.get_mut(&id)?;
         Some(match cmd {
             PhysicsCmd::RemoveBody { .. } => {
                 self.waiting.remove(&id);
+                self.drop_deferred(cmd);
                 Ok(())
             }
             PhysicsCmd::SetKinematicTarget { .. } if desc.kind != BodyKind::Kinematic => {
@@ -779,7 +878,9 @@ impl Physics {
                 desc.pos = *pos;
                 desc.rot = *rot;
                 if self.in_reach(*pos) {
-                    self.add_waiting(id)
+                    let added = self.add_waiting(id);
+                    self.replay_deferred();
+                    added
                 } else {
                     Ok(())
                 }
@@ -806,11 +907,11 @@ impl Physics {
     }
 
     fn set_transform(&mut self, id: EntityId, pos: Vec3, rot: Quat) -> Result<(), Diagnostic> {
-        if !self.in_reach(pos) {
-            return self.far_write(id, "new", pos);
-        }
         let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
-        self.far_reported.remove(&id);
+        if !self.in_reach(pos) {
+            return self.far_write(id, "new", pos, rot, false);
+        }
+        self.far_writes.remove(&id);
         let at = self.jolt_point(pos);
         if let Some(entry) = self.bodies.get(&id) {
             let activation = if entry.kind == BodyKind::Static {
@@ -878,7 +979,10 @@ impl Physics {
         pos: Vec3,
         rot: Quat,
     ) -> Result<(), Diagnostic> {
-        if self.bodies.contains_key(&id) || self.characters.contains_key(&id) {
+        if self.bodies.contains_key(&id)
+            || self.waiting.contains_key(&id)
+            || self.characters.contains_key(&id)
+        {
             return Err(Diagnostic::error(
                 codes::DUPLICATE_ENTITY,
                 format!("entity {id} already has a body or character"),
@@ -1491,6 +1595,7 @@ impl Physics {
             origin: self.parts.origin,
             ragdolls: self.save_ragdolls(),
             waiting: self.waiting.clone(),
+            deferred: self.deferred.clone(),
         }
     }
 
@@ -1499,8 +1604,12 @@ impl Physics {
     /// constraints or ragdolls were added or removed (or a ragdoll rebuilt) since it
     /// was saved. Ragdolls get back their mode, frame and target too.
     pub fn restore_state(&mut self, snapshot: &PhysicsSnapshot) -> Result<(), Diagnostic> {
+        let waiting_changed = !self.waiting.keys().eq(snapshot.waiting.keys());
         match self.ragdolls_unrestorable(&snapshot.ragdolls) {
             Some(why) => Err(why),
+            None if waiting_changed => {
+                Err("bodies waiting out of reach were added or removed since".to_string())
+            }
             None => self
                 .world
                 .restore_state(&snapshot.world)
@@ -1521,6 +1630,7 @@ impl Physics {
         self.parts.origin = snapshot.origin;
         self.restore_ragdolls(&snapshot.ragdolls);
         self.waiting = snapshot.waiting.clone();
+        self.deferred = snapshot.deferred.clone();
         Ok(())
     }
 

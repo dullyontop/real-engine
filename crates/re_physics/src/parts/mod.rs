@@ -946,10 +946,11 @@ impl Physics {
     /// translation, so contacts, sleep and joints carry on. Positions in and
     /// out of [`Physics`] stay world positions. Call it between steps, before
     /// the tick's commands. Bodies and characters the move leaves outside
-    /// the limits stay where they are and are not written to (a new position
-    /// for one is dropped and reported once as an `RE5006` warning) until a
-    /// later move brings them back; bodies added out of reach while the
-    /// origin is moved wait and join Jolt once in reach. Fails with `RE5016`,
+    /// the limits stay where they are until a later move brings them back; a
+    /// new position for one is kept (reported once as an `RE5006` warning)
+    /// and applied then. Bodies added out of reach while the origin is moved
+    /// wait, with their vehicles and constraints, and join Jolt once in
+    /// reach. Fails with `RE5016`,
     /// leaving the world unchanged, for a point that is not finite, a move
     /// larger than twice the limits, or while the world has ragdolls. A
     /// [`PhysicsSnapshot`](crate::PhysicsSnapshot) saved before the move no
@@ -987,7 +988,6 @@ impl Physics {
             .rebase(&bodies, jq(Quat::IDENTITY), rv(shift))
             .map_err(|e| refuse(&e.to_string()))?;
         self.parts.origin = origin;
-        self.far_reported.clear();
         // Bodies added while out of reach join now if they are in reach.
         let back: Vec<EntityId> = self
             .waiting
@@ -1000,6 +1000,7 @@ impl Physics {
                 self.diagnostics.push(d);
             }
         }
+        self.catch_up();
         Ok(())
     }
 

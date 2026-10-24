@@ -950,7 +950,7 @@ fn floating_origin() {
     assert_eq!(p.pose(pad), None);
 
     // Moving back near zero leaves the far bodies where they are and brings
-    // the pad in; writes to the far sphere are dropped, reported once.
+    // the pad in; a new position for the far sphere is kept, reported once.
     p.set_origin(Vec3::new(1024.0, 0.0, 1024.0)).unwrap();
     assert_eq!(pos(&p, 2), after);
     assert_eq!(down(&p, 0.0, 0.0), Some(pad));
@@ -969,8 +969,10 @@ fn floating_origin() {
     );
     assert_eq!(pos(&p, 2), after);
 
-    // Back out, the character walks on as before.
+    // Back out, the sphere takes its new position and the character walks
+    // on as before.
     p.set_origin(Vec3::new(8192.0, 0.0, 8192.0)).unwrap();
+    assert!((pos(&p, 2) - (after + Vec3::X)).length() < 1e-3);
     let x = p.character(ch).unwrap().pos.x;
     walk(&mut p, 30);
     let x2 = p.character(ch).unwrap().pos.x;
