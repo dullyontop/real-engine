@@ -43,7 +43,7 @@ pub struct Shape {
     /// The outer boundary.
     pub outer: Contour,
     /// Holes, each inside `outer`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub holes: Vec<Contour>,
 }
 

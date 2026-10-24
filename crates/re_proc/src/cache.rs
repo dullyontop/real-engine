@@ -1,15 +1,15 @@
 //! The disk cache of node outputs: `<dir>/<key hex>.bin` in a [`WritableDir`]
 //! (the run's cache folder), postcard with a
 //! `(magic, format_version)` header (ARCHITECTURE §8, "Caches"). Fields,
-//! meshes and points are stored; fragments are cheap to rebuild from them
-//! and stay in memory only. Every entry is safe to delete.
+//! meshes, points, shapes and paths are stored; fragments are cheap to
+//! rebuild from them and stay in memory only. Every entry is safe to delete.
 
 use std::sync::Arc;
 
 use re_core::files::WritableDir;
 use serde::{Deserialize, Serialize};
 
-use crate::value::{Field, MeshValue, Output, Points};
+use crate::value::{Field, MeshValue, Output, Points, RoadPath, Shapes};
 
 const MAGIC: [u8; 8] = *b"REPROC\0\0";
 /// Bump when the stored types change; older entries are then ignored.
@@ -20,6 +20,9 @@ enum Stored {
     Field(Field),
     Mesh(MeshValue),
     Points(Points),
+    // Added after the M1 variants, so older entries still read the same.
+    Shapes(Shapes),
+    Path(RoadPath),
 }
 
 /// A directory of cached node outputs.
@@ -77,6 +80,16 @@ impl DiskCache {
                 Output::Mesh(Arc::new(m))
             }
             Stored::Points(p) => Output::Points(Arc::new(p)),
+            Stored::Shapes(s) => {
+                s.validate()
+                    .map_err(|e| format!("cache entry is damaged: {e}"))?;
+                Output::Shapes(Arc::new(s))
+            }
+            Stored::Path(p) => {
+                p.validate()
+                    .map_err(|e| format!("cache entry is damaged: {e}"))?;
+                Output::Path(Arc::new(p))
+            }
         }))
     }
 
@@ -87,6 +100,8 @@ impl DiskCache {
             Output::Field(f) => Stored::Field((**f).clone()),
             Output::Mesh(m) => Stored::Mesh((**m).clone()),
             Output::Points(p) => Stored::Points((**p).clone()),
+            Output::Shapes(s) => Stored::Shapes((**s).clone()),
+            Output::Path(p) => Stored::Path((**p).clone()),
             Output::Fragment(_) => return Ok(()),
         };
         let mut bytes = MAGIC.to_vec();

@@ -73,20 +73,42 @@ const GOLDEN: &[(&str, u32, &str, &str)] = &[
     ("terrain.erode", 1, "eroded", "300f5e16a637b2d1"),
 ];
 
+/// The same for the polygon and road kinds (ADR-0043 §5), from
+/// `examples/roads.graph.json`.
+const GOLDEN_ROADS: &[(&str, u32, &str, &str)] = &[
+    ("path.spline", 1, "main", "cb0b0cded6d0a6c6"),
+    ("road.mesh", 1, "roads", "751b0c4564adbb49"),
+    ("road.footprint", 1, "print", "5bb699525b14169b"),
+    ("terrain.conform", 1, "flat", "7a59b37f8acf592f"),
+    ("shape.polygon", 1, "plaza", "4bcd533206c73f6e"),
+    ("shape.boolean", 1, "yard", "b0b3e348b5136f98"),
+    ("shape.offset", 1, "grown", "af63a37014a82f9b"),
+    ("shape.mesh", 1, "yard_mesh", "aa134d4fe3693939"),
+    ("field.from_shapes", 1, "clear", "29f8c960812b370b"),
+    ("points.mask", 1, "off_road", "087b5717f949479c"),
+];
+
 #[test]
 fn every_supported_kind_version_has_a_golden_output() {
     let registry = NodeRegistry::m1();
     for def in registry.iter() {
         for v in def.oldest..=def.version {
             assert!(
-                GOLDEN.iter().any(|(k, gv, ..)| *k == def.kind && *gv == v),
+                GOLDEN
+                    .iter()
+                    .chain(GOLDEN_ROADS)
+                    .any(|(k, gv, ..)| *k == def.kind && *gv == v),
                 "{}@{v} has no golden in tests/versions.rs",
                 def.kind
             );
         }
     }
-    for (version, entries) in [(1u32, GOLDEN)] {
-        let mut doc = example_with_every_kind();
+    let roads = GraphDoc::from_json(include_str!("../examples/roads.graph.json")).unwrap();
+    for (doc, version, entries) in [
+        (example_with_every_kind(), 1u32, GOLDEN),
+        (roads, 1, GOLDEN_ROADS),
+    ] {
+        let mut doc = doc;
         for n in &mut doc.nodes {
             n.version = version;
         }
