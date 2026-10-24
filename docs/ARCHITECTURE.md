@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** partly implemented (M1 done, M2 in progress). Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. In progress: `re_compat` (M2), with its class layer, data formats, scene conventions (WP9), datatypes and enums (WP10), the data model and script runtime (WP11), the two worlds with players and remotes (WP12), physics for parts (WP13), characters, animation and input (WP14), and tweens, sound, the 2D UI and the 3D view (WP15) merged, and `re_import` with the compat boot in `re_app` (WP16's "importer" and "boot"). Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** M1 and M2 done, M3 in progress. Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. M2 is complete: `re_compat` (the Roblox-style layer), `re_import` and the compat boot in `re_app`, with `examples/plaza` verified in CI. M3 work merged so far includes D2 determinism across Linux, Windows and macOS, packaged games (`real build`, `game.rpak`), browser builds (`re_web`), the HDR post chain and cascaded shadows, skins and animation graphs, vehicles, ragdolls and audio buses, world streaming, generator versions, bake, Luau node kinds, polygon booleans and roads, the editor's node canvas, docking and gizmos, the script debugger, the AI track's templates, recipes, eval harness and HTTP transport, the compat follow-ups (saved data, script reload, place files, surfaces, skinned `MeshPart`s and post effects, and debugging compat scripts), the `re_net` transport and replication over postcard frames, and `examples/valley`. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -25,8 +25,9 @@ The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx
 All crates live in `crates/`. An arrow means "depends on".
 
 - The **contract layer** is `re_core` and `re_types` (plus `re_noise`, which has no dependencies at all). These crates are plain data, traits and small utilities, with no heavy dependencies.
-- **Subsystem crates** (`re_render`, `re_physics`, `re_audio`, `re_input`, `re_assets`, `re_anim`) depend only on the contract layer and on third-party crates. They never depend on each other, on `re_geom` or on `re_scene`.
-- `examples/island` is a project directory (scenes, scripts, replays and goldens), not a crate. `real` loads it.
+- **Subsystem crates** (`re_render`, `re_physics`, `re_audio`, `re_input`, `re_assets`, `re_anim`, and `re_net` since M3) depend only on the contract layer and on third-party crates. `re_net` depends on `re_core` only; today `re_compat` uses it only in tests, until WP30's sessions PR wires it into runs. They never depend on each other, on `re_geom` or on `re_scene`.
+- `examples/island`, `examples/plaza` and `examples/valley` are project directories (scenes, scripts, replays and goldens), not crates. `real` loads them.
+- `re_web` (M3, WP29) is the browser runtime: a `cdylib` over `re_app` and `re_render` (ADR-0049).
 
 ```mermaid
 graph TD
@@ -58,6 +59,7 @@ graph TD
     input[re_input] --> types
     assets[re_assets] --> types
     anim[re_anim] --> types
+    net[re_net] --> core
   end
 
   subgraph Scripting
@@ -78,6 +80,8 @@ graph TD
     app --> proc
     app --> command
     cli[re_cli / real] --> app
+    web[re_web] --> app
+    web --> render
   end
 
   subgraph "Compatibility (M2)"
@@ -119,23 +123,25 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_reflect` | The component registry over bevy_ecs: field types, values and coercion, by-name access, script-defined components, the untyped document tree used at text boundaries, registry description and scene JSON Schema (ADR-0032) | `Registry`, `ComponentKey`, `ComponentSchema`, `FieldSchema`, `FieldType`, `ComponentOrigin`, `Value`, `Color`, `Reflect`, `component!`, `field_enum!`, `Doc`, `f32_from_parsed_f64` | subsystems, mlua |
 | `re_scene` | The World facade over bevy_ecs (ADR-0005): stable ids, hierarchy, transforms and propagation, the built-in components, scene and prefab files, procedural sources, fragments, overrides, suppression, state hash | `World`, `Entity`, `StableId`, `IdIndex`, `IdGen`, `Transform`, `GlobalTransform`, `Name`, the built-ins of §4, `SceneDoc`, `SaveOptions`, `PrefabFile`, `Procedural`, `GraphSource`, `Generated`, `Overrides`, `GenNode`, `SceneFragment`, `GenContext`, `Generators`, `state_hash` | subsystems, mlua |
 | `re_command` | Edit operations and transactions with exact undo, the log, the command registry, dry runs, the policy hook and the engine request channel (ADR-0003) | `Op`, `Transaction`, `Origin`, `History`, `LogEntry`, `CommandRegistry`, `CommandSpec`, `Tier`, `CommandOutcome`, `PolicyCheck` trait, `remote::{EngineHandle, EngineReceiver}` | subsystems, mlua, tokio |
-| `re_geom` | Geometry operations over `MeshData` | `Heightfield`, `primitives::*`, `merge`, `transform`, `compute_normals` | wgpu, oxijolt, mlua |
+| `re_geom` | Geometry operations over `MeshData`, polygon booleans (`polygon`) and roads (`road`) | `Heightfield`, `primitives::*`, `merge`, `transform`, `compute_normals`, `Shapes`, `road::{spline, road_mesh, footprint}` | wgpu, oxijolt, mlua |
 | `re_proc` | ProcGraph IR, nodes, evaluation, cache, the `graph` generator for procedural sources, `graph.*` commands | `ProcGraph`, `NodeRegistry`, `NodeDef`, `Evaluator`, `EvalReport`, `GraphStore`, `register_generator`, `register_commands` | wgpu, oxijolt, mlua |
 | `re_render` | The GPU renderer, GPU resources, headless capture and egui painting | `Gpu`, `Renderer`, `Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot)`, `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`, `upload_*` / `create_material` / `release_*`, `stats`, `RendererSettings`, `Capture`, `imgdiff` | `re_scene` |
 | `re_physics` | Jolt through oxijolt | `Physics::new(PhysicsConfig, &'static TaskPool)`, `apply(&mut Vec<PhysicsCmd>)`, `step(dt)`, `poses_into(&mut Vec<BodyPose>)`, `velocity(id)`, `character(id)`, `events()`, `raycast` / `shape_cast` / `overlap_sphere` with a `QueryFilter`, `LayerTable`, `save_state` / `restore_state`, `motion_state` / `apply_motion_state` (`JoltRayonJobs` is internal) | `re_scene` |
 | `re_audio` | kira playback, with a headless capture fallback | `Audio::new_or_headless`, `apply(&[AudioCmd])`, `CaptureBackend` | `re_scene` |
 | `re_input` | Raw input, the action map and replay | `RawInput`, `InputConfig`, `ActionMap`, `Replay`, `ReplayRecorder` | `re_scene` |
 | `re_assets` | Import, material files, cache and hot reload | `AssetId`, `AssetServer`, `import_gltf`, `load_material`, `ProcessedCache`, `AssetWatcher` | `re_scene` |
-| `re_anim` | Animation-lite: sampling glTF node clips, and tweens | `Sampler`, `Tween` | `re_scene` |
+| `re_anim` | glTF node clips, skeletal poses for skins, animation graphs, keyframe tracks, IK and tweens | `Sampler`, `Tween`, `graph::{validate, BoundGraph, GraphPlayer}` | `re_scene` |
+| `re_net` | Connections over UDP with our own reliability, a transport seam with in-memory and conditioned links (M3, WP30, ADR-0050) | `Endpoint`, `Transport`, `UdpTransport`, `MemoryNet`, `Conditioned` | everything but `re_core` |
 | `re_script` | The Luau VMs, contexts, native API, scheduler, compile check and engine type definitions | `ScriptRuntime`, `Context`, `compile_check`, `api::definitions` | subsystems (it reaches them through `HostServices`), full_moon |
 | `re_script_check` | The static scan, the external type checker runner and the corpus validation suite (tooling) | `scan`, `GapReport`, `types::run`, `corpus::run` | `re_app`, tokio |
 | `re_app` | The frame loop, sync glue, headless runner, verify and the runtime commands | `App`, `App::open`, `App::serve`, `AppConfig`, `run_windowed`, `run_headless`, `sync::{render, physics, audio}`, `verify::{run, VerifyStage}`; not frozen: `run_headless_observed`, `restarts`, `pending_diagnostics` | tokio, rmcp, full_moon |
 | `re_cli` | The `real` binary and the `explain` command | subcommands | — |
 | `re_agent` | Agent policy, sessions, checkpoints, agent commands, `AGENTS.md` and client configs, the editor socket (client and server loop; Unix only in M1) and the single-writer lock | `Policy`, `Session`, `Checkpoint`, `register_commands`, `generate_agents_md`, `remote::{connect, serve}`, `lock::{acquire, probe}` | tokio |
-| `re_mcp` | The MCP server (rmcp, stdio) | `serve_stdio(EngineHandle, McpOptions)` | `re_app` |
-| `re_editor` | Editor-lite UI and the editor socket | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
+| `re_mcp` | The MCP server (rmcp, stdio or streamable HTTP on loopback), the tool-call recorder, and small blocking MCP clients for tests and the eval harness | `serve_stdio(EngineHandle, McpOptions)`, `http`, `record::Recorder`, `client::{HttpClient, StdioClient}` | `re_app` |
+| `re_editor` | The editor UI: dockable panel tabs (layout in `.real/editor/layout.json`), translate, rotate and scale gizmos (W, E, R) whose drags edit live as one undo step, the node canvas over graph files, the debugger panel, and the editor socket (ADR-0044, ADR-0045) | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
 | `re_import` | Static importer for Rojo-style projects and Studio loader scripts (tooling, M2 WP16); it never runs Luau | `import`, `ImportReport`, `new_project` | `re_app` |
-| `re_compat` | The Roblox-style compatibility layer (M2, in progress): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, the compat VM with instances, signals and core services, and the `RenderFrame` it builds for the renderer (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app`. It uses `re_noise` for the seeded particle effects and material detail textures |
+| `re_web` | The browser runtime (M3, WP29): a wasm-bindgen `Session` that takes a project's archive or files and plays or replays it (ADR-0049) | `Session` | tokio, any tooling crate |
+| `re_compat` | The Roblox-style compatibility layer (M2): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, the compat VM with instances, signals and core services, and the `RenderFrame` it builds for the renderer (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app`. It uses `re_noise` for the seeded particle effects and material detail textures |
 
 Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
 
@@ -150,11 +156,19 @@ deny.toml               licenses, bans, duplicate allow-list
 crates/re_*/            the crates above
 crates/re_*/explain/    one Markdown page per diagnostic code the crate owns
 examples/island/        the M1 demo project (data and Luau only; not a workspace member)
+examples/plaza/         the M2 compat example
+examples/valley/        the M3 example: a streamed world, walked and driven
+templates/              project templates and generator recipes for `real new` and `recipe.apply` (ADR-0046)
+third_party/            temporary patched copies of mlua and oxijolt-sys for the browser build (ADR-0049 §2), used through [patch.crates-io]
 schemas/                generated JSON Schemas (`cargo xtask schemas`; checked in CI)
 docs/                   these documents
 tools/xtask/            repo checks: crate-graph rules, duplicate-version allow-list, explain-page coverage, schema drift
 tools/derive_alias_check/  proves bevy derives work through `use re_scene::ecs as bevy_ecs;`
+tools/web-test/         the wasm smoke crate and the Node and Playwright scripts for the browser checks
+tools/ci/               CI scripts (wasi-sdk, binaryen, the web clippy.toml); not a crate
 ```
+
+The patched copies in `third_party/` go when mlua and oxijolt-sys releases carry the changes. To build the runtime for the browser, install wasi-sdk and set its environment with `eval "$(tools/ci/wasi-sdk.sh)"`, then build for `wasm32-unknown-unknown` (ADR-0049 §1; `real build --target web` does the rest, §8).
 
 ## 3. Frame loop and threading
 
@@ -165,7 +179,7 @@ tools/derive_alias_check/  proves bevy derives work through `use re_scene::ecs a
 | Main | The winit event loop (or the headless driver), input, Luau (one VM per script context), sync, rendering submission, egui, and answering engine requests |
 | rayon pool (N = cores − 1, at least 1) | ProcGraph node evaluation, Jolt jobs (through `JoltRayonJobs`, which implements `oxijolt::JobSystem`), asset processing. bevy_ecs gets no pool of its own: `re_scene`'s schedules run single-threaded on the main thread (ADR-0005, ADR-0007). |
 | Asset watcher | notify's own thread; it posts `AssetChange` into a channel the main thread drains |
-| tokio (only inside `real mcp`) | The MCP stdio transport. Commands reach the main thread through `re_command::remote::EngineHandle`, a std channel. |
+| tokio (only inside `real mcp`) | The MCP transport (stdio, or streamable HTTP with `--http`). Commands reach the main thread through `re_command::remote::EngineHandle`, a std channel. |
 
 There is no render thread in M1. The seam for one is that `RenderSnapshot` is `Send` and owns its data (ADR-0007).
 
@@ -177,14 +191,18 @@ There is no render thread in M1. The seam for one is that `RenderSnapshot` is `S
 Input          poll winit/gilrs or the replay → RawInput → ActionMap → ActionFrame
 PreRender      script contexts: per-frame callbacks (variable dt)
 fixed steps    FixedClock.advance(frame_dt) → 0..=5 steps of 1/60 s
-  PreAnimation   re_anim samples clips and tweens → Transform writes
-  PreSimulation  a CharacterController without a physics character gets one first (tried once per entity),
-                 so move_character works on its first step; then script fixed-update callbacks;
-                 commands queued by scripts
+  PreAnimation   re_anim samples clips and tweens → Transform writes; animation graphs step,
+                 and root motion moves entities and characters
+  PreSimulation  world streaming (cells unloaded and loaded at this tick; scripts see stream.on_unloaded,
+                 then stream.on_loaded); a CharacterController without a physics character gets one
+                 first (tried once per entity), so move_character works on its first step, and an
+                 entity with a Vehicle and no vehicle yet is linked the same way; then script
+                 fixed-update callbacks (time.on_step); commands queued by scripts
   Physics        sync::physics::push: World changes → Vec<PhysicsCmd>, sorted by (kind, EntityId)
                  Physics::apply, Physics::step(dt) on the rayon pool
                  Physics::poses_into(&mut poses); Physics::events()
-  PostSimulation sync::physics::pull: poses → Transform; contact events → script signals
+  PostSimulation sync::physics::pull: poses → Transform; contact events → script signals;
+                 ragdoll poses blended into their skins; bone attachments placed
 Sync           propagate GlobalTransform; interpolate between steps;
                sync::render::build → RenderSnapshot; sync::audio → Vec<AudioCmd>
 Render         Renderer::render(device, queue, view, &snapshot); egui overlay through paint_ui
@@ -208,6 +226,8 @@ client phases   PreRender .. PostSimulation; rendering and input use the client 
 
 `re_app` runs this frame for a `[compat]` project (`re_app/src/compat.rs`) in `real run`, `real verify` and `play.run`, and renders from the local player's world. Each world's phases are the `CompatVm` calls: the render step (WP14's input and `Animator` start run inside it), then per fixed step `PreAnimation`, `PreSimulation`, `physics` (parts and characters), `media` (tweens, then sounds) and `PostSimulation`. The client's sound commands go to the mixer. Server ids are seeded, so a run and its replay end with the same `state_hash`.
 
+**Physics sync cost.** `sync::physics::push` fingerprints each body's description to find what changed. A collider backed by the shape library (mesh, convex or heightfield) is fingerprinted by the library's content hash, its kind and its scale, not by copying its data; the data is copied only when the body is added or replaced. A static body whose `Transform`, `Collider` and `RigidBody` have not changed since the last push (bevy change ticks), under a parent whose world transform is unchanged, is skipped. Dynamic, kinematic and character bodies take the full path. A sync state copied into a forked world looks at everything once.
+
 Headless runs (`real run --headless --frames N`, tests, `real verify`) use the same loop. The differences are:
 - the frame time is fixed at the step size;
 - input comes from a replay;
@@ -224,6 +244,9 @@ pub struct RenderSnapshot {
     pub camera: Camera, pub lights: Vec<Light>,
     pub items: Vec<DrawItem>, pub debug_lines: Vec<DebugLine>,
     pub clear: [f32; 4],                     // no egui types here: UI is painted separately
+    pub quads: Vec<WorldQuad>,               // textured quads in the world, such as GUIs on surfaces (M3)
+    pub skinned: Vec<SkinnedDrawItem>,       // skinned objects (M3, ADR-0039)
+    pub joint_palette: Vec<Mat4>,            // their joint matrices, one run per skinned item
 }
 pub struct DrawItem { pub entity: EntityId, pub mesh: MeshHandle, pub material: MaterialHandle,
                       pub world: glam::Mat4, pub flags: DrawFlags }
@@ -234,6 +257,9 @@ pub enum PhysicsCmd {
     ApplyImpulse { id: EntityId, impulse: Vec3 }, SetVelocity { id: EntityId, linear: Vec3, angular: Vec3 },
     SetShape { id: EntityId, shape: ShapeDesc },
     AddConstraint { id: EntityId, desc: ConstraintDesc }, RemoveConstraint { id: EntityId }, // ... characters
+    RemoveVehicle { .. }, AddVehicle { .. }, SetVehicleInput { .. },            // ranks 12–14 (M3, ADR-0040)
+    RemoveRagdoll { .. }, AddRagdoll { .. }, SetRagdollMode { .. },             // ranks 15–19
+    SetRagdollTarget { .. }, ApplyRagdollImpulse { .. },
 }
 pub struct BodyPose { pub id: EntityId, pub pos: Vec3, pub rot: Quat }   // active bodies, newly asleep bodies, characters
 ```
@@ -265,6 +291,15 @@ The entity core is bevy_ecs 0.20.0 used standalone, behind our own API (ADR-0005
   - `Procedural` and `GraphSource` (procedural sources, §5);
   - `HudText`.
 - **M2 built-ins** (WP9): `Attributes` (a string-keyed map of `Value`s) and `Tags` (a string list), both immutable components written by replacement. The `TagIndex` resource maps each tag to its entities and is kept exact by hooks, like `IdIndex`. Two opt-in resources, `AttributeFeed` and `TagFeed`, record `AttributeChanged { entity, key }` and `TagChanged { entity, tag, added }` while a world holds them; `drain()` takes the batch.
+- **M3 built-ins** (so far):
+  - `RigidBody.center_of_mass_offset` (a `vec3`, default zero);
+  - `AudioSource.bus`: the mixer bus it plays on, empty for `[audio] default_bus` (ADR-0041);
+  - `SkinnedMesh` (`asset` is `<model path>#<skin name>`): a skinned mesh posed by its skeleton; an `AnimPlayer` on the same entity plays clips onto its joints (ADR-0039);
+  - `Animator` (`graph`, `playing`, `speed`): plays an animation graph (`*.animgraph.json`) on the `SkinnedMesh` of the same entity, in place of an `AnimPlayer`; parameters and states are runtime state that scripts reach through the `anim` library (ADR-0039). It is not the compat layer's `Animator` instance (§4, M2);
+  - `BoneAttachment` (`joint`): on a child of a skinned entity, places the child at that joint of its parent's skin at the end of each fixed step, after physics and the ragdoll blend (ADR-0039);
+  - `Vehicle` (on a dynamic `RigidBody`) and `VehicleWheel` (on its child entities, in child order): a wheeled vehicle or motorcycle on Jolt; the default wheel tester is `Ray` (ADR-0040);
+  - `Ragdoll` (on an entity with a `SkinnedMesh`): a ragdoll generated on the skin's skeleton, with the modes (the enum `RagdollControl`) `Animated` (follows the animation), `Simulated` (falls freely) and `Powered` (motors pull it toward the animated pose with a `strength` from 0 to 1); the skin shows the simulated pose blended in over `blend_seconds` (ADR-0040);
+  - `Streamed` and `StreamFocus` (`re_scene::stream`): a streamed procedural source or authored root, and a focus that cells load around (ADR-0042).
 - **Hierarchy**: bevy's `ChildOf` / `Children` relationship: ordered children, recursive despawn. Files store a `parent` id per entity. `GlobalTransform` is recomputed in the Sync phase by a change-driven propagation system that only touches subtrees whose `Transform` or `ChildOf` changed (0.42 to 1.36 ms per update at 100,100 entities in the spike, against 5.5 ms for a full pass). `world.find("Island/Crates/Crate_3")` resolves a path of names as a convenience; it is not an identity.
 - **Change tracking**: bevy's per-component change ticks. Writing an equal value through the registry does not mark a component changed.
 - **Edits** go through `re_command` operations and transactions (ADR-0003): atomic, with exact undo and redo, and a log. Project files the editor or an agent edits in memory (graph files) are open documents in the World, changed by the `set_doc` operation, checked by a validator per file suffix, listed as unsaved by `project.status` and written back by the scene save (ADR-0044).
@@ -289,6 +324,9 @@ task.wait(0.5)
 - A CPU budget per context is enforced by a raw Luau interrupt that keeps raising once tripped, so `pcall` cannot swallow it.
 - `tools` scripts may issue commands. `game` scripts may not issue destructive commands; they reach the engine through `HostServices`.
 - `engine.d.luau`, generated from the binding registry, describes the whole native API for the type checker, editors and agents (`real describe --luau-defs`).
+- M3 additions to the native libraries: `physics.drive` and `physics.vehicle` (vehicles); `physics.ragdoll(entity, mode, strength?)`, `physics.ragdoll_state(entity)` (root, mode, strength and `calm`; no pose) and `physics.ragdoll_impulse(entity, joint, impulse)`; `audio.play(clip, at?, volume?, bus?)`, `audio.set_bus_volume`, `audio.set_effect` (1-based effect index), `audio.snapshot` and `audio.levels` (frame-only: an error during a fixed step). The `anim` library drives the graph an entity's `Animator` plays: `anim.set(e, param, value)`, `anim.get(e, param)`, `anim.trigger(e, param)`, `anim.state(e, layer?)` and `anim.joint(e, joint)` (world-space position and rotation from the last step's pose); an unknown or mistyped parameter is `RE7609`. The `stream` library (game and tools contexts, ADR-0042) has `stream.on_loaded`, `stream.on_unloaded`, `stream.cells()` and `stream.is_loaded(key)`; `stream.load` and `stream.release` exist in the `tools` context only. A script that starts after cells loaded gets no `on_loaded` for them, so it reads `stream.cells()` at start.
+- `math` is portable (ADR-0036): every VM replaces the transcendental functions with `libm` versions through `re_script::portable_math`, and the compiler disables the matching builtins. `x ^ y` still uses the platform's `pow` unless `y` is 2, 0.5 or 3; use `math.pow` in simulated code. `real verify`'s scan stage warns about any other `^` (`RE3083`).
+- **Debugger** (M3, WP25, ADR-0045): `re_script::debug` holds Luau breakpoints, stepping and pausing, and its DAP server (`re_script::debug::dap`) listens on 127.0.0.1 only. `real run --debug [PORT]` and `real editor --debug [PORT]` serve it (default port 4711); the editor also has a debugger panel. Compat Scripts and ModuleScripts register their chunks under their source paths too, and register again when hot reload restarts them, so breakpoints keep working.
 
 ### M2 Roblox-style compatibility layer (`re_compat`)
 
@@ -340,10 +378,12 @@ The runtime as built so far (WP10, WP11, WP12, WP13, WP14, WP15, WP16 "boot"):
 - Characters (WP14): a `Humanoid` rides a `re_physics` character controller in the compat world's `Physics`. A jump sets the vertical velocity to v + g·dt/2, where v is `JumpPower` or √(2g·`JumpHeight`), so the peak matches the configured height at the fixed step. R6 and R15 rigs and their built-in clips are data files under `assets/rigs/` (ADR-0034).
 - Animation (WP14): the `Animator` samples and blends `re_anim` tracks by priority and weight, then applies `IKControl`s. A joint a script wrote in the same frame keeps the script's value, and a joint no track drives any more returns to its rest pose. `Animation.AnimationId` resolves through `[compat.animations]`; an id with no clip plays an empty clip and warns with `RE9201`.
 - A compat frame runs: input, the render step (`RenderStepped`), animation, `Stepped`, the humanoid pre-simulation pass, physics, the humanoid post-simulation pass, tweens and sounds, then `Heartbeat`. `re_app` drives it per world as §3 describes.
-- Boot and play (WP16 "boot"): `real verify` boots a compat project for 600 frames and fails on an uncaught script error or a thread still waiting in `WaitForChild` (`RE0526`); its data lists `uncaught`, `stuck_yields`, `unsupported` (`RE9001` and `RE9002` with counts) and `output`. `play.run` takes `steps` after its first frames: `frames`, `add_player`, `say`, `invoke` (a `BindableFunction` test hook) and `dump_tree`; a failed step is `RE0527`. `scene.dump_tree` lives in `re_compat::dump`, so the runtime and `re_agent` share it. `real check --types` writes `.real/types/roblox.d.luau` from the class, enum and datatype tables. Compat scripts do not hot-reload yet.
+- Saved data (WP27 "persistence", ADR-0048): `DataStoreService` and `MemoryStoreService` work on the server against the run's data folder (`ProjectFiles::writable(Data)`). Under `real run` (without `--replay`) and editor play they read and write `.real/data/` with the wall clock; in the browser the same writes go to IndexedDB (§8). `real verify`, replays, `play.run` and the test harness start from an in-memory copy of `data/seed/` on a fixed clock, so runs repeat. Requests complete after `latency_frames`, spend per-minute budgets that grow with the player count, and fail with the vendor's error numbers (`RE9400`–`RE9403`).
+- Script reload (WP27 "reload", ADR-0048 §3): while `real run` (without `--replay`) or the editor runs, a changed compat `Script` or `LocalScript` restarts, and a changed `ModuleScript` restarts every running script that required it, directly or through other modules; a source that does not compile keeps the old run (`RE9420`). `Enabled`/`Disabled` stop a script and start it again from the top. `real verify`, replays and `play.run` never reload.
+- Boot and play (WP16 "boot"): `real verify` boots a compat project for 600 frames and fails on an uncaught script error or a thread still waiting in `WaitForChild` (`RE0526`); its data lists `uncaught`, `stuck_yields`, `unsupported` (`RE9001` and `RE9002` with counts) and `output`. `play.run` takes `steps` after its first frames: `frames`, `add_player`, `say`, `invoke` (a `BindableFunction` test hook) and `dump_tree`; a failed step is `RE0527`. `scene.dump_tree` lives in `re_compat::dump`, so the runtime and `re_agent` share it. `real check --types` writes `.real/types/roblox.d.luau` from the class, enum and datatype tables. Compat scripts reload during play since M3 (above).
 - Tweens and sound (WP15): `TweenService:Create` animates properties along an easing curve and refuses a property that cannot be tweened (`RE9352`). `Sound` keeps each sound's clock in the layer, so `TimePosition`, `IsPlaying`, `Ended` and `DidLoop` behave the same with and without an audio device. Each frame the layer queues `re_types::AudioCmd`s, and the frame driver takes them with `sound::take_commands` and hands them to `re_audio`, so `re_compat` does not depend on `re_audio`. `SoundId` resolves through `[compat] assets`; an unknown id is silent and warns once with `RE9350`.
 - 2D UI (WP15): `gui::step` runs once a frame inside the host's egui pass with the containers to draw (the local player's `PlayerGui`), the viewport, the camera and the frame's input. It lays out each enabled `ScreenGui` and `BillboardGui`, writes the read-only results (`AbsolutePosition`, `AbsoluteSize`, `TextBounds`) only when they change, fires the input events, and returns egui shapes that `re_render`'s UI pass paints over the 3D view. Text uses the bundled substitute fonts (ADR-0035), so metrics can differ slightly from the original platform. An own-property write of ±infinity (`math.huge`) is stored as ±`f32::MAX`; NaN is still refused.
-- 3D view (WP15 "render"): `re_compat::render::build` turns a world into a `RenderFrame` each frame: the camera and lights, one draw item per part or merged static cell (one mesh per material), the environment (ambient, fog, sky, colour grading from `Lighting`, `Atmosphere`, `Sky` and `ColorCorrectionEffect`), the effects and the GPU resources to upload or release. In a window, `re_app::compat_view` builds it from the client VM each frame, runs one egui pass of the local player's `PlayerGui` (`re_compat::gui`) with the HUD, and keeps CPU copies of the uploaded meshes, materials and textures until they are released, so the window, `screenshot` and replay screenshots all draw the same frame. `re_render` draws it, with `SceneExtras` for fog, sky, grading, spot lights, sprites, ribbons and highlights. Particles are simulated on the CPU; beams are Bézier strips between attachments and trails keep the path their attachments swept. `[compat] effect_budget` caps particles plus segments per frame (`RE9351` on overflow). `Camera` gives the projection members (`WorldToScreenPoint`, `ScreenPointToRay`, ...) and `Ray` is a datatype.
+- 3D view (WP15 "render"): `re_compat::render::build` turns a world into a `RenderFrame` each frame: the camera and lights, one draw item per part or merged static cell (one mesh per material), the environment (ambient, fog, sky, colour grading from `Lighting`, `Atmosphere`, `Sky` and `ColorCorrectionEffect`), the effects and the GPU resources to upload or release. In a window, `re_app::compat_view` builds it from the client VM each frame, runs one egui pass of the local player's `PlayerGui` (`re_compat::gui`) with the HUD, and keeps CPU copies of the uploaded meshes, materials and textures until they are released, so the window, `screenshot` and replay screenshots all draw the same frame. The host also loads `MeshPart` models for the view (`re_app::compat::load_model`: a `.glb`, or a `.gltf` with embedded buffers, read through `ProjectFiles`), and `compat_view` uploads skinned meshes and their joint palettes. `re_render` draws it, with `SceneExtras` for fog, sky, grading, spot lights, sprites, ribbons and highlights. Particles are simulated on the CPU; beams are Bézier strips between attachments and trails keep the path their attachments swept. `[compat] effect_budget` caps particles plus segments per frame (`RE9351` on overflow). `Camera` gives the projection members (`WorldToScreenPoint`, `ScreenPointToRay`, ...) and `Ray` is a datatype.
 - Datatypes: `Vector3` is Luau's native vector with a frozen type metatable, so its methods stay fast calls. `CFrame` stores an f32 position and rotation matrix and looks along −Z. The other datatypes are Rust userdata. `Enum` tables are built from `enums/*.json`, with one object per item per VM, so `==`, `rawequal` and table keys work. `Random` is our own seeded generator, so its numbers differ from Roblox's (marked `partial`).
 
 Coverage is a data file, `crates/re_compat/coverage.json`, listing each class and member with its status (`implemented`, `partial`, `stub-error` or `missing`). The static scan (§7) compares real scripts against this file. M2 also ships a compatibility definitions file, so the type checker knows the Roblox-style globals.
@@ -419,7 +459,9 @@ Two port types carry them: `shapes` (polygons with holes in the source's XZ plan
 | `road.footprint` (any number of paths, plus a margin) | Shapes |
 | `terrain.conform` (a field flattened under paths, blending back beside them) | Field |
 
-`NodeRegistry::m1()` registers these with the others (28 kinds). Shapes and paths are stored in the disk cache like fields and meshes, and Luau nodes can take and return them (`re_script::generator`).
+`NodeRegistry::m1()` registers these with the others (28 kinds). Shapes and paths are stored in the disk cache like fields and meshes, and Luau nodes can take and return them (`re_script::generator`): shapes as a list of `{ outer, holes }` polygons of `{x, z}` points, a path as `{ closed, samples }` with `x`, `y`, `z`, `width`, `bank` and `distance` per sample. Bad shapes and paths are `RE4504`, coordinates beyond about ±1,000 km `RE4503`, and a failed triangulation `RE4505`.
+
+Known limits: a road's footprint is the union of its ribbon's triangles, so a curve tighter than half the road's width still gives the area it covers, but `road.mesh` overlaps itself there; junctions are found between different paths only, so a path that crosses itself makes no junction; and finding them compares every segment of each pair of paths (after a bounding-box test), so the cost grows with the square of the segment count.
 
 ### Evaluation
 
@@ -444,12 +486,19 @@ A graph is placed in a scene by a **procedural source** entity (ADR-0017): an or
 
 This works during play. The M1 demo regenerates the island with a new seed while the character stands on it.
 
+### M3 additions
+
+- **Versions** (ADR-0043): every node records its kind's version, old parameter shapes migrate in memory, and `real migrate-graph [--project DIR] [--dry-run] [--json]` rewrites graph files to the current versions, all or nothing. `graph.migration_report` (read) says what a migration would change.
+- **Bake** (ADR-0043): `proc.bake { source, keys?, keep_source? }` turns a source's output into authored entities with a `Baked` provenance record, in one undoable transaction. Baked ids are `<source>.<key with / as .>` (`~N` on a clash), and derived meshes and heightfields become `.glb` and `.heightfield` files under `assets/baked/<encoded source id>/`.
+- **Luau node kinds** (ADR-0043 §4): scripts under `scripts/generators/` declare `project.*` node kinds, run in the sandboxed `generator` context with the `[proc]` budget; `proc.create_source { kind, params }` places one as a source.
+- **Streaming** (ADR-0042): `re_proc::stream` evaluates a streamed source per cell (`c/<x>_<z>`) around the focus points, on the task pool from the tick a cell is requested, and applies it `delay_ticks` later within the per-tick budgets. `re_scene::stream` holds the per-cell apply, unload and stash hooks (`World::apply_cell`, `unload_cell`) and the `StreamCell` type. `play.run` copies remap the streamer's source handles by id (`Streamer::forked`).
+
 ## 6. AI integration
 
 ### Guarantees
 
 - **AI is optional.** Every capability that agents use is an ordinary engine feature: commands, `real` subcommands, `real verify`, diagnostics and the editor. The engine never calls a model or a provider API. A runtime-only build (`real` without the `tooling` feature) contains no agent or MCP code at all.
-- **Provider-neutral.** Agents connect through open interfaces: MCP over stdio, and the `real` CLI with JSON output. No provider SDK is linked, and nothing depends on one vendor's protocol extensions. Everything an agent needs is reachable through MCP tools, because tools are the one feature that every client supports; resources and prompts are extras. `real agent init` writes each supported client's own configuration format (ADR-0025).
+- **Provider-neutral.** Agents connect through open interfaces: MCP over stdio or over streamable HTTP on localhost, and the `real` CLI with JSON output. No provider SDK is linked, and nothing depends on one vendor's protocol extensions. Everything an agent needs is reachable through MCP tools, because tools are the one feature that every client supports; resources and prompts are extras. `real agent init` writes each supported client's own configuration format (ADR-0025).
 - **Verifiable.** Every change returns a structured outcome with its diagnostics, every mutating command supports a dry run, and `real verify --json` checks the whole project.
 
 ### Surfaces
@@ -461,10 +510,12 @@ This works during play. The M1 demo regenerates the island with a new seed while
 | `real check [--types] [--checker PATH] [--corpus] [--scripts-dir DIR…] [--json]` | Compile and scan scripts; `--types` runs the external type checker (without luau-lsp it reports `RE3090` and exits 1); `--corpus` runs the corpus suite over the `--scripts-dir` directories (exit 2 without any); `--scripts-dir` works without a project | `re_script`, `re_script_check` |
 | `real do <command> [--args '{json}'] [--dry-run] [--json]` (tooling build) | One edit from a shell. It sends the command to the editor if one is running; otherwise it takes the headless lock for the command's duration and saves the scene unless `--dry-run`. `--json` prints the `CommandOutcome` plus `via` (`"local"`, `"editor"`, or `null` when the project was never reached). Exit 0 on success, 1 when the command fails, the project is unreachable or the scene save fails (`RE0518`), 2 when `--args` is not a JSON object | The registry |
 | `real verify --json` | Is the project healthy? | ADR-0022 |
-| `real import <INPUT> --project <DIR> [--dry-run] [--keep-stale] [--json]` (tooling build) | Bring a Rojo-style project or a Studio loader script into a compat project, without running its Luau; re-import is idempotent | `re_import` (`ImportReport`) |
-| `real new <DIR> [--name NAME] [--template native\|roblox]` | Create a project; `roblox` makes an empty compat place (tooling build) | `re_cli`, `re_import::new_project` |
+| `real import <INPUT> --project <DIR> [--parent PATH] [--dry-run] [--keep-stale] [--json]` (tooling build) | Bring a Rojo-style project, a Studio loader script, or a place or model file (`.rbxl`, `.rbxlx`, `.rbxm`, `.rbxmx`, M3) into a compat project, without running its Luau; `--parent` puts a place or model file's instances under that instance; re-import is idempotent | `re_import` (`ImportReport`) |
+| `real new <DIR> [--name NAME] [--template native\|roblox\|terrain\|DIR] [--set KEY=VALUE]… [--check]`, `real new --list-templates [--json]` | Create a project from a template (ADR-0046; the format is in `templates/README.md`); `roblox` makes an empty compat place; every template but `native` needs the tooling build | `re_cli`, `re_agent::templates`, `re_import::new_project` |
+| `real build [--project DIR] --out DIR [--target TRIPLE\|web] [--runtime PATH] [--archive-only] [--json]`, `real verify --package DIR` (tooling build) | Package a game (ADR-0037, §8), or a browser build (ADR-0049); check that a packaged game plays as its project does | `re_cli::build`, `re_app::package` |
+| `real agent eval SUITE [--agent NAME] [--runs N] [--out DIR] [--transport http\|stdio]` (tooling build) | Run scripted agent tasks and score them with `real verify` (ADR-0046); no model is called unless `eval.toml` names an agent command (looked up in the working directory, then `$XDG_CONFIG_HOME/real`, `~/.config/real` or `%APPDATA%\real`; `RE8025`–`RE8027` for a bad task, an unknown agent or a failed run) | `re_agent::eval`, `re_mcp::client` |
 | `real explain RE####` | What an error means and how to fix it | Compiled explain pages |
-| `real mcp` | MCP clients (Claude Code, Codex, VS Code, Cursor, Gemini CLI, Zed and others) | `re_mcp` → `EngineHandle` → the registry |
+| `real mcp [--http [ADDR]] [--record FILE]` | MCP clients (Claude Code, Codex, VS Code, Cursor, Gemini CLI, Zed and others), over stdio or streamable HTTP; `--record` writes one JSON line per tool call | `re_mcp` → `EngineHandle` → the registry |
 | `AGENTS.md` / `CLAUDE.md` | Agent onboarding in a project | Generated by `real agent init` |
 
 ### Command flow
@@ -477,7 +528,7 @@ client → real mcp (tokio, background thread) → re_command::remote::EngineHan
        → Transaction of Ops → History (undo, redo, log) → CommandOutcome { changes, diagnostics, data }
 ```
 
-`re_cli` builds the engine (`App::open`) and hands the `EngineHandle` to `re_mcp::serve_stdio`, so `re_mcp` never depends on `re_app`. If an editor process is running, `real mcp` and the CLI connect to `.real/editor.sock` (`re_agent::remote::connect`) instead of opening the project themselves; otherwise the first writer (`real do`, `real mcp`) takes an operating-system file lock on `.real/editor.lock` through `re_agent::lock` and records its pid and kind in `.real/editor.owner`, and a second one gets `RE8003`. The OS releases the lock when the holder exits, so a crashed writer leaves nothing stale. There is one writer (ADR-0020, ADR-0026). `App::serve` is edit mode: it answers requests between frames without stepping the simulation, so what an agent edits is the scene on disk; running the game is `play.run` (on a copy) or `real run`.
+`re_cli` builds the engine (`App::open`) and hands the `EngineHandle` to `re_mcp::serve_stdio`, so `re_mcp` never depends on `re_app`. With `--http [ADDR]` (M3, ADR-0046), `real mcp` serves streamable HTTP at `/mcp` on a loopback address instead. Clients send `Authorization: Bearer <token>`; the token comes from `REAL_MCP_TOKEN` or is generated, and `.real/mcp-http.json` (readable by the user only) holds it with the URL. Host and Origin are checked, and the policy and tiers are the same as over stdio. The server stops on stdin EOF when stdin is a pipe, otherwise on Ctrl-C. A non-loopback address is `RE8502`, a weak token `RE8503`, and a failed bind `RE8504`. `real agent init --http ADDR` points Claude Code's `.mcp.json` at the endpoint and prints the URL and header for other clients. If an editor process is running, `real mcp` and the CLI connect to `.real/editor.sock` (`re_agent::remote::connect`) instead of opening the project themselves; otherwise the first writer (`real do`, `real mcp`) takes an operating-system file lock on `.real/editor.lock` through `re_agent::lock` and records its pid and kind in `.real/editor.owner`, and a second one gets `RE8003`. The OS releases the lock when the holder exits, so a crashed writer leaves nothing stale. There is one writer (ADR-0020, ADR-0026). `App::serve` is edit mode: it answers requests between frames without stepping the simulation, so what an agent edits is the scene on disk; running the game is `play.run` (on a copy) or `real run`.
 
 ### Safety
 
@@ -506,6 +557,22 @@ Each M1 command is one MCP tool. There is no generic `command.run` tool in M1, b
 | Destructive | `file.delete` | `re_agent` |
 
 Annotations are derived from the tier and set explicitly on every tool (ADR-0025): `read` gives `readOnlyHint: true, destructiveHint: false`; `edit` gives `readOnlyHint: false, destructiveHint: false`; `destructive` gives `destructiveHint: true`. `idempotentHint` is set per command, and `openWorldHint` is `false` for all of them.
+
+### M3 tools
+
+With every M3 command so far, `real mcp` lists 53 tools.
+
+| Tier | Tools | Registered by |
+|---|---|---|
+| Read | `graph.migration_report` (ADR-0043) | `re_proc` |
+| Read | `template.list`, `recipe.list` (ADR-0046) | `re_cli` (`register_recipes`, over `re_agent::templates`) |
+| Edit | `proc.bake`, and the structural overrides `proc.move`, `proc.replace`, `proc.insert` and `proc.clear_structure` (ADR-0043) | `re_proc` |
+| Edit | `graph.add_node`, `graph.remove_node`, `graph.connect`, `graph.disconnect`, `graph.move_nodes`, `graph.set_default` (ADR-0044; idempotent except `graph.add_node`, which picks a fresh id when none is given; arguments as in `re_proc::{AddNodeArgs, RemoveNodeArgs, ConnectArgs, MoveNodesArgs, SetDefaultArgs}`) | `re_proc` |
+| Edit | `recipe.apply` (ADR-0046; all or nothing: a failed step or check restores the checkpoint taken first) | `re_cli` (`register_recipes`) |
+| Read | `animgraph.validate` (ADR-0039; with `skin`, it also binds the graph to that skin) | `re_app` |
+| Edit | `animgraph.create`, `animgraph.edit` (a batch of `upsert` and `remove` changes to params, nodes, layers, masks, states and transitions, validated together, one undo step), `anim.set_param` (a running graph's parameter; runtime state, not undoable) (ADR-0039) | `re_app` |
+
+Recipes are data: a recipe runs only registered commands, up to the `edit` tier, and each step goes through the policy like any call. `scene.apply` takes an optional `coalesce` key, so a run of edits under one key (an editor gizmo drag) is one undo step.
 
 ### MCP additions (M2, WP17)
 
@@ -548,6 +615,8 @@ Annotations are derived from the tier and set explicitly on every tool (ADR-0025
 | RE9800–9899 | `re_import` |
 | RE9900–9999 | reserved |
 
+Inside `re_app`'s range, `RE0600`–`RE0619` are package reading (ADR-0037) and `RE0620`–`RE0649` the web runtime (ADR-0049): `RE0620`–`RE0622` are in use and `RE0623`–`RE0649` stay reserved for WP29. Inside `re_cli`'s, `RE0950`–`RE0969` are `real build` and `RE0970`–`RE0989` its web target.
+
 - **Explain pages.** Each crate has `explain/RE####.md` and exports `pub const DIAGNOSTICS: &[DiagInfo]`, built with `include_str!`. `re_cli` collects all of them. A test fails on a missing page, a duplicate code, or a code outside the crate's range, and `cargo xtask explain` fails on a page that no `include_str!` in the crate's sources references (so every code used in source is in `DIAGNOSTICS`).
 - **Output.** Human output looks like rustc's: `error[RE3004]: ... --> scripts/game/player.luau:12:5`, followed by a hint. `--json` gives the same data as JSON lines.
 - **Logging.** `real` logs to stderr at `warn,script=info`, so script `print` and `warn` output shows; `RUST_LOG` overrides it.
@@ -568,14 +637,18 @@ my-game/
   prefabs/*.prefab.json      reusable entity trees
   materials/*.material.json  PBR-lite parameters + texture asset refs
   graphs/*.graph.json        ProcGraph IR
+  anims/*.animgraph.json     animation graphs (ADR-0039)
   scripts/game/**.luau       game context
   scripts/tools/**.luau      tools context (graph builders, editor helpers)
   scripts/shared/**.luau     modules require-able from both
+  scripts/generators/**.luau Luau node kinds (`project.*`, ADR-0043)
+  data/seed/**               saved data that verify runs, replays and new saves start from (ADR-0048); packed by `real build`
   assets/**                  .gltf/.glb, .png/.jpg, .wav, each with a .meta.json (uuid, import settings)
   tests/replays/*.replay.json
   tests/goldens/<backend>/*.png
   .real/agent-policy.toml    committed
   .real/cache/  .real/agent/  .real/sessions/  .real/crash/  .real/types/   ignored
+  .real/data/  .real/out/  .real/editor/layout.json  .real/mcp-http.json      ignored (saved data, captures, the editor's dock layout, the HTTP MCP state)
   .real/editor.lock  .real/editor.owner  .real/editor.sock                 ignored; the editor or a headless writer holds an OS lock on editor.lock and writes its pid and kind to editor.owner; the socket exists only while the editor runs
   AGENTS.md  CLAUDE.md       generated by `real agent init`
 ```
@@ -596,6 +669,20 @@ max_steps_per_frame = 5
 [render]
 backends = ["vulkan", "gl"]   # wgpu backend preference
 
+[render.post]                 # exposure and the post chain (M3, ADR-0038); every step is off by default
+exposure = 1.0                # multiplies lights, ambient and emissive
+tone_mapping = "None"         # or "PbrNeutral", "Aces", "AgX"
+blur_radius = 0.0             # fraction of the target's height; 0 is off
+bloom = { intensity = 0.0, threshold = 0.0, knee = 0.5, radius = 0.05 }
+sun_rays = { intensity = 0.0, spread = 0.5 }
+# grading = { brightness = 0.0, contrast = 0.0, saturation = 0.0, tint = [1.0, 1.0, 1.0] }   # off unless given
+
+[render.shadows]              # the sun's shadow cascades (M3, ADR-0038)
+cascades = 4                  # 1 to 4
+distance = 150.0              # how far from the camera shadows reach
+split_lambda = 0.75           # logarithmic (1) to uniform (0) splits
+blend = 0.1                   # fraction of each cascade that fades into the next
+
 [scripts]
 contexts = ["game", "tools"]
 cpu_budget_ms = 4
@@ -605,6 +692,30 @@ checker = "luau-lsp"          # or a path to a patched luau-analyze (ADR-0013)
 [proc]                        # Luau node kinds (M3, ADR-0043 §4)
 luau_budget = 20000000        # safepoints per evaluation (RE4101 past it)
 luau_memory_mb = 256
+
+[audio]                       # mixer buses, sends, effects and snapshots (M3, ADR-0041)
+default_bus = "sfx"           # where sources without a bus play
+
+[audio.buses.sfx]
+sends = { world_reverb = -9.0 }
+effects = [{ kind = "compressor", threshold_db = -18.0, ratio = 3.0 },
+           { kind = "eq", shape = "bell", hz = 2000.0, gain_db = -3.0, q = 1.0 }]
+
+[audio.buses.footsteps]
+parent = "sfx"
+effects = [{ kind = "filter", mode = "high_pass", cutoff_hz = 120.0 },
+           { kind = "distortion", mode = "soft_clip", drive_db = 6.0 }]
+
+[audio.sends.world_reverb]
+effects = [{ kind = "reverb", feedback = 0.85, damping = 0.3, mix = 1.0 }]
+
+[audio.snapshots.underwater]
+buses = { sfx = -3.0 }
+effects = [{ bus = "footsteps", effect = 0, cutoff_hz = 600.0 }]
+
+[stream]                      # world streaming (M3, ADR-0042; re_proc::stream::StreamConfig); keys and defaults in the ADR
+cell_size = 256.0
+radius = 768.0
 
 [input.buttons]               # action = list of bindings
 jump = ["key:Space", "pad:South"]
@@ -649,6 +760,18 @@ studio = true
 "rbxassetid://456" = "builtin:r15_walk"
 "789" = "game.ReplicatedStorage.Wave"
 ```
+
+A compat project can also set `[compat.data]` (M3, ADR-0048):
+
+```toml
+[compat.data]                  # DataStoreService and MemoryStoreService
+enabled = true                 # false fails every call with error 403
+latency_frames = 1             # frames a request takes
+epoch = "2026-01-01T00:00:00Z" # the data clock's start outside `real run`
+mode = "persist"               # or "session": never keep data, even in `real run`
+```
+
+The `[render.post]` and `[render.shadows]` values are checked at load: a value out of range is `RE0501`, naming the key and the range, and is not clamped. In a compat project the place's own exposure and grading (its `Lighting` and post effects) win over the TOML, while bloom, sun rays and the shadow settings still apply. Without `[audio]`, the mixer has the buses `music`, `sfx` and `ui` and no effects. A project without `[audio]` sounds as before.
 
 Asset paths are relative to the project and may not contain `..`. An id that is not in the table, or whose file is missing, is `RE9350` when it is used. An animation value is `builtin:` followed by `r6_` or `r15_` and one of `idle`, `walk`, `run`, `jump`, `fall`, `climb` and `sit`, or a dotted path into the place. A key that is not an asset id, a bad value, or one id listed twice is `RE9202` at load.
 
@@ -722,4 +845,27 @@ Goldens are kept per backend, because GL and Vulkan differ in small ways (ADR-00
 
 ### Caches
 
-Caches are postcard with a `(magic, format_version)` header, stored in `.real/cache/`. Keys are blake3 hashes. Every cache is safe to delete.
+Caches are postcard with a `(magic, format_version)` header, stored in `.real/cache/`. Keys are blake3 hashes. Every cache is safe to delete. Runtime code reaches them through `ProjectFiles::writable(Cache)` (`assets/` and `proc/` inside it), never by joining paths itself. The compat boot no longer writes `.real/defaults/`: an engine layer serves the default scripts.
+
+### Project files at run time
+
+Every runtime read of a project file goes through `re_core::files::ProjectFiles` (ADR-0037): an ordered list of read-only layers, first match wins, plus the writable folders (`writable(Cache | Data | Crash | Out)`, each a `WritableDir`).
+- A development run (`real run`, `real verify`, the editor, MCP): the engine layer (`.real/defaults/**`), then the project directory. The writable folders are `.real/cache`, `.real/data`, `.real/crash` and `.real/out`.
+- A packaged game: the engine layer, then `game.rpak`, then the folder that holds it (source files only). The writable folders are per user, under `[package] identifier`: the cache in `$XDG_CACHE_HOME` (default `~/.cache`), `~/Library/Caches` or `%LOCALAPPDATA%`; data, crash reports and captures in `$XDG_DATA_HOME` (default `~/.local/share`), `~/Library/Application Support` or `%APPDATA%`. `--data-dir DIR` overrides both. Headless packaged runs do not save data.
+- A browser build: the same layers over the archive in memory; the writable folders are memory, with data and crash reports mirrored to IndexedDB (below).
+
+### Packaged games
+
+`real build` (ADR-0037) writes `game.rpak` and, beside it, the runtime binary renamed after `[project] name` (on Linux also a `.desktop` file). The binary is `re_cli` built with `--no-default-features --features game` and the `packaged` cargo profile (`release` with `strip = "debuginfo"`; cargo reserves the name `package`). `--runtime PATH` takes a prebuilt one, checked with its `--runtime-info`. The archive (`crates/re_app/src/package/`):
+- a 72-byte header: the magic `RPAK\r\n\x1a\n`, `format_version: u32` (1), `flags: u32` (0), `index_offset`, `index_stored_size` and `index_size` as `u64`, and the blake3 of the stored index; all integers little-endian;
+- the entries' bytes, back to back, in index order; an entry is zstd-compressed (level 9) only when that saves at least 10%;
+- the index: postcard, zstd-compressed, sorted by path: the engine, Luau, bytecode and compiler versions (`COMPILER_ID`, ADR-0036), the `[package]` name, identifier and version, and per entry its path, form (`Source`, `Bytecode` or `Processed`), offset, sizes, compression and the blake3 of its bytes.
+
+The default content is `real.toml`, `.luaurc`, `scenes/`, `prefabs/`, `materials/`, `graphs/`, `anims/`, `scripts/`, `assets/` and `data/seed/`; `tests/`, `.real/`, `.git/`, `AGENTS.md` and `CLAUDE.md` are never packed. Animation graphs (`*.animgraph.json`) go in `anims/`; elsewhere one is packed when it lies in another default folder or matches `[package] include`, and a packed scene that names a file the archive leaves out fails the build (`RE0957`). Scripts are stored as Luau bytecode. Every read checks the entry's hash, and an archive from another engine, Luau or compiler version is refused (`RE0602`). `[package]` in `real.toml` sets the identifier, display name, version, icon, the scripts and assets forms, `exclude`, `include` and `notices`. `real verify --package DIR` runs the packaged game as a child process (a boot and every replay) and compares its `state_hash`es with the project's.
+
+### Web builds
+
+`real build --target web` (ADR-0049) writes a folder a static server can host: `index.html`, `boot.js`, `wasi.js`, `real.js` (wasm-bindgen's glue), `real_bg.wasm` (the `re_web` runtime, built with `[profile.web]` and `wasm-opt -Oz`), `runtime.json` and the same `game.rpak` as a desktop build. `runtime.json` names the engine, Luau, bytecode and compiler versions and the target; `--runtime DIR` checks it, and an earlier web build is a valid runtime folder. The page needs WebGPU or WebGL2 and wasm exnref exception handling, in a secure context (HTTPS or `localhost`). CI fails a runtime above 8 MB gzipped.
+- **The page contract.** `boot({ archive = 'game.rpak', project, extra, onProgress })` checks the browser, loads the engine and hands it the game: the archive by default, or with `project` a project folder's loose files listed in its `files.json`; `extra` adds `[path, url]` files. `play(session, { gameId, onReport })` starts the game in a canvas after a click. The engine reports through `globalThis.realEngine.report(kind, message)`, with the kinds `running`, `warning`, `problem` and `error`, and stores saved files through `globalThis.realEngine.persist(key, bytes)`, which never throws into wasm.
+- **Saved data.** `Data` and `Crash` are memory folders whose changes the page stores in an IndexedDB database named `real-engine:<id>`, under the keys `data/<path>` and `crash/<path>`; `<id>` is the archive's `[package] identifier` (or the project's name). They are loaded before the game starts, so compat saves (WP27, ADR-0048) last across page loads. When the browser refuses storage, saves stay in memory. Crash reports are written only by the desktop `real` binary's panic hook; in the browser a panic is `RE0622` on the console and the page.
+- WebGPU is used when the browser has an adapter, else WebGL2, chosen before the surface exists. `cargo xtask web-test` runs the CI checks: the island and the plaza built for the web, their replays from `game.rpak` in headless Chromium compared with the native hashes, and the island's game page.
