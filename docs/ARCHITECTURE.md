@@ -389,6 +389,21 @@ The runtime as built so far (WP10, WP11, WP12, WP13, WP14, WP15, WP16 "boot"):
 
 Coverage is a data file, `crates/re_compat/coverage.json`, listing each class and member with its status (`implemented`, `partial`, `stub-error` or `missing`). The static scan (§7) compares real scripts against this file. M2 also ships a compatibility definitions file, so the type checker knows the Roblox-style globals.
 
+### Online play (M3, WP30, ADR-0050)
+
+A compat project can be played by several people on different machines. The server world is authoritative, and each player's client owns its character (`NetworkOwner`), as on the vendor's platform. The traffic is not encrypted, so play on a LAN or with people you trust. Native `game` scripts have no networking API in M3, and packaged games (§8) take no online flags yet.
+- **Roles.** A run is one of these:
+  - **in-process**, the default and editor play: the server world and the local player's client world in one process, replicated every frame through the same wire frames, encoded and decoded as bytes;
+  - **dedicated server** (`real run --server`): the server world only, headless, with no GPU or audio device, stepping in real time until it is stopped or `--frames` ends;
+  - **host** (`real run --host`): the in-process run, which remote players join too;
+  - **client** (`real run --connect HOST[:PORT]`): the local player's world only, in a window or headless. Its local player is the one the server gives it.
+
+  A server listens on `0.0.0.0` (every interface) unless `--bind` names an address, and prints its port. `App::set_net` binds the socket before the first frame (`re_app/src/net.rs`), and `re_compat::net::session` runs the game over a `re_net` endpoint (`ServerNet` and `ClientNet`).
+- **Joining.** `re_net`'s handshake (Hello, a Challenge with a stateless cookie, Response, then Accept or Deny) checks the transport and protocol versions and the game hash, so a client with other content is refused (`RE8905`). The game hash is a blake3 of `real.toml`, the scenes and the scripts as the run reads them (`re_app::net::game_hash`), without `.real/`. The client then sends `Join` with its name. The server adds the `Player`, named by `--name` or `Player<n>` in join order and made unique with a number, before `PlayerAdded` fires. It answers `Welcome` with the player's stable id, the server's frame and a frame that binds the client's own copy of the scene; its next frame carries everything that changed since the server started, so a player who joins a game in progress gets its current state. The client starts its scripts once bound.
+- **Frames.** Each side sends one reliable frame per frame: the server, a connection's replication ops and the messages for its player; a client, its owned changes and its messages. An `UnreliableRemoteEvent` message goes alone in an unreliable datagram (`RE9454` when it is too large for one). A message larger than one transport message, such as a large game's first frame, crosses in parts.
+- **Limits.** The server drops a remote message over 64 KiB or one it cannot decode (`RE9450`), and a player's messages past `[compat.net] remote_rate` a second (`RE9453`). It takes only `upstream` components of instances the player owns (`RE9451` for the rest, which stays on that client), and keeps an owned part that moves faster than `max_owned_speed` where it was (`RE9452`). A connection over its backlog gets no ops that frame, and the next diff carries the difference. A connection whose unacknowledged data passes 4 MiB is closed. A disconnect or a timeout removes the player as `Players:remove_player` does, and `Player:Kick` closes the connection with its message.
+- **Lockstep** (`--lockstep [N]`, for checks): a server waits for N players (default 1), then runs each frame only when every player's frame of that number arrived, and a client runs each frame only when the server's arrived. A side that waits longer than `[net] timeout_ms` with no traffic moving fails the run. A lockstep server then ends where the in-process run ends, and `real verify`'s `net` stage checks that for a compat project: each replay is played by a dedicated server and one client, as child processes over loopback, and a different state hash is `RE9455`.
+
 ## 5. Procedural system
 
 ### ProcGraph IR
@@ -512,6 +527,7 @@ This works during play. The M1 demo regenerates the island with a new seed while
 | `real describe --luau-defs` / `engine.d.luau` | The exact native Luau API, for type checkers, editors and agents (prints `engine.d.luau`; not combinable with `--json`) | The binding registry in `re_script` |
 | `real check [--types] [--checker PATH] [--corpus] [--scripts-dir DIR…] [--json]` | Compile and scan scripts; `--types` runs the external type checker (without luau-lsp it reports `RE3090` and exits 1); `--corpus` runs the corpus suite over the `--scripts-dir` directories (exit 2 without any); `--scripts-dir` works without a project | `re_script`, `re_script_check` |
 | `real do <command> [--args '{json}'] [--dry-run] [--json]` (tooling build) | One edit from a shell. It sends the command to the editor if one is running; otherwise it takes the headless lock for the command's duration and saves the scene unless `--dry-run`. `--json` prints the `CommandOutcome` plus `via` (`"local"`, `"editor"`, or `null` when the project was never reached). Exit 0 on success, 1 when the command fails, the project is unreachable or the scene save fails (`RE0518`), 2 when `--args` is not a JSON object | The registry |
+| `real run [--headless] [--frames N] [--replay FILE] [--screenshot FILE] [--exit-after] [--json] [--checkpoints K] [--debug [PORT]]`, and online `--server`, `--host` or `--connect HOST[:PORT]` with `--name NAME`, `--port P`, `--bind ADDR`, `--max-players N` and `--lockstep [N]` | Play the project in a window or headless; serve, host or join a compat game over UDP (§4, ADR-0050; the traffic is not encrypted, so play on trusted networks) | `re_app` (`App`, `App::set_net`) |
 | `real verify --json` | Is the project healthy? | ADR-0022 |
 | `real import <INPUT> --project <DIR> [--parent PATH] [--dry-run] [--keep-stale] [--json]` (tooling build) | Bring a Rojo-style project, a Studio loader script, or a place or model file (`.rbxl`, `.rbxlx`, `.rbxm`, `.rbxmx`, M3) into a compat project, without running its Luau; `--parent` puts a place or model file's instances under that instance; re-import is idempotent | `re_import` (`ImportReport`) |
 | `real new <DIR> [--name NAME] [--template native\|roblox\|terrain\|DIR] [--set KEY=VALUE]… [--check]`, `real new --list-templates [--json]` | Create a project from a template (ADR-0046; the format is in `templates/README.md`); `roblox` makes an empty compat place; every template but `native` needs the tooling build | `re_cli`, `re_agent::templates`, `re_import::new_project` |
@@ -772,6 +788,23 @@ enabled = true                 # false fails every call with error 403
 latency_frames = 1             # frames a request takes
 epoch = "2026-01-01T00:00:00Z" # the data clock's start outside `real run`
 mode = "persist"               # or "session": never keep data, even in `real run`
+```
+
+Online play (M3, ADR-0050) reads `[net]`, and a compat project also `[compat.net]`. A command-line flag overrides the file:
+
+```toml
+[net]
+port = 47800                   # a server listens on it; --connect HOST uses it
+max_players = 16               # the most network players a server accepts
+server_rate = 262144           # bytes a second a server sends each client (256 KiB/s)
+client_rate = 65536            # bytes a second a client sends its server (64 KiB/s)
+timeout_ms = 10000             # a silent connection closes after this; lockstep waits this long
+
+[compat.net]                   # what a networked game takes from its clients
+# upstream = ["Transform"]     # components (or "Component.field") an owner's changes send; unset: a part's
+                               # pose, its animation joints and tracks, and the Humanoid's movement fields
+max_owned_speed = 1000         # studs a second an owned part may move (RE9452)
+remote_rate = 600              # remote messages a player may send a second (RE9453)
 ```
 
 The `[render.post]` and `[render.shadows]` values are checked at load: a value out of range is `RE0501`, naming the key and the range, and is not clamped. In a compat project the place's own exposure and grading (its `Lighting` and post effects) win over the TOML, while bloom, sun rays and the shadow settings still apply. Without `[audio]`, the mixer has the buses `music`, `sfx` and `ui` and no effects. A project without `[audio]` sounds as before.

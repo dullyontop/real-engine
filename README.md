@@ -22,7 +22,7 @@ Real Engine is an open-source 3D game engine written in Rust. It is built around
 - Generator versions with `real migrate-graph`, `proc.bake`, structural overrides, node kinds written in Luau, and polygon booleans and roads with junctions as graph nodes.
 - Project templates (`real new DIR --template native|roblox|terrain`, `--set KEY=VALUE`, `--list-templates`; the format is in [templates/README.md](templates/README.md)), generator recipes, `real agent eval`, and MCP over streamable HTTP on localhost (`real mcp --http`).
 - For Roblox-style projects: saved data, script reload during play, SurfaceGui and ViewportFrame, and `real import` of `.rbxl`, `.rbxlx`, `.rbxm` and `.rbxmx` files (with `--parent`).
-- `re_net`, our reliable UDP transport, and replication as server diffs and client applies over postcard frames (ADR-0050). Online sessions come next.
+- Online play for Roblox-style projects (ADR-0050): `real run --server` runs a dedicated server, `--host` plays while serving, and `--connect HOST[:PORT]` joins, over `re_net`, our reliable UDP transport. The traffic is not encrypted, so play on a LAN or with people you trust.
 
 The workspace holds:
 
