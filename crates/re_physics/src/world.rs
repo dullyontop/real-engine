@@ -69,9 +69,16 @@ pub struct Physics {
     pub(crate) gate: Arc<GroupGate>,
     pub(crate) state: StepState,
     pub(crate) removed: Vec<BodyId>,
-    diagnostics: Vec<Diagnostic>,
+    pub(crate) diagnostics: Vec<Diagnostic>,
     scratch_poses: Vec<oxijolt::BodyPose>,
     pub(crate) parts: PartsState,
+    /// Bodies added out of reach of a moved origin, by entity: added to Jolt
+    /// when a later move of the origin, or a new transform, brings them in
+    /// reach (ADR-0042).
+    pub(crate) waiting: BTreeMap<EntityId, BodyDesc>,
+    /// Bodies and characters whose out-of-reach writes were already reported
+    /// at the current origin.
+    pub(crate) far_reported: BTreeSet<EntityId>,
 }
 
 /// What the world knows about one body.
@@ -145,6 +152,7 @@ pub struct PhysicsSnapshot {
     /// The simulation origin the world's positions are relative to.
     origin: Vec3,
     ragdolls: BTreeMap<EntityId, RagdollSaved>,
+    waiting: BTreeMap<EntityId, BodyDesc>,
 }
 
 impl std::fmt::Debug for PhysicsSnapshot {
@@ -418,6 +426,8 @@ impl Physics {
             diagnostics: Vec::new(),
             scratch_poses: Vec::new(),
             parts,
+            waiting: BTreeMap::new(),
+            far_reported: BTreeSet::new(),
         })
     }
 
@@ -443,6 +453,9 @@ impl Physics {
     }
 
     fn apply_one(&mut self, cmd: PhysicsCmd) -> Result<(), Diagnostic> {
+        if let Some(result) = self.apply_waiting(&cmd) {
+            return result;
+        }
         match cmd {
             PhysicsCmd::AddBody { id, desc } => self.add_body(id, &desc),
             PhysicsCmd::RemoveBody { id } => self.remove_body(id),
@@ -453,10 +466,11 @@ impl Physics {
                     return Err(wrong_kind(id, "a kinematic target", entry.kind));
                 }
                 if !self.in_reach(pos) {
-                    return Err(self.out_of_reach(id, "target", pos));
+                    return self.far_write(id, "target", pos);
                 }
                 let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
                 self.state.kin_targets.insert(id, (pos, rot));
+                self.far_reported.remove(&id);
                 Ok(())
             }
             PhysicsCmd::ApplyImpulse { id, impulse } => {
@@ -585,6 +599,7 @@ impl Physics {
 
     fn add_body(&mut self, id: EntityId, desc: &BodyDesc) -> Result<(), Diagnostic> {
         if self.bodies.contains_key(&id)
+            || self.waiting.contains_key(&id)
             || self.characters.contains_key(&id)
             || self.ragdolls.contains_key(&id)
         {
@@ -599,10 +614,22 @@ impl Physics {
         if desc.kind != BodyKind::Static && shapes::is_static_only(&desc.shape) {
             return Err(static_only(id, &desc.shape, desc.kind));
         }
-        if !self.in_reach(desc.pos) {
-            return Err(self.out_of_reach(id, "body", desc.pos));
-        }
         let rot = unit_rotation(desc.rot).ok_or_else(|| bad_rotation(id))?;
+        if !self.in_reach(desc.pos) {
+            if self.parts.origin == Vec3::ZERO {
+                return Err(self.out_of_reach(id, "body", desc.pos));
+            }
+            // The origin moved away from it: it waits until it is back in reach.
+            let mut d = self.out_of_reach(id, "body", desc.pos);
+            d.severity = Severity::Warning;
+            d.message = format!(
+                "{}; it is added when the origin comes within reach",
+                d.message
+            );
+            self.diagnostics.push(d);
+            self.waiting.insert(id, desc.clone());
+            return Ok(());
+        }
         let built = shapes::build(&desc.shape).map_err(|d| d.at(at(id)))?;
         if let Some(w) = built.warning {
             self.diagnostics.push(w.at(at(id)));
@@ -704,11 +731,86 @@ impl Physics {
         }
     }
 
+    /// A new position or target out of reach: an error at the world origin;
+    /// with the origin moved, the write is dropped and reported once per
+    /// entity and origin, since the body or character only waits for the
+    /// origin to come back (ADR-0042).
+    fn far_write(&mut self, id: EntityId, what: &str, p: Vec3) -> Result<(), Diagnostic> {
+        let d = self.out_of_reach(id, what, p);
+        if self.parts.origin == Vec3::ZERO {
+            return Err(d);
+        }
+        if self.far_reported.insert(id) {
+            self.diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                message: format!("{}; it stays where it is until it is in reach", d.message),
+                ..d
+            });
+        }
+        Ok(())
+    }
+
+    /// Applies `cmd` to a body waiting out of reach, or `None` when `cmd` is
+    /// not for one.
+    fn apply_waiting(&mut self, cmd: &PhysicsCmd) -> Option<Result<(), Diagnostic>> {
+        let id = match cmd {
+            PhysicsCmd::RemoveBody { id }
+            | PhysicsCmd::SetTransform { id, .. }
+            | PhysicsCmd::SetKinematicTarget { id, .. }
+            | PhysicsCmd::ApplyImpulse { id, .. }
+            | PhysicsCmd::SetVelocity { id, .. }
+            | PhysicsCmd::SetShape { id, .. } => *id,
+            _ => return None,
+        };
+        let desc = self.waiting.get_mut(&id)?;
+        Some(match cmd {
+            PhysicsCmd::RemoveBody { .. } => {
+                self.waiting.remove(&id);
+                Ok(())
+            }
+            PhysicsCmd::SetKinematicTarget { .. } if desc.kind != BodyKind::Kinematic => {
+                Err(wrong_kind(id, "a kinematic target", desc.kind))
+            }
+            PhysicsCmd::SetTransform { pos, rot, .. }
+            | PhysicsCmd::SetKinematicTarget { pos, rot, .. } => {
+                if unit_rotation(*rot).is_none() {
+                    return Some(Err(bad_rotation(id)));
+                }
+                desc.pos = *pos;
+                desc.rot = *rot;
+                if self.in_reach(*pos) {
+                    self.add_waiting(id)
+                } else {
+                    Ok(())
+                }
+            }
+            PhysicsCmd::SetShape { shape, .. } => {
+                if desc.kind != BodyKind::Static && shapes::is_static_only(shape) {
+                    Err(static_only(id, shape, desc.kind))
+                } else {
+                    desc.shape = shape.clone();
+                    Ok(())
+                }
+            }
+            // Nothing moves while it waits.
+            _ => Ok(()),
+        })
+    }
+
+    /// Adds waiting body `id` to Jolt.
+    pub(crate) fn add_waiting(&mut self, id: EntityId) -> Result<(), Diagnostic> {
+        match self.waiting.remove(&id) {
+            Some(desc) => self.add_body(id, &desc),
+            None => Ok(()),
+        }
+    }
+
     fn set_transform(&mut self, id: EntityId, pos: Vec3, rot: Quat) -> Result<(), Diagnostic> {
         if !self.in_reach(pos) {
-            return Err(self.out_of_reach(id, "new", pos));
+            return self.far_write(id, "new", pos);
         }
         let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
+        self.far_reported.remove(&id);
         let at = self.jolt_point(pos);
         if let Some(entry) = self.bodies.get(&id) {
             let activation = if entry.kind == BodyKind::Static {
@@ -1388,6 +1490,7 @@ impl Physics {
             state: self.state.clone(),
             origin: self.parts.origin,
             ragdolls: self.save_ragdolls(),
+            waiting: self.waiting.clone(),
         }
     }
 
@@ -1417,6 +1520,7 @@ impl Physics {
         self.state = snapshot.state.clone();
         self.parts.origin = snapshot.origin;
         self.restore_ragdolls(&snapshot.ragdolls);
+        self.waiting = snapshot.waiting.clone();
         Ok(())
     }
 

@@ -82,9 +82,9 @@ pub fn chunk_indices(edges: Edges) -> Vec<u32> {
 /// (apron sample `(i + 1, j + 1)`) sits at `(i as f32 × spacing, height,
 /// j as f32 × spacing)`, relative to the chunk's corner (its sample `(0, 0)`),
 /// so the chunk is drawn at its corner and keeps its precision kilometres
-/// out (ADR-0042's render origin). With a power-of-two spacing the corners
-/// and offsets are exact, so neighbouring chunks share edge vertices bit for
-/// bit. Normals come from central differences over the apron, so they agree
+/// out (ADR-0042's render origin). With a spacing that is a multiple of
+/// 1/1024 m (world streaming refuses others) the corners and offsets within
+/// 16 km are exact, so neighbouring chunks share edge vertices bit for bit. Normals come from central differences over the apron, so they agree
 /// across chunk borders too. UVs run from 0 to 1 across the chunk.
 pub fn chunk_mesh(heights: &[f32], spacing: f32, edges: Edges) -> Result<MeshData, GeomError> {
     let n = CHUNK_SAMPLES as usize;

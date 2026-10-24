@@ -945,10 +945,15 @@ impl Physics {
     /// keeps its world pose and velocity: the whole Jolt world moves by one
     /// translation, so contacts, sleep and joints carry on. Positions in and
     /// out of [`Physics`] stay world positions. Call it between steps, before
-    /// the tick's commands. Fails with `RE5016`, leaving the world unchanged,
-    /// for a point that is not finite or when a body or character would end
-    /// up outside the limits. A [`PhysicsSnapshot`](crate::PhysicsSnapshot)
-    /// saved before the move no longer restores (`RE5012`).
+    /// the tick's commands. Bodies and characters the move leaves outside
+    /// the limits stay where they are and are not written to (a new position
+    /// for one is dropped and reported once as an `RE5006` warning) until a
+    /// later move brings them back; bodies added out of reach while the
+    /// origin is moved wait and join Jolt once in reach. Fails with `RE5016`,
+    /// leaving the world unchanged, for a point that is not finite, a move
+    /// larger than twice the limits, or while the world has ragdolls. A
+    /// [`PhysicsSnapshot`](crate::PhysicsSnapshot) saved before the move no
+    /// longer restores (`RE5012`).
     pub fn set_origin(&mut self, origin: Vec3) -> Result<(), Diagnostic> {
         let refuse = |why: &str| {
             Diagnostic::error(
@@ -972,42 +977,29 @@ impl Physics {
             return Err(refuse("the move is larger than twice the world limits"));
         }
         // Every body of the Jolt world, in a stable order: plain bodies by
-        // entity, then assemblies, then characters' inner bodies.
+        // entity, then assemblies, then characters' inner bodies. Bodies the
+        // move leaves out of reach stay where they are, far from every focus,
+        // until a later move brings them back.
         let mut bodies: Vec<BodyId> = self.bodies.values().map(|b| b.id).collect();
         bodies.extend(self.parts.assemblies.values().map(|a| a.body));
         bodies.extend(self.characters.values().filter_map(|c| c.inner));
-        for &b in &bodies {
-            if let Ok(body) = self.world.body(b)
-                && !crate::world::in_world(grv(body.position()) + shift)
-            {
-                let at = self.world_point(body.position());
-                let what = self.entity_of.get(&b).or_else(|| {
-                    self.parts
-                        .assemblies
-                        .iter()
-                        .find(|(_, a)| a.body == b)
-                        .map(|(k, _)| k)
-                });
-                return Err(refuse(&match what {
-                    Some(e) => format!("entity {e} at {at} would be outside the limits"),
-                    None => format!("a body at {at} would be outside the limits"),
-                }));
-            }
-        }
-        for (e, c) in &self.characters {
-            if let Ok(ch) = self.world.character(c.id)
-                && !crate::world::in_world(grv(ch.position()) + shift)
-            {
-                return Err(refuse(&format!(
-                    "character {e} at {} would be outside the limits",
-                    self.world_point(ch.position())
-                )));
-            }
-        }
         self.world
             .rebase(&bodies, jq(Quat::IDENTITY), rv(shift))
             .map_err(|e| refuse(&e.to_string()))?;
         self.parts.origin = origin;
+        self.far_reported.clear();
+        // Bodies added while out of reach join now if they are in reach.
+        let back: Vec<EntityId> = self
+            .waiting
+            .iter()
+            .filter(|(_, d)| self.in_reach(d.pos))
+            .map(|(e, _)| *e)
+            .collect();
+        for id in back {
+            if let Err(d) = self.add_waiting(id) {
+                self.diagnostics.push(d);
+            }
+        }
         Ok(())
     }
 

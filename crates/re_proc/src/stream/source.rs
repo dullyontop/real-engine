@@ -400,6 +400,15 @@ fn graph_spacing(doc: &GraphDoc) -> Result<f32, String> {
         if !(cell.is_finite() && cell > 0.0) {
             return Err(format!("node `{}` has spacing {cell}", node.id));
         }
+        // On multiples of 1/1024 m every sample within 16 km of the world
+        // origin, and every chunk corner, is an exact float, so chunks drawn
+        // or simulated at their corners meet bit for bit (ADR-0042).
+        if (cell * 1024.0).fract() != 0.0 {
+            return Err(format!(
+                "node `{}` has spacing {cell}, which is not a multiple of 1/1024 m, so streamed chunks would not meet exactly",
+                node.id
+            ));
+        }
         match spacing {
             Some(s) if s != cell => {
                 return Err(format!(

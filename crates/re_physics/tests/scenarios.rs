@@ -849,6 +849,8 @@ fn large_world() {
 /// The floating origin (ADR-0042): bodies and characters 8 km out simulate
 /// once the origin follows them, keep their world poses when it moves
 /// mid-run, and queries, snapshots and refusals all speak world positions.
+/// Bodies a move leaves out of reach stay put; bodies added out of reach
+/// wait for the origin.
 #[test]
 fn floating_origin() {
     let far = 8000.0;
@@ -926,9 +928,53 @@ fn floating_origin() {
     walk(&mut p, 30);
     assert_eq!(pos(&p, 2), after);
 
-    // A move that would leave a body out of reach is refused, changing nothing.
-    let err = p.set_origin(Vec3::new(1024.0, 0.0, 1024.0)).unwrap_err();
-    assert_eq!(err.code, re_physics::codes::INVALID_ARGUMENT);
-    assert_eq!(p.origin(), Vec3::new(8192.0, 0.0, 8192.0));
+    // A pad near zero added while the origin is far waits, with a warning.
+    let pad = EntityId(5);
+    p.apply(&mut vec![floor(5, 0.0, 0.0, 0.0, 10.0)]);
+    let d = p.take_diagnostics();
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        (d[0].code, d[0].severity),
+        (re_physics::codes::OUTSIDE_WORLD, re_core::Severity::Warning)
+    );
+    let down = |p: &Physics, x: f32, z: f32| {
+        p.raycast(
+            Vec3::new(x, 5.0, z),
+            Vec3::NEG_Y,
+            10.0,
+            &QueryFilter::default(),
+        )
+        .unwrap()
+        .map(|h| h.entity)
+    };
+    assert_eq!(p.pose(pad), None);
+
+    // Moving back near zero leaves the far bodies where they are and brings
+    // the pad in; writes to the far sphere are dropped, reported once.
+    p.set_origin(Vec3::new(1024.0, 0.0, 1024.0)).unwrap();
     assert_eq!(pos(&p, 2), after);
+    assert_eq!(down(&p, 0.0, 0.0), Some(pad));
+    for _ in 0..2 {
+        p.apply(&mut vec![PhysicsCmd::SetTransform {
+            id: EntityId(2),
+            pos: after + Vec3::X,
+            rot: Quat::IDENTITY,
+        }]);
+    }
+    let d = p.take_diagnostics();
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        (d[0].code, d[0].severity),
+        (re_physics::codes::OUTSIDE_WORLD, re_core::Severity::Warning)
+    );
+    assert_eq!(pos(&p, 2), after);
+
+    // Back out, the character walks on as before.
+    p.set_origin(Vec3::new(8192.0, 0.0, 8192.0)).unwrap();
+    let x = p.character(ch).unwrap().pos.x;
+    walk(&mut p, 30);
+    let x2 = p.character(ch).unwrap().pos.x;
+    assert_near("character x after 0.5 s more", x2, x + 1.0, 0.05);
+    // The pad stays, out of reach, where it is.
+    assert!((p.pose(pad).unwrap().0 - Vec3::new(0.0, -0.5, 0.0)).length() < 1e-3);
 }

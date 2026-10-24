@@ -411,6 +411,20 @@ fn stream_refuses_unstreamable_and_moved_sources() {
     let mut st = streamed(odd, 0.0, 0.0, json!([]));
     let r = step(&mut st.world, 0, &config());
     assert_eq!(r.diagnostics[0].code.to_string(), "RE4301");
+    // One that divides it but is not a multiple of 1/1024 m: chunks at their
+    // corners would not meet exactly.
+    let inexact = graph(
+        &[("h", "terrain.heightfield", json!({ "cell": 0.64 }))],
+        &[],
+    );
+    let mut st = streamed(inexact, 0.0, 0.0, json!([]));
+    let r = step(&mut st.world, 0, &config());
+    assert_eq!(r.diagnostics[0].code.to_string(), "RE4301");
+    assert!(
+        r.diagnostics[0].message.contains("1/1024"),
+        "{}",
+        r.diagnostics[0].message
+    );
 
     let mut st = streamed(world_graph(), 0.0, 0.0, json!([]));
     st.world
@@ -1303,4 +1317,44 @@ fn stream_reports_outdated_nodes_once() {
         "{}",
         d.message
     );
+}
+
+#[test]
+fn stream_cell_bounds_span_the_terrain_heights() {
+    // Terrain lifted to 100 m and more: the cell's bounds hold its mesh's
+    // heights, not the corner-local entity's origin at y = 0.
+    let doc = graph(
+        &[
+            (
+                "h",
+                "terrain.heightfield",
+                json!({ "cell": 4.0, "height": 40.0 }),
+            ),
+            (
+                "lift",
+                "field.remap",
+                json!({ "mode": "curve", "points": [[0.0, 100.0], [40.0, 140.0]] }),
+            ),
+            ("ground", "terrain.mesh", json!({})),
+        ],
+        &[
+            ("h", "field", "lift", "field"),
+            ("lift", "field", "ground", "field"),
+        ],
+    );
+    let mut st = streamed(doc, 32.0, 32.0, json!([]));
+    let mut r = run(&mut st.world, 0..3);
+    r.push(step(&mut st.world, 3, &config()));
+    assert!(r.iter().all(|r| r.diagnostics.is_empty()), "{r:?}");
+    let events = st.world.ecs.resource::<StreamEvents>();
+    assert!(!events.loaded.is_empty());
+    for cell in &events.loaded {
+        assert!(
+            cell.min.y >= 99.0 && cell.max.y <= 141.0 && cell.max.y > cell.min.y,
+            "{}: {} to {}",
+            cell.key,
+            cell.min.y,
+            cell.max.y
+        );
+    }
 }

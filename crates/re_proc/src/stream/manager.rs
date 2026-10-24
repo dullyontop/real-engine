@@ -296,7 +296,10 @@ impl Streamer {
     /// The floating origin (ADR-0042): a point of the `origin_grid` that
     /// follows the focuses, where physics should put its simulation origin
     /// before the tick's physics commands. It depends only on the focuses'
-    /// history, so a replay moves it at the same ticks.
+    /// history, so a replay moves it at the same ticks when the focuses move
+    /// in fixed steps. A focus moved once per frame (with no `StreamFocus`,
+    /// the active camera, often moved by `PreRender` scripts) can move it at
+    /// a tick that depends on the frame rate, and with it physics' rounding.
     pub fn origin(&self) -> Vec3 {
         self.origin
     }
@@ -1210,15 +1213,26 @@ impl Streamer {
                 }
             }
             for n in out.fragment.iter().filter(|_| applied.is_ok()) {
-                for (cname, fields) in &n.components {
-                    if cname == "Transform" {
-                        for (f, v) in fields {
-                            if let (true, re_reflect::Value::Vec3(p)) = (f == "translation", v) {
-                                ymin = ymin.min(p.y);
-                                ymax = ymax.max(p.y);
-                            }
-                        }
+                let (y, mesh) = translation_and_mesh(n);
+                // An entity drawing a derived mesh (a corner-local terrain
+                // cell) spans its mesh's heights, not its origin's.
+                let range = mesh
+                    .and_then(|m| out.assets.iter().find(|(name, _)| name == m))
+                    .and_then(|(_, a)| match a {
+                        DerivedAsset::Mesh(m) => mesh_height_range(m),
+                        DerivedAsset::Heightfield(_) => None,
+                    });
+                match (range, y) {
+                    (Some((lo, hi)), y) => {
+                        let y = y.unwrap_or(0.0);
+                        ymin = ymin.min(y + lo);
+                        ymax = ymax.max(y + hi);
                     }
+                    (None, Some(y)) => {
+                        ymin = ymin.min(y);
+                        ymax = ymax.max(y);
+                    }
+                    (None, None) => {}
                 }
             }
             match applied {
@@ -1344,4 +1358,27 @@ fn release(world: &World, assets: &[String]) {
             store.release(a);
         }
     }
+}
+
+/// The translation's height and the derived mesh asset of a generated node.
+fn translation_and_mesh(n: &re_scene::GenNode) -> (Option<f32>, Option<&str>) {
+    let (mut y, mut mesh) = (None, None);
+    for (cname, fields) in &n.components {
+        for (f, v) in fields {
+            match (cname.as_str(), f.as_str(), v) {
+                ("Transform", "translation", re_reflect::Value::Vec3(p)) => y = Some(p.y),
+                ("MeshRef", "asset", re_reflect::Value::Str(a)) => mesh = Some(a.as_str()),
+                _ => {}
+            }
+        }
+    }
+    (y, mesh)
+}
+
+/// The lowest and highest vertex of `mesh`, in its own space.
+fn mesh_height_range(mesh: &re_types::mesh::MeshData) -> Option<(f32, f32)> {
+    mesh.vertices.iter().fold(None, |r, v| {
+        let y = v.pos[1];
+        Some(r.map_or((y, y), |(lo, hi): (f32, f32)| (lo.min(y), hi.max(y))))
+    })
 }

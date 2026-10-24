@@ -83,9 +83,11 @@ struct Linked {
 #[derive(Default)]
 pub struct RagdollSync {
     linked: BTreeMap<EntityId, Linked>,
-    /// Entities whose ragdoll could not be built, with what it was built from, so
-    /// each problem is reported once.
-    refused: BTreeMap<EntityId, Built>,
+    /// Entities whose ragdoll could not be built or physics refused, with what
+    /// it was built from and physics' simulation origin then, so each problem
+    /// is reported once (a ragdoll refused while the origin is moved is tried
+    /// again when the origin moves).
+    refused: BTreeMap<EntityId, (Built, Vec3)>,
 }
 
 impl RagdollSync {
@@ -197,7 +199,7 @@ pub fn push(
         .collect();
     for id in lost {
         if let Some(linked) = sync.linked.remove(&id) {
-            sync.refused.insert(id, linked.built);
+            sync.refused.insert(id, (linked.built, physics.origin()));
         }
     }
 
@@ -234,7 +236,11 @@ pub fn push(
         }
         let pose = animated(matrices, scale);
         if !sync.linked.contains_key(&id) {
-            if sync.refused.get(&id) == Some(&built) {
+            if sync
+                .refused
+                .get(&id)
+                .is_some_and(|(b, o)| *b == built && *o == physics.origin())
+            {
                 continue;
             }
             let desc = if (scale3.abs() - Vec3::splat(scale)).abs().max_element() > 1e-3 * scale {
@@ -284,7 +290,7 @@ pub fn push(
                         world,
                         format!("the ragdoll on skin `{}` cannot be built: {why}", skin.name),
                     ));
-                    sync.refused.insert(id, built);
+                    sync.refused.insert(id, (built, physics.origin()));
                     continue;
                 }
             }
