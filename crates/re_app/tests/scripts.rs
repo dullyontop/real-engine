@@ -258,3 +258,63 @@ fn the_game_context_stays_attached_to_the_debugger_across_a_restart() {
     app.set_debugger(None);
     assert!(debugger.contexts().is_empty());
 }
+
+#[test]
+fn a_running_script_stops_at_a_breakpoint_and_a_reload_ends_the_stop() {
+    use re_script::debug::{Debugger, Event, Resume};
+    let dir = project(MOVER);
+    let mut app = open(dir.path());
+    // The mover starts on the first frame, before there is a debugger.
+    app.run_headless(Some(1), None).unwrap();
+    let debugger = Debugger::new();
+    app.set_debugger(Some(debugger.clone()));
+    let game = debugger.contexts()[0].id;
+    debugger.set_breakpoints("scripts/mover.luau", &[3]);
+
+    // Its step callback stops at line 3 and is parked: the frame returns
+    // with the stop shown, and the mover has not moved.
+    let z = mover_z(&app);
+    app.run_headless(Some(1), None).unwrap();
+    let stop = debugger.stopped().expect("the mover stopped");
+    assert_eq!(stop.context, game);
+    let top = stop.top().unwrap();
+    assert_eq!(top.source.as_deref(), Some("scripts/mover.luau"));
+    assert_eq!(top.line, Some(3));
+    assert!(debugger.last_unpaused().is_none());
+    assert_eq!(mover_z(&app), z);
+    // The game runs on: the next step's callback runs past the breakpoint
+    // while the first stop is shown.
+    app.run_headless(Some(1), None).unwrap();
+    assert!(mover_z(&app) > z);
+    assert_eq!(debugger.stopped().map(|s| s.context), Some(game));
+    debugger.take_events();
+
+    // Reloading the script drops the parked callback, which ends its stop.
+    std::fs::write(
+        dir.path().join("scripts/mover.luau"),
+        MOVER.replace("mover started", "mover v2"),
+    )
+    .unwrap();
+    app.apply_file_changes(&[re_assets::AssetChange::Modified(
+        "scripts/mover.luau".into(),
+    )]);
+    assert!(debugger.stopped().is_none());
+    assert!(
+        debugger
+            .take_events()
+            .contains(&Event::Continued { context: game })
+    );
+    // The new run's callback stops at the same breakpoint.
+    let report = app.run_headless(Some(1), None).unwrap();
+    assert_eq!(report.output, ["[game] mover v2"]);
+    let stop = debugger.stopped().expect("the new run stopped");
+    assert_eq!(stop.top().unwrap().line, Some(3));
+
+    // Continued with the breakpoint gone, it moves the mover again.
+    debugger.set_breakpoints("scripts/mover.luau", &[]);
+    assert!(debugger.resume(Resume::Continue));
+    let z = mover_z(&app);
+    app.run_headless(Some(2), None).unwrap();
+    assert!(debugger.stopped().is_none());
+    assert!(mover_z(&app) > z);
+}
