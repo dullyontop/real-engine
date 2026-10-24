@@ -18,6 +18,7 @@ use re_core::Code;
 use crate::codes;
 use crate::vm::ContextKind;
 
+pub(crate) mod anim;
 pub mod entity;
 pub(crate) mod json;
 pub(crate) mod libs;

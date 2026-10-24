@@ -4,7 +4,8 @@
 # and verify-plaza (all on Ubuntu; verify-plaza by ADR-0023's M2 amendment), and
 # build-windows and build-macos (the whole suite and `real verify` on the island
 # and the plaza; ADR-0023's M3 amendment, WP18 PR "blocking"), and build-web
-# (ADR-0023's M3 amendment, WP29 PR "portable").
+# (ADR-0023's M3 amendment, WP29 PR "portable"), and d2 (the state_hash of every
+# island and plaza replay agrees on the three platforms; ADR-0036, WP18 PR "d2").
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
@@ -345,16 +346,9 @@ jobs:
             jq -r '.stages[] | "\(.name): ok=\(.ok)"' "$report"
             jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' "$report"
             jq -c '.stages[] | select(.name == "goldens") | .data' "$report"
-            # Goldens are blessed on Linux only (lavapipe and GL). Here every other
-            # stage must pass, and goldens must match where a set for this backend
-            # exists; a backend with no set at all is reported, not failed. WP18's
-            # PR "d2" adds the dx12 and metal sets and removes this rule.
-            jq -r --arg p "$project" '.stages[] | select(.name == "goldens") | select(.data.checks | length > 0 and all(.missing == true)) | "::warning::\($p): no golden set for backend \(.data.backend), \(.data.checks | length) images not compared"' "$report"
-            jq -e '.ok == true or (
-              ([.stages[] | select(.name != "goldens") | .ok] | all) and
-              (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)) and
-                ([.diagnostics[]? | select(.severity == "error") | .code] | all(. == "RE0510")))
-            )' "$report" || status=1
+            # Every stage must pass, goldens included: each backend has its own set
+            # (vulkan and gl blessed on Linux, dx12 on Windows, metal on macOS).
+            jq -e '.ok == true' "$report" > /dev/null || status=1
           done
           exit $status
       - uses: actions/upload-artifact@v7
@@ -407,16 +401,9 @@ jobs:
             jq -r '.stages[] | "\(.name): ok=\(.ok)"' "$report"
             jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' "$report"
             jq -c '.stages[] | select(.name == "goldens") | .data' "$report"
-            # Goldens are blessed on Linux only (lavapipe and GL). Here every other
-            # stage must pass, and goldens must match where a set for this backend
-            # exists; a backend with no set at all is reported, not failed. WP18's
-            # PR "d2" adds the dx12 and metal sets and removes this rule.
-            jq -r --arg p "$project" '.stages[] | select(.name == "goldens") | select(.data.checks | length > 0 and all(.missing == true)) | "::warning::\($p): no golden set for backend \(.data.backend), \(.data.checks | length) images not compared"' "$report"
-            jq -e '.ok == true or (
-              ([.stages[] | select(.name != "goldens") | .ok] | all) and
-              (.stages[] | select(.name == "goldens") | (.data.checks | length > 0 and all(.missing == true)) and
-                ([.diagnostics[]? | select(.severity == "error") | .code] | all(. == "RE0510")))
-            )' "$report" || status=1
+            # Every stage must pass, goldens included: each backend has its own set
+            # (vulkan and gl blessed on Linux, dx12 on Windows, metal on macOS).
+            jq -e '.ok == true' "$report" > /dev/null || status=1
           done
           exit $status
       - uses: actions/upload-artifact@v7
@@ -432,11 +419,12 @@ jobs:
   # ADR-0049 (WP29): the browser build. Type-checks and lints the runtime for
   # wasm32-unknown-unknown (the std::time ban runs only here, ADR-0049 §5), then links
   # tools/web-test with Luau and Jolt built by wasi-sdk and compares its report under
-  # Node with the native one. Then it builds the browser runtime (re_web, profile
-  # `web` and wasm-opt, failing above 8 MB gzipped) and, in
-  # headless Chromium with WebGPU, plays the island's and the plaza's replays (no
-  # error, a drawn last frame) and starts the island's game page. The pile hash and
-  # the replays' state_hash against native are reported only until WP18 PR "d2".
+  # Node with the native one. Then `real build --target web` builds the island and the
+  # plaza (the runtime with profile `web` and wasm-opt, failing above 8 MB gzipped)
+  # and, serving each folder in headless Chromium with WebGPU, plays their replays
+  # from game.rpak (no error, a drawn last frame) and starts the island's game page.
+  # Every line of the Node report, the Jolt pile hash included, and every replay's
+  # state_hash must match native (ADR-0036, WP18 PR "d2").
   # actions/setup-node v7 (949feb24) verified with `git ls-remote` on 2026-10-20.
   build-web:
     runs-on: ubuntu-latest
@@ -467,37 +455,58 @@ jobs:
           cargo build --locked --release --target wasm32-unknown-unknown -p web-test
           wasm-bindgen --target web --out-dir target/web-test target/wasm32-unknown-unknown/release/web_test.wasm
           cargo run --locked --release -p web-test > target/web-test/native.txt
-          node --experimental-wasm-exnref tools/web-test/smoke.mjs --reported "pile " target/web-test target/web-test/native.txt
+          node --experimental-wasm-exnref tools/web-test/smoke.mjs target/web-test target/web-test/native.txt
       - name: Install binaryen 133
         run: tools/ci/binaryen.sh
-      - name: Build the browser runtime, within the 8 MB gzip budget
-        run: |
-          cargo build --locked --profile web --target wasm32-unknown-unknown -p re_web
-          wasm-bindgen --target web --out-name real --out-dir target/re-web target/wasm32-unknown-unknown/web/re_web.wasm
-          wasm-opt -Oz --strip-debug --strip-producers --enable-exception-handling \
-            --enable-reference-types --enable-bulk-memory --enable-nontrapping-float-to-int \
-            --enable-sign-ext --enable-mutable-globals --enable-multivalue \
-            target/re-web/real_bg.wasm -o target/re-web/real_bg.wasm
-          size=$(gzip -9 -c target/re-web/real_bg.wasm | wc -c)
-          echo "real_bg.wasm: $(wc -c < target/re-web/real_bg.wasm) bytes, $size gzipped"
-          if [ "$size" -gt 8000000 ]; then
-            echo "::error::real_bg.wasm is $size bytes gzipped, over the 8 MB budget (ADR-0049)"
-            exit 1
-          fi
       - name: Install Playwright's Chromium
         working-directory: tools/web-test
         run: |
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
-      - name: The island and the plaza in headless Chromium with WebGPU
+      # real build --target web for the island and the plaza (failing above the 8 MB
+      # gzip budget), their replays from game.rpak in headless Chromium with WebGPU,
+      # and the island's game page.
+      - name: cargo xtask web-test
+        run: cargo xtask web-test
+
+  # D2 (ADR-0036): every replay of the island and the plaza, run on each
+  # platform, writes its state_hash every 60 frames; `d2` compares them.
+  d2-run:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-setup
+      - if: runner.os != 'Linux'
+        run: rustup toolchain install stable --profile minimal
+      - if: runner.os != 'Linux'
+        uses: Swatinem/rust-cache@v2
+      - name: State hashes of every replay
+        shell: bash
         run: |
-          cargo run --locked --release -p re_web --example replay -- examples/island \
-            tests/replays/walk_collect.replay.json tests/replays/full_game.replay.json \
-            tests/replays/regenerate.replay.json > target/re-web/island.jsonl
-          cargo run --locked --release -p re_web --example replay -- examples/plaza \
-            tests/replays/idle.replay.json tests/replays/walk.replay.json > target/re-web/plaza.jsonl
-          node tools/web-test/browser.mjs --expect target/re-web/island.jsonl --reported target/re-web examples/island \
-            tests/replays/walk_collect.replay.json tests/replays/full_game.replay.json tests/replays/regenerate.replay.json
-          node tools/web-test/browser.mjs --expect target/re-web/plaza.jsonl --reported target/re-web examples/plaza \
-            tests/replays/idle.replay.json tests/replays/walk.replay.json
-          node tools/web-test/play.mjs target/re-web examples/island
+          mkdir -p out
+          cargo xtask d2 --project examples/island --project examples/plaza --json --out out/d2.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: d2-${{ runner.os }}
+          path: out/d2.json
+
+  # Linux x86_64, Windows x86_64 and macOS arm64 must agree checkpoint for
+  # checkpoint (ADR-0036; macOS matched from this PR's first run on).
+  d2:
+    needs: d2-run
+    if: success() || failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: d2-*
+          path: out
+      - name: Compare the platforms
+        run: cargo xtask d2 compare out/*/d2.json --require linux-x86_64,windows-x86_64,macos-aarch64

@@ -26,7 +26,7 @@ use crate::{AssetId, codes};
 /// cached imports are rebuilt. This includes new fields: the cache is postcard,
 /// which ignores `#[serde(default)]`, so an old cache never reads into a new
 /// struct.
-pub const GLTF_IMPORTER_VERSION: u32 = 2;
+pub const GLTF_IMPORTER_VERSION: u32 = 3;
 
 /// Everything imported from one glTF file.
 #[derive(Clone, Debug, Default, PartialEq)]

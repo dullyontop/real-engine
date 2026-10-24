@@ -17,6 +17,9 @@
 //!   a skin's joints by index, [`skin::ModelPose`] gives the joints' model
 //!   matrices, and [`skin::palette_into`] the joint palette the renderer skins
 //!   with.
+//! * [`graph`] plays animation graphs (ADR-0039): parameters, blend spaces,
+//!   additive nodes, layered state machines with crossfades, joint masks and
+//!   root motion, evaluated onto a skin's pose.
 //! * [`ik`] aims joints ([`ik::look_at_delta`]) and bends two-bone chains to
 //!   reach a target ([`ik::two_bone`]).
 //!
@@ -30,6 +33,7 @@
 #![warn(missing_docs)]
 
 pub mod codes;
+pub mod graph;
 pub mod ik;
 pub mod keyframes;
 mod sampler;
@@ -83,6 +87,31 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::SKIN_MALFORMED,
         title: "Malformed skin",
         page: include_str!("../explain/RE7606.md"),
+    },
+    DiagInfo {
+        code: codes::GRAPH_INVALID,
+        title: "Invalid animation graph",
+        page: include_str!("../explain/RE7607.md"),
+    },
+    DiagInfo {
+        code: codes::GRAPH_CLIP_MISSING,
+        title: "Animation graph clip cannot be loaded",
+        page: include_str!("../explain/RE7608.md"),
+    },
+    DiagInfo {
+        code: codes::GRAPH_PARAM_UNKNOWN,
+        title: "Unknown or mistyped graph parameter",
+        page: include_str!("../explain/RE7609.md"),
+    },
+    DiagInfo {
+        code: codes::GRAPH_MASK_JOINT_MISSING,
+        title: "Mask joint missing from the skeleton",
+        page: include_str!("../explain/RE7610.md"),
+    },
+    DiagInfo {
+        code: codes::GRAPH_CYCLE,
+        title: "Blend tree cycle",
+        page: include_str!("../explain/RE7611.md"),
     },
 ];
 

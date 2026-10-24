@@ -80,6 +80,33 @@ pub const BAKE_FAILED: Code = Code::new("RE4021");
 /// reads and rewrites.
 pub const OPEN_GRAPH_DIFFERS: Code = Code::new("RE4022");
 
+/// `proc.move`, `proc.replace`, `proc.insert` or `proc.clear_structure`
+/// refused: not a generated entity or a procedural source, a streamed
+/// source, a parent outside the source's output, a cycle, or a replacement
+/// that does not turn into entities.
+pub const STRUCTURE_REFUSED: Code = Code::new("RE4023");
+
+/// A Luau node script under `scripts/generators/` does not declare a valid
+/// node kind: it fails to compile or run, does not return `proc.node{...}`,
+/// or its kind is malformed or taken (ADR-0043 §4).
+pub const LUAU_DECLARATION: Code = Code::new("RE4100");
+
+/// A Luau node ran past its safepoint budget (`[proc] luau_budget`) or its
+/// memory limit (`[proc] luau_memory_mb`). The same on every machine.
+pub const LUAU_BUDGET: Code = Code::new("RE4101");
+
+/// A Luau node ran past the wall-clock backstop (60 s), for example inside
+/// one long builtin. Machine-dependent, unlike `RE4101`.
+pub const LUAU_BACKSTOP: Code = Code::new("RE4102");
+
+/// A Luau node returned an output that does not fit its declared type: a
+/// non-finite number, a wrong length, a bad key or component name.
+pub const LUAU_OUTPUT: Code = Code::new("RE4103");
+
+/// `proc.create_source` cannot make a source from the kind: it is unknown,
+/// does not output a fragment, needs inputs, or the graph file exists.
+pub const CREATE_SOURCE: Code = Code::new("RE4104");
+
 /// The `[stream]` section of `real.toml` has an unknown key or a bad value.
 pub const STREAM_CONFIG: Code = Code::new("RE4300");
 
@@ -112,3 +139,8 @@ pub const ORIGIN_RANGE: Code = Code::new("RE4308");
 
 /// Content lies beyond the precision limit of world-space positions (warning).
 pub const PRECISION_LIMIT: Code = Code::new("RE4309");
+
+/// A streaming job's evaluation was cancelled before it finished (its cell
+/// was no longer wanted, or its inputs changed). Never shown as a problem:
+/// the result is dropped.
+pub const CANCELLED: Code = Code::new("RE4310");

@@ -450,6 +450,22 @@ impl CompatVm {
         &self.ctx
     }
 
+    /// Attaches `debugger` to this context ([`Context::attach_debugger`]) and
+    /// registers the compat scripts and modules already running, so their
+    /// breakpoints hit. Use this rather than attaching the context's VM
+    /// directly.
+    ///
+    /// # Errors
+    /// The debugger refuses the attach.
+    pub fn attach_debugger(
+        &self,
+        debugger: &re_script::debug::Debugger,
+    ) -> mlua::Result<re_script::debug::ContextInfo> {
+        let info = self.ctx.attach_debugger(debugger)?;
+        scripts::register_live_chunks(self.ctx.lua());
+        Ok(info)
+    }
+
     /// The setup the VM was built from.
     pub fn setup(&self) -> &Arc<CompatSetup> {
         &self.state.setup

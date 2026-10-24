@@ -1,6 +1,8 @@
-//! The `graph.*` commands (ARCHITECTURE §6): `graph.set_param` and
-//! `graph.regenerate` (edit), `graph.generate`, `graph.report` and
+//! The `graph.*` commands (ARCHITECTURE §6): `proc.create_source`,
+//! `graph.set_param` and `graph.regenerate` (edit), `graph.generate`, `graph.report` and
 //! `graph.migration_report` (read).
+
+use std::path::Path;
 
 use re_command::{Call, CommandRegistry, EditTarget, Op, Tier};
 use re_core::{Diagnostic, Location};
@@ -81,6 +83,37 @@ pub struct MigrationReportArgs {
     #[serde(default)]
     pub source: Option<String>,
 }
+
+/// Arguments of `proc.create_source`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateSourceArgs {
+    /// The node kind: one whose output is a fragment and whose inputs are
+    /// all optional (a Luau generator, `project.*`).
+    pub kind: String,
+    /// The node's parameters, checked against the kind's schema.
+    #[serde(default)]
+    pub params: Map<String, Json>,
+    /// The new source's id (generated when omitted).
+    #[serde(default)]
+    pub id: Option<String>,
+    /// The display name (default: the kind without `project.`).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The parent's id (a root when omitted).
+    #[serde(default)]
+    pub parent: Option<String>,
+    /// `Procedural.seed` (default 0).
+    #[serde(default)]
+    pub seed: Option<i64>,
+    /// The graph file to write (default `graphs/<name>.graph.json`, with
+    /// `_2`, `_3`... when taken). It must not exist.
+    #[serde(default)]
+    pub graph: Option<String>,
+}
+
+/// The id of the one node of a graph `proc.create_source` writes.
+pub const CREATED_NODE: &str = "gen";
 
 /// What a command needs about its graph source.
 struct Source {
@@ -192,7 +225,7 @@ fn with_override(
     overrides
 }
 
-fn regen_json(report: &RegenReport) -> Json {
+pub(crate) fn regen_json(report: &RegenReport) -> Json {
     json!({
         "sources": report.sources,
         "spawned": report.spawned,
@@ -204,6 +237,7 @@ fn regen_json(report: &RegenReport) -> Json {
             "target": o.target,
             "component": o.component,
             "field": o.field,
+            "structural": o.structural.map(|k| k.to_string()),
         })).collect::<Vec<_>>(),
     })
 }
@@ -211,7 +245,7 @@ fn regen_json(report: &RegenReport) -> Json {
 /// The warnings of a regeneration for `source`: orphaned overrides
 /// (`RE4010`), overrides that could not be applied, and the graph's own
 /// warnings. The first error, if the source's generator failed.
-fn regen_diagnostics(
+pub(crate) fn regen_diagnostics(
     world: &World,
     source: &str,
     report: &RegenReport,
@@ -420,6 +454,210 @@ fn generate<C: EditTarget>(
     }))
 }
 
+fn create_error(message: String) -> Diagnostic {
+    Diagnostic::error(codes::CREATE_SOURCE, message).at(Location::command("proc.create_source"))
+}
+
+/// A project path made of plain names (`[A-Za-z0-9_.-]`, no `..`) ending in
+/// `.graph.json`.
+fn valid_graph_path(path: &str) -> bool {
+    path.ends_with(".graph.json")
+        && path.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        })
+}
+
+fn create_source<C: EditTarget>(
+    target: &mut C,
+    a: CreateSourceArgs,
+    call: &mut Call,
+) -> Result<Json, Diagnostic> {
+    let world = target.world();
+    let store = world.ecs.get_resource::<GraphStore>().ok_or_else(|| {
+        Diagnostic::error(codes::NO_GRAPH, "the world has no GraphStore resource")
+            .at(Location::command("proc.create_source"))
+    })?;
+    let root = store.root().map(Path::to_path_buf).ok_or_else(|| {
+        create_error("the world's GraphStore has no project root to write the graph file in".into())
+    })?;
+    let registry = store.evaluator().registry();
+    let def = registry.get(&a.kind).ok_or_else(|| {
+        let mut project: Vec<&str> = registry
+            .kinds()
+            .filter(|k| k.starts_with("project."))
+            .collect();
+        project.sort_unstable();
+        create_error(format!(
+            "unknown node kind `{}` (project kinds: {})",
+            a.kind,
+            if project.is_empty() {
+                "none".to_string()
+            } else {
+                project.join(", ")
+            }
+        ))
+    })?;
+    if def.output != crate::PortType::Fragment {
+        return Err(create_error(format!(
+            "`{}` outputs {}, not a fragment: only a kind that outputs a fragment can be a source",
+            a.kind,
+            def.output.port_name()
+        )));
+    }
+    if let Some(port) = def.inputs.iter().find(|p| p.required) {
+        return Err(create_error(format!(
+            "`{}` needs the input `{}`: wire it into a graph file instead",
+            a.kind, port.name
+        )));
+    }
+    let params = Json::Object(a.params.clone());
+    def.check(&params).map_err(|m| {
+        Diagnostic::error(codes::INVALID_PARAMS, format!("`{}`: {m}", a.kind))
+            .at(Location::command("proc.create_source"))
+    })?;
+    let name = a.name.clone().unwrap_or_else(|| {
+        a.kind
+            .strip_prefix("project.")
+            .unwrap_or(&a.kind)
+            .to_string()
+    });
+    let seed = a.seed.unwrap_or(0);
+    let doc: GraphDoc = serde_json::from_value(json!({
+        "format": "real-engine/graph",
+        "version": 1,
+        "name": name,
+        "seed": seed,
+        "nodes": [{ "id": CREATED_NODE, "kind": a.kind, "version": def.version, "params": a.params }],
+        "edges": [],
+    }))
+    .map_err(|e| create_error(format!("cannot build the graph: {e}")))?;
+    // A file that already holds exactly this graph (left by an undone
+    // `proc.create_source`) is used again rather than written beside.
+    let text = doc.to_json();
+    let free = |p: &str| match std::fs::read(root.join(p)) {
+        Ok(bytes) => bytes == text.as_bytes(),
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    };
+    let graph = match &a.graph {
+        Some(g) if !valid_graph_path(g) => {
+            return Err(create_error(format!(
+                "`{g}` is not a project path ending in `.graph.json` (plain names, no `..`)"
+            )));
+        }
+        Some(g) if !free(g) => {
+            return Err(create_error(format!(
+                "the graph file `{g}` already exists (with other contents)"
+            )));
+        }
+        Some(g) => g.clone(),
+        None => {
+            let stem: String =
+                a.id.as_deref()
+                    .unwrap_or(&name)
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '-' {
+                            c.to_ascii_lowercase()
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+            let stem = if stem.is_empty() {
+                "source".to_string()
+            } else {
+                stem
+            };
+            (1..)
+                .map(|n| match n {
+                    1 => format!("graphs/{stem}.graph.json"),
+                    n => format!("graphs/{stem}_{n}.graph.json"),
+                })
+                .find(|p| free(p))
+                .expect("a free name")
+        }
+    };
+    let mut components = re_scene::scene::ComponentsDoc::default();
+    components.insert(
+        "GraphSource".into(),
+        [("graph".to_string(), Doc::Str(graph.clone()))]
+            .into_iter()
+            .collect(),
+    );
+    components.insert(
+        "Procedural".into(),
+        [
+            ("generator".to_string(), Doc::Str(GENERATOR.to_string())),
+            ("seed".to_string(), Doc::Int(seed)),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    components.insert("Transform".into(), Default::default());
+    let file = root.join(&graph);
+    let written = !call.dry_run() && !file.exists();
+    if written {
+        let write = || -> std::io::Result<()> {
+            if let Some(dir) = file.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            // `create_new`: a file written meanwhile is never replaced.
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&file)?;
+            f.write_all(text.as_bytes())
+        };
+        write().map_err(|e| create_error(format!("cannot write `{graph}`: {e}")))?;
+    }
+    let applied = call.transact(
+        target,
+        format!("proc.create_source {}", a.kind),
+        vec![Op::Spawn {
+            id: a.id.clone(),
+            name: name.clone(),
+            parent: a.parent.clone(),
+            index: None,
+            components,
+        }],
+    );
+    let applied = match applied {
+        Ok(ops) => ops,
+        Err(d) => {
+            if written {
+                let _ = std::fs::remove_file(&file);
+            }
+            return Err(d);
+        }
+    };
+    let id = applied
+        .iter()
+        .find_map(|op| match op {
+            Op::Spawn { id, .. } => id.clone(),
+            _ => None,
+        })
+        .or(a.id)
+        .unwrap_or_default();
+    if !call.dry_run()
+        && let Some(mut store) = target.world().ecs.get_resource_mut::<GraphStore>()
+    {
+        store.insert(id.clone(), doc);
+    }
+    Ok(json!({
+        "source": id,
+        "graph": graph,
+        "node": CREATED_NODE,
+        "kind": a.kind,
+        "seed": seed,
+    }))
+}
+
 fn report<C: EditTarget>(
     target: &mut C,
     a: ReportArgs,
@@ -491,6 +729,13 @@ fn migration_report<C: EditTarget>(
 ///   every node to its kind's current version would change. It changes
 ///   nothing; `real migrate-graph` writes the files.
 pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry<C>) {
+    registry.register_typed::<CreateSourceArgs, _>(
+        "proc.create_source",
+        "Create a procedural source from one node kind (a Luau generator): writes a one-node graph file and spawns the source; its parameters are then set with graph.set_param.",
+        Tier::Edit,
+        true,
+        create_source::<C>,
+    );
     registry.register_typed::<SetParamArgs, _>(
         "graph.set_param",
         "Set one parameter of one node of a procedural source's graph (stored on the source, undoable).",
@@ -519,12 +764,82 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
         true,
         report::<C>,
     );
+    registry.register_typed::<crate::AddNodeArgs, _>(
+        "graph.add_node",
+        "Add a node to a graph file (opened for editing, saved by scene.save): its kind and parameters are checked; a fresh id is chosen when none is given, so a retry without an id adds another node.",
+        Tier::Edit,
+        false,
+        crate::edit::add_node::<C>,
+    );
+    registry.register_typed::<crate::RemoveNodeArgs, _>(
+        "graph.remove_node",
+        "Remove a node from a graph file, with its edges, its canvas position and the procedural sources' parameter overrides of it, in one undoable step. Its generated entities' keys go away; overrides of them are listed and kept.",
+        Tier::Edit,
+        true,
+        crate::edit::remove_node::<C>,
+    );
+    registry.register_typed::<crate::ConnectArgs, _>(
+        "graph.connect",
+        "Connect a node's output to another node's input in a graph file; ports and types are checked, cycles refused, and an edge already into that input is replaced.",
+        Tier::Edit,
+        true,
+        crate::edit::connect::<C>,
+    );
+    registry.register_typed::<crate::ConnectArgs, _>(
+        "graph.disconnect",
+        "Remove the edge from a node's output to another node's input in a graph file.",
+        Tier::Edit,
+        true,
+        crate::edit::disconnect::<C>,
+    );
+    registry.register_typed::<crate::MoveNodesArgs, _>(
+        "graph.move_nodes",
+        "Set the canvas positions of nodes in a graph file (layout only: nothing regenerates).",
+        Tier::Edit,
+        true,
+        crate::edit::move_nodes::<C>,
+    );
+    registry.register_typed::<crate::SetDefaultArgs, _>(
+        "graph.set_default",
+        "Set a node's parameter in the graph file itself (checked against the node kind; null removes it). graph.set_param sets a per-source override instead.",
+        Tier::Edit,
+        true,
+        crate::edit::set_default::<C>,
+    );
     registry.register_typed::<crate::bake::BakeArgs, _>(
         "proc.bake",
         "Turn a procedural source's generated entities into authored ones (ids `<source>.<key>`, a `Baked` record each, derived meshes and heightfields written under assets/baked/), as one undoable transaction. By default the source stops generating; with `keys` or `keep_source` it keeps generating the rest.",
         Tier::Edit,
         false,
         crate::bake::bake::<C>,
+    );
+    registry.register_typed::<crate::structure::MoveArgs, _>(
+        "proc.move",
+        "Move a generated entity under another entity of its source's output (or the source itself), kept across regenerations as an override; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::move_entity::<C>,
+    );
+    registry.register_typed::<crate::structure::ReplaceArgs, _>(
+        "proc.replace",
+        "Replace what a generated entity is with a prefab or components, keeping its key, id and generated Transform; kept across regenerations; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::replace::<C>,
+    );
+    registry.register_typed::<crate::structure::InsertArgs, _>(
+        "proc.insert",
+        "Add an authored entity (a prefab or components) to a procedural source's output with id `<source>/+<key>`, kept across regenerations; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::insert::<C>,
+    );
+    registry.register_typed::<crate::structure::ClearStructureArgs, _>(
+        "proc.clear_structure",
+        "Remove a procedural source's structural overrides (moves, replacements, inserts), all or one key's; undoable.",
+        Tier::Edit,
+        false,
+        crate::structure::clear_structure::<C>,
     );
     registry.register_typed::<MigrationReportArgs, _>(
         "graph.migration_report",

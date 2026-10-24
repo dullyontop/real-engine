@@ -13,6 +13,13 @@
 //! edited: once a document is reopened (or closed), undo and redo refuse the
 //! entries recorded against it and drop them, instead of applying JSON
 //! pointers to a different document.
+//!
+//! A transaction with a [`coalesce`](Transaction::coalesce) key merges into
+//! the undo step before it when that step has the same key and origin and
+//! nothing came between: a gizmo drag sends a live `set_field` each frame,
+//! and the whole drag is one undo step. [`History::seal`] ends the run (the
+//! button is released), as does any other transaction, an undo or a redo.
+//! The log still records every transaction.
 
 use re_scene::{IdGen, World};
 use serde::{Deserialize, Serialize};
@@ -42,6 +49,10 @@ pub struct Transaction {
     pub origin: Origin,
     /// The operations, applied in order.
     pub ops: Vec<Op>,
+    /// Merges this transaction into the previous undo step when that step
+    /// has the same key and origin and is not sealed (see the module docs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coalesce: Option<String>,
 }
 
 impl Transaction {
@@ -51,7 +62,14 @@ impl Transaction {
             label: label.into(),
             origin,
             ops,
+            coalesce: None,
         }
+    }
+
+    /// The same transaction with a coalescing key.
+    pub fn coalescing(mut self, key: impl Into<String>) -> Self {
+        self.coalesce = Some(key.into());
+        self
     }
 }
 
@@ -95,6 +113,88 @@ struct Applied {
     inverse: Vec<Op>,
     /// The open documents the operations edit, with the epoch they had.
     docs: Vec<(String, u64)>,
+    /// The key later transactions merge into this step by; `None` once
+    /// sealed.
+    coalesce: Option<String>,
+}
+
+impl Applied {
+    /// Whether `tx`, applied with `forward`, merges into this step.
+    fn takes(&self, tx: &Transaction, docs: &[(String, u64)]) -> bool {
+        tx.coalesce.is_some()
+            && self.coalesce == tx.coalesce
+            && self.origin == tx.origin
+            && docs.iter().all(|(d, e)| {
+                self.docs
+                    .iter()
+                    .find(|(sd, _)| sd == d)
+                    .is_none_or(|(_, se)| se == e)
+            })
+    }
+
+    /// Folds a later transaction's operations into this step: undoing it
+    /// undoes both. When both are only `set_field`s (a drag), each field
+    /// keeps its latest value and its earliest inverse, so a step that sets
+    /// a field every frame stays one operation per field.
+    fn absorb(&mut self, forward: Vec<Op>, inverse: Vec<Op>, docs: Vec<(String, u64)>) {
+        for d in docs {
+            if !self.docs.iter().any(|(sd, _)| *sd == d.0) {
+                self.docs.push(d);
+            }
+        }
+        if only_set_fields(&self.forward) && only_set_fields(&forward) {
+            let mut fresh = Vec::new();
+            for op in forward {
+                let key = field_of(&op);
+                match self.forward.iter_mut().find(|f| field_of(f) == key) {
+                    Some(f) => *f = op,
+                    None => {
+                        fresh.push(key);
+                        self.forward.push(op);
+                    }
+                }
+            }
+            // A field this step did not set yet is undone with the later
+            // transaction's inverse for it: its `set_field` and the override
+            // restore that follows it on a generated entity.
+            let mut merged = Vec::new();
+            let mut keep = false;
+            for op in inverse {
+                if let Op::SetField { .. } = op {
+                    keep = fresh.contains(&field_of(&op));
+                }
+                if keep {
+                    merged.push(op);
+                }
+            }
+            merged.append(&mut self.inverse);
+            self.inverse = merged;
+            return;
+        }
+        self.forward.extend(forward);
+        let mut merged = inverse;
+        merged.append(&mut self.inverse);
+        self.inverse = merged;
+    }
+}
+
+/// True when `ops` are all `set_field` operations.
+fn only_set_fields(ops: &[Op]) -> bool {
+    ops.iter().all(|op| matches!(op, Op::SetField { .. }))
+}
+
+/// The (entity, component, field) a `set_field` sets; `None` for any other
+/// operation.
+fn field_of(op: &Op) -> Option<(String, String, String)> {
+    match op {
+        Op::SetField {
+            id,
+            component,
+            field,
+            ..
+        } => Some((id.clone(), component.clone(), field.clone())),
+        _ => None,
+    }
 }
 
 /// The open documents `ops` edit, each once, with their current epoch.
@@ -129,14 +229,22 @@ impl History {
         match apply_all(world, &tx.ops) {
             Ok((forward, inverse)) => {
                 self.record(LogKind::Do, &tx.label, &tx.origin, &forward, None);
+                let docs = doc_epochs(world, &forward);
+                self.redo.clear();
+                if let Some(top) = self.undo.last_mut()
+                    && top.takes(&tx, &docs)
+                {
+                    top.absorb(forward.clone(), inverse, docs);
+                    return Ok(forward);
+                }
                 self.undo.push(Applied {
                     label: tx.label,
                     origin: tx.origin,
-                    docs: doc_epochs(world, &forward),
+                    docs,
                     forward: forward.clone(),
                     inverse,
+                    coalesce: tx.coalesce,
                 });
-                self.redo.clear();
                 Ok(forward)
             }
             Err(err) => {
@@ -181,6 +289,14 @@ impl History {
         result
     }
 
+    /// Ends a coalescing run: the next transaction starts a new undo step
+    /// whatever its key (a drag's button was released).
+    pub fn seal(&mut self) {
+        if let Some(top) = self.undo.last_mut() {
+            top.coalesce = None;
+        }
+    }
+
     /// A document `applied` edited that was reopened or closed since:
     /// every entry that edited it is dropped from both stacks, and the
     /// refusal is returned.
@@ -221,6 +337,7 @@ impl History {
                     None,
                 );
                 self.redo.push(applied);
+                self.seal();
                 Ok(true)
             }
             Err(e) => {
@@ -253,6 +370,7 @@ impl History {
                     docs: applied.docs,
                     forward,
                     inverse,
+                    coalesce: None,
                 });
                 Ok(true)
             }
@@ -286,6 +404,12 @@ impl History {
     /// The label of the transaction an undo would revert.
     pub fn undo_label(&self) -> Option<&str> {
         self.undo.last().map(|a| a.label.as_str())
+    }
+
+    /// The [coalesce](Transaction::coalesce) key of the step an undo would
+    /// revert, while later transactions with that key still merge into it.
+    pub fn undo_key(&self) -> Option<&str> {
+        self.undo.last().and_then(|a| a.coalesce.as_deref())
     }
 
     /// The label of the transaction a redo would reapply.

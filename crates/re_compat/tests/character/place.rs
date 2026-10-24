@@ -47,6 +47,15 @@ impl HostServices for Services {
     fn vehicle_state(&self, e: EntityId) -> HostResult<VehicleState> {
         self.base.vehicle_state(e)
     }
+    fn ragdoll_mode(&mut self, e: EntityId, m: re_types::physics::RagdollMode) -> HostResult<()> {
+        self.base.ragdoll_mode(e, m)
+    }
+    fn ragdoll_state(&self, e: EntityId) -> HostResult<re_types::physics::RagdollState> {
+        self.base.ragdoll_state(e)
+    }
+    fn ragdoll_impulse(&mut self, e: EntityId, j: &str, i: Vec3) -> HostResult<()> {
+        self.base.ragdoll_impulse(e, j, i)
+    }
     fn play_sound(&mut self, c: &str, a: Option<Vec3>, v: f32) -> HostResult<()> {
         self.base.play_sound(c, a, v)
     }
@@ -69,6 +78,21 @@ impl HostServices for Services {
         self.base.regenerate(s, seed)
     }
     fn request_restart(&mut self) {}
+    fn anim_set(&mut self, e: EntityId, p: &str, v: re_types::anim::AnimValue) -> HostResult<()> {
+        self.base.anim_set(e, p, v)
+    }
+    fn anim_get(&self, e: EntityId, p: &str) -> HostResult<re_types::anim::AnimValue> {
+        self.base.anim_get(e, p)
+    }
+    fn anim_trigger(&mut self, e: EntityId, p: &str) -> HostResult<()> {
+        self.base.anim_trigger(e, p)
+    }
+    fn anim_state(&self, e: EntityId, layer: Option<&str>) -> HostResult<String> {
+        self.base.anim_state(e, layer)
+    }
+    fn anim_joint(&self, e: EntityId, j: &str) -> HostResult<(Vec3, re_types::glam::Quat)> {
+        self.base.anim_joint(e, j)
+    }
     fn raw_input(&self) -> Option<&RawInputFrame> {
         self.raw.as_ref()
     }

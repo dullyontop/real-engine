@@ -13,10 +13,13 @@ use std::ptr::NonNull;
 use mlua::Lua;
 use re_command::{CommandOutcome, CommandRegistry, EditTarget, Origin, PolicyCheck};
 use re_scene::{StreamCell, World};
+use re_types::anim::AnimValue;
 use re_types::audio::{AudioCmd, BusLevel};
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::input::ActionFrame;
-use re_types::physics::{CharacterState, GroupMask, RayHit, VehicleInput, VehicleState};
+use re_types::physics::{
+    CharacterState, GroupMask, RagdollMode, RagdollState, RayHit, VehicleInput, VehicleState,
+};
 use re_types::{EntityId, glam::Vec3};
 use serde_json::Value as Json;
 
@@ -161,6 +164,15 @@ impl HostServices for NoServices {
     fn vehicle_state(&self, _: EntityId) -> HostResult<VehicleState> {
         Self::unavailable("physics.vehicle")
     }
+    fn ragdoll_mode(&mut self, _: EntityId, _: RagdollMode) -> HostResult<()> {
+        Self::unavailable("physics.ragdoll")
+    }
+    fn ragdoll_state(&self, _: EntityId) -> HostResult<RagdollState> {
+        Self::unavailable("physics.ragdoll_state")
+    }
+    fn ragdoll_impulse(&mut self, _: EntityId, _: &str, _: Vec3) -> HostResult<()> {
+        Self::unavailable("physics.ragdoll_impulse")
+    }
     fn play_sound(&mut self, _: &str, _: Option<Vec3>, _: f32) -> HostResult<()> {
         Self::unavailable("audio.play")
     }
@@ -188,6 +200,21 @@ impl HostServices for NoServices {
         Self::unavailable("proc.regenerate")
     }
     fn request_restart(&mut self) {}
+    fn anim_set(&mut self, _: EntityId, _: &str, _: AnimValue) -> HostResult<()> {
+        Self::unavailable("anim.set")
+    }
+    fn anim_get(&self, _: EntityId, _: &str) -> HostResult<AnimValue> {
+        Self::unavailable("anim.get")
+    }
+    fn anim_trigger(&mut self, _: EntityId, _: &str) -> HostResult<()> {
+        Self::unavailable("anim.trigger")
+    }
+    fn anim_state(&self, _: EntityId, _: Option<&str>) -> HostResult<String> {
+        Self::unavailable("anim.state")
+    }
+    fn anim_joint(&self, _: EntityId, _: &str) -> HostResult<(Vec3, re_types::glam::Quat)> {
+        Self::unavailable("anim.joint")
+    }
 }
 
 /// The host bound to a VM for the duration of one entry point.

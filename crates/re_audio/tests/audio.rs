@@ -199,7 +199,9 @@ fn clips_load_from_the_asset_root() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("assets/sfx")).unwrap();
     let samples: Vec<i16> = (0..RATE / 2)
-        .map(|i| ((std::f32::consts::TAU * 440.0 * i as f32 / RATE as f32).sin() * 16384.0) as i16)
+        .map(|i| {
+            (libm::sinf(std::f32::consts::TAU * 440.0 * i as f32 / RATE as f32) * 16384.0) as i16
+        })
         .collect();
     std::fs::write(dir.path().join("assets/sfx/beep.wav"), wav(&samples, RATE)).unwrap();
     std::fs::write(dir.path().join("assets/sfx/broken.wav"), b"RIFF nonsense").unwrap();

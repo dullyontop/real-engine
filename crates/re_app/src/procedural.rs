@@ -30,6 +30,35 @@ pub fn install(world: &mut World, files: &ProjectFiles) {
     world
         .ecs
         .insert_resource(GraphStore::for_files(files.clone()));
+    world
+        .ecs
+        .insert_resource(re_scene::structure::SceneFiles(files.clone()));
+}
+
+/// Declares the project's Luau node kinds (`scripts/generators/`, ADR-0043
+/// §4) into the World's store: graphs use the M1 kinds plus these from now
+/// on. Called when the project loads and when a generator script changes; a
+/// source whose graph uses a kind whose scripts changed regenerates at the
+/// next `regenerate_changed`. Returns the declaration problems (`RE4100`).
+pub fn declare_generators(
+    world: &mut World,
+    project: &ProjectFiles,
+    limits: re_script::generator::Limits,
+) -> Vec<Diagnostic> {
+    let base = re_proc::NodeRegistry::m1();
+    let declared = re_script::generator::declare(project, &base, limits);
+    if let Some(mut store) = world.ecs.get_resource_mut::<GraphStore>() {
+        let registry = declared.registry_keeping(&base, store.evaluator().registry());
+        store.set_registry(std::sync::Arc::new(registry));
+    }
+    declared.diagnostics
+}
+
+/// True if `path` (a project path) is a generator script or module.
+pub fn is_generator_script(path: &str) -> bool {
+    path.strip_prefix(re_script::generator::GENERATORS_DIR)
+        .is_some_and(|rest| rest.starts_with('/'))
+        && path.ends_with(".luau")
 }
 
 /// Every procedural source with a `GraphSource`: `(stable id, graph, builder)`.
@@ -237,13 +266,22 @@ pub fn heightfield_changed(world: &mut World, path: &str) {
 /// and forgets the derived ones nothing names any more (whatever released them:
 /// a regeneration, a `graph.regenerate` command, a play copy).
 pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibrary) {
-    let meshes: BTreeSet<String> = world
+    let mut meshes: BTreeSet<String> = world
         .ecs
         .query::<&MeshRef>()
         .iter(&world.ecs)
         .filter(|m| m.asset.starts_with(DERIVED))
         .map(|m| m.asset.clone())
         .collect();
+    // Streamed terrain chunks (ADR-0042) carry their meshes.
+    if let Some(view) = world.ecs.get_resource::<re_proc::stream::TerrainView>() {
+        for c in view.chunks() {
+            if !media.has_derived_mesh(&c.mesh) {
+                media.insert_derived_mesh(c.mesh.clone(), c.data().clone());
+            }
+            meshes.insert(c.mesh.clone());
+        }
+    }
     let colliders: Vec<(ColliderShape, String)> = world
         .ecs
         .query::<&Collider>()
@@ -298,6 +336,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
             samples,
             spacing,
             offset,
+            precision,
         }) = shape
         else {
             failed.insert(name);
@@ -311,6 +350,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
                 spacing,
                 offset,
                 samples,
+                precision,
             }),
         );
     }
@@ -331,8 +371,10 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
                         samples,
                         spacing,
                         offset,
+                        ..
                     } = h.to_shape()
                 {
+                    let precision = re_proc::stream::collider_precision(&name);
                     shapes.insert_heightfield(
                         name,
                         std::sync::Arc::new(HeightfieldData {
@@ -340,6 +382,7 @@ pub fn sync_derived(world: &mut World, media: &mut Media, shapes: &mut ShapeLibr
                             spacing,
                             offset,
                             samples,
+                            precision,
                         }),
                     );
                 }
@@ -424,6 +467,7 @@ pub fn ground_span(world: &mut World) -> Option<(f32, f32)> {
             samples,
             spacing,
             offset,
+            ..
         } = h.to_shape()
         else {
             continue;

@@ -110,6 +110,10 @@ pub struct RenderInputs<'a> {
     pub post: PostSettings,
     /// The sun's shadow cascades (`real.toml [render.shadows]`).
     pub shadows: SunShadows,
+    /// The render origin: every position in the snapshot is relative to it,
+    /// so precision near the camera does not depend on where in a streamed
+    /// world it is (ADR-0042; the floating origin, zero otherwise).
+    pub origin: Vec3,
 }
 
 /// Mesh and material assets referenced by the world's drawable entities, so the
@@ -122,8 +126,6 @@ pub fn referenced_assets(world: &mut World) -> (Vec<String>, Vec<String>) {
         .map(|m| m.asset.clone())
         .filter(|a| !a.is_empty())
         .collect();
-    meshes.sort();
-    meshes.dedup();
     let mut materials: Vec<String> = world
         .ecs
         .query::<&MaterialRef>()
@@ -131,6 +133,16 @@ pub fn referenced_assets(world: &mut World) -> (Vec<String>, Vec<String>) {
         .map(|m| m.asset.clone())
         .filter(|a| !a.is_empty())
         .collect();
+    if let Some(view) = world.ecs.get_resource::<re_proc::stream::TerrainView>() {
+        for c in view.chunks() {
+            meshes.push(c.mesh.clone());
+            if !c.material.is_empty() {
+                materials.push(c.material.clone());
+            }
+        }
+    }
+    meshes.sort();
+    meshes.dedup();
     materials.sort();
     materials.dedup();
     (meshes, materials)
@@ -158,12 +170,14 @@ fn global(world: &World, inputs: &RenderInputs<'_>, entity: Entity) -> Affine3A 
             .ecs
             .get::<GlobalTransform>(entity)
             .map_or(Vec3::ONE, |g| g.0.to_scale_rotation_translation().0);
-        return Affine3A::from_scale_rotation_translation(scale, rot, pos);
+        return Affine3A::from_scale_rotation_translation(scale, rot, pos - inputs.origin);
     }
-    world
+    let mut g = world
         .ecs
         .get::<GlobalTransform>(entity)
-        .map_or(Affine3A::IDENTITY, |g| g.0)
+        .map_or(Affine3A::IDENTITY, |g| g.0);
+    g.translation -= glam::Vec3A::from(inputs.origin);
+    g
 }
 
 /// A camera-to-world matrix at `eye` looking at `target` with +Y up.
@@ -217,6 +231,36 @@ pub fn build(world: &mut World, inputs: &RenderInputs<'_>) -> RenderSnapshot {
             world: Mat4::from(global(world, inputs, entity)),
             flags: DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS,
         });
+    }
+    // Streamed terrain chunks (ADR-0042): meshes at their corners, drawn as
+    // their source, which hides them when it is hidden.
+    if let Some(view) = world.ecs.get_resource::<re_proc::stream::TerrainView>() {
+        for c in view.chunks() {
+            if world
+                .ecs
+                .get::<Visible>(c.source)
+                .is_some_and(|v| !v.visible)
+            {
+                continue;
+            }
+            let Some(handle) = inputs.assets.mesh(&c.mesh) else {
+                continue;
+            };
+            let material = Some(c.material.as_str())
+                .filter(|m| !m.is_empty())
+                .and_then(|m| inputs.assets.material(m))
+                .or(inputs.assets.default_material);
+            let Some(material) = material else {
+                continue;
+            };
+            items.push(DrawItem {
+                entity: entity_id(c.source),
+                mesh: handle,
+                material,
+                world: Mat4::from_translation(c.corner - inputs.origin),
+                flags: DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS,
+            });
+        }
     }
 
     let mut skinned = Vec::new();
@@ -283,7 +327,7 @@ pub fn build(world: &mut World, inputs: &RenderInputs<'_>) -> RenderSnapshot {
             }
         }
         None => Camera {
-            world: looking_at(Vec3::new(0.0, 10.0, 20.0), Vec3::ZERO),
+            world: looking_at(Vec3::new(0.0, 10.0, 20.0) - inputs.origin, -inputs.origin),
             ..Camera::default()
         },
     };

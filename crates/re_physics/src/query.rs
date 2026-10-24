@@ -11,7 +11,7 @@ use re_types::EntityId;
 use re_types::physics::{GroupMask, RayHit, ShapeDesc};
 
 use crate::codes;
-use crate::convert::{grv, gv, jq, jv, rv, unit_rotation};
+use crate::convert::{gv, jq, jv, unit_rotation};
 use crate::shapes;
 use crate::world::Physics;
 
@@ -65,11 +65,14 @@ impl Physics {
             Some(entry) => {
                 entry.groups.intersects(filter.groups) && (filter.sensors || !entry.sensor)
             }
-            // A character's inner body stands for the character and takes its groups.
+            // A character's inner body stands for the character and a ragdoll part for
+            // the ragdoll; both take their owner's groups.
             None => self
                 .characters
                 .get(&id)
-                .is_some_and(|ch| ch.groups.intersects(filter.groups)),
+                .map(|ch| ch.groups)
+                .or_else(|| self.ragdolls.get(&id).map(|r| r.groups))
+                .is_some_and(|groups| groups.intersects(filter.groups)),
         };
         seen.then_some(id)
     }
@@ -93,7 +96,7 @@ impl Physics {
         let mut skip = None;
         for _ in 0..MAX_SKIPS {
             let from = origin + dir * start;
-            let ray = RayCast::new(rv(from), jv(dir * (max_dist - start)));
+            let ray = RayCast::new(self.jolt_point(from), jv(dir * (max_dist - start)));
             let mut jf = JQueryFilter::new();
             if let Some(body) = skip {
                 jf = jf.exclude_body(body);
@@ -160,7 +163,12 @@ impl Physics {
         let mut skip = None;
         for _ in 0..MAX_SKIPS {
             let from = pos + dir * start;
-            let cast = ShapeCast::new(&built.shape, rv(from), jq(rot), jv(dir * (length - start)));
+            let cast = ShapeCast::new(
+                &built.shape,
+                self.jolt_point(from),
+                jq(rot),
+                jv(dir * (length - start)),
+            );
             let mut jf = JQueryFilter::new();
             if let Some(body) = skip {
                 jf = jf.exclude_body(body);
@@ -176,7 +184,7 @@ impl Physics {
             if let Some(entity) = self.sees(hit.body, filter) {
                 return Ok(Some(RayHit {
                     entity,
-                    point: grv(hit.point),
+                    point: self.world_point(hit.point),
                     normal: gv(hit.normal),
                     distance,
                 }));
@@ -214,7 +222,7 @@ impl Physics {
         let hits = self
             .world
             .collide_shape(
-                &CollideShape::new(&sphere, rv(center), jq(Quat::IDENTITY)),
+                &CollideShape::new(&sphere, self.jolt_point(center), jq(Quat::IDENTITY)),
                 &JQueryFilter::new(),
             )
             .map_err(|e| invalid(format!("overlap query refused: {e}")))?;

@@ -380,6 +380,7 @@ pub(crate) fn bake<C: re_command::EditTarget>(
     use std::collections::{HashMap, HashSet};
 
     use re_command::Op;
+    use re_scene::structure::StructuralKind;
     use re_scene::{Generated, OverrideDoc, Overrides, Procedural, SaveOptions};
 
     let world = target.world();
@@ -617,6 +618,9 @@ pub(crate) fn bake<C: re_command::EditTarget>(
                 value: None,
                 deleted: Some(false),
                 index: None,
+                moved: None,
+                replaced: None,
+                insert: None,
             });
         }
         for o in overrides.iter().rev() {
@@ -634,6 +638,9 @@ pub(crate) fn bake<C: re_command::EditTarget>(
                     value: None,
                     deleted: None,
                     index: None,
+                    moved: None,
+                    replaced: None,
+                    insert: None,
                 },
                 OverrideDoc::Deleted { target } => Op::SetOverride {
                     source: a.source.clone(),
@@ -643,7 +650,26 @@ pub(crate) fn bake<C: re_command::EditTarget>(
                     value: None,
                     deleted: Some(false),
                     index: None,
+                    moved: None,
+                    replaced: None,
+                    insert: None,
                 },
+                o => {
+                    let kind = o.structural_kind();
+                    let is = |k| kind == Some(k);
+                    Op::SetOverride {
+                        source: a.source.clone(),
+                        target: o.target().to_string(),
+                        component: None,
+                        field: None,
+                        value: None,
+                        deleted: None,
+                        index: None,
+                        moved: is(StructuralKind::Moved).then_some(None),
+                        replaced: is(StructuralKind::Replaced).then_some(None),
+                        insert: is(StructuralKind::Inserted).then_some(None),
+                    }
+                }
             });
         }
         if world

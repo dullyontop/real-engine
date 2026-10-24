@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::EntityId;
 
+mod ragdoll;
+pub use ragdoll::*;
+
 /// How a body moves.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BodyKind {
@@ -116,7 +119,37 @@ pub enum ShapeDesc {
         spacing: f32,
         /// Position of sample `(0, 0)` relative to the body (heights are added to its Y).
         offset: Vec3,
+        /// How finely the heights are stored; `None` keeps the physics backend's
+        /// defaults (Jolt: 8 bits per sample, block size 2).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        precision: Option<HeightfieldPrecision>,
     },
+}
+
+/// How finely a heightfield shape stores its heights (ADR-0042). Each block of
+/// `block_size × block_size` samples is quantised to `bits_per_sample` bits
+/// over its own height range: more bits follow the samples more closely, and
+/// larger blocks use less memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HeightfieldPrecision {
+    /// Bits per sample, 1 to 16.
+    pub bits_per_sample: u8,
+    /// Samples per block side, 2 to 8.
+    pub block_size: u8,
+}
+
+impl HeightfieldPrecision {
+    /// 16 bits per sample in blocks of 4: neighbouring chunks built from the
+    /// same edge samples agree to 0.1 mm (ADR-0042, §3).
+    pub const FINE: HeightfieldPrecision = HeightfieldPrecision {
+        bits_per_sample: 16,
+        block_size: 4,
+    };
+
+    /// True when both values are in range.
+    pub fn is_valid(&self) -> bool {
+        (1..=16).contains(&self.bits_per_sample) && (2..=8).contains(&self.block_size)
+    }
 }
 
 impl ShapeDesc {
@@ -157,8 +190,10 @@ impl ShapeDesc {
                 samples,
                 spacing,
                 offset,
+                precision,
             } => {
                 *n >= 2
+                    && precision.is_none_or(|p| p.is_valid())
                     && samples.len() as u64 == u64::from(*n) * u64::from(*n)
                     && samples.iter().all(|h| h.is_finite())
                     && spacing.is_finite()
@@ -755,6 +790,54 @@ pub enum PhysicsCmd {
         /// The input.
         input: VehicleInput,
     },
+    /// Remove an entity's ragdoll and its parts.
+    RemoveRagdoll {
+        /// The entity.
+        id: EntityId,
+    },
+    /// Build a ragdoll for an entity (ADR-0040), animated, in `pose` (or the
+    /// skeleton's neutral pose). An entity has a ragdoll or a body, not both.
+    AddRagdoll {
+        /// The entity.
+        id: EntityId,
+        /// The ragdoll.
+        desc: RagdollDesc,
+        /// World position of the skeleton's model space.
+        pos: Vec3,
+        /// World rotation of the skeleton's model space.
+        rot: Quat,
+        /// The starting pose, one model-space transform per skeleton joint.
+        pose: Option<Vec<JointPose>>,
+    },
+    /// Set how a ragdoll moves. Switching from animated keeps the parts' velocities.
+    SetRagdollMode {
+        /// The entity.
+        id: EntityId,
+        /// The mode.
+        mode: RagdollMode,
+    },
+    /// Set the pose an animated or powered ragdoll drives to, from this step until
+    /// the next target.
+    SetRagdollTarget {
+        /// The entity.
+        id: EntityId,
+        /// World position of the skeleton's model space.
+        pos: Vec3,
+        /// World rotation of the skeleton's model space.
+        rot: Quat,
+        /// One model-space transform per skeleton joint.
+        pose: Vec<JointPose>,
+    },
+    /// Apply an impulse (N·s) to the part on a joint, or on its nearest ancestor
+    /// with a part.
+    ApplyRagdollImpulse {
+        /// The entity.
+        id: EntityId,
+        /// The skeleton joint, by name.
+        joint: String,
+        /// The impulse.
+        impulse: Vec3,
+    },
 }
 
 impl PhysicsCmd {
@@ -775,7 +858,12 @@ impl PhysicsCmd {
             | PhysicsCmd::RemoveConstraint { id }
             | PhysicsCmd::RemoveVehicle { id }
             | PhysicsCmd::AddVehicle { id, .. }
-            | PhysicsCmd::SetVehicleInput { id, .. } => *id,
+            | PhysicsCmd::SetVehicleInput { id, .. }
+            | PhysicsCmd::RemoveRagdoll { id }
+            | PhysicsCmd::AddRagdoll { id, .. }
+            | PhysicsCmd::SetRagdollMode { id, .. }
+            | PhysicsCmd::SetRagdollTarget { id, .. }
+            | PhysicsCmd::ApplyRagdollImpulse { id, .. } => *id,
         }
     }
 
@@ -784,7 +872,8 @@ impl PhysicsCmd {
     /// their bodies), shape changes, teleports, targets, velocities, impulses and
     /// character moves; then the vehicle commands (ADR-0040), ranked after every
     /// earlier kind so those ranks never change: removals, creations (after the
-    /// chassis body) and inputs.
+    /// chassis body) and inputs; then the ragdoll commands (ADR-0040): removals,
+    /// creations, modes, targets and impulses.
     pub fn kind_rank(&self) -> u8 {
         match self {
             PhysicsCmd::RemoveConstraint { .. } => 0,
@@ -802,12 +891,32 @@ impl PhysicsCmd {
             PhysicsCmd::RemoveVehicle { .. } => 12,
             PhysicsCmd::AddVehicle { .. } => 13,
             PhysicsCmd::SetVehicleInput { .. } => 14,
+            PhysicsCmd::RemoveRagdoll { .. } => 15,
+            PhysicsCmd::AddRagdoll { .. } => 16,
+            PhysicsCmd::SetRagdollMode { .. } => 17,
+            PhysicsCmd::SetRagdollTarget { .. } => 18,
+            PhysicsCmd::ApplyRagdollImpulse { .. } => 19,
         }
     }
 
-    /// The deterministic sort key `(kind, entity)`.
-    pub fn sort_key(&self) -> (u8, EntityId) {
-        (self.kind_rank(), self.id())
+    /// Whether the command removes something. Removals apply before every other
+    /// kind, so a later kind's removal (a vehicle or a ragdoll) still frees its
+    /// entity before a creation on the same entity in the same buffer.
+    pub fn is_removal(&self) -> bool {
+        matches!(
+            self,
+            PhysicsCmd::RemoveConstraint { .. }
+                | PhysicsCmd::RemoveBody { .. }
+                | PhysicsCmd::RemoveCharacter { .. }
+                | PhysicsCmd::RemoveVehicle { .. }
+                | PhysicsCmd::RemoveRagdoll { .. }
+        )
+    }
+
+    /// The deterministic sort key `(phase, kind, entity)`: removals (phase 0)
+    /// before everything else (phase 1), then by [`kind_rank`](Self::kind_rank).
+    pub fn sort_key(&self) -> (u8, u8, EntityId) {
+        (u8::from(!self.is_removal()), self.kind_rank(), self.id())
     }
 
     /// Sorts a command buffer by [`sort_key`](Self::sort_key), keeping the relative

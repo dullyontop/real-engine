@@ -267,3 +267,61 @@ fn an_animation_controller_rig_moves_its_parts() {
     let moved = (0..3).map(|i| (after[i] - before[i]).abs()).sum::<f32>();
     assert!(moved > 0.05, "arm {before:?} -> {after:?}");
 }
+
+#[test]
+fn an_animator_poses_the_bones_of_a_skinned_mesh_part() {
+    let mut p = character_place(ContextKind::Server);
+    p.with(|lua| {
+        let mut subs = std::collections::BTreeMap::new();
+        subs.insert("778".to_string(), "game.ReplicatedStorage.Bend".to_string());
+        re_compat::anim::set_substitutes(lua, subs);
+        Ok(())
+    });
+    p.run(
+        "local rig = Instance.new('Model')
+         rig.Name = 'Arm'
+         local part = Instance.new('MeshPart')
+         part.Name = 'Body'
+         part.Anchored = true
+         part.MeshId = 'rbxassetid://101'
+         part.Parent = rig
+         local shoulder = Instance.new('Bone')
+         shoulder.Name = 'Shoulder'
+         shoulder.Parent = part
+         local elbow = Instance.new('Bone')
+         elbow.Name = 'Elbow'
+         elbow.Parent = shoulder
+         local ctl = Instance.new('AnimationController')
+         ctl.Parent = rig
+         Instance.new('Animator').Parent = ctl
+         rig.Parent = workspace
+         local seq = Instance.new('KeyframeSequence')
+         seq.Name = 'Bend'
+         seq.Loop = false
+         for _, t in {0, 0.5} do
+             local k = Instance.new('Keyframe')
+             k.Time = t
+             local root = Instance.new('Pose')
+             root.Name = 'Shoulder'
+             root.Parent = k
+             local e = Instance.new('Pose')
+             e.Name = 'Elbow'
+             e.CFrame = CFrame.Angles(0, 0, t * 2)
+             e.Parent = root
+             k.Parent = seq
+         end
+         seq.Parent = game.ReplicatedStorage
+         local a = Instance.new('Animation')
+         a.AnimationId = 'rbxassetid://778'
+         ctl.Animator:LoadAnimation(a):Play(0)",
+    );
+    p.frames(15);
+    p.run(
+        "print(workspace.Arm.AnimationController.Animator:GetPlayingAnimationTracks()[1].TimePosition)",
+    );
+    let t: f32 = p.out()[0].parse().unwrap();
+    assert!(t > 0.1 && t < 0.5, "{t}");
+    let elbow = p.find(&["Workspace", "Arm", "Body", "Shoulder", "Elbow"]);
+    let (_, _, rz) = p.cframe(elbow, "Transform").to_euler_xyz();
+    assert!((rz - 2.0 * t).abs() < 0.05, "{rz} at {t}");
+}

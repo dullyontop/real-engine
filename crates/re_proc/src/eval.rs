@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -31,7 +32,7 @@ use crate::cache::DiskCache;
 use crate::canon::{canonical_json, fragment_hash, hash64};
 use crate::codes;
 use crate::graph::ProcGraph;
-use crate::nodes::{Domain, NodeCtx, NodeDef, NodeRegistry, natural_cmp, sink_fragment};
+use crate::nodes::{Domain, NodeCtx, NodeDef, NodeRegistry, Streaming, natural_cmp, sink_fragment};
 use crate::value::{DerivedAsset, Fragment, Output, PortType};
 
 /// Where a node's output came from.
@@ -81,6 +82,10 @@ pub struct NodeReport {
     /// The node's problems.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<Diagnostic>,
+    /// What the node logged while it computed (a Luau node's `ctx:log`);
+    /// empty when its output came from a cache.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<String>,
 }
 
 /// What an evaluation did. `real graph eval --json` and `graph.report`
@@ -159,6 +164,13 @@ pub struct EvalOptions {
     /// The window to evaluate, for streamed evaluation (ADR-0042). Part of
     /// every node's key when set.
     pub domain: Option<Domain>,
+    /// Runs every node on the calling thread, one after another, with no
+    /// fan-out on the pool: a streaming job is serial (ADR-0042). The output
+    /// is the same either way.
+    pub serial: bool,
+    /// Stops before the next level of nodes once this flag is set (`RE4310`);
+    /// a streaming job's request was cancelled.
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 struct MemEntry {
@@ -219,6 +231,7 @@ struct JobResult {
     from_disk: bool,
     ms: f64,
     warnings: Vec<Diagnostic>,
+    logs: Vec<String>,
 }
 
 impl Evaluator {
@@ -267,6 +280,20 @@ impl Evaluator {
         &self.registry
     }
 
+    /// This evaluator with `registry` instead of its own: the same pool, disk
+    /// cache and memory budget, with an empty memory cache. Keys include
+    /// each kind's version and implementation hash, so disk entries of
+    /// kinds that did not change stay valid.
+    pub fn with_registry(&self, registry: Arc<NodeRegistry>) -> Evaluator {
+        Evaluator {
+            registry,
+            pool: self.pool.clone(),
+            disk: self.disk.clone(),
+            memory: Mutex::new(MemCache::default()),
+            budget: self.budget,
+        }
+    }
+
     /// The disk cache directory, if there is a disk cache and it is on disk.
     pub fn disk_cache_dir(&self) -> Option<&Path> {
         self.disk.as_ref().and_then(|d| d.dir().path())
@@ -307,6 +334,7 @@ impl Evaluator {
                     ms: 0.0,
                     output: None,
                     diagnostics: Vec::new(),
+                    logs: Vec::new(),
                 })
                 .collect(),
             ..Default::default()
@@ -348,6 +376,17 @@ impl Evaluator {
                     )
                     .with_hint("raise `max_ms`, or make the graph cheaper (smaller fields, larger scatter radius)"),
                 );
+                break 'levels;
+            }
+            if opts
+                .cancel
+                .as_ref()
+                .is_some_and(|c| c.load(Ordering::Relaxed))
+            {
+                report.diagnostics.push(Diagnostic::error(
+                    codes::CANCELLED,
+                    format!("evaluation of `{}` was cancelled", graph.id),
+                ));
                 break 'levels;
             }
             let mut jobs: Vec<Job> = Vec::new();
@@ -419,14 +458,16 @@ impl Evaluator {
             }
             let results: Vec<Mutex<Option<JobResult>>> =
                 jobs.iter().map(|_| Mutex::new(None)).collect();
-            if jobs.len() == 1 {
-                *results[0].lock().unwrap_or_else(|e| e.into_inner()) =
-                    Some(self.run_job(graph, &jobs[0], pool, opts.domain));
+            if jobs.len() == 1 || opts.serial {
+                for (job, slot) in jobs.iter().zip(&results) {
+                    *slot.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(self.run_job(graph, job, pool, opts));
+                }
             } else if !jobs.is_empty() {
                 pool.scope(|s| {
                     for (job, slot) in jobs.iter().zip(&results) {
                         s.spawn(move |_| {
-                            let r = self.run_job(graph, job, pool, opts.domain);
+                            let r = self.run_job(graph, job, pool, opts);
                             *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
                         });
                     }
@@ -440,6 +481,7 @@ impl Evaluator {
                 let nr = &mut report.nodes[job.index];
                 nr.ms = r.ms;
                 nr.diagnostics.extend(r.warnings);
+                nr.logs = r.logs;
                 match r.output {
                     Ok(output) => {
                         nr.output = Some(info(&output));
@@ -481,7 +523,7 @@ impl Evaluator {
         graph: &ProcGraph,
         job: &Job,
         pool: &TaskPool,
-        domain: Option<Domain>,
+        opts: &EvalOptions,
     ) -> JobResult {
         let start = Instant::now();
         let (id, node) = graph
@@ -499,21 +541,54 @@ impl Evaluator {
                         from_disk: true,
                         ms: ms_since(start),
                         warnings,
+                        logs: Vec::new(),
                     };
                 }
                 Ok(_) => {}
                 Err(e) => warnings.push(cache_warning(id, e)),
             }
         }
+        // A region node reads its inputs over its tiles' windows: the graph
+        // upstream of it, evaluated again with the tile as the domain.
+        let sub = (job.def.streaming == Streaming::Region && opts.domain.is_some())
+            .then(|| upstream_graph(graph, job.index));
+        let read = |port: &str, domain: Domain| -> Result<Arc<crate::value::Field>, String> {
+            let Some(sub) = &sub else {
+                return Err("not a streamed region node".into());
+            };
+            let from = graph
+                .inputs_of(job.index)
+                .into_iter()
+                .find(|(p, _)| *p == port)
+                .and_then(|(_, from)| graph.nodes.get_index(from))
+                .map(|(id, _)| id.clone())
+                .ok_or_else(|| format!("input `{port}` is not connected"))?;
+            let opts = EvalOptions {
+                domain: Some(domain),
+                ..opts.clone()
+            };
+            let e = self.evaluate(sub, &opts);
+            match e.output(&from) {
+                Some(Output::Field(f)) => Ok(f.clone()),
+                _ => Err(e
+                    .report
+                    .first_error()
+                    .map(|d| d.message.clone())
+                    .unwrap_or_else(|| format!("input `{port}` has no field"))),
+            }
+        };
         let ctx = NodeCtx {
             node_id: id,
             key: job.key,
             version: node.version,
-            domain,
+            domain: opts.domain,
+            serial: opts.serial,
             seed: job.seed,
             inputs: job.inputs.clone(),
             files: job.files.clone(),
             pool,
+            logs: Default::default(),
+            upstream: sub.as_ref().map(|_| &read as &crate::nodes::Upstream),
         };
         let output = job.def.eval(&ctx, &job.params).map_err(|e| {
             Diagnostic::error(
@@ -532,6 +607,7 @@ impl Evaluator {
             from_disk: false,
             ms: ms_since(start),
             warnings,
+            logs: ctx.logs.into_inner().unwrap_or_else(|e| e.into_inner()),
         }
     }
 
@@ -864,4 +940,31 @@ pub fn to_scene_fragment(
 /// The hash (hex) of a scene fragment, as in [`EvalReport::fragment_hash`].
 pub fn fragment_hash_hex(fragment: &SceneFragment) -> String {
     fragment_hash(fragment).to_hex().to_string()
+}
+
+/// The part of `graph` that node `index` depends on: its ancestors, without
+/// the node itself.
+fn upstream_graph(graph: &ProcGraph, index: usize) -> ProcGraph {
+    let mut keep: std::collections::BTreeSet<usize> = graph
+        .inputs_of(index)
+        .into_iter()
+        .map(|(_, from)| from)
+        .collect();
+    let mut todo: Vec<usize> = keep.iter().copied().collect();
+    while let Some(i) = todo.pop() {
+        for (_, from) in graph.inputs_of(i) {
+            if keep.insert(from) {
+                todo.push(from);
+            }
+        }
+    }
+    let mut sub = graph.clone();
+    let ids: std::collections::BTreeSet<String> = keep
+        .iter()
+        .filter_map(|i| graph.nodes.get_index(*i).map(|(id, _)| id.clone()))
+        .collect();
+    sub.nodes.retain(|id, _| ids.contains(id));
+    sub.edges
+        .retain(|e| ids.contains(&e.from.0) && ids.contains(&e.to.0));
+    sub
 }

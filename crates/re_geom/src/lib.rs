@@ -5,7 +5,12 @@
 //! * [`Heightfield`]: an `n × n` grid of heights in Jolt's layout
 //!   (`samples[z * n + x]`), with [`Heightfield::to_mesh`],
 //!   [`Heightfield::height_at`] and [`Heightfield::to_shape`];
-//! * [`ops`]: [`compute_normals`], [`transform`] and [`merge`].
+//! * [`ops`]: [`compute_normals`], [`transform`] and [`merge`];
+//! * [`polygon`]: [`Shapes`] in the XZ plane with booleans, offsets,
+//!   strokes and triangulation on a 1 mm integer grid (ADR-0043 §5);
+//! * [`road`]: centreline splines and road surfaces with junctions;
+//! * [`terrain`]: the level-of-detail chunk quadtree, stitched chunk meshes
+//!   and hydraulic erosion on region tiles, for streamed worlds (ADR-0042).
 //!
 //! Everything here is plain computation with no GPU, physics or scripting
 //! dependency. Results are **bit-identical on every platform**: angles come
@@ -26,11 +31,15 @@ mod error;
 mod heightfield;
 pub mod math;
 pub mod ops;
+pub mod polygon;
 pub mod primitives;
+pub mod road;
+pub mod terrain;
 
 pub use error::GeomError;
 pub use heightfield::Heightfield;
 pub use ops::{compute_normals, merge, transform};
+pub use polygon::{BoolOp, Shape, Shapes};
 pub use primitives::{capsule, cuboid, cylinder, plane, uv_sphere};
 
 use re_core::DiagInfo;
@@ -51,6 +60,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::MESH_TOO_LARGE,
         title: "Mesh too large",
         page: include_str!("../explain/RE4502.md"),
+    },
+    DiagInfo {
+        code: codes::OUT_OF_RANGE,
+        title: "Polygon out of range",
+        page: include_str!("../explain/RE4503.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_POLYGON,
+        title: "Invalid polygon or path",
+        page: include_str!("../explain/RE4504.md"),
+    },
+    DiagInfo {
+        code: codes::TRIANGULATION_FAILED,
+        title: "Triangulation failed",
+        page: include_str!("../explain/RE4505.md"),
     },
 ];
 

@@ -23,15 +23,24 @@ use indexmap::IndexMap;
 use re_reflect::Doc;
 use re_scene::hierarchy::{self, check_reparent, sibling_index};
 use re_scene::scene::ComponentsDoc;
+use re_scene::structure::{Insert, Move, Replace, StructuralKind};
 use re_scene::{
-    Entity, EntityDoc, Generated, GeneratedDoc, Name, Overrides, SaveOptions, Snapshot, World,
-    validate_id,
+    Entity, EntityDoc, Generated, GeneratedDoc, Name, Note, OverrideDoc, Overrides, SaveOptions,
+    Snapshot, World, validate_id,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as Json;
 
 use crate::error::OpError;
+
+/// Deserializes a present field (including `null`) as `Some`, so that a
+/// missing field and `null` can be told apart.
+fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
+}
 
 /// One edit operation.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -110,6 +119,14 @@ pub enum Op {
         /// The new name.
         name: String,
     },
+    /// Set an entity's note, the comment kept with it in the scene file
+    /// (empty removes it). The game never reads it.
+    SetNote {
+        /// The entity's id.
+        id: String,
+        /// The new note.
+        note: String,
+    },
     /// Recreate a despawned subtree exactly (the inverse of `despawn`). The
     /// entities must form one subtree: every entity after the first has an
     /// earlier one as its parent.
@@ -162,6 +179,34 @@ pub enum Op {
         /// (default: last). Undo uses it to restore the list exactly.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         index: Option<usize>,
+        /// Sets (`{"parent", "index"?}`) or, with `null`, clears the move of
+        /// `target` (ADR-0043 §3).
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        #[schemars(with = "Option<serde_json::Value>")]
+        moved: Option<Option<Move>>,
+        /// Sets (`{"prefab" | "components", "keep_children"?}`) or, with
+        /// `null`, clears the replacement of `target`.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        #[schemars(with = "Option<serde_json::Value>")]
+        replaced: Option<Option<Box<Replace>>>,
+        /// Sets (`{"parent"?, "index"?, "name"?, "prefab" | "components"}`)
+        /// or, with `null`, clears the insert whose key is `target`
+        /// (`+<key>`).
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        #[schemars(with = "Option<serde_json::Value>")]
+        insert: Option<Option<Box<Insert>>>,
     },
     /// Add, replace or remove the JSON value at `pointer` (RFC 6901) in an
     /// open document (ADR-0044). With `value`, as JSON Patch's `add`: an
@@ -318,6 +363,10 @@ struct GeneratedDocSchema {
 }
 
 const STRUCTURAL_HINT: &str = "change its source's generator parameters instead";
+/// What to do instead of re-parenting a generated entity (ADR-0043 §3).
+const MOVE_HINT: &str = "move it within its source's output with `proc.move`";
+/// What to do instead of putting an entity under a generated one.
+const INSERT_HINT: &str = "generated entities cannot have authored children; add one to the output with `proc.insert`, or move a generated entity there with `proc.move`";
 
 fn reject_generated(
     world: &World,
@@ -415,16 +464,12 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
             };
             if let Some(p) = parent_id {
                 let pe = world.entity(p)?;
-                reject_generated(
-                    world,
-                    pe,
-                    p,
-                    "generated entities cannot have authored children",
-                )?;
+                reject_generated(world, pe, p, INSERT_HINT)?;
             }
             let doc = EntityDoc {
                 id: id.clone(),
                 name: name.clone(),
+                note: String::new(),
                 parent: parent_id.clone(),
                 components: components.clone(),
                 overrides: vec![],
@@ -499,6 +544,9 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
                     value: None,
                     deleted: Some(prev),
                     index: None,
+                    moved: None,
+                    replaced: None,
+                    insert: None,
                 });
             }
             hierarchy::despawn_recursive(&mut world.ecs, e);
@@ -544,6 +592,9 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
                     value: None,
                     deleted: Some(prev),
                     index: None,
+                    moved: None,
+                    replaced: None,
+                    insert: None,
                 });
             }
             Ok((op.clone(), inverse))
@@ -583,6 +634,9 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
                     value: prev,
                     deleted: None,
                     index: None,
+                    moved: None,
+                    replaced: None,
+                    insert: None,
                 });
             }
             Ok((op.clone(), inverse))
@@ -595,10 +649,105 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
             value,
             deleted,
             index,
+            moved,
+            replaced,
+            insert,
         } => {
             let s = world.entity(source)?;
             let mut ov = source_overrides(world, s);
+            let structural = [moved.is_some(), replaced.is_some(), insert.is_some()]
+                .into_iter()
+                .filter(|b| *b)
+                .count();
             let inverse = match (component, field, deleted) {
+                _ if structural > 0 => {
+                    if structural > 1
+                        || component.is_some()
+                        || field.is_some()
+                        || deleted.is_some()
+                        || value.is_some()
+                    {
+                        return Err(OpError::Invalid(
+                            "set_override takes one structural kind (`moved`, `replaced` or `insert`) and no field or deletion"
+                                .into(),
+                        ));
+                    }
+                    let (kind, new) = if let Some(m) = moved {
+                        (
+                            StructuralKind::Moved,
+                            m.clone().map(|to| OverrideDoc::Moved {
+                                target: target.clone(),
+                                to,
+                            }),
+                        )
+                    } else if let Some(r) = replaced {
+                        (
+                            StructuralKind::Replaced,
+                            r.clone().map(|replace| OverrideDoc::Replaced {
+                                target: target.clone(),
+                                replace: *replace,
+                            }),
+                        )
+                    } else {
+                        let key = target.strip_prefix('+').ok_or_else(|| {
+                            OpError::Invalid(format!(
+                                "an inserted entity's key starts with `+` (got {target:?})"
+                            ))
+                        })?;
+                        re_scene::structure::check_insert_key(key).map_err(OpError::Invalid)?;
+                        (
+                            StructuralKind::Inserted,
+                            insert
+                                .clone()
+                                .flatten()
+                                .map(|insert| OverrideDoc::Inserted {
+                                    target: target.clone(),
+                                    insert: *insert,
+                                }),
+                        )
+                    };
+                    let pos = ov.position_structural(target, kind);
+                    let cleared = new.is_none();
+                    let prev = ov.set_structural_at(target, kind, new, *index);
+                    let mut inverse = Op::SetOverride {
+                        source: source.clone(),
+                        target: target.clone(),
+                        component: None,
+                        field: None,
+                        value: None,
+                        deleted: None,
+                        // A cleared override is re-added where it was.
+                        index: if cleared { pos } else { None },
+                        moved: None,
+                        replaced: None,
+                        insert: None,
+                    };
+                    if let Op::SetOverride {
+                        moved,
+                        replaced,
+                        insert,
+                        ..
+                    } = &mut inverse
+                    {
+                        match (kind, prev) {
+                            (StructuralKind::Moved, Some(OverrideDoc::Moved { to, .. })) => {
+                                *moved = Some(Some(to))
+                            }
+                            (StructuralKind::Moved, _) => *moved = Some(None),
+                            (
+                                StructuralKind::Replaced,
+                                Some(OverrideDoc::Replaced { replace, .. }),
+                            ) => *replaced = Some(Some(Box::new(replace))),
+                            (StructuralKind::Replaced, _) => *replaced = Some(None),
+                            (
+                                StructuralKind::Inserted,
+                                Some(OverrideDoc::Inserted { insert: i, .. }),
+                            ) => *insert = Some(Some(Box::new(i))),
+                            (StructuralKind::Inserted, _) => *insert = Some(None),
+                        }
+                    }
+                    inverse
+                }
                 (Some(c), Some(f), None) => {
                     let pos = ov.position(target, c, f);
                     let prev = ov.set_at(target, c, f, value.clone(), *index);
@@ -611,6 +760,9 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
                         index: if value.is_none() { pos } else { None },
                         value: prev,
                         deleted: None,
+                        moved: None,
+                        replaced: None,
+                        insert: None,
                     }
                 }
                 (None, None, Some(d)) if value.is_none() => {
@@ -624,11 +776,14 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
                         value: None,
                         deleted: Some(prev),
                         index: if *d { None } else { pos },
+                        moved: None,
+                        replaced: None,
+                        insert: None,
                     }
                 }
                 _ => {
                     return Err(OpError::Invalid(
-                        "set_override needs either `component` and `field` (with an optional `value`), or `deleted`"
+                        "set_override needs either `component` and `field` (with an optional `value`), `deleted`, or one of `moved`, `replaced` and `insert`"
                             .into(),
                     ));
                 }
@@ -689,7 +844,7 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
             index,
         } => {
             let e = world.entity(id)?;
-            reject_generated(world, e, id, STRUCTURAL_HINT)?;
+            reject_generated(world, e, id, MOVE_HINT)?;
             let old_parent = hierarchy::parent(&world.ecs, e);
             let old_index = sibling_index(&world.ecs, e);
             let inverse = Op::Reparent {
@@ -701,12 +856,7 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
                 Some(pid) => {
                     let p = world.entity(pid)?;
                     check_reparent(&world.ecs, e, p)?;
-                    reject_generated(
-                        world,
-                        p,
-                        pid,
-                        "generated entities cannot have authored children",
-                    )?;
+                    reject_generated(world, p, pid, INSERT_HINT)?;
                     let len = hierarchy::children(&world.ecs, p).len();
                     hierarchy::insert_child(&mut world.ecs, p, index.unwrap_or(len), e);
                 }
@@ -748,6 +898,28 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
                 vec![Op::Rename {
                     id: id.clone(),
                     name: old,
+                }],
+            ))
+        }
+        Op::SetNote { id, note } => {
+            let e = world.entity(id)?;
+            reject_generated(
+                world,
+                e,
+                id,
+                "generated entities are not saved, so they keep no notes",
+            )?;
+            let old = world.note_of(e).to_string();
+            if note.is_empty() {
+                world.ecs.entity_mut(e).remove::<Note>();
+            } else {
+                world.ecs.entity_mut(e).insert(Note(note.clone()));
+            }
+            Ok((
+                op.clone(),
+                vec![Op::SetNote {
+                    id: id.clone(),
+                    note: old,
                 }],
             ))
         }

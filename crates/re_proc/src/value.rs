@@ -1,10 +1,14 @@
 //! The values that flow along a graph's edges: [`Field`], [`MeshValue`],
-//! [`Points`] and [`Fragment`], carried as an [`Output`].
+//! [`Points`], [`Fragment`], [`Shapes`] and [`RoadPath`], carried as an
+//! [`Output`].
 
 use std::sync::Arc;
 
 use glam::Vec3;
 use re_geom::Heightfield;
+pub use re_geom::Shapes;
+/// A road centreline sampled at a fixed spacing (`re_geom::road::Path`).
+pub use re_geom::road::Path as RoadPath;
 use re_reflect::Value;
 use re_scene::PrefabFile;
 use re_types::mesh::MeshData;
@@ -21,17 +25,23 @@ pub enum PortType {
     Points,
     /// A [`Fragment`]: entities to create.
     Fragment,
+    /// [`Shapes`]: polygons with holes in the XZ plane (ADR-0043 §5).
+    Shapes,
+    /// A [`RoadPath`]: a sampled road centreline with width and bank.
+    Path,
 }
 
 impl PortType {
     /// The name of a node's output port of this type (`field`, `mesh`,
-    /// `points` or `fragment`).
+    /// `points`, `fragment`, `shapes` or `path`).
     pub fn port_name(self) -> &'static str {
         match self {
             PortType::Field => "field",
             PortType::Mesh => "mesh",
             PortType::Points => "points",
             PortType::Fragment => "fragment",
+            PortType::Shapes => "shapes",
+            PortType::Path => "path",
         }
     }
 }
@@ -213,6 +223,10 @@ pub enum Output {
     Points(Arc<Points>),
     /// A fragment.
     Fragment(Arc<Fragment>),
+    /// Shapes.
+    Shapes(Arc<Shapes>),
+    /// A road path.
+    Path(Arc<RoadPath>),
 }
 
 impl Output {
@@ -223,10 +237,13 @@ impl Output {
             Output::Mesh(_) => PortType::Mesh,
             Output::Points(_) => PortType::Points,
             Output::Fragment(_) => PortType::Fragment,
+            Output::Shapes(_) => PortType::Shapes,
+            Output::Path(_) => PortType::Path,
         }
     }
 
-    /// `(items, bytes)`: samples, vertices, points or entities, and an
+    /// `(items, bytes)`: samples, vertices, points, entities, polygon points
+    /// or path samples, and an
     /// estimate of the memory held.
     pub fn size(&self) -> (u64, u64) {
         match self {
@@ -249,6 +266,11 @@ impl Output {
                     .sum();
                 (f.items.len() as u64, f.items.len() as u64 * 256 + assets)
             }
+            Output::Shapes(s) => {
+                let n = s.point_count() as u64;
+                (n, n * 16 + s.shapes.len() as u64 * 48)
+            }
+            Output::Path(p) => (p.samples.len() as u64, p.samples.len() as u64 * 48),
         }
     }
 }

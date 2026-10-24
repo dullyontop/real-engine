@@ -16,14 +16,21 @@
 //! * **command palette** (`Ctrl+P`): any registered command with JSON
 //!   arguments.
 //!
+//! The **node graph** panel ([`CanvasSpot`]; ADR-0044) draws a procedural
+//! source's graph file as nodes and wires (egui-snarl). It never edits the
+//! file itself: connecting, cutting, moving, adding and removing nodes are
+//! the `graph.*` commands, each one undo step, and the graph stays an
+//! unsaved open document until the scene is saved.
+//!
 //! The panels other than the toolbar and the palette are tabs in a dock
 //! (egui_dock): they can be dragged into other splits, stacked or floated.
 //! The arrangement and the gizmo settings are saved per project in
 //! `.real/editor/layout.json` ([`layout`]), as editor state, not as commands.
 //!
 //! The game view carries translate, rotate and scale gizmos for the selected
-//! entity ([`gizmo`]; `W`, `E`, `R`). A drag only moves the gizmo's preview;
-//! its release sends one `scene.apply`, so a drag is one undo step.
+//! entity ([`gizmo`]; `W`, `E`, `R`). A drag moves the entity as it goes,
+//! with `scene.apply` edits that share one coalesce key, so the drag is one
+//! undo step; Escape puts the entity back.
 //!
 //! Every action is a command dispatched through
 //! [`App::dispatch`](re_app::App::dispatch), so each one is a single undo step
@@ -41,6 +48,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod canvas;
 pub mod codes;
 mod debugger;
 mod editor;
@@ -52,6 +60,7 @@ mod socket;
 mod view;
 mod windowed;
 
+pub use canvas::CanvasSpot;
 pub use editor::{ConsoleLine, Editor, LineKind, Panel, PanelRects};
 pub use headless::HeadlessEditor;
 pub use socket::EditorSocket;

@@ -45,7 +45,7 @@ pub fn mesh_item(
 
 /// The fragment a node's output adds to the graph's output when nothing
 /// consumes it: a fragment as it is, a mesh as one entity `<node>/mesh`;
-/// fields and points add nothing.
+/// fields, points, shapes and paths add nothing.
 pub fn sink_fragment(node_id: &str, output: &Output) -> Option<Arc<Fragment>> {
     match output {
         Output::Fragment(f) => Some(f.clone()),
@@ -56,7 +56,7 @@ pub fn sink_fragment(node_id: &str, output: &Output) -> Option<Arc<Fragment>> {
                 assets: vec![asset],
             }))
         }
-        Output::Field(_) | Output::Points(_) => None,
+        Output::Field(_) | Output::Points(_) | Output::Shapes(_) | Output::Path(_) => None,
     }
 }
 

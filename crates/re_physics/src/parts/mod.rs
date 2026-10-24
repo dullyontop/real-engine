@@ -359,7 +359,7 @@ pub(crate) struct PartsState {
     /// Where the simulation's origin lies in the world: positions go to Jolt
     /// relative to it, so a map away from the world origin still fits Jolt's
     /// limits.
-    origin: Vec3,
+    pub(crate) origin: Vec3,
 }
 
 impl Default for PartsState {
@@ -682,7 +682,7 @@ impl Physics {
             .at(at(p.id)));
         }
         if !self.in_reach(desc.pose.pos) {
-            return Err(self.out_of_reach(key, desc.pose.pos));
+            return Err(self.out_of_reach(key, "assembly", desc.pose.pos));
         }
         let rot = unit_rotation(desc.pose.rot)
             .ok_or_else(|| invalid(key, "its rotation is zero or not finite"))?;
@@ -938,12 +938,23 @@ impl Physics {
         self.parts.origin
     }
 
-    /// Moves the simulation's origin to world point `origin`, so that parts
-    /// within Jolt's limits of it ([`WORLD_LIMIT`](crate::WORLD_LIMIT) per
-    /// axis) can be simulated wherever the world puts them. Assemblies keep
-    /// their world poses and velocities. Fails with `RE5016` for a point that
-    /// is not finite, while the world has bodies or characters outside the
-    /// part assemblies, or when an assembly would end up outside the limits.
+    /// Moves the simulation's origin to world point `origin`, so that bodies,
+    /// characters and parts within Jolt's limits of it
+    /// ([`WORLD_LIMIT`](crate::WORLD_LIMIT) per axis) can be simulated wherever
+    /// the world puts them (ADR-0031, ADR-0042's floating origin). Everything
+    /// keeps its world pose and velocity: the whole Jolt world moves by one
+    /// translation, so contacts, sleep and joints carry on. Positions in and
+    /// out of [`Physics`] stay world positions. Call it between steps, before
+    /// the tick's commands. Bodies and characters the move leaves outside
+    /// the limits stay where they are until a later move brings them back; a
+    /// new position for one is kept (reported once as an `RE5006` warning)
+    /// and applied then. Bodies added out of reach while the origin is moved
+    /// wait, with their vehicles and constraints, and join Jolt once in
+    /// reach. Fails with `RE5016`,
+    /// leaving the world unchanged, for a point that is not finite, a move
+    /// larger than twice the limits, or while the world has ragdolls. A
+    /// [`PhysicsSnapshot`](crate::PhysicsSnapshot) saved before the move no
+    /// longer restores (`RE5012`).
     pub fn set_origin(&mut self, origin: Vec3) -> Result<(), Diagnostic> {
         let refuse = |why: &str| {
             Diagnostic::error(
@@ -957,24 +968,39 @@ impl Physics {
         if origin == self.parts.origin {
             return Ok(());
         }
-        if self.parts.assemblies.is_empty() {
-            self.parts.origin = origin;
-            return Ok(());
+        if !self.ragdolls.is_empty() {
+            return Err(refuse(
+                "the world has ragdolls, which do not follow the origin yet",
+            ));
         }
-        if !self.bodies.is_empty() || !self.characters.is_empty() {
-            return Err(refuse("the world has bodies besides part assemblies"));
+        let shift = self.parts.origin - origin;
+        if !crate::world::in_world(shift * 0.5) {
+            return Err(refuse("the move is larger than twice the world limits"));
         }
-        let bodies: Vec<BodyId> = self.parts.assemblies.values().map(|a| a.body).collect();
-        for a in self.parts.assemblies.values() {
-            let p = self.assembly_pose_raw(a.body).pos + self.parts.origin;
-            if !crate::world::in_world(p - origin) {
-                return Err(refuse("an assembly would be outside the limits"));
-            }
-        }
+        // Every body of the Jolt world, in a stable order: plain bodies by
+        // entity, then assemblies, then characters' inner bodies. Bodies the
+        // move leaves out of reach stay where they are, far from every focus,
+        // until a later move brings them back.
+        let mut bodies: Vec<BodyId> = self.bodies.values().map(|b| b.id).collect();
+        bodies.extend(self.parts.assemblies.values().map(|a| a.body));
+        bodies.extend(self.characters.values().filter_map(|c| c.inner));
         self.world
-            .rebase(&bodies, jq(Quat::IDENTITY), rv(self.parts.origin - origin))
+            .rebase(&bodies, jq(Quat::IDENTITY), rv(shift))
             .map_err(|e| refuse(&e.to_string()))?;
         self.parts.origin = origin;
+        // Bodies added while out of reach join now if they are in reach.
+        let back: Vec<EntityId> = self
+            .waiting
+            .iter()
+            .filter(|(_, d)| self.in_reach(d.pos))
+            .map(|(e, _)| *e)
+            .collect();
+        for id in back {
+            if let Err(d) = self.add_waiting(id) {
+                self.diagnostics.push(d);
+            }
+        }
+        self.catch_up();
         Ok(())
     }
 
@@ -988,12 +1014,15 @@ impl Physics {
         out
     }
 
-    fn in_reach(&self, p: Vec3) -> bool {
+    /// True if world point `p` is within Jolt's limits of the origin.
+    pub(crate) fn in_reach(&self, p: Vec3) -> bool {
         crate::world::in_world(p - self.parts.origin)
     }
 
-    fn out_of_reach(&self, key: EntityId, p: Vec3) -> Diagnostic {
-        let mut d = crate::world::outside_world(key, "assembly", p);
+    /// `RE5006`: `what` at world point `p` is out of reach, naming the
+    /// origin when it moved.
+    pub(crate) fn out_of_reach(&self, key: EntityId, what: &str, p: Vec3) -> Diagnostic {
+        let mut d = crate::world::outside_world(key, what, p);
         if self.parts.origin != Vec3::ZERO {
             d.message = format!(
                 "{} of the simulation origin {}",
@@ -1003,11 +1032,11 @@ impl Physics {
         d
     }
 
-    fn jolt_point(&self, p: Vec3) -> oxijolt::RVec3 {
+    pub(crate) fn jolt_point(&self, p: Vec3) -> oxijolt::RVec3 {
         rv(p - self.parts.origin)
     }
 
-    fn world_point(&self, p: oxijolt::RVec3) -> Vec3 {
+    pub(crate) fn world_point(&self, p: oxijolt::RVec3) -> Vec3 {
         grv(p) + self.parts.origin
     }
 
@@ -1087,7 +1116,7 @@ impl Physics {
             .get(&key)
             .ok_or_else(|| unknown_assembly(key))?;
         if !self.in_reach(pose.pos) {
-            return Err(self.out_of_reach(key, pose.pos));
+            return Err(self.out_of_reach(key, "assembly", pose.pos));
         }
         let rot = unit_rotation(pose.rot)
             .ok_or_else(|| invalid(key, "its rotation is zero or not finite"))?;
@@ -1243,7 +1272,7 @@ impl Physics {
         }
         let body = asm.body;
         if !self.in_reach(pose.pos) {
-            return Err(self.out_of_reach(key, pose.pos));
+            return Err(self.out_of_reach(key, "assembly", pose.pos));
         }
         let origin = self.parts.origin;
         let rot = unit_rotation(pose.rot)

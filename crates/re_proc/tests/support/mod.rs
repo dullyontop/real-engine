@@ -27,7 +27,9 @@ pub fn graph(
         "name": "test",
         "seed": seed,
         "nodes": nodes.iter().map(|(id, kind, params)| json!({
-            "id": id, "kind": kind, "version": 1, "params": params,
+            "id": id, "kind": kind, "params": params,
+            // Each kind's current version.
+            "version": re_proc::NodeRegistry::m1().get(kind).map_or(1, |d| d.version),
         })).collect::<Vec<_>>(),
         "edges": edges.iter().map(|(f, fp, t, tp)| json!({
             "from": [f, fp], "to": [t, tp],
@@ -182,6 +184,26 @@ pub fn output_hash(output: &Output) -> String {
             h.update(re_proc::fragment_hash_hex(&nodes).as_bytes());
             for (name, _) in &frag.assets {
                 h.update(name.as_bytes());
+            }
+        }
+        Output::Shapes(shapes) => {
+            for s in &shapes.shapes {
+                for c in std::iter::once(&s.outer).chain(&s.holes) {
+                    for p in c {
+                        h.update(&p[0].to_bits().to_le_bytes());
+                        h.update(&p[1].to_bits().to_le_bytes());
+                    }
+                    h.update(b"|");
+                }
+                h.update(b"/");
+            }
+        }
+        Output::Path(path) => {
+            h.update(&[u8::from(path.closed)]);
+            for s in &path.samples {
+                for x in s.position.iter().chain(&[s.width, s.bank, s.distance]) {
+                    h.update(&x.to_bits().to_le_bytes());
+                }
             }
         }
     }

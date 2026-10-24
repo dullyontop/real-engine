@@ -592,7 +592,7 @@ pub fn linear_to_decibels(volume: f32) -> Decibels {
     if volume <= 0.0 || !volume.is_finite() {
         Decibels::SILENCE
     } else {
-        Decibels((20.0 * volume.log10()).max(Decibels::SILENCE.0))
+        Decibels((20.0 * libm::log10f(volume)).max(Decibels::SILENCE.0))
     }
 }
 
@@ -602,7 +602,7 @@ pub fn sine(freq: f32, seconds: f32, sample_rate: u32, amplitude: f32) -> Static
     let frames: Arc<[Frame]> = (0..n)
         .map(|i| {
             let phase = std::f32::consts::TAU * freq * i as f32 / sample_rate as f32;
-            Frame::from_mono(amplitude * phase.sin())
+            Frame::from_mono(amplitude * libm::sinf(phase))
         })
         .collect();
     StaticSoundData {

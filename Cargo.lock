@@ -1190,6 +1190,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "earcut"
+version = "0.4.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f03dd5350900133e14471c90d513eb5ba264004cd833adecab7dfa5fb5a2974"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "ecolor"
 version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1219,6 +1228,29 @@ dependencies = [
  "smallvec",
  "unicode-segmentation",
  "web-sys",
+]
+
+[[package]]
+name = "egui-scale"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16194efd2800275df80448afa0ee11d3e23ce0220f6754e1af53fec8e9b7467a"
+dependencies = [
+ "egui",
+]
+
+[[package]]
+name = "egui-snarl"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "247c36a1f3b71fb25597f16f9396687641fec220a8116d5093941138fae59e61"
+dependencies = [
+ "ahash",
+ "egui",
+ "egui-scale",
+ "serde",
+ "slab",
+ "smallvec",
 ]
 
 [[package]]
@@ -1777,6 +1809,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc148d4ddd3930c52f9e5ae79b89805c6f07e9ff417e7b083e0348cea60a5aba"
 dependencies = [
  "bytemuck",
+ "libm",
  "mint",
  "serde_core",
 ]
@@ -2065,6 +2098,48 @@ dependencies = [
  "tokio",
  "tower-service",
 ]
+
+[[package]]
+name = "i_float"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ecaff1ce29bcacd72cdf581ba6fce636ef4c4e0b2da7e7846dd0137d98141e2"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "i_key_sort"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14269ee362009550495e20650ff3c2bca14a8147fe251e216760381ffed90b6f"
+
+[[package]]
+name = "i_overlay"
+version = "9.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "913fd692c02408adc76cead636f8e7e07c705f8b995a8b54b454b995e8e197d5"
+dependencies = [
+ "i_float",
+ "i_key_sort",
+ "i_shape",
+ "i_tree",
+]
+
+[[package]]
+name = "i_shape"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa1878f91ef7921feaf1b2346253ebc5e661878b22d5715195c1d5dcf0f20ae5"
+dependencies = [
+ "i_float",
+]
+
+[[package]]
+name = "i_tree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "048af31de955890c62a8506fec511335a5089e91e1c516537add16f96c507d84"
 
 [[package]]
 name = "iana-time-zone"
@@ -3660,9 +3735,11 @@ name = "re_anim"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
+ "libm",
  "re_core",
  "re_types",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3671,6 +3748,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "glam 0.34.1",
+ "libm",
  "postcard",
  "re_anim",
  "re_assets",
@@ -3727,6 +3805,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
  "kira",
+ "libm",
  "re_core",
  "re_types",
  "serde_json",
@@ -3791,6 +3870,7 @@ dependencies = [
  "egui",
  "glam 0.34.1",
  "indexmap 2.14.2",
+ "libm",
  "mlua",
  "postcard",
  "re_anim",
@@ -3835,14 +3915,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "egui",
+ "egui-snarl",
  "egui-winit",
  "egui_dock",
  "glam 0.34.1",
+ "libm",
  "mlua",
  "re_agent",
  "re_app",
  "re_command",
  "re_core",
+ "re_proc",
  "re_reflect",
  "re_render",
  "re_scene",
@@ -3859,7 +3942,10 @@ name = "re_geom"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "earcut",
  "glam 0.34.1",
+ "i_overlay",
+ "libm",
  "re_core",
  "re_types",
  "serde",
@@ -3940,6 +4026,7 @@ name = "re_physics"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
+ "libm",
  "oxijolt",
  "re_core",
  "re_types",
@@ -3977,9 +4064,19 @@ dependencies = [
  "glam 0.34.1",
  "indexmap 2.14.2",
  "re_core",
+ "re_reflect_derive",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "re_reflect_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3991,6 +4088,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "glam 0.34.1",
+ "libm",
  "png",
  "pollster",
  "re_core",
@@ -4021,11 +4119,16 @@ dependencies = [
 name = "re_script"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "glam 0.34.1",
  "insta",
+ "libm",
  "mlua",
  "re_command",
  "re_core",
+ "re_geom",
+ "re_noise",
+ "re_proc",
  "re_reflect",
  "re_scene",
  "re_types",
@@ -4064,10 +4167,13 @@ version = "0.1.0"
 dependencies = [
  "pollster",
  "re_app",
+ "re_compat",
  "re_core",
+ "re_import",
  "re_render",
  "re_types",
  "serde_json",
+ "tempfile",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
@@ -4464,6 +4570,9 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "slotmap"
@@ -4690,7 +4799,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
  "windows-sys 0.61.2",
@@ -5417,6 +5526,7 @@ dependencies = [
 name = "web-test"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "mlua",
  "re_core",
  "re_physics",

@@ -7,6 +7,8 @@
 //!   removed, and `getfenv`/`setfenv` would turn off `safeenv`);
 //! * installs the engine API ([`crate::api`]), `print`, `warn` and the
 //!   project-confined `require` ([`crate::modules`]);
+//! * replaces Luau's transcendental maths with portable versions and compiles
+//!   every chunk with those builtins disabled ([`crate::portable_math`], ADR-0036);
 //! * has a memory limit and the raw CPU-budget interrupt (`budget`).
 //!
 //! Every script and module runs in its own environment table whose metatable
@@ -135,6 +137,7 @@ pub(crate) fn install_engine(
     }
     let debug: Table = globals.get("debug")?;
     lua.set_named_registry_value(TRACEBACK_FN, debug.get::<Function>("traceback")?)?;
+    crate::portable_math::install(lua)?;
 
     lua.set_app_data(HostSlot::default());
     lua.set_app_data(Output {
@@ -160,6 +163,7 @@ pub(crate) fn create(
     loaded: Loaded,
 ) -> Result<Lua> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
+    lua.set_compiler(crate::compile::compiler());
     install_engine(&lua, kind, budget)?;
     let require = lua.create_require_function(ProjectRequirer::new(files.clone(), kind, loaded))?;
     lua.globals().raw_set("require", require)?;
@@ -184,6 +188,8 @@ pub(crate) fn create_compat(
     install: &dyn Fn(&Lua) -> Result<()>,
 ) -> Result<Lua> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
+    lua.set_compiler(crate::compile::compiler());
+    crate::portable_math::install(&lua)?;
     let globals = lua.globals();
     for name in ["loadstring", "getfenv", "setfenv"] {
         globals.raw_set(name, Value::Nil)?;

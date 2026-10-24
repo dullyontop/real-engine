@@ -2,10 +2,13 @@
 //! billboards, in a client VM. The expected positions and sizes are worked
 //! out by hand from the properties each test sets.
 
+use std::collections::HashMap;
+
 use glam::{Quat, Vec2, Vec3};
 use re_compat::gui::{self, GuiCamera, GuiFrame, GuiInput, GuiOutput};
 use re_compat::instance::tree;
 use re_scene::Entity;
+use re_types::render::QuadDepth;
 use wp15::{Place, place};
 
 mod wp15;
@@ -21,6 +24,8 @@ struct Ui {
     view: Vec2,
     pub camera: Option<GuiCamera>,
     pub roots: Vec<Entity>,
+    /// The viewport textures the host drew.
+    pub images: HashMap<Entity, egui::TextureId>,
 }
 
 fn raw(frame: u32, view: Vec2) -> egui::RawInput {
@@ -68,6 +73,7 @@ fn ui_sized(view: Vec2) -> Ui {
         view,
         camera: None,
         roots: vec![pg],
+        images: HashMap::new(),
     }
 }
 
@@ -84,6 +90,7 @@ impl Ui {
             roots: self.roots.clone(),
             camera: self.camera,
             input,
+            images: self.images.clone(),
         };
         let mut out = None;
         let place = &mut self.place;
@@ -104,6 +111,7 @@ impl Ui {
             roots: self.roots.clone(),
             camera: self.camera,
             input: GuiInput::default(),
+            images: self.images.clone(),
         };
         let place = &mut self.place;
         self.ctx.run_ui(raw(n, self.view), |ui| {
@@ -588,7 +596,7 @@ fn billboards_follow_their_adornee() {
         rotation: Quat::IDENTITY,
         fov_y: 70f32.to_radians(),
     });
-    let focal = 300.0 / 35f32.to_radians().tan();
+    let focal = 300.0 / libm::tanf(35f32.to_radians());
     let mut sizes = Vec::new();
     for z in [-10.0, -20.0] {
         place_at(&mut u, z);
@@ -941,4 +949,307 @@ fn screen_insets_none_draws_under_the_top_bar() {
     );
     u.frame();
     assert_eq!(u.v2("S.sg.AbsoluteSize"), "800,564");
+}
+
+/// A camera 10 studs in front of the origin, looking at it down -Z.
+fn facing_origin() -> GuiCamera {
+    GuiCamera {
+        position: Vec3::new(0.0, 0.0, 10.0),
+        rotation: Quat::IDENTITY,
+        fov_y: 70f32.to_radians(),
+    }
+}
+
+/// A raw window point (no top bar): the camera's rays go through these.
+fn window(x: f32, y: f32) -> Option<Vec2> {
+    Some(Vec2::new(x, y))
+}
+
+fn click(u: &mut Ui, p: Option<Vec2>) {
+    u.frame_with(GuiInput {
+        pointer: p,
+        button1: true,
+        ..Default::default()
+    });
+    u.frame_with(GuiInput {
+        pointer: p,
+        ..Default::default()
+    });
+    u.frame();
+}
+
+#[test]
+fn surfaces_lay_out_on_their_canvas_and_take_clicks_on_their_face() {
+    let mut u = ui();
+    u.run(
+        r#"
+        local sign = Instance.new("Part")
+        sign.Anchored = true
+        sign.Size = Vector3.new(8, 4, 1)
+        sign.CFrame = CFrame.new(0, 0, 0)
+        sign.Parent = workspace
+        local sg = Instance.new("SurfaceGui")
+        sg.Adornee = sign
+        sg.Face = Enum.NormalId.Back
+        sg.CanvasSize = Vector2.new(400, 200)
+        sg.Parent = S.pg
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.fromOffset(100, 50)
+        b.Position = UDim2.fromOffset(150, 75)
+        b.Parent = sg
+        S.sign, S.sg, S.b = sign, sg, b
+        S.log = {}
+        b.Activated:Connect(function() table.insert(S.log, "Activated") end)
+        b.MouseButton1Down:Connect(function(x, y)
+            table.insert(S.log, "Down " .. x .. " " .. y)
+        end)
+        "#,
+    );
+    u.camera = Some(facing_origin());
+    let out = u.frame();
+    assert_eq!(out.surfaces.len(), 1);
+    let s = &out.surfaces[0];
+    assert_eq!(s.canvas, Vec2::new(400.0, 200.0));
+    assert_eq!(s.texture_px, [400, 200]);
+    assert_eq!(s.pixels_per_point, 1.0);
+    assert_eq!(s.size, Vec2::new(8.0, 4.0));
+    // The Back face: +Z out of it, the canvas's right along +X.
+    let w = s.world;
+    assert_eq!(w.w_axis.truncate(), Vec3::new(0.0, 0.0, 0.5));
+    assert_eq!(w.x_axis.truncate(), Vec3::X);
+    assert_eq!(w.z_axis.truncate(), Vec3::Z);
+    assert!(!s.shapes.is_empty());
+    // Elements are laid out in canvas pixels; none goes to the screen.
+    assert_eq!(u.v2("S.sg.AbsoluteSize"), "400,200");
+    assert_eq!(u.v2("S.b.AbsolutePosition"), "150,75");
+    assert!(out.shapes.is_empty());
+
+    // The window's centre sees the face's centre: canvas (200, 100).
+    click(&mut u, window(400.0, 300.0));
+    assert_eq!(
+        u.eval("print(table.concat(S.log, '; '))"),
+        ["Down 200 100; Activated"]
+    );
+    // Off the button, and off the part, nothing.
+    u.run("S.log = {}");
+    click(&mut u, window(330.0, 300.0));
+    click(&mut u, window(10.0, 10.0));
+    assert_eq!(u.eval("print(#S.log)"), ["0"]);
+
+    // A part in front of the face hides it from the pointer.
+    u.run(
+        r#"
+        local wall = Instance.new("Part")
+        wall.Anchored = true
+        wall.Size = Vector3.new(2, 2, 1)
+        wall.CFrame = CFrame.new(0, 0, 4)
+        wall.Parent = workspace
+        S.wall = wall
+        "#,
+    );
+    click(&mut u, window(400.0, 300.0));
+    assert_eq!(u.eval("print(#S.log)"), ["0"]);
+    u.run("S.wall:Destroy()");
+
+    // Screen UI under the pointer takes the click first.
+    u.run(
+        r#"
+        local screen = Instance.new("ScreenGui")
+        screen.Parent = S.pg
+        local cover = Instance.new("Frame")
+        cover.Active = true
+        cover.Size = UDim2.fromScale(1, 1)
+        cover.Parent = screen
+        S.screen = screen
+        "#,
+    );
+    click(&mut u, window(400.0, 300.0));
+    assert_eq!(u.eval("print(#S.log)"), ["0"]);
+    u.run("S.screen:Destroy()");
+    click(&mut u, window(400.0, 300.0));
+    assert_eq!(u.eval("print(#S.log)"), ["2"]);
+    // Not Active, it takes none.
+    u.run("S.log = {}; S.sg.Active = false");
+    click(&mut u, window(400.0, 300.0));
+    assert_eq!(u.eval("print(#S.log)"), ["0"]);
+    u.run("S.sg.Active = true");
+
+    // In Workspace it is drawn but takes no input.
+    u.run("S.log = {}; S.sg.Adornee = nil; S.sg.Parent = S.sign");
+    let out = u.frame();
+    assert_eq!(out.surfaces.len(), 1);
+    click(&mut u, window(400.0, 300.0));
+    assert_eq!(u.eval("print(#S.log)"), ["0"]);
+    // Disabled, it is not drawn.
+    u.run("S.sg.Enabled = false");
+    assert!(u.frame().surfaces.is_empty());
+}
+
+#[test]
+fn surface_canvas_face_depth_and_distance() {
+    let mut u = ui();
+    u.run(
+        r#"
+        local p = Instance.new("Part")
+        p.Anchored = true
+        p.Size = Vector3.new(8, 2, 6)
+        p.CFrame = CFrame.new(0, 0, 0)
+        p.Parent = workspace
+        local sg = Instance.new("SurfaceGui")
+        sg.Face = Enum.NormalId.Top
+        sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+        sg.PixelsPerStud = 10
+        sg.Parent = p
+        S.p, S.sg = p, sg
+        "#,
+    );
+    u.camera = Some(facing_origin());
+    let out = u.frame();
+    let s = &out.surfaces[0];
+    // Top: right along +X, up towards the front (-Z), out along +Y.
+    assert_eq!(s.canvas, Vec2::new(80.0, 60.0));
+    assert_eq!(s.size, Vec2::new(8.0, 6.0));
+    assert_eq!(s.world.x_axis.truncate(), Vec3::X);
+    assert_eq!(s.world.y_axis.truncate(), Vec3::NEG_Z);
+    assert_eq!(s.world.z_axis.truncate(), Vec3::Y);
+    assert_eq!(s.world.w_axis.truncate(), Vec3::new(0.0, 1.0, 0.0));
+    assert_eq!(s.depth, QuadDepth::Tested { bias: 0.02 });
+    assert_eq!((s.light_influence, s.brightness), (1.0, 1.0));
+    assert_eq!(u.v2("S.sg.AbsoluteSize"), "80,60");
+
+    u.run(
+        "S.sg.ZOffset = 2; S.sg.LightInfluence = 0.25; S.sg.Brightness = 2; \
+         S.sg.Shape = Enum.SurfaceGuiShape.Flat; S.sg.ToolPunchThroughDistance = 1; \
+         S.sg.ClipsDescendants = true",
+    );
+    let s = u.frame().surfaces.remove(0);
+    assert_eq!(s.depth, QuadDepth::Tested { bias: 0.04 });
+    assert_eq!((s.light_influence, s.brightness), (0.25, 2.0));
+    u.run("S.sg.AlwaysOnTop = true");
+    assert_eq!(u.frame().surfaces[0].depth, QuadDepth::OnTop);
+
+    // Beyond MaxDistance it is not drawn; 0 means no limit.
+    u.run("S.sg.MaxDistance = 5");
+    assert!(u.frame().surfaces.is_empty());
+    u.run("S.sg.MaxDistance = 0");
+    assert_eq!(u.frame().surfaces.len(), 1);
+
+    // A canvas larger than a texture is drawn scaled down, with one warning.
+    u.run(
+        "S.sg.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize; \
+         S.sg.CanvasSize = Vector2.new(4096, 1024)",
+    );
+    let out = u.frame();
+    let s = &out.surfaces[0];
+    assert_eq!(s.canvas, Vec2::new(4096.0, 1024.0));
+    assert_eq!(s.texture_px, [2048, 512]);
+    assert_eq!(s.pixels_per_point, 0.5);
+    assert_eq!(out.diagnostics.len(), 1, "{:?}", out.diagnostics);
+    assert_eq!(out.diagnostics[0].code, re_compat::codes::SURFACE);
+    assert!(u.frame().diagnostics.is_empty());
+
+    // With no part to sit on it is not drawn, with one warning.
+    u.run("S.sg.Parent = S.pg");
+    let out = u.frame();
+    assert!(out.surfaces.is_empty());
+    assert_eq!(out.diagnostics.len(), 1);
+    assert!(
+        out.diagnostics[0].message.contains("no part"),
+        "{:?}",
+        out.diagnostics
+    );
+    assert!(u.frame().diagnostics.is_empty());
+}
+
+#[test]
+fn viewport_frames_show_the_host_texture() {
+    let mut u = ui();
+    u.run(
+        r#"
+        local screen = Instance.new("ScreenGui")
+        screen.Parent = S.pg
+        local vf = Instance.new("ViewportFrame")
+        vf.Size = UDim2.fromOffset(200, 100)
+        vf.Position = UDim2.fromOffset(10, 10)
+        vf.ImageColor3 = Color3.new(1, 0.5, 0.5)
+        vf.Parent = screen
+        S.vf = vf
+        "#,
+    );
+    let out = u.frame();
+    assert_eq!(out.viewports.len(), 1);
+    let v = out.viewports[0];
+    assert_eq!((v.size, v.surface), (Vec2::new(200.0, 100.0), None));
+    let textured = |shapes: &[egui::epaint::ClippedShape], id| {
+        shapes.iter().any(|s| match &s.shape {
+            egui::Shape::Mesh(m) => m.texture_id == id,
+            _ => false,
+        })
+    };
+    let id = egui::TextureId::User(7);
+    assert!(!textured(&out.shapes, id));
+    u.images.insert(v.entity, id);
+    assert!(textured(&u.frame().shapes, id));
+    u.run("S.vf.ImageTransparency = 1");
+    assert!(!textured(&u.frame().shapes, id));
+
+    // On a surface, it is drawn into the surface's shapes.
+    u.run(
+        r#"
+        S.vf.ImageTransparency = 0
+        local p = Instance.new("Part")
+        p.Anchored = true
+        p.Parent = workspace
+        local sg = Instance.new("SurfaceGui")
+        sg.Parent = p
+        S.vf.Parent = sg
+        "#,
+    );
+    let out = u.frame();
+    assert_eq!(out.viewports.len(), 1);
+    assert_eq!(out.viewports[0].surface, Some(out.surfaces[0].entity));
+    assert!(textured(&out.surfaces[0].shapes, id));
+    assert!(!textured(&out.shapes, id));
+}
+
+#[test]
+fn surface_redraws_follow_changes_within_the_budget() {
+    let mut u = ui();
+    u.run(
+        r#"
+        for i = 1, 2 do
+            local p = Instance.new("Part")
+            p.Anchored = true
+            p.CFrame = CFrame.new(i * 10, 0, 0)
+            p.Parent = workspace
+            local sg = Instance.new("SurfaceGui")
+            sg.Parent = p
+            local t = Instance.new("TextLabel")
+            t.Size = UDim2.fromOffset(100, 40)
+            t.Text = "one"
+            t.Parent = sg
+            S["t" .. i], S["p" .. i] = t, p
+        end
+        "#,
+    );
+    let mut r = gui::SurfaceRedraws::default();
+    let plan = |u: &mut Ui, r: &mut gui::SurfaceRedraws| r.plan(&u.frame().surfaces, 1);
+    // Never painted: one a frame within a budget of one.
+    assert_eq!(plan(&mut u, &mut r).redraw, [0]);
+    assert_eq!(plan(&mut u, &mut r).redraw, [1]);
+    assert!(plan(&mut u, &mut r).redraw.is_empty());
+    // A change paints that one again; a viewport drawn on it too.
+    u.run("S.t2.Text = 'two'");
+    assert_eq!(plan(&mut u, &mut r).redraw, [1]);
+    assert!(plan(&mut u, &mut r).redraw.is_empty());
+    let first = u.frame().surfaces[0].entity;
+    r.invalidate(first);
+    assert_eq!(plan(&mut u, &mut r).redraw, [0]);
+    // A surface gone is returned once, to free its texture.
+    u.run("S.p1:Destroy()");
+    let p = plan(&mut u, &mut r);
+    assert_eq!(p.gone, [first]);
+    assert!(p.redraw.is_empty());
+    r.clear();
+    assert_eq!(plan(&mut u, &mut r).redraw, [0]);
 }

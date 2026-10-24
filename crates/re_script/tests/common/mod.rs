@@ -12,7 +12,9 @@ use re_types::audio::{AudioCmd, BusLevel};
 use re_types::glam::Vec3;
 use re_types::host::{HostResult, HostServices};
 use re_types::input::{ActionFrame, ButtonState};
-use re_types::physics::{CharacterState, GroupMask, RayHit, VehicleInput, VehicleState};
+use re_types::physics::{
+    CharacterState, GroupMask, RagdollMode, RagdollState, RayHit, VehicleInput, VehicleState,
+};
 
 pub fn project() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/project")
@@ -26,6 +28,8 @@ pub struct Services {
     /// Mixer commands (`audio_mix`).
     pub mix: Vec<AudioCmd>,
     pub impulses: Vec<(EntityId, Vec3)>,
+    /// Ragdoll mode changes and impulses, as text.
+    pub ragdolls: Vec<String>,
     pub restarts: usize,
     none: NoServices,
 }
@@ -69,6 +73,27 @@ impl HostServices for Services {
     fn vehicle_state(&self, e: EntityId) -> HostResult<VehicleState> {
         self.none.vehicle_state(e)
     }
+    fn ragdoll_mode(&mut self, e: EntityId, mode: RagdollMode) -> HostResult<()> {
+        self.ragdolls.push(format!("mode {} {mode:?}", e.0));
+        Ok(())
+    }
+    fn ragdoll_state(&self, e: EntityId) -> HostResult<RagdollState> {
+        if e.0 == 0 {
+            return self.none.ragdoll_state(e);
+        }
+        Ok(RagdollState {
+            mode: RagdollMode::Powered { strength: 0.5 },
+            root_pos: Vec3::new(1.0, 2.0, 3.0),
+            calm: true,
+            pose: vec![re_types::physics::JointPose::IDENTITY; 2],
+            ..RagdollState::default()
+        })
+    }
+    fn ragdoll_impulse(&mut self, e: EntityId, joint: &str, impulse: Vec3) -> HostResult<()> {
+        self.ragdolls
+            .push(format!("impulse {} {joint} {impulse}", e.0));
+        Ok(())
+    }
     fn play_sound(&mut self, clip: &str, _: Option<Vec3>, _: f32) -> HostResult<()> {
         self.sounds.push(clip.to_string());
         Ok(())
@@ -103,6 +128,21 @@ impl HostServices for Services {
     }
     fn request_restart(&mut self) {
         self.restarts += 1;
+    }
+    fn anim_set(&mut self, e: EntityId, p: &str, v: re_types::anim::AnimValue) -> HostResult<()> {
+        self.none.anim_set(e, p, v)
+    }
+    fn anim_get(&self, e: EntityId, p: &str) -> HostResult<re_types::anim::AnimValue> {
+        self.none.anim_get(e, p)
+    }
+    fn anim_trigger(&mut self, e: EntityId, p: &str) -> HostResult<()> {
+        self.none.anim_trigger(e, p)
+    }
+    fn anim_state(&self, e: EntityId, layer: Option<&str>) -> HostResult<String> {
+        self.none.anim_state(e, layer)
+    }
+    fn anim_joint(&self, e: EntityId, j: &str) -> HostResult<(Vec3, re_types::glam::Quat)> {
+        self.none.anim_joint(e, j)
     }
 }
 

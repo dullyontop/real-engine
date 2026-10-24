@@ -273,7 +273,7 @@ fn root_height(w: &World, classes: &ClassRegistry, humanoid: Entity, root: Entit
 
 /// A yaw-only rotation facing `dir` (the front is -Z).
 fn facing(dir: Vec3) -> Quat {
-    Quat::from_rotation_y(f32::atan2(-dir.x, -dir.z))
+    Quat::from_rotation_y(libm::atan2f(-dir.x, -dir.z))
 }
 
 fn quat(c: &CFrame) -> Quat {

@@ -189,7 +189,21 @@ impl Call {
         label: impl Into<String>,
         ops: Vec<Op>,
     ) -> Result<Vec<Op>, Diagnostic> {
-        let tx = Transaction::new(label, self.origin.clone(), ops);
+        self.transact_coalescing(target, label, ops, None)
+    }
+
+    /// [`transact`](Self::transact) with a [coalesce](Transaction::coalesce)
+    /// key: the transaction merges into the previous undo step when that
+    /// step has the same key and origin.
+    pub fn transact_coalescing<C: EditTarget + ?Sized>(
+        &mut self,
+        target: &mut C,
+        label: impl Into<String>,
+        ops: Vec<Op>,
+        coalesce: Option<String>,
+    ) -> Result<Vec<Op>, Diagnostic> {
+        let mut tx = Transaction::new(label, self.origin.clone(), ops);
+        tx.coalesce = coalesce;
         let result = if self.dry_run {
             History::dry_run(target.world(), &tx)
         } else {

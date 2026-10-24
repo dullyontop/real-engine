@@ -28,7 +28,7 @@ use re_types::physics::{
 };
 
 use crate::codes;
-use crate::convert::{gq, grv, gv, jv};
+use crate::convert::{gq, gv, jv};
 use crate::world::{Physics, at, object_layer, unknown};
 
 /// Driven wheels whose local `z` differ by at most this share an axle, metres.
@@ -334,7 +334,10 @@ impl Physics {
                         .as_ref()
                         .and_then(|c| self.entity_of.get(&c.body).copied()),
                     on_ground: w.contact.is_some(),
-                    contact_point: w.contact.as_ref().map_or(Vec3::ZERO, |c| grv(c.position)),
+                    contact_point: w
+                        .contact
+                        .as_ref()
+                        .map_or(Vec3::ZERO, |c| self.world_point(c.position)),
                     suspension_length: w.suspension_length,
                     angular_velocity: w.angular_velocity,
                     // Jolt's steer angle is about the steering axis (up): a right turn
@@ -356,7 +359,7 @@ impl Physics {
                         out.push(WheelPose {
                             id,
                             wheel,
-                            pos: grv(pos),
+                            pos: self.world_point(pos),
                             rot: wheel_rotation(gq(rot)),
                         });
                     }

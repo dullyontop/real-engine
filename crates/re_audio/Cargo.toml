@@ -13,6 +13,7 @@ publish.workspace = true
 re_core.workspace = true
 re_types.workspace = true
 kira.workspace = true
+libm.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -116,6 +116,10 @@
           "name": {
             "type": "string"
           },
+          "note": {
+            "type": "string",
+            "description": "A comment on the entity, kept by every save; the game never reads it."
+          },
           "parent": {
             "type": "string"
           },
@@ -187,6 +191,15 @@
               },
               "VehicleWheel": {
                 "$ref": "#/$defs/VehicleWheel"
+              },
+              "Ragdoll": {
+                "$ref": "#/$defs/Ragdoll"
+              },
+              "Animator": {
+                "$ref": "#/$defs/Animator"
+              },
+              "BoneAttachment": {
+                "$ref": "#/$defs/BoneAttachment"
               }
             },
             "additionalProperties": false
@@ -230,6 +243,150 @@
                     },
                     "deleted": {
                       "const": true
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "target",
+                    "moved"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "target": {
+                      "type": "string"
+                    },
+                    "moved": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "parent": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "index": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "target",
+                    "replaced"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "target": {
+                      "type": "string"
+                    },
+                    "replaced": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "oneOf": [
+                        {
+                          "required": [
+                            "prefab"
+                          ],
+                          "not": {
+                            "required": [
+                              "components"
+                            ]
+                          }
+                        },
+                        {
+                          "required": [
+                            "components"
+                          ],
+                          "not": {
+                            "required": [
+                              "prefab"
+                            ]
+                          }
+                        }
+                      ],
+                      "properties": {
+                        "prefab": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "components": {
+                          "type": "object"
+                        },
+                        "keep_children": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "insert"
+                  ],
+                  "additionalProperties": false,
+                  "oneOf": [
+                    {
+                      "required": [
+                        "prefab"
+                      ],
+                      "not": {
+                        "required": [
+                          "components"
+                        ]
+                      }
+                    },
+                    {
+                      "required": [
+                        "components"
+                      ],
+                      "not": {
+                        "required": [
+                          "prefab"
+                        ]
+                      }
+                    }
+                  ],
+                  "properties": {
+                    "prefab": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "components": {
+                      "type": "object"
+                    },
+                    "insert": {
+                      "type": "string",
+                      "pattern": "^[^/+~][^/]*$"
+                    },
+                    "parent": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "index": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   }
                 }
@@ -971,6 +1128,79 @@
           "type": "boolean",
           "default": false,
           "description": "True if the engine drives this wheel."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Ragdoll": {
+      "type": "object",
+      "description": "Gives a [`SkinnedMesh`] a ragdoll on its skeleton (ADR-0040). Once the skin\nloads, `re_app` generates the parts (one capsule per listed joint along its\nbone, humanoid joint limits, the mass split by volume), keeps an animated\nragdoll on the animation, and shows the simulated pose blended in while it is\nsimulated or powered. Scripts switch it with `physics.ragdoll`. The entity\nhas no `RigidBody`; a `CharacterController` on it is fine and never collides\nwith its own ragdoll.",
+      "properties": {
+        "joints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "The joints that get parts, by name; empty finds a humanoid's hips, spine,\nhead, upper arms, forearms, thighs and shins by name."
+        },
+        "total_mass": {
+          "type": "number",
+          "default": 70.0,
+          "description": "Total mass, in kilograms."
+        },
+        "mode": {
+          "enum": [
+            "Animated",
+            "Simulated",
+            "Powered"
+          ],
+          "default": "Animated",
+          "description": "How it moves when the scene starts, and after each edit of this field."
+        },
+        "strength": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Motor strength in `Powered` mode, 0 (limp) to 1."
+        },
+        "blend_seconds": {
+          "type": "number",
+          "default": 0.20000000298023224,
+          "description": "Seconds the shown pose takes to blend from the animation to the ragdoll\nand back; 0 switches at once."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Animator": {
+      "type": "object",
+      "description": "Plays an animation graph (ADR-0039, `*.animgraph.json`) on the\n[`SkinnedMesh`] of the same entity, in place of an [`AnimPlayer`].\nParameters and state-machine state are runtime state in `re_app`;\nscripts reach them through the `anim` library.",
+      "properties": {
+        "graph": {
+          "type": "string",
+          "default": "",
+          "description": "The graph file, e.g. `anims/hero.animgraph.json`."
+        },
+        "playing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the graph advances; while false the pose holds."
+        },
+        "speed": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Playback speed multiplier for the whole graph (0 or more)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "BoneAttachment": {
+      "type": "object",
+      "description": "Places this entity at a joint of its parent's [`SkinnedMesh`] each\nfixed step: its `Transform` becomes the joint's model-space transform,\nwhich is relative to the parent because the skin's space is the\nparent's (ADR-0039). Put an offset on a child of this entity. It is\nplaced at the end of the step, after physics and the ragdoll blend, so\n`PostSimulation` scripts see the previous step's placement.",
+      "properties": {
+        "joint": {
+          "type": "string",
+          "default": "",
+          "description": "The joint's name in the parent's skin."
         }
       },
       "additionalProperties": false

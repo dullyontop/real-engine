@@ -2,7 +2,8 @@
 //!
 //! * [`ProcGraph`]: the validated IR of a `*.graph.json` document
 //!   ([`re_types::graph::GraphDoc`]), with errors `RE4000`–`RE4007`;
-//! * [`NodeRegistry`]: the 16 M1 node kinds ([`NodeRegistry::m1`]), each
+//! * [`NodeRegistry`]: the 28 built-in node kinds ([`NodeRegistry::m1`]:
+//!   M1's 16, the two terrain kinds and ADR-0043 §5's polygon and road kinds), each
 //!   with typed ports and a schemars parameter schema
 //!   ([`NodeRegistry::graph_json_schema`] gives `graph.schema.json`);
 //! * [`Evaluator`]: topological, parallel evaluation on the
@@ -49,6 +50,7 @@ mod cache;
 pub mod canon;
 pub mod codes;
 mod commands;
+mod edit;
 mod eval;
 mod generator;
 mod glb;
@@ -57,6 +59,7 @@ pub mod migrate;
 pub mod nodes;
 mod store;
 pub mod stream;
+mod structure;
 pub mod value;
 
 pub use canon::version_stamp;
@@ -64,6 +67,7 @@ pub use commands::{
     DEFAULT_GENERATE_ENTITIES, DEFAULT_GENERATE_MS, GenerateArgs, MigrationReportArgs,
     RegenerateArgs, ReportArgs, SetParamArgs, register_commands,
 };
+pub use edit::{AddNodeArgs, ConnectArgs, MoveNodesArgs, RemoveNodeArgs, SetDefaultArgs};
 pub use eval::{
     CacheState, DEFAULT_MEMORY_BUDGET, EvalOptions, EvalReport, Evaluation, Evaluator, NodeReport,
     OutputInfo, fragment_hash_hex, to_scene_fragment,
@@ -74,12 +78,13 @@ pub use generator::{
 };
 pub use graph::{Edge, GraphId, Node, NodeId, OUT_ALIAS, PortName, ProcGraph};
 pub use nodes::{
-    Domain, Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef,
-    Streaming,
+    CheckFn, CustomKind, CustomPort, Domain, EvalFn, MAX_LOG_LINE, MAX_LOG_LINES, MigrateFn,
+    Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef, Streaming,
 };
 pub use store::{Budget, CurrentGraph, GraphStore, register_doc_validators, validate_graph_json};
 pub use value::{
     DerivedAsset, Field, FragItem, Fragment, MeshValue, Output, Point, Points, PortType, PrefabUse,
+    RoadPath, Shapes,
 };
 
 use re_core::DiagInfo;
@@ -197,9 +202,39 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE4021.md"),
     },
     DiagInfo {
+        code: codes::STRUCTURE_REFUSED,
+        title: "Structural override refused",
+        page: include_str!("../explain/RE4023.md"),
+    },
+    DiagInfo {
         code: codes::OPEN_GRAPH_DIFFERS,
         title: "Open graph differs from its file",
         page: include_str!("../explain/RE4022.md"),
+    },
+    DiagInfo {
+        code: codes::LUAU_DECLARATION,
+        title: "Invalid Luau node declaration",
+        page: include_str!("../explain/RE4100.md"),
+    },
+    DiagInfo {
+        code: codes::LUAU_BUDGET,
+        title: "Luau node over its budget",
+        page: include_str!("../explain/RE4101.md"),
+    },
+    DiagInfo {
+        code: codes::LUAU_BACKSTOP,
+        title: "Luau node stopped by the wall-clock backstop",
+        page: include_str!("../explain/RE4102.md"),
+    },
+    DiagInfo {
+        code: codes::LUAU_OUTPUT,
+        title: "Invalid Luau node output",
+        page: include_str!("../explain/RE4103.md"),
+    },
+    DiagInfo {
+        code: codes::CREATE_SOURCE,
+        title: "Cannot create a source from a node kind",
+        page: include_str!("../explain/RE4104.md"),
     },
     DiagInfo {
         code: codes::STREAM_CONFIG,
@@ -250,6 +285,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::PRECISION_LIMIT,
         title: "Content beyond the precision limit",
         page: include_str!("../explain/RE4309.md"),
+    },
+    DiagInfo {
+        code: codes::CANCELLED,
+        title: "Streaming job cancelled",
+        page: include_str!("../explain/RE4310.md"),
     },
 ];
 

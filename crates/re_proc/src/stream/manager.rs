@@ -2,9 +2,12 @@
 //! within which budgets, and what it costs in memory (ADR-0042).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 use glam::{Affine3A, Vec2, Vec3};
-use re_core::{Diagnostic, Location};
+use re_core::time::Instant;
+use re_core::{Diagnostic, Location, TaskPool};
 use re_scene::ecs as bevy_ecs;
 use re_scene::ecs::entity::Entity;
 use re_scene::ecs::resource::Resource;
@@ -14,7 +17,7 @@ use re_scene::{
 };
 
 use super::StreamConfig;
-use super::source::{self, CellOutput, Source};
+use super::source::{self, CellJob, CellOutput, RawCell, Source};
 use crate::value::DerivedAsset;
 use crate::{GraphStore, codes};
 
@@ -28,6 +31,14 @@ pub const SHAPE_BYTES: u64 = 11_059;
 /// The angle each side of a focus's forward within which cells load out to
 /// `radius_ahead`: ±60°, as its cosine.
 const AHEAD_COS: f32 = 0.5;
+
+/// How far from the simulation origin, per axis, physics simulates (Jolt's
+/// single-precision limit, `re_physics::WORLD_LIMIT`), in metres.
+const PHYSICS_REACH: f32 = 5000.0;
+
+/// How far from the world origin, per axis, f32 scene positions stay exact
+/// to about 2 mm (`RE4309`), in metres.
+const PRECISION_LIMIT: f32 = 16_000.0;
 
 /// A point the world streams around, at one tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,8 +89,18 @@ pub struct StepReport {
     pub memory_bytes: u64,
     /// Cells requested and not yet applied.
     pub pending: usize,
+    /// Generation jobs in flight after this tick.
+    pub in_flight: usize,
+    /// Results the tick waited for ([`Lateness::Wait`]); zero is the goal.
+    pub waits: usize,
+    /// Cells applied after their tick ([`Lateness::Late`]).
+    pub late: usize,
     /// Problems found at this tick (each reported once per subject).
     pub diagnostics: Vec<Diagnostic>,
+    /// Wall time spent applying unloads and loads (including any waits).
+    pub apply_time: core::time::Duration,
+    /// The simulation origin after this tick ([`Streamer::origin`]).
+    pub origin: Vec3,
 }
 
 /// The cells loaded and unloaded at the last tick, for scripts
@@ -95,23 +116,79 @@ pub struct StreamEvents {
     pub loaded: Vec<StreamCell>,
 }
 
+/// What a job hands back: for each source, its id, the inputs it ran with
+/// and the raw result.
+type JobOutput = Vec<(String, blake3::Hash, RawCell)>;
+
+/// Where a job leaves its result, and how the main thread waits for it.
+type Slot = Arc<(Mutex<Option<JobOutput>>, Condvar)>;
+
+/// A cell being generated on the pool.
+struct InFlight {
+    cancel: Arc<AtomicBool>,
+    slot: Slot,
+    /// The covering sources and their inputs it was issued with.
+    inputs: Vec<(String, blake3::Hash)>,
+}
+
+impl std::fmt::Debug for InFlight {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InFlight").finish_non_exhaustive()
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        // A job nobody will read stops at its next level of nodes.
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// How the manager treats a result that is not ready at its apply tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lateness {
+    /// Wait for it and count the wait ([`StepReport::waits`]): `real
+    /// verify`, the D2 harness and replays, where the loaded set must not
+    /// depend on the machine.
+    #[default]
+    Wait,
+    /// Apply it when it arrives (`RE4305`, once per cell): play, where no
+    /// frame waits.
+    Late,
+}
+
 /// The world-streaming state of one world (ADR-0042): the loaded cells, the
-/// pending requests and their apply ticks, and the accounting. A world
-/// resource; [`step`] advances it once per fixed tick.
-#[derive(Resource, Clone, Debug)]
+/// pending requests and their apply ticks, the generation jobs in flight,
+/// and the accounting. A world resource; [`step`] advances it once per
+/// fixed tick.
+#[derive(Resource, Debug)]
 pub struct Streamer {
     config: StreamConfig,
     loaded: BTreeMap<String, Loaded>,
     /// Requested cells and the tick they apply at.
     pending: BTreeMap<String, u64>,
-    /// Generated content waiting for its turn in the apply budget.
+    /// Generated content waiting for its apply tick or its turn in the budget.
     ready: BTreeMap<String, Vec<SourceOutput>>,
+    /// Cells being generated on the pool.
+    jobs: BTreeMap<String, InFlight>,
+    /// The pool jobs run on (the global pool when `None`).
+    pool: Option<Arc<TaskPool>>,
+    lateness: Lateness,
     /// The load radius after memory pressure (starts at `radius`).
     radius: f32,
     /// Subjects already reported, by code.
     reported: BTreeSet<(String, String)>,
     /// Cells loaded by hand (`stream.load`), kept until released.
     pinned: BTreeSet<String>,
+    /// The sources as last prepared.
+    described: source::DescribeCache,
+    /// True while the terrain view is kept up to date.
+    view: bool,
+    terrain: super::terrain::TerrainState,
+    /// Terrain collision chunks (simulation state).
+    collision: super::collision::CollisionState,
+    /// The floating origin (simulation state).
+    origin: Vec3,
 }
 
 impl Streamer {
@@ -124,9 +201,61 @@ impl Streamer {
             loaded: BTreeMap::new(),
             pending: BTreeMap::new(),
             ready: BTreeMap::new(),
+            jobs: BTreeMap::new(),
+            pool: None,
+            lateness: Lateness::default(),
             reported: BTreeSet::new(),
             pinned: BTreeSet::new(),
+            described: source::DescribeCache::new(),
+            view: false,
+            terrain: Default::default(),
+            collision: Default::default(),
+            origin: Vec3::ZERO,
         })
+    }
+
+    /// Runs generation jobs on `pool` instead of the global pool.
+    #[must_use]
+    pub fn with_pool(mut self, pool: Arc<TaskPool>) -> Self {
+        self.pool = Some(pool);
+        self
+    }
+
+    /// Sets how a result that is late for its apply tick is treated.
+    pub fn set_lateness(&mut self, lateness: Lateness) {
+        self.lateness = lateness;
+    }
+
+    /// How a result that is late for its apply tick is treated.
+    pub fn lateness(&self) -> Lateness {
+        self.lateness
+    }
+
+    /// Keeps the [`TerrainView`](super::TerrainView) of the world's terrain
+    /// sources up to date while `on` (off by default: only something that
+    /// draws needs it). The view is not simulation state.
+    pub fn set_view(&mut self, on: bool) {
+        self.view = on;
+    }
+
+    /// True while the terrain view is kept up to date.
+    pub fn view(&self) -> bool {
+        self.view
+    }
+
+    fn pool(&self) -> &TaskPool {
+        self.pool.as_deref().unwrap_or_else(|| TaskPool::global())
+    }
+
+    /// Generation jobs in flight.
+    pub fn in_flight(&self) -> usize {
+        self.jobs.len() + self.terrain.in_flight() + self.collision.in_flight()
+    }
+
+    /// Terrain chunks the view has selected but not drawn yet, after the
+    /// last step (zero with the view off).
+    pub fn view_missing(&self) -> usize {
+        self.terrain.missing()
     }
 
     /// The settings.
@@ -137,7 +266,11 @@ impl Streamer {
     /// True when nothing is loaded, requested or pinned: a world without
     /// streamed sources can skip [`step`] while this holds.
     pub fn is_idle(&self) -> bool {
-        self.loaded.is_empty() && self.pending.is_empty() && self.pinned.is_empty()
+        self.loaded.is_empty()
+            && self.pending.is_empty()
+            && self.pinned.is_empty()
+            && self.collision.len() == 0
+            && self.collision.pending() == 0
     }
 
     /// The loaded cells, in key order.
@@ -157,7 +290,56 @@ impl Streamer {
 
     /// Accounted streamed bytes.
     pub fn memory_bytes(&self) -> u64 {
-        self.loaded.values().map(|l| l.bytes).sum()
+        self.loaded.values().map(|l| l.bytes).sum::<u64>() + self.collision.bytes()
+    }
+
+    /// The floating origin (ADR-0042): a point of the `origin_grid` that
+    /// follows the focuses, where physics should put its simulation origin
+    /// before the tick's physics commands. It depends only on the focuses'
+    /// history, so a replay moves it at the same ticks when the focuses move
+    /// in fixed steps. A focus moved once per frame (with no `StreamFocus`,
+    /// the active camera, often moved by `PreRender` scripts) can move it at
+    /// a tick that depends on the frame rate, and with it physics' rounding.
+    pub fn origin(&self) -> Vec3 {
+        self.origin
+    }
+
+    /// Moves the origin when a focus is more than `origin_shift` from it on
+    /// X or Z, to the grid point nearest the focuses' mean; reports `RE4308`
+    /// for focuses then beyond physics' reach.
+    fn follow(&mut self, focuses: &[(String, Focus)], out: &mut Vec<Diagnostic>) {
+        if focuses.is_empty() {
+            return;
+        }
+        let at = Vec2::new(self.origin.x, self.origin.z);
+        let shift = self.config.origin_shift;
+        let off = |f: &Focus| (f.position - at).abs().max_element();
+        if focuses.iter().any(|(_, f)| off(f) > shift) {
+            let mean = focuses.iter().map(|(_, f)| f.position).sum::<Vec2>() / focuses.len() as f32;
+            let grid = self.config.origin_grid;
+            let o = (mean / grid).round() * grid;
+            self.origin = Vec3::new(o.x, 0.0, o.y);
+        }
+        let at = Vec2::new(self.origin.x, self.origin.z);
+        for (id, f) in focuses {
+            let d = (f.position - at).abs().max_element();
+            if d > PHYSICS_REACH {
+                let o = self.origin;
+                let diag = Diagnostic::warning(
+                    codes::ORIGIN_RANGE,
+                    format!(
+                        "focus `{id}` is {:.1} km from the origin [{}, {}, {}]; physics range is {} km",
+                        d / 1000.0,
+                        o.x,
+                        o.y,
+                        o.z,
+                        PHYSICS_REACH / 1000.0
+                    ),
+                )
+                .with_hint("keep the focuses closer together, or remove StreamFocus from the far one");
+                self.report_once(out, &format!("origin {id}"), diag);
+            }
+        }
     }
 
     /// The current load radius (smaller than `radius` under memory pressure).
@@ -168,16 +350,36 @@ impl Streamer {
     /// This manager for `to`, a fork of `from` ([`World::fork`]): the same
     /// state, with the source entities it holds content of found again in
     /// `to` by id (a fork gives every entity a new handle).
+    ///
+    /// Jobs in flight are not shared: the fork generates its pending cells
+    /// again, with the same results. It waits for late results
+    /// ([`Lateness::Wait`]) until told otherwise.
     pub fn forked(&self, from: &World, to: &World) -> Streamer {
-        let mut out = self.clone();
-        for l in out.loaded.values_mut() {
+        let mut loaded = self.loaded.clone();
+        for l in loaded.values_mut() {
             l.sources = l
                 .sources
                 .iter()
                 .filter_map(|e| to.entity(from.id_of(*e)?).ok())
                 .collect();
         }
-        out
+        Streamer {
+            config: self.config.clone(),
+            loaded,
+            pending: self.pending.clone(),
+            ready: self.ready.clone(),
+            jobs: BTreeMap::new(),
+            pool: self.pool.clone(),
+            lateness: Lateness::Wait,
+            radius: self.radius,
+            reported: self.reported.clone(),
+            pinned: self.pinned.clone(),
+            described: source::DescribeCache::new(),
+            view: self.view,
+            terrain: Default::default(),
+            collision: self.collision.clone(),
+            origin: self.origin,
+        }
     }
 
     /// Keeps cell `key` wanted whatever the focuses (the editor and tools'
@@ -228,6 +430,11 @@ impl Streamer {
 /// The focus points: entities with [`StreamFocus`], in id order; with none,
 /// the active camera.
 pub fn focuses(world: &mut World) -> Vec<Focus> {
+    named_focuses(world).into_iter().map(|(_, f)| f).collect()
+}
+
+/// [`focuses`] with their entity ids.
+fn named_focuses(world: &mut World) -> Vec<(String, Focus)> {
     let mut out: Vec<(String, Focus)> = Vec::new();
     let mut q = world.ecs.query::<(Entity, &StreamFocus)>();
     for (e, _) in q.iter(&world.ecs) {
@@ -248,7 +455,7 @@ pub fn focuses(world: &mut World) -> Vec<Focus> {
         out.truncate(1);
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
-    out.into_iter().map(|(_, f)| f).collect()
+    out
 }
 
 /// The world transform of `e`, from the `Transform`s of it and its parents
@@ -450,9 +657,19 @@ impl Streamer {
 
         // The sources, checked.
         let mut sources: Vec<Source> = Vec::new();
-        for (id, e) in source_entities(world) {
-            match source::describe(world, e, &self.config) {
-                Ok(s) => sources.push(s),
+        let entities = source_entities(world);
+        self.described
+            .retain(|e, _| entities.iter().any(|(_, s)| s == e));
+        for (id, e) in entities {
+            match source::describe(world, e, &self.config, &mut self.described) {
+                Ok(s) => {
+                    // Streamed cells skip the generator, which reports these.
+                    for d in &s.outdated {
+                        let subject = format!("{id}: {}", d.message);
+                        self.report_once(&mut report.diagnostics, &subject, d.clone());
+                    }
+                    sources.push(s);
+                }
                 Err(d) => self.report_once(&mut report.diagnostics, &id, d),
             }
         }
@@ -466,8 +683,12 @@ impl Streamer {
                 || authored_cells.contains(&cell_key(c[0], c[1]))
         };
 
+        // 0. The floating origin follows the focuses.
+        let named = named_focuses(world);
+        self.follow(&named, &mut report.diagnostics);
+        let focuses: Vec<Focus> = named.into_iter().map(|(_, f)| f).collect();
+
         // 1. Requests.
-        let focuses = focuses(world);
         let desired = self.desired(&focuses, &has_content);
         let keep = self.near(
             &focuses,
@@ -498,6 +719,25 @@ impl Streamer {
             .retain(|k, _| desired.contains(k) || stale.contains(k));
         self.ready
             .retain(|k, _| desired.contains(k) || stale.contains(k));
+        for k in &desired {
+            if let Some(c) = parse_cell_key(k) {
+                let far = ((Vec2::new(c[0] as f32, c[1] as f32) + 0.5) * size)
+                    .abs()
+                    .max_element();
+                if far > PRECISION_LIMIT && !self.loaded.contains_key(k) {
+                    let d = Diagnostic::warning(
+                        codes::PRECISION_LIMIT,
+                        format!(
+                            "cell {k} lies {:.1} km from the world origin, beyond the {} km precision limit",
+                            far / 1000.0,
+                            PRECISION_LIMIT / 1000.0
+                        ),
+                    )
+                    .with_hint("keep the world within 16 km of its origin, e.g. with Streamed.bounds");
+                    self.report_once(&mut report.diagnostics, k, d);
+                }
+            }
+        }
         for k in desired.iter().chain(&stale) {
             if (!self.loaded.contains_key(k) || stale.contains(k)) && !self.pending.contains_key(k)
             {
@@ -511,6 +751,12 @@ impl Streamer {
             .filter(|k| !keep.contains(*k) && !self.pinned.contains(*k) && !focuses.is_empty())
             .cloned()
             .collect();
+
+        // Jobs for cells no longer requested stop; finished ones are taken in,
+        // and results whose inputs changed meanwhile are dropped.
+        let pending = &self.pending;
+        self.jobs.retain(|k, _| pending.contains_key(k));
+        self.collect(world, &sources);
 
         // Authored roots outside every loaded or pending cell are stashed.
         for (id, e, cell) in &roots {
@@ -578,6 +824,7 @@ impl Streamer {
             ..Default::default()
         };
         let mut done = 0usize;
+        let apply_start = Instant::now();
         for k in unloads {
             if done > 0 && done + self.loaded[&k].entities > limit {
                 report.deferred += 1;
@@ -599,23 +846,26 @@ impl Streamer {
             let Some(c) = parse_cell_key(&k) else {
                 continue;
             };
-            let covering: Vec<&Source> = sources.iter().filter(|s| s.covers(c, size)).collect();
-            // Content generated earlier is used only if its inputs still hold.
-            let fresh = self.ready.get(&k).is_some_and(|outs| {
-                outs.len() == covering.len()
-                    && outs
-                        .iter()
-                        .zip(&covering)
-                        .all(|((id, inputs, _), s)| *id == s.id && *inputs == s.inputs)
-            });
-            if !fresh {
-                let outputs: Vec<_> = covering
-                    .iter()
-                    .map(|s| (s.id.clone(), s.inputs, source::generate(world, s, c)))
-                    .collect();
-                self.ready.insert(k.clone(), outputs);
+            if !self.ready.contains_key(&k) {
+                match self.lateness {
+                    Lateness::Late => {
+                        report.deferred += 1;
+                        continue;
+                    }
+                    Lateness::Wait => {
+                        // Not issued yet (all workers busy), or still running.
+                        if !self.jobs.contains_key(&k) {
+                            self.issue(world, &sources, &k);
+                        }
+                        report.waits += 1;
+                        self.wait_for(world, &sources, &k);
+                    }
+                }
             }
-            let count: usize = self.ready[&k]
+            let Some(outputs) = self.ready.get(&k) else {
+                continue;
+            };
+            let count: usize = outputs
                 .iter()
                 .map(|(_, _, r)| r.as_ref().map_or(0, |o| o.fragment.len()))
                 .sum::<usize>()
@@ -630,15 +880,208 @@ impl Streamer {
                 continue;
             }
             let outputs = self.ready.remove(&k).unwrap_or_default();
-            self.pending.remove(&k);
+            let due_at = self.pending.remove(&k).unwrap_or(tick);
+            if tick > due_at + 1 && self.lateness == Lateness::Late {
+                report.late += 1;
+                let d = Diagnostic::warning(
+                    codes::LATE_CELL,
+                    format!(
+                        "cell {k} was applied {} ticks late (generation took longer than delay_ticks)",
+                        tick - due_at
+                    ),
+                )
+                .with_hint("raise [stream] delay_ticks or workers, or make the cell cheaper");
+                self.report_once(&mut report.diagnostics, &k, d);
+            }
             done += self.load(world, &sources, &k, c, outputs, &mut report, &mut events);
+        }
+        // Terrain collision chunks near the focuses.
+        {
+            let at: Vec<Vec2> = focuses.iter().map(|f| f.position).collect();
+            let pool = self.pool.clone();
+            let pool = pool.as_deref().unwrap_or_else(|| TaskPool::global());
+            self.collision.step(
+                world,
+                &sources,
+                &at,
+                tick,
+                &self.config,
+                self.lateness,
+                pool,
+                &mut report,
+            );
+        }
+        report.apply_time = apply_start.elapsed();
+        // Start jobs for the next requests, nearest apply tick first.
+        self.issue_next(world, &sources, &focuses);
+        // Then terrain chunks, with the workers cells leave.
+        if self.view {
+            let cap = self.config.jobs(self.pool().threads());
+            let free = cap.saturating_sub(self.jobs.len() + self.terrain.in_flight());
+            let at: Vec<Vec3> = focuses
+                .iter()
+                .map(|f| Vec3::new(f.position.x, 0.0, f.position.y))
+                .collect();
+            let pool = self.pool.clone();
+            let pool = pool.as_deref().unwrap_or_else(|| TaskPool::global());
+            self.terrain
+                .step(world, &sources, &at, self.config.terrain_view, pool, free);
         }
         report.entities = done;
         report.resident = self.loaded.len();
         report.memory_bytes = self.memory_bytes();
+        report.origin = self.origin;
         report.pending = self.pending.len();
+        report.in_flight = self.jobs.len() + self.collision.in_flight();
         world.ecs.insert_resource(events);
         report
+    }
+
+    /// The inputs each source covering cell `c` has now.
+    fn covering(sources: &[Source], c: [i32; 2], size: f32) -> Vec<(String, blake3::Hash)> {
+        sources
+            .iter()
+            .filter(|s| s.covers(c, size))
+            .map(|s| (s.id.clone(), s.inputs))
+            .collect()
+    }
+
+    /// Starts generating cell `k` on the pool.
+    fn issue(&mut self, world: &World, sources: &[Source], k: &str) {
+        let Some(c) = parse_cell_key(k) else { return };
+        let size = self.config.cell_size;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let inputs = Self::covering(sources, c, size);
+        let mut work = Vec::new();
+        for s in sources.iter().filter(|s| s.covers(c, size)) {
+            work.push((
+                s.id.clone(),
+                s.inputs,
+                CellJob::new(world, s, c, Some(cancel.clone())),
+            ));
+        }
+        let slot: Slot = Arc::new((Mutex::new(None), Condvar::new()));
+        let out = slot.clone();
+        self.pool().spawn(move || {
+            let result: JobOutput = work
+                .into_iter()
+                .map(|(id, inputs, job)| {
+                    // A panicking node fails its cell instead of the pool
+                    // thread, and the result still arrives for `wait_for`.
+                    let raw = match job {
+                        Ok(job) => {
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run()))
+                                .unwrap_or_else(|p| {
+                                    let why = p
+                                        .downcast_ref::<&str>()
+                                        .map(|s| (*s).to_string())
+                                        .or_else(|| p.downcast_ref::<String>().cloned())
+                                        .unwrap_or_default();
+                                    Err(Diagnostic::error(
+                                        codes::CELL_FAILED,
+                                        format!("generation panicked: {why}"),
+                                    ))
+                                })
+                        }
+                        Err(d) => Err(d),
+                    };
+                    (id, inputs, raw)
+                })
+                .collect();
+            let (lock, ready) = &*out;
+            *lock.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+            ready.notify_all();
+        });
+        self.jobs.insert(
+            k.to_string(),
+            InFlight {
+                cancel,
+                slot,
+                inputs,
+            },
+        );
+    }
+
+    /// Starts jobs for pending cells with no result and no job, up to the
+    /// workers allowed: earliest apply tick first, then nearest, then key.
+    fn issue_next(&mut self, world: &World, sources: &[Source], focuses: &[Focus]) {
+        let cap = self.config.jobs(self.pool().threads());
+        if self.jobs.len() >= cap {
+            return;
+        }
+        let mut next: Vec<(u64, f32, String)> = self
+            .pending
+            .iter()
+            .filter(|(k, _)| !self.ready.contains_key(*k) && !self.jobs.contains_key(*k))
+            .map(|(k, t)| (*t, self.nearest(focuses, k), k.clone()))
+            .collect();
+        next.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
+        for (_, _, k) in next.into_iter().take(cap - self.jobs.len()) {
+            self.issue(world, sources, &k);
+        }
+    }
+
+    /// Takes in finished jobs; drops results whose inputs no longer hold.
+    fn collect(&mut self, world: &World, sources: &[Source]) {
+        // A job whose sources or inputs changed since it was issued is
+        // stopped, whether or not it has finished, so what loads never
+        // depends on how fast generation ran.
+        let size = self.config.cell_size;
+        self.jobs.retain(|k, j| {
+            parse_cell_key(k).is_some_and(|c| Self::covering(sources, c, size) == j.inputs)
+        });
+        let done: Vec<String> = self
+            .jobs
+            .iter()
+            .filter(|(_, j)| j.slot.0.lock().unwrap_or_else(|e| e.into_inner()).is_some())
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in done {
+            self.take(world, sources, &k);
+        }
+        self.ready.retain(|k, outs| {
+            let now = parse_cell_key(k).map(|c| Self::covering(sources, c, size));
+            now.is_some_and(|now| {
+                now.len() == outs.len()
+                    && now
+                        .iter()
+                        .zip(outs.iter())
+                        .all(|((id, inputs), (oid, oinputs, _))| id == oid && inputs == oinputs)
+            })
+        });
+    }
+
+    /// Moves a finished job's result into `ready`, finishing it on this
+    /// thread (prefabs, keys under the cell).
+    fn take(&mut self, world: &World, sources: &[Source], k: &str) {
+        let Some(job) = self.jobs.remove(k) else {
+            return;
+        };
+        let raw = job.slot.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let Some(raw) = raw else { return };
+        let Some(c) = parse_cell_key(k) else { return };
+        let mut outputs = Vec::new();
+        for (id, inputs, r) in raw {
+            let Some(s) = sources.iter().find(|s| s.id == id) else {
+                continue;
+            };
+            outputs.push((id, inputs, source::finish(world, s, c, r)));
+        }
+        self.ready.insert(k.to_string(), outputs);
+    }
+
+    /// Blocks until cell `k`'s job has finished, then takes its result.
+    fn wait_for(&mut self, world: &World, sources: &[Source], k: &str) {
+        let Some(job) = self.jobs.get(k) else { return };
+        let slot = job.slot.clone();
+        {
+            let (lock, cv) = &*slot;
+            let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+            while guard.is_none() {
+                guard = cv.wait(guard).unwrap_or_else(|e| e.into_inner());
+            }
+        }
+        self.take(world, sources, k);
     }
 
     fn stash_root(
@@ -770,15 +1213,26 @@ impl Streamer {
                 }
             }
             for n in out.fragment.iter().filter(|_| applied.is_ok()) {
-                for (cname, fields) in &n.components {
-                    if cname == "Transform" {
-                        for (f, v) in fields {
-                            if let (true, re_reflect::Value::Vec3(p)) = (f == "translation", v) {
-                                ymin = ymin.min(p.y);
-                                ymax = ymax.max(p.y);
-                            }
-                        }
+                let (y, mesh) = translation_and_mesh(n);
+                // An entity drawing a derived mesh (a corner-local terrain
+                // cell) spans its mesh's heights, not its origin's.
+                let range = mesh
+                    .and_then(|m| out.assets.iter().find(|(name, _)| name == m))
+                    .and_then(|(_, a)| match a {
+                        DerivedAsset::Mesh(m) => mesh_height_range(m),
+                        DerivedAsset::Heightfield(_) => None,
+                    });
+                match (range, y) {
+                    (Some((lo, hi)), y) => {
+                        let y = y.unwrap_or(0.0);
+                        ymin = ymin.min(y + lo);
+                        ymax = ymax.max(y + hi);
                     }
+                    (None, Some(y)) => {
+                        ymin = ymin.min(y);
+                        ymax = ymax.max(y);
+                    }
+                    (None, None) => {}
                 }
             }
             match applied {
@@ -904,4 +1358,27 @@ fn release(world: &World, assets: &[String]) {
             store.release(a);
         }
     }
+}
+
+/// The translation's height and the derived mesh asset of a generated node.
+fn translation_and_mesh(n: &re_scene::GenNode) -> (Option<f32>, Option<&str>) {
+    let (mut y, mut mesh) = (None, None);
+    for (cname, fields) in &n.components {
+        for (f, v) in fields {
+            match (cname.as_str(), f.as_str(), v) {
+                ("Transform", "translation", re_reflect::Value::Vec3(p)) => y = Some(p.y),
+                ("MeshRef", "asset", re_reflect::Value::Str(a)) => mesh = Some(a.as_str()),
+                _ => {}
+            }
+        }
+    }
+    (y, mesh)
+}
+
+/// The lowest and highest vertex of `mesh`, in its own space.
+fn mesh_height_range(mesh: &re_types::mesh::MeshData) -> Option<(f32, f32)> {
+    mesh.vertices.iter().fold(None, |r, v| {
+        let y = v.pos[1];
+        Some(r.map_or((y, y), |(lo, hi): (f32, f32)| (lo.min(y), hi.max(y))))
+    })
 }

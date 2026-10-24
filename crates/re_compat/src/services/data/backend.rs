@@ -1,11 +1,14 @@
-//! Where the data services keep their files (ADR-0048): a directory
-//! (`.real/data/` in `real run`) or memory (a session seeded from
-//! `data/seed/`). A browser build adds its own backend behind
-//! [`DataBackend`] (ADR-0049).
+//! Where the data services keep their files (ADR-0048): the run's saved
+//! data folder ([`WritableBackend`] over `ProjectFiles::writable(Data)`,
+//! `.real/data/` in `real run`), a directory, or memory (a session seeded
+//! from `data/seed/`). The saved data folder is on disk, in memory or in the
+//! browser, as the host made it (ADR-0049).
 
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use re_core::files::WritableDir;
 
 /// The files of the data services: paths are relative, `/`-separated, and
 /// made of [`encode`]d components.
@@ -165,6 +168,75 @@ fn list_dir(dir: &Path) -> io::Result<Vec<String>> {
     Ok(out)
 }
 
+/// Files in a writable folder of the run (`ProjectFiles::writable`), which
+/// writes each file atomically.
+pub struct WritableBackend {
+    dir: WritableDir,
+}
+
+impl WritableBackend {
+    /// The files in `dir`.
+    pub fn new(dir: WritableDir) -> WritableBackend {
+        WritableBackend { dir }
+    }
+}
+
+impl DataBackend for WritableBackend {
+    fn read(&self, path: &str) -> io::Result<Option<Vec<u8>>> {
+        self.dir.read(path)
+    }
+
+    fn write(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
+        self.dir.write(path, bytes)
+    }
+
+    fn set_aside(&mut self, path: &str) -> io::Result<()> {
+        // A folder has no rename: copy to the next free `.bad.N`, then remove.
+        let Some(bytes) = self.dir.read(path)? else {
+            return Ok(());
+        };
+        let mut n = 0;
+        loop {
+            let bad = if n == 0 {
+                format!("{path}.bad")
+            } else {
+                format!("{path}.bad.{n}")
+            };
+            if self.dir.read(&bad)?.is_none() {
+                self.dir.write(&bad, &bytes)?;
+                return self.dir.remove(path);
+            }
+            n += 1;
+        }
+    }
+
+    fn list(&self, dir: &str) -> io::Result<Vec<String>> {
+        let dir = dir.trim_end_matches('/');
+        let prefix = if dir.is_empty() {
+            String::new()
+        } else {
+            format!("{dir}/")
+        };
+        let mut out: Vec<String> = self
+            .dir
+            .list(dir)?
+            .iter()
+            .filter_map(|p| p.strip_prefix(&prefix))
+            .map(|rest| rest.split('/').next().unwrap_or(rest).to_string())
+            .filter(|name| !name.ends_with(".tmp") && !name.contains(".bad"))
+            .collect();
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+
+    fn persists(&self) -> bool {
+        // Only a folder on disk is known to outlast the run. A browser's data
+        // folder has no path, yet its host mirrors each write to IndexedDB.
+        self.dir.path().is_some()
+    }
+}
+
 /// Files in memory, for a session that keeps nothing.
 #[derive(Default)]
 pub struct MemoryBackend {
@@ -316,6 +388,43 @@ mod tests {
                 .exists()
         );
         assert!(b.list("datastore/_a").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_writable_folder_lists_children_and_sets_bad_files_aside() {
+        let tmp = tempfile::tempdir().unwrap();
+        for dir in [WritableDir::memory(), WritableDir::dir(tmp.path())] {
+            let mut b = WritableBackend::new(dir.sub("data"));
+            assert_eq!(b.read("datastore/_a/_global.json").unwrap(), None);
+            assert!(b.list("datastore").unwrap().is_empty());
+            b.write("datastore/_a/_global.json", b"{}").unwrap();
+            b.write("datastore/_a/_global.json", b"[1]").unwrap();
+            b.write("datastore/_b/_x/_k.json", b"2").unwrap();
+            assert_eq!(
+                b.read("datastore/_a/_global.json").unwrap().as_deref(),
+                Some(&b"[1]"[..])
+            );
+            assert_eq!(b.list("").unwrap(), vec!["datastore".to_string()]);
+            assert_eq!(b.list("datastore").unwrap(), vec!["_a", "_b"]);
+            b.set_aside("datastore/_a/_global.json").unwrap();
+            b.write("datastore/_a/_global.json", b"bad again").unwrap();
+            b.set_aside("datastore/_a/_global.json").unwrap();
+            assert_eq!(b.read("datastore/_a/_global.json").unwrap(), None);
+            assert!(b.list("datastore/_a").unwrap().is_empty());
+            assert_eq!(
+                dir.read("data/datastore/_a/_global.json.bad")
+                    .unwrap()
+                    .as_deref(),
+                Some(&b"[1]"[..])
+            );
+            assert_eq!(
+                dir.read("data/datastore/_a/_global.json.bad.1")
+                    .unwrap()
+                    .as_deref(),
+                Some(&b"bad again"[..])
+            );
+            assert_eq!(b.persists(), dir.path().is_some());
+        }
     }
 
     #[test]

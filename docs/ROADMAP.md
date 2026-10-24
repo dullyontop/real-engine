@@ -94,7 +94,7 @@ AI support stays optional and provider-neutral (ARCHITECTURE §6). It grows with
 |---|---|---|
 | M1 | The command registry as MCP tools (25, including `scene.apply` for atomic multi-operation edits), dry runs, `real verify --json`, `real explain`, `engine.d.luau`, checkpoints, the policy file, generated `AGENTS.md` and per-client configs | `re_command`, `re_agent`, `re_mcp` |
 | M2 | Luau-defined tools (`tools` context, capped at `edit`); MCP resources for the docs, the explain pages and `engine.d.luau` (for clients that support resources; everything stays reachable through tools); a verify-diff loop that reports which verify results a change altered; structured output schemas on every tool | the registry, ADR-0026 |
-| M3+ | Natural-language starting points for beginners: project templates and generator recipes that an agent fills in through ordinary commands; an evaluation harness that runs scripted agent tasks against sample projects and scores them with `real verify`; the HTTP MCP transport | the registry, `real verify`, templates |
+| M3+ | Natural-language starting points for beginners: project templates and generator recipes that an agent fills in through ordinary commands; an evaluation harness that runs scripted agent tasks against sample projects and scores them with `real verify`; the HTTP MCP transport. All three are done in M3 (WP26: templates and recipes #104, `real agent eval` #124, `real mcp --http` #92) | the registry, `real verify`, templates |
 
 The engine never calls a model itself. Every capability an agent uses is also usable by a human through the CLI or the editor.
 

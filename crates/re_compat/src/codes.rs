@@ -101,6 +101,16 @@ pub const DATA_FILE: Code = Code::new("RE9402");
 /// quota, a value or structure too large, or a bad argument.
 pub const MEMORY_REQUEST: Code = Code::new("RE9403");
 
+/// A `SurfaceGui` or `ViewportFrame` cannot be drawn as asked: a surface
+/// with no part to sit on, or a canvas larger than a texture can hold, drawn
+/// scaled down (ADR-0048 §2).
+pub const SURFACE: Code = Code::new("RE9410");
+
 /// A compat script changed on disk during play but does not compile; the
 /// running version stays until a save that compiles (ADR-0048 §3).
 pub const RELOAD_COMPILE: Code = Code::new("RE9420");
+
+/// A skinned `MeshPart`'s `Bone`s and its model's joints do not match: a
+/// bone names no joint of the skin, or a joint has no bone, so that joint
+/// stays in its rest pose (ADR-0048 §5). Once per part.
+pub const BONE_MISMATCH: Code = Code::new("RE9440");

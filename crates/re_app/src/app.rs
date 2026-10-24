@@ -38,6 +38,7 @@ use crate::sync::anim::{self, AnimSync};
 use crate::sync::anim_skin::{self, SkinSync};
 use crate::sync::audio::{self, AudioSync};
 use crate::sync::physics::{self, PhysicsSync, ShapeLibrary};
+use crate::sync::ragdoll::{self, RagdollSync};
 use crate::sync::render::{self, RenderAssets, RenderInputs};
 use crate::verify::VerifyStage;
 
@@ -60,7 +61,7 @@ pub struct ScreenshotRequest {
 pub struct RunReport {
     /// Frames run.
     pub frames: u64,
-    /// The world's [`state_hash`](re_scene::World::state_hash) after the last frame, as hex.
+    /// The game's [`state_hash`](App::state_hash) after the last frame, as hex.
     pub state_hash: String,
     /// Everything reported during the run (subsystem errors, failed replay
     /// commands, script errors).
@@ -103,6 +104,10 @@ pub struct App {
     clock: FixedClock,
     /// Fixed steps taken since the scene was loaded: world streaming's tick.
     stream_tick: u64,
+    /// How world streaming treats a cell generated too late for its tick.
+    stream_lateness: re_proc::stream::Lateness,
+    /// The floating origin physics last refused, reported once.
+    origin_refused: Option<glam::Vec3>,
     frame: u64,
     alpha: f32,
 
@@ -133,6 +138,7 @@ pub struct App {
 
     anim_sync: AnimSync,
     skin_sync: SkinSync,
+    ragdoll_sync: RagdollSync,
 
     /// The `derived:` heightfields colliders used at the last step: when they
     /// change during play, characters are put back on the new ground.
@@ -154,7 +160,7 @@ pub struct App {
     compat_config: Option<re_compat::CompatConfig>,
     compat: Option<crate::compat::CompatPlay>,
     compat_failed: bool,
-    /// Whether the compat data services keep their data in `.real/data/`
+    /// Whether the compat data services keep their data in the run's data folder
     /// ([`App::persist_data`]).
     persist_data: bool,
     /// A compat game's 3D view and UI on the renderer.
@@ -293,6 +299,8 @@ impl App {
             commands,
             clock,
             stream_tick: 0,
+            stream_lateness: re_proc::stream::Lateness::Wait,
+            origin_refused: None,
             frame: 0,
             alpha: 0.0,
             action_map,
@@ -316,6 +324,7 @@ impl App {
             changed_scripts: Vec::new(),
             anim_sync: AnimSync::new(),
             skin_sync: SkinSync::new(),
+            ragdoll_sync: RagdollSync::new(),
             ground: None,
             graph_inputs,
             restarts: 0,
@@ -400,6 +409,9 @@ impl App {
             copy.stream_tick = self.stream_tick;
         }
         copy.diagnostics.extend(problems);
+        if !restarted && let Err(d) = copy.physics.set_origin(self.physics.origin()) {
+            copy.diagnostics.push(d);
+        }
         load_collider_sources(&mut copy.world, &mut copy.shapes, &mut self.media);
         physics::push(
             &mut copy.world,
@@ -551,6 +563,37 @@ impl App {
         &self.physics
     }
 
+    /// A hash of the game state, for determinism checks: the world's
+    /// [`state_hash`](re_scene::World::state_hash), and with any ragdolls also their
+    /// physics state, which the scene does not hold (the skin shows it), and with
+    /// any bound animation graph (playing or paused) also its parameters,
+    /// states and times (ADR-0039). A game without ragdolls or graphs hashes as
+    /// its world.
+    pub fn state_hash(&self) -> blake3::Hash {
+        let world = self.world.state_hash();
+        let ragdolls = self.physics.ragdoll_state_bytes();
+        let base = if ragdolls.is_empty() {
+            world
+        } else {
+            let mut h = blake3::Hasher::new();
+            h.update(b"real-engine/state-hash+ragdolls/1");
+            h.update(world.as_bytes());
+            h.update(&ragdolls);
+            h.finalize()
+        };
+        if !self.skin_sync.has_graphs() {
+            return base;
+        }
+        let mut bytes = Vec::new();
+        self.skin_sync.write_state(&mut bytes);
+        let mut h = blake3::Hasher::new();
+        h.update(b"real-engine/state-hash/anim/1");
+        h.update(base.as_bytes());
+        h.update(&(bytes.len() as u64).to_le_bytes());
+        h.update(&bytes);
+        h.finalize()
+    }
+
     /// Which entity has which body or character.
     pub fn physics_sync(&self) -> &PhysicsSync {
         &self.physics_sync
@@ -566,7 +609,14 @@ impl App {
         &mut self.render_assets
     }
 
-    /// The render snapshot built by the last frame's Sync phase.
+    /// The render origin the [`snapshot`](Self::snapshot) is relative to:
+    /// world streaming's floating origin (ADR-0042), zero without one.
+    pub fn render_origin(&self) -> glam::Vec3 {
+        self.physics.origin()
+    }
+
+    /// The render snapshot built by the last frame's Sync phase, relative to
+    /// the [`render_origin`](Self::render_origin).
     pub fn snapshot(&self) -> &RenderSnapshot {
         &self.snapshot
     }
@@ -672,6 +722,7 @@ impl App {
             clear: self.config.render.clear,
             post: self.config.render.post,
             shadows: self.config.render.shadows,
+            origin: self.physics.origin(),
         };
         self.snapshot = render::build(&mut self.world, &inputs);
         self.hud = hud::collect(&mut self.world);
@@ -747,9 +798,23 @@ impl App {
         Ok(())
     }
 
+    /// Sets how world streaming treats a cell whose generation is not done
+    /// at its apply tick (ADR-0042). [`Lateness::Wait`] (the default) waits
+    /// for it, so `real verify`, replays and `play.run` load the same cells at
+    /// the same ticks on every machine. Only a live run, which must not stall
+    /// a frame, sets [`Lateness::Late`]: the cell applies when it is ready,
+    /// reported as `RE4305`.
+    ///
+    /// [`Lateness::Wait`]: re_proc::stream::Lateness::Wait
+    /// [`Lateness::Late`]: re_proc::stream::Lateness::Late
+    pub fn set_stream_lateness(&mut self, lateness: re_proc::stream::Lateness) {
+        self.stream_lateness = lateness;
+    }
+
     /// Makes a compat game's `DataStoreService` and `MemoryStoreService`
-    /// keep their data in the project's `.real/data/` with the wall clock, as
-    /// `real run` does (ADR-0048). Without it, each run starts from
+    /// keep their data in the run's data folder (`.real/data/` on desktop,
+    /// IndexedDB in a browser) with the wall clock, as `real run` does
+    /// (ADR-0048). Without it, each run starts from
     /// `data/seed/` on a fixed clock so it repeats. Call it before the first
     /// frame.
     pub fn persist_data(&mut self) {
@@ -769,6 +834,16 @@ impl App {
     /// Skeleton poses of the world's skinned meshes.
     pub fn skin_sync(&self) -> &SkinSync {
         &self.skin_sync
+    }
+
+    /// Skeleton poses and animation graphs, to set graph parameters.
+    pub fn skin_sync_mut(&mut self) -> &mut SkinSync {
+        &mut self.skin_sync
+    }
+
+    /// The ragdolls built for `Ragdoll` components, with their blend weights.
+    pub fn ragdoll_sync(&self) -> &RagdollSync {
+        &self.ragdoll_sync
     }
 
     /// The contact events of the last frame's physics steps.
@@ -840,6 +915,7 @@ impl App {
             bus_levels: &self.bus_levels,
             audio_graph: self.audio.graph(),
             pending: &mut self.pending,
+            skins: &mut self.skin_sync,
         }
     }
 
@@ -1001,6 +1077,7 @@ impl App {
                 clear: self.config.render.clear,
                 post: self.config.render.post,
                 shadows: self.config.render.shadows,
+                origin: self.physics.origin(),
             };
             self.snapshot = render::build(&mut self.world, &inputs);
             self.hud = hud::collect(&mut self.world);
@@ -1106,7 +1183,7 @@ impl App {
         diagnostics.retain(|d| d.severity != re_core::Severity::Note || d.is_error());
         Ok(RunReport {
             frames: self.frame - start,
-            state_hash: self.world.state_hash().to_hex().to_string(),
+            state_hash: self.state_hash().to_hex().to_string(),
             diagnostics,
             perf: self.perf_report(),
             screenshots: std::mem::take(&mut self.screenshots),
@@ -1126,6 +1203,13 @@ impl App {
             && let Some(scripts) = &self.scripts
         {
             re_script::debug::service(scripts.context(ContextKind::Game).lua());
+        }
+        if self.debugger.is_some()
+            && let Some(c) = &self.compat
+        {
+            for kind in [ContextKind::Server, ContextKind::Client] {
+                re_script::debug::service(c.vm(kind).context().lua());
+            }
         }
 
         // Input.
@@ -1217,6 +1301,7 @@ impl App {
             clear: self.config.render.clear,
             post: self.config.render.post,
             shadows: self.config.render.shadows,
+            origin: self.physics.origin(),
         };
         // A compat game shows the local player's world.
         let shown = match &mut self.compat {
@@ -1264,13 +1349,30 @@ impl App {
             self.clock.dt_secs(),
             &mut self.diagnostics,
         );
-        anim_skin::step(
+        let motions = anim_skin::step(
             &mut self.world,
             &mut self.skin_sync,
             &mut self.media,
             self.clock.dt_secs(),
             &mut self.diagnostics,
         );
+        if !motions.is_empty() {
+            let links = &self.physics_sync;
+            let moves = anim_skin::apply_root_motion(
+                &mut self.world,
+                &motions,
+                self.clock.dt_secs(),
+                &|id| links.kind(id) == Some(physics::LinkKind::Character),
+            );
+            self.physics_cmds
+                .extend(moves.into_iter().map(|(id, desired_velocity)| {
+                    PhysicsCmd::MoveCharacter {
+                        id,
+                        desired_velocity,
+                        jump: false,
+                    }
+                }));
+        }
         if self.compat.is_some() {
             // The compat clock advances here, then `PreAnimation` fires.
             self.run_scripts(Phase::PreAnimation, self.clock.dt_secs().into());
@@ -1293,6 +1395,14 @@ impl App {
             &mut self.world,
             &mut self.physics_sync,
             &self.shapes,
+            &mut self.physics_cmds,
+            &mut self.diagnostics,
+        );
+        ragdoll::push(
+            &mut self.world,
+            &self.physics,
+            &self.skin_sync,
+            &mut self.ragdoll_sync,
             &mut self.physics_cmds,
             &mut self.diagnostics,
         );
@@ -1341,6 +1451,15 @@ impl App {
             scripts.push_contacts(self.physics.events());
         }
         self.run_scripts(Phase::PostSimulation, self.clock.dt_secs().into());
+        // The animated/simulated blend (ADR-0040), after scripts saw the step.
+        ragdoll::pull(
+            &self.physics,
+            &mut self.skin_sync,
+            &mut self.ragdoll_sync,
+            self.clock.dt_secs(),
+        );
+        // Bone attachments follow the final pose, ragdolls included.
+        anim_skin::attach(&mut self.world, &mut self.skin_sync, &mut self.diagnostics);
         self.perf.add(Phase::PostSimulation, t.elapsed());
     }
 
@@ -1362,11 +1481,57 @@ impl App {
                 .next()
                 .is_some();
         if streams {
+            if let Some(mut s) = self
+                .world
+                .ecs
+                .get_resource_mut::<re_proc::stream::Streamer>()
+                && s.lateness() != self.stream_lateness
+            {
+                s.set_lateness(self.stream_lateness);
+            }
+            // The terrain view is only made for an app that draws.
+            if let Some(mut s) = self
+                .world
+                .ecs
+                .get_resource_mut::<re_proc::stream::Streamer>()
+                && s.view() != self.graphics.is_some()
+            {
+                s.set_view(self.graphics.is_some());
+            }
             let report =
                 re_proc::stream::step(&mut self.world, self.stream_tick, &self.config.stream);
             self.diagnostics.extend(report.diagnostics);
+            // A streamer that could not be made has no origin to follow.
+            if self
+                .world
+                .ecs
+                .get_resource::<re_proc::stream::Streamer>()
+                .is_some()
+            {
+                self.follow_origin(report.origin);
+            }
         }
         self.stream_tick += 1;
+    }
+
+    /// Moves physics' simulation origin to world streaming's floating origin
+    /// (ADR-0042), between steps and before the tick's physics commands, so
+    /// bodies and characters kilometres out stay within Jolt's reach. A move
+    /// physics refuses (`RE5016`: something would end up out of reach) is
+    /// reported once per origin and tried again each tick.
+    fn follow_origin(&mut self, origin: glam::Vec3) {
+        if self.physics.origin() == origin {
+            return;
+        }
+        match self.physics.set_origin(origin) {
+            Ok(()) => self.origin_refused = None,
+            Err(d) => {
+                if self.origin_refused != Some(origin) {
+                    self.origin_refused = Some(origin);
+                    self.diagnostics.push(d);
+                }
+            }
+        }
     }
 
     /// Gives characters and vehicles that appeared since the last physics push
@@ -1595,28 +1760,43 @@ impl App {
         let time = self.clock.tick() as f64 * f64::from(self.clock.dt_secs());
         let raw = hud::raw_input(size_px, pixels_per_point, time);
         let hud_lines = self.hud.clone();
-        let last_camera = self.compat_view.frame().map(|f| f.gui_camera);
-        let mut built = None;
+        if let Some(cfg) = &self.compat_config {
+            self.compat_view.surface_budget = cfg.gui.surface_redraws_per_frame as usize;
+        }
+        // Building advances effects and the camera's viewport, so it happens
+        // once a frame unless the size changes.
+        if build {
+            let mut built = None;
+            self.compat_call(ContextKind::Client, |vm, h| {
+                vm.run(h, |lua| {
+                    built = Some(re_compat::render::build(lua, &input)?);
+                    Ok(())
+                })
+            });
+            if let Some(mut frame) = built {
+                self.diagnostics.append(&mut frame.diagnostics);
+                self.compat_view.take(frame);
+            }
+        }
+        let camera = self.compat_view.frame().map(|f| f.gui_camera);
+        // The viewports need their textures before the UI pass shows them.
+        if let Some(gfx) = self.graphics.as_mut()
+            && let Err(d) = gfx.compat_images(&mut self.compat_view)
+        {
+            self.diagnostics.push(d);
+        }
+        let gui = re_compat::gui::GuiFrame {
+            viewport: input.viewport / pixels_per_point,
+            top_inset: 0.0,
+            roots,
+            camera,
+            input: re_compat::gui::GuiInput::default(),
+            images: self.compat_view.images(),
+        };
         let mut ui = Vec::new();
+        let mut textured = None;
         self.compat_call(ContextKind::Client, |vm, h| {
             vm.run(h, |lua| {
-                // Building advances effects and the camera's viewport, so it
-                // happens once a frame unless the size changes.
-                let camera = if build {
-                    let frame = re_compat::render::build(lua, &input)?;
-                    let camera = frame.gui_camera;
-                    built = Some(frame);
-                    Some(camera)
-                } else {
-                    last_camera
-                };
-                let gui = re_compat::gui::GuiFrame {
-                    viewport: input.viewport / pixels_per_point,
-                    top_inset: 0.0,
-                    roots,
-                    camera,
-                    input: re_compat::gui::GuiInput::default(),
-                };
                 for _ in 0..passes {
                     let mut failed = None;
                     let out = ctx.run_ui(raw.clone(), |ui| {
@@ -1624,6 +1804,7 @@ impl App {
                             Ok(o) => {
                                 re_compat::gui::paint(ui.ctx(), o.shapes);
                                 hud::draw(ui.ctx(), &hud_lines);
+                                textured = Some((o.surfaces, o.viewports, o.diagnostics));
                             }
                             Err(e) => failed = Some(e),
                         }
@@ -1636,9 +1817,9 @@ impl App {
                 Ok(())
             })
         });
-        if let Some(mut frame) = built {
-            self.diagnostics.append(&mut frame.diagnostics);
-            self.compat_view.take(frame);
+        if let Some((surfaces, viewports, mut diagnostics)) = textured {
+            self.diagnostics.append(&mut diagnostics);
+            self.compat_view.set_textured(surfaces, viewports);
         }
         for out in ui {
             self.compat_view.set_ui(out);
@@ -1763,6 +1944,15 @@ impl App {
                 re_assets::AssetChange::Renamed { from, to } => vec![from.clone(), to.clone()],
             })
             .collect();
+        if paths.iter().any(|p| procedural::is_generator_script(p)) {
+            let declared = procedural::declare_generators(
+                &mut self.world,
+                &self.files,
+                self.config.proc.limits(),
+            );
+            self.diagnostics.extend(declared.iter().cloned());
+            problems.extend(declared);
+        }
         for p in paths.iter().filter(|p| p.ends_with(".heightfield")) {
             procedural::heightfield_changed(&mut self.world, p);
         }
@@ -1873,16 +2063,22 @@ impl App {
         self.scripts.as_ref()
     }
 
-    /// Attaches the game context's VM to `debugger` (ADR-0045), now if the
-    /// scripts are running and again whenever the VM is replaced; `None`
-    /// detaches it. Breakpoint changes and commands for a parked script are
+    /// Attaches the game context's VM, and a compat project's server and
+    /// client VMs, to `debugger` (ADR-0045), now if the scripts are running
+    /// and again whenever a VM is replaced; `None` detaches them. Breakpoint changes and commands for a parked script are
     /// carried out at the start of each frame.
     pub fn set_debugger(&mut self, debugger: Option<re_script::debug::Debugger>) {
         if let (Some(old), Some(scripts)) = (&self.debugger, &self.scripts) {
             old.detach(scripts.context(ContextKind::Game).lua());
         }
+        if let (Some(old), Some(c)) = (&self.debugger, &self.compat) {
+            for kind in [ContextKind::Server, ContextKind::Client] {
+                old.detach(c.vm(kind).context().lua());
+            }
+        }
         self.debugger = debugger;
         self.attach_debugger();
+        self.attach_compat_debugger();
     }
 
     /// The debugger set with [`App::set_debugger`].
@@ -1898,6 +2094,20 @@ impl App {
         if let Err(e) = debugger.attach(lua, ContextKind::Game.name(), None) {
             self.diagnostics
                 .push(ScriptError::from_mlua(ContextKind::Game.name(), &e).to_diagnostic());
+        }
+    }
+
+    /// Attaches the compat server and client VMs to the debugger, with the
+    /// scripts they already run.
+    fn attach_compat_debugger(&mut self) {
+        let (Some(debugger), Some(c)) = (&self.debugger, &self.compat) else {
+            return;
+        };
+        for kind in [ContextKind::Server, ContextKind::Client] {
+            if let Err(e) = c.vm(kind).attach_debugger(debugger) {
+                self.diagnostics
+                    .push(ScriptError::from_mlua(kind.name(), &e).to_diagnostic());
+            }
         }
     }
 
@@ -1922,6 +2132,7 @@ impl App {
                 bus_levels: &self.bus_levels,
                 audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
+                skins: &mut self.skin_sync,
             },
         };
         let out = f(scripts, &mut host);
@@ -1986,6 +2197,8 @@ impl App {
                 return;
             }
         }
+        // Attached before the scripts start, so their first lines can stop.
+        self.attach_compat_debugger();
         for kind in [ContextKind::Server, ContextKind::Client] {
             self.compat_call(kind, |vm, h| crate::compat::start_scripts(vm, h));
         }
@@ -2075,7 +2288,7 @@ impl App {
         report
             .output
             .extend(std::mem::take(&mut self.script_output));
-        report.state_hash = self.world.state_hash().to_hex().to_string();
+        report.state_hash = self.state_hash().to_hex().to_string();
         report.compat = self.compat.as_ref().map(|c| c.info());
         results
     }
@@ -2168,6 +2381,7 @@ impl App {
                 bus_levels: &self.bus_levels,
                 audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
+                skins: &mut self.skin_sync,
             },
         };
         let diags = f(vm, &mut host);
@@ -2332,10 +2546,12 @@ impl App {
                 }
                 self.physics_sync = PhysicsSync::new();
                 self.physics_cmds.clear();
+                self.origin_refused = None;
                 self.audio_cmds.push(AudioCmd::StopAll);
                 self.audio_sync = AudioSync::new();
                 self.anim_sync = AnimSync::new();
                 self.skin_sync = SkinSync::new();
+                self.ragdoll_sync = RagdollSync::new();
                 self.script_errors.clear();
                 // The compat contexts start again on the next frame.
                 self.compat = None;
@@ -2431,11 +2647,12 @@ fn load_world(
     })?;
     let mut world = content_world(config).map_err(|e| fail(e.message.clone()))?;
     procedural::install(&mut world, files);
+    let mut problems = procedural::declare_generators(&mut world, files, config.proc.limits());
     world.load(&doc).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not load")).with_related(e.to_diagnostic())
     })?;
     world.propagate_all();
-    let problems = procedural::load_graphs(&mut world, files, None);
+    problems.extend(procedural::load_graphs(&mut world, files, None));
     Ok((world, problems))
 }
 
