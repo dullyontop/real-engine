@@ -15,7 +15,10 @@
 //! N ticks of the walk; default: the whole diagonal, about 12.5 minutes per
 //! run, two runs), `--threads N` (worker threads; default: cores minus one) and
 //! `--unpaced` (run ticks back to back instead of at 60 Hz; generation then
-//! falls behind and waits are expected). Headless, no rendering, no physics:
+//! falls behind and waits are expected) and `--terrain` (the ground as
+//! eroded level-of-detail terrain, `terrain.erode` into `terrain.chunks`, with
+//! the terrain view on and collision chunks near the walker, instead of a
+//! mesh per cell; the initial load then also waits for the view). Headless, no rendering, no physics:
 //! a tick is the streaming step plus the scene update, run at the fixed
 //! step's real-time pace, as a game would. Prefab paths are relative to this
 //! `examples/` directory, which stands in for a project. The exit code is 1
@@ -54,6 +57,7 @@ struct Args {
     ticks: Option<u64>,
     threads: usize,
     unpaced: bool,
+    terrain: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -62,6 +66,7 @@ fn parse_args() -> Result<Args, String> {
         ticks: None,
         threads: 0,
         unpaced: false,
+        terrain: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -75,9 +80,11 @@ fn parse_args() -> Result<Args, String> {
             "--ticks" => args.ticks = Some(number("--ticks")?),
             "--threads" => args.threads = number("--threads")? as usize,
             "--unpaced" => args.unpaced = true,
+            "--terrain" => args.terrain = true,
             "-h" | "--help" => {
                 return Err(
-                    "usage: stream_walk [--json] [--ticks N] [--threads N] [--unpaced]".into(),
+                    "usage: stream_walk [--json] [--ticks N] [--threads N] [--unpaced] [--terrain]"
+                        .into(),
                 );
             }
             other => return Err(format!("unknown option `{other}`")),
@@ -88,17 +95,26 @@ fn parse_args() -> Result<Args, String> {
 
 /// The world: eroded-looking hills at 4 m, water, palms on a jittered grid
 /// and rocks on gentle slopes.
-fn world_graph() -> GraphDoc {
-    let nodes = [
+fn world_graph(terrain: bool) -> GraphDoc {
+    let ground = if terrain {
         (
-            "h",
-            "terrain.heightfield",
-            json!({ "cell": 4.0, "height": 400.0, "scale": 0.002, "octaves": 6, "noise": "warped", "warp": 0.6 }),
-        ),
+            "ground",
+            "terrain.chunks",
+            json!({ "material": "materials/grass.material.json" }),
+        )
+    } else {
         (
             "ground",
             "terrain.mesh",
             json!({ "collider": true, "material": "materials/grass.material.json" }),
+        )
+    };
+    let mut nodes = vec![
+        ground,
+        (
+            "h",
+            "terrain.heightfield",
+            json!({ "cell": 4.0, "height": 400.0, "scale": 0.002, "octaves": 6, "noise": "warped", "warp": 0.6 }),
         ),
         ("water", "terrain.water_plane", json!({ "level": 60.0 })),
         (
@@ -122,13 +138,19 @@ fn world_graph() -> GraphDoc {
             json!({ "prefab": "prefabs/rock.prefab.json", "random_yaw": true, "scale_min": 0.5, "scale_max": 1.5 }),
         ),
     ];
-    let edges = [
-        ("h", "field", "ground", "field"),
-        ("h", "field", "grid", "field"),
+    // With terrain, everything stands on the eroded field.
+    let field = if terrain { "e" } else { "h" };
+    let mut edges = vec![
+        (field, "field", "ground", "field"),
+        (field, "field", "grid", "field"),
         ("grid", "points", "palms", "points"),
-        ("h", "field", "scatter", "field"),
+        (field, "field", "scatter", "field"),
         ("scatter", "points", "rocks", "points"),
     ];
+    if terrain {
+        nodes.push(("e", "terrain.erode", json!({})));
+        edges.push(("h", "field", "e", "field"));
+    }
     let doc = json!({
         "format": "real-engine/graph",
         "version": 1,
@@ -144,14 +166,14 @@ fn world_graph() -> GraphDoc {
     GraphDoc::from_json(&doc.to_string()).expect("the walk graph parses")
 }
 
-fn world(root: &Path, cache: &Path, pool: Arc<TaskPool>) -> EditState {
+fn world(root: &Path, cache: &Path, pool: Arc<TaskPool>, terrain: bool) -> EditState {
     let mut st = EditState::new();
     register_generator(&mut st.world.generators);
     let evaluator = Evaluator::new(Arc::new(NodeRegistry::m1()))
         .with_pool(pool)
         .with_disk_cache(cache);
     let mut store = GraphStore::with_evaluator(Arc::new(evaluator), Some(root.to_path_buf()));
-    store.insert("world", world_graph());
+    store.insert("world", world_graph(terrain));
     st.world.ecs.insert_resource(store);
     // Facing along +X+Z: -Z turned by -135° about Y.
     let facing = Quat::from_xyzw(0.0, -0.923_879_5, 0.0, 0.382_683_43);
@@ -213,12 +235,13 @@ fn peak_rss_mb() -> f64 {
 fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
     let ticks = args.ticks;
     let config = StreamConfig::default();
-    let mut st = world(root, cache, pool.clone());
+    let mut st = world(root, cache, pool.clone(), args.terrain);
     let w = &mut st.world;
     let mut streamer = Streamer::new(config.clone())
         .expect("the default settings are valid")
         .with_pool(pool.clone());
     streamer.set_lateness(Lateness::Wait);
+    streamer.set_view(args.terrain);
     w.ecs.insert_resource(streamer);
 
     // The initial load, behind a load screen: until nothing is pending.
@@ -231,8 +254,15 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
         load_waits += r.waits;
         w.update();
         tick += 1;
-        if r.pending == 0 && r.in_flight == 0 {
+        // With terrain, the view's jobs too (the terrain within the
+        // horizon is not shown until it is ready).
+        let s = w.ecs.resource::<Streamer>();
+        let busy = s.in_flight() + s.view_missing();
+        if r.pending == 0 && r.in_flight == 0 && busy == 0 {
             break;
+        }
+        if args.terrain {
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
     let load_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -254,6 +284,7 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
     let mut peak_bytes = 0u64;
     let mut peak_entities = 0usize;
     let mut peak_cells = 0usize;
+    let mut peak_view = (0usize, 0u64);
     let mut position = -END;
     let step_time = std::time::Duration::from_secs_f64(1.0 / f64::from(HZ));
     let mut next = Instant::now();
@@ -344,6 +375,9 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
         peak_bytes = peak_bytes.max(r.memory_bytes);
         peak_cells = peak_cells.max(r.resident);
         peak_entities = peak_entities.max(w.ids().len());
+        if let Some(view) = w.ecs.get_resource::<re_proc::stream::TerrainView>() {
+            peak_view = (peak_view.0.max(view.len()), peak_view.1.max(view.bytes()));
+        }
         tick += 1;
     }
     let mut sorted = times.clone();
@@ -380,6 +414,8 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
             "peak_cells": peak_cells,
             "peak_entities": peak_entities,
             "peak_memory_mib": peak_bytes as f64 / (1 << 20) as f64,
+            "peak_view_chunks": peak_view.0,
+            "peak_view_mib": peak_view.1 as f64 / (1 << 20) as f64,
         },
         "state_hash": hash,
     })
@@ -440,6 +476,7 @@ fn main() -> ExitCode {
         "hz": HZ,
         "threads": pool.threads(),
         "paced": !args.unpaced,
+        "terrain": args.terrain,
         "jobs": config.jobs(pool.threads()),
         "stream": config,
         "cold": cold,

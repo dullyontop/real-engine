@@ -119,7 +119,37 @@ pub enum ShapeDesc {
         spacing: f32,
         /// Position of sample `(0, 0)` relative to the body (heights are added to its Y).
         offset: Vec3,
+        /// How finely the heights are stored; `None` keeps the physics backend's
+        /// defaults (Jolt: 8 bits per sample, block size 2).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        precision: Option<HeightfieldPrecision>,
     },
+}
+
+/// How finely a heightfield shape stores its heights (ADR-0042). Each block of
+/// `block_size × block_size` samples is quantised to `bits_per_sample` bits
+/// over its own height range: more bits follow the samples more closely, and
+/// larger blocks use less memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HeightfieldPrecision {
+    /// Bits per sample, 1 to 16.
+    pub bits_per_sample: u8,
+    /// Samples per block side, 2 to 8.
+    pub block_size: u8,
+}
+
+impl HeightfieldPrecision {
+    /// 16 bits per sample in blocks of 4: neighbouring chunks built from the
+    /// same edge samples agree to 0.1 mm (ADR-0042, §3).
+    pub const FINE: HeightfieldPrecision = HeightfieldPrecision {
+        bits_per_sample: 16,
+        block_size: 4,
+    };
+
+    /// True when both values are in range.
+    pub fn is_valid(&self) -> bool {
+        (1..=16).contains(&self.bits_per_sample) && (2..=8).contains(&self.block_size)
+    }
 }
 
 impl ShapeDesc {
@@ -160,8 +190,10 @@ impl ShapeDesc {
                 samples,
                 spacing,
                 offset,
+                precision,
             } => {
                 *n >= 2
+                    && precision.is_none_or(|p| p.is_valid())
                     && samples.len() as u64 == u64::from(*n) * u64::from(*n)
                     && samples.iter().all(|h| h.is_finite())
                     && spacing.is_finite()

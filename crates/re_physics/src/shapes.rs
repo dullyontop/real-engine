@@ -95,13 +95,18 @@ pub(crate) fn build(desc: &ShapeDesc) -> Result<Built, Diagnostic> {
             samples,
             spacing,
             offset,
-        } => Shape::new_height_field(
-            *n,
-            samples,
-            &HeightFieldSettings::default()
+            precision,
+        } => {
+            let mut settings = HeightFieldSettings::default()
                 .scale(JVec3::new(*spacing, 1.0, *spacing))
-                .offset(jv(*offset)),
-        )
+                .offset(jv(*offset));
+            if let Some(p) = precision {
+                settings = settings
+                    .bits_per_sample(u32::from(p.bits_per_sample))
+                    .block_size(u32::from(p.block_size));
+            }
+            Shape::new_height_field(*n, samples, &settings)
+        }
         .map_err(|e| e.to_string()),
     }
     .map_err(invalid)?;
