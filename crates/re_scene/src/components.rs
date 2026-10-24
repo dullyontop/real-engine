@@ -287,7 +287,9 @@ component! {
     /// Places this entity at a joint of its parent's [`SkinnedMesh`] each
     /// fixed step: its `Transform` becomes the joint's model-space transform,
     /// which is relative to the parent because the skin's space is the
-    /// parent's (ADR-0039). Put an offset on a child of this entity.
+    /// parent's (ADR-0039). Put an offset on a child of this entity. It is
+    /// placed at the end of the step, after physics and the ragdoll blend, so
+    /// `PostSimulation` scripts see the previous step's placement.
     pub struct BoneAttachment {
         /// The joint's name in the parent's skin.
         pub joint: String = String::new(),

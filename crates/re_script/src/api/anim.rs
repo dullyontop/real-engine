@@ -98,7 +98,7 @@ pub(crate) fn lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         lua,
         "joint",
         "(e: Entity, joint: string) -> (vector, Quat)",
-        "A joint of `e`'s skin in world space after the last step: its position and rotation.",
+        "A joint of `e`'s skin in world space: the last step's pose, placed by `e`'s transform from the start of that step (so it trails that step's root motion). Its position and rotation.",
         |lua, (e, joint): (Value, String)| {
             let e = entity_arg(&e, "anim.joint")?;
             let (p, r) = with_host(lua, |h| {

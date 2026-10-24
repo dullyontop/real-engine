@@ -1191,7 +1191,7 @@
     },
     "BoneAttachment": {
       "type": "object",
-      "description": "Places this entity at a joint of its parent's [`SkinnedMesh`] each\nfixed step: its `Transform` becomes the joint's model-space transform,\nwhich is relative to the parent because the skin's space is the\nparent's (ADR-0039). Put an offset on a child of this entity.",
+      "description": "Places this entity at a joint of its parent's [`SkinnedMesh`] each\nfixed step: its `Transform` becomes the joint's model-space transform,\nwhich is relative to the parent because the skin's space is the\nparent's (ADR-0039). Put an offset on a child of this entity. It is\nplaced at the end of the step, after physics and the ragdoll blend, so\n`PostSimulation` scripts see the previous step's placement.",
       "properties": {
         "joint": {
           "type": "string",

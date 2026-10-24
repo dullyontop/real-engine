@@ -682,8 +682,9 @@ pub fn push(
         match sync.links.get_mut(&id) {
             Some(link) if link.fingerprint == fp && link.entity == entity => {
                 if link.written != local || link.parent != parent {
-                    // A character only turned (root motion's yaw, ADR-0039):
-                    // it keeps interpolating from where it was.
+                    // A character only turned (root motion's yaw, ADR-0039,
+                    // or any rotation-only write): it keeps interpolating,
+                    // so the turn shows over one fixed step.
                     let turned = link.kind == LinkKind::Character
                         && link.parent == parent
                         && link.written.0 == local.0;

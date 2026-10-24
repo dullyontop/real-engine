@@ -160,7 +160,8 @@ pub trait HostServices {
     /// first layer when `layer` is `None`.
     fn anim_state(&self, entity: EntityId, layer: Option<&str>) -> HostResult<String>;
 
-    /// A joint of the entity's skin in world space after the last step:
-    /// `(position, rotation)`.
+    /// A joint of the entity's skin in world space: the last step's pose,
+    /// placed by the entity's transform from the start of that step (so it
+    /// trails that step's root motion). `(position, rotation)`.
     fn anim_joint(&self, entity: EntityId, joint: &str) -> HostResult<(Vec3, Quat)>;
 }

@@ -197,7 +197,7 @@ declare anim: {
     trigger: (e: Entity, param: string) -> (),
     -- The state a layer of `e`'s graph is in, or fading into (the first layer by default).
     state: (e: Entity, layer: string?) -> string,
-    -- A joint of `e`'s skin in world space after the last step: its position and rotation.
+    -- A joint of `e`'s skin in world space: the last step's pose, placed by `e`'s transform from the start of that step (so it trails that step's root motion). Its position and rotation.
     joint: (e: Entity, joint: string) -> (vector, Quat),
 }
 

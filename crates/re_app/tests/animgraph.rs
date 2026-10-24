@@ -957,3 +957,52 @@ fn graphs_keep_playing_when_other_files_change() {
     assert!(o.ok, "{:?}", o.diagnostics);
     assert!(o.changes.is_empty(), "{:?}", o.changes);
 }
+
+/// Root motion's yaw writes only a character's rotation; the character keeps
+/// interpolating through the turn. A translation write is still a teleport.
+#[test]
+fn a_character_that_only_turns_keeps_interpolating() {
+    let dir = project(
+        &[
+            r#"{ "id": "walker", "components": {
+            "Transform": { "translation": [0.0, 1.0, 0.0] },
+            "CharacterController": { "height": 1.8, "radius": 0.3 } } }"#
+                .to_string(),
+            r#"{ "id": "ground", "components": {
+            "Collider": { "shape": "Box", "half_extents": [20.0, 0.5, 20.0] },
+            "Transform": { "translation": [0.0, -0.5, 0.0] } } }"#
+                .to_string(),
+        ],
+        &[],
+    );
+    let mut app = open(dir.path());
+    app.run_headless(Some(30), None).unwrap();
+    let id = re_scene::entity_id(app.world().entity("walker").unwrap());
+    let (_, before) = app.physics_sync().interpolated(id, 1.0).unwrap();
+
+    let turn = Quat::from_rotation_y(0.4);
+    app.world_mut()
+        .set(
+            "walker",
+            "Transform",
+            "rotation",
+            Value::Quat(before * turn),
+        )
+        .unwrap();
+    app.run_headless(Some(1), None).unwrap();
+    let (_, half) = app.physics_sync().interpolated(id, 0.5).unwrap();
+    let want = before.slerp(before * turn, 0.5);
+    assert!(half.angle_between(want) < 1e-3, "{half} vs {want}");
+
+    let (at, _) = app.physics_sync().interpolated(id, 1.0).unwrap();
+    let to = at + Vec3::new(3.0, 0.0, 0.0);
+    app.world_mut()
+        .set("walker", "Transform", "translation", Value::Vec3(to))
+        .unwrap();
+    app.run_headless(Some(1), None).unwrap();
+    let (snapped, _) = app.physics_sync().interpolated(id, 0.0).unwrap();
+    assert!(
+        (snapped.x - to.x).abs() < 0.05,
+        "a teleport snaps: {snapped} vs {to}"
+    );
+}
