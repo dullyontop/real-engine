@@ -238,37 +238,96 @@ impl Default for AnimGraph {
     }
 }
 
-/// A graph parameter with its default value.
+/// A graph parameter with its default value. In files it is one object,
+/// `{"id": "speed", "type": "float", "default": 0}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[serde(from = "ParamRepr", into = "ParamRepr")]
 pub struct GraphParam {
     /// Unique among the parameters; scripts use it (`anim.set(e, "speed", 3)`).
     pub id: String,
     /// The type and default.
-    #[serde(flatten)]
     pub value: ParamValue,
 }
 
 /// A parameter's type and value.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ParamValue {
     /// A number, compared by transitions and read by blend spaces.
     Float {
+        /// The value at start.
+        default: f32,
+    },
+    /// A flag.
+    Bool {
+        /// The value at start.
+        default: bool,
+    },
+    /// Set by `anim.trigger` and cleared when a transition consumes it.
+    Trigger,
+}
+
+// `#[serde(flatten)]` cannot be combined with `deny_unknown_fields`, so the
+// file form of a parameter and of a node is a tagged enum carrying the id.
+
+/// A graph parameter as written in files.
+#[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum ParamRepr {
+    /// A number, compared by transitions and read by blend spaces.
+    Float {
+        /// Unique among the parameters.
+        id: String,
         /// The value at start.
         #[serde(default)]
         default: f32,
     },
     /// A flag.
     Bool {
+        /// Unique among the parameters.
+        id: String,
         /// The value at start.
         #[serde(default)]
         default: bool,
     },
     /// Set by `anim.trigger` and cleared when a transition consumes it.
-    Trigger,
+    Trigger {
+        /// Unique among the parameters.
+        id: String,
+    },
+}
+
+impl From<ParamRepr> for GraphParam {
+    fn from(r: ParamRepr) -> GraphParam {
+        let (id, value) = match r {
+            ParamRepr::Float { id, default } => (id, ParamValue::Float { default }),
+            ParamRepr::Bool { id, default } => (id, ParamValue::Bool { default }),
+            ParamRepr::Trigger { id } => (id, ParamValue::Trigger),
+        };
+        GraphParam { id, value }
+    }
+}
+
+impl From<GraphParam> for ParamRepr {
+    fn from(p: GraphParam) -> ParamRepr {
+        let id = p.id;
+        match p.value {
+            ParamValue::Float { default } => ParamRepr::Float { id, default },
+            ParamValue::Bool { default } => ParamRepr::Bool { id, default },
+            ParamValue::Trigger => ParamRepr::Trigger { id },
+        }
+    }
+}
+
+#[cfg(feature = "schemars")]
+impl schemars::JsonSchema for GraphParam {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "GraphParam".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        ParamRepr::json_schema(generator)
+    }
 }
 
 impl ParamValue {
@@ -282,15 +341,14 @@ impl ParamValue {
     }
 }
 
-/// One node of the blend tree.
+/// One node of the blend tree. In files it is one object,
+/// `{"id": "walk", "kind": "clip", "clip": "models/hero.glb#Walk"}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[serde(from = "NodeRepr", into = "NodeRepr")]
 pub struct GraphNode {
     /// Unique among the nodes.
     pub id: String,
     /// What the node computes.
-    #[serde(flatten)]
     pub kind: NodeKind,
 }
 
@@ -315,12 +373,65 @@ fn is_false(v: &bool) -> bool {
 }
 
 /// The kinds of blend tree node.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
     /// Plays one clip.
     Clip {
+        /// `<model path>#<clip name>`.
+        clip: String,
+        /// Playback speed; the node lasts `duration / speed`.
+        speed: f32,
+        /// Wraps at the end (otherwise holds the last frame).
+        looping: bool,
+        /// Takes the root joint's horizontal motion out of the pose and moves
+        /// the entity with it.
+        root_motion: bool,
+    },
+    /// Blends children placed along one float parameter, piecewise linearly
+    /// and clamped at the ends.
+    Blend1d {
+        /// The float parameter.
+        param: String,
+        /// The children, sorted by threshold.
+        children: Vec<Blend1dChild>,
+        /// Keeps the children in phase by normalised time.
+        sync: bool,
+    },
+    /// Blends children placed at points over two float parameters, by
+    /// gradient-band (freeform cartesian) interpolation.
+    Blend2d {
+        /// The parameter on the first axis.
+        x: String,
+        /// The parameter on the second axis.
+        y: String,
+        /// The children at their points.
+        children: Vec<Blend2dChild>,
+        /// Keeps the children in phase by normalised time.
+        sync: bool,
+    },
+    /// Adds an additive child's motion, relative to its first frame, onto a
+    /// base node.
+    Additive {
+        /// The base node.
+        base: String,
+        /// The node whose motion is added.
+        additive: String,
+        /// The weight of the added motion, when `weight_param` is not set.
+        weight: f32,
+        /// A float parameter giving the weight.
+        weight_param: Option<String>,
+    },
+}
+
+/// A blend tree node as written in files.
+#[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum NodeRepr {
+    /// Plays one clip.
+    Clip {
+        /// Unique among the nodes.
+        id: String,
         /// `<model path>#<clip name>`.
         clip: String,
         /// Playback speed; the node lasts `duration / speed`.
@@ -337,6 +448,8 @@ pub enum NodeKind {
     /// Blends children placed along one float parameter, piecewise linearly
     /// and clamped at the ends.
     Blend1d {
+        /// Unique among the nodes.
+        id: String,
         /// The float parameter.
         param: String,
         /// The children, sorted by threshold.
@@ -348,6 +461,8 @@ pub enum NodeKind {
     /// Blends children placed at points over two float parameters, by
     /// gradient-band (freeform cartesian) interpolation.
     Blend2d {
+        /// Unique among the nodes.
+        id: String,
         /// The parameter on the first axis.
         x: String,
         /// The parameter on the second axis.
@@ -361,6 +476,8 @@ pub enum NodeKind {
     /// Adds an additive child's motion, relative to its first frame, onto a
     /// base node.
     Additive {
+        /// Unique among the nodes.
+        id: String,
         /// The base node.
         base: String,
         /// The node whose motion is added.
@@ -372,6 +489,137 @@ pub enum NodeKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         weight_param: Option<String>,
     },
+}
+
+impl From<NodeRepr> for GraphNode {
+    fn from(r: NodeRepr) -> GraphNode {
+        let (id, kind) = match r {
+            NodeRepr::Clip {
+                id,
+                clip,
+                speed,
+                looping,
+                root_motion,
+            } => (
+                id,
+                NodeKind::Clip {
+                    clip,
+                    speed,
+                    looping,
+                    root_motion,
+                },
+            ),
+            NodeRepr::Blend1d {
+                id,
+                param,
+                children,
+                sync,
+            } => (
+                id,
+                NodeKind::Blend1d {
+                    param,
+                    children,
+                    sync,
+                },
+            ),
+            NodeRepr::Blend2d {
+                id,
+                x,
+                y,
+                children,
+                sync,
+            } => (
+                id,
+                NodeKind::Blend2d {
+                    x,
+                    y,
+                    children,
+                    sync,
+                },
+            ),
+            NodeRepr::Additive {
+                id,
+                base,
+                additive,
+                weight,
+                weight_param,
+            } => (
+                id,
+                NodeKind::Additive {
+                    base,
+                    additive,
+                    weight,
+                    weight_param,
+                },
+            ),
+        };
+        GraphNode { id, kind }
+    }
+}
+
+impl From<GraphNode> for NodeRepr {
+    fn from(n: GraphNode) -> NodeRepr {
+        let id = n.id;
+        match n.kind {
+            NodeKind::Clip {
+                clip,
+                speed,
+                looping,
+                root_motion,
+            } => NodeRepr::Clip {
+                id,
+                clip,
+                speed,
+                looping,
+                root_motion,
+            },
+            NodeKind::Blend1d {
+                param,
+                children,
+                sync,
+            } => NodeRepr::Blend1d {
+                id,
+                param,
+                children,
+                sync,
+            },
+            NodeKind::Blend2d {
+                x,
+                y,
+                children,
+                sync,
+            } => NodeRepr::Blend2d {
+                id,
+                x,
+                y,
+                children,
+                sync,
+            },
+            NodeKind::Additive {
+                base,
+                additive,
+                weight,
+                weight_param,
+            } => NodeRepr::Additive {
+                id,
+                base,
+                additive,
+                weight,
+                weight_param,
+            },
+        }
+    }
+}
+
+#[cfg(feature = "schemars")]
+impl schemars::JsonSchema for GraphNode {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "GraphNode".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        NodeRepr::json_schema(generator)
+    }
 }
 
 /// A child of a [`NodeKind::Blend1d`].

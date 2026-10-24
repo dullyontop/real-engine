@@ -44,18 +44,28 @@ fn a_graph_round_trips() {
         &g.node("run").unwrap().kind,
         NodeKind::Clip { speed, looping: true, root_motion: true, .. } if *speed == 1.5
     ));
-    assert!(matches!(&g.node("aim").unwrap().kind, NodeKind::Blend2d { sync: false, .. }));
+    assert!(matches!(
+        &g.node("aim").unwrap().kind,
+        NodeKind::Blend2d { sync: false, .. }
+    ));
     let down = &g.layers[0].transitions[1];
     assert_eq!(down.exit_time, Some(0.9));
     assert!(down.interruptible);
     assert_eq!(
         down.conditions[1],
-        Condition::Compare { param: "speed".into(), op: CompareOp::Ge, value: 0.1 }
+        Condition::Compare {
+            param: "speed".into(),
+            op: CompareOp::Ge,
+            value: 0.1
+        }
     );
     assert!(g.mask("arms").unwrap().joints[0].subtree);
 
     let text = serde_json::to_string(&g).unwrap();
-    assert!(!text.contains("looping"), "defaults are not written: {text}");
+    assert!(
+        !text.contains("looping"),
+        "defaults are not written: {text}"
+    );
     let back: AnimGraph = serde_json::from_str(&text).unwrap();
     assert_eq!(back, g);
 }
@@ -64,15 +74,30 @@ fn a_graph_round_trips() {
 fn unknown_keys_are_refused() {
     for (from, to) in [
         (r#""format""#, r#""extra": 1, "format""#),
-        (r#""id": "idle", "kind""#, r#""id": "idle", "colour": 1, "kind""#),
+        (
+            r#""id": "idle", "kind""#,
+            r#""id": "idle", "colour": 1, "kind""#,
+        ),
         (r#""threshold": 4.0"#, r#""threshold": 4.0, "w": 1"#),
         (r#""id": "up", "from""#, r#""id": "up", "blend": 1, "from""#),
-        (r#""test": "trigger", "param": "jump""#, r#""test": "trigger", "param": "jump", "value": 1"#),
-        (r#""id": "jump", "type": "trigger""#, r#""id": "jump", "type": "trigger", "default": 1"#),
-        (r#""kind": "clip", "clip": "assets/hero.glb#idle""#, r#""kind": "clip", "clip": "assets/hero.glb#idle", "param": "x""#),
+        (
+            r#""test": "trigger", "param": "jump""#,
+            r#""test": "trigger", "param": "jump", "value": 1"#,
+        ),
+        (
+            r#""id": "jump", "type": "trigger""#,
+            r#""id": "jump", "type": "trigger", "default": 1"#,
+        ),
+        (
+            r#""kind": "clip", "clip": "assets/hero.glb#idle""#,
+            r#""kind": "clip", "clip": "assets/hero.glb#idle", "param": "x""#,
+        ),
     ] {
         assert_eq!(WALK.matches(from).count(), 1, "{from}");
         let bad = WALK.replace(from, to);
-        assert!(serde_json::from_str::<AnimGraph>(&bad).is_err(), "accepted {to}");
+        assert!(
+            serde_json::from_str::<AnimGraph>(&bad).is_err(),
+            "accepted {to}"
+        );
     }
 }

@@ -1,0 +1,619 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnimGraph",
+  "description": "An animation graph: parameters, a blend tree of nodes, layered state\nmachines and joint masks, saved as `*.animgraph.json` (ADR-0039).\n\n```json\n{ \"format\": \"real-engine/animgraph\", \"version\": 1,\n  \"params\": [{ \"id\": \"speed\", \"type\": \"float\", \"default\": 0.0 }],\n  \"nodes\": [{ \"id\": \"walk\", \"kind\": \"clip\", \"clip\": \"assets/hero.glb#walk\" }],\n  \"layers\": [{ \"id\": \"base\", \"entry\": \"move\",\n               \"states\": [{ \"id\": \"move\", \"node\": \"walk\" }] }] }\n```\n\nEvery element has an `id` unique within its kind, which `animgraph.edit`\naddresses. Lists keep file order and unknown keys are errors. `re_anim`\nvalidates the references between elements when the graph binds.",
+  "type": "object",
+  "properties": {
+    "format": {
+      "description": "Always [`AnimGraph::FORMAT`].",
+      "type": "string"
+    },
+    "version": {
+      "description": "The file format version, [`AnimGraph::VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "params": {
+      "description": "The parameters scripts and transitions read.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/GraphParam"
+      }
+    },
+    "nodes": {
+      "description": "The blend tree's nodes. States and other nodes refer to them by id.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/GraphNode"
+      }
+    },
+    "layers": {
+      "description": "The layers, bottom first. The first layer gives the base pose.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/GraphLayer"
+      }
+    },
+    "masks": {
+      "description": "Joint masks that layers refer to by id.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/JointMask"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version"
+  ],
+  "$defs": {
+    "GraphParam": {
+      "description": "A graph parameter as written in files.",
+      "oneOf": [
+        {
+          "description": "A number, compared by transitions and read by blend spaces.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "float"
+            },
+            "id": {
+              "description": "Unique among the parameters.",
+              "type": "string"
+            },
+            "default": {
+              "description": "The value at start.",
+              "type": "number",
+              "format": "float",
+              "default": 0.0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id"
+          ]
+        },
+        {
+          "description": "A flag.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "bool"
+            },
+            "id": {
+              "description": "Unique among the parameters.",
+              "type": "string"
+            },
+            "default": {
+              "description": "The value at start.",
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id"
+          ]
+        },
+        {
+          "description": "Set by `anim.trigger` and cleared when a transition consumes it.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "trigger"
+            },
+            "id": {
+              "description": "Unique among the parameters.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id"
+          ]
+        }
+      ]
+    },
+    "GraphNode": {
+      "description": "A blend tree node as written in files.",
+      "oneOf": [
+        {
+          "description": "Plays one clip.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "clip"
+            },
+            "id": {
+              "description": "Unique among the nodes.",
+              "type": "string"
+            },
+            "clip": {
+              "description": "`<model path>#<clip name>`.",
+              "type": "string"
+            },
+            "speed": {
+              "description": "Playback speed; the node lasts `duration / speed`.",
+              "type": "number",
+              "format": "float"
+            },
+            "looping": {
+              "description": "Wraps at the end (otherwise holds the last frame).",
+              "type": "boolean"
+            },
+            "root_motion": {
+              "description": "Takes the root joint's horizontal motion out of the pose and moves\nthe entity with it.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "clip"
+          ]
+        },
+        {
+          "description": "Blends children placed along one float parameter, piecewise linearly\nand clamped at the ends.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "blend1d"
+            },
+            "id": {
+              "description": "Unique among the nodes.",
+              "type": "string"
+            },
+            "param": {
+              "description": "The float parameter.",
+              "type": "string"
+            },
+            "children": {
+              "description": "The children, sorted by threshold.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Blend1dChild"
+              }
+            },
+            "sync": {
+              "description": "Keeps the children in phase by normalised time.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "param",
+            "children"
+          ]
+        },
+        {
+          "description": "Blends children placed at points over two float parameters, by\ngradient-band (freeform cartesian) interpolation.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "blend2d"
+            },
+            "id": {
+              "description": "Unique among the nodes.",
+              "type": "string"
+            },
+            "x": {
+              "description": "The parameter on the first axis.",
+              "type": "string"
+            },
+            "y": {
+              "description": "The parameter on the second axis.",
+              "type": "string"
+            },
+            "children": {
+              "description": "The children at their points.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Blend2dChild"
+              }
+            },
+            "sync": {
+              "description": "Keeps the children in phase by normalised time.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "x",
+            "y",
+            "children"
+          ]
+        },
+        {
+          "description": "Adds an additive child's motion, relative to its first frame, onto a\nbase node.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "additive"
+            },
+            "id": {
+              "description": "Unique among the nodes.",
+              "type": "string"
+            },
+            "base": {
+              "description": "The base node.",
+              "type": "string"
+            },
+            "additive": {
+              "description": "The node whose motion is added.",
+              "type": "string"
+            },
+            "weight": {
+              "description": "The weight of the added motion, when `weight_param` is not set.",
+              "type": "number",
+              "format": "float"
+            },
+            "weight_param": {
+              "description": "A float parameter giving the weight.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "base",
+            "additive"
+          ]
+        }
+      ]
+    },
+    "Blend1dChild": {
+      "description": "A child of a [`NodeKind::Blend1d`].",
+      "type": "object",
+      "properties": {
+        "node": {
+          "description": "The child node.",
+          "type": "string"
+        },
+        "threshold": {
+          "description": "The parameter value at which the child has full weight.",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "node",
+        "threshold"
+      ]
+    },
+    "Blend2dChild": {
+      "description": "A child of a [`NodeKind::Blend2d`].",
+      "type": "object",
+      "properties": {
+        "node": {
+          "description": "The child node.",
+          "type": "string"
+        },
+        "point": {
+          "description": "The `[x, y]` parameter values at which the child has full weight.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "node",
+        "point"
+      ]
+    },
+    "GraphLayer": {
+      "description": "One layer: a state machine whose pose is laid over the layers below it.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique among the layers; `anim.state(e, layer)` names it.",
+          "type": "string"
+        },
+        "blend": {
+          "description": "How the pose combines with the layers below. The first layer's blend is\nignored.",
+          "$ref": "#/$defs/LayerBlend"
+        },
+        "weight": {
+          "description": "How much of the layer applies, from 0 to 1.",
+          "type": "number",
+          "format": "float"
+        },
+        "mask": {
+          "description": "A mask limiting the joints the layer affects.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reference": {
+          "description": "For an additive layer: a clip (`<model>#<clip>`) whose first frame the\nmotion is measured from. Without it, each state's node at time 0.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entry": {
+          "description": "The state entered at start.",
+          "type": "string"
+        },
+        "states": {
+          "description": "The states.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GraphState"
+          }
+        },
+        "transitions": {
+          "description": "The transitions, checked in order; the first that passes wins.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Transition"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "entry",
+        "states"
+      ]
+    },
+    "LayerBlend": {
+      "description": "How a layer combines with the layers below it.",
+      "oneOf": [
+        {
+          "description": "Blends toward the layer's pose by its weight.",
+          "type": "string",
+          "const": "override"
+        },
+        {
+          "description": "Adds the layer's motion, relative to its reference, scaled by its weight.",
+          "type": "string",
+          "const": "additive"
+        }
+      ]
+    },
+    "GraphState": {
+      "description": "A state of a layer's state machine.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique within the layer. `any` is reserved for transitions.",
+          "type": "string"
+        },
+        "node": {
+          "description": "The node the state plays.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "node"
+      ]
+    },
+    "Transition": {
+      "description": "A transition between two states of a layer.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique within the layer.",
+          "type": "string"
+        },
+        "from": {
+          "description": "The state it leaves, or [`Transition::ANY`] for every other state.",
+          "type": "string"
+        },
+        "to": {
+          "description": "The state it enters.",
+          "type": "string"
+        },
+        "duration": {
+          "description": "The crossfade time in seconds.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0
+        },
+        "exit_time": {
+          "description": "The normalised time of the `from` state (1 is one pass through its\nnode) the transition waits for.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "conditions": {
+          "description": "All of them must hold.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Condition"
+          }
+        },
+        "interruptible": {
+          "description": "Whether another transition may interrupt its crossfade.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from",
+        "to"
+      ]
+    },
+    "Condition": {
+      "description": "A test on a parameter.",
+      "oneOf": [
+        {
+          "description": "Compares a float parameter with a value.",
+          "type": "object",
+          "properties": {
+            "test": {
+              "type": "string",
+              "const": "compare"
+            },
+            "param": {
+              "description": "The float parameter.",
+              "type": "string"
+            },
+            "op": {
+              "description": "The comparison.",
+              "$ref": "#/$defs/CompareOp"
+            },
+            "value": {
+              "description": "The value compared with.",
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "test",
+            "param",
+            "op",
+            "value"
+          ]
+        },
+        {
+          "description": "Tests a bool parameter.",
+          "type": "object",
+          "properties": {
+            "test": {
+              "type": "string",
+              "const": "bool"
+            },
+            "param": {
+              "description": "The bool parameter.",
+              "type": "string"
+            },
+            "value": {
+              "description": "The value it must have.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "test",
+            "param",
+            "value"
+          ]
+        },
+        {
+          "description": "Passes when the trigger is set, and clears it when the transition fires.",
+          "type": "object",
+          "properties": {
+            "test": {
+              "type": "string",
+              "const": "trigger"
+            },
+            "param": {
+              "description": "The trigger parameter.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "test",
+            "param"
+          ]
+        }
+      ]
+    },
+    "CompareOp": {
+      "description": "A comparison of a float parameter.",
+      "oneOf": [
+        {
+          "description": "Less than.",
+          "type": "string",
+          "const": "<"
+        },
+        {
+          "description": "Less than or equal.",
+          "type": "string",
+          "const": "<="
+        },
+        {
+          "description": "Greater than.",
+          "type": "string",
+          "const": ">"
+        },
+        {
+          "description": "Greater than or equal.",
+          "type": "string",
+          "const": ">="
+        }
+      ]
+    },
+    "JointMask": {
+      "description": "Per-joint weights for a layer.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Unique among the masks.",
+          "type": "string"
+        },
+        "joints": {
+          "description": "The joints, by name. A later entry overrides an earlier one for the\njoints both cover. Joints no entry covers have weight 0.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MaskJoint"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "joints"
+      ]
+    },
+    "MaskJoint": {
+      "description": "One entry of a [`JointMask`].",
+      "type": "object",
+      "properties": {
+        "joint": {
+          "description": "The joint's name. A name the skeleton lacks is a warning when the graph\nbinds, so one mask fits several skeletons.",
+          "type": "string"
+        },
+        "weight": {
+          "description": "The weight, from 0 to 1.",
+          "type": "number",
+          "format": "float"
+        },
+        "subtree": {
+          "description": "Also covers the joint's descendants.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "joint"
+      ]
+    }
+  }
+}
