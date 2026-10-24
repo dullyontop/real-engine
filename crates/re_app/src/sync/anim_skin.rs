@@ -167,14 +167,17 @@ impl SkinSync {
         Some((translation, rotation.normalize()))
     }
 
-    /// True when some entity plays a graph.
+    /// True when some entity's `Animator` has a bound graph, playing or
+    /// paused (`Animator.playing` false).
     pub fn has_graphs(&self) -> bool {
         self.posed.values().any(|p| p.run.is_some())
     }
 
-    /// Appends the state determinism checks hash: for each entity playing a
-    /// graph, in id order, its id and the graph's parameters, states and
-    /// times (`GraphPlayer::write_state`). Poses are not included.
+    /// Appends the state determinism checks hash: for each entity with a
+    /// bound graph (playing or paused), in id order, its id, whether it
+    /// plays, its speed, and the graph's parameters, states and times
+    /// (`GraphPlayer::write_state`). A paused graph's parameters still change
+    /// what it plays next, so it counts. Poses are not included.
     pub fn write_state(&self, out: &mut Vec<u8>) {
         for (id, p) in &self.posed {
             if let Some(run) = &p.run {

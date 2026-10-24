@@ -26,6 +26,7 @@ pub const DEFAULT_DIRS: &[&str] = &[
     "prefabs",
     "materials",
     "graphs",
+    "anims",
     "scripts",
     "assets",
     "data/seed",
