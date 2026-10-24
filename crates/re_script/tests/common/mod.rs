@@ -104,6 +104,21 @@ impl HostServices for Services {
     fn request_restart(&mut self) {
         self.restarts += 1;
     }
+    fn anim_set(&mut self, e: EntityId, p: &str, v: re_types::anim::AnimValue) -> HostResult<()> {
+        self.none.anim_set(e, p, v)
+    }
+    fn anim_get(&self, e: EntityId, p: &str) -> HostResult<re_types::anim::AnimValue> {
+        self.none.anim_get(e, p)
+    }
+    fn anim_trigger(&mut self, e: EntityId, p: &str) -> HostResult<()> {
+        self.none.anim_trigger(e, p)
+    }
+    fn anim_state(&self, e: EntityId, layer: Option<&str>) -> HostResult<String> {
+        self.none.anim_state(e, layer)
+    }
+    fn anim_joint(&self, e: EntityId, j: &str) -> HostResult<(Vec3, re_types::glam::Quat)> {
+        self.none.anim_joint(e, j)
+    }
 }
 
 pub struct Rig {

@@ -131,46 +131,23 @@ pub trait HostServices {
 
     /// Sets a float or bool parameter of the animation graph the entity's
     /// `Animator` plays (ADR-0039). An unknown or mistyped parameter is an
-    /// error whose message lists the graph's parameters. The default refuses:
-    /// a host without animation graphs. Implemented by `re_app`'s host
-    /// (WP21).
-    fn anim_set(&mut self, entity: EntityId, param: &str, value: AnimValue) -> HostResult<()> {
-        let _ = (entity, param, value);
-        Err(no_graphs("anim.set"))
-    }
+    /// error whose message lists the graph's parameters. Implemented by
+    /// `re_app`'s host (WP21).
+    fn anim_set(&mut self, entity: EntityId, param: &str, value: AnimValue) -> HostResult<()>;
 
     /// A parameter of the entity's animation graph; a trigger reads as a bool
-    /// (whether it is set). The default refuses.
-    fn anim_get(&self, entity: EntityId, param: &str) -> HostResult<AnimValue> {
-        let _ = (entity, param);
-        Err(no_graphs("anim.get"))
-    }
+    /// (whether it is set).
+    fn anim_get(&self, entity: EntityId, param: &str) -> HostResult<AnimValue>;
 
     /// Sets a trigger of the entity's animation graph, which stays set until
-    /// a transition consumes it. The default refuses.
-    fn anim_trigger(&mut self, entity: EntityId, param: &str) -> HostResult<()> {
-        let _ = (entity, param);
-        Err(no_graphs("anim.trigger"))
-    }
+    /// a transition consumes it.
+    fn anim_trigger(&mut self, entity: EntityId, param: &str) -> HostResult<()>;
 
     /// The state a layer of the entity's graph is in (or fading into): the
-    /// first layer when `layer` is `None`. The default refuses.
-    fn anim_state(&self, entity: EntityId, layer: Option<&str>) -> HostResult<String> {
-        let _ = (entity, layer);
-        Err(no_graphs("anim.state"))
-    }
+    /// first layer when `layer` is `None`.
+    fn anim_state(&self, entity: EntityId, layer: Option<&str>) -> HostResult<String>;
 
     /// A joint of the entity's skin in world space after the last step:
-    /// `(position, rotation)`. The default refuses.
-    fn anim_joint(&self, entity: EntityId, joint: &str) -> HostResult<(Vec3, Quat)> {
-        let _ = (entity, joint);
-        Err(no_graphs("anim.joint"))
-    }
-}
-
-fn no_graphs(what: &str) -> HostError {
-    HostError::new(
-        "RE0503",
-        format!("{what} is not available here: this host plays no animation graphs"),
-    )
+    /// `(position, rotation)`.
+    fn anim_joint(&self, entity: EntityId, joint: &str) -> HostResult<(Vec3, Quat)>;
 }

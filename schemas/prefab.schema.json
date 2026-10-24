@@ -187,6 +187,12 @@
               },
               "VehicleWheel": {
                 "$ref": "#/$defs/VehicleWheel"
+              },
+              "Animator": {
+                "$ref": "#/$defs/Animator"
+              },
+              "BoneAttachment": {
+                "$ref": "#/$defs/BoneAttachment"
               }
             },
             "additionalProperties": false
@@ -971,6 +977,40 @@
           "type": "boolean",
           "default": false,
           "description": "True if the engine drives this wheel."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Animator": {
+      "type": "object",
+      "description": "Plays an animation graph (ADR-0039, `*.animgraph.json`) on the\n[`SkinnedMesh`] of the same entity, in place of an [`AnimPlayer`].\nParameters and state-machine state are runtime state in `re_app`;\nscripts reach them through the `anim` library.",
+      "properties": {
+        "graph": {
+          "type": "string",
+          "default": "",
+          "description": "The graph file, e.g. `anims/hero.animgraph.json`."
+        },
+        "playing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the graph advances; while false the pose holds."
+        },
+        "speed": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Playback speed multiplier for the whole graph (0 or more)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "BoneAttachment": {
+      "type": "object",
+      "description": "Places this entity at a joint of its parent's [`SkinnedMesh`] each\nfixed step: its `Transform` becomes the joint's model-space transform,\nwhich is relative to the parent because the skin's space is the\nparent's (ADR-0039). Put an offset on a child of this entity.",
+      "properties": {
+        "joint": {
+          "type": "string",
+          "default": "",
+          "description": "The joint's name in the parent's skin."
         }
       },
       "additionalProperties": false

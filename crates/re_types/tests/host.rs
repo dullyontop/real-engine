@@ -1,6 +1,7 @@
 //! `HostServices` is object-safe and implementable with the exact frozen signatures.
 
 use glam::Vec3;
+use re_types::anim::AnimValue;
 use re_types::{
     ActionFrame, AudioCmd, BusLevel, CharacterState, EntityId, GroupMask, HostError, HostResult,
     HostServices, RayHit, VehicleInput, VehicleState,
@@ -105,6 +106,29 @@ impl HostServices for RecordingHost {
 
     fn request_restart(&mut self) {
         self.restart = true;
+    }
+
+    fn anim_set(&mut self, entity: EntityId, param: &str, value: AnimValue) -> HostResult<()> {
+        self.log
+            .push(format!("anim.set {entity} {param} {value:?}"));
+        Ok(())
+    }
+
+    fn anim_get(&self, _entity: EntityId, _param: &str) -> HostResult<AnimValue> {
+        Ok(AnimValue::Float(1.5))
+    }
+
+    fn anim_trigger(&mut self, entity: EntityId, param: &str) -> HostResult<()> {
+        self.log.push(format!("anim.trigger {entity} {param}"));
+        Ok(())
+    }
+
+    fn anim_state(&self, _entity: EntityId, layer: Option<&str>) -> HostResult<String> {
+        Ok(layer.unwrap_or("idle").to_string())
+    }
+
+    fn anim_joint(&self, _entity: EntityId, _joint: &str) -> HostResult<(Vec3, glam::Quat)> {
+        Ok((Vec3::Y, glam::Quat::IDENTITY))
     }
 }
 
