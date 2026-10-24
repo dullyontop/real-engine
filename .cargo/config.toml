@@ -1,3 +1,14 @@
 [alias]
 # Repository checks: `cargo xtask check` (see tools/xtask).
 xtask = "run --locked -p xtask --"
+
+# ADR-0036 (D2 determinism): Clang contracts a * b + c into one fused
+# multiply-add by default, which rounds differently from the two operations
+# other platforms run. Luau's C++ (luau0-src, through the cc crate) and Jolt's
+# are compiled without contraction on arm64, the targets where FMA is always
+# available. A value set in the environment takes precedence.
+[env]
+CFLAGS_aarch64_apple_darwin = "-ffp-contract=off"
+CXXFLAGS_aarch64_apple_darwin = "-ffp-contract=off"
+CFLAGS_aarch64_unknown_linux_gnu = "-ffp-contract=off"
+CXXFLAGS_aarch64_unknown_linux_gnu = "-ffp-contract=off"

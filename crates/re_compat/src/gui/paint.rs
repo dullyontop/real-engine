@@ -79,7 +79,7 @@ fn outline(min: Vec2, size: Vec2, r: f32) -> Vec<Vec2> {
         const SEG: usize = 8;
         for i in 0..=SEG {
             let a = (from + 90.0 * i as f32 / SEG as f32).to_radians();
-            pts.push(c + Vec2::new(a.cos(), a.sin()) * r);
+            pts.push(c + Vec2::new(libm::cosf(a), libm::sinf(a)) * r);
         }
     };
     // Screen y points down, so angles go clockwise from +x.
@@ -389,7 +389,7 @@ impl<'a> Painter<'a> {
         let alphas = gp.sequence("Transparency");
         let offset = gp.vec2("Offset", Vec2::ZERO);
         let r = gp.f32("Rotation", 0.0).to_radians();
-        let dir = Vec2::new(r.cos(), r.sin());
+        let dir = Vec2::new(libm::cosf(r), libm::sinf(r));
         let center = it.min + it.size * 0.5;
         let color_at = |q: Vec2| {
             // The gradient runs along its rotated x axis across the element's

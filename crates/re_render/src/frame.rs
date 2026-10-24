@@ -286,8 +286,8 @@ pub(crate) fn select_spots(
         .into_iter()
         .map(|l| {
             let half = l.half_angle.min(std::f32::consts::FRAC_PI_2 * 0.999);
-            let outer = half.cos();
-            let inner = (half * 0.8).cos();
+            let outer = libm::cosf(half);
+            let inner = libm::cosf(half * 0.8);
             SpotLightRaw {
                 position_range: l.position.extend(l.range).to_array(),
                 color: (Vec3::from_array(l.color) * l.intensity * lumens_to_candela * exposure)

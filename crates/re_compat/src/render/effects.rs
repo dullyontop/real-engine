@@ -271,7 +271,11 @@ fn spawn_point(rng: &mut Pcg32, p: &Props, size: Vec3, emit_dir: Vec3) -> (Vec3,
         "Sphere" => {
             let r = half.min_element();
             let d = Vec3::new(unit(), unit(), unit()).normalize_or(Vec3::Y);
-            let k = if surface { 1.0 } else { rng.next_f32().cbrt() };
+            let k = if surface {
+                1.0
+            } else {
+                libm::cbrtf(rng.next_f32())
+            };
             (d * r * k, d * sign)
         }
         "Disc" | "Cylinder" => {
@@ -286,7 +290,7 @@ fn spawn_point(rng: &mut Pcg32, p: &Props, size: Vec3, emit_dir: Vec3) -> (Vec3,
                 Vec3::ZERO
             };
             (
-                (a * angle.cos() + b * angle.sin()) * r + along,
+                (a * libm::cosf(angle) + b * libm::sinf(angle)) * r + along,
                 emit_dir * sign,
             )
         }
@@ -330,7 +334,7 @@ fn emitter(
     let drag = p.f32("Drag", 0.0).max(0.0);
 
     // Age and move.
-    let damp = 2f32.powf(-drag * dt);
+    let damp = libm::powf(2f32, -drag * dt);
     let local_accel = if locked { rot.inverse() * accel } else { accel };
     em.particles.retain_mut(|q| {
         q.age += dt;

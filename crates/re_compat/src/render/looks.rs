@@ -161,7 +161,7 @@ pub(crate) fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 {
         c / 12.92
     } else {
-        ((c + 0.055) / 1.055).powf(2.4)
+        libm::powf((c + 0.055) / 1.055, 2.4)
     }
 }
 
@@ -204,7 +204,7 @@ fn linear_to_srgb(c: f32) -> f32 {
     if c <= 0.003_130_8 {
         c * 12.92
     } else {
-        1.055 * c.powf(1.0 / 2.4) - 0.055
+        1.055 * libm::powf(c, 1.0 / 2.4) - 0.055
     }
 }
 
@@ -216,8 +216,20 @@ fn tiled(seed: u64, f: &(Fractal, f32), u: f32, v: f32, period: f32) -> f32 {
     let (a, b) = (u / period * tau, v / period * tau);
     let r = period / tau * freq;
     // Sample a 4D torus through two 3D noises.
-    let n1 = re_noise::fbm3(seed, f, r * a.cos(), r * a.sin(), r * b.cos());
-    let n2 = re_noise::fbm3(seed ^ 0x5555, f, r * b.sin(), r * a.cos(), r * b.cos());
+    let n1 = re_noise::fbm3(
+        seed,
+        f,
+        r * libm::cosf(a),
+        r * libm::sinf(a),
+        r * libm::cosf(b),
+    );
+    let n2 = re_noise::fbm3(
+        seed ^ 0x5555,
+        f,
+        r * libm::sinf(b),
+        r * libm::cosf(a),
+        r * libm::cosf(b),
+    );
     (n1 + n2) * 0.5
 }
 
@@ -286,28 +298,28 @@ fn sample(p: Pattern, seed: u64, u: f32, v: f32) -> f32 {
         }
         Pattern::Marble => {
             let w = tiled(seed, &broad, u, v, period);
-            let vein = ((u + v) * 0.8 + w * 6.0).sin().abs();
-            0.85 + 0.15 * vein.powf(0.3)
+            let vein = libm::sinf((u + v) * 0.8 + w * 6.0).abs();
+            0.85 + 0.15 * libm::powf(vein, 0.3)
         }
         Pattern::Wood => {
             let w = tiled(seed, &broad, u, v, period);
-            let ring = ((v * 3.0 + w * 4.0) * std::f32::consts::PI).sin();
+            let ring = libm::sinf((v * 3.0 + w * 4.0) * std::f32::consts::PI);
             0.85 + 0.1 * ring + 0.05 * tiled(seed ^ 1, &fine, u * 0.25, v * 4.0, period)
         }
         Pattern::Planks => {
             let plank = (v / 1.0).floor();
             let seam = edge(v - (v / 1.0).round(), 0.04);
-            let offset = (plank * 2.7).sin() * 2.0;
+            let offset = libm::sinf(plank * 2.7) * 2.0;
             let end = edge(((u + offset) / 4.0).fract() - 0.5, 0.48 / 4.0 * 4.0);
             let grain = tiled(seed, &broad, u, v * 6.0, period);
-            let tone = 0.9 + 0.08 * (plank * 1.9).sin();
+            let tone = 0.9 + 0.08 * libm::sinf(plank * 1.9);
             (tone + 0.08 * grain) * (0.6 + 0.4 * seam) * (0.75 + 0.25 * end.max(seam.min(1.0)))
         }
         Pattern::Brick => {
             let row = (v / 0.5).floor();
             let su = u + if row as i32 % 2 == 0 { 0.0 } else { 0.5 };
             let mortar = edge(su - su.round(), 0.05) * edge(v / 0.5 - (v / 0.5).round(), 0.1);
-            let tone = 0.9 + 0.1 * ((row * 3.1 + (su).floor() * 7.3).sin());
+            let tone = 0.9 + 0.1 * (libm::sinf(row * 3.1 + (su).floor() * 7.3));
             (0.55 + 0.45 * mortar) * (tone + 0.08 * tiled(seed, &fine, u, v, period))
         }
         Pattern::Tiles => {
@@ -336,7 +348,7 @@ fn sample(p: Pattern, seed: u64, u: f32, v: f32) -> f32 {
             } else {
                 (v * 8.0).fract()
             };
-            0.85 + 0.15 * (t * std::f32::consts::PI).sin()
+            0.85 + 0.15 * libm::sinf(t * std::f32::consts::PI)
         }
         Pattern::Cracks => {
             let (d1, d2) = cells(seed, u, v, 1.5, period);

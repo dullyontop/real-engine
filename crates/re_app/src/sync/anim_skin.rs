@@ -70,6 +70,22 @@ impl SkinSync {
         self.posed.get(&id).map(|p| &*p.skin)
     }
 
+    /// The shared skin an entity is posed with.
+    pub fn skin_arc(&self, id: EntityId) -> Option<Arc<SkinData>> {
+        self.posed.get(&id).map(|p| p.skin.clone())
+    }
+
+    /// Replaces an entity's joint model-space matrices for this step (a ragdoll's
+    /// blended pose, ADR-0040) and rebuilds its palette. The next step poses the
+    /// skeleton from its animation again.
+    pub fn override_joints(&mut self, id: EntityId, f: impl FnOnce(&mut [Mat4])) {
+        if let Some(p) = self.posed.get_mut(&id) {
+            f(&mut p.model.joints);
+            p.palette.clear();
+            palette_into(&p.skin, &p.model, &mut p.palette);
+        }
+    }
+
     /// An entity's joint model-space matrices, from the last step.
     pub fn joint_matrices(&self, id: EntityId) -> Option<&[Mat4]> {
         self.posed.get(&id).map(|p| p.model.joints.as_slice())

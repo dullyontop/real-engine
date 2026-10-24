@@ -6,7 +6,7 @@
 //! report a contact of a body after the body is gone (ADR-0008).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 use glam::{Quat, Vec3};
@@ -30,6 +30,7 @@ use crate::config::{LayerTable, PhysicsConfig};
 use crate::convert::{gq, grv, gv, jq, jv, rv, unit_rotation};
 use crate::jobs::JoltRayonJobs;
 use crate::parts::{PartGate, PartListener, PartsState};
+use crate::ragdoll::{RagdollEntry, RagdollMotion, Settle};
 use crate::shapes;
 use crate::vehicle::VehicleEntry;
 
@@ -59,12 +60,15 @@ pub struct Physics {
     pub(crate) characters: BTreeMap<EntityId, CharacterEntry>,
     constraints: BTreeMap<EntityId, ConstraintEntry>,
     pub(crate) vehicles: BTreeMap<EntityId, VehicleEntry>,
+    pub(crate) ragdolls: BTreeMap<EntityId, RagdollEntry>,
+    /// Ragdoll motion from [`Physics::apply_motion_state`] for ragdolls not added yet.
+    pub(crate) pending_ragdolls: BTreeMap<EntityId, RagdollMotion>,
     /// The driver input of vehicles removed during the current `apply`, so a
     /// vehicle added again in the same `apply` keeps it.
     pub(crate) dropped_inputs: BTreeMap<EntityId, VehicleInput>,
-    gate: Arc<GroupGate>,
-    state: StepState,
-    removed: Vec<BodyId>,
+    pub(crate) gate: Arc<GroupGate>,
+    pub(crate) state: StepState,
+    pub(crate) removed: Vec<BodyId>,
     diagnostics: Vec<Diagnostic>,
     scratch_poses: Vec<oxijolt::BodyPose>,
     pub(crate) parts: PartsState,
@@ -109,7 +113,7 @@ struct Pair {
 
 /// The state that changes from step to step and goes into a [`PhysicsSnapshot`].
 #[derive(Clone, Default)]
-struct StepState {
+pub(crate) struct StepState {
     pairs: HashMap<(BodyId, BodyId), Pair>,
     events: Vec<ContactEvent>,
     /// Events produced between steps (removals), delivered by the next step.
@@ -124,6 +128,8 @@ struct StepState {
     character_velocity: BTreeMap<EntityId, Vec3>,
     /// Bodies that fell asleep in the last step: their final pose is reported once.
     slept: Vec<BodyId>,
+    /// Each ragdoll's settle count and whether it is calm.
+    pub(crate) settle: Settle,
 }
 
 /// A saved physics state, from [`Physics::save_state`].
@@ -178,6 +184,7 @@ struct CharacterMotion {
 pub struct MotionState {
     bodies: Vec<BodyMotion>,
     characters: Vec<CharacterMotion>,
+    ragdolls: Vec<RagdollMotion>,
 }
 
 impl MotionState {
@@ -197,28 +204,51 @@ impl MotionState {
 /// `update_character`; it never touches the world).
 /// A character meets an assembly's part only when the part collides and the
 /// character's group bits include the part's collision group.
-struct GroupGate {
+pub(crate) struct GroupGate {
     /// Raw body id → group bits.
     masks: RwLock<HashMap<u32, u32>>,
     /// The group bits of the character being updated.
     current: AtomicU32,
+    /// Raw body id → the entity that owns it, for ragdoll parts: a character never
+    /// meets the ragdoll on its own entity.
+    owners: RwLock<HashMap<u32, u64>>,
+    /// The entity of the character being updated.
+    current_owner: AtomicU64,
     /// The assemblies' parts.
     parts: Arc<PartGate>,
 }
 
 impl GroupGate {
-    fn set(&self, body: BodyId, groups: GroupMask) {
+    pub(crate) fn set(&self, body: BodyId, groups: GroupMask) {
         self.masks
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(body.to_raw(), groups.0);
     }
 
-    fn forget(&self, body: BodyId) {
+    pub(crate) fn forget(&self, body: BodyId) {
         self.masks
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&body.to_raw());
+        self.owners
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&body.to_raw());
+    }
+
+    /// Records that `body` belongs to `owner`'s ragdoll.
+    pub(crate) fn own(&self, body: BodyId, owner: EntityId) {
+        self.owners
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(body.to_raw(), owner.to_bits());
+    }
+
+    /// Prepares the gate for the character of entity `owner` with `groups`.
+    fn enter(&self, groups: GroupMask, owner: EntityId) {
+        self.current.store(groups.0, Ordering::Relaxed);
+        self.current_owner.store(owner.to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -228,6 +258,15 @@ impl CharacterContactListener for GroupGate {
             return true;
         };
         let current = self.current.load(Ordering::Relaxed);
+        if self
+            .owners
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&body.to_raw())
+            .is_some_and(|&owner| owner == self.current_owner.load(Ordering::Relaxed))
+        {
+            return false;
+        }
         if let Some(asm) = self.parts.body(body) {
             let Some(part) = asm.child(contact.sub_shape_id).map(|i| asm.parts[i]) else {
                 return true;
@@ -350,6 +389,8 @@ impl Physics {
         let gate = Arc::new(GroupGate {
             masks: RwLock::default(),
             current: AtomicU32::new(0),
+            owners: RwLock::default(),
+            current_owner: AtomicU64::new(0),
             parts: parts.gate.clone(),
         });
         world.set_character_contact_listener(Some(gate.clone()));
@@ -362,6 +403,8 @@ impl Physics {
             characters: BTreeMap::new(),
             constraints: BTreeMap::new(),
             vehicles: BTreeMap::new(),
+            ragdolls: BTreeMap::new(),
+            pending_ragdolls: BTreeMap::new(),
             dropped_inputs: BTreeMap::new(),
             gate,
             state: StepState::default(),
@@ -495,10 +538,27 @@ impl Physics {
             PhysicsCmd::RemoveVehicle { id } => self.remove_vehicle(id),
             PhysicsCmd::AddVehicle { id, desc } => self.add_vehicle(id, &desc),
             PhysicsCmd::SetVehicleInput { id, input } => self.set_vehicle_input(id, input),
+            PhysicsCmd::RemoveRagdoll { id } => self.remove_ragdoll(id),
+            PhysicsCmd::AddRagdoll {
+                id,
+                desc,
+                pos,
+                rot,
+                pose,
+            } => self
+                .add_ragdoll(id, &desc, pos, rot, pose.as_deref())
+                .map(|()| self.apply_pending_ragdoll(id)),
+            PhysicsCmd::SetRagdollMode { id, mode } => self.set_ragdoll_mode(id, mode),
+            PhysicsCmd::SetRagdollTarget { id, pos, rot, pose } => {
+                self.set_ragdoll_target(id, pos, rot, &pose)
+            }
+            PhysicsCmd::ApplyRagdollImpulse { id, joint, impulse } => {
+                self.apply_ragdoll_impulse(id, &joint, impulse)
+            }
         }
     }
 
-    fn check_layer(&self, id: EntityId, layer: Layer) -> Result<(), Diagnostic> {
+    pub(crate) fn check_layer(&self, id: EntityId, layer: Layer) -> Result<(), Diagnostic> {
         if self.config.layers.contains(layer) {
             Ok(())
         } else {
@@ -518,10 +578,13 @@ impl Physics {
     }
 
     fn add_body(&mut self, id: EntityId, desc: &BodyDesc) -> Result<(), Diagnostic> {
-        if self.bodies.contains_key(&id) || self.characters.contains_key(&id) {
+        if self.bodies.contains_key(&id)
+            || self.characters.contains_key(&id)
+            || self.ragdolls.contains_key(&id)
+        {
             return Err(Diagnostic::error(
                 codes::DUPLICATE_ENTITY,
-                format!("entity {id} already has a body or character"),
+                format!("entity {id} already has a body, character or ragdoll"),
             )
             .at(at(id))
             .with_hint("remove the existing body first, or send SetShape to change its shape"));
@@ -656,7 +719,7 @@ impl Physics {
         if let Some(ch) = self.characters.get(&id) {
             let cid = ch.id;
             let filter_layers = ch.sees.clone();
-            self.gate.current.store(ch.groups.0, Ordering::Relaxed);
+            self.gate.enter(ch.groups, id);
             let result = self.world.character_mut(cid).and_then(|mut c| {
                 c.set_position(rv(pos))?;
                 c.set_rotation(jq(rot))
@@ -764,7 +827,7 @@ impl Physics {
             .create_character(&settings, rv(pos), jq(rot))
             .map_err(|e| character_invalid(id, e.to_string()))?;
         let sees = self.layers_seen_by(desc.layer);
-        self.gate.current.store(desc.groups.0, Ordering::Relaxed);
+        self.gate.enter(desc.groups, id);
         // A new character knows no contacts until refreshed, and stick-to-floor only
         // acts on a character that was supported before its update.
         let _ = self
@@ -924,6 +987,7 @@ impl Physics {
 
         self.drive_kinematics(dt);
         self.drive_joints(dt);
+        self.drive_ragdolls(dt);
         self.update_characters(dt);
 
         let report = self.world.step(dt).map_err(|e| {
@@ -945,6 +1009,7 @@ impl Physics {
             );
         }
         self.gather_events();
+        self.settle_ragdolls();
         let slept = std::mem::take(&mut self.state.slept);
         self.refresh_moved_assemblies(&slept);
         self.state.slept = slept;
@@ -1021,7 +1086,7 @@ impl Physics {
             new_velocity = new_velocity.clamp_length_max(TERMINAL_SPEED);
             let step_up = jv(up * ch.step_height);
             let extended = ExtendedUpdateSettings::default().walk_stairs_step_up(step_up);
-            self.gate.current.store(ch.groups.0, Ordering::Relaxed);
+            self.gate.enter(ch.groups, id);
             let updated = self
                 .world
                 .character_mut(ch.id)
@@ -1072,6 +1137,13 @@ impl Physics {
         let mut deltas: BTreeMap<(BodyId, BodyId), Delta> = BTreeMap::new();
         for c in &events.contacts {
             let pair = c.pair();
+            // Ragdoll parts report no contact events (ADR-0040): one ragdoll touches the
+            // same body with several parts.
+            if self.world.ragdoll_of_body(pair.body1).is_some()
+                || self.world.ragdoll_of_body(pair.body2).is_some()
+            {
+                continue;
+            }
             let d = deltas.entry((pair.body1, pair.body2)).or_insert(Delta {
                 added: 0,
                 removed: 0,
@@ -1173,7 +1245,7 @@ impl Physics {
         out.clear();
         self.world.active_body_poses_into(&mut self.scratch_poses);
         for p in &self.scratch_poses {
-            if self.world.is_inner_body(p.id) {
+            if self.world.is_inner_body(p.id) || self.world.ragdoll_of_body(p.id).is_some() {
                 continue;
             }
             if let Some(&id) = self.entity_of.get(&p.id) {
@@ -1188,7 +1260,10 @@ impl Physics {
             let (Some(&id), Ok(b)) = (self.entity_of.get(body), self.world.body(*body)) else {
                 continue;
             };
-            if b.is_active() || self.world.is_inner_body(*body) {
+            if b.is_active()
+                || self.world.is_inner_body(*body)
+                || self.world.ragdoll_of_body(*body).is_some()
+            {
                 continue;
             }
             out.push(BodyPose {
@@ -1355,7 +1430,11 @@ impl Physics {
                 jolt: c.save_state(),
             });
         }
-        MotionState { bodies, characters }
+        MotionState {
+            bodies,
+            characters,
+            ragdolls: self.ragdoll_motion(),
+        }
     }
 
     /// Gives each entity of `motion` that this world also has the pose, velocity and
@@ -1373,6 +1452,7 @@ impl Physics {
     /// bit-identical, since Jolt's contact cache starts empty;
     /// [`restore_state`](Self::restore_state) is the exact replay within one world.
     pub fn apply_motion_state(&mut self, motion: &MotionState) {
+        self.apply_ragdoll_motion(&motion.ragdolls);
         for m in &motion.bodies {
             let Some(entry) = self.bodies.get(&m.id) else {
                 self.diagnostics.push(as_warning(unknown(m.id, "body")));
@@ -1415,7 +1495,7 @@ impl Physics {
             };
             let (cid, inner) = (ch.id, ch.inner);
             let filter_layers = ch.sees.clone();
-            self.gate.current.store(ch.groups.0, Ordering::Relaxed);
+            self.gate.enter(ch.groups, m.id);
             // The saved ground and contacts name bodies by Jolt id, which differ when the
             // worlds hold different bodies: recompute them against this world.
             let restored = self

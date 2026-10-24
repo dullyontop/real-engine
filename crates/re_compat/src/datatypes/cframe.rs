@@ -220,7 +220,7 @@ impl CFrame {
 
     /// A rotation of `angle` radians about the X axis.
     pub fn rotation_x(angle: f32) -> Self {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = libm::sincosf(angle);
         Self {
             p: [0.0; 3],
             r: [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]],
@@ -229,7 +229,7 @@ impl CFrame {
 
     /// A rotation of `angle` radians about the Y axis.
     pub fn rotation_y(angle: f32) -> Self {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = libm::sincosf(angle);
         Self {
             p: [0.0; 3],
             r: [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]],
@@ -238,7 +238,7 @@ impl CFrame {
 
     /// A rotation of `angle` radians about the Z axis.
     pub fn rotation_z(angle: f32) -> Self {
-        let (s, c) = angle.sin_cos();
+        let (s, c) = libm::sincosf(angle);
         Self {
             p: [0.0; 3],
             r: [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]],
@@ -259,7 +259,7 @@ impl CFrame {
     /// A rotation of `angle` radians about `axis` (normalized first).
     pub fn from_axis_angle(axis: [f32; 3], angle: f32) -> Self {
         let [x, y, z] = unit(axis);
-        let (s, c) = angle.sin_cos();
+        let (s, c) = libm::sincosf(angle);
         let t = 1.0 - c;
         Self {
             p: [0.0; 3],
@@ -371,14 +371,14 @@ impl CFrame {
         let s: f32 = if (j + 3 - i) % 3 == 1 { 1.0 } else { -1.0 };
         let sj = (s * r[i][k]).clamp(-1.0, 1.0);
         let mut out = [0.0; 3];
-        out[j] = sj.asin();
+        out[j] = libm::asinf(sj);
         if sj.abs() < 0.999_999_9 {
-            out[i] = (-s * r[j][k]).atan2(r[k][k]);
-            out[k] = (-s * r[i][j]).atan2(r[i][i]);
+            out[i] = libm::atan2f(-s * r[j][k], r[k][k]);
+            out[k] = libm::atan2f(-s * r[i][j], r[i][i]);
         } else {
             // Gimbal lock: the first and last axes turn about the same line;
             // put it all in the first.
-            out[i] = (s * r[k][j]).atan2(r[j][j]);
+            out[i] = libm::atan2f(s * r[k][j], r[j][j]);
         }
         out
     }
@@ -404,7 +404,7 @@ impl CFrame {
         if s < 1e-7 {
             return ([1.0, 0.0, 0.0], 0.0);
         }
-        ([x / s, y / s, z / s], 2.0 * s.atan2(w))
+        ([x / s, y / s, z / s], 2.0 * libm::atan2f(s, w))
     }
 
     /// Interpolates position linearly and rotation along the shortest arc;

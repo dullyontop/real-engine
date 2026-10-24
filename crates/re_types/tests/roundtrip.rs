@@ -455,6 +455,46 @@ fn physics() {
                 handbrake: 1.0,
             },
         },
+        PhysicsCmd::RemoveRagdoll { id },
+        PhysicsCmd::AddRagdoll {
+            id,
+            desc: RagdollDesc {
+                skeleton: RagdollSkeleton {
+                    joints: vec![SkeletonJoint {
+                        name: "hips".into(),
+                        parent: None,
+                        neutral: JointPose::new(Vec3::Y, Quat::IDENTITY),
+                    }],
+                },
+                parts: vec![RagdollPartDesc {
+                    joint: "hips".into(),
+                    constraint: RagdollConstraint::Hinge {
+                        min_deg: 0.0,
+                        max_deg: 140.0,
+                    },
+                    ..RagdollPartDesc::default()
+                }],
+                ..RagdollDesc::default()
+            },
+            pos: Vec3::X,
+            rot: rot(),
+            pose: Some(vec![JointPose::IDENTITY]),
+        },
+        PhysicsCmd::SetRagdollMode {
+            id,
+            mode: RagdollMode::Powered { strength: 0.5 },
+        },
+        PhysicsCmd::SetRagdollTarget {
+            id,
+            pos: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+            pose: vec![JointPose::new(Vec3::ONE, rot())],
+        },
+        PhysicsCmd::ApplyRagdollImpulse {
+            id,
+            joint: "hips".into(),
+            impulse: Vec3::Z,
+        },
     ];
     let ranks: std::collections::BTreeSet<u8> =
         commands.iter().map(PhysicsCmd::kind_rank).collect();

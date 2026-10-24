@@ -72,7 +72,11 @@ impl Random {
         let z = 2.0 * self.next_number() - 1.0;
         let phi = std::f64::consts::TAU * self.next_number();
         let r = (1.0 - z * z).max(0.0).sqrt();
-        [(r * phi.cos()) as f32, (r * phi.sin()) as f32, z as f32]
+        [
+            (r * libm::cos(phi)) as f32,
+            (r * libm::sin(phi)) as f32,
+            z as f32,
+        ]
     }
 }
 

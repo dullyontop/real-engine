@@ -29,6 +29,7 @@ pub mod diag;
 pub mod generator;
 pub mod host;
 pub mod modules;
+mod portable_math;
 mod runtime;
 mod scheduler;
 pub mod vm;
