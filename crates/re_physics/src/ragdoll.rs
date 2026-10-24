@@ -965,5 +965,100 @@ impl Physics {
     }
 }
 
+/// What a [`PhysicsSnapshot`](crate::PhysicsSnapshot) keeps of a ragdoll besides its
+/// bodies, which the Jolt state carries.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RagdollSaved {
+    mode: RagdollMode,
+    motor_scale: f32,
+    frame: (Vec3, Quat),
+    target: Vec<JointPose>,
+}
+
+impl Physics {
+    pub(crate) fn save_ragdolls(&self) -> BTreeMap<EntityId, RagdollSaved> {
+        self.ragdolls
+            .iter()
+            .map(|(&id, r)| {
+                (
+                    id,
+                    RagdollSaved {
+                        mode: r.mode,
+                        motor_scale: r.motor_scale,
+                        frame: r.frame,
+                        target: r.target.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Why `saved` cannot be restored into this world: other ragdolls, or ones rebuilt
+    /// since (a rebuild also changes the Jolt structure, so this only names it).
+    pub(crate) fn ragdolls_unrestorable(
+        &self,
+        saved: &BTreeMap<EntityId, RagdollSaved>,
+    ) -> Option<String> {
+        let same = saved.len() == self.ragdolls.len()
+            && saved.iter().zip(&self.ragdolls).all(|((a, s), (b, r))| {
+                a == b && s.motor_scale.to_bits() == r.motor_scale.to_bits()
+            });
+        (!same).then(|| "ragdolls were added, removed or rebuilt since it was saved".into())
+    }
+
+    /// Puts back each ragdoll's mode, motor scale, frame and target; check first with
+    /// [`ragdolls_unrestorable`](Self::ragdolls_unrestorable).
+    pub(crate) fn restore_ragdolls(&mut self, saved: &BTreeMap<EntityId, RagdollSaved>) {
+        for (id, s) in saved {
+            if let Some(r) = self.ragdolls.get_mut(id) {
+                r.mode = s.mode;
+                r.motor_scale = s.motor_scale;
+                r.frame = s.frame;
+                r.target.clone_from(&s.target);
+            }
+        }
+    }
+
+    /// The ragdolls' state for a state hash, in entity order: each one's entity, mode
+    /// and strength, then each part's position, rotation and velocities, as the bits of
+    /// their floats (every NaN as one). Empty when there are no ragdolls.
+    pub fn ragdoll_state_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        let floats = |out: &mut Vec<u8>, v: &[f32]| {
+            for x in v {
+                let bits = if x.is_nan() {
+                    f32::NAN.to_bits()
+                } else {
+                    x.to_bits()
+                };
+                out.extend_from_slice(&bits.to_le_bytes());
+            }
+        };
+        for (&id, r) in &self.ragdolls {
+            out.extend_from_slice(&id.0.to_le_bytes());
+            let (tag, strength) = match r.mode {
+                RagdollMode::Animated => (0u8, 0.0),
+                RagdollMode::Simulated => (1, 0.0),
+                RagdollMode::Powered { strength } => (2, strength),
+            };
+            out.push(tag);
+            floats(&mut out, &[strength]);
+            out.extend_from_slice(&(r.bodies.len() as u64).to_le_bytes());
+            for &b in &r.bodies {
+                let Ok(b) = self.world.body(b) else {
+                    out.push(0);
+                    continue;
+                };
+                out.push(1);
+                floats(&mut out, &grv(b.position()).to_array());
+                floats(&mut out, &gq(b.rotation()).to_array());
+                floats(&mut out, &gv(b.linear_velocity()).to_array());
+                floats(&mut out, &gv(b.angular_velocity()).to_array());
+            }
+        }
+        out
+    }
+}
+
 /// Settle detectors by entity, in the step state.
 pub(crate) type Settle = BTreeMap<EntityId, (SettleDetector, bool)>;

@@ -371,3 +371,76 @@ fn a_copy_of_the_game_keeps_a_fallen_ragdoll() {
     let (report, _, _) = app.play_copy(5, None, &[], false).unwrap();
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
 }
+
+const LIMP: &str = r#"local steps = 0
+time.on_step(function()
+	steps += 1
+	if steps == 2 then
+		physics.ragdoll(script.entity, "simulated")
+	end
+end)
+"#;
+
+#[test]
+fn a_rebuild_keeps_the_mode_a_script_set() {
+    let dir = project("{}", Some(LIMP), false);
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(60), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    let id = man(&app);
+    assert_eq!(
+        app.physics().ragdoll(id).unwrap().mode,
+        re_types::physics::RagdollMode::Simulated
+    );
+    // A new mass rebuilds the ragdoll; it stays limp and shown.
+    app.world_mut()
+        .set(
+            "man",
+            "Ragdoll",
+            "total_mass",
+            re_reflect::Value::Float(80.0),
+        )
+        .unwrap();
+    let report = app.run_headless(Some(3), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert_eq!(
+        app.physics().ragdoll(id).unwrap().mode,
+        re_types::physics::RagdollMode::Simulated
+    );
+    assert_eq!(app.ragdoll_sync().weight(id), Some(1.0));
+}
+
+#[test]
+fn a_nan_strength_is_reported_once() {
+    let dir = project(r#"{ "mode": "Powered" }"#, None, false);
+    let mut app = open(dir.path());
+    // Reflection refuses a NaN; Rust code writing the component directly does not.
+    let e = app.world().entity("man").unwrap();
+    app.world_mut()
+        .ecs
+        .get_mut::<re_scene::Ragdoll>(e)
+        .unwrap()
+        .strength = f32::NAN;
+    let report = app.run_headless(Some(30), None).unwrap();
+    let refused = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.to_string() == "RE5019")
+        .count();
+    assert_eq!(refused, 1, "{:?}", report.diagnostics);
+}
+
+#[test]
+fn the_state_hash_covers_ragdolls() {
+    let dir = project(r#"{ "mode": "Simulated" }"#, None, false);
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(10), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert_eq!(report.state_hash, app.state_hash().to_hex().to_string());
+    assert_ne!(app.state_hash(), app.world().state_hash());
+    // The ragdoll falls while the scene stands still: only the ragdolls change it.
+    let (world, game) = (app.world().state_hash(), app.state_hash());
+    app.run_headless(Some(5), None).unwrap();
+    assert_eq!(app.world().state_hash(), world);
+    assert_ne!(app.state_hash(), game);
+}

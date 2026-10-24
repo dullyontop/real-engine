@@ -2,7 +2,8 @@
 //!
 //! Everything a scene file, script or agent can name is declared with
 //! [`component!`] and registered by [`register_builtins`]. `Name` (the file's
-//! `name`), [`StableId`](crate::StableId) (the file's `id`), [`GlobalTransform`],
+//! `name`), [`Note`] (the file's `note`), [`StableId`](crate::StableId) (the
+//! file's `id`), [`GlobalTransform`],
 //! [`Generated`](crate::Generated) and the hierarchy are not registry
 //! components.
 
@@ -16,6 +17,13 @@ use crate::procedural::{GraphSource, Procedural};
 /// Display name. Not unique; written to scene files as the entity's `name`.
 #[derive(Component, Clone, Debug, PartialEq, Eq, Default)]
 pub struct Name(pub String);
+
+/// A comment on an entity: written to scene and prefab files as its `note`
+/// (JSON has no comments), kept by every save, and never part of the
+/// simulation or its [`state_hash`](crate::World::state_hash). Present only
+/// when not empty.
+#[derive(Component, Clone, Debug, PartialEq, Eq, Default)]
+pub struct Note(pub String);
 
 component! {
     /// Position, rotation and scale relative to the parent entity (or to the
@@ -359,8 +367,10 @@ component! {
 
 field_enum! {
     /// How a [`Ragdoll`] moves (ADR-0040): following its animation with
-    /// kinematic parts, limp, or holding the animation with joint motors.
-    pub enum RagdollMode { Animated, Simulated, Powered }
+    /// kinematic parts, limp, or holding the animation with joint motors. It is
+    /// the scene's field; `re_types::physics::RagdollMode` is the physics mode,
+    /// which carries the strength.
+    pub enum RagdollControl { Animated, Simulated, Powered }
 }
 
 component! {
@@ -378,7 +388,7 @@ component! {
         /// Total mass, in kilograms.
         pub total_mass: f32 = 70.0,
         /// How it moves when the scene starts, and after each edit of this field.
-        pub mode: RagdollMode = RagdollMode::Animated,
+        pub mode: RagdollControl = RagdollControl::Animated,
         /// Motor strength in `Powered` mode, 0 (limp) to 1.
         pub strength: f32 = 1.0,
         /// Seconds the shown pose takes to blend from the animation to the ragdoll

@@ -21,6 +21,7 @@ re_core = { path = "crates/re_core" }
 re_noise = { path = "crates/re_noise" }
 re_types = { path = "crates/re_types" }
 re_reflect = { path = "crates/re_reflect" }
+re_reflect_derive = { path = "crates/re_reflect_derive" }
 re_scene = { path = "crates/re_scene" }
 re_command = { path = "crates/re_command" }
 re_render = { path = "crates/re_render" }
@@ -66,6 +67,10 @@ ruzstd = { version = "=0.9.1", default-features = false, features = ["std"] }
 quick-xml = "=0.41.0"
 base64 = "=0.23.1"
 
+# Polygon booleans and triangulation (ADR-0043 §5): re_geom only.
+i_overlay = { version = "=9.1.0", default-features = false }
+earcut = "=0.4.11"
+
 # Core, data and serialization.
 bevy_ecs = { version = "=0.20.0", default-features = false, features = ["std", "multi_threaded"] }
 rayon = "=1.12.0"
@@ -83,6 +88,11 @@ uuid = { version = "=1.28.0", features = ["v4", "serde", "js"] }
 indexmap = { version = "=2.14.2", features = ["serde"] }
 thiserror = "=2.0.21"
 anyhow = "=1.0.104"
+
+# Proc macros (re_reflect_derive only).
+proc-macro2 = "=1.0.107"
+quote = "=1.0.47"
+syn = "=2.0.119"
 
 # Assets, input, audio, platform.
 gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength"] }

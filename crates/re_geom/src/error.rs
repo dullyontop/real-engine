@@ -21,6 +21,15 @@ pub enum GeomError {
     /// A merged mesh would have too many vertices (`RE4502`).
     #[error("merged mesh would have {0} vertices, more than a u32 index can name")]
     TooLarge(u64),
+    /// A coordinate does not fit the 1 mm polygon grid (`RE4503`).
+    #[error("out of range: {0}")]
+    OutOfRange(String),
+    /// A polygon or path is unusable (`RE4504`).
+    #[error("invalid polygon or path: {0}")]
+    Polygon(String),
+    /// A polygon could not be triangulated (`RE4505`).
+    #[error("triangulation failed: {0}")]
+    Triangulation(String),
 }
 
 impl GeomError {
@@ -30,6 +39,9 @@ impl GeomError {
             GeomError::Heightfield(_) => codes::INVALID_HEIGHTFIELD,
             GeomError::Primitive { .. } => codes::INVALID_PRIMITIVE,
             GeomError::TooLarge(_) => codes::MESH_TOO_LARGE,
+            GeomError::OutOfRange(_) => codes::OUT_OF_RANGE,
+            GeomError::Polygon(_) => codes::INVALID_POLYGON,
+            GeomError::Triangulation(_) => codes::TRIANGULATION_FAILED,
         }
     }
 

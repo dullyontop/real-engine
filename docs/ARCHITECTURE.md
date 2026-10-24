@@ -403,6 +403,24 @@ The builder runs once in the `tools` context and returns a `GraphDoc` (`re_types
 
 The table has 15 rows and 16 node kinds: `mesh.transform` and `mesh.merge` share a row.
 
+### Polygon and road nodes (M3, ADR-0043 §5)
+
+Two port types carry them: `shapes` (polygons with holes in the source's XZ plane, in metres) and `path` (a road centreline sampled at a fixed spacing, with width and bank per sample). `re_geom::polygon` runs booleans, offsets and strokes on i_overlay's integer engine at a fixed 1 mm grid and triangulates with earcut, so outputs are the same on every platform; `re_geom::road` makes the splines, ribbons and junctions.
+
+| Node | Output |
+|---|---|
+| `shape.polygon` (points and holes) | Shapes |
+| `shape.boolean` (union, intersect, difference, xor) / `shape.offset` | Shapes |
+| `shape.mesh` (flat, at a height) | Mesh |
+| `field.from_shapes` (a mask with falloff, on a field's grid or its own) | Field |
+| `points.mask` (keep inside or outside) | Points |
+| `path.spline` (centripetal Catmull-Rom through control points, optionally draped on a field) | Path |
+| `road.mesh` (any number of paths; ribbons cut back around junctions, flat junction surfaces) | Mesh |
+| `road.footprint` (any number of paths, plus a margin) | Shapes |
+| `terrain.conform` (a field flattened under paths, blending back beside them) | Field |
+
+`NodeRegistry::m1()` registers these with the others (28 kinds). Shapes and paths are stored in the disk cache like fields and meshes, and Luau nodes can take and return them (`re_script::generator`).
+
 ### Evaluation
 
 - Nodes are evaluated in topological order. Independent nodes run in parallel on the rayon pool.
@@ -658,6 +676,7 @@ Input bindings name winit `KeyCode` variants (`key:KeyW`), mouse buttons (`mouse
     {
       "id": "island",
       "name": "Island",
+      "note": "Seed 1234 keeps the beach on the east side; change it with care.",
       "parent": "world",
       "components": {
         "GraphSource": { "builder": "scripts/tools/island_graph.luau", "graph": "" },
@@ -679,6 +698,7 @@ Rules (verified by the core spike's round-trip tests, ADR-0016):
 - components are sorted by name, fields are in declaration order, and lists of scalars are written on one line;
 - floats are written in shortest round-trip form, and parsed exactly (including the f32 double-rounding fix of ADR-0032);
 - unknown keys are errors that name the entity index, id, component and field;
+- an entity's `note` is its comment (JSON has none): free text for people and agents, kept by every save and set with the `set_note` operation, never read by the game and not part of `state_hash`;
 - generated entities are not written; the schemas of the script-defined components the saving world had registered (including those only generated entities use) are declared in a top-level `script_components` list, so the file loads before any script runs. A declaration stays until it is removed from the file while no world that loaded it saves again;
 - a file always ends with a newline, and save → load → save is byte-identical;
 - the `version` field is migrated forwards by `re_scene::migrate`, one function per version.
