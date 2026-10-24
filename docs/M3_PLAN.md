@@ -469,7 +469,7 @@ real build --project examples/island --out out/island-web --target web
 - `cargo xtask web-test` and WebGL2 moved from "runtime" to "build". The static server stays in Node (`tools/web-test/serve.mjs`), not xtask.
 - `RE0975` waits for WP30's server role, since nothing triggers it yet. The notices file in the web folder arrives with WP19 PR "bundles".
 - Saved data on the web is persisted since WP27's "saved data" (#131).
-- Release CI publishing the prebuilt web runtime (the folder `target/web-runtime/` that `real build --target web` stages) is the maintainer's, still to do.
+- Release CI publishing the prebuilt web runtime: `.github/workflows/release.yml` builds it on a `v*` tag and attaches `real-web-runtime-<version>.tar.gz` (the runtime files) to the release, for `real build --target web --runtime DIR`. Desktop runtimes are not published yet.
 
 **Definition of done:** PRs "portable", "toolchain", "runtime" and "build" merged; `build-web` and `web` CI jobs required and green; ADR-0049 Accepted with the full runtime's size and the private-sample results recorded under `research/m3/wp29/`.
 
