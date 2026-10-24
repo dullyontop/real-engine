@@ -91,6 +91,26 @@
           "description": "One physics step (`Physics::step` alone).",
           "$ref": "#/$defs/TimeStats"
         },
+        "render_submit": {
+          "description": "Drawing one frame on the CPU (ADR-0038): the renderer preparing,\nencoding and finishing the command buffers of the 3D view, a compat\ngame's surfaces and viewports, and the UI, which is what a render\nthread would take over. Waits for the GPU are not in it: presentation,\nreadback, and `Queue::submit` (`queue_submit`). Taken when frames are\ndrawn (in a window, and for captures), after the frame the phases\nmeasure.",
+          "$ref": "#/$defs/TimeStats",
+          "default": {
+            "samples": 0,
+            "mean_ms": 0.0,
+            "p95_ms": 0.0,
+            "max_ms": 0.0
+          }
+        },
+        "queue_submit": {
+          "description": "The frame's time inside `Queue::submit`. Software rasterisers and some\nGL drivers wait there until the GPU is done with the previous frame, so\nthere it mostly measures the GPU.",
+          "$ref": "#/$defs/TimeStats",
+          "default": {
+            "samples": 0,
+            "mean_ms": 0.0,
+            "p95_ms": 0.0,
+            "max_ms": 0.0
+          }
+        },
         "counts": {
           "description": "Counts at the end of the run.",
           "$ref": "#/$defs/PerfCounts"
