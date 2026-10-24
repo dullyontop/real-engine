@@ -59,6 +59,7 @@ pub mod prefab;
 pub mod procedural;
 pub mod scene;
 pub mod stream;
+pub mod structure;
 pub mod tags;
 pub mod world;
 
