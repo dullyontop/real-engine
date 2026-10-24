@@ -358,7 +358,10 @@ fn far_terrain_is_drawn_relative_to_the_render_origin() {
     assert_eq!(app.render_origin(), Vec3::new(7168.0, 0.0, 0.0));
     let snapshot = app.snapshot();
     let eye = snapshot.camera.position();
-    assert!((eye - Vec3::new(-168.0, 30.0, 40.0)).length() < 1e-3, "{eye}");
+    assert!(
+        (eye - Vec3::new(-168.0, 30.0, 40.0)).length() < 1e-3,
+        "{eye}"
+    );
     assert!(!snapshot.items.is_empty(), "the terrain is drawn");
     for item in &snapshot.items {
         let at = item.world.w_axis.truncate();

@@ -963,7 +963,9 @@ impl Physics {
             return Ok(());
         }
         if !self.ragdolls.is_empty() {
-            return Err(refuse("the world has ragdolls, which do not follow the origin yet"));
+            return Err(refuse(
+                "the world has ragdolls, which do not follow the origin yet",
+            ));
         }
         let shift = self.parts.origin - origin;
         if !crate::world::in_world(shift * 0.5) {
