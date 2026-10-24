@@ -21,10 +21,10 @@ use re_compat::render::{FrameItem, MaterialKey, MeshKey, RenderFrame, ViewportSc
 use re_core::Diagnostic;
 use re_render::{Capture, Renderer, SceneExtras, UiFrame, egui, wgpu};
 use re_scene::Entity;
-use re_types::mesh::MeshData;
+use re_types::mesh::{MeshData, SkinWeights};
 use re_types::render::{
     DrawFlags, DrawItem, MaterialDesc, MaterialHandle, MeshHandle, PostSettings, RenderSnapshot,
-    SunShadows, TextureData, TextureHandle, TextureRef, WorldQuad,
+    SkinnedDrawItem, SunShadows, TextureData, TextureHandle, TextureRef, WorldQuad,
 };
 
 /// A resource the view keeps: its data, and its handle once uploaded.
@@ -42,7 +42,8 @@ impl<D, H> Kept<D, H> {
 /// The compat game's view; see the module docs.
 #[derive(Default)]
 pub struct CompatView {
-    meshes: HashMap<MeshKey, Kept<MeshData, MeshHandle>>,
+    /// Meshes, with skin weights for a skinned `MeshPart`'s.
+    meshes: HashMap<MeshKey, Kept<(MeshData, Option<SkinWeights>), MeshHandle>>,
     materials: HashMap<MaterialKey, Kept<MaterialDesc, MaterialHandle>>,
     textures: HashMap<String, Kept<TextureData, TextureHandle>>,
     /// Handles of released resources, freed at the next draw.
@@ -100,7 +101,10 @@ impl CompatView {
             self.textures.insert(name, Kept::new(data));
         }
         for (key, data) in frame.new_meshes.drain(..) {
-            self.meshes.insert(key, Kept::new(data));
+            self.meshes.insert(key, Kept::new((data, None)));
+        }
+        for (key, data, weights) in frame.new_skinned_meshes.drain(..) {
+            self.meshes.insert(key, Kept::new((data, Some(weights))));
         }
         for (key, desc) in frame.new_materials.drain(..) {
             self.materials.insert(key, Kept::new(desc));
@@ -259,7 +263,10 @@ impl CompatView {
         }
         for m in self.meshes.values_mut() {
             if m.handle.is_none() {
-                m.handle = Some(r.upload_mesh(&m.data)?);
+                m.handle = Some(match &m.data {
+                    (data, Some(weights)) => r.upload_skinned_mesh(data, weights)?,
+                    (data, None) => r.upload_mesh(data)?,
+                });
             }
         }
         for m in self.materials.values_mut() {
@@ -276,22 +283,18 @@ impl CompatView {
             }
         }
         let items = self.draw_items(&f.items);
-        let mut snapshot = RenderSnapshot {
+        let skinned = self.skinned_items(f);
+        let snapshot = RenderSnapshot {
             camera: f.camera,
             lights: f.lights.clone(),
             items,
+            skinned,
+            joint_palette: f.joint_palette.clone(),
             clear: f.clear,
-            post: self.post,
+            post: f.post_settings(self.post),
             shadows: self.shadows,
             ..RenderSnapshot::default()
         };
-        snapshot.post.exposure = f.exposure;
-        snapshot.post.grading = f.grading.map(|g| re_types::render::ColorGrading {
-            brightness: g.brightness,
-            contrast: g.contrast,
-            saturation: g.saturation,
-            tint: g.tint,
-        });
         Ok(Some((snapshot, extras(f))))
     }
 
@@ -311,6 +314,30 @@ impl CompatView {
                     } else {
                         DrawFlags::RECEIVE_SHADOWS
                     },
+                })
+            })
+            .collect()
+    }
+
+    /// The renderer's skinned items of a frame, skipping any whose mesh or
+    /// material is not uploaded.
+    fn skinned_items(&self, f: &RenderFrame) -> Vec<SkinnedDrawItem> {
+        f.skinned
+            .iter()
+            .filter_map(|i| {
+                Some(SkinnedDrawItem {
+                    entity: i.entity,
+                    mesh: self.meshes.get(&i.mesh)?.handle?,
+                    material: self.materials.get(&i.material)?.handle?,
+                    world: i.world,
+                    flags: if i.cast_shadow {
+                        DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS
+                    } else {
+                        DrawFlags::RECEIVE_SHADOWS
+                    },
+                    palette: i.palette,
+                    joints: i.joints,
+                    bounds: i.bounds,
                 })
             })
             .collect()

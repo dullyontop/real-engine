@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1803,
-    "partial": 237,
+    "implemented": 1816,
+    "partial": 234,
     "stub-error": 50,
     "missing": 3
   },
@@ -999,25 +999,22 @@
       "name": "BloomEffect",
       "superclass": "PostEffect",
       "creatable": true,
-      "status": "partial",
+      "status": "implemented",
       "members": [
         {
           "name": "Intensity",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
         },
         {
           "name": "Size",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
         },
         {
           "name": "Threshold",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
         }
       ]
     },
@@ -1025,13 +1022,25 @@
       "name": "BlurEffect",
       "superclass": "PostEffect",
       "creatable": true,
-      "status": "partial",
+      "status": "implemented",
       "members": [
         {
           "name": "Size",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Bone",
+      "superclass": "Attachment",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Transform",
+          "kind": "property",
+          "status": "implemented"
         }
       ]
     },
@@ -1445,6 +1454,38 @@
           "name": "MaxItems",
           "kind": "property",
           "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "DepthOfFieldEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "partial",
+      "members": [
+        {
+          "name": "FarIntensity",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "FocusDistance",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "InFocusRadius",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
+        },
+        {
+          "name": "NearIntensity",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn."
         }
       ]
     },
@@ -3314,6 +3355,25 @@
       ]
     },
     {
+      "name": "MeshPart",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "MeshId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextureID",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn. The part's Color and Material are used."
+        }
+      ]
+    },
+    {
       "name": "MessagingService",
       "superclass": "Instance",
       "service": true,
@@ -5008,19 +5068,17 @@
       "name": "SunRaysEffect",
       "superclass": "PostEffect",
       "creatable": true,
-      "status": "partial",
+      "status": "implemented",
       "members": [
         {
           "name": "Intensity",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
         },
         {
           "name": "Spread",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; not drawn."
+          "status": "implemented"
         }
       ]
     },

@@ -478,8 +478,7 @@
       "name": "BloomEffect",
       "superclass": "PostEffect",
       "creatable": true,
-      "status": "partial",
-      "note": "Stored; bloom is not drawn yet (real post-processing is M3).",
+      "status": "implemented",
       "doc": "Makes bright parts of the image glow.",
       "properties": [
         {
@@ -489,8 +488,7 @@
             "kind": "own"
           },
           "default": 1,
-          "status": "partial",
-          "note": "Stored; not drawn.",
+          "status": "implemented",
           "doc": "How strong the glow is."
         },
         {
@@ -500,8 +498,7 @@
             "kind": "own"
           },
           "default": 24,
-          "status": "partial",
-          "note": "Stored; not drawn.",
+          "status": "implemented",
           "doc": "How far the glow spreads."
         },
         {
@@ -511,8 +508,7 @@
             "kind": "own"
           },
           "default": 2,
-          "status": "partial",
-          "note": "Stored; not drawn.",
+          "status": "implemented",
           "doc": "How bright a pixel must be to glow."
         }
       ]
@@ -521,8 +517,7 @@
       "name": "BlurEffect",
       "superclass": "PostEffect",
       "creatable": true,
-      "status": "partial",
-      "note": "Stored; the blur is not drawn yet (M3).",
+      "status": "implemented",
       "doc": "Blurs the image.",
       "properties": [
         {
@@ -532,8 +527,7 @@
             "kind": "own"
           },
           "default": 24,
-          "status": "partial",
-          "note": "Stored; not drawn.",
+          "status": "implemented",
           "doc": "How strong the blur is."
         }
       ]
@@ -595,8 +589,7 @@
       "name": "SunRaysEffect",
       "superclass": "PostEffect",
       "creatable": true,
-      "status": "partial",
-      "note": "Stored; sun rays are not drawn yet (M3).",
+      "status": "implemented",
       "doc": "Rays of light from the sun past objects.",
       "properties": [
         {
@@ -606,8 +599,7 @@
             "kind": "own"
           },
           "default": 0.25,
-          "status": "partial",
-          "note": "Stored; not drawn.",
+          "status": "implemented",
           "doc": "How bright the rays are."
         },
         {
@@ -617,9 +609,62 @@
             "kind": "own"
           },
           "default": 1,
+          "status": "implemented",
+          "doc": "How far the rays reach."
+        }
+      ]
+    },
+    {
+      "name": "DepthOfFieldEffect",
+      "superclass": "PostEffect",
+      "creatable": true,
+      "status": "partial",
+      "note": "Stored; the renderer has no depth of field yet.",
+      "doc": "Blurs what is nearer or farther than the focus.",
+      "properties": [
+        {
+          "name": "FarIntensity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.75,
           "status": "partial",
           "note": "Stored; not drawn.",
-          "doc": "How far the rays reach."
+          "doc": "How blurred things beyond the focus are."
+        },
+        {
+          "name": "FocusDistance",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.05,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "How far from the camera the focus is, in studs."
+        },
+        {
+          "name": "InFocusRadius",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 10,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "How deep the sharp zone around the focus is, in studs."
+        },
+        {
+          "name": "NearIntensity",
+          "type": "number",
+          "storage": {
+            "kind": "own"
+          },
+          "default": 0.75,
+          "status": "partial",
+          "note": "Stored; not drawn.",
+          "doc": "How blurred things in front of the focus are."
         }
       ]
     },

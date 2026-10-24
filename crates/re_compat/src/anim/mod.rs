@@ -2,8 +2,9 @@
 //! and `IKControl`, on `re_anim`'s keyframe mixer.
 //!
 //! An Animator drives the `Motor6D` joints of the rig it sits in (the model
-//! holding its Humanoid or AnimationController). A track's joints are named
-//! by each joint's `Part1`, as a keyframe sequence's poses are. Each step,
+//! holding its Humanoid or AnimationController), and the `Bone`s of its
+//! skinned `MeshPart`s. A track's joints are named by each joint's `Part1`
+//! (or the bone's own name), as a keyframe sequence's poses are. Each step,
 //! [`step`] advances every track, fires the track events and writes the
 //! blended pose to the joints' `Transform`, then applies the rig's IK
 //! controls ([`ik`]).
@@ -153,11 +154,19 @@ pub fn rig_of(w: &World, animator: Entity) -> Option<Entity> {
     tree::parent(w, holder)
 }
 
-/// The `Motor6D` joints of a rig, by the name of their `Part1`.
+/// The joints of a rig a track's poses name: its `Motor6D`s by the name of
+/// their `Part1`, then the `Bone`s of its skinned `MeshPart`s by their own
+/// name (a `Motor6D` wins a shared name). Both are posed through
+/// `Transform`.
 pub fn joints(w: &World, classes: &ClassRegistry, rig: Entity) -> BTreeMap<String, Entity> {
     let mut out = BTreeMap::new();
     for j in pose::joints(w, classes, rig) {
         out.entry(tree::name(w, j.part1)).or_insert(j.motor);
+    }
+    for b in tree::descendants(w, rig) {
+        if tree::is_a(w, classes, b, "Bone") && !tree::is_destroyed(w, b) {
+            out.entry(tree::name(w, b)).or_insert(b);
+        }
     }
     out
 }

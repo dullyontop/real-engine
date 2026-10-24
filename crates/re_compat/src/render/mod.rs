@@ -4,7 +4,7 @@
 //! The host calls [`build`] once a frame, after the frame's scripts and
 //! simulation, with the viewport. It returns a [`RenderFrame`]: the camera
 //! and lights, one [`FrameItem`] per drawn part or merged static cell, the
-//! environment (ambient light, fog, sky, colour grading), the effects, and
+//! environment (ambient light, fog, sky, post effects), the effects, and
 //! the meshes, materials and textures to upload or release since the last
 //! frame. Nothing here talks to the GPU: the host maps the frame onto its
 //! renderer (`re_render`'s `RenderSnapshot` and `SceneExtras`), keeping a
@@ -23,6 +23,7 @@ mod effects;
 mod lighting;
 mod looks;
 mod mesh;
+mod models;
 mod parts;
 mod viewport;
 
@@ -34,11 +35,14 @@ use re_core::Diagnostic;
 use re_scene::{Entity, World};
 use re_types::EntityId;
 use re_types::mesh::MeshData;
-use re_types::render::{Camera, Light, MaterialDesc, TextureData};
+use re_types::render::{Camera, Light, MaterialDesc, PostSettings, TextureData};
 
-pub use lighting::sun_direction;
+pub use lighting::{PostEffects, sun_direction};
 pub use looks::{MaterialKey, TEXTURE_SIZE};
 pub use mesh::UV_STUDS;
+pub use models::{
+    LoadModelFn, Model, ModelMesh, ModelSettings, SkinnedFrameItem, configure_models,
+};
 pub use viewport::ViewportScene;
 
 use crate::class::Accessor;
@@ -307,6 +311,10 @@ pub struct RenderFrame {
     pub spot_lights: Vec<SpotLight>,
     /// What to draw.
     pub items: Vec<FrameItem>,
+    /// Skinned `MeshPart`s to draw.
+    pub skinned: Vec<SkinnedFrameItem>,
+    /// The joint matrices [`RenderFrame::skinned`] items point into.
+    pub joint_palette: Vec<Mat4>,
     /// The colour behind the sky.
     pub clear: [f32; 4],
     /// Multiplies every light (`ExposureCompensation`).
@@ -317,8 +325,8 @@ pub struct RenderFrame {
     pub fog: Option<Fog>,
     /// The sky.
     pub sky: Sky,
-    /// Colour correction.
-    pub grading: Option<ColorGrading>,
+    /// Colour correction, bloom, blur and sun rays.
+    pub post: PostEffects,
     /// Particles.
     pub sprites: Vec<Sprite>,
     /// Beams and trails.
@@ -333,6 +341,8 @@ pub struct RenderFrame {
     pub effects: EffectStats,
     /// Meshes to upload before drawing.
     pub new_meshes: Vec<(MeshKey, MeshData)>,
+    /// Skinned meshes to upload before drawing, with their weights.
+    pub new_skinned_meshes: Vec<(MeshKey, MeshData, re_types::mesh::SkinWeights)>,
     /// Meshes no longer drawn, to release.
     pub released_meshes: Vec<MeshKey>,
     /// Textures to upload, by name; materials name them as
@@ -346,6 +356,35 @@ pub struct RenderFrame {
     pub diagnostics: Vec<Diagnostic>,
     /// The work the build did.
     pub stats: BuildStats,
+}
+
+impl RenderFrame {
+    /// `base` (the project's post settings) with this frame's exposure and
+    /// post effects: each kind of effect the place has replaces the base
+    /// setting of that kind, and a kind it lacks leaves the base as it is.
+    pub fn post_settings(&self, base: PostSettings) -> PostSettings {
+        let mut post = base;
+        post.exposure = self.exposure;
+        let fx = &self.post;
+        if let Some(g) = fx.grading {
+            post.grading = Some(re_types::render::ColorGrading {
+                brightness: g.brightness,
+                contrast: g.contrast,
+                saturation: g.saturation,
+                tint: g.tint,
+            });
+        }
+        if let Some(b) = fx.bloom {
+            post.bloom = b;
+        }
+        if fx.blur_radius > 0.0 {
+            post.blur_radius = fx.blur_radius;
+        }
+        if let Some(r) = fx.sun_rays {
+            post.sun_rays = r;
+        }
+        post
+    }
 }
 
 /// What the view needs from the project's configuration.
@@ -406,6 +445,8 @@ pub(crate) struct Hub {
     verify_every: u64,
     /// A content hash of each uploaded mesh, for the check.
     mesh_sigs: FxMap<MeshKey, u64>,
+    /// `MeshPart` models.
+    models: models::Models,
 }
 
 /// The variable that turns on the check against a full rebuild every 60th
@@ -475,6 +516,18 @@ impl Hub {
         key
     }
 
+    fn new_skinned_mesh(
+        &mut self,
+        out: &mut RenderFrame,
+        data: MeshData,
+        weights: re_types::mesh::SkinWeights,
+    ) -> MeshKey {
+        self.next_mesh += 1;
+        let key = MeshKey(self.next_mesh);
+        out.new_skinned_meshes.push((key, data, weights));
+        key
+    }
+
     /// Notes a material as used this frame, sending it (and its texture)
     /// the first time.
     fn use_material(&mut self, out: &mut RenderFrame, key: MaterialKey) {
@@ -506,6 +559,7 @@ impl Hub {
             }
             keep
         });
+        self.models.collect(frame, RELEASE_AFTER_FRAMES, out);
         self.materials.retain(|key, last| {
             let keep = !old(*last);
             if !keep {
@@ -621,6 +675,8 @@ fn build_in(
         HashSet::new()
     };
     let light_list = instances_of(w, "Light");
+    let mut mesh_parts = instances_of(w, "MeshPart");
+    mesh_parts.sort();
     let viewport_list = instances_of(w, "ViewportFrame");
     let effect_lists = effects::Lists::find(w);
 
@@ -638,6 +694,8 @@ fn build_in(
         lights: env.sun.into_iter().collect(),
         spot_lights: Vec::new(),
         items: Vec::new(),
+        skinned: Vec::new(),
+        joint_palette: Vec::new(),
         clear: [
             env.sky.horizon[0],
             env.sky.horizon[1],
@@ -648,13 +706,14 @@ fn build_in(
         ambient: env.ambient,
         fog: env.fog,
         sky: env.sky,
-        grading: env.grading,
+        post: env.effects,
         sprites: Vec::new(),
         ribbons: Vec::new(),
         highlights: Vec::new(),
         viewports: Vec::new(),
         effects: EffectStats::default(),
         new_meshes: Vec::new(),
+        new_skinned_meshes: Vec::new(),
         released_meshes: Vec::new(),
         new_textures: Vec::new(),
         new_materials: Vec::new(),
@@ -689,6 +748,7 @@ fn build_in(
             first_item,
         )?;
     }
+    models::draw(&s, hub, &mesh_parts, &in_workspace, &mut out);
     effects::draw(
         &s,
         hub,
@@ -769,6 +829,7 @@ fn verify(
 ) -> mlua::Result<()> {
     let mut scratch = Hub {
         settings: hub.settings,
+        models: models::Models::with(hub.models.settings.clone()),
         frame: hub.frame,
         verify_every: 1,
         ..Hub::default()

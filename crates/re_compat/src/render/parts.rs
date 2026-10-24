@@ -158,7 +158,12 @@ pub(super) fn draw(
     for &e in dirty {
         let drawn = if s.w.ecs.get_entity(e).is_ok() && s.is_a(e, "BasePart") {
             visited += 1;
-            if in_workspace(e) { info(s, e) } else { None }
+            // A `MeshPart` with a model is drawn by the models pass.
+            if in_workspace(e) && hub.models.path_of(s, e).is_none() {
+                info(s, e)
+            } else {
+                None
+            }
         } else {
             None
         };
