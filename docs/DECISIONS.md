@@ -1807,6 +1807,8 @@ PR "async" measures these on the walk; if a budget cannot be met, the PR changes
 - **Lateness is set explicitly.** `Lateness::Wait` is the default: `real verify`, `real run --replay`, `play.run` copies and the D2 harness wait for a late result and count it. Only a live windowed `real run` calls `App::set_stream_lateness(Lateness::Late)`, where a late cell applies when ready and is reported once as `RE4305`. Play copies (`Streamer::forked`) start in Wait mode with no jobs carried over.
 - The WP28 valley's walk was re-measured after this PR: no tick generates a cell inline.
 
+**Amendment (WP24 PR "streamed roads", #159; 2026-10-24).** A fifth class, **global**, for shapes and road paths: one result for every window, keyed without it, which samples its fields on the source's grid instead of taking them over the window. ADR-0043's amendment of the same PR has the rules and the `RE4301` checks. Cell, terrain-chunk and collision-chunk jobs pass the source's spacing as `EvalOptions::global_spacing`, so roads drape and flatten the same at every level. The cells' graph also drops shape and path nodes whose output nothing uses. A region node reads each input from that input's own subgraph.
+
 ## ADR-0043: Procedural workflow: generator versions, bake, structural overrides, Luau generators, polygon booleans and roads
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP24). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: two probes in `research/m3/wp24/` (sources and output): `luau-node-bench` (mlua 0.12.2, Luau 0.740, the workspace's pins) and `overlay-probe` (i_overlay 9.1.0 and earcut 0.4.11). Measured on one core of the reference container (Intel Xeon @ 2.80 GHz).
@@ -2004,6 +2006,18 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 - A junction forms where centrelines of different paths cross, or where an open end comes within `snap` of another path. A path that crosses itself makes no junction. Junction finding compares every segment of each pair of paths, after a bounding-box test, so its cost is quadratic in the segment count.
 - Polygons use the positive fill rule: a hole that sticks out of its outer contour, or overlaps another hole, only removes area.
 - `NodeRegistry::m1()` registers 28 kinds, WP23's two terrain kinds included. The disk cache stores shapes and paths as new variants after the M1 ones, with no format version change. Luau nodes take and return both (`re_script::generator::marshal`).
+
+**Amendment (WP24 PR "streamed roads", #159; 2026-10-24).** Roads and shapes stream (ADR-0042), so the valley (WP28) can have roads on its eroded, streamed terrain.
+- **A global class.** `Streaming::Global` marks a node whose output does not depend on the window: `path.spline`, `road.footprint`, `shape.polygon`, `shape.boolean` and `shape.offset`. In a streamed evaluation a global node runs without a window. Its key hashes its inputs' keys as they are without a window, plus the global spacing, so every cell and chunk of a source shares one result through the memory and disk caches. A global node outputs shapes or a path. When not streamed, every key and output is unchanged.
+- **Fields are sampled, not windowed.** A global node does not get its fields over the window. It asks for them where it needs them (`NodeCtx::sample`), interpolated on the triangles of the source's grid at `EvalOptions::global_spacing`. That spacing is the source's for cells and chunks alike, so a chunk at 8 m sees the road a 4 m cell sees. The samples come from small windows of the field's own subgraph, one per 16 × 16 grid cells with points in them, through the same caches. `path.spline` drapes its control points this way. A node whose output only reaches global nodes' fields does not run over the window (`Skipped`).
+- **Pointwise and cell nodes.** `terrain.conform` and `field.from_shapes` are pointwise: each sample is tested against the whole of every path or shape, so windows agree on shared samples. `road.mesh`, `shape.mesh` and `points.mask` work per cell. A cell node's mesh is local to the window's corner (`min x, 0, min z`), where its entity is placed, and an empty mesh makes no entity.
+- **Road meshes per cell.** `road::network` joins the paths once, and `road.mesh` keeps the networks joined last in a small memo (four, by content hash), so the cells share one. `Network::mesh_in` keeps the triangles whose centre lies in the cell's half-open square, with the whole mesh's normals and UVs. The cells' parts add up to the whole road exactly, and `Network::mesh` is byte-identical to the old `road_mesh`. `shape.mesh` clips the shapes to the cell (`Shapes::clip`) and keeps UVs in world metres.
+- **Refused graphs** (`re_proc::nodes::check_streaming`, run when a streamed source is prepared; `RE4301`):
+  - a global node outputs something other than shapes or a path;
+  - shapes or a path come from a node that is not global;
+  - a global node takes a field from a node that is not pointwise or region, or another input from a node that is not global;
+  - a node upstream of a global node is not global, pointwise or region.
+- **Junctions without the quadratic search.** Junctions are found through a uniform grid of segment boxes, which finds exactly what comparing every pair found (tested on random networks).
 
 ## ADR-0044: Editor node canvas, docking and gizmos: egui-snarl, egui_dock and our own gizmos; graph files become open documents edited by `graph.*` commands
 
