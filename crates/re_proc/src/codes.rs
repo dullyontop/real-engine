@@ -80,6 +80,12 @@ pub const BAKE_FAILED: Code = Code::new("RE4021");
 /// reads and rewrites.
 pub const OPEN_GRAPH_DIFFERS: Code = Code::new("RE4022");
 
+/// `proc.move`, `proc.replace`, `proc.insert` or `proc.clear_structure`
+/// refused: not a generated entity or a procedural source, a streamed
+/// source, a parent outside the source's output, a cycle, or a replacement
+/// that does not turn into entities.
+pub const STRUCTURE_REFUSED: Code = Code::new("RE4023");
+
 /// A Luau node script under `scripts/generators/` does not declare a valid
 /// node kind: it fails to compile or run, does not return `proc.node{...}`,
 /// or its kind is malformed or taken (ADR-0043 §4).

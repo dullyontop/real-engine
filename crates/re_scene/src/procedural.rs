@@ -45,6 +45,11 @@ use crate::components::{MaterialRef, MeshRef, Name};
 use crate::error::SceneError;
 use crate::hierarchy::{self, children};
 use crate::ids::{StableId, splitmix64};
+use crate::scene::ComponentsDoc;
+use crate::structure::{
+    self, INSERTED_PREFIX, Insert, Move, Replace, StructuralKind, check_insert_key, replacement,
+    split,
+};
 use crate::world::World;
 
 component! {
@@ -89,8 +94,10 @@ pub struct Generated {
 /// One user edit of a generated entity, kept on its source and re-applied
 /// after each regeneration.
 ///
-/// Written `{"target", "component", "field", "value"}` or
-/// `{"target", "deleted": true}`.
+/// Written `{"target", "component", "field", "value"}`,
+/// `{"target", "deleted": true}`, or one of the structural forms of
+/// ADR-0043 §3: `{"target", "moved": {...}}`, `{"target", "replaced": {...}}`
+/// and `{"insert": "<key>", ...}` (see [`crate::structure`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "RawOverride", into = "RawOverride")]
 pub enum OverrideDoc {
@@ -110,13 +117,49 @@ pub enum OverrideDoc {
         /// Key of the generated entity.
         target: String,
     },
+    /// The generated entity is re-parented.
+    Moved {
+        /// Key of the generated entity.
+        target: String,
+        /// Where it goes.
+        to: Move,
+    },
+    /// The generated entity becomes something else (same key and id).
+    Replaced {
+        /// Key of the generated entity.
+        target: String,
+        /// What it becomes.
+        replace: Replace,
+    },
+    /// An authored entity added to the output.
+    Inserted {
+        /// Its key in the output: the written key with `+` in front.
+        target: String,
+        /// Where it goes and what it is.
+        insert: Insert,
+    },
 }
 
 impl OverrideDoc {
-    /// The key of the generated entity this override applies to.
+    /// The key of the generated entity this override applies to (for an
+    /// insert, the inserted entity's key, `+<key>`).
     pub fn target(&self) -> &str {
         match self {
-            OverrideDoc::Field { target, .. } | OverrideDoc::Deleted { target } => target,
+            OverrideDoc::Field { target, .. }
+            | OverrideDoc::Deleted { target }
+            | OverrideDoc::Moved { target, .. }
+            | OverrideDoc::Replaced { target, .. }
+            | OverrideDoc::Inserted { target, .. } => target,
+        }
+    }
+
+    /// The structural kind, for the overrides of ADR-0043 §3.
+    pub fn structural_kind(&self) -> Option<StructuralKind> {
+        match self {
+            OverrideDoc::Field { .. } | OverrideDoc::Deleted { .. } => None,
+            OverrideDoc::Moved { .. } => Some(StructuralKind::Moved),
+            OverrideDoc::Replaced { .. } => Some(StructuralKind::Replaced),
+            OverrideDoc::Inserted { .. } => Some(StructuralKind::Inserted),
         }
     }
 }
@@ -124,7 +167,8 @@ impl OverrideDoc {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawOverride {
-    target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     component: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,6 +181,22 @@ struct RawOverride {
     value: Option<Doc>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    moved: Option<Move>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replaced: Option<Replace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    insert: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prefab: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    components: Option<ComponentsDoc>,
 }
 
 /// Deserializes a present value (including `null`) as `Some`, so that a
@@ -148,45 +208,119 @@ pub fn some_doc<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Doc>, D::Error
 impl TryFrom<RawOverride> for OverrideDoc {
     type Error = String;
     fn try_from(r: RawOverride) -> Result<Self, String> {
-        match (r.component, r.field, r.value, r.deleted) {
-            (Some(component), Some(field), Some(value), false) => Ok(OverrideDoc::Field {
-                target: r.target,
-                component,
-                field,
-                value,
-            }),
-            (None, None, None, true) => Ok(OverrideDoc::Deleted { target: r.target }),
-            _ => Err(format!(
-                "override of {:?}: expected either `component`, `field` and `value`, or `deleted: true`",
-                r.target
-            )),
+        let form = "expected `component`, `field` and `value`; `deleted: true`; `moved`; `replaced`; or `insert`";
+        if let Some(key) = r.insert {
+            let with = match (
+                r.target, r.component, r.field, r.value, r.deleted, r.moved, r.replaced,
+            ) {
+                (None, None, None, None, false, None, None) => {
+                    replacement(r.prefab, r.components)
+                }
+                _ => Err("other override fields".into()),
+            }
+            .map_err(|e| {
+                format!(
+                    "insert {key:?}: expected `parent`, `index`, `name` and one of `prefab` or `components` ({e})"
+                )
+            })?;
+            check_insert_key(&key)?;
+            return Ok(OverrideDoc::Inserted {
+                target: format!("{INSERTED_PREFIX}{key}"),
+                insert: Insert {
+                    parent: r.parent,
+                    index: r.index,
+                    name: r.name,
+                    with,
+                },
+            });
+        }
+        let target = r
+            .target
+            .ok_or_else(|| format!("override without `target`: {form}"))?;
+        if r.parent.is_some()
+            || r.index.is_some()
+            || r.name.is_some()
+            || r.prefab.is_some()
+            || r.components.is_some()
+        {
+            return Err(format!("override of {target:?}: {form}"));
+        }
+        match (
+            r.component,
+            r.field,
+            r.value,
+            r.deleted,
+            r.moved,
+            r.replaced,
+        ) {
+            (Some(component), Some(field), Some(value), false, None, None) => {
+                Ok(OverrideDoc::Field {
+                    target,
+                    component,
+                    field,
+                    value,
+                })
+            }
+            (None, None, None, true, None, None) => Ok(OverrideDoc::Deleted { target }),
+            (None, None, None, false, Some(to), None) => Ok(OverrideDoc::Moved { target, to }),
+            (None, None, None, false, None, Some(replace)) => {
+                Ok(OverrideDoc::Replaced { target, replace })
+            }
+            _ => Err(format!("override of {target:?}: {form}")),
         }
     }
 }
 
 impl From<OverrideDoc> for RawOverride {
     fn from(o: OverrideDoc) -> Self {
+        let mut raw = RawOverride {
+            target: None,
+            component: None,
+            field: None,
+            value: None,
+            deleted: false,
+            moved: None,
+            replaced: None,
+            insert: None,
+            parent: None,
+            index: None,
+            name: None,
+            prefab: None,
+            components: None,
+        };
         match o {
             OverrideDoc::Field {
                 target,
                 component,
                 field,
                 value,
-            } => RawOverride {
-                target,
-                component: Some(component),
-                field: Some(field),
-                value: Some(value),
-                deleted: false,
-            },
-            OverrideDoc::Deleted { target } => RawOverride {
-                target,
-                component: None,
-                field: None,
-                value: None,
-                deleted: true,
-            },
+            } => {
+                raw.target = Some(target);
+                raw.component = Some(component);
+                raw.field = Some(field);
+                raw.value = Some(value);
+            }
+            OverrideDoc::Deleted { target } => {
+                raw.target = Some(target);
+                raw.deleted = true;
+            }
+            OverrideDoc::Moved { target, to } => {
+                raw.target = Some(target);
+                raw.moved = Some(to);
+            }
+            OverrideDoc::Replaced { target, replace } => {
+                raw.target = Some(target);
+                raw.replaced = Some(replace);
+            }
+            OverrideDoc::Inserted { target, insert } => {
+                raw.insert = Some(target[INSERTED_PREFIX.len_utf8()..].to_string());
+                raw.parent = insert.parent;
+                raw.index = insert.index;
+                raw.name = insert.name;
+                (raw.prefab, raw.components) = split(insert.with);
+            }
         }
+        raw
     }
 }
 
@@ -249,7 +383,7 @@ impl Overrides {
         let pos = self.position(target, component, field);
         let prev = pos.and_then(|i| match &self.0[i] {
             OverrideDoc::Field { value, .. } => Some(value.clone()),
-            OverrideDoc::Deleted { .. } => None,
+            _ => None,
         });
         match (pos, value) {
             (Some(i), Some(v)) => {
@@ -273,6 +407,59 @@ impl Overrides {
             (None, None) => {}
         }
         prev
+    }
+
+    /// The position of `target`'s structural override of `kind`, if any.
+    pub fn position_structural(&self, target: &str, kind: StructuralKind) -> Option<usize> {
+        self.0
+            .iter()
+            .position(|o| o.structural_kind() == Some(kind) && o.target() == target)
+    }
+
+    /// Sets (with `Some`, which must be of `kind` with target `target`) or
+    /// clears `target`'s structural override of `kind`; returns the previous
+    /// one. A new override is inserted at `at` (clamped; appended when
+    /// `None`), so undo restores the list exactly.
+    pub fn set_structural_at(
+        &mut self,
+        target: &str,
+        kind: StructuralKind,
+        value: Option<OverrideDoc>,
+        at: Option<usize>,
+    ) -> Option<OverrideDoc> {
+        debug_assert!(
+            value
+                .as_ref()
+                .is_none_or(|v| v.structural_kind() == Some(kind) && v.target() == target)
+        );
+        match (self.position_structural(target, kind), value) {
+            (Some(i), Some(v)) => Some(std::mem::replace(&mut self.0[i], v)),
+            (Some(i), None) => Some(self.0.remove(i)),
+            (None, Some(v)) => {
+                let i = at.map_or(self.0.len(), |i| i.min(self.0.len()));
+                self.0.insert(i, v);
+                None
+            }
+            (None, None) => None,
+        }
+    }
+
+    /// The hash of the structural overrides, which a source's fingerprint
+    /// includes: adding, changing or removing one regenerates the source.
+    pub(crate) fn structure_hash(&self) -> Option<u64> {
+        let structural: Vec<&OverrideDoc> = self
+            .0
+            .iter()
+            .filter(|o| o.structural_kind().is_some())
+            .collect();
+        if structural.is_empty() {
+            return None;
+        }
+        let mut h = DefaultHasher::new();
+        serde_json::to_string(&structural)
+            .unwrap_or_default()
+            .hash(&mut h);
+        Some(h.finish())
     }
 
     /// True if `target` has a deletion override.
@@ -517,10 +704,19 @@ pub struct Orphan {
     pub component: Option<String>,
     /// The field of a field override (`None` for a deletion override).
     pub field: Option<String>,
+    /// The kind of a structural override, whose target or parent is gone.
+    pub structural: Option<StructuralKind>,
 }
 
 impl fmt::Display for Orphan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(kind) = self.structural {
+            return write!(
+                f,
+                "{}: {kind} override on {:?} has no target or parent in the new output; kept",
+                self.source, self.target
+            );
+        }
         match (&self.component, &self.field) {
             (Some(c), Some(field)) => write!(
                 f,
@@ -596,6 +792,13 @@ pub(crate) fn fingerprint(world: &World, source: Entity) -> Option<u64> {
     p.generator.hash(&mut h);
     p.seed.hash(&mut h);
     p.version.hash(&mut h);
+    if let Some(structure) = world
+        .ecs
+        .get::<Overrides>(source)
+        .and_then(Overrides::structure_hash)
+    {
+        structure.hash(&mut h);
+    }
     if let Some(info) = world.generators.get(&p.generator) {
         if let Some(key) = world.registry.try_key(&info.params_component) {
             format!("{:?}", world.registry.get_all(&world.ecs, source, key)).hash(&mut h);
@@ -761,6 +964,91 @@ pub(crate) fn apply_output(
     // The current output, by key.
     let mut existing = current_output(world, source, scope);
 
+    // Structural overrides (ADR-0043 §3) apply to the generator's output
+    // before anything else; generators may not use their key prefixes.
+    if let Some(n) = nodes.iter().find(|n| !structure::is_generator_key(&n.key)) {
+        return Err(generator_failed(
+            &src_id,
+            format!(
+                "node {:?}: generator keys may not have a segment starting with `+` or `~` (kept for structural overrides)",
+                n.key
+            ),
+            None,
+        ));
+    }
+    // The generator's own output must be well formed before structural
+    // overrides rearrange it, so an override never hides a broken output.
+    let mut seen_raw: HashSet<&str> = HashSet::with_capacity(nodes.len());
+    for node in nodes {
+        if node.key.is_empty() {
+            return Err(generator_failed(
+                &src_id,
+                format!("generator {generator} produced an empty key"),
+                None,
+            ));
+        }
+        if !seen_raw.insert(node.key.as_str()) {
+            return Err(generator_failed(
+                &src_id,
+                format!("generator {generator} produced key {:?} twice", node.key),
+                None,
+            ));
+        }
+        if let Some(k) = &node.parent_key
+            && (k == &node.key || !seen_raw.contains(k.as_str()))
+        {
+            return Err(generator_failed(
+                &src_id,
+                format!(
+                    "node {:?}: parent key {k:?} not generated before it",
+                    node.key
+                ),
+                None,
+            ));
+        }
+    }
+    let overrides = world
+        .ecs
+        .get::<Overrides>(source)
+        .cloned()
+        .unwrap_or_default();
+    let structural: Vec<&OverrideDoc> = overrides
+        .0
+        .iter()
+        .filter(|o| o.structural_kind().is_some())
+        .collect();
+    let mut structured = structure::Applied::default();
+    let restructured;
+    let nodes: &[GenNode] = if structural.is_empty() || !matches!(scope, Scope::Whole) {
+        nodes
+    } else if streamed {
+        for o in &structural {
+            structured.failed.push((
+                o.target().to_string(),
+                format!(
+                    "{} override on {:?} not applied: structural overrides are not applied on a streamed source",
+                    o.structural_kind().expect("structural"),
+                    o.target()
+                ),
+            ));
+        }
+        nodes
+    } else {
+        let files = world
+            .ecs
+            .get_resource::<structure::SceneFiles>()
+            .map(|f| f.0.clone());
+        let ids = world.ids();
+        let registry = &world.registry;
+        let (fragment, applied) =
+            structure::apply_structure(nodes.to_vec(), &structural, &mut |with, key| {
+                structure::resolve(with, key, registry, files.as_ref(), &|id| ids.get(id))
+            });
+        structured = applied;
+        restructured = fragment;
+        &restructured
+    };
+
     // Validate and resolve everything before changing anything.
     let mut prepared = Vec::with_capacity(nodes.len());
     let mut seen: HashSet<&str> = HashSet::new();
@@ -865,11 +1153,6 @@ pub(crate) fn apply_output(
         sources: vec![src_id.clone()],
         ..Default::default()
     };
-    let overrides = world
-        .ecs
-        .get::<Overrides>(source)
-        .cloned()
-        .unwrap_or_default();
 
     // Orphans: overrides whose target key is not in the output at all.
     let mut all_keys: HashSet<&str> = prepared.iter().map(|n| n.key.as_str()).collect();
@@ -879,26 +1162,37 @@ pub(crate) fn apply_output(
     }
     for o in &overrides.0 {
         if scope.owns_target(streamed, o.target()) && !all_keys.contains(o.target()) {
-            report.orphans.push(match o {
+            let (component, field) = match o {
                 OverrideDoc::Field {
-                    target,
-                    component,
-                    field,
-                    ..
-                } => Orphan {
-                    source: src_id.clone(),
-                    target: target.clone(),
-                    component: Some(component.clone()),
-                    field: Some(field.clone()),
-                },
-                OverrideDoc::Deleted { target } => Orphan {
-                    source: src_id.clone(),
-                    target: target.clone(),
-                    component: None,
-                    field: None,
-                },
+                    component, field, ..
+                } => (Some(component.clone()), Some(field.clone())),
+                OverrideDoc::Deleted { .. } => (None, None),
+                // Reported by `apply_structure`.
+                _ => continue,
+            };
+            report.orphans.push(Orphan {
+                source: src_id.clone(),
+                target: o.target().to_string(),
+                component,
+                field,
+                structural: None,
             });
         }
+    }
+    for m in structured.missing {
+        report.orphans.push(Orphan {
+            source: src_id.clone(),
+            target: m.target,
+            component: None,
+            field: None,
+            structural: Some(m.kind),
+        });
+    }
+    for (_, message) in structured.failed {
+        report.diagnostics.push(
+            Diagnostic::warning(codes::OVERRIDE_NOT_APPLIED, format!("{src_id}: {message}"))
+                .at(Location::entity(src_id.clone())),
+        );
     }
 
     // Skipped keys: deleted, suppressed, or under a skipped parent.
