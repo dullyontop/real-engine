@@ -2148,6 +2148,8 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 
 **Amendment (WP27 PR "debug hooks", #146).** Compat Scripts and ModuleScripts register their compiled chunks with `re_script::debug` under their source paths, in `re_compat`'s `runtime/scripts.rs` (not a `load_chunk` function). When a script stops or restarts, or a module leaves the cache on reload, its old chunk is unregistered, and the new one registered, so breakpoints keep working after a hot reload.
 
+**Amendment (WP27 follow-up, #154): implemented.** The app attaches the debugger to a compat project's `server` and `client` contexts as well as `game`: before their scripts start, again after a restart (the new VMs replace the old), and when a debugger is set while the game runs. `set_debugger(None)` detaches them, and each frame services them like the game context.
+
 ## ADR-0046: The M3 AI track: templates and recipes as data, an evaluation harness that never calls a model, and MCP over streamable HTTP on localhost
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP26). The code waits for M2's definition of done (M3_PLAN, "How M3 starts").
@@ -2432,6 +2434,11 @@ The engine already has what these need underneath: the scheduler's `park`/`wake`
 - **Place files (#112).** `real import` reads `.rbxl`, `.rbxm`, `.rbxlx` and `.rbxmx` (`InputFormat::Place`), and `--parent` (`ImportOptions.parent`) puts the imported instances under a given instance. In the binary format, the reader takes acoustic absorption for `PhysicalProperties` when flag bit 1 (value 2) is set. That is an assumption from the format facts and has not been checked against a real file.
 - **Incremental render (#127).** The `re_reflect` hook is an optional change sink on `Registry`, a function pointer: `set_field` calls it only when the value changed, and `insert` and `remove` call it too, so `re_reflect` sees no journal type. `ChangeJournal` holds at most `ChangeJournal::CAP` (65,536) entries between drains; past that it empties itself and the next build is a full pass. CI's `test` job runs with `REAL_RENDER_VERIFY=1`. Measured on the 250,000-part bigmap in the WP's 4-core container, not the reference container: idle frames 2.7 ms with no part visited, 100 falling parts 2.9 ms, one cell part recoloured every frame 5.2 ms, against about 2.4 s for the first, full build. All are inside the budgets above.
 - **Saved data (#131).** Data is written through `ProjectFiles::writable(Data)`, not to `.real/data/` directly. `real run` still maps that to `.real/data/`; in the browser it is IndexedDB (ADR-0049 §6), so compat saves last across page loads.
+
+**Amendment (WP27 PR "skins and effects", #153): §5 as built.**
+- `BloomEffect`, `BlurEffect` and `SunRaysEffect` are `implemented`. Blur uses WP20's `blur_radius` and sun rays use its `sun_rays`. Several enabled effects combine: blooms add their intensities and take the widest size and the lowest threshold, blurs add as Gaussians do (radii in squares), and sun rays add their intensities and take the widest spread. `Size` 24 is a radius of 5% of the view's height, WP20's default bloom radius. Each kind of effect a place has replaces the project's `[render.post]` setting of that kind. `DepthOfFieldEffect` stays `partial`, since WP20 has no depth of field.
+- `MeshPart` and `Bone` exist. A `MeshPart` whose `MeshId` resolves through `[compat.assets]` to a glTF file draws that model, scaled to its `Size`; an unknown id draws a block, and a file that does not load draws a block and warns once (`RE9350`). `MeshPart.TextureID` stays `partial`: the part's `Color` and `Material` are used.
+- A skinned model is a skinned draw item on WP21's skins. Each `Bone` under the part drives the joint with the same name; its `Transform` applies on top of the joint's rest pose, in the model's units, before the part's scale. The Animator poses `Bone`s by name, as it poses `Motor6D`s (a `Motor6D` wins a shared name). A bone or joint without a partner is `RE9440`, once per part.
 
 ## ADR-0049: Browser builds: `wasm32-unknown-unknown` with wasi-sdk for Luau and Jolt, WebGPU first, the archive in memory, one thread
 

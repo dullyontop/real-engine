@@ -389,7 +389,7 @@ real verify --project examples/plaza --json
 
 **Definition of done:** the six PRs merged; `verify-plaza` stays green.
 
-**Progress (2026-10-24).** Merged: "persistence" (#96), "reload" (#107), "place files" (#112), "incremental render" (#127), "saved data" (#131: compat data writes through `writable(Data)`, so browser saves last across page loads, which closes the gap WP29's runtime PR named) and "surfaces" (#137: `SurfaceGui` and `ViewportFrame` are drawn through render-to-texture). "skins and effects" is still to come. "debug hooks" (#146), outside the six, registers compat scripts with the debugger (ADR-0045's amendment).
+**Progress (2026-10-24).** Merged: "persistence" (#96), "reload" (#107), "place files" (#112), "incremental render" (#127), "saved data" (#131: compat data writes through `writable(Data)`, so browser saves last across page loads, which closes the gap WP29's runtime PR named) and "surfaces" (#137: `SurfaceGui` and `ViewportFrame` are drawn through render-to-texture). "skins and effects" (#153: skinned `MeshPart`s, and bloom, blur and sun rays). Outside the six, "debug hooks" (#146) registers compat scripts with the debugger, and #154 attaches the compat `server` and `client` contexts to the app's debugger (ADR-0045's amendments). WP27 is complete.
 
 ---
 
