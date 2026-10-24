@@ -32,6 +32,14 @@ pub const SHAPE_BYTES: u64 = 11_059;
 /// `radius_ahead`: ±60°, as its cosine.
 const AHEAD_COS: f32 = 0.5;
 
+/// How far from the simulation origin, per axis, physics simulates (Jolt's
+/// single-precision limit, `re_physics::WORLD_LIMIT`), in metres.
+const PHYSICS_REACH: f32 = 5000.0;
+
+/// How far from the world origin, per axis, f32 scene positions stay exact
+/// to about 2 mm (`RE4309`), in metres.
+const PRECISION_LIMIT: f32 = 16_000.0;
+
 /// A point the world streams around, at one tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Focus {
@@ -91,6 +99,8 @@ pub struct StepReport {
     pub diagnostics: Vec<Diagnostic>,
     /// Wall time spent applying unloads and loads (including any waits).
     pub apply_time: core::time::Duration,
+    /// The simulation origin after this tick ([`Streamer::origin`]).
+    pub origin: Vec3,
 }
 
 /// The cells loaded and unloaded at the last tick, for scripts
@@ -177,6 +187,8 @@ pub struct Streamer {
     terrain: super::terrain::TerrainState,
     /// Terrain collision chunks (simulation state).
     collision: super::collision::CollisionState,
+    /// The floating origin (simulation state).
+    origin: Vec3,
 }
 
 impl Streamer {
@@ -198,6 +210,7 @@ impl Streamer {
             view: false,
             terrain: Default::default(),
             collision: Default::default(),
+            origin: Vec3::ZERO,
         })
     }
 
@@ -280,6 +293,52 @@ impl Streamer {
         self.loaded.values().map(|l| l.bytes).sum::<u64>() + self.collision.bytes()
     }
 
+    /// The floating origin (ADR-0042): a point of the `origin_grid` that
+    /// follows the focuses, where physics should put its simulation origin
+    /// before the tick's physics commands. It depends only on the focuses'
+    /// history, so a replay moves it at the same ticks.
+    pub fn origin(&self) -> Vec3 {
+        self.origin
+    }
+
+    /// Moves the origin when a focus is more than `origin_shift` from it on
+    /// X or Z, to the grid point nearest the focuses' mean; reports `RE4308`
+    /// for focuses then beyond physics' reach.
+    fn follow(&mut self, focuses: &[(String, Focus)], out: &mut Vec<Diagnostic>) {
+        if focuses.is_empty() {
+            return;
+        }
+        let at = Vec2::new(self.origin.x, self.origin.z);
+        let shift = self.config.origin_shift;
+        let off = |f: &Focus| (f.position - at).abs().max_element();
+        if focuses.iter().any(|(_, f)| off(f) > shift) {
+            let mean = focuses.iter().map(|(_, f)| f.position).sum::<Vec2>() / focuses.len() as f32;
+            let grid = self.config.origin_grid;
+            let o = (mean / grid).round() * grid;
+            self.origin = Vec3::new(o.x, 0.0, o.y);
+        }
+        let at = Vec2::new(self.origin.x, self.origin.z);
+        for (id, f) in focuses {
+            let d = (f.position - at).abs().max_element();
+            if d > PHYSICS_REACH {
+                let o = self.origin;
+                let diag = Diagnostic::warning(
+                    codes::ORIGIN_RANGE,
+                    format!(
+                        "focus `{id}` is {:.1} km from the origin [{}, {}, {}]; physics range is {} km",
+                        d / 1000.0,
+                        o.x,
+                        o.y,
+                        o.z,
+                        PHYSICS_REACH / 1000.0
+                    ),
+                )
+                .with_hint("keep the focuses closer together, or remove StreamFocus from the far one");
+                self.report_once(out, &format!("origin {id}"), diag);
+            }
+        }
+    }
+
     /// The current load radius (smaller than `radius` under memory pressure).
     pub fn radius(&self) -> f32 {
         self.radius
@@ -316,6 +375,7 @@ impl Streamer {
             view: self.view,
             terrain: Default::default(),
             collision: self.collision.clone(),
+            origin: self.origin,
         }
     }
 
@@ -367,6 +427,11 @@ impl Streamer {
 /// The focus points: entities with [`StreamFocus`], in id order; with none,
 /// the active camera.
 pub fn focuses(world: &mut World) -> Vec<Focus> {
+    named_focuses(world).into_iter().map(|(_, f)| f).collect()
+}
+
+/// [`focuses`] with their entity ids.
+fn named_focuses(world: &mut World) -> Vec<(String, Focus)> {
     let mut out: Vec<(String, Focus)> = Vec::new();
     let mut q = world.ecs.query::<(Entity, &StreamFocus)>();
     for (e, _) in q.iter(&world.ecs) {
@@ -387,7 +452,7 @@ pub fn focuses(world: &mut World) -> Vec<Focus> {
         out.truncate(1);
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
-    out.into_iter().map(|(_, f)| f).collect()
+    out
 }
 
 /// The world transform of `e`, from the `Transform`s of it and its parents
@@ -608,8 +673,12 @@ impl Streamer {
                 || authored_cells.contains(&cell_key(c[0], c[1]))
         };
 
+        // 0. The floating origin follows the focuses.
+        let named = named_focuses(world);
+        self.follow(&named, &mut report.diagnostics);
+        let focuses: Vec<Focus> = named.into_iter().map(|(_, f)| f).collect();
+
         // 1. Requests.
-        let focuses = focuses(world);
         let desired = self.desired(&focuses, &has_content);
         let keep = self.near(
             &focuses,
@@ -640,6 +709,25 @@ impl Streamer {
             .retain(|k, _| desired.contains(k) || stale.contains(k));
         self.ready
             .retain(|k, _| desired.contains(k) || stale.contains(k));
+        for k in &desired {
+            if let Some(c) = parse_cell_key(k) {
+                let far = ((Vec2::new(c[0] as f32, c[1] as f32) + 0.5) * size)
+                    .abs()
+                    .max_element();
+                if far > PRECISION_LIMIT && !self.loaded.contains_key(k) {
+                    let d = Diagnostic::warning(
+                        codes::PRECISION_LIMIT,
+                        format!(
+                            "cell {k} lies {:.1} km from the world origin, beyond the {} km precision limit",
+                            far / 1000.0,
+                            PRECISION_LIMIT / 1000.0
+                        ),
+                    )
+                    .with_hint("keep the world within 16 km of its origin, e.g. with Streamed.bounds");
+                    self.report_once(&mut report.diagnostics, k, d);
+                }
+            }
+        }
         for k in desired.iter().chain(&stale) {
             if (!self.loaded.contains_key(k) || stale.contains(k)) && !self.pending.contains_key(k)
             {
@@ -832,6 +920,7 @@ impl Streamer {
         report.entities = done;
         report.resident = self.loaded.len();
         report.memory_bytes = self.memory_bytes();
+        report.origin = self.origin;
         report.pending = self.pending.len();
         report.in_flight = self.jobs.len() + self.collision.in_flight();
         world.ecs.insert_resource(events);

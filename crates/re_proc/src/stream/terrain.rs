@@ -54,11 +54,14 @@ pub struct ViewChunk {
     pub mesh: String,
     /// The material file, or empty.
     pub material: String,
+    /// Where the chunk's corner (its sample `(0, 0)`) lies in the world:
+    /// draw the mesh there.
+    pub corner: Vec3,
     data: Arc<MeshData>,
 }
 
 impl ViewChunk {
-    /// The chunk's mesh, in world space.
+    /// The chunk's mesh, relative to [`corner`](Self::corner).
     pub fn data(&self) -> &Arc<MeshData> {
         &self.data
     }
@@ -357,7 +360,7 @@ fn issue(
                     return Err(why);
                 }
             };
-            let mesh = chunk_mesh(&heights, origin, spacing, edges)
+            let mesh = chunk_mesh(&heights, spacing, edges)
                 .map_err(|e| Diagnostic::error(crate::codes::CELL_FAILED, e.to_string()))?;
             Ok((heights, edges, Arc::new(mesh)))
         }))
@@ -454,6 +457,7 @@ fn swap(
                 edges: r.edges,
                 mesh: mesh_name(&id, k, r.edges, st.built),
                 material: terrain.material.clone(),
+                corner: corner(grid, k),
                 data: r.mesh.clone(),
             },
         );
@@ -472,12 +476,7 @@ fn swap(
         let Some(r) = st.ready.get_mut(k) else {
             continue;
         };
-        if let Ok(mesh) = chunk_mesh(
-            &r.heights,
-            grid.origin_index(*k),
-            grid.spacing(k.level),
-            *want,
-        ) {
+        if let Ok(mesh) = chunk_mesh(&r.heights, grid.spacing(k.level), *want) {
             r.edges = *want;
             r.mesh = Arc::new(mesh);
             st.built += 1;
@@ -486,6 +485,13 @@ fn swap(
             c.mesh = mesh_name(&id, *k, *want, st.built);
         }
     }
+}
+
+/// Chunk `k`'s corner in the world.
+fn corner(grid: &TerrainGrid, k: ChunkKey) -> Vec3 {
+    let [x, z] = grid.origin_index(k);
+    let s = grid.spacing(k.level);
+    Vec3::new(x as f32 * s, 0.0, z as f32 * s)
 }
 
 fn mesh_name(source: &str, k: ChunkKey, edges: Edges, n: u64) -> String {

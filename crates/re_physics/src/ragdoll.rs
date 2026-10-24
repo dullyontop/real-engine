@@ -319,6 +319,17 @@ impl Physics {
             .at(at(id))
             .with_hint("an entity has a ragdoll instead of a body; remove the body first"));
         }
+        // Ragdoll poses go to Jolt in world coordinates: not yet relative to a
+        // moved simulation origin (ADR-0042).
+        if self.parts.origin != Vec3::ZERO {
+            return Err(ragdoll_invalid(
+                id,
+                format!(
+                    "ragdolls are not simulated yet while the simulation origin is moved (to {})",
+                    self.parts.origin
+                ),
+            ));
+        }
         self.check_layer(id, desc.layer)?;
         let skeleton = &desc.skeleton;
         if let Some(why) = skeleton.problem() {

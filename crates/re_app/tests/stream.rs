@@ -306,3 +306,62 @@ fn only_a_live_run_applies_late_cells() {
     assert!(report.ok(), "{:?}", report.diagnostics);
     assert_eq!(lateness(&app), Lateness::Late);
 }
+
+/// Seven kilometres out, beyond Jolt's 5 km from the world origin: the
+/// floating origin follows the hero, so collision chunks there still load
+/// and carry the character.
+#[test]
+fn the_floating_origin_carries_the_character_far_out() {
+    let dir = project(&format!("{CONFIG}physics_radius = 100.0\n"));
+    let scene = SCENE
+        .replace(
+            "\"translation\": [20.0, 30.0, 20.0]",
+            "\"translation\": [7020.0, 30.0, 20.0]",
+        )
+        .replace("\"bounds\": 512.0", "\"bounds\": 0.0");
+    std::fs::write(dir.path().join("scenes/main.scene.json"), scene).unwrap();
+    std::fs::write(dir.path().join("scripts/tools/land.luau"), CHUNKED).unwrap();
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(120), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert_eq!(app.physics().origin(), Vec3::new(7168.0, 0.0, 0.0));
+    let hero = position(&app, "hero");
+    assert!((hero.x - 7020.0).abs() < 1.0, "{hero}");
+    let ground = ground_under(&app, hero).expect("a collision chunk 7 km out");
+    assert!(
+        (hero.y - (ground + 0.9)).abs() < 0.25,
+        "the hero stands on the terrain: y {} over ground {ground}",
+        hero.y
+    );
+}
+
+/// The render snapshot is relative to the floating origin: far out, the
+/// camera and the terrain it sees are drawn near zero.
+#[test]
+fn far_terrain_is_drawn_relative_to_the_render_origin() {
+    let dir = project(&format!("{CONFIG}terrain_view = 512.0\n"));
+    let scene = SCENE
+        .replace(
+            "\"translation\": [20.0, 30.0, 20.0]",
+            "\"translation\": [7020.0, 30.0, 20.0]",
+        )
+        .replace(
+            "\"translation\": [0.0, 30.0, 40.0]",
+            "\"translation\": [7000.0, 30.0, 40.0]",
+        )
+        .replace("\"bounds\": 512.0", "\"bounds\": 0.0");
+    std::fs::write(dir.path().join("scenes/main.scene.json"), scene).unwrap();
+    std::fs::write(dir.path().join("scripts/tools/land.luau"), CHUNKED).unwrap();
+    let mut app = open(dir.path());
+    app.ensure_graphics().unwrap();
+    app.run_headless(Some(60), None).unwrap();
+    assert_eq!(app.render_origin(), Vec3::new(7168.0, 0.0, 0.0));
+    let snapshot = app.snapshot();
+    let eye = snapshot.camera.position();
+    assert!((eye - Vec3::new(-168.0, 30.0, 40.0)).length() < 1e-3, "{eye}");
+    assert!(!snapshot.items.is_empty(), "the terrain is drawn");
+    for item in &snapshot.items {
+        let at = item.world.w_axis.truncate();
+        assert!(at.abs().max_element() < 2048.0, "{at}");
+    }
+}

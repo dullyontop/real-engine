@@ -285,11 +285,26 @@ impl Params for TerrainMeshParams {}
 
 fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, String> {
     let field = ctx.need_field("field")?;
-    let hf = &field.0;
+    // Streamed, the entity sits at the window's corner and the mesh and
+    // collider are local to it, so a body kilometres out lies where its
+    // ground is (within physics' reach of a floating origin, ADR-0042).
+    let (hf, transform) = match ctx.domain {
+        Some(_) => {
+            let mut local = field.0.clone();
+            let corner = Vec3::new(local.offset.x, 0.0, local.offset.z);
+            local.offset -= corner;
+            (
+                local,
+                vec![("translation".to_string(), Value::Vec3(corner))],
+            )
+        }
+        None => (field.0.clone(), Vec::new()),
+    };
+    let hf = &hf;
     let mesh = Arc::new(hf.to_mesh());
     let mesh_name = derived_name(&ctx.key);
     let mut components = vec![
-        ("Transform".to_string(), Vec::new()),
+        ("Transform".to_string(), transform),
         (
             "MeshRef".to_string(),
             vec![("asset".to_string(), Value::Str(mesh_name.clone()))],

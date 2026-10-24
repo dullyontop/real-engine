@@ -79,18 +79,14 @@ pub fn chunk_indices(edges: Edges) -> Vec<u32> {
 ///
 /// `heights` holds `(CHUNK_SAMPLES + 2)²` samples: the chunk's samples with a
 /// one-sample apron on every side, row-major. Sample `(i, j)` of the chunk
-/// (apron sample `(i + 1, j + 1)`) sits at world position
-/// `((origin[0] + i) as f32 × spacing, height, (origin[1] + j) as f32 × spacing)`,
-/// the exact position rule of the module docs, so neighbouring chunks share
-/// edge vertices bit for bit. Normals come from central differences over the
-/// apron, so they agree across chunk borders too. UVs run from 0 to 1 across
-/// the chunk.
-pub fn chunk_mesh(
-    heights: &[f32],
-    origin: [i64; 2],
-    spacing: f32,
-    edges: Edges,
-) -> Result<MeshData, GeomError> {
+/// (apron sample `(i + 1, j + 1)`) sits at `(i as f32 × spacing, height,
+/// j as f32 × spacing)`, relative to the chunk's corner (its sample `(0, 0)`),
+/// so the chunk is drawn at its corner and keeps its precision kilometres
+/// out (ADR-0042's render origin). With a power-of-two spacing the corners
+/// and offsets are exact, so neighbouring chunks share edge vertices bit for
+/// bit. Normals come from central differences over the apron, so they agree
+/// across chunk borders too. UVs run from 0 to 1 across the chunk.
+pub fn chunk_mesh(heights: &[f32], spacing: f32, edges: Edges) -> Result<MeshData, GeomError> {
     let n = CHUNK_SAMPLES as usize;
     let w = n + 2;
     if heights.len() != w * w {
@@ -121,11 +117,7 @@ pub fn chunk_mesh(
             let ny = 2.0 * spacing;
             let len = (nx * nx + ny * ny + nz * nz).sqrt();
             vertices.push(Vertex {
-                pos: [
-                    (origin[0] + i as i64) as f32 * spacing,
-                    h(x, z),
-                    (origin[1] + j as i64) as f32 * spacing,
-                ],
+                pos: [i as f32 * spacing, h(x, z), j as f32 * spacing],
                 normal: [nx / len, ny / len, nz / len],
                 uv: [i as f32 / last, j as f32 / last],
                 color: [1.0; 4],
@@ -218,16 +210,18 @@ mod tests {
             v
         };
         let s = 0.7;
-        let a = chunk_mesh(&window([-64, 128]), [-64, 128], s, Edges(0)).unwrap();
-        let b = chunk_mesh(&window([0, 128]), [0, 128], s, Edges(0)).unwrap();
+        let a = chunk_mesh(&window([-64, 128]), s, Edges(0)).unwrap();
+        let b = chunk_mesh(&window([0, 128]), s, Edges(0)).unwrap();
         let n = CHUNK_SAMPLES as usize;
         for z in 0..n {
             let va = a.vertices[z * n + n - 1];
             let vb = b.vertices[z * n];
-            assert_eq!(va.pos, vb.pos);
+            // a's corner is 64 samples to the -X of b's.
+            assert_eq!(va.pos[0] + -64.0 * s, vb.pos[0]);
+            assert_eq!([va.pos[1], va.pos[2]], [vb.pos[1], vb.pos[2]]);
             assert_eq!(va.normal, vb.normal);
         }
         assert!(a.is_well_formed());
-        assert!(chunk_mesh(&[0.0; 4], [0, 0], s, Edges(0)).is_err());
+        assert!(chunk_mesh(&[0.0; 4], s, Edges(0)).is_err());
     }
 }

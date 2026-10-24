@@ -106,6 +106,8 @@ pub struct App {
     stream_tick: u64,
     /// How world streaming treats a cell generated too late for its tick.
     stream_lateness: re_proc::stream::Lateness,
+    /// The floating origin physics last refused, reported once.
+    origin_refused: Option<glam::Vec3>,
     frame: u64,
     alpha: f32,
 
@@ -298,6 +300,7 @@ impl App {
             clock,
             stream_tick: 0,
             stream_lateness: re_proc::stream::Lateness::Wait,
+            origin_refused: None,
             frame: 0,
             alpha: 0.0,
             action_map,
@@ -406,6 +409,9 @@ impl App {
             copy.stream_tick = self.stream_tick;
         }
         copy.diagnostics.extend(problems);
+        if !restarted && let Err(d) = copy.physics.set_origin(self.physics.origin()) {
+            copy.diagnostics.push(d);
+        }
         load_collider_sources(&mut copy.world, &mut copy.shapes, &mut self.media);
         physics::push(
             &mut copy.world,
@@ -572,7 +578,14 @@ impl App {
         &mut self.render_assets
     }
 
-    /// The render snapshot built by the last frame's Sync phase.
+    /// The render origin the [`snapshot`](Self::snapshot) is relative to:
+    /// world streaming's floating origin (ADR-0042), zero without one.
+    pub fn render_origin(&self) -> glam::Vec3 {
+        self.physics.origin()
+    }
+
+    /// The render snapshot built by the last frame's Sync phase, relative to
+    /// the [`render_origin`](Self::render_origin).
     pub fn snapshot(&self) -> &RenderSnapshot {
         &self.snapshot
     }
@@ -678,6 +691,7 @@ impl App {
             clear: self.config.render.clear,
             post: self.config.render.post,
             shadows: self.config.render.shadows,
+            origin: self.physics.origin(),
         };
         self.snapshot = render::build(&mut self.world, &inputs);
         self.hud = hud::collect(&mut self.world);
@@ -1026,6 +1040,7 @@ impl App {
                 clear: self.config.render.clear,
                 post: self.config.render.post,
                 shadows: self.config.render.shadows,
+                origin: self.physics.origin(),
             };
             self.snapshot = render::build(&mut self.world, &inputs);
             self.hud = hud::collect(&mut self.world);
@@ -1242,6 +1257,7 @@ impl App {
             clear: self.config.render.clear,
             post: self.config.render.post,
             shadows: self.config.render.shadows,
+            origin: self.physics.origin(),
         };
         // A compat game shows the local player's world.
         let shown = match &mut self.compat {
@@ -1422,8 +1438,29 @@ impl App {
             let report =
                 re_proc::stream::step(&mut self.world, self.stream_tick, &self.config.stream);
             self.diagnostics.extend(report.diagnostics);
+            self.follow_origin(report.origin);
         }
         self.stream_tick += 1;
+    }
+
+    /// Moves physics' simulation origin to world streaming's floating origin
+    /// (ADR-0042), between steps and before the tick's physics commands, so
+    /// bodies and characters kilometres out stay within Jolt's reach. A move
+    /// physics refuses (`RE5016`: something would end up out of reach) is
+    /// reported once per origin and tried again each tick.
+    fn follow_origin(&mut self, origin: glam::Vec3) {
+        if self.physics.origin() == origin {
+            return;
+        }
+        match self.physics.set_origin(origin) {
+            Ok(()) => self.origin_refused = None,
+            Err(d) => {
+                if self.origin_refused != Some(origin) {
+                    self.origin_refused = Some(origin);
+                    self.diagnostics.push(d);
+                }
+            }
+        }
     }
 
     /// Gives characters and vehicles that appeared since the last physics push

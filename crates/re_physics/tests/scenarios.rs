@@ -4,7 +4,7 @@
 mod common;
 
 use common::*;
-use re_physics::{LayerTable, PhysicsConfig, QueryFilter};
+use re_physics::{LayerTable, Physics, PhysicsConfig, QueryFilter};
 use re_types::EntityId;
 use re_types::glam::{Quat, Vec3};
 use re_types::physics::{
@@ -844,4 +844,91 @@ fn large_world() {
             re_physics::codes::STATIC_ONLY_SHAPE
         ]
     );
+}
+
+/// The floating origin (ADR-0042): bodies and characters 8 km out simulate
+/// once the origin follows them, keep their world poses when it moves
+/// mid-run, and queries, snapshots and refusals all speak world positions.
+#[test]
+fn floating_origin() {
+    let far = 8000.0;
+    let mut p = world(1);
+    // Beyond the limits of the world origin: refused.
+    p.apply(&mut vec![floor(1, far, far, 0.0, 30.0)]);
+    let codes: Vec<_> = p.take_diagnostics().iter().map(|d| d.code).collect();
+    assert_eq!(codes, [re_physics::codes::OUTSIDE_WORLD]);
+
+    p.set_origin(Vec3::new(7168.0, 0.0, 7168.0)).unwrap();
+    let ch = EntityId(3);
+    apply(
+        &mut p,
+        vec![
+            floor(1, far, far, 0.0, 30.0),
+            add(
+                2,
+                body(
+                    BodyKind::Dynamic,
+                    sphere(0.5),
+                    Vec3::new(far + 5.3, 3.0, far - 0.2),
+                ),
+            ),
+            PhysicsCmd::AddCharacter {
+                id: ch,
+                desc: Default::default(),
+                pos: Vec3::new(far, 0.92, far),
+                rot: Quat::IDENTITY,
+            },
+        ],
+    );
+    let walk = |p: &mut Physics, n: usize| {
+        for _ in 0..n {
+            apply(
+                p,
+                vec![PhysicsCmd::MoveCharacter {
+                    id: ch,
+                    desired_velocity: Vec3::new(2.0, 0.0, 0.0),
+                    jump: false,
+                }],
+            );
+            p.step(DT).unwrap();
+        }
+    };
+    walk(&mut p, 30);
+    let before = (pos(&p, 2), p.character(ch).unwrap().pos);
+
+    // The origin moves between steps; world poses stay where they were.
+    p.set_origin(Vec3::new(8192.0, 0.0, 8192.0)).unwrap();
+    assert_eq!(p.origin(), Vec3::new(8192.0, 0.0, 8192.0));
+    assert!((pos(&p, 2) - before.0).length() < 1e-3);
+    assert!((p.character(ch).unwrap().pos - before.1).length() < 1e-3);
+    let snap = p.save_state();
+    walk(&mut p, 30);
+    let after = pos(&p, 2);
+    assert_rests("sphere 8 km out", pos(&p, 2).y, 0.5);
+    let c = p.character(ch).unwrap();
+    assert_near("character x after 1 s at 2 m/s", c.pos.x, far + 2.0, 0.05);
+    assert!(c.on_ground(), "ground state {:?}", c.ground);
+    assert_eq!(c.ground_entity, Some(EntityId(1)));
+    let hit = p
+        .raycast(
+            Vec3::new(far - 3.0, 5.0, far),
+            Vec3::NEG_Y,
+            10.0,
+            &QueryFilter::default(),
+        )
+        .unwrap()
+        .expect("the floor 8 km out");
+    assert_eq!(hit.entity, EntityId(1));
+    assert_near("hit height", hit.point.y, 0.0, 1e-3);
+
+    // A replay from a snapshot taken after the move is exact.
+    p.restore_state(&snap).unwrap();
+    walk(&mut p, 30);
+    assert_eq!(pos(&p, 2), after);
+
+    // A move that would leave a body out of reach is refused, changing nothing.
+    let err = p.set_origin(Vec3::new(1024.0, 0.0, 1024.0)).unwrap_err();
+    assert_eq!(err.code, re_physics::codes::INVALID_ARGUMENT);
+    assert_eq!(p.origin(), Vec3::new(8192.0, 0.0, 8192.0));
+    assert_eq!(pos(&p, 2), after);
 }

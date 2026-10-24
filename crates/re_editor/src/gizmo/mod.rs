@@ -92,8 +92,12 @@ fn transforms(world: &World, id: &str) -> Option<(Affine3A, Affine3A, (Vec3, Qua
 /// last drawn with.
 fn screen(app: &App, rect: egui::Rect) -> Option<Screen> {
     let cam = app.snapshot().camera;
+    // The snapshot is relative to the render origin; the gizmo works in the
+    // world.
+    let mut world = cam.world;
+    world.w_axis += app.render_origin().extend(0.0);
     Screen::new(
-        cam.world,
+        world,
         cam.fov_y_radians,
         cam.near,
         cam.far,

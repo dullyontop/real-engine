@@ -88,8 +88,8 @@ pub(crate) struct BodyEntry {
 }
 
 pub(crate) struct CharacterEntry {
-    id: CharacterId,
-    inner: Option<BodyId>,
+    pub(crate) id: CharacterId,
+    pub(crate) inner: Option<BodyId>,
     pub(crate) groups: GroupMask,
     step_height: f32,
     /// The object layers the character collides with, for its query filter.
@@ -142,6 +142,8 @@ pub(crate) struct StepState {
 pub struct PhysicsSnapshot {
     world: WorldState,
     state: StepState,
+    /// The simulation origin the world's positions are relative to.
+    origin: Vec3,
 }
 
 impl std::fmt::Debug for PhysicsSnapshot {
@@ -185,6 +187,9 @@ pub struct MotionState {
     bodies: Vec<BodyMotion>,
     characters: Vec<CharacterMotion>,
     ragdolls: Vec<RagdollMotion>,
+    /// The origin of the world that took it (characters' Jolt states are
+    /// relative to it).
+    origin: Vec3,
 }
 
 impl MotionState {
@@ -446,8 +451,8 @@ impl Physics {
                 if entry.kind != BodyKind::Kinematic {
                     return Err(wrong_kind(id, "a kinematic target", entry.kind));
                 }
-                if !in_world(pos) {
-                    return Err(outside_world(id, "target", pos));
+                if !self.in_reach(pos) {
+                    return Err(self.out_of_reach(id, "target", pos));
                 }
                 let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
                 self.state.kin_targets.insert(id, (pos, rot));
@@ -593,8 +598,8 @@ impl Physics {
         if desc.kind != BodyKind::Static && shapes::is_static_only(&desc.shape) {
             return Err(static_only(id, &desc.shape, desc.kind));
         }
-        if !in_world(desc.pos) {
-            return Err(outside_world(id, "body", desc.pos));
+        if !self.in_reach(desc.pos) {
+            return Err(self.out_of_reach(id, "body", desc.pos));
         }
         let rot = unit_rotation(desc.rot).ok_or_else(|| bad_rotation(id))?;
         let built = shapes::build(&desc.shape).map_err(|d| d.at(at(id)))?;
@@ -609,7 +614,7 @@ impl Physics {
             BodyKind::Kinematic => BodySettings::new_kinematic(),
         }
         .object_layer(object_layer(desc.layer, moving))
-        .position(rv(desc.pos))
+        .position(self.jolt_point(desc.pos))
         .rotation(jq(rot))
         .friction(desc.friction)
         .restitution(desc.restitution)
@@ -699,10 +704,11 @@ impl Physics {
     }
 
     fn set_transform(&mut self, id: EntityId, pos: Vec3, rot: Quat) -> Result<(), Diagnostic> {
-        if !in_world(pos) {
-            return Err(outside_world(id, "new", pos));
+        if !self.in_reach(pos) {
+            return Err(self.out_of_reach(id, "new", pos));
         }
         let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
+        let at = self.jolt_point(pos);
         if let Some(entry) = self.bodies.get(&id) {
             let activation = if entry.kind == BodyKind::Static {
                 Activation::DontActivate
@@ -713,7 +719,7 @@ impl Physics {
             return self
                 .world
                 .body_mut(body)
-                .and_then(|mut b| b.set_position_and_rotation(rv(pos), jq(rot), activation))
+                .and_then(|mut b| b.set_position_and_rotation(at, jq(rot), activation))
                 .map_err(|e| body_invalid(id, e));
         }
         if let Some(ch) = self.characters.get(&id) {
@@ -721,7 +727,7 @@ impl Physics {
             let filter_layers = ch.sees.clone();
             self.gate.enter(ch.groups, id);
             let result = self.world.character_mut(cid).and_then(|mut c| {
-                c.set_position(rv(pos))?;
+                c.set_position(at)?;
                 c.set_rotation(jq(rot))
             });
             return result
@@ -799,8 +805,8 @@ impl Physics {
                 ),
             ));
         }
-        if !in_world(pos) {
-            return Err(outside_world(id, "character", pos));
+        if !self.in_reach(pos) {
+            return Err(self.out_of_reach(id, "character", pos));
         }
         let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
         let capsule = Shape::new_capsule(half, desc.radius)
@@ -824,7 +830,7 @@ impl Physics {
             }));
         let cid = self
             .world
-            .create_character(&settings, rv(pos), jq(rot))
+            .create_character(&settings, self.jolt_point(pos), jq(rot))
             .map_err(|e| character_invalid(id, e.to_string()))?;
         let sees = self.layers_seen_by(desc.layer);
         self.gate.enter(desc.groups, id);
@@ -922,7 +928,8 @@ impl Physics {
             } => {
                 let axis = axis.normalize();
                 let normal = axis.any_orthonormal_vector();
-                let mut settings = HingeConstraintSettings::new(rv(pivot), jv(axis), jv(normal));
+                let mut settings =
+                    HingeConstraintSettings::new(self.jolt_point(pivot), jv(axis), jv(normal));
                 if let Some([lo, hi]) = limits {
                     settings = settings.limits(lo, hi);
                 }
@@ -940,8 +947,11 @@ impl Physics {
                 .create_constraint(
                     a,
                     b,
-                    &DistanceConstraintSettings::new(rv(point_a), rv(point_b))
-                        .range(DistanceRange::Range { min, max }),
+                    &DistanceConstraintSettings::new(
+                        self.jolt_point(point_a),
+                        self.jolt_point(point_b),
+                    )
+                    .range(DistanceRange::Range { min, max }),
                 )
                 .map(Into::into),
         };
@@ -1040,10 +1050,11 @@ impl Physics {
             let Some(entry) = self.bodies.get(&id) else {
                 continue;
             };
+            let at = self.jolt_point(pos);
             let moved = self
                 .world
                 .body_mut(entry.id)
-                .and_then(|mut b| b.move_kinematic(rv(pos), jq(rot), dt));
+                .and_then(|mut b| b.move_kinematic(at, jq(rot), dt));
             match moved {
                 Ok(()) => {
                     self.state.kin_moved.insert(id);
@@ -1158,7 +1169,7 @@ impl Physics {
                         let point = manifold
                             .points
                             .first()
-                            .map_or(Vec3::ZERO, |p| grv(p.point_on1));
+                            .map_or(Vec3::ZERO, |p| self.world_point(p.point_on1));
                         d.first = Some((point, gv(manifold.normal), settings.is_sensor()));
                     }
                 }
@@ -1243,6 +1254,7 @@ impl Physics {
     /// read of Jolt's active bodies.
     pub fn poses_into(&mut self, out: &mut Vec<BodyPose>) {
         out.clear();
+        let origin = self.parts.origin;
         self.world.active_body_poses_into(&mut self.scratch_poses);
         for p in &self.scratch_poses {
             if self.world.is_inner_body(p.id) || self.world.ragdoll_of_body(p.id).is_some() {
@@ -1251,7 +1263,7 @@ impl Physics {
             if let Some(&id) = self.entity_of.get(&p.id) {
                 out.push(BodyPose {
                     id,
-                    pos: grv(p.position),
+                    pos: grv(p.position) + origin,
                     rot: gq(p.rotation),
                 });
             }
@@ -1268,7 +1280,7 @@ impl Physics {
             }
             out.push(BodyPose {
                 id,
-                pos: grv(b.position()),
+                pos: grv(b.position()) + origin,
                 rot: gq(b.rotation()),
             });
         }
@@ -1276,7 +1288,7 @@ impl Physics {
             if let Ok(c) = self.world.character(ch.id) {
                 out.push(BodyPose {
                     id,
-                    pos: grv(c.position()),
+                    pos: grv(c.position()) + origin,
                     rot: gq(c.rotation()),
                 });
             }
@@ -1301,11 +1313,11 @@ impl Physics {
     pub fn pose(&self, id: EntityId) -> Option<(Vec3, Quat)> {
         if let Some(entry) = self.bodies.get(&id) {
             let b = self.world.body(entry.id).ok()?;
-            return Some((grv(b.position()), gq(b.rotation())));
+            return Some((self.world_point(b.position()), gq(b.rotation())));
         }
         let ch = self.characters.get(&id)?;
         let c = self.world.character(ch.id).ok()?;
-        Some((grv(c.position()), gq(c.rotation())))
+        Some((self.world_point(c.position()), gq(c.rotation())))
     }
 
     /// Whether an entity's body is awake. `None` if it has no body.
@@ -1320,7 +1332,7 @@ impl Physics {
         let c = self.world.character(ch.id).ok()?;
         let ground = map_ground(c.ground_state());
         Some(CharacterState {
-            pos: grv(c.position()),
+            pos: self.world_point(c.position()),
             rot: gq(c.rotation()),
             velocity: self.character_velocity(id, &c),
             ground,
@@ -1373,6 +1385,7 @@ impl Physics {
         PhysicsSnapshot {
             world: self.world.save_state(),
             state: self.state.clone(),
+            origin: self.parts.origin,
         }
     }
 
@@ -1392,6 +1405,7 @@ impl Physics {
             )
         })?;
         self.state = snapshot.state.clone();
+        self.parts.origin = snapshot.origin;
         Ok(())
     }
 
@@ -1412,7 +1426,7 @@ impl Physics {
             };
             bodies.push(BodyMotion {
                 id,
-                pos: grv(b.position()),
+                pos: self.world_point(b.position()),
                 rot: gq(b.rotation()),
                 linear: gv(b.linear_velocity()),
                 angular: gv(b.angular_velocity()),
@@ -1434,6 +1448,7 @@ impl Physics {
             bodies,
             characters,
             ragdolls: self.ragdoll_motion(),
+            origin: self.parts.origin,
         }
     }
 
@@ -1465,8 +1480,9 @@ impl Physics {
             }
             let kinematic = entry.kind == BodyKind::Kinematic;
             let body = entry.id;
+            let at = self.jolt_point(m.pos);
             let result = self.world.body_mut(body).and_then(|mut b| {
-                b.set_position_and_rotation(rv(m.pos), jq(m.rot), Activation::DontActivate)?;
+                b.set_position_and_rotation(at, jq(m.rot), Activation::DontActivate)?;
                 if m.awake {
                     b.set_linear_velocity(jv(m.linear))?;
                     b.set_angular_velocity(jv(m.angular))?;
@@ -1498,10 +1514,19 @@ impl Physics {
             self.gate.enter(ch.groups, m.id);
             // The saved ground and contacts name bodies by Jolt id, which differ when the
             // worlds hold different bodies: recompute them against this world.
+            // The saved position is relative to the source's origin.
+            let shift = motion.origin - self.parts.origin;
             let restored = self
                 .world
                 .character_mut(cid)
                 .and_then(|mut c| c.restore_state(&m.jolt))
+                .and_then(|()| {
+                    if shift == Vec3::ZERO {
+                        return Ok(());
+                    }
+                    let p = grv(self.world.character(cid)?.position());
+                    self.world.character_mut(cid)?.set_position(rv(p + shift))
+                })
                 .and_then(|()| {
                     self.world.refresh_character_contacts(
                         cid,
