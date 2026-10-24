@@ -1,4 +1,4 @@
-//! The libraries other than `world`: `input`, `physics`, `audio`, `ui`, `time`,
+//! The libraries other than `world`: `input`, `physics`, `audio`, `anim`, `ui`, `time`,
 //! `task`, `quat`, `color`, `proc`, `stream`, `command` (tools only), and the `print`,
 //! `warn` and `script` globals.
 
@@ -58,6 +58,11 @@ pub(crate) fn all(lua: &Lua, kind: ContextKind) -> Result<Vec<(&'static str, Tab
             physics_lib,
         ),
         ("audio", "Sound playback.", audio_lib),
+        (
+            "anim",
+            "Animation graphs: parameters, states and joints.",
+            super::anim::lib,
+        ),
         ("ui", "The heads-up display.", ui_lib),
         (
             "time",
@@ -113,7 +118,7 @@ pub(crate) fn host_err(e: HostError) -> mlua::Error {
     }
 }
 
-fn entity_arg(v: &Value, what: &str) -> Result<Entity> {
+pub(crate) fn entity_arg(v: &Value, what: &str) -> Result<Entity> {
     if let Value::UserData(ud) = v
         && let Ok(e) = ud.borrow::<EntityRef>()
     {

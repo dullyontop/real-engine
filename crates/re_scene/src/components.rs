@@ -268,6 +268,32 @@ component! {
     }
 }
 
+component! {
+    /// Plays an animation graph (ADR-0039, `*.animgraph.json`) on the
+    /// [`SkinnedMesh`] of the same entity, in place of an [`AnimPlayer`].
+    /// Parameters and state-machine state are runtime state in `re_app`;
+    /// scripts reach them through the `anim` library.
+    pub struct Animator {
+        /// The graph file, e.g. `anims/hero.animgraph.json`.
+        pub graph: String = String::new(),
+        /// Whether the graph advances; while false the pose holds.
+        pub playing: bool = true,
+        /// Playback speed multiplier for the whole graph (0 or more).
+        pub speed: f32 = 1.0,
+    }
+}
+
+component! {
+    /// Places this entity at a joint of its parent's [`SkinnedMesh`] each
+    /// fixed step: its `Transform` becomes the joint's model-space transform,
+    /// which is relative to the parent because the skin's space is the
+    /// parent's (ADR-0039). Put an offset on a child of this entity.
+    pub struct BoneAttachment {
+        /// The joint's name in the parent's skin.
+        pub joint: String = String::new(),
+    }
+}
+
 field_enum! {
     /// Where a [`HudText`] is anchored on screen.
     pub enum HudAnchor { TopLeft, Top, TopRight, Center, BottomLeft, Bottom, BottomRight }
@@ -361,7 +387,8 @@ component! {
 /// `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light`, `RigidBody`,
 /// `Collider`, `CharacterController`, `ScriptRef`, `AudioSource`, `AnimPlayer`,
 /// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `SkinnedMesh`,
-/// `Streamed`, `StreamFocus`, `Vehicle`, `VehicleWheel`.
+/// `Streamed`, `StreamFocus`, `Vehicle`, `VehicleWheel`, `Animator`,
+/// `BoneAttachment`.
 pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<Transform>(world);
     registry.register::<MeshRef>(world);
@@ -386,4 +413,6 @@ pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<crate::stream::StreamFocus>(world);
     registry.register::<Vehicle>(world);
     registry.register::<VehicleWheel>(world);
+    registry.register::<Animator>(world);
+    registry.register::<BoneAttachment>(world);
 }

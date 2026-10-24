@@ -9,8 +9,10 @@
 //! - sounds go to the frame's audio commands;
 //! - HUD text, screenshots, regeneration and restart are applied in EndFrame.
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
+use re_anim::graph::{GraphPlayer, Param};
 use re_physics::{Physics, QueryFilter};
+use re_types::anim::AnimValue;
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::{
     ActionFrame, AudioCmd, BodyKind, BusLevel, CharacterState, EntityId, GroupMask, PhysicsCmd,
@@ -18,6 +20,7 @@ use re_types::{
 };
 
 use crate::codes::{HOST_INVALID_ARGUMENT_STR, HOST_NO_SUCH_THING_STR};
+use crate::sync::anim_skin::SkinSync;
 use crate::sync::physics::{LinkKind, PhysicsSync};
 
 /// Requests queued by scripts (and commands) for the end of the frame.
@@ -56,10 +59,21 @@ pub struct Host<'a> {
     pub audio_graph: &'a re_types::AudioGraphDesc,
     /// End-of-frame requests.
     pub pending: &'a mut Pending,
+    /// Skeleton poses and animation graphs (`anim.*` read and set them at
+    /// once).
+    pub skins: &'a mut SkinSync,
 }
 
 fn no_such(msg: String) -> HostError {
     HostError::new(HOST_NO_SUCH_THING_STR, msg)
+}
+
+fn no_graph(entity: EntityId) -> HostError {
+    no_such(format!(
+        "entity {} plays no animation graph (add a SkinnedMesh and an Animator whose graph \
+         loads; it starts in the first fixed step)",
+        entity.0
+    ))
 }
 
 fn invalid(msg: String) -> HostError {
@@ -74,7 +88,21 @@ fn finite(v: Vec3, what: &str) -> HostResult<()> {
     }
 }
 
+fn graph_err(d: re_core::Diagnostic) -> HostError {
+    HostError::new(re_anim::codes::GRAPH_PARAM_UNKNOWN_STR, d.message)
+}
+
 impl Host<'_> {
+    fn player(&self, entity: EntityId) -> HostResult<&GraphPlayer> {
+        self.skins.player(entity).ok_or_else(|| no_graph(entity))
+    }
+
+    fn player_mut(&mut self, entity: EntityId) -> HostResult<&mut GraphPlayer> {
+        self.skins
+            .player_mut(entity)
+            .ok_or_else(|| no_graph(entity))
+    }
+
     fn require_character(&self, entity: EntityId) -> HostResult<()> {
         match self.links.kind(entity) {
             Some(LinkKind::Character) => Ok(()),
@@ -344,6 +372,58 @@ impl HostServices for Host<'_> {
 
     fn request_restart(&mut self) {
         self.pending.restart = true;
+    }
+
+    fn anim_set(&mut self, entity: EntityId, param: &str, value: AnimValue) -> HostResult<()> {
+        let value = match value {
+            AnimValue::Float(v) => Param::Float(v),
+            AnimValue::Bool(v) => Param::Bool(v),
+        };
+        self.player_mut(entity)?
+            .set(param, value)
+            .map_err(graph_err)
+    }
+
+    fn anim_get(&self, entity: EntityId, param: &str) -> HostResult<AnimValue> {
+        Ok(match self.player(entity)?.get(param).map_err(graph_err)? {
+            Param::Float(v) => AnimValue::Float(v),
+            Param::Bool(v) | Param::Trigger(v) => AnimValue::Bool(v),
+        })
+    }
+
+    fn anim_trigger(&mut self, entity: EntityId, param: &str) -> HostResult<()> {
+        self.player_mut(entity)?.trigger(param).map_err(graph_err)
+    }
+
+    fn anim_state(&self, entity: EntityId, layer: Option<&str>) -> HostResult<String> {
+        let player = self.player(entity)?;
+        player.state(layer).map(str::to_string).ok_or_else(|| {
+            let layers: Vec<String> = player.graph().layers().map(|l| format!("`{l}`")).collect();
+            invalid(format!(
+                "the animation graph of entity {} has no layer `{}`; its layers: {}",
+                entity.0,
+                layer.unwrap_or("(first)"),
+                if layers.is_empty() {
+                    "none".to_string()
+                } else {
+                    layers.join(", ")
+                }
+            ))
+        })
+    }
+
+    fn anim_joint(&self, entity: EntityId, joint: &str) -> HostResult<(Vec3, Quat)> {
+        match self.skins.joint_world(entity, joint) {
+            Some(j) => Ok(j),
+            None if self.skins.skin(entity).is_none() => Err(no_such(format!(
+                "entity {} has no posed skin (add a SkinnedMesh)",
+                entity.0
+            ))),
+            None => Err(invalid(format!(
+                "the skin of entity {} has no joint `{joint}`",
+                entity.0
+            ))),
+        }
     }
 }
 

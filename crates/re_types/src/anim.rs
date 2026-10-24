@@ -238,6 +238,16 @@ impl Default for AnimGraph {
     }
 }
 
+/// A graph parameter's value as scripts read and write it through
+/// [`HostServices`](crate::host::HostServices) (`anim.set`, `anim.get`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AnimValue {
+    /// For a float parameter.
+    Float(f32),
+    /// For a bool parameter (or, read back, whether a trigger is set).
+    Bool(bool),
+}
+
 /// A graph parameter with its default value. In files it is one object,
 /// `{"id": "speed", "type": "float", "default": 0}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

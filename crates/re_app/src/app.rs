@@ -788,6 +788,30 @@ impl App {
         &self.skin_sync
     }
 
+    /// Skeleton poses and animation graphs, to set graph parameters.
+    pub fn skin_sync_mut(&mut self) -> &mut SkinSync {
+        &mut self.skin_sync
+    }
+
+    /// The run's state hash: the world's
+    /// [`state_hash`](re_scene::World::state_hash), combined with every
+    /// animation graph's parameters, states and times when some entity plays
+    /// one (ADR-0039). Without graphs it is the world's hash.
+    pub fn state_hash(&self) -> blake3::Hash {
+        let world = self.world.state_hash();
+        if !self.skin_sync.has_graphs() {
+            return world;
+        }
+        let mut bytes = Vec::new();
+        self.skin_sync.write_state(&mut bytes);
+        let mut h = blake3::Hasher::new();
+        h.update(b"real-engine/state-hash/anim/1");
+        h.update(world.as_bytes());
+        h.update(&(bytes.len() as u64).to_le_bytes());
+        h.update(&bytes);
+        h.finalize()
+    }
+
     /// The contact events of the last frame's physics steps.
     pub fn contacts(&self) -> &[ContactEvent] {
         &self.contacts
@@ -857,6 +881,7 @@ impl App {
             bus_levels: &self.bus_levels,
             audio_graph: self.audio.graph(),
             pending: &mut self.pending,
+            skins: &mut self.skin_sync,
         }
     }
 
@@ -1123,7 +1148,7 @@ impl App {
         diagnostics.retain(|d| d.severity != re_core::Severity::Note || d.is_error());
         Ok(RunReport {
             frames: self.frame - start,
-            state_hash: self.world.state_hash().to_hex().to_string(),
+            state_hash: self.state_hash().to_hex().to_string(),
             diagnostics,
             perf: self.perf_report(),
             screenshots: std::mem::take(&mut self.screenshots),
@@ -1281,13 +1306,31 @@ impl App {
             self.clock.dt_secs(),
             &mut self.diagnostics,
         );
-        anim_skin::step(
+        let motions = anim_skin::step(
             &mut self.world,
             &mut self.skin_sync,
             &mut self.media,
             self.clock.dt_secs(),
             &mut self.diagnostics,
         );
+        if !motions.is_empty() {
+            let links = &self.physics_sync;
+            let moves = anim_skin::apply_root_motion(
+                &mut self.world,
+                &motions,
+                self.clock.dt_secs(),
+                &|id| links.kind(id) == Some(physics::LinkKind::Character),
+            );
+            self.physics_cmds
+                .extend(moves.into_iter().map(|(id, desired_velocity)| {
+                    PhysicsCmd::MoveCharacter {
+                        id,
+                        desired_velocity,
+                        jump: false,
+                    }
+                }));
+        }
+        anim_skin::attach(&mut self.world, &mut self.skin_sync, &mut self.diagnostics);
         if self.compat.is_some() {
             // The compat clock advances here, then `PreAnimation` fires.
             self.run_scripts(Phase::PreAnimation, self.clock.dt_secs().into());
@@ -1972,6 +2015,7 @@ impl App {
                 bus_levels: &self.bus_levels,
                 audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
+                skins: &mut self.skin_sync,
             },
         };
         let out = f(scripts, &mut host);
@@ -2125,7 +2169,7 @@ impl App {
         report
             .output
             .extend(std::mem::take(&mut self.script_output));
-        report.state_hash = self.world.state_hash().to_hex().to_string();
+        report.state_hash = self.state_hash().to_hex().to_string();
         report.compat = self.compat.as_ref().map(|c| c.info());
         results
     }
@@ -2218,6 +2262,7 @@ impl App {
                 bus_levels: &self.bus_levels,
                 audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
+                skins: &mut self.skin_sync,
             },
         };
         let diags = f(vm, &mut host);

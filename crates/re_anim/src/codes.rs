@@ -46,6 +46,9 @@ pub const GRAPH_CLIP_MISSING: Code = Code::new("RE7608");
 /// parameters.
 pub const GRAPH_PARAM_UNKNOWN: Code = Code::new("RE7609");
 
+/// [`GRAPH_PARAM_UNKNOWN`] as text, for `HostError`s.
+pub const GRAPH_PARAM_UNKNOWN_STR: &str = "RE7609";
+
 /// A joint mask names a joint the skeleton does not have (a warning: one mask
 /// can serve several skeletons).
 pub const GRAPH_MASK_JOINT_MISSING: Code = Code::new("RE7610");
