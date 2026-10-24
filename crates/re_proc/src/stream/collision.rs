@@ -197,6 +197,7 @@ impl CollisionState {
                             root: store.root().map(Into::into),
                             files: store.files().cloned(),
                             serial: true,
+                            global_spacing: Some(source.spacing),
                             ..Default::default()
                         };
                         st.jobs
