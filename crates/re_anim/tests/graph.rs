@@ -111,7 +111,7 @@ fn walk_clip() -> ClipData {
     let times: Vec<f32> = (0..=4).map(|i| i as f32 * 0.25).collect();
     let translation = times
         .iter()
-        .map(|&t| Vec3::new(0.1 * (t * 6.0).sin(), 0.05 * t, 2.0 * t))
+        .map(|&t| Vec3::new(0.1 * libm::sinf(t * 6.0), 0.05 * t, 2.0 * t))
         .collect();
     let rotation = times
         .iter()

@@ -622,6 +622,62 @@ fn script_mistakes_are_node_errors_not_crashes() {
     }
 }
 
+/// A generator's transcendental maths is libm's on every machine (ADR-0036),
+/// whether the argument is a variable or a constant the compiler could fold.
+#[test]
+fn a_generator_computes_math_with_libm() {
+    let src = bad(
+        "for _, x in { 0.5, 1.5, 2.75, -7.25, 1e6, 123456.789 } do
+            ctx:log(string.format(\"%.17g %.17g %.17g %.17g %.17g %.17g\",
+                math.sin(x), math.cos(x), math.tan(x), math.exp(x / 1e5),
+                math.atan2(x, 3), math.pow(math.abs(x), 1.3)))
+        end
+        ctx:log(string.format(\"%.17g %.17g\", math.sin(1e6), math.log(123456.789, 10)))
+        return { items = {} }",
+        "fragment",
+    );
+    let dir = project(&[("scripts/generators/bad.luau", &src)]);
+    let (_, registry) = declared(dir.path(), Limits::default());
+    let g = ProcGraph::from_doc(
+        &graph(1, &[("n", "project.bad", json!({}))], &[]),
+        &registry,
+    )
+    .unwrap();
+    let e = evaluator(registry, 1).evaluate(&g, &EvalOptions::default());
+    assert!(e.ok(), "{:#?}", e.report.diagnostics);
+    let logs = &e.report.node("n").unwrap().logs;
+    let mut want: Vec<String> = [0.5, 1.5, 2.75, -7.25, 1e6, 123_456.789]
+        .iter()
+        .map(|&x: &f64| {
+            [
+                libm::sin(x),
+                libm::cos(x),
+                libm::tan(x),
+                libm::exp(x / 1e5),
+                libm::atan2(x, 3.0),
+                libm::pow(x.abs(), 1.3),
+            ]
+            .map(|v| format!("{v:e}"))
+            .join(" ")
+        })
+        .collect();
+    want.push(format!(
+        "{:e} {:e}",
+        libm::sin(1e6),
+        libm::log10(123_456.789)
+    ));
+    let got: Vec<String> = logs
+        .iter()
+        .map(|l| {
+            l.split(' ')
+                .map(|v| format!("{:e}", v.parse::<f64>().unwrap()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    assert_eq!(got, want);
+}
+
 #[test]
 fn tostring_never_shows_an_address_and_logs_are_capped() {
     let src = bad(

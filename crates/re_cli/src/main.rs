@@ -252,6 +252,10 @@ struct RunArgs {
     /// Print the run report as JSON.
     #[arg(long)]
     json: bool,
+    /// With --headless: record the state hash every K frames and after the
+    /// last one, as `checkpoints` in the JSON report (`cargo xtask d2`, ADR-0036).
+    #[arg(long, value_name = "K", requires = "headless")]
+    checkpoints: Option<std::num::NonZeroU64>,
     /// Serve the script debugger over DAP on 127.0.0.1 (default port 4711).
     #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "4711")]
     debug: Option<u16>,
@@ -314,6 +318,7 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         // A replay must repeat its recording, so only a live run keeps data
         // and reloads changed files.
         live: Live::Development,
+        checkpoints: args.checkpoints,
     };
     play(app, options, &mut Vec::new)
 }
@@ -337,6 +342,8 @@ struct PlayOptions {
     exit_after: bool,
     json: bool,
     live: Live,
+    /// Write the state hash every this many frames (`real run --checkpoints`).
+    checkpoints: Option<std::num::NonZeroU64>,
 }
 
 /// Runs `app` (headless or in a window), prints the report and returns the
@@ -373,12 +380,28 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
         }
     }
     let (frames, mut diagnostics, mut report) = if options.headless {
-        match app.run_headless(options.frames, replay) {
-            Ok(r) => (
-                r.frames,
-                r.diagnostics.clone(),
-                serde_json::to_value(&r).unwrap_or_default(),
-            ),
+        let every = options.checkpoints.map(std::num::NonZeroU64::get);
+        let mut checkpoints = Vec::new();
+        let run = app.run_headless_observed(options.frames, replay, |app| {
+            if let Some(k) = every
+                && app.frame_count().is_multiple_of(k)
+            {
+                checkpoints.push(checkpoint(app));
+            }
+        });
+        match run {
+            Ok(r) => {
+                let mut json = serde_json::to_value(&r).unwrap_or_default();
+                if every.is_some() {
+                    if checkpoints.last().map(|c| c["frame"].as_u64())
+                        != Some(Some(app.frame_count()))
+                    {
+                        checkpoints.push(checkpoint(&app));
+                    }
+                    json["checkpoints"] = serde_json::Value::Array(checkpoints);
+                }
+                (r.frames, r.diagnostics.clone(), json)
+            }
             Err(d) => return fail(d),
         }
     } else {
@@ -460,6 +483,14 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
         );
     }
     ExitCode::SUCCESS
+}
+
+/// One `checkpoints` entry: the frames run so far and the world's state hash.
+fn checkpoint(app: &App) -> serde_json::Value {
+    serde_json::json!({
+        "frame": app.frame_count(),
+        "state_hash": app.world().state_hash().to_hex().to_string(),
+    })
 }
 
 fn cmd_describe(project: &Path, json: bool, luau_defs: bool) -> ExitCode {

@@ -48,7 +48,12 @@ pub fn sun_direction(clock: f32, latitude: f32) -> Vec3 {
         0.0
     };
     let h = (clock / 24.0 - 0.5) * TAU;
-    Vec3::new(-h.sin(), lat.cos() * h.cos(), lat.sin() * h.cos()).normalize_or(Vec3::Y)
+    Vec3::new(
+        -libm::sinf(h),
+        libm::cosf(lat) * libm::cosf(h),
+        libm::sinf(lat) * libm::cosf(h),
+    )
+    .normalize_or(Vec3::Y)
 }
 
 /// `ClockTime` from a `TimeOfDay` string (`"HH:MM:SS"`, minutes and seconds
@@ -229,7 +234,7 @@ pub(crate) fn environment(
         add(ambient, outdoor, outdoor_scale * 0.6),
         add(ambient, outdoor, outdoor_scale * 0.25),
     );
-    let exposure = 2f32.powf(f("ExposureCompensation", 0.0).clamp(-5.0, 5.0));
+    let exposure = libm::powf(2f32, f("ExposureCompensation", 0.0).clamp(-5.0, 5.0));
 
     // Sky by time of day.
     let dusk = 1.0 - smoothstep(0.0, 0.3, to_sun.y.abs());

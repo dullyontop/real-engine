@@ -8,7 +8,7 @@ use re_core::Code;
 use re_scene::{Entity, entity_from_id, entity_id};
 use re_types::audio::{AudioCmd, EffectParam};
 use re_types::host::HostError;
-use re_types::physics::{GroundState, GroupMask, VehicleInput};
+use re_types::physics::{GroundState, GroupMask, RagdollMode, VehicleInput};
 
 use super::entity::{EntityRef, handle};
 use super::math::{LQuat, V3};
@@ -329,6 +329,73 @@ fn physics_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
             }
             t.raw_set("wheels", wheels)?;
             Ok(t)
+        },
+    )?;
+    lib.func(
+        lua,
+        "ragdoll",
+        "(e: Entity, mode: \"animated\" | \"simulated\" | \"powered\", strength: number?) -> ()",
+        "Switches the entity's ragdoll from the next step until the next call or an edit of its `Ragdoll`: `animated` follows the animation, `simulated` goes limp, keeping its motion, and `powered` holds the animation with joint motors at `strength` (0 to 1, default 1). The shown pose blends to the ragdoll and back over the component's `blend_seconds`.",
+        |lua, (e, mode, strength): (Value, String, Option<f32>)| {
+            let e = entity_arg(&e, "physics.ragdoll")?;
+            let mode = match mode.as_str() {
+                "animated" => RagdollMode::Animated,
+                "simulated" => RagdollMode::Simulated,
+                "powered" => RagdollMode::Powered {
+                    strength: strength.unwrap_or(1.0),
+                },
+                other => {
+                    return Err(super::error(
+                        codes::BAD_ARGUMENT,
+                        format!(
+                            "physics.ragdoll: mode `{other}` is not animated, simulated or powered"
+                        ),
+                    ));
+                }
+            };
+            with_host(lua, |h| {
+                h.services()
+                    .ragdoll_mode(entity_id(e), mode)
+                    .map_err(host_err)
+            })
+        },
+    )?;
+    lib.func(
+        lua,
+        "ragdoll_state",
+        "(e: Entity) -> { mode: string, strength: number, position: vector, rotation: Quat, root_position: vector, root_rotation: Quat, calm: boolean }",
+        "The entity's ragdoll after the last step: its mode and powered strength (0 otherwise), the frame its pose is placed in (the entity's pose when last targeted), the root part's world pose, and `calm`, true once every part has stayed slower than 0.05 m/s and 0.1 rad/s for 30 steps.",
+        |lua, e: Value| {
+            let e = entity_arg(&e, "physics.ragdoll_state")?;
+            let st = with_host(lua, |h| h.services().ragdoll_state(entity_id(e)).map_err(host_err))?;
+            let t = lua.create_table()?;
+            let (mode, strength) = match st.mode {
+                RagdollMode::Animated => ("animated", 0.0),
+                RagdollMode::Simulated => ("simulated", 0.0),
+                RagdollMode::Powered { strength } => ("powered", strength),
+            };
+            t.raw_set("mode", mode)?;
+            t.raw_set("strength", strength)?;
+            t.raw_set("position", V3(st.pos))?;
+            t.raw_set("rotation", LQuat(st.rot))?;
+            t.raw_set("root_position", V3(st.root_pos))?;
+            t.raw_set("root_rotation", LQuat(st.root_rot))?;
+            t.raw_set("calm", st.calm)?;
+            Ok(t)
+        },
+    )?;
+    lib.func(
+        lua,
+        "ragdoll_impulse",
+        "(e: Entity, joint: string, impulse: vector) -> ()",
+        "Applies an impulse (N·s) at the next step to the ragdoll part that follows `joint` (or the joint's nearest ancestor with a part); the ragdoll must be simulated or powered.",
+        |lua, (e, joint, v): (Value, String, V3)| {
+            let e = entity_arg(&e, "physics.ragdoll_impulse")?;
+            with_host(lua, |h| {
+                h.services()
+                    .ragdoll_impulse(entity_id(e), &joint, v.0)
+                    .map_err(host_err)
+            })
         },
     )?;
     lib.func(

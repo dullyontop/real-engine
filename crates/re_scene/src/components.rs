@@ -383,11 +383,41 @@ component! {
     }
 }
 
+field_enum! {
+    /// How a [`Ragdoll`] moves (ADR-0040): following its animation with
+    /// kinematic parts, limp, or holding the animation with joint motors.
+    pub enum RagdollMode { Animated, Simulated, Powered }
+}
+
+component! {
+    /// Gives a [`SkinnedMesh`] a ragdoll on its skeleton (ADR-0040). Once the skin
+    /// loads, `re_app` generates the parts (one capsule per listed joint along its
+    /// bone, humanoid joint limits, the mass split by volume), keeps an animated
+    /// ragdoll on the animation, and shows the simulated pose blended in while it is
+    /// simulated or powered. Scripts switch it with `physics.ragdoll`. The entity
+    /// has no `RigidBody`; a `CharacterController` on it is fine and never collides
+    /// with its own ragdoll.
+    pub struct Ragdoll {
+        /// The joints that get parts, by name; empty finds a humanoid's hips, spine,
+        /// head, upper arms, forearms, thighs and shins by name.
+        pub joints: Vec<String> = Vec::new(),
+        /// Total mass, in kilograms.
+        pub total_mass: f32 = 70.0,
+        /// How it moves when the scene starts, and after each edit of this field.
+        pub mode: RagdollMode = RagdollMode::Animated,
+        /// Motor strength in `Powered` mode, 0 (limp) to 1.
+        pub strength: f32 = 1.0,
+        /// Seconds the shown pose takes to blend from the animation to the ragdoll
+        /// and back; 0 switches at once.
+        pub blend_seconds: f32 = 0.2,
+    }
+}
+
 /// Registers every built-in component, in a fixed order: `Transform`,
 /// `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light`, `RigidBody`,
 /// `Collider`, `CharacterController`, `ScriptRef`, `AudioSource`, `AnimPlayer`,
 /// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `SkinnedMesh`,
-/// `Streamed`, `StreamFocus`, `Vehicle`, `VehicleWheel`, `Animator`,
+/// `Streamed`, `StreamFocus`, `Vehicle`, `VehicleWheel`, `Ragdoll`, `Animator`,
 /// `BoneAttachment`.
 pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<Transform>(world);
@@ -413,6 +443,7 @@ pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<crate::stream::StreamFocus>(world);
     registry.register::<Vehicle>(world);
     registry.register::<VehicleWheel>(world);
+    registry.register::<Ragdoll>(world);
     registry.register::<Animator>(world);
     registry.register::<BoneAttachment>(world);
 }

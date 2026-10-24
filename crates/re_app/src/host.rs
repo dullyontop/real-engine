@@ -16,7 +16,7 @@ use re_types::anim::AnimValue;
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::{
     ActionFrame, AudioCmd, BodyKind, BusLevel, CharacterState, EntityId, GroupMask, PhysicsCmd,
-    RayHit, VehicleInput, VehicleState,
+    RagdollMode, RagdollState, RayHit, VehicleInput, VehicleState,
 };
 
 use crate::codes::{HOST_INVALID_ARGUMENT_STR, HOST_NO_SUCH_THING_STR};
@@ -101,6 +101,18 @@ impl Host<'_> {
         self.skins
             .player_mut(entity)
             .ok_or_else(|| no_graph(entity))
+    }
+
+    fn require_ragdoll(&self, entity: EntityId) -> HostResult<()> {
+        if self.physics.has_ragdoll(entity) {
+            Ok(())
+        } else {
+            Err(no_such(format!(
+                "entity {} has no ragdoll (add a Ragdoll to a SkinnedMesh; it is built once \
+                 the skin is posed)",
+                entity.0
+            )))
+        }
     }
 
     fn require_character(&self, entity: EntityId) -> HostResult<()> {
@@ -199,6 +211,39 @@ impl HostServices for Host<'_> {
         self.physics
             .vehicle(entity)
             .ok_or_else(|| no_such(format!("entity {} has no vehicle", entity.0)))
+    }
+
+    fn ragdoll_mode(&mut self, entity: EntityId, mode: RagdollMode) -> HostResult<()> {
+        self.require_ragdoll(entity)?;
+        if !mode.is_valid() {
+            return Err(invalid(format!(
+                "ragdoll mode {mode:?} is out of range: a powered strength is 0 to 1"
+            )));
+        }
+        self.physics_cmds
+            .push(PhysicsCmd::SetRagdollMode { id: entity, mode });
+        Ok(())
+    }
+
+    fn ragdoll_state(&self, entity: EntityId) -> HostResult<RagdollState> {
+        self.require_ragdoll(entity)?;
+        self.physics
+            .ragdoll(entity)
+            .ok_or_else(|| no_such(format!("entity {} has no ragdoll", entity.0)))
+    }
+
+    fn ragdoll_impulse(&mut self, entity: EntityId, joint: &str, impulse: Vec3) -> HostResult<()> {
+        self.require_ragdoll(entity)?;
+        finite(impulse, "impulse")?;
+        if joint.is_empty() {
+            return Err(invalid("the joint name is empty".into()));
+        }
+        self.physics_cmds.push(PhysicsCmd::ApplyRagdollImpulse {
+            id: entity,
+            joint: joint.to_string(),
+            impulse,
+        });
+        Ok(())
     }
 
     fn play_sound(&mut self, clip: &str, at: Option<Vec3>, volume: f32) -> HostResult<()> {

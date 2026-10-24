@@ -54,7 +54,7 @@ fn terrain_height(x: f32, z: f32) -> f32 {
     if r <= 3.0 {
         PLATEAU
     } else {
-        PLATEAU + 0.8 * (x * 0.9).sin() * (z * 0.7).cos()
+        PLATEAU + 0.8 * libm::sinf(x * 0.9) * libm::cosf(z * 0.7)
     }
 }
 
@@ -83,7 +83,7 @@ fn hex_prism() -> ShapeDesc {
     for k in 0..6 {
         let a = k as f32 * std::f32::consts::TAU / 6.0;
         for y in [-0.25f32, 0.25] {
-            points.push(Vec3::new(0.5 * a.cos(), y, 0.5 * a.sin()));
+            points.push(Vec3::new(0.5 * libm::cosf(a), y, 0.5 * libm::sinf(a)));
         }
     }
     ShapeDesc::ConvexHull { points }
@@ -199,14 +199,6 @@ fn drop_and_rest() {
     for (i, (name, _, _, _, _, top, rest)) in drops.iter().enumerate() {
         let id = 100 + i as u64;
         assert_rests(name, pos(&p, id).y, top + rest);
-        // On MSVC, Jolt's default build (/fp:fast with FMA, the likely cause)
-        // leaves the lying capsule awake on the mesh at rest height (still
-        // awake after 480 steps in CI); with ADR-0036's cross-platform build it
-        // sleeps as on Linux. WP18's PR "d2" turns that build on and removes
-        // this exception.
-        if cfg!(target_env = "msvc") && *name == "mesh/capsule" {
-            continue;
-        }
         assert_eq!(
             p.is_awake(EntityId(id)),
             Some(false),

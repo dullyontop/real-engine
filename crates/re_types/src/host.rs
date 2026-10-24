@@ -14,7 +14,9 @@ use crate::anim::AnimValue;
 use crate::audio::{AudioCmd, BusLevel};
 use crate::ids::EntityId;
 use crate::input::{ActionFrame, MouseLock, RawInputFrame};
-use crate::physics::{CharacterState, GroupMask, RayHit, VehicleInput, VehicleState};
+use crate::physics::{
+    CharacterState, GroupMask, RagdollMode, RagdollState, RayHit, VehicleInput, VehicleState,
+};
 
 /// Why a [`HostServices`] call failed.
 ///
@@ -84,6 +86,17 @@ pub trait HostServices {
 
     /// The state of the vehicle on `entity` after the last step.
     fn vehicle_state(&self, entity: EntityId) -> HostResult<VehicleState>;
+
+    /// Switches the ragdoll on `entity` to `mode` from the next step (ADR-0040); it
+    /// holds until the next call or an edit of the entity's ragdoll settings.
+    fn ragdoll_mode(&mut self, entity: EntityId, mode: RagdollMode) -> HostResult<()>;
+
+    /// The state of the ragdoll on `entity` after the last step.
+    fn ragdoll_state(&self, entity: EntityId) -> HostResult<RagdollState>;
+
+    /// Applies an impulse (N·s) at the next step to the part of the ragdoll on
+    /// `entity` that follows `joint`, or the joint's nearest ancestor with a part.
+    fn ragdoll_impulse(&mut self, entity: EntityId, joint: &str, impulse: Vec3) -> HostResult<()>;
 
     /// Plays a sound clip (an asset path) once, at a world position or non-spatially.
     fn play_sound(&mut self, clip: &str, at: Option<Vec3>, volume: f32) -> HostResult<()>;

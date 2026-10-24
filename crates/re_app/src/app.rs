@@ -38,6 +38,7 @@ use crate::sync::anim::{self, AnimSync};
 use crate::sync::anim_skin::{self, SkinSync};
 use crate::sync::audio::{self, AudioSync};
 use crate::sync::physics::{self, PhysicsSync, ShapeLibrary};
+use crate::sync::ragdoll::{self, RagdollSync};
 use crate::sync::render::{self, RenderAssets, RenderInputs};
 use crate::verify::VerifyStage;
 
@@ -135,6 +136,7 @@ pub struct App {
 
     anim_sync: AnimSync,
     skin_sync: SkinSync,
+    ragdoll_sync: RagdollSync,
 
     /// The `derived:` heightfields colliders used at the last step: when they
     /// change during play, characters are put back on the new ground.
@@ -319,6 +321,7 @@ impl App {
             changed_scripts: Vec::new(),
             anim_sync: AnimSync::new(),
             skin_sync: SkinSync::new(),
+            ragdoll_sync: RagdollSync::new(),
             ground: None,
             graph_inputs,
             restarts: 0,
@@ -810,6 +813,11 @@ impl App {
         h.update(&(bytes.len() as u64).to_le_bytes());
         h.update(&bytes);
         h.finalize()
+    }
+
+    /// The ragdolls built for `Ragdoll` components, with their blend weights.
+    pub fn ragdoll_sync(&self) -> &RagdollSync {
+        &self.ragdoll_sync
     }
 
     /// The contact events of the last frame's physics steps.
@@ -1330,7 +1338,6 @@ impl App {
                     }
                 }));
         }
-        anim_skin::attach(&mut self.world, &mut self.skin_sync, &mut self.diagnostics);
         if self.compat.is_some() {
             // The compat clock advances here, then `PreAnimation` fires.
             self.run_scripts(Phase::PreAnimation, self.clock.dt_secs().into());
@@ -1353,6 +1360,14 @@ impl App {
             &mut self.world,
             &mut self.physics_sync,
             &self.shapes,
+            &mut self.physics_cmds,
+            &mut self.diagnostics,
+        );
+        ragdoll::push(
+            &mut self.world,
+            &self.physics,
+            &self.skin_sync,
+            &mut self.ragdoll_sync,
             &mut self.physics_cmds,
             &mut self.diagnostics,
         );
@@ -1401,6 +1416,15 @@ impl App {
             scripts.push_contacts(self.physics.events());
         }
         self.run_scripts(Phase::PostSimulation, self.clock.dt_secs().into());
+        // The animated/simulated blend (ADR-0040), after scripts saw the step.
+        ragdoll::pull(
+            &self.physics,
+            &mut self.skin_sync,
+            &mut self.ragdoll_sync,
+            self.clock.dt_secs(),
+        );
+        // Bone attachments follow the final pose, ragdolls included.
+        anim_skin::attach(&mut self.world, &mut self.skin_sync, &mut self.diagnostics);
         self.perf.add(Phase::PostSimulation, t.elapsed());
     }
 
@@ -2431,6 +2455,7 @@ impl App {
                 self.audio_sync = AudioSync::new();
                 self.anim_sync = AnimSync::new();
                 self.skin_sync = SkinSync::new();
+                self.ragdoll_sync = RagdollSync::new();
                 self.script_errors.clear();
                 // The compat contexts start again on the next frame.
                 self.compat = None;

@@ -55,7 +55,7 @@ impl GuiCamera {
 
     /// Pixels per stud at one stud in front of the camera.
     pub fn focal(&self, viewport: Vec2) -> f32 {
-        viewport.y * 0.5 / (self.fov_y.clamp(0.01, 3.1) * 0.5).tan()
+        viewport.y * 0.5 / libm::tanf(self.fov_y.clamp(0.01, 3.1) * 0.5)
     }
 
     /// The unit direction through screen point `q` of a `viewport`-pixel

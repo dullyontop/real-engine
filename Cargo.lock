@@ -1800,6 +1800,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc148d4ddd3930c52f9e5ae79b89805c6f07e9ff417e7b083e0348cea60a5aba"
 dependencies = [
  "bytemuck",
+ "libm",
  "mint",
  "serde_core",
 ]
@@ -3683,6 +3684,7 @@ name = "re_anim"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
+ "libm",
  "re_core",
  "re_types",
  "serde",
@@ -3695,6 +3697,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "glam 0.34.1",
+ "libm",
  "postcard",
  "re_anim",
  "re_assets",
@@ -3751,6 +3754,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
  "kira",
+ "libm",
  "re_core",
  "re_types",
  "serde_json",
@@ -3815,6 +3819,7 @@ dependencies = [
  "egui",
  "glam 0.34.1",
  "indexmap 2.14.2",
+ "libm",
  "mlua",
  "postcard",
  "re_anim",
@@ -3863,6 +3868,7 @@ dependencies = [
  "egui-winit",
  "egui_dock",
  "glam 0.34.1",
+ "libm",
  "mlua",
  "re_agent",
  "re_app",
@@ -3886,6 +3892,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "glam 0.34.1",
+ "libm",
  "re_core",
  "re_types",
  "serde",
@@ -3966,6 +3973,7 @@ name = "re_physics"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
+ "libm",
  "oxijolt",
  "re_core",
  "re_types",
@@ -4017,6 +4025,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "glam 0.34.1",
+ "libm",
  "png",
  "pollster",
  "re_core",
@@ -4050,6 +4059,7 @@ dependencies = [
  "blake3",
  "glam 0.34.1",
  "insta",
+ "libm",
  "mlua",
  "re_command",
  "re_core",
@@ -5453,6 +5463,7 @@ dependencies = [
 name = "web-test"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "mlua",
  "re_core",
  "re_physics",

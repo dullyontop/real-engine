@@ -159,6 +159,12 @@ declare physics: {
     drive: (e: Entity, input: { throttle: number?, steer: number?, brake: number?, handbrake: number? }) -> (),
     -- A vehicle's state after the last step: forward speed (m/s, negative in reverse), engine rpm, gear (negative in reverse, 0 neutral), the input in effect, and each wheel in wheel order.
     vehicle: (e: Entity) -> { speed: number, rpm: number, gear: number, throttle: number, steer: number, brake: number, handbrake: number, wheels: { { on_ground: boolean, contact: Entity?, contact_point: vector, suspension_length: number, angular_velocity: number, steer_deg: number } } },
+    -- Switches the entity's ragdoll from the next step until the next call or an edit of its `Ragdoll`: `animated` follows the animation, `simulated` goes limp, keeping its motion, and `powered` holds the animation with joint motors at `strength` (0 to 1, default 1). The shown pose blends to the ragdoll and back over the component's `blend_seconds`.
+    ragdoll: (e: Entity, mode: "animated" | "simulated" | "powered", strength: number?) -> (),
+    -- The entity's ragdoll after the last step: its mode and powered strength (0 otherwise), the frame its pose is placed in (the entity's pose when last targeted), the root part's world pose, and `calm`, true once every part has stayed slower than 0.05 m/s and 0.1 rad/s for 30 steps.
+    ragdoll_state: (e: Entity) -> { mode: string, strength: number, position: vector, rotation: Quat, root_position: vector, root_rotation: Quat, calm: boolean },
+    -- Applies an impulse (N·s) at the next step to the ragdoll part that follows `joint` (or the joint's nearest ancestor with a part); the ragdoll must be simulated or powered.
+    ragdoll_impulse: (e: Entity, joint: string, impulse: vector) -> (),
     -- Calls `f` when two bodies start touching (or a body enters a sensor), after each physics step.
     on_contact: (f: (a: Entity, b: Entity, info: { point: vector, normal: vector, sensor: boolean }) -> ()) -> Connection,
     -- Calls `f` when two bodies stop touching (one may already be gone).

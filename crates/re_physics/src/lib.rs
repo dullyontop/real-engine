@@ -60,6 +60,7 @@ mod convert;
 mod jobs;
 pub mod parts;
 mod query;
+mod ragdoll;
 mod shapes;
 mod vehicle;
 mod world;
@@ -165,6 +166,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::VEHICLE_INVALID,
         title: "Invalid vehicle",
         page: include_str!("../explain/RE5018.md"),
+    },
+    DiagInfo {
+        code: codes::RAGDOLL_INVALID,
+        title: "Invalid ragdoll",
+        page: include_str!("../explain/RE5019.md"),
     },
 ];
 
