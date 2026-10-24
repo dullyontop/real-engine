@@ -204,6 +204,10 @@ fn terrain_erode(ctx: &NodeCtx, p: &ErodeParams) -> Result<Output, String> {
         // Not streamed: the whole field at once.
         let f = ctx.need_field("field")?;
         let n = f.n() as usize;
+        if n < 3 {
+            // Too small to carry water: nothing to erode.
+            return Ok(Output::Field(f.clone()));
+        }
         let eroded = erode_grid(
             &f.0.samples,
             n,

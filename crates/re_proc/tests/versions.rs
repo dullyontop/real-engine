@@ -675,3 +675,24 @@ fn overrides_on_an_old_node_use_its_version_shape() {
     assert_eq!(set("factr", json!(2.0)), ["RE4011"]);
     assert_eq!(set("factor", json!("x")), ["RE4005"]);
 }
+
+#[test]
+fn erosion_leaves_a_field_too_small_to_carry_water() {
+    let doc = json!({
+        "format": "real-engine/graph", "version": 1, "name": "e", "seed": 7,
+        "nodes": [
+            { "id": "h", "kind": "terrain.heightfield", "version": 1,
+              "params": { "size": 2, "height": 10.0 } },
+            { "id": "e", "kind": "terrain.erode", "version": 1, "params": {} },
+        ],
+        "edges": [{ "from": ["h", "field"], "to": ["e", "field"] }],
+    });
+    let reg = Arc::new(NodeRegistry::m1());
+    let g = ProcGraph::from_doc(&GraphDoc::from_json(&doc.to_string()).unwrap(), &reg).unwrap();
+    let e = Evaluator::new(reg).evaluate(&g, &EvalOptions::default());
+    assert!(e.ok(), "{:#?}", e.report.diagnostics);
+    let (Some(Output::Field(a)), Some(Output::Field(b))) = (e.output("h"), e.output("e")) else {
+        panic!("no fields");
+    };
+    assert_eq!(a.0.samples, b.0.samples);
+}

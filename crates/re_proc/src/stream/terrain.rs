@@ -5,7 +5,7 @@
 //! [`TerrainView`] resource, are swapped in as soon as they are ready, and
 //! are not part of `state_hash`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -148,6 +148,9 @@ struct SourceTerrain {
     inputs: Option<blake3::Hash>,
     ready: BTreeMap<ChunkKey, Ready>,
     jobs: BTreeMap<ChunkKey, ChunkJob>,
+    /// Drawn chunks built from earlier inputs, replaced as their new
+    /// versions come in.
+    stale: BTreeSet<ChunkKey>,
     /// Meshes built so far, for unique names.
     built: u64,
 }
@@ -210,6 +213,7 @@ impl TerrainState {
                 st.inputs = Some(source.inputs);
                 st.ready.clear();
                 st.jobs.clear();
+                st.stale = view.of(&source.id).map(|(k, _)| *k).collect();
             }
             let grid = TerrainGrid {
                 base_spacing: source.spacing,
@@ -289,7 +293,9 @@ impl TerrainState {
             swap(&mut view, st, source, terrain, &grid, &desired, started);
             self.missing += desired
                 .keys()
-                .filter(|k| !view.chunks.contains_key(&(source.id.clone(), **k)))
+                .filter(|k| {
+                    st.stale.contains(*k) || !view.chunks.contains_key(&(source.id.clone(), **k))
+                })
                 .count();
         }
         world.ecs.insert_resource(view);
@@ -419,6 +425,23 @@ fn swap(
     }
     for k in remove {
         view.chunks.remove(&(id.clone(), k));
+        st.stale.remove(&k);
+    }
+    // Drawn chunks from earlier inputs whose new version is ready.
+    for k in st.stale.iter().copied().collect::<Vec<_>>() {
+        if !shown.contains_key(&k) {
+            st.stale.remove(&k);
+            continue;
+        }
+        if let Some(r) = st.ready.get(&k) {
+            st.built += 1;
+            if let Some(c) = view.chunks.get_mut(&(id.clone(), k)) {
+                c.edges = r.edges;
+                c.data = r.mesh.clone();
+                c.mesh = mesh_name(&id, k, r.edges, st.built);
+            }
+            st.stale.remove(&k);
+        }
     }
     for k in add {
         let Some(r) = st.ready.get(&k) else { continue };

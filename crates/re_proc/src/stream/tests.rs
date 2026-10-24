@@ -794,7 +794,8 @@ fn settle_view(w: &mut World, from: u64) -> u64 {
             .ecs
             .get_resource::<TerrainView>()
             .map_or(0, TerrainView::len);
-        if !busy && shown > 0 && t > from + 10 {
+        let missing = w.ecs.resource::<Streamer>().view_missing();
+        if !busy && shown > 0 && missing == 0 && t > from + 10 {
             return t + 1;
         }
         std::thread::sleep(std::time::Duration::from_millis(2));
@@ -898,6 +899,30 @@ fn stream_terrain_follows_the_focus_without_drawing_ground_twice() {
     move_to(w, -200.0, -200.0);
     settle_view(w, t);
     assert_eq!(fine_at(w), [(-1, -1), (-1, 0), (0, -1), (0, 0)]);
+}
+
+#[test]
+fn stream_terrain_view_regenerates_when_the_inputs_change() {
+    let mut st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    let w = &mut st.world;
+    let heights = |w: &World| -> Vec<(re_geom::terrain::ChunkKey, Vec<f32>)> {
+        w.ecs
+            .resource::<TerrainView>()
+            .chunks()
+            .map(|c| (c.key, c.data().vertices.iter().map(|v| v.pos[1]).collect()))
+            .collect()
+    };
+    let t = settle_view(w, 0);
+    let before = heights(w);
+    w.set("terrain", "Procedural", "seed", Value::Int(8))
+        .unwrap();
+    settle_view(w, t);
+    let after = heights(w);
+    assert_eq!(before.len(), after.len());
+    for (k, h) in &before {
+        let (_, now) = after.iter().find(|(a, _)| a == k).expect("still drawn");
+        assert_ne!(h, now, "{k:?} kept the old seed's heights");
+    }
 }
 
 fn collision_config() -> StreamConfig {
