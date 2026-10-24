@@ -705,21 +705,21 @@ impl App {
 
     /// Draws the current frame (the last Sync's snapshot and HUD) offscreen at
     /// the configured size and returns it; with `path`, also writes it as a PNG
-    /// (relative paths are under the project).
+    /// (relative paths are under the project). Under [`Lateness::Wait`] (the
+    /// default), streamed terrain is drawn whole, however fast its chunks were
+    /// made ([`re_proc::stream::complete_view`]).
     ///
     /// # Errors
     ///
     /// `RE0516` when no GPU device can be opened or the file cannot be written,
     /// and the renderer's errors.
+    ///
+    /// [`Lateness::Wait`]: re_proc::stream::Lateness::Wait
     pub fn screenshot(&mut self, path: Option<&Path>) -> Result<Image, Diagnostic> {
         self.ensure_graphics()?;
+        self.complete_terrain_view();
+        self.upload_assets();
         let gfx = self.graphics.as_mut().expect("ensured");
-        gfx.sync_assets(
-            &mut self.world,
-            &mut self.media,
-            &mut self.render_assets,
-            &mut self.diagnostics,
-        );
         let inputs = RenderInputs {
             assets: &self.render_assets,
             physics: &self.physics_sync,
@@ -807,9 +807,11 @@ impl App {
     /// Sets how world streaming treats a cell whose generation is not done
     /// at its apply tick (ADR-0042). [`Lateness::Wait`] (the default) waits
     /// for it, so `real verify`, replays and `play.run` load the same cells at
-    /// the same ticks on every machine. Only a live run, which must not stall
-    /// a frame, sets [`Lateness::Late`]: the cell applies when it is ready,
-    /// reported as `RE4305`.
+    /// the same ticks on every machine; a frame that takes a screenshot also
+    /// waits for the whole streamed terrain view, so the image is the same
+    /// too. Only a live run, which must not stall a frame, sets
+    /// [`Lateness::Late`]: the cell applies when it is ready, reported as
+    /// `RE4305`.
     ///
     /// [`Lateness::Wait`]: re_proc::stream::Lateness::Wait
     /// [`Lateness::Late`]: re_proc::stream::Lateness::Late
@@ -1306,6 +1308,12 @@ impl App {
         // Sync.
         let t = Instant::now();
         self.world.propagate();
+        if self.graphics.is_some()
+            && (!self.pending.screenshots.is_empty()
+                || self.screenshots.iter().any(|r| r.frame == f))
+        {
+            self.complete_terrain_view();
+        }
         self.upload_assets();
         let inputs = RenderInputs {
             assets: &self.render_assets,
@@ -1482,13 +1490,10 @@ impl App {
         self.perf.add(Phase::PostSimulation, t.elapsed());
     }
 
-    /// World streaming (ADR-0042): loads and unloads the cells of `Streamed`
-    /// procedural sources around the focuses, before scripts' fixed update
-    /// sees this tick's stream events. A world with no streamed source pays a
-    /// query.
-    fn stream_step(&mut self) {
-        let streams = self
-            .world
+    /// True if the world streams: it has streamed sources, or its manager
+    /// still holds something.
+    fn streams(&mut self) -> bool {
+        self.world
             .ecs
             .get_resource::<re_proc::stream::Streamer>()
             .is_some_and(|s| !s.is_idle())
@@ -1498,8 +1503,33 @@ impl App {
                 .query_filtered::<(), re_scene::ecs::query::With<re_scene::Streamed>>()
                 .iter(&self.world.ecs)
                 .next()
-                .is_some();
-        if streams {
+                .is_some()
+    }
+
+    /// Before a screenshot under [`Lateness::Wait`]: completes the streamed
+    /// terrain view ([`re_proc::stream::complete_view`]), so the image shows
+    /// the terrain whole, however fast its chunks were made. A live run
+    /// ([`Lateness::Late`]) never waits, and a world that has not streamed
+    /// yet (a scene being edited) has no view to complete.
+    ///
+    /// [`Lateness::Wait`]: re_proc::stream::Lateness::Wait
+    /// [`Lateness::Late`]: re_proc::stream::Lateness::Late
+    fn complete_terrain_view(&mut self) {
+        if self.stream_lateness == re_proc::stream::Lateness::Wait
+            && self.stream_tick > 0
+            && self.streams()
+        {
+            let problems = re_proc::stream::complete_view(&mut self.world);
+            self.diagnostics.extend(problems);
+        }
+    }
+
+    /// World streaming (ADR-0042): loads and unloads the cells of `Streamed`
+    /// procedural sources around the focuses, before scripts' fixed update
+    /// sees this tick's stream events. A world with no streamed source pays a
+    /// query.
+    fn stream_step(&mut self) {
+        if self.streams() {
             if let Some(mut s) = self
                 .world
                 .ecs
