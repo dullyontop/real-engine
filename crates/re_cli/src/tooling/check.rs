@@ -272,7 +272,7 @@ pub fn run(args: CheckArgs, project: &Path) -> anyhow::Result<ExitCode> {
 
 /// Verify's stage 3: the static API scan over the project's scripts. A file the
 /// scanner cannot parse is an error; a name the engine does not provide is a
-/// warning.
+/// warning, and so is a `^` that calls the platform's `pow` (`RE3083`).
 pub struct ScanStage;
 
 impl VerifyStage for ScanStage {
@@ -287,7 +287,10 @@ impl VerifyStage for ScanStage {
         for file in &files {
             match std::fs::read_to_string(ctx.project.join(file)) {
                 Ok(source) => match re_script_check::scan_source(&source, file) {
-                    Ok(u) => usage.merge(&u),
+                    Ok(u) => {
+                        usage.merge(&u);
+                        diags.extend(re_script_check::pow_warnings(&source, file));
+                    }
                     Err(d) => diags.push(d),
                 },
                 Err(e) => diags.push(
