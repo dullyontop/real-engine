@@ -76,9 +76,9 @@ pub struct Physics {
     /// when a later move of the origin, or a new transform, brings them in
     /// reach (ADR-0042).
     pub(crate) waiting: BTreeMap<EntityId, BodyDesc>,
-    /// The latest position (or kinematic target, `true`) each body or
-    /// character out of reach was given, applied once it is in reach.
-    pub(crate) far_writes: BTreeMap<EntityId, (Vec3, Quat, bool)>,
+    /// The latest position or kinematic target each body or character out of
+    /// reach was given, applied as a teleport once it is in reach.
+    pub(crate) far_writes: BTreeMap<EntityId, (Vec3, Quat)>,
     /// Vehicles and constraints on bodies that wait, in arrival order, added
     /// once their bodies join.
     pub(crate) deferred: Vec<PhysicsCmd>,
@@ -469,6 +469,7 @@ impl Physics {
             PhysicsCmd::AddBody { id, desc } => self.add_body(id, &desc),
             PhysicsCmd::RemoveBody { id } => {
                 self.drop_deferred(&cmd);
+                self.far_writes.remove(&id);
                 self.remove_body(id)
             }
             PhysicsCmd::SetTransform { id, pos, rot } => self.set_transform(id, pos, rot),
@@ -479,7 +480,7 @@ impl Physics {
                 }
                 let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
                 if !self.in_reach(pos) {
-                    return self.far_write(id, "target", pos, rot, true);
+                    return self.far_write(id, "target", pos, rot);
                 }
                 self.state.kin_targets.insert(id, (pos, rot));
                 self.far_writes.remove(&id);
@@ -536,7 +537,10 @@ impl Physics {
             PhysicsCmd::AddCharacter { id, desc, pos, rot } => {
                 self.add_character(id, &desc, pos, rot)
             }
-            PhysicsCmd::RemoveCharacter { id } => self.remove_character(id),
+            PhysicsCmd::RemoveCharacter { id } => {
+                self.far_writes.remove(&id);
+                self.remove_character(id)
+            }
             PhysicsCmd::MoveCharacter {
                 id,
                 desired_velocity,
@@ -753,7 +757,6 @@ impl Physics {
         what: &str,
         p: Vec3,
         rot: Quat,
-        target: bool,
     ) -> Result<(), Diagnostic> {
         if !self.bodies.contains_key(&id) && !self.characters.contains_key(&id) {
             return Err(unknown(id, "body or character"));
@@ -762,7 +765,7 @@ impl Physics {
         if self.parts.origin == Vec3::ZERO {
             return Err(d);
         }
-        if self.far_writes.insert(id, (p, rot, target)).is_none() {
+        if self.far_writes.insert(id, (p, rot)).is_none() {
             self.diagnostics.push(Diagnostic {
                 severity: Severity::Warning,
                 message: format!(
@@ -778,30 +781,40 @@ impl Physics {
     /// After a move of the origin: the kept writes now in reach apply, and
     /// the vehicles and constraints whose bodies joined are added.
     pub(crate) fn catch_up(&mut self) {
-        let due: Vec<(EntityId, (Vec3, Quat, bool))> = self
+        let due: Vec<(EntityId, (Vec3, Quat))> = self
             .far_writes
             .iter()
             .filter(|(_, w)| self.in_reach(w.0))
             .map(|(e, w)| (*e, *w))
             .collect();
-        for (id, (pos, rot, target)) in due {
+        for (id, (pos, rot)) in due {
             self.far_writes.remove(&id);
-            let cmd = if target {
-                PhysicsCmd::SetKinematicTarget { id, pos, rot }
-            } else {
-                PhysicsCmd::SetTransform { id, pos, rot }
-            };
-            if let Err(d) = self.apply_one(cmd) {
+            // A teleport, also for a kinematic body: a target that far would
+            // sweep it there in one step.
+            self.state.kin_targets.remove(&id);
+            if let Err(d) = self.set_transform(id, pos, rot) {
                 self.diagnostics.push(d);
             }
         }
         self.replay_deferred();
     }
 
-    /// True when `cmd` adds a vehicle or constraint on a body that waits.
-    fn defers(&self, cmd: &PhysicsCmd) -> bool {
+    /// True when `cmd` adds a vehicle or constraint on a body that waits, or
+    /// drives such a vehicle (only its latest input is kept).
+    fn defers(&mut self, cmd: &PhysicsCmd) -> bool {
         match cmd {
             PhysicsCmd::AddVehicle { id, .. } => self.waiting.contains_key(id),
+            PhysicsCmd::SetVehicleInput { id, .. }
+                if self.waiting.contains_key(id)
+                    || self
+                        .deferred
+                        .iter()
+                        .any(|c| matches!(c, PhysicsCmd::AddVehicle { id: v, .. } if v == id)) =>
+            {
+                self.deferred
+                    .retain(|c| !matches!(c, PhysicsCmd::SetVehicleInput { id: v, .. } if v == id));
+                true
+            }
             PhysicsCmd::AddConstraint { desc, .. } => {
                 self.waiting.contains_key(&desc.a) || self.waiting.contains_key(&desc.b)
             }
@@ -824,14 +837,16 @@ impl Physics {
     fn drop_deferred(&mut self, cmd: &PhysicsCmd) -> bool {
         let before = self.deferred.len();
         match cmd {
-            PhysicsCmd::RemoveVehicle { id } => self
-                .deferred
-                .retain(|c| !matches!(c, PhysicsCmd::AddVehicle { id: v, .. } if v == id)),
+            PhysicsCmd::RemoveVehicle { id } => self.deferred.retain(|c| {
+                !matches!(c, PhysicsCmd::AddVehicle { id: v, .. }
+                    | PhysicsCmd::SetVehicleInput { id: v, .. } if v == id)
+            }),
             PhysicsCmd::RemoveConstraint { id } => self
                 .deferred
                 .retain(|c| !matches!(c, PhysicsCmd::AddConstraint { id: k, .. } if k == id)),
             PhysicsCmd::RemoveBody { id } => self.deferred.retain(|c| match c {
-                PhysicsCmd::AddVehicle { id: v, .. } => v != id,
+                PhysicsCmd::AddVehicle { id: v, .. }
+                | PhysicsCmd::SetVehicleInput { id: v, .. } => v != id,
                 PhysicsCmd::AddConstraint { desc, .. } => desc.a != *id && desc.b != *id,
                 _ => true,
             }),
@@ -856,8 +871,7 @@ impl Physics {
             | PhysicsCmd::SetKinematicTarget { id, .. }
             | PhysicsCmd::ApplyImpulse { id, .. }
             | PhysicsCmd::SetVelocity { id, .. }
-            | PhysicsCmd::SetShape { id, .. }
-            | PhysicsCmd::SetVehicleInput { id, .. } => *id,
+            | PhysicsCmd::SetShape { id, .. } => *id,
             _ => return None,
         };
         let desc = self.waiting.get_mut(&id)?;
@@ -909,7 +923,7 @@ impl Physics {
     fn set_transform(&mut self, id: EntityId, pos: Vec3, rot: Quat) -> Result<(), Diagnostic> {
         let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
         if !self.in_reach(pos) {
-            return self.far_write(id, "new", pos, rot, false);
+            return self.far_write(id, "new", pos, rot);
         }
         self.far_writes.remove(&id);
         let at = self.jolt_point(pos);
@@ -1631,6 +1645,8 @@ impl Physics {
         self.restore_ragdolls(&snapshot.ragdolls);
         self.waiting = snapshot.waiting.clone();
         self.deferred = snapshot.deferred.clone();
+        // Positions kept after the save belong to the abandoned timeline.
+        self.far_writes.clear();
         Ok(())
     }
 

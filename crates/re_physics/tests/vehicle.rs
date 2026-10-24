@@ -542,4 +542,9 @@ fn a_car_waiting_out_of_reach_is_built_when_the_origin_returns() {
     p.set_origin(Vec3::ZERO).unwrap();
     assert!(p.has_vehicle(CAR), "{:?}", p.take_diagnostics());
     assert!(p.take_diagnostics().is_empty());
+    // It drives off with the input it was given while it waited.
+    for _ in 0..60 {
+        p.step(1.0 / 60.0).unwrap();
+    }
+    assert!(p.pose(CAR).unwrap().0.z > 0.05, "{:?}", p.pose(CAR));
 }
