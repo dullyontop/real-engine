@@ -74,7 +74,7 @@ pub use attributes::{AttributeChanged, AttributeFeed, Attributes};
 pub use components::{
     AnimPlayer, AudioSource, BodyKind, Camera, CharacterController, Collider, ColliderShape,
     GlobalTransform, HudAnchor, HudText, Light, LightKind, MaterialRef, MeshRef, Name, Note,
-    Ragdoll, RagdollMode, RigidBody, ScriptContext, ScriptRef, SkinnedMesh, Transform, Vehicle,
+    Ragdoll, RagdollControl, RigidBody, ScriptContext, ScriptRef, SkinnedMesh, Transform, Vehicle,
     VehicleKind, VehicleWheel, Visible, WheelTester, register_builtins,
 };
 pub use docs::{DocMarks, DocValidator, OpenDoc, OpenDocs, doc_path};

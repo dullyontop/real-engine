@@ -662,3 +662,72 @@ fn a_character_walks_through_its_own_animated_ragdoll_but_not_anothers() {
     assert!(walk(true) > 0.3, "the own ragdoll does not block");
     assert!(walk(false) < -0.2, "another ragdoll blocks");
 }
+
+#[test]
+fn a_restore_brings_back_the_mode_frame_and_target() {
+    let neutral = humanoid::skeleton().neutral_pose();
+    let start = |p: &mut Physics| {
+        apply(
+            p,
+            vec![
+                floor(0, 0.0, 0.0, 0.0, 20.0),
+                add_man(MAN, Vec3::new(0.0, 0.5, 0.0), Quat::IDENTITY),
+            ],
+        );
+        apply(
+            p,
+            vec![target(MAN, Vec3::new(0.0, 0.5, 0.0), neutral.clone())],
+        );
+        steps(p, 5);
+    };
+    // Animated: a target sent after the save is forgotten by the restore.
+    let mut a = world(2);
+    start(&mut a);
+    let saved = a.save_state();
+    apply(
+        &mut a,
+        vec![target(MAN, Vec3::new(1.0, 0.5, 0.0), neutral.clone())],
+    );
+    steps(&mut a, 3);
+    a.restore_state(&saved).unwrap();
+    steps(&mut a, 10);
+    let mut b = world(2);
+    start(&mut b);
+    steps(&mut b, 10);
+    assert_eq!(a.ragdoll_parts(MAN), b.ragdoll_parts(MAN));
+    assert_eq!(a.ragdoll_state_bytes(), b.ragdoll_state_bytes());
+
+    // Simulated, then limp-powered (no rebuild): the restore makes it simulated again.
+    apply(&mut a, vec![mode(MAN, RagdollMode::Simulated)]);
+    steps(&mut a, 2);
+    let saved = a.save_state();
+    apply(
+        &mut a,
+        vec![mode(MAN, RagdollMode::Powered { strength: 0.0 })],
+    );
+    assert_eq!(state(&a, MAN).mode, RagdollMode::Powered { strength: 0.0 });
+    a.restore_state(&saved).unwrap();
+    assert_eq!(state(&a, MAN).mode, RagdollMode::Simulated);
+
+    // A rebuilt ragdoll cannot go back to before its rebuild.
+    apply(
+        &mut a,
+        vec![mode(MAN, RagdollMode::Powered { strength: 0.5 })],
+    );
+    assert!(a.restore_state(&saved).is_err());
+}
+
+#[test]
+fn ragdoll_state_bytes_follow_the_parts() {
+    let mut p = world(2);
+    apply(&mut p, vec![floor(0, 0.0, 0.0, 0.0, 20.0)]);
+    assert!(p.ragdoll_state_bytes().is_empty());
+    apply(
+        &mut p,
+        vec![add_man(MAN, Vec3::new(0.0, 0.5, 0.0), Quat::IDENTITY)],
+    );
+    apply(&mut p, vec![mode(MAN, RagdollMode::Simulated)]);
+    let before = p.ragdoll_state_bytes();
+    steps(&mut p, 5);
+    assert_ne!(p.ragdoll_state_bytes(), before);
+}

@@ -426,7 +426,7 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
                     "frames": r.frames,
                     "skipped": r.skipped,
                     "adapter": r.adapter,
-                    "state_hash": app.world().state_hash().to_hex().to_string(),
+                    "state_hash": app.state_hash().to_hex().to_string(),
                     "diagnostics": r.diagnostics,
                     "perf": app.perf_report(),
                 });
@@ -484,7 +484,7 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
     } else if !options.json {
         println!(
             "ran {frames} frames; state hash {}",
-            app.world().state_hash().to_hex()
+            app.state_hash().to_hex()
         );
     }
     ExitCode::SUCCESS
@@ -494,7 +494,7 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
 fn checkpoint(app: &App) -> serde_json::Value {
     serde_json::json!({
         "frame": app.frame_count(),
-        "state_hash": app.world().state_hash().to_hex().to_string(),
+        "state_hash": app.state_hash().to_hex().to_string(),
     })
 }
 
