@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1812,
-    "partial": 233,
+    "implemented": 1816,
+    "partial": 234,
     "stub-error": 50,
     "missing": 3
   },
@@ -1026,6 +1026,19 @@
       "members": [
         {
           "name": "Size",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Bone",
+      "superclass": "Attachment",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Transform",
           "kind": "property",
           "status": "implemented"
         }
@@ -3338,6 +3351,25 @@
           "name": "UpdateAsync",
           "kind": "method",
           "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "MeshPart",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "MeshId",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TextureID",
+          "kind": "property",
+          "status": "partial",
+          "note": "Stored; not drawn. The part's Color and Material are used."
         }
       ]
     },

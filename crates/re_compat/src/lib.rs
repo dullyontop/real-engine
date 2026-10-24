@@ -171,6 +171,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE9420.md"),
     },
     DiagInfo {
+        code: codes::BONE_MISMATCH,
+        title: "Bones and skin joints do not match",
+        page: include_str!("../explain/RE9440.md"),
+    },
+    DiagInfo {
         code: codes::DEPRECATED_MEMBER,
         title: "Deprecated member used",
         page: include_str!("../explain/RE9101.md"),

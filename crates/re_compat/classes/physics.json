@@ -680,6 +680,36 @@
       "doc": "A corner wedge: a pyramid-like part with its apex above one corner."
     },
     {
+      "name": "MeshPart",
+      "superclass": "BasePart",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A part drawn with a model file. Its MeshId resolves through the [compat.assets] table of real.toml to a glTF file, scaled to the part's Size. A model with a skin is posed by the Bones under the part.",
+      "properties": [
+        {
+          "name": "MeshId",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "implemented",
+          "doc": "The model's asset id. It resolves through the [compat.assets] table of real.toml to a .glb or .gltf file; an id that is not there draws the part as a block. The vendor's own mesh format is not read."
+        },
+        {
+          "name": "TextureID",
+          "type": "string",
+          "storage": {
+            "kind": "own"
+          },
+          "default": "",
+          "status": "partial",
+          "note": "Stored; not drawn. The part's Color and Material are used.",
+          "doc": "The image wrapped over the model."
+        }
+      ]
+    },
+    {
       "name": "TrussPart",
       "superclass": "BasePart",
       "creatable": true,
@@ -1334,6 +1364,46 @@
           "read_only": true,
           "status": "implemented",
           "doc": "The attachment's Y axis in the world."
+        }
+      ]
+    },
+    {
+      "name": "Bone",
+      "superclass": "Attachment",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A joint of a skinned MeshPart's model, matched to the skin's joint of the same name.",
+      "properties": [
+        {
+          "name": "Transform",
+          "type": "CFrame",
+          "storage": {
+            "kind": "own"
+          },
+          "default": {
+            "Position": [
+              0,
+              0,
+              0
+            ],
+            "XVector": [
+              1,
+              0,
+              0
+            ],
+            "YVector": [
+              0,
+              1,
+              0
+            ],
+            "ZVector": [
+              0,
+              0,
+              1
+            ]
+          },
+          "status": "implemented",
+          "doc": "The bone's pose on top of its rest frame. The Animator writes it from a track's pose of the same name; scripts may write it too."
         }
       ]
     },

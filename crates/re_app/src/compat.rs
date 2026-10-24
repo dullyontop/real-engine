@@ -164,6 +164,13 @@ impl CompatPlay {
                 re_compat::sound::SoundSettings::from_config(compat, Some(lookup)),
             );
             re_compat::anim::set_substitutes(vm.context().lua(), compat.animations.clone());
+            let model_files = files.clone();
+            let load: Arc<re_compat::render::LoadModelFn> =
+                Arc::new(move |path: &str| load_model(&model_files, path));
+            re_compat::render::configure_models(
+                vm.context().lua(),
+                re_compat::render::ModelSettings::from_config(compat, Some(load)),
+            );
         }
         Ok(CompatPlay {
             client,
@@ -328,4 +335,120 @@ pub fn install_default_scripts(
         });
     }
     Ok(())
+}
+
+/// A `MeshPart` model from a `.glb` (or a `.gltf` with embedded buffers) of
+/// the project: the meshes of its first skin that has any, with that skin,
+/// or else every mesh of the default scene with its node transforms baked
+/// in.
+///
+/// # Errors
+///
+/// The file is missing or unreadable, or does not import.
+pub fn load_model(
+    files: &re_core::files::ProjectFiles,
+    path: &str,
+) -> Result<re_compat::render::Model, String> {
+    use re_compat::render::{Model, ModelMesh};
+    let bytes = files.read(path).map_err(|e| e.to_string())?.bytes;
+    let g = re_assets::import_gltf(&bytes, None, re_assets::AssetId::new_source(), path)
+        .map_err(|d| d.message.clone())?;
+    for (i, skin) in g.skins.iter().enumerate() {
+        let meshes: Vec<ModelMesh> = g
+            .skinned_meshes(i)
+            .into_iter()
+            .map(|m| ModelMesh {
+                data: g.meshes[m].mesh.clone(),
+                weights: g.meshes[m].skin_weights.clone(),
+            })
+            .collect();
+        if !meshes.is_empty() {
+            return Ok(Model::new(meshes, Some(skin.clone())));
+        }
+    }
+    let mut meshes = Vec::new();
+    let mut stack: Vec<(usize, glam::Mat4)> =
+        g.roots.iter().map(|&r| (r, glam::Mat4::IDENTITY)).collect();
+    while let Some((n, parent)) = stack.pop() {
+        let node = &g.nodes[n];
+        let world = parent
+            * glam::Mat4::from_scale_rotation_translation(
+                node.scale,
+                node.rotation,
+                node.translation,
+            );
+        let normal = glam::Mat3::from_mat4(world).inverse().transpose();
+        for &m in &node.meshes {
+            let mut data = g.meshes[m].mesh.clone();
+            for v in &mut data.vertices {
+                v.pos = world.transform_point3(Vec3::from(v.pos)).to_array();
+                v.normal = (normal * Vec3::from(v.normal))
+                    .normalize_or_zero()
+                    .to_array();
+            }
+            meshes.push(ModelMesh {
+                data,
+                weights: None,
+            });
+        }
+        stack.extend(node.children.iter().map(|&c| (c, world)));
+    }
+    Ok(Model::new(meshes, None))
+}
+
+#[cfg(test)]
+mod tests {
+    use re_core::files::{Form, LayerKind, MemLayer, ProjectFiles, ProjectPath};
+
+    use super::*;
+
+    /// A triangle (0,0,0), (2,0,0), (2,1,0) drawn by a node under a parent
+    /// node at x = 10, as a `.glb`.
+    fn triangle_glb() -> Vec<u8> {
+        let mut bin: Vec<u8> = [0.0f32, 0.0, 0.0, 2.0, 0.0, 0.0, 2.0, 1.0, 0.0]
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        bin.extend([0u16, 1, 2, 0].iter().flat_map(|i| i.to_le_bytes()));
+        let json = r#"{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],
+"nodes":[{"name":"Root","translation":[10,0,0],"children":[1]},{"name":"Tri","mesh":0}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1}]}],
+"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[2,1,0]},
+{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],
+"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],
+"buffers":[{"byteLength":44}]}"#;
+        let mut j = json.as_bytes().to_vec();
+        while !j.len().is_multiple_of(4) {
+            j.push(b' ');
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(b"glTF");
+        out.extend_from_slice(&2u32.to_le_bytes());
+        out.extend_from_slice(&((12 + 8 + j.len() + 8 + bin.len()) as u32).to_le_bytes());
+        out.extend_from_slice(&(j.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"JSON");
+        out.extend_from_slice(&j);
+        out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"BIN\0");
+        out.extend_from_slice(&bin);
+        out
+    }
+
+    #[test]
+    fn a_model_without_a_skin_bakes_its_node_transforms() {
+        let mut layer = MemLayer::new(LayerKind::Project);
+        layer.insert(
+            ProjectPath::new("assets/tri.glb").unwrap(),
+            triangle_glb(),
+            Form::Source,
+        );
+        let files = ProjectFiles::for_tests(layer);
+        let m = load_model(&files, "assets/tri.glb").unwrap();
+        assert!(m.skin.is_none());
+        assert_eq!(m.meshes.len(), 1);
+        assert!(m.meshes[0].weights.is_none());
+        assert_eq!(m.bounds.min, Vec3::new(10.0, 0.0, 0.0));
+        assert_eq!(m.bounds.max, Vec3::new(12.0, 1.0, 0.0));
+        assert!(load_model(&files, "assets/gone.glb").is_err());
+    }
 }

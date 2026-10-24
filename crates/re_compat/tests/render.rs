@@ -521,6 +521,9 @@ impl View3d {
         for (k, m) in &f.new_meshes {
             self.meshes.insert(*k, r.upload_mesh(m).unwrap());
         }
+        for (k, m, w) in &f.new_skinned_meshes {
+            self.meshes.insert(*k, r.upload_skinned_mesh(m, w).unwrap());
+        }
         for (k, d) in &f.new_materials {
             let mut d = d.clone();
             if let Some(TextureRef::Asset(name)) = &d.base_color_texture {
@@ -556,6 +559,25 @@ impl View3d {
                     },
                 })
                 .collect(),
+            skinned: f
+                .skinned
+                .iter()
+                .map(|i| re_types::render::SkinnedDrawItem {
+                    entity: i.entity,
+                    mesh: self.meshes[&i.mesh],
+                    material: self.materials[&i.material],
+                    world: i.world,
+                    flags: if i.cast_shadow {
+                        DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS
+                    } else {
+                        DrawFlags::RECEIVE_SHADOWS
+                    },
+                    palette: i.palette,
+                    joints: i.joints,
+                    bounds: i.bounds,
+                })
+                .collect(),
+            joint_palette: f.joint_palette.clone(),
             clear: f.clear,
             post: f.post_settings(re_types::render::PostSettings::default()),
             ..RenderSnapshot::default()
@@ -953,4 +975,259 @@ fn emitter_members_drawn_later_are_stored() {
             "0.5\tEnum.ParticleFlipbookLayout.Grid4x4\t20\ttrue",
         ]
     );
+}
+
+/// An arm: a 0.4 wide strip from y = 0 to y = 2 facing +Z, skinned to
+/// `Shoulder` (at the origin) and `Elbow` (at y = 1), as a `.glb`.
+fn arm_glb() -> Vec<u8> {
+    let mut bin: Vec<u8> = Vec::new();
+    let mut views = Vec::new();
+    let mut accessors = Vec::new();
+    let mut push = |bytes: &[u8], component: u32, count: usize, ty: &str, extra: &str| {
+        while !bin.len().is_multiple_of(4) {
+            bin.push(0);
+        }
+        views.push(format!(
+            r#"{{"buffer":0,"byteOffset":{},"byteLength":{}}}"#,
+            bin.len(),
+            bytes.len()
+        ));
+        bin.extend_from_slice(bytes);
+        accessors.push(format!(
+            r#"{{"bufferView":{},"componentType":{component},"count":{count},"type":"{ty}"{extra}}}"#,
+            views.len() - 1
+        ));
+        accessors.len() - 1
+    };
+    let floats = |v: &[f32]| v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>();
+    let mut pos = Vec::new();
+    let mut joints: Vec<u8> = Vec::new();
+    let mut weights = Vec::new();
+    for (y, w) in [(0.0f32, 0.0f32), (1.0, 0.5), (2.0, 1.0)] {
+        for x in [-0.2f32, 0.2] {
+            pos.extend_from_slice(&[x, y, 0.0]);
+            for j in [0u16, 1, 0, 0] {
+                joints.extend_from_slice(&j.to_le_bytes());
+            }
+            weights.extend_from_slice(&[1.0 - w, w, 0.0, 0.0]);
+        }
+    }
+    let p = push(
+        &floats(&pos),
+        5126,
+        6,
+        "VEC3",
+        r#","min":[-0.2,0,0],"max":[0.2,2,0]"#,
+    );
+    let n = push(&floats(&[0.0, 0.0, 1.0].repeat(6)), 5126, 6, "VEC3", "");
+    let j = push(&joints, 5123, 6, "VEC4", "");
+    let w = push(&floats(&weights), 5126, 6, "VEC4", "");
+    let idx: Vec<u8> = [0u16, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4]
+        .iter()
+        .flat_map(|i| i.to_le_bytes())
+        .collect();
+    let i = push(&idx, 5123, 12, "SCALAR", "");
+    let ibm: Vec<f32> = [
+        glam::Mat4::IDENTITY,
+        glam::Mat4::from_translation(Vec3::new(0.0, -1.0, 0.0)),
+    ]
+    .iter()
+    .flat_map(|m| m.to_cols_array())
+    .collect();
+    let ibm = push(&floats(&ibm), 5126, 2, "MAT4", "");
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
+    }
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0,2]}}],
+"nodes":[{{"name":"Shoulder","children":[1]}},{{"name":"Elbow","translation":[0,1,0]}},{{"name":"Arm","mesh":0,"skin":0}}],
+"meshes":[{{"primitives":[{{"attributes":{{"POSITION":{p},"NORMAL":{n},"JOINTS_0":{j},"WEIGHTS_0":{w}}},"indices":{i}}}]}}],
+"skins":[{{"name":"Rig","joints":[0,1],"inverseBindMatrices":{ibm}}}],
+"accessors":[{}],"bufferViews":[{}],"buffers":[{{"byteLength":{}}}]}}"#,
+        accessors.join(","),
+        views.join(","),
+        bin.len()
+    );
+    let mut j = json.into_bytes();
+    while !j.len().is_multiple_of(4) {
+        j.push(b' ');
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(b"glTF");
+    out.extend_from_slice(&2u32.to_le_bytes());
+    out.extend_from_slice(&((12 + 8 + j.len() + 8 + bin.len()) as u32).to_le_bytes());
+    out.extend_from_slice(&(j.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"JSON");
+    out.extend_from_slice(&j);
+    out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"BIN\0");
+    out.extend_from_slice(&bin);
+    out
+}
+
+/// A place whose `MeshId`s resolve: `101` to the arm, `102` to a file that
+/// does not exist, `103` to a rigid two-triangle square.
+fn mesh_place() -> Place {
+    use re_core::files::{Form, LayerKind, MemLayer, ProjectFiles, ProjectPath};
+    let mut p = place();
+    let mut layer = MemLayer::new(LayerKind::Project);
+    layer.insert(
+        ProjectPath::new("assets/arm.glb").unwrap(),
+        arm_glb(),
+        Form::Source,
+    );
+    let files = ProjectFiles::for_tests(layer);
+    let load: std::sync::Arc<render::LoadModelFn> = std::sync::Arc::new(move |path: &str| {
+        if path == "assets/square.glb" {
+            let v = |x: f32, y: f32| re_types::mesh::Vertex {
+                pos: [x, y, 0.0],
+                normal: [0.0, 0.0, 1.0],
+                uv: [0.0, 0.0],
+                color: [1.0; 4],
+            };
+            let data = re_types::mesh::MeshData {
+                vertices: vec![v(0.0, 0.0), v(4.0, 0.0), v(4.0, 2.0), v(0.0, 2.0)],
+                indices: vec![0, 1, 2, 0, 2, 3],
+            };
+            return Ok(render::Model::new(
+                vec![render::ModelMesh {
+                    data,
+                    weights: None,
+                }],
+                None,
+            ));
+        }
+        re_app::compat::load_model(&files, path)
+    });
+    let mut assets = std::collections::BTreeMap::new();
+    assets.insert("101".to_string(), "assets/arm.glb".to_string());
+    assets.insert("102".to_string(), "assets/gone.glb".to_string());
+    assets.insert("103".to_string(), "assets/square.glb".to_string());
+    p.lua(|lua| {
+        render::configure_models(
+            lua,
+            render::ModelSettings {
+                assets,
+                load: Some(load),
+            },
+        );
+        render::verify_every(lua, 1);
+    });
+    p
+}
+
+const ARM: &str = r#"
+local function arm(name, id, x)
+    local part = new("MeshPart", {Name = name, Anchored = true, MeshId = id,
+        Size = Vector3.new(0.4, 2, 0.4), Position = Vector3.new(x, 1, 0)}, workspace)
+    local shoulder = new("Bone", {Name = "Shoulder"}, part)
+    local elbow = new("Bone", {Name = "Elbow"}, shoulder)
+    return part, elbow
+end
+"#;
+
+#[test]
+fn mesh_parts_draw_their_model_posed_by_their_bones() {
+    let mut p = mesh_place();
+    script(
+        &mut p,
+        &format!(
+            r#"{ARM}
+            S.arm, S.elbow = arm("Arm", "rbxassetid://101", 0)
+            new("MeshPart", {{Name = "Plain", Anchored = true, Size = Vector3.new(1, 1, 1)}}, workspace)
+            new("MeshPart", {{Name = "Gone", Anchored = true, MeshId = "102", Size = Vector3.new(1, 1, 1),
+                Position = Vector3.new(5, 0, 0)}}, workspace)
+            new("MeshPart", {{Name = "Square", Anchored = true, MeshId = "103", Size = Vector3.new(2, 2, 1),
+                Position = Vector3.new(-5, 1, 0)}}, workspace)
+            local odd = arm("Odd", "101", 3)
+            odd.Shoulder.Elbow.Name = "Tail"
+            "#
+        ),
+    );
+    let f = p.render(&input());
+    // The arm and the odd arm are skinned; the plain part and the part whose
+    // file is gone are blocks; the square is a rigid model.
+    assert_eq!(f.skinned.len(), 2);
+    assert_eq!(f.new_skinned_meshes.len(), 1, "one upload per model");
+    assert_eq!(f.items.len(), 3);
+    let square = f
+        .items
+        .iter()
+        .find(|i| (i.world.w_axis.x + 5.0).abs() < 1.5)
+        .unwrap();
+    // The 4 x 2 square stretched to 2 x 2, centred on the part.
+    let corner = square.world.transform_point3(Vec3::new(4.0, 2.0, 0.0));
+    assert!(
+        (corner - Vec3::new(-4.0, 2.0, 0.0)).length() < 1e-5,
+        "{corner}"
+    );
+    let mut codes: Vec<String> = f.diagnostics.iter().map(|d| d.code.to_string()).collect();
+    codes.sort();
+    assert_eq!(codes, ["RE9350", "RE9440"], "{:?}", f.diagnostics);
+    let odd = f
+        .diagnostics
+        .iter()
+        .find(|d| d.code == re_compat::codes::BONE_MISMATCH)
+        .unwrap();
+    assert!(
+        odd.message.contains("[Tail]") && odd.message.contains("[Elbow]"),
+        "{}",
+        odd.message
+    );
+
+    // At rest the palette is the identity: the arm stands as modelled.
+    let at_origin = |f: &RenderFrame| {
+        *f.skinned
+            .iter()
+            .find(|i| i.world.w_axis.x.abs() < 0.5)
+            .unwrap()
+    };
+    let arm = at_origin(&f);
+    assert_eq!(arm.joints, 2);
+    let tip = |f: &RenderFrame, i: &render::SkinnedFrameItem| {
+        let m = f.joint_palette[i.palette as usize + 1];
+        i.world
+            .transform_point3(m.transform_point3(Vec3::new(0.0, 2.0, 0.0)))
+    };
+    assert!((tip(&f, &arm) - Vec3::new(0.0, 2.0, 0.0)).length() < 1e-5);
+
+    // Bending the elbow bone swings the forearm about the elbow.
+    script(
+        &mut p,
+        "S.elbow.Transform = CFrame.Angles(0, 0, math.rad(90))",
+    );
+    let f = p.render(&input());
+    assert!(f.diagnostics.is_empty(), "{:?}", f.diagnostics);
+    assert!(f.new_skinned_meshes.is_empty());
+    let arm = at_origin(&f);
+    let t = tip(&f, &arm);
+    assert!((t - Vec3::new(-1.0, 1.0, 0.0)).length() < 1e-4, "{t}");
+    assert!(arm.bounds.min.x <= t.x + 1e-4 && arm.bounds.max.y >= 1.0);
+}
+
+/// A bent arm and an arm at rest, skinned on the GPU.
+#[test]
+fn golden_skinned_mesh_parts() {
+    let Some(mut v) = View3d::new(320, 240) else {
+        return;
+    };
+    let mut p = mesh_place();
+    script(
+        &mut p,
+        &format!(
+            r#"{ARM}
+            workspace.CurrentCamera.CFrame = CFrame.new(Vector3.new(0, 2, 6), Vector3.new(0, 1.5, 0))
+            new("Part", {{Anchored = true, Size = Vector3.new(20, 1, 20), Position = Vector3.new(0, -0.5, 0)}}, workspace)
+            local a, elbow = arm("Bent", "101", -1)
+            a.Color = Color3.fromRGB(220, 80, 60)
+            elbow.Transform = CFrame.Angles(0, 0, math.rad(-70))
+            local b = arm("Straight", "101", 1)
+            b.Color = Color3.fromRGB(60, 120, 220)
+            "#
+        ),
+    );
+    let f = p.render(&v.input());
+    assert_eq!(f.skinned.len(), 2);
+    v.draw(&f);
+    v.golden("skinned_mesh_parts");
 }
