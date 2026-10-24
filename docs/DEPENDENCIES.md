@@ -90,8 +90,8 @@ Used only inside `re_geom::polygon`, never in its public types (ADR-0043). Pinne
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
 | i_overlay | 9.1.0 | MIT OR Apache-2.0 | 1.88 | integer-core polygon booleans, offsets and strokes on a fixed 1 mm grid | `default-features = false` | WP24 `overlay-probe` (road strokes, union and intersection, 5,000-square union; identical hashes across runs); `re_geom` polygon tests and goldens | Verified; landed with WP24 PR "booleans and roads" |
-| i_float, i_shape, i_key_sort, i_tree | 5.0.0, 5.0.0, 0.12.0, 0.20.0 | MIT | ≤ 1.88 | i_overlay's own building blocks (same author) | defaults | WP24 probe (resolved with i_overlay) | Verified; transitive |
-| earcut | 0.4.11 | MIT OR Apache-2.0 | ≤ 1.95 | triangulating road unions, junction caps and shapes | defaults | WP24 probe (240-point road union, area matches); `re_geom` triangulation tests and goldens | Verified; landed with WP24 PR "booleans and roads" |
+| i_float, i_shape, i_key_sort, i_tree | 5.0.0, 5.0.0, 0.12.0, 0.20.0 | MIT | 1.85, 1.85, none, none | i_overlay's own building blocks (same author) | defaults | WP24 probe (resolved with i_overlay) | Verified; transitive |
+| earcut | 0.4.11 | MIT OR Apache-2.0 | none | triangulating road unions, junction caps and shapes | defaults | WP24 probe (240-point road union, area matches); `re_geom` triangulation tests and goldens | Verified; landed with WP24 PR "booleans and roads" |
 
 `libm` 0.2.16 and `num-traits` 0.2.19, which these pull, are already in the lockfile.
 
@@ -249,7 +249,7 @@ Never accepted: a second `wgpu`, `winit`, `egui` or `mlua` version, or a second 
 | naga_oil 0.23.0 | Our own `#include` preprocessor is enough for a small shader set |
 | egui_dock 0.21.1 | egui panels are enough for editor-lite. Taken in M3 (ADR-0044). |
 | transform-gizmo-egui 0.11.0 | Gizmos are cut from M1. It also needs Rust 1.96 and pulls glam 0.32; M3 writes its own gizmos (ADR-0044). |
-| i_overlay 9.1.0 | Deferred. Published on 2026-10-14, the day we checked, and not needed until polygon boolean nodes (M3). |
+| i_overlay 9.1.0 | Deferred. Published on 2026-10-14, the day we checked, and not needed until polygon boolean nodes (M3). Taken in M3 (ADR-0043 §5). |
 | meshopt 0.6.2, spade, manifold3d, egui-snarl, zstd, libm | Not needed in M1. egui-snarl (ADR-0044) and zstd (ADR-0037) are taken in M3. |
 | hecs 0.11.2, sparsey 0.13.4, shipyard 0.11.5, flecs_ecs 0.2.2 | Entity storage alternatives measured by the core spike; rejected in ADR-0005 (no hierarchy, hooks or per-component change ticks in hecs and sparsey; no hierarchy in shipyard; flecs is C and segfaulted from safe Rust) |
 | bevy_reflect 0.20.0 (bevy_ecs's default `bevy_reflect` feature) | Reflecting glam types needs bevy_reflect's optional `glam` feature, which ties it to glam 0.33.x (0.33.12 resolved; bevy_ecs's `bevy_reflect` feature does not turn it on by itself); no f64 → f32 coercion, `ReflectComponent::apply` panics on a type mismatch; rejected in ADR-0032 |

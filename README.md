@@ -17,9 +17,9 @@ Real Engine is an open-source 3D game engine written in Rust. It is built around
 - `examples/valley` is a streamed world: you can walk it and drive a car through it, and cells load and unload around you (ADR-0042).
 - `real build` packs a game into `game.rpak` with a runtime-only player, and `real verify --package` checks that it plays like the project (ADR-0037).
 - `real build --target web` makes a folder any static server can host; the game runs in the browser with WebGPU or WebGL2, and saves last across page loads (ADR-0049).
-- The editor has dockable panels, a node canvas over graph files (every edit an undoable `graph.*` command), and translate, rotate and scale gizmos (W, E, R) that move entities live, one undo step per drag (ADR-0044). It also has a script debugger, served over DAP with `--debug` (ADR-0045).
-- The HDR post chain and cascaded shadows, configured in `[render.post]` and `[render.shadows]`; glTF skins; vehicles and ragdolls on Jolt; audio buses, effects and snapshots.
-- Generator versions with `real migrate-graph`, `proc.bake`, and node kinds written in Luau.
+- The editor has dockable panels, a node canvas over graph files (every edit an undoable `graph.*` command), and translate, rotate and scale gizmos (W, E, R) that move entities live, one undo step per drag (ADR-0044). It also has a script debugger, served over DAP with `--debug`, that stops in native and compat scripts (ADR-0045).
+- The HDR post chain and cascaded shadows, configured in `[render.post]` and `[render.shadows]`; glTF skins and animation graphs (`*.animgraph.json`: blend spaces, layers, state machines and root motion, driven by the `anim` Luau library and the `animgraph.*` commands); vehicles and ragdolls on Jolt; audio buses, effects and snapshots.
+- Generator versions with `real migrate-graph`, `proc.bake`, structural overrides, node kinds written in Luau, and polygon booleans and roads with junctions as graph nodes.
 - Project templates (`real new DIR --template native|roblox|terrain`, `--set KEY=VALUE`, `--list-templates`; the format is in [templates/README.md](templates/README.md)), generator recipes, `real agent eval`, and MCP over streamable HTTP on localhost (`real mcp --http`).
 - For Roblox-style projects: saved data, script reload during play, SurfaceGui and ViewportFrame, and `real import` of `.rbxl`, `.rbxlx`, `.rbxm` and `.rbxmx` files (with `--parent`).
 - `re_net`, our reliable UDP transport, and replication as server diffs and client applies over postcard frames (ADR-0050). Online sessions come next.

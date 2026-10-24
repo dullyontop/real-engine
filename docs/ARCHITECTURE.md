@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** M1 and M2 done, M3 in progress. Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. M2 is complete: `re_compat` (the Roblox-style layer), `re_import` and the compat boot in `re_app`, with `examples/plaza` verified in CI. M3 work merged so far includes D2 determinism across Linux, Windows and macOS, packaged games (`real build`, `game.rpak`), browser builds (`re_web`), the HDR post chain and cascaded shadows, skins, vehicles, ragdolls and audio buses, world streaming, generator versions, bake and Luau node kinds, the editor's node canvas, docking and gizmos, the script debugger, the AI track's templates, recipes, eval harness and HTTP transport, the compat follow-ups (saved data, script reload, place files, surfaces), the `re_net` transport and replication over postcard frames, and `examples/valley`. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** M1 and M2 done, M3 in progress. Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. M2 is complete: `re_compat` (the Roblox-style layer), `re_import` and the compat boot in `re_app`, with `examples/plaza` verified in CI. M3 work merged so far includes D2 determinism across Linux, Windows and macOS, packaged games (`real build`, `game.rpak`), browser builds (`re_web`), the HDR post chain and cascaded shadows, skins and animation graphs, vehicles, ragdolls and audio buses, world streaming, generator versions, bake, Luau node kinds, polygon booleans and roads, the editor's node canvas, docking and gizmos, the script debugger, the AI track's templates, recipes, eval harness and HTTP transport, the compat follow-ups (saved data, script reload, place files, surfaces), the `re_net` transport and replication over postcard frames, and `examples/valley`. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -123,14 +123,14 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_reflect` | The component registry over bevy_ecs: field types, values and coercion, by-name access, script-defined components, the untyped document tree used at text boundaries, registry description and scene JSON Schema (ADR-0032) | `Registry`, `ComponentKey`, `ComponentSchema`, `FieldSchema`, `FieldType`, `ComponentOrigin`, `Value`, `Color`, `Reflect`, `component!`, `field_enum!`, `Doc`, `f32_from_parsed_f64` | subsystems, mlua |
 | `re_scene` | The World facade over bevy_ecs (ADR-0005): stable ids, hierarchy, transforms and propagation, the built-in components, scene and prefab files, procedural sources, fragments, overrides, suppression, state hash | `World`, `Entity`, `StableId`, `IdIndex`, `IdGen`, `Transform`, `GlobalTransform`, `Name`, the built-ins of §4, `SceneDoc`, `SaveOptions`, `PrefabFile`, `Procedural`, `GraphSource`, `Generated`, `Overrides`, `GenNode`, `SceneFragment`, `GenContext`, `Generators`, `state_hash` | subsystems, mlua |
 | `re_command` | Edit operations and transactions with exact undo, the log, the command registry, dry runs, the policy hook and the engine request channel (ADR-0003) | `Op`, `Transaction`, `Origin`, `History`, `LogEntry`, `CommandRegistry`, `CommandSpec`, `Tier`, `CommandOutcome`, `PolicyCheck` trait, `remote::{EngineHandle, EngineReceiver}` | subsystems, mlua, tokio |
-| `re_geom` | Geometry operations over `MeshData` | `Heightfield`, `primitives::*`, `merge`, `transform`, `compute_normals` | wgpu, oxijolt, mlua |
+| `re_geom` | Geometry operations over `MeshData`, polygon booleans (`polygon`) and roads (`road`) | `Heightfield`, `primitives::*`, `merge`, `transform`, `compute_normals`, `Shapes`, `road::{spline, road_mesh, footprint}` | wgpu, oxijolt, mlua |
 | `re_proc` | ProcGraph IR, nodes, evaluation, cache, the `graph` generator for procedural sources, `graph.*` commands | `ProcGraph`, `NodeRegistry`, `NodeDef`, `Evaluator`, `EvalReport`, `GraphStore`, `register_generator`, `register_commands` | wgpu, oxijolt, mlua |
 | `re_render` | The GPU renderer, GPU resources, headless capture and egui painting | `Gpu`, `Renderer`, `Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot)`, `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`, `upload_*` / `create_material` / `release_*`, `stats`, `RendererSettings`, `Capture`, `imgdiff` | `re_scene` |
 | `re_physics` | Jolt through oxijolt | `Physics::new(PhysicsConfig, &'static TaskPool)`, `apply(&mut Vec<PhysicsCmd>)`, `step(dt)`, `poses_into(&mut Vec<BodyPose>)`, `velocity(id)`, `character(id)`, `events()`, `raycast` / `shape_cast` / `overlap_sphere` with a `QueryFilter`, `LayerTable`, `save_state` / `restore_state`, `motion_state` / `apply_motion_state` (`JoltRayonJobs` is internal) | `re_scene` |
 | `re_audio` | kira playback, with a headless capture fallback | `Audio::new_or_headless`, `apply(&[AudioCmd])`, `CaptureBackend` | `re_scene` |
 | `re_input` | Raw input, the action map and replay | `RawInput`, `InputConfig`, `ActionMap`, `Replay`, `ReplayRecorder` | `re_scene` |
 | `re_assets` | Import, material files, cache and hot reload | `AssetId`, `AssetServer`, `import_gltf`, `load_material`, `ProcessedCache`, `AssetWatcher` | `re_scene` |
-| `re_anim` | glTF node clips, skeletal poses for skins, keyframe tracks, IK and tweens | `Sampler`, `Tween` | `re_scene` |
+| `re_anim` | glTF node clips, skeletal poses for skins, animation graphs, keyframe tracks, IK and tweens | `Sampler`, `Tween`, `graph::{validate, BoundGraph, GraphPlayer}` | `re_scene` |
 | `re_net` | Connections over UDP with our own reliability, a transport seam with in-memory and conditioned links (M3, WP30, ADR-0050) | `Endpoint`, `Transport`, `UdpTransport`, `MemoryNet`, `Conditioned` | everything but `re_core` |
 | `re_script` | The Luau VMs, contexts, native API, scheduler, compile check and engine type definitions | `ScriptRuntime`, `Context`, `compile_check`, `api::definitions` | subsystems (it reaches them through `HostServices`), full_moon |
 | `re_script_check` | The static scan, the external type checker runner and the corpus validation suite (tooling) | `scan`, `GapReport`, `types::run`, `corpus::run` | `re_app`, tokio |
@@ -191,7 +191,8 @@ There is no render thread in M1. The seam for one is that `RenderSnapshot` is `S
 Input          poll winit/gilrs or the replay → RawInput → ActionMap → ActionFrame
 PreRender      script contexts: per-frame callbacks (variable dt)
 fixed steps    FixedClock.advance(frame_dt) → 0..=5 steps of 1/60 s
-  PreAnimation   re_anim samples clips and tweens → Transform writes
+  PreAnimation   re_anim samples clips and tweens → Transform writes; animation graphs step,
+                 and root motion moves entities and characters
   PreSimulation  world streaming (cells unloaded and loaded at this tick; scripts see stream.on_unloaded,
                  then stream.on_loaded); a CharacterController without a physics character gets one
                  first (tried once per entity), so move_character works on its first step, and an
@@ -201,7 +202,7 @@ fixed steps    FixedClock.advance(frame_dt) → 0..=5 steps of 1/60 s
                  Physics::apply, Physics::step(dt) on the rayon pool
                  Physics::poses_into(&mut poses); Physics::events()
   PostSimulation sync::physics::pull: poses → Transform; contact events → script signals;
-                 ragdoll poses blended into their skins
+                 ragdoll poses blended into their skins; bone attachments placed
 Sync           propagate GlobalTransform; interpolate between steps;
                sync::render::build → RenderSnapshot; sync::audio → Vec<AudioCmd>
 Render         Renderer::render(device, queue, view, &snapshot); egui overlay through paint_ui
@@ -294,8 +295,10 @@ The entity core is bevy_ecs 0.20.0 used standalone, behind our own API (ADR-0005
   - `RigidBody.center_of_mass_offset` (a `vec3`, default zero);
   - `AudioSource.bus`: the mixer bus it plays on, empty for `[audio] default_bus` (ADR-0041);
   - `SkinnedMesh` (`asset` is `<model path>#<skin name>`): a skinned mesh posed by its skeleton; an `AnimPlayer` on the same entity plays clips onto its joints (ADR-0039);
+  - `Animator` (`graph`, `playing`, `speed`): plays an animation graph (`*.animgraph.json`) on the `SkinnedMesh` of the same entity, in place of an `AnimPlayer`; parameters and states are runtime state that scripts reach through the `anim` library (ADR-0039). It is not the compat layer's `Animator` instance (§4, M2);
+  - `BoneAttachment` (`joint`): on a child of a skinned entity, places the child at that joint of its parent's skin at the end of each fixed step, after physics and the ragdoll blend (ADR-0039);
   - `Vehicle` (on a dynamic `RigidBody`) and `VehicleWheel` (on its child entities, in child order): a wheeled vehicle or motorcycle on Jolt; the default wheel tester is `Ray` (ADR-0040);
-  - `Ragdoll` (on an entity with a `SkinnedMesh`): a ragdoll generated on the skin's skeleton, with the modes `Animated` (follows the animation), `Simulated` (falls freely) and `Powered` (motors pull it toward the animated pose with a `strength` from 0 to 1); the skin shows the simulated pose blended in over `blend_seconds` (ADR-0040);
+  - `Ragdoll` (on an entity with a `SkinnedMesh`): a ragdoll generated on the skin's skeleton, with the modes (the enum `RagdollControl`) `Animated` (follows the animation), `Simulated` (falls freely) and `Powered` (motors pull it toward the animated pose with a `strength` from 0 to 1); the skin shows the simulated pose blended in over `blend_seconds` (ADR-0040);
   - `Streamed` and `StreamFocus` (`re_scene::stream`): a streamed procedural source or authored root, and a focus that cells load around (ADR-0042).
 - **Hierarchy**: bevy's `ChildOf` / `Children` relationship: ordered children, recursive despawn. Files store a `parent` id per entity. `GlobalTransform` is recomputed in the Sync phase by a change-driven propagation system that only touches subtrees whose `Transform` or `ChildOf` changed (0.42 to 1.36 ms per update at 100,100 entities in the spike, against 5.5 ms for a full pass). `world.find("Island/Crates/Crate_3")` resolves a path of names as a convenience; it is not an identity.
 - **Change tracking**: bevy's per-component change ticks. Writing an equal value through the registry does not mark a component changed.
@@ -321,9 +324,9 @@ task.wait(0.5)
 - A CPU budget per context is enforced by a raw Luau interrupt that keeps raising once tripped, so `pcall` cannot swallow it.
 - `tools` scripts may issue commands. `game` scripts may not issue destructive commands; they reach the engine through `HostServices`.
 - `engine.d.luau`, generated from the binding registry, describes the whole native API for the type checker, editors and agents (`real describe --luau-defs`).
-- M3 additions to the native libraries: `physics.drive` and `physics.vehicle` (vehicles); `physics.ragdoll(entity, mode, strength?)`, `physics.ragdoll_state(entity)` (root, mode, strength and `calm`; no pose) and `physics.ragdoll_impulse(entity, joint, impulse)`; `audio.play(clip, at?, volume?, bus?)`, `audio.set_bus_volume`, `audio.set_effect` (1-based effect index), `audio.snapshot` and `audio.levels` (frame-only: an error during a fixed step). The `stream` library (game and tools contexts, ADR-0042) has `stream.on_loaded`, `stream.on_unloaded`, `stream.cells()` and `stream.is_loaded(key)`; `stream.load` and `stream.release` exist in the `tools` context only. A script that starts after cells loaded gets no `on_loaded` for them, so it reads `stream.cells()` at start.
-- `math` is portable (ADR-0036): every VM replaces the transcendental functions with `libm` versions through `re_script::portable_math`, and the compiler disables the matching builtins. `x ^ y` still uses the platform's `pow` unless `y` is 2, 0.5 or 3; use `math.pow` in simulated code.
-- **Debugger** (M3, WP25, ADR-0045): `re_script::debug` holds Luau breakpoints, stepping and pausing, and its DAP server (`re_script::debug::dap`) listens on 127.0.0.1 only. `real run --debug [PORT]` and `real editor --debug [PORT]` serve it (default port 4711); the editor also has a debugger panel.
+- M3 additions to the native libraries: `physics.drive` and `physics.vehicle` (vehicles); `physics.ragdoll(entity, mode, strength?)`, `physics.ragdoll_state(entity)` (root, mode, strength and `calm`; no pose) and `physics.ragdoll_impulse(entity, joint, impulse)`; `audio.play(clip, at?, volume?, bus?)`, `audio.set_bus_volume`, `audio.set_effect` (1-based effect index), `audio.snapshot` and `audio.levels` (frame-only: an error during a fixed step). The `anim` library drives the graph an entity's `Animator` plays: `anim.set(e, param, value)`, `anim.get(e, param)`, `anim.trigger(e, param)`, `anim.state(e, layer?)` and `anim.joint(e, joint)` (world-space position and rotation from the last step's pose); an unknown or mistyped parameter is `RE7609`. The `stream` library (game and tools contexts, ADR-0042) has `stream.on_loaded`, `stream.on_unloaded`, `stream.cells()` and `stream.is_loaded(key)`; `stream.load` and `stream.release` exist in the `tools` context only. A script that starts after cells loaded gets no `on_loaded` for them, so it reads `stream.cells()` at start.
+- `math` is portable (ADR-0036): every VM replaces the transcendental functions with `libm` versions through `re_script::portable_math`, and the compiler disables the matching builtins. `x ^ y` still uses the platform's `pow` unless `y` is 2, 0.5 or 3; use `math.pow` in simulated code. `real verify`'s scan stage warns about any other `^` (`RE3083`).
+- **Debugger** (M3, WP25, ADR-0045): `re_script::debug` holds Luau breakpoints, stepping and pausing, and its DAP server (`re_script::debug::dap`) listens on 127.0.0.1 only. `real run --debug [PORT]` and `real editor --debug [PORT]` serve it (default port 4711); the editor also has a debugger panel. Compat Scripts and ModuleScripts register their chunks under their source paths too, and register again when hot reload restarts them, so breakpoints keep working.
 
 ### M2 Roblox-style compatibility layer (`re_compat`)
 
@@ -456,7 +459,9 @@ Two port types carry them: `shapes` (polygons with holes in the source's XZ plan
 | `road.footprint` (any number of paths, plus a margin) | Shapes |
 | `terrain.conform` (a field flattened under paths, blending back beside them) | Field |
 
-`NodeRegistry::m1()` registers these with the others (28 kinds). Shapes and paths are stored in the disk cache like fields and meshes, and Luau nodes can take and return them (`re_script::generator`).
+`NodeRegistry::m1()` registers these with the others (28 kinds). Shapes and paths are stored in the disk cache like fields and meshes, and Luau nodes can take and return them (`re_script::generator`): shapes as a list of `{ outer, holes }` polygons of `{x, z}` points, a path as `{ closed, samples }` with `x`, `y`, `z`, `width`, `bank` and `distance` per sample. Bad shapes and paths are `RE4504`, coordinates beyond about ±1,000 km `RE4503`, and a failed triangulation `RE4505`.
+
+Known limits: a road's footprint is the union of its ribbon's triangles, so a curve tighter than half the road's width still gives the area it covers, but `road.mesh` overlaps itself there; junctions are found between different paths only, so a path that crosses itself makes no junction; and finding them compares every segment of each pair of paths (after a bounding-box test), so the cost grows with the square of the segment count.
 
 ### Evaluation
 
@@ -555,15 +560,17 @@ Annotations are derived from the tier and set explicitly on every tool (ADR-0025
 
 ### M3 tools
 
-With every M3 command so far, `real mcp` lists 45 tools.
+With every M3 command so far, `real mcp` lists 53 tools.
 
 | Tier | Tools | Registered by |
 |---|---|---|
 | Read | `graph.migration_report` (ADR-0043) | `re_proc` |
 | Read | `template.list`, `recipe.list` (ADR-0046) | `re_cli` (`register_recipes`, over `re_agent::templates`) |
-| Edit | `proc.bake` (ADR-0043) | `re_proc` |
+| Edit | `proc.bake`, and the structural overrides `proc.move`, `proc.replace`, `proc.insert` and `proc.clear_structure` (ADR-0043) | `re_proc` |
 | Edit | `graph.add_node`, `graph.remove_node`, `graph.connect`, `graph.disconnect`, `graph.move_nodes`, `graph.set_default` (ADR-0044; idempotent except `graph.add_node`, which picks a fresh id when none is given; arguments as in `re_proc::{AddNodeArgs, RemoveNodeArgs, ConnectArgs, MoveNodesArgs, SetDefaultArgs}`) | `re_proc` |
 | Edit | `recipe.apply` (ADR-0046; all or nothing: a failed step or check restores the checkpoint taken first) | `re_cli` (`register_recipes`) |
+| Read | `animgraph.validate` (ADR-0039; with `skin`, it also binds the graph to that skin) | `re_app` |
+| Edit | `animgraph.create`, `animgraph.edit` (a batch of `upsert` and `remove` changes to params, nodes, layers, masks, states and transitions, validated together, one undo step), `anim.set_param` (a running graph's parameter; runtime state, not undoable) (ADR-0039) | `re_app` |
 
 Recipes are data: a recipe runs only registered commands, up to the `edit` tier, and each step goes through the policy like any call. `scene.apply` takes an optional `coalesce` key, so a run of edits under one key (an editor gizmo drag) is one undo step.
 
@@ -853,7 +860,7 @@ Every runtime read of a project file goes through `re_core::files::ProjectFiles`
 - the entries' bytes, back to back, in index order; an entry is zstd-compressed (level 9) only when that saves at least 10%;
 - the index: postcard, zstd-compressed, sorted by path: the engine, Luau, bytecode and compiler versions (`COMPILER_ID`, ADR-0036), the `[package]` name, identifier and version, and per entry its path, form (`Source`, `Bytecode` or `Processed`), offset, sizes, compression and the blake3 of its bytes.
 
-The default content is `real.toml`, `.luaurc`, `scenes/`, `prefabs/`, `materials/`, `graphs/`, `scripts/`, `assets/` and `data/seed/`; `tests/`, `.real/`, `.git/`, `AGENTS.md` and `CLAUDE.md` are never packed. Scripts are stored as Luau bytecode. Every read checks the entry's hash, and an archive from another engine, Luau or compiler version is refused (`RE0602`). `[package]` in `real.toml` sets the identifier, display name, version, icon, the scripts and assets forms, `exclude`, `include` and `notices`. `real verify --package DIR` runs the packaged game as a child process (a boot and every replay) and compares its `state_hash`es with the project's.
+The default content is `real.toml`, `.luaurc`, `scenes/`, `prefabs/`, `materials/`, `graphs/`, `scripts/`, `assets/` and `data/seed/`; `tests/`, `.real/`, `.git/`, `AGENTS.md` and `CLAUDE.md` are never packed. Animation graphs (`*.animgraph.json`) have no folder of their own: one is packed when it lies in a default folder or matches `[package] include`, and a packed scene that names one the archive leaves out fails the build (`RE0957`). Scripts are stored as Luau bytecode. Every read checks the entry's hash, and an archive from another engine, Luau or compiler version is refused (`RE0602`). `[package]` in `real.toml` sets the identifier, display name, version, icon, the scripts and assets forms, `exclude`, `include` and `notices`. `real verify --package DIR` runs the packaged game as a child process (a boot and every replay) and compares its `state_hash`es with the project's.
 
 ### Web builds
 

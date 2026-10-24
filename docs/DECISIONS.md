@@ -1001,6 +1001,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - **The `std::time` clock ban** lives in WP29's wasm-only clippy pass (`tools/ci/clippy-web/clippy.toml`, ADR-0049 §5), not in the root `clippy.toml`. That file repeats the root file's libm list, and `cargo xtask clippy-web` checks that it does.
 - The physics benchmarks stayed inside the 10% allowance (PR "d2" lists them).
 
+**Amendment (#143, #145).** `App::state_hash` is the hash that run reports, `real run`, checkpoints and the `d2` job compare. It is the world's `state_hash` alone when nothing below applies, so earlier hashes and goldens are unchanged. When the physics world has ragdolls, it is a blake3 hash of the world's hash and the ragdolls' state bytes (in entity order: mode, strength and every part's position, rotation and velocities, with NaNs canonical). When any `Animator` runs a graph, that result is hashed again with the graphs' state (ADR-0039's amendment).
+
 ## ADR-0037: Packaged games: one archive behind `ProjectFiles`, Luau bytecode, zstd, and per-platform bundles
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP19). The code waits for M2's definition of done (M3_PLAN, "How M3 starts") and WP18 PR "blocking". The departures from the plan listed at the end of the Decision are accepted. Evidence: the WP19 measurements (`research/m3/wp19/measurements.md`): the runtime-only `real` built and inspected on Linux x86_64, the glTF importer run on public sample models, Luau bytecode compiled and loaded with mlua 0.12.2, the archive index encoding timed, and four compressors compared on the same data.
@@ -1141,6 +1143,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - Headless packaged runs do not save data, so `real verify --package` can repeat them. Windowed runs save it.
 - The archive format lives in `crates/re_app/src/package/` (`archive.rs`, `config.rs`, `dirs.rs`), not one `package.rs`.
 - Notices, icons and the Windows and macOS bundles stay in PR "bundles"; until then those platforms get the plain folder, and the build report says so.
+
+**Amendment (WP21 PR "graphs", #145).** WP21 adds no content directory. An `*.animgraph.json` file is packed when it lies in one of the default directories (`assets/` or `graphs/`, for example) or matches `[package] include`; a packed scene or prefab that names one the archive leaves out fails the build with `RE0957`.
 
 **Evidence.** `research/m3/wp19/measurements.md`: the compression table (four codecs, three models and the content text), the importer and cache-hit timings, Luau bytecode size, determinism and load time, the index timings, the runtime binary's size, `ldd` and glibc symbols, the license-file scan of the runtime crates, and the API facts checked in mlua 0.12.2, mlua-sys 0.13.0, luau0-src 0.22.0+luau740, wgpu-types 30.0.1 and zstd 0.14.2.
 
@@ -1329,6 +1333,15 @@ Measured (lavapipe and llvmpipe GL, wgpu 30.0.1; measurements §1–§3):
 - Cross-owner work is small but spread out: `re_scene` components and `HostServices` methods (maintainer), the `anim` Luau library (WP24), the commands and sync module in `re_app` (maintainer), and the skinned pipelines (WP20). WP21 writes each change and its owner reviews it.
 - Not in M3: morph targets, inverse kinematics beyond the two-bone solver, facial animation, retargeting between differently named skeletons, more than four influences per vertex, GPU-driven culling of skinned items, and interpolating poses between fixed steps.
 
+**Amendment (WP21 PR "graphs", #145).** As built:
+- The root joint that root motion reads is joint 0. The importer makes it the skin's `skeleton` node when that is a joint with no parent in the skin, and otherwise the first root joint in depth-then-file order. `GLTF_IMPORTER_VERSION` is 3, so cached imports rebuild.
+- Additive nodes and additive layers give no root motion. A clip node's `speed` must not be 0 (pause a graph with `Animator.playing` or `Animator.speed`).
+- `HostServices` gains five required methods for the `anim` library: `anim_set`, `anim_get`, `anim_trigger`, `anim_state` and `anim_joint`.
+- Graphs step, and root motion moves the entity, in PreAnimation. `BoneAttachment`s are placed at the end of PostSimulation, after the ragdoll blend, so `PostSimulation` scripts see the previous step's placement. When several graphs play, they step in parallel on the task pool.
+- When any `Animator` runs a graph, `App::state_hash` adds each graph's playing flag, speed, parameters, states and times, in entity order, to the hash (see ADR-0036's amendment); poses are not hashed.
+- Codes: `RE7607` invalid graph (naming the element by its path in the file), `RE7608` a clip that cannot be loaded, `RE7609` an unknown or mistyped parameter, `RE7610` a mask joint the skeleton lacks (warning) and `RE7611` a blend-tree cycle.
+- `animgraph.validate` is `read` tier; `anim.set_param` changes runtime state and is not undoable. With them `real mcp` lists 53 tools. `schemas/animgraph.schema.json` is exported with the other schemas.
+
 ## ADR-0040: Vehicles and ragdolls: oxijolt's `vehicle` and `ragdoll` modules behind `PhysicsCmd`
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP22). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: WP22's phase-0 benches. They are summarised under "Measured"; the full tables are in the maintainers' research bundle.
@@ -1513,6 +1526,12 @@ Budgets for M3, checked by benches in `re_physics`:
 8. `physics.ragdoll_state` returns no pose: scripts get the root, the mode, the strength and `calm`.
 9. Rotations of the mapped pose match the parts, but positions can differ by up to about 2 cm, because the mapper locks translations to keep bones their length.
 10. A mode set by a script holds until the component's `mode` field is next edited.
+
+**Amendment (WP22 ragdoll follow-ups, #143).**
+- A physics snapshot keeps each ragdoll's mode, motor scale, frame and target, and `restore_state` puts them back after the Jolt state. A snapshot whose ragdolls differ (one added, removed or rebuilt since) is refused with `RE5012`.
+- `App::state_hash` covers the ragdolls' physics state (ADR-0036's amendment), and run reports, `real run` and the web checkpoints print it.
+- A rebuild keeps the mode physics has and the blend weight, so a mode a script set survives an edit of another field; an invalid `strength` is reported once.
+- The scene enum for the component's `mode` is `RagdollControl` (it was `RagdollMode`, the same name as `re_types::physics::RagdollMode`). The scene schema has only the variant names, so files are unchanged.
 
 ## ADR-0041: Audio effects graph: named buses on kira tracks, kira's built-in effects, snapshots in `real.toml`
 
@@ -1980,6 +1999,12 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 
 **Amendment (WP24 PR "luau", #125; 2026-10-21).** An out-of-memory error that a `pcall`, `xpcall` or `coroutine.resume` catches still fails the node (`RE4101`). A generator script that fails to declare on reload keeps the last good kind, if there was one. `proc.create_source` refusals are `RE4104`. The generator VM installs ADR-0036's portable maths (`re_script::portable_math`), like every other VM.
 
+**Amendment (WP24 PR "booleans and roads", #142).**
+- A road's footprint is the union of its ribbon's triangles, so a curve tighter than half the road's width still gives the area it covers. `road.mesh` overlaps itself on such curves; control points should keep curves wider than that.
+- A junction forms where centrelines of different paths cross, or where an open end comes within `snap` of another path. A path that crosses itself makes no junction. Junction finding compares every segment of each pair of paths, after a bounding-box test, so its cost is quadratic in the segment count.
+- Polygons use the positive fill rule: a hole that sticks out of its outer contour, or overlaps another hole, only removes area.
+- `NodeRegistry::m1()` registers 28 kinds, WP23's two terrain kinds included. The disk cache stores shapes and paths as new variants after the M1 ones, with no format version change. Luau nodes take and return both (`re_script::generator::marshal`).
+
 ## ADR-0044: Editor node canvas, docking and gizmos: egui-snarl, egui_dock and our own gizmos; graph files become open documents edited by `graph.*` commands
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP25). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). The maintainer chose our own gizmos over transform-gizmo-egui (below).
@@ -2121,6 +2146,8 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 - Step into from a synchronous stop costs about 100 ms per step in a 4,000-line chunk.
 - If a later mlua version handles `LUA_BREAK`, the yield can be swapped for `lua_break` inside `re_script/src/debug/` without changing the scheduler hook.
 
+**Amendment (WP27 PR "debug hooks", #146).** Compat Scripts and ModuleScripts register their compiled chunks with `re_script::debug` under their source paths, in `re_compat`'s `runtime/scripts.rs` (not a `load_chunk` function). When a script stops or restarts, or a module leaves the cache on reload, its old chunk is unregistered, and the new one registered, so breakpoints keep working after a hot reload.
+
 ## ADR-0046: The M3 AI track: templates and recipes as data, an evaluation harness that never calls a model, and MCP over streamable HTTP on localhost
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP26). The code waits for M2's definition of done (M3_PLAN, "How M3 starts").
@@ -2217,7 +2244,7 @@ What was checked for this ADR (2026-10-15, on `main` at 69ed909):
 - The small blocking MCP clients live in `re_mcp::client` (`HttpClient` over streamable HTTP, `StdioClient` for a `real mcp` child process), shared by the tests and the harness, still with no client crate.
 - `real agent init --http ADDR` writes the Claude Code entry and prints how to start the server, plus the URL and the `Authorization` header for other clients; it does not print a snippet per client.
 - The evaluation harness serves MCP by running `real mcp` on the copy as a child process, over the chosen transport (`--transport http|stdio`, HTTP by default), not in-process, so the server under test is the one people run.
-- With every M3 command so far, `real mcp` lists 45 tools.
+- With every M3 command so far, `real mcp` lists 53 tools (WP24's structural override commands and WP21's four animation graph commands included).
 
 ## ADR-0047: Block-compressed textures with block_compression 0.10.1, encoded at import
 

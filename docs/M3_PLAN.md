@@ -215,6 +215,8 @@ cargo test --locked -p re_anim
 
 **Definition of done:** both PRs merged.
 
+**Progress (2026-10-24).** Done: "skins" (#97, with the `SkinnedMesh` component in #101) and "graphs" (#145: `Animator`, `BoneAttachment`, the `anim` library and the `animgraph.*` commands; ADR-0039's amendment).
+
 ---
 
 ## WP22: Vehicles, ragdolls and audio effects
@@ -241,6 +243,8 @@ cargo test --locked -p re_audio
 - Effect graph tests compare rendered buffers against reference buffers.
 
 **Definition of done:** the three PRs merged.
+
+**Progress (2026-10-24).** Done: "vehicles" (#94), "audio" (#115) and "ragdolls" (#134), with review follow-ups in #143 (snapshots restore ragdoll modes and targets, and `state_hash` covers ragdolls).
 
 ---
 
@@ -298,6 +302,8 @@ cargo test --locked -p re_geom
 - A Luau node and the same node in Rust give identical output on the test graphs.
 
 **Definition of done:** the five PRs merged.
+
+**Progress (2026-10-24).** Done: "versioning" (#93), "bake" (#105), "luau" (#125), "overrides" (#136) and "booleans and roads" (#142).
 
 ---
 
@@ -383,7 +389,7 @@ real verify --project examples/plaza --json
 
 **Definition of done:** the six PRs merged; `verify-plaza` stays green.
 
-**Progress (2026-10-24).** Merged: "persistence" (#96), "reload" (#107), "place files" (#112), "incremental render" (#127), "saved data" (#131: compat data writes through `writable(Data)`, so browser saves last across page loads, which closes the gap WP29's runtime PR named) and "surfaces" (#137: `SurfaceGui` and `ViewportFrame` are drawn through render-to-texture). "skins and effects" is still to come.
+**Progress (2026-10-24).** Merged: "persistence" (#96), "reload" (#107), "place files" (#112), "incremental render" (#127), "saved data" (#131: compat data writes through `writable(Data)`, so browser saves last across page loads, which closes the gap WP29's runtime PR named) and "surfaces" (#137: `SurfaceGui` and `ViewportFrame` are drawn through render-to-texture). "skins and effects" is still to come. "debug hooks" (#146), outside the six, registers compat scripts with the debugger (ADR-0045's amendment).
 
 ---
 
