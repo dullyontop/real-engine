@@ -941,6 +941,245 @@ fn stream_terrain_view_regenerates_when_the_inputs_change() {
     }
 }
 
+/// The drawn chunks: key, stitching, corner, material and mesh, in order.
+type Drawn = Vec<(
+    re_geom::terrain::ChunkKey,
+    re_geom::terrain::Edges,
+    Vec3,
+    String,
+    re_types::mesh::MeshData,
+)>;
+
+fn drawn(w: &World) -> Drawn {
+    w.ecs
+        .resource::<TerrainView>()
+        .chunks()
+        .map(|c| {
+            (
+                c.key,
+                c.edges,
+                c.corner,
+                c.material.clone(),
+                (**c.data()).clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn stream_terrain_view_completes_whatever_came_before() {
+    // From scratch: one call draws the whole selection, view off before.
+    let mut fresh = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    let a = &mut fresh.world;
+    a.ecs
+        .insert_resource(Streamer::new(terrain_config()).unwrap());
+    let before = a.state_hash();
+    complete_view(a);
+    let s = a.ecs.resource::<Streamer>();
+    assert!(s.view(), "completing turns the view on");
+    assert_eq!((s.view_missing(), s.in_flight()), (0, 0));
+    assert_no_overlap(a);
+    assert!(drawn(a).iter().any(|c| c.0.level == 0));
+    assert_eq!(a.state_hash(), before, "the view is not simulation state");
+
+    // Another world gets there from far away, with its one worker held
+    // busy for a few ticks: jobs queued, coarse chunks still drawn.
+    let mut walked = streamed(chunked_graph(), 1200.0, -1200.0, json!([]));
+    let b = &mut walked.world;
+    let pool = Arc::new(re_core::TaskPool::new(1).unwrap());
+    let mut s = Streamer::new(terrain_config())
+        .unwrap()
+        .with_pool(pool.clone());
+    s.set_view(true);
+    b.ecs.insert_resource(s);
+    let t = settle_view(b, 0);
+    assert_ne!(drawn(b), drawn(a));
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    pool.spawn(move || {
+        let _ = held.recv();
+    });
+    move_to(b, 0.0, 0.0);
+    // Within delay_ticks, so no cell or collision chunk is due (and waited
+    // for) while the worker is held.
+    for t in t..t + 2 {
+        step(b, t, &terrain_config());
+    }
+    assert!(b.ecs.resource::<Streamer>().view_missing() > 0);
+    release.send(()).unwrap();
+    complete_view(b);
+    assert_eq!(b.ecs.resource::<Streamer>().view_missing(), 0);
+    assert_eq!(drawn(b), drawn(a), "the same chunks, stitching and meshes");
+}
+
+#[test]
+fn stream_terrain_view_does_not_retry_failed_chunks() {
+    let mut st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    let w = &mut st.world;
+    let e = w.entity("terrain").unwrap();
+    let mut cache = source::DescribeCache::new();
+    let mut s = source::describe(w, e, &terrain_config(), &mut cache).unwrap();
+    // A field no node makes: every chunk fails.
+    let t = s.terrain.clone().expect("the graph has terrain.chunks");
+    s.terrain = Some(Arc::new(source::TerrainSource {
+        graph: t.graph.clone(),
+        field: "nowhere".into(),
+        material: String::new(),
+        max_level: t.max_level,
+    }));
+    let pool = re_core::TaskPool::new(1).unwrap();
+    let mut view = terrain::TerrainState::default();
+    let at = [Vec3::ZERO];
+    let failures = view.step(w, &[s.clone()], &at, 1024.0, &pool, terrain::Pace::Complete);
+    let selected = view.missing();
+    assert!(selected > 0);
+    assert_eq!(view.in_flight(), 0);
+    assert_eq!(
+        failures.len(),
+        selected,
+        "one problem per chunk, one subject"
+    );
+    assert!(
+        failures
+            .iter()
+            .all(|(subject, _)| *subject == failures[0].0)
+    );
+    let d = &failures[0].1;
+    assert_eq!(d.code.to_string(), "RE4307");
+    assert!(
+        d.message.starts_with("terrain: terrain view chunk 0/"),
+        "{}",
+        d.message
+    );
+    assert!(w.ecs.resource::<TerrainView>().is_empty());
+    // With the worker held, a job started now stays in flight.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    pool.spawn(move || {
+        let _ = held.recv();
+    });
+    let failures = view.step(w, &[s.clone()], &at, 1024.0, &pool, terrain::Pace::Jobs(64));
+    assert_eq!(view.in_flight(), 0, "failed chunks are not tried again");
+    assert!(failures.is_empty());
+    assert_eq!(view.missing(), selected);
+    // New inputs: they are.
+    s.inputs = blake3::hash(b"new inputs");
+    view.step(w, &[s], &at, 1024.0, &pool, terrain::Pace::Jobs(64));
+    assert_eq!(view.in_flight(), selected);
+    release.send(()).unwrap();
+}
+
+#[test]
+fn stream_terrain_view_leaves_failed_ground_bare_whatever_came_before() {
+    // The source's chunks, and the same inputs with chunks that fail (a
+    // field no node makes), driven by hand: two chunks near the focus are
+    // made, the other two fail.
+    let world = || {
+        let st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+        let e = st.world.entity("terrain").unwrap();
+        let mut cache = source::DescribeCache::new();
+        let good = source::describe(&st.world, e, &terrain_config(), &mut cache).unwrap();
+        let mut bad = good.clone();
+        let t = good.terrain.clone().unwrap();
+        bad.terrain = Some(Arc::new(source::TerrainSource {
+            graph: t.graph.clone(),
+            field: "nowhere".into(),
+            material: t.material.clone(),
+            max_level: t.max_level,
+        }));
+        (st, good, bad)
+    };
+    let pool = re_core::TaskPool::new(2).unwrap();
+    let step =
+        |w: &mut World, view: &mut terrain::TerrainState, s: &source::Source, at: Vec3, pace| {
+            view.step(w, std::slice::from_ref(s), &[at], 1024.0, &pool, pace)
+        };
+    let settle = |w: &mut World, view: &mut terrain::TerrainState, s: &source::Source, at: Vec3| {
+        step(w, view, s, at, terrain::Pace::Jobs(2));
+        while view.in_flight() > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            step(w, view, s, at, terrain::Pace::Jobs(0));
+        }
+    };
+    let near = Vec3::ZERO;
+    let keys = |w: &World| -> Vec<(u8, i32, i32)> {
+        w.ecs
+            .resource::<TerrainView>()
+            .chunks()
+            .map(|c| (c.key.level, c.key.x, c.key.z))
+            .collect()
+    };
+
+    let (mut fresh, good, bad) = world();
+    let a = &mut fresh.world;
+    let mut view_a = terrain::TerrainState::default();
+    settle(a, &mut view_a, &good, near);
+    assert_eq!(keys(a), [(0, -1, -1), (0, -1, 0)], "the two nearest first");
+    let failures = step(a, &mut view_a, &bad, near, terrain::Pace::Complete);
+    assert_eq!(failures.len(), 2);
+    assert_eq!(view_a.missing(), 2);
+
+    // Coarse chunks drawn from far away cover the ground that fails later.
+    let (mut walked, good, bad) = world();
+    let b = &mut walked.world;
+    let mut view_b = terrain::TerrainState::default();
+    let far = Vec3::new(1200.0, 0.0, -1200.0);
+    for _ in 0..10 {
+        settle(b, &mut view_b, &good, far);
+    }
+    assert!(
+        keys(b).contains(&(1, 0, -1)),
+        "a coarse chunk over (0, 0, -1): {:?}",
+        keys(b)
+    );
+    settle(b, &mut view_b, &good, near);
+    step(b, &mut view_b, &bad, near, terrain::Pace::Complete);
+    assert_eq!(view_b.missing(), 2);
+    assert_eq!(keys(b), keys(a), "bare where the chunks failed");
+    assert_eq!(drawn(b), drawn(a));
+
+    // New inputs whose chunks all fail: what the old ones drew goes too.
+    let (mut changed, good, mut bad) = world();
+    let c = &mut changed.world;
+    let mut view_c = terrain::TerrainState::default();
+    for _ in 0..2 {
+        settle(c, &mut view_c, &good, near);
+    }
+    assert_eq!(keys(c).len(), 4);
+    bad.inputs = blake3::hash(b"new inputs");
+    step(c, &mut view_c, &bad, near, terrain::Pace::Complete);
+    assert_eq!((keys(c).len(), view_c.missing()), (0, 4));
+}
+
+#[test]
+fn stream_terrain_view_completes_the_same_after_its_inputs_change() {
+    // Finer samples (so every chunk has another corner) and another
+    // material: a view drawn before the change ends up as one drawn after.
+    let params = Value::Str(
+        r#"{"h":{"cell":2.0},"ground":{"material":"materials/rock.material.json"}}"#.into(),
+    );
+    let key = |level, x, z| re_geom::terrain::ChunkKey { level, x, z };
+    let mut before = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    let b = &mut before.world;
+    settle_view(b, 0);
+    assert!(drawn(b).iter().any(|c| c.0 == key(0, -1, -1)));
+    b.set("terrain", "GraphSource", "params", params.clone())
+        .unwrap();
+    complete_view(b);
+    assert_eq!(b.ecs.resource::<Streamer>().view_missing(), 0);
+    assert_no_overlap(b);
+
+    let mut after = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    let a = &mut after.world;
+    a.set("terrain", "GraphSource", "params", params).unwrap();
+    a.ecs
+        .insert_resource(Streamer::new(terrain_config()).unwrap());
+    complete_view(a);
+    let fresh = drawn(a);
+    let near = fresh.iter().find(|c| c.0 == key(0, -1, -1)).expect("drawn");
+    assert_eq!(near.2, Vec3::new(-128.0, 0.0, -128.0), "64 cells of 2 m");
+    assert!(fresh.iter().all(|c| c.3 == "materials/rock.material.json"));
+    assert_eq!(drawn(b), fresh);
+}
+
 fn collision_config() -> StreamConfig {
     StreamConfig {
         physics_radius: 100.0,

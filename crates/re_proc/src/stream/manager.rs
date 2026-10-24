@@ -18,6 +18,7 @@ use re_scene::{
 
 use super::StreamConfig;
 use super::source::{self, CellJob, CellOutput, RawCell, Source};
+use super::terrain::Pace;
 use crate::value::DerivedAsset;
 use crate::{GraphStore, codes};
 
@@ -252,10 +253,48 @@ impl Streamer {
         self.jobs.len() + self.terrain.in_flight() + self.collision.in_flight()
     }
 
-    /// Terrain chunks the view has selected but not drawn yet, after the
-    /// last step (zero with the view off).
+    /// Terrain chunks the view has selected but not drawn as selected yet,
+    /// after the last step: not drawn (failed chunks included), drawn from a
+    /// source's earlier inputs, or drawn with an old stitching (zero with the
+    /// view off). Zero after [`complete_view`](Self::complete_view) unless a
+    /// chunk failed.
     pub fn view_missing(&self) -> usize {
         self.terrain.missing()
+    }
+
+    /// Completes the terrain view for the focuses as they are now: every
+    /// chunk the view selects is generated (waiting for it) and drawn with
+    /// its current stitching, so [`view_missing`](Self::view_missing) is
+    /// zero unless a chunk failed (its ground is left bare, `RE4307` once per
+    /// cause). Turns the view on. Returns the problems found.
+    ///
+    /// For a screenshot under [`Lateness::Wait`]: what it shows then depends
+    /// only on the world, not on how fast the workers made the chunks. Cells,
+    /// collision chunks and the origin are left as they are (the view is not
+    /// simulation state), and problems with the sources are left for the
+    /// next [`step`] to report.
+    pub fn complete_view(&mut self, world: &mut World) -> Vec<Diagnostic> {
+        self.view = true;
+        let (sources, _) = self.describe_sources(world);
+        let at: Vec<Vec3> = named_focuses(world)
+            .into_iter()
+            .map(|(_, f)| Vec3::new(f.position.x, 0.0, f.position.y))
+            .collect();
+        let pool = self.pool.clone();
+        let pool = pool.as_deref().unwrap_or_else(|| TaskPool::global());
+        let failures = self.terrain.step(
+            world,
+            &sources,
+            &at,
+            self.config.terrain_view,
+            pool,
+            Pace::Complete,
+        );
+        let mut out = Vec::new();
+        for (subject, d) in failures {
+            self.report_once(&mut out, &subject, d);
+        }
+        out
     }
 
     /// The settings.
@@ -415,6 +454,30 @@ impl Streamer {
             .with_hint("wait for `stream.on_loaded`, or load it with `stream.load`")),
             _ => Ok(()),
         }
+    }
+
+    /// The world's streamed sources, checked, with the problems to report
+    /// (once per subject): sources that cannot stream, and nodes written for
+    /// an older version (streamed cells skip the generator, which reports
+    /// those).
+    fn describe_sources(&mut self, world: &mut World) -> (Vec<Source>, Vec<(String, Diagnostic)>) {
+        let mut sources = Vec::new();
+        let mut problems = Vec::new();
+        let entities = source_entities(world);
+        self.described
+            .retain(|e, _| entities.iter().any(|(_, s)| s == e));
+        for (id, e) in entities {
+            match source::describe(world, e, &self.config, &mut self.described) {
+                Ok(s) => {
+                    for d in &s.outdated {
+                        problems.push((format!("{id}: {}", d.message), d.clone()));
+                    }
+                    sources.push(s);
+                }
+                Err(d) => problems.push((id, d)),
+            }
+        }
+        (sources, problems)
     }
 
     fn report_once(&mut self, out: &mut Vec<Diagnostic>, subject: &str, d: Diagnostic) {
@@ -646,6 +709,17 @@ pub fn step(world: &mut World, tick: u64, config: &StreamConfig) -> StepReport {
     report
 }
 
+/// [`Streamer::complete_view`] on the world's manager (nothing without one);
+/// returns the problems found.
+pub fn complete_view(world: &mut World) -> Vec<Diagnostic> {
+    let Some(mut streamer) = world.ecs.remove_resource::<Streamer>() else {
+        return Vec::new();
+    };
+    let problems = streamer.complete_view(world);
+    world.ecs.insert_resource(streamer);
+    problems
+}
+
 impl Streamer {
     /// [`step`] on this manager.
     pub fn step(&mut self, world: &mut World, tick: u64) -> StepReport {
@@ -656,22 +730,9 @@ impl Streamer {
         let size = self.config.cell_size;
 
         // The sources, checked.
-        let mut sources: Vec<Source> = Vec::new();
-        let entities = source_entities(world);
-        self.described
-            .retain(|e, _| entities.iter().any(|(_, s)| s == e));
-        for (id, e) in entities {
-            match source::describe(world, e, &self.config, &mut self.described) {
-                Ok(s) => {
-                    // Streamed cells skip the generator, which reports these.
-                    for d in &s.outdated {
-                        let subject = format!("{id}: {}", d.message);
-                        self.report_once(&mut report.diagnostics, &subject, d.clone());
-                    }
-                    sources.push(s);
-                }
-                Err(d) => self.report_once(&mut report.diagnostics, &id, d),
-            }
+        let (sources, problems) = self.describe_sources(world);
+        for (subject, d) in problems {
+            self.report_once(&mut report.diagnostics, &subject, d);
         }
         let roots = authored_roots(world, size);
         let mut authored_cells: BTreeSet<String> = roots.iter().map(|r| r.2.clone()).collect();
@@ -924,8 +985,17 @@ impl Streamer {
                 .collect();
             let pool = self.pool.clone();
             let pool = pool.as_deref().unwrap_or_else(|| TaskPool::global());
-            self.terrain
-                .step(world, &sources, &at, self.config.terrain_view, pool, free);
+            let failures = self.terrain.step(
+                world,
+                &sources,
+                &at,
+                self.config.terrain_view,
+                pool,
+                Pace::Jobs(free),
+            );
+            for (subject, d) in failures {
+                self.report_once(&mut report.diagnostics, &subject, d);
+            }
         }
         report.entities = done;
         report.resident = self.loaded.len();
