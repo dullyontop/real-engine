@@ -589,6 +589,32 @@ fn physics_commands_sort_deterministically() {
 }
 
 #[test]
+fn removals_apply_before_creations_of_every_kind() {
+    let mut commands = vec![
+        PhysicsCmd::AddBody {
+            id: EntityId(5),
+            desc: BodyDesc::default(),
+        },
+        PhysicsCmd::RemoveRagdoll { id: EntityId(5) },
+        PhysicsCmd::AddBody {
+            id: EntityId(6),
+            desc: BodyDesc::default(),
+        },
+        PhysicsCmd::RemoveVehicle { id: EntityId(6) },
+        PhysicsCmd::RemoveBody { id: EntityId(7) },
+    ];
+    PhysicsCmd::sort(&mut commands);
+    let kinds: Vec<(bool, u64)> = commands
+        .iter()
+        .map(|c| (c.is_removal(), c.id().0))
+        .collect();
+    assert_eq!(
+        kinds,
+        [(true, 7), (true, 6), (true, 5), (false, 5), (false, 6)]
+    );
+}
+
+#[test]
 fn malformed_shapes_are_detected() {
     assert!(!ShapeDesc::Sphere { radius: 0.0 }.is_well_formed());
     assert!(

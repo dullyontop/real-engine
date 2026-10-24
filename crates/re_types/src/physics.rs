@@ -867,9 +867,24 @@ impl PhysicsCmd {
         }
     }
 
-    /// The deterministic sort key `(kind, entity)`.
-    pub fn sort_key(&self) -> (u8, EntityId) {
-        (self.kind_rank(), self.id())
+    /// Whether the command removes something. Removals apply before every other
+    /// kind, so a later kind's removal (a vehicle or a ragdoll) still frees its
+    /// entity before a creation on the same entity in the same buffer.
+    pub fn is_removal(&self) -> bool {
+        matches!(
+            self,
+            PhysicsCmd::RemoveConstraint { .. }
+                | PhysicsCmd::RemoveBody { .. }
+                | PhysicsCmd::RemoveCharacter { .. }
+                | PhysicsCmd::RemoveVehicle { .. }
+                | PhysicsCmd::RemoveRagdoll { .. }
+        )
+    }
+
+    /// The deterministic sort key `(phase, kind, entity)`: removals (phase 0)
+    /// before everything else (phase 1), then by [`kind_rank`](Self::kind_rank).
+    pub fn sort_key(&self) -> (u8, u8, EntityId) {
+        (u8::from(!self.is_removal()), self.kind_rank(), self.id())
     }
 
     /// Sorts a command buffer by [`sort_key`](Self::sort_key), keeping the relative
