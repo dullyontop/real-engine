@@ -19,6 +19,7 @@
 
 #![warn(missing_docs)]
 
+pub mod animgraph;
 pub mod app;
 pub mod codes;
 pub mod commands;

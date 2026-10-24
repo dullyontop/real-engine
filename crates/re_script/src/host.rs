@@ -13,6 +13,7 @@ use std::ptr::NonNull;
 use mlua::Lua;
 use re_command::{CommandOutcome, CommandRegistry, EditTarget, Origin, PolicyCheck};
 use re_scene::{StreamCell, World};
+use re_types::anim::AnimValue;
 use re_types::audio::{AudioCmd, BusLevel};
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::input::ActionFrame;
@@ -199,6 +200,21 @@ impl HostServices for NoServices {
         Self::unavailable("proc.regenerate")
     }
     fn request_restart(&mut self) {}
+    fn anim_set(&mut self, _: EntityId, _: &str, _: AnimValue) -> HostResult<()> {
+        Self::unavailable("anim.set")
+    }
+    fn anim_get(&self, _: EntityId, _: &str) -> HostResult<AnimValue> {
+        Self::unavailable("anim.get")
+    }
+    fn anim_trigger(&mut self, _: EntityId, _: &str) -> HostResult<()> {
+        Self::unavailable("anim.trigger")
+    }
+    fn anim_state(&self, _: EntityId, _: Option<&str>) -> HostResult<String> {
+        Self::unavailable("anim.state")
+    }
+    fn anim_joint(&self, _: EntityId, _: &str) -> HostResult<(Vec3, re_types::glam::Quat)> {
+        Self::unavailable("anim.joint")
+    }
 }
 
 /// The host bound to a VM for the duration of one entry point.

@@ -565,18 +565,31 @@ impl App {
 
     /// A hash of the game state, for determinism checks: the world's
     /// [`state_hash`](re_scene::World::state_hash), and with any ragdolls also their
-    /// physics state, which the scene does not hold (the skin shows it). A game
-    /// without ragdolls hashes as its world.
+    /// physics state, which the scene does not hold (the skin shows it), and with
+    /// any animation graphs also their parameters, states and times (ADR-0039).
+    /// A game without ragdolls or graphs hashes as its world.
     pub fn state_hash(&self) -> blake3::Hash {
         let world = self.world.state_hash();
         let ragdolls = self.physics.ragdoll_state_bytes();
-        if ragdolls.is_empty() {
-            return world;
+        let base = if ragdolls.is_empty() {
+            world
+        } else {
+            let mut h = blake3::Hasher::new();
+            h.update(b"real-engine/state-hash+ragdolls/1");
+            h.update(world.as_bytes());
+            h.update(&ragdolls);
+            h.finalize()
+        };
+        if !self.skin_sync.has_graphs() {
+            return base;
         }
+        let mut bytes = Vec::new();
+        self.skin_sync.write_state(&mut bytes);
         let mut h = blake3::Hasher::new();
-        h.update(b"real-engine/state-hash+ragdolls/1");
-        h.update(world.as_bytes());
-        h.update(&ragdolls);
+        h.update(b"real-engine/state-hash/anim/1");
+        h.update(base.as_bytes());
+        h.update(&(bytes.len() as u64).to_le_bytes());
+        h.update(&bytes);
         h.finalize()
     }
 
@@ -822,6 +835,11 @@ impl App {
         &self.skin_sync
     }
 
+    /// Skeleton poses and animation graphs, to set graph parameters.
+    pub fn skin_sync_mut(&mut self) -> &mut SkinSync {
+        &mut self.skin_sync
+    }
+
     /// The ragdolls built for `Ragdoll` components, with their blend weights.
     pub fn ragdoll_sync(&self) -> &RagdollSync {
         &self.ragdoll_sync
@@ -896,6 +914,7 @@ impl App {
             bus_levels: &self.bus_levels,
             audio_graph: self.audio.graph(),
             pending: &mut self.pending,
+            skins: &mut self.skin_sync,
         }
     }
 
@@ -1322,13 +1341,30 @@ impl App {
             self.clock.dt_secs(),
             &mut self.diagnostics,
         );
-        anim_skin::step(
+        let motions = anim_skin::step(
             &mut self.world,
             &mut self.skin_sync,
             &mut self.media,
             self.clock.dt_secs(),
             &mut self.diagnostics,
         );
+        if !motions.is_empty() {
+            let links = &self.physics_sync;
+            let moves = anim_skin::apply_root_motion(
+                &mut self.world,
+                &motions,
+                self.clock.dt_secs(),
+                &|id| links.kind(id) == Some(physics::LinkKind::Character),
+            );
+            self.physics_cmds
+                .extend(moves.into_iter().map(|(id, desired_velocity)| {
+                    PhysicsCmd::MoveCharacter {
+                        id,
+                        desired_velocity,
+                        jump: false,
+                    }
+                }));
+        }
         if self.compat.is_some() {
             // The compat clock advances here, then `PreAnimation` fires.
             self.run_scripts(Phase::PreAnimation, self.clock.dt_secs().into());
@@ -1414,6 +1450,8 @@ impl App {
             &mut self.ragdoll_sync,
             self.clock.dt_secs(),
         );
+        // Bone attachments follow the final pose, ragdolls included.
+        anim_skin::attach(&mut self.world, &mut self.skin_sync, &mut self.diagnostics);
         self.perf.add(Phase::PostSimulation, t.elapsed());
     }
 
@@ -2066,6 +2104,7 @@ impl App {
                 bus_levels: &self.bus_levels,
                 audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
+                skins: &mut self.skin_sync,
             },
         };
         let out = f(scripts, &mut host);
@@ -2312,6 +2351,7 @@ impl App {
                 bus_levels: &self.bus_levels,
                 audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
+                skins: &mut self.skin_sync,
             },
         };
         let diags = f(vm, &mut host);
