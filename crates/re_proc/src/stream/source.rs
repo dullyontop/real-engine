@@ -39,6 +39,9 @@ pub(crate) struct Source {
     pub inputs: blake3::Hash,
     /// Its `terrain.chunks` terrain, if its graph has one.
     pub terrain: Option<Arc<TerrainSource>>,
+    /// Its nodes written for an older version (`RE4019`), which still
+    /// evaluate as that version.
+    pub outdated: Vec<Diagnostic>,
 }
 
 /// The terrain of a streamed source: the field reaching its `terrain.chunks`
@@ -249,6 +252,16 @@ fn prepare(
         })),
         None => None,
     };
+    let outdated = crate::graph::outdated_nodes(
+        &graph.id,
+        doc.nodes
+            .iter()
+            .map(|n| (n.id.as_str(), n.kind.as_str(), n.version)),
+        registry,
+    )
+    .into_iter()
+    .map(|d| d.at(Location::entity(id.clone())))
+    .collect();
     let stamp = version_stamp(&doc, registry).to_hex().to_string();
     let seed = seed as u64;
     let mut h = blake3::Hasher::new();
@@ -267,6 +280,7 @@ fn prepare(
         stamp,
         inputs: h.finalize(),
         terrain,
+        outdated,
     })
 }
 

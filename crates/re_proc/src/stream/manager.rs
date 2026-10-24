@@ -659,7 +659,14 @@ impl Streamer {
             .retain(|e, _| entities.iter().any(|(_, s)| s == e));
         for (id, e) in entities {
             match source::describe(world, e, &self.config, &mut self.described) {
-                Ok(s) => sources.push(s),
+                Ok(s) => {
+                    // Streamed cells skip the generator, which reports these.
+                    for d in &s.outdated {
+                        let subject = format!("{id}: {}", d.message);
+                        self.report_once(&mut report.diagnostics, &subject, d.clone());
+                    }
+                    sources.push(s);
+                }
                 Err(d) => self.report_once(&mut report.diagnostics, &id, d),
             }
         }

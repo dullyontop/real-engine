@@ -30,7 +30,7 @@ const SCENE: &str = r#"{
 
 const BUILDER: &str = r#"local g = proc.graph("land")
 local h = g:node("terrain.heightfield", { cell = 4.0, height = 6.0, scale = 0.02 }, nil, "h")
-g:node("terrain.mesh", { collider = true }, { field = h }, "ground")
+g:node("terrain.mesh@2", { collider = true }, { field = h }, "ground")
 return g
 "#;
 

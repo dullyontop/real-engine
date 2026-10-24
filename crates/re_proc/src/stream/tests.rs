@@ -26,7 +26,8 @@ fn graph(nodes: &[(&str, &str, Json)], edges: &[(&str, &str, &str, &str)]) -> Gr
         "name": "world",
         "seed": 7,
         "nodes": nodes.iter().map(|(id, kind, params)| json!({
-            "id": id, "kind": kind, "version": 1, "params": params,
+            "id": id, "kind": kind, "params": params,
+            "version": crate::NodeRegistry::m1().get(kind).map_or(1, |d| d.version),
         })).collect::<Vec<_>>(),
         "edges": edges.iter().map(|(f, fp, t, tp)| json!({
             "from": [f, fp], "to": [t, tp],
@@ -1276,4 +1277,30 @@ fn stream_origin_reports_focuses_out_of_reach_and_content_out_of_precision() {
         .collect();
     assert!(!far.is_empty(), "{:#?}", r.diagnostics);
     assert!(far[0].message.contains("beyond the 16 km precision limit"));
+}
+
+#[test]
+fn stream_reports_outdated_nodes_once() {
+    // Streamed cells skip the generator, so the streamer says itself that
+    // `terrain.mesh` 1 still puts streamed cells in world space.
+    let mut doc = world_graph();
+    for n in &mut doc.nodes {
+        if n.kind == "terrain.mesh" {
+            n.version = 1;
+        }
+    }
+    let mut st = streamed(doc, 32.0, 32.0, json!([]));
+    let r = run(&mut st.world, 0..5);
+    let codes: Vec<Vec<String>> = r
+        .iter()
+        .map(|r| r.diagnostics.iter().map(|d| d.code.to_string()).collect())
+        .collect();
+    assert_eq!(codes[0], ["RE4019"], "{:#?}", r[0].diagnostics);
+    assert!(codes[1..].iter().all(Vec::is_empty), "{codes:?}");
+    let d = &r[0].diagnostics[0];
+    assert!(
+        d.message.contains("node `ground` (terrain.mesh)"),
+        "{}",
+        d.message
+    );
 }
