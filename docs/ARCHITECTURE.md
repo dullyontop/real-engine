@@ -637,6 +637,7 @@ my-game/
   prefabs/*.prefab.json      reusable entity trees
   materials/*.material.json  PBR-lite parameters + texture asset refs
   graphs/*.graph.json        ProcGraph IR
+  anims/*.animgraph.json     animation graphs (ADR-0039)
   scripts/game/**.luau       game context
   scripts/tools/**.luau      tools context (graph builders, editor helpers)
   scripts/shared/**.luau     modules require-able from both
@@ -860,7 +861,7 @@ Every runtime read of a project file goes through `re_core::files::ProjectFiles`
 - the entries' bytes, back to back, in index order; an entry is zstd-compressed (level 9) only when that saves at least 10%;
 - the index: postcard, zstd-compressed, sorted by path: the engine, Luau, bytecode and compiler versions (`COMPILER_ID`, ADR-0036), the `[package]` name, identifier and version, and per entry its path, form (`Source`, `Bytecode` or `Processed`), offset, sizes, compression and the blake3 of its bytes.
 
-The default content is `real.toml`, `.luaurc`, `scenes/`, `prefabs/`, `materials/`, `graphs/`, `scripts/`, `assets/` and `data/seed/`; `tests/`, `.real/`, `.git/`, `AGENTS.md` and `CLAUDE.md` are never packed. Animation graphs (`*.animgraph.json`) have no folder of their own: one is packed when it lies in a default folder or matches `[package] include`, and a packed scene that names one the archive leaves out fails the build (`RE0957`). Scripts are stored as Luau bytecode. Every read checks the entry's hash, and an archive from another engine, Luau or compiler version is refused (`RE0602`). `[package]` in `real.toml` sets the identifier, display name, version, icon, the scripts and assets forms, `exclude`, `include` and `notices`. `real verify --package DIR` runs the packaged game as a child process (a boot and every replay) and compares its `state_hash`es with the project's.
+The default content is `real.toml`, `.luaurc`, `scenes/`, `prefabs/`, `materials/`, `graphs/`, `anims/`, `scripts/`, `assets/` and `data/seed/`; `tests/`, `.real/`, `.git/`, `AGENTS.md` and `CLAUDE.md` are never packed. Animation graphs (`*.animgraph.json`) go in `anims/`; elsewhere one is packed when it lies in another default folder or matches `[package] include`, and a packed scene that names a file the archive leaves out fails the build (`RE0957`). Scripts are stored as Luau bytecode. Every read checks the entry's hash, and an archive from another engine, Luau or compiler version is refused (`RE0602`). `[package]` in `real.toml` sets the identifier, display name, version, icon, the scripts and assets forms, `exclude`, `include` and `notices`. `real verify --package DIR` runs the packaged game as a child process (a boot and every replay) and compares its `state_hash`es with the project's.
 
 ### Web builds
 

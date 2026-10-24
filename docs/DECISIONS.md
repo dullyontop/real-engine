@@ -1001,7 +1001,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - **The `std::time` clock ban** lives in WP29's wasm-only clippy pass (`tools/ci/clippy-web/clippy.toml`, ADR-0049 §5), not in the root `clippy.toml`. That file repeats the root file's libm list, and `cargo xtask clippy-web` checks that it does.
 - The physics benchmarks stayed inside the 10% allowance (PR "d2" lists them).
 
-**Amendment (#143, #145).** `App::state_hash` is the hash that run reports, `real run`, checkpoints and the `d2` job compare. It is the world's `state_hash` alone when nothing below applies, so earlier hashes and goldens are unchanged. When the physics world has ragdolls, it is a blake3 hash of the world's hash and the ragdolls' state bytes (in entity order: mode, strength and every part's position, rotation and velocities, with NaNs canonical). When any `Animator` runs a graph, that result is hashed again with the graphs' state (ADR-0039's amendment).
+**Amendment (#143, #145).** `App::state_hash` is the hash that run reports, `real run`, checkpoints and the `d2` job compare. It is the world's `state_hash` alone when nothing below applies, so earlier hashes and goldens are unchanged. When the physics world has ragdolls, it is a blake3 hash of the world's hash and the ragdolls' state bytes (in entity order: mode, strength and every part's position, rotation and velocities, with NaNs canonical). When any `Animator` has a bound graph, playing or paused, that result is hashed again with the graphs' state (ADR-0039's amendment).
 
 ## ADR-0037: Packaged games: one archive behind `ProjectFiles`, Luau bytecode, zstd, and per-platform bundles
 
@@ -1144,7 +1144,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - The archive format lives in `crates/re_app/src/package/` (`archive.rs`, `config.rs`, `dirs.rs`), not one `package.rs`.
 - Notices, icons and the Windows and macOS bundles stay in PR "bundles"; until then those platforms get the plain folder, and the build report says so.
 
-**Amendment (WP21 PR "graphs", #145).** WP21 adds no content directory. An `*.animgraph.json` file is packed when it lies in one of the default directories (`assets/` or `graphs/`, for example) or matches `[package] include`; a packed scene or prefab that names one the archive leaves out fails the build with `RE0957`.
+**Amendment (WP21 PRs "graphs", #145, and its follow-up, #152).** `anims/` is a default packed directory, beside the ones above, for `*.animgraph.json` files. A graph elsewhere is packed when it lies in another default directory or matches `[package] include`; a packed scene or prefab that names one the archive leaves out fails the build with `RE0957`.
 
 **Evidence.** `research/m3/wp19/measurements.md`: the compression table (four codecs, three models and the content text), the importer and cache-hit timings, Luau bytecode size, determinism and load time, the index timings, the runtime binary's size, `ldd` and glibc symbols, the license-file scan of the runtime crates, and the API facts checked in mlua 0.12.2, mlua-sys 0.13.0, luau0-src 0.22.0+luau740, wgpu-types 30.0.1 and zstd 0.14.2.
 
@@ -1338,7 +1338,7 @@ Measured (lavapipe and llvmpipe GL, wgpu 30.0.1; measurements §1–§3):
 - Additive nodes and additive layers give no root motion. A clip node's `speed` must not be 0 (pause a graph with `Animator.playing` or `Animator.speed`).
 - `HostServices` gains five required methods for the `anim` library: `anim_set`, `anim_get`, `anim_trigger`, `anim_state` and `anim_joint`.
 - Graphs step, and root motion moves the entity, in PreAnimation. `BoneAttachment`s are placed at the end of PostSimulation, after the ragdoll blend, so `PostSimulation` scripts see the previous step's placement. When several graphs play, they step in parallel on the task pool.
-- When any `Animator` runs a graph, `App::state_hash` adds each graph's playing flag, speed, parameters, states and times, in entity order, to the hash (see ADR-0036's amendment); poses are not hashed.
+- For every bound graph, playing or paused (a paused graph's parameters still change what it plays next), `App::state_hash` adds each graph's playing flag, speed, parameters, states and times, in entity order, to the hash (see ADR-0036's amendment); poses are not hashed.
 - Codes: `RE7607` invalid graph (naming the element by its path in the file), `RE7608` a clip that cannot be loaded, `RE7609` an unknown or mistyped parameter, `RE7610` a mask joint the skeleton lacks (warning) and `RE7611` a blend-tree cycle.
 - `animgraph.validate` is `read` tier; `anim.set_param` changes runtime state and is not undoable. With them `real mcp` lists 53 tools. `schemas/animgraph.schema.json` is exported with the other schemas.
 
