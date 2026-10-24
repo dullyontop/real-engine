@@ -1400,7 +1400,7 @@ The engine side has its own constraints:
   - `AddRagdoll { id, desc, pose: Option<Vec<JointPose>> }` (in the animation skeleton's local space; `None` is the neutral pose);
   - `RemoveRagdoll { id }`;
   - `SetRagdollMode { id, mode }`;
-  - ranks 15 to 19, in the order `RemoveRagdoll`, `AddRagdoll`, `SetRagdollMode`, `SetRagdollTarget`, `ApplyRagdollImpulse`, after the vehicle commands; `RemoveBody` is never needed for parts, which the ragdoll owns;
+  - ranks 15 to 19, in the order `RemoveRagdoll`, `AddRagdoll`, `SetRagdollMode`, `SetRagdollTarget`, `ApplyRagdollImpulse`, after the vehicle commands; `RemoveBody` is never needed for parts, which the ragdoll owns. Every removal, the vehicle and ragdoll ones included, sorts before every other kind (`PhysicsCmd::sort_key` is `(phase, rank, entity)` with removals in phase 0), so `RemoveRagdoll` frees its entity before an `AddBody` on it in the same buffer;
   - `SetRagdollTarget { id, pose }`: the animation pose the drive aims at, mapped with `map_reverse`;
   - `ApplyRagdollImpulse { id, joint, impulse }`: hit reactions, applied to the part the joint maps to.
 - **Modes:**
