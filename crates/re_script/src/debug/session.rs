@@ -382,6 +382,29 @@ pub fn is_parked(lua: &Lua, thread: usize) -> bool {
     .unwrap_or(false)
 }
 
+/// Tells the debugger attached to `lua` that its host dropped `threads`
+/// (`lua_State` addresses) for good, such as the threads of a script that was
+/// reloaded or cancelled. When one of them is parked at a stop, the stop ends
+/// as if continued, so other scripts can stop again. Does nothing when no
+/// debugger is attached to `lua`.
+pub fn threads_ended(lua: &Lua, threads: &[usize]) {
+    let ended = with_session(main_of(lua), |s| {
+        let p = s.parked.take_if(|p| threads.contains(&p.thread))?;
+        Some((s.debugger.clone(), s.context, p.r))
+    })
+    .flatten();
+    let Some((debugger, context, r)) = ended else {
+        return;
+    };
+    // SAFETY: the reference taken when the thread parked, released once.
+    let _ = unsafe {
+        lua.exec_raw::<()>((), |l| {
+            ffi::lua_unref(l, r);
+        })
+    };
+    debugger.end_stop(context);
+}
+
 /// Sets or clears the breakpoint on `line` in the chunk behind reference `r`
 /// and every function nested in it. Returns the line it snapped to, or -1.
 ///

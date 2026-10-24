@@ -1,13 +1,14 @@
 //! The script debugger on the runtime's contexts (ADR-0045): the scheduler
 //! parks the thread a breakpoint stops while the rest of the context runs,
-//! and the chunks of entry scripts and modules reach the debugger whether
-//! they loaded before or after it attached.
+//! the chunks of entry scripts and modules reach the debugger whether they
+//! loaded before or after it attached, and a stop ends when its thread is
+//! dropped.
 
 mod common;
 
 use common::{Rig, STEP};
 use re_script::ContextKind;
-use re_script::debug::{Debugger, Resume, service};
+use re_script::debug::{Debugger, Event, Resume, StopReason, service};
 
 fn rig(files: &[(&str, &str)]) -> (tempfile::TempDir, Rig) {
     let dir = tempfile::tempdir().unwrap();
@@ -39,6 +40,31 @@ function M.label()
 \treturn \"tick\"
 end
 return M
+";
+
+const WORKER: &str = "local frames = 0
+local worker = task.spawn(function()
+\twhile true do
+\t\ttask.wait()
+\t\tprint(\"work\")
+\tend
+end)
+time.on_frame(function()
+\tframes += 1
+\tif frames == 3 then
+\t\ttask.cancel(worker)
+\t\tprint(\"cancelled\")
+\tend
+end)
+";
+
+const QUITTER: &str = "task.spawn(function()
+\ttask.wait()
+\ttask.cancel(coroutine.running())
+\tprint(\"after\")
+\ttask.wait()
+\tprint(\"never\")
+end)
 ";
 
 fn frame(rig: &mut Rig) {
@@ -118,7 +144,8 @@ fn modules_loaded_after_attaching_reach_breakpoints() {
 fn a_script_stopped_while_parked_is_dropped_with_its_run() {
     let (dir, mut rig) = rig(&[("scripts/loop.luau", LOOP)]);
     let debugger = Debugger::new();
-    rig.rt
+    let info = rig
+        .rt
         .context(ContextKind::Game)
         .attach_debugger(&debugger)
         .unwrap();
@@ -127,8 +154,10 @@ fn a_script_stopped_while_parked_is_dropped_with_its_run() {
     frame(&mut rig);
     assert!(debugger.stopped().is_some());
     rig.output();
+    debugger.take_events();
 
-    // A reload stops the parked run and starts a new one.
+    // A reload stops the parked run, which ends its stop, and starts a new
+    // run, which stops at the same breakpoint before its first print.
     std::fs::write(
         dir.path().join("scripts/loop.luau"),
         LOOP.replace("\"loop\"", "\"again\""),
@@ -143,15 +172,99 @@ fn a_script_stopped_while_parked_is_dropped_with_its_run() {
     let report = rt.reload(&mut host, "scripts/loop.luau");
     assert!(report.diagnostics.is_empty(), "{:#?}", report.diagnostics);
     assert_eq!(report.restarted, 1);
-    assert_eq!(rig.output(), ["again\t1"]);
-    // Resuming the old stop finds nothing to run; the new run keeps going.
+    assert_eq!(
+        stops(&debugger),
+        [
+            Event::Continued { context: info.id },
+            Event::Stopped {
+                context: info.id,
+                reason: StopReason::Breakpoint
+            },
+        ]
+    );
+    let stop = debugger.stopped().expect("the new run stopped");
+    assert_eq!(stop.top().unwrap().line, Some(3));
+    assert!(rig.output().is_empty(), "it stopped before its first print");
+
+    // Continued, the new run goes on.
     debugger.set_breakpoints("scripts/loop.luau", &[]);
-    if debugger.stopped().is_some() {
-        debugger.resume(Resume::Continue);
-    }
+    assert!(debugger.resume(Resume::Continue));
     frame(&mut rig);
     frame(&mut rig);
     let out = rig.output();
+    assert_eq!(out.first().map(String::as_str), Some("again\t1"), "{out:?}");
     assert!(out.iter().all(|l| l.starts_with("again\t")), "{out:?}");
-    assert!(!out.is_empty());
+}
+
+#[test]
+fn a_script_thread_cancelled_while_parked_ends_its_stop() {
+    let (_dir, mut rig) = rig(&[("scripts/worker.luau", WORKER)]);
+    let debugger = Debugger::new();
+    let info = rig
+        .rt
+        .context(ContextKind::Game)
+        .attach_debugger(&debugger)
+        .unwrap();
+    debugger.set_breakpoints("scripts/worker.luau", &[5]);
+    assert!(rig.run("scripts/worker.luau").is_empty());
+    frame(&mut rig);
+    let stop = debugger.stopped().expect("the worker stopped");
+    assert_eq!(stop.top().unwrap().line, Some(5));
+    debugger.take_events();
+
+    // The frame callback cancels the parked worker, and its stop ends.
+    for _ in 0..10 {
+        if rig.output().contains(&"cancelled".to_string()) {
+            break;
+        }
+        assert!(debugger.stopped().is_some(), "the worker stays parked");
+        frame(&mut rig);
+    }
+    assert!(debugger.stopped().is_none());
+    assert_eq!(stops(&debugger), [Event::Continued { context: info.id }]);
+    // There is nothing left to resume, and the worker never runs again.
+    assert!(!debugger.resume(Resume::Continue));
+    frame(&mut rig);
+    frame(&mut rig);
+    assert!(rig.output().is_empty());
+}
+
+#[test]
+fn a_thread_that_stops_after_cancelling_itself_ends_its_stop() {
+    let (_dir, mut rig) = rig(&[("scripts/quitter.luau", QUITTER)]);
+    let debugger = Debugger::new();
+    let info = rig
+        .rt
+        .context(ContextKind::Game)
+        .attach_debugger(&debugger)
+        .unwrap();
+    debugger.set_breakpoints("scripts/quitter.luau", &[4]);
+    assert!(rig.run("scripts/quitter.luau").is_empty());
+
+    // It stops at line 4 and parks there, which is the yield that ends a
+    // cancelled thread: the scheduler drops it, and its stop ends at once.
+    frame(&mut rig);
+    assert!(debugger.stopped().is_none());
+    assert_eq!(
+        stops(&debugger),
+        [
+            Event::Stopped {
+                context: info.id,
+                reason: StopReason::Breakpoint
+            },
+            Event::Continued { context: info.id },
+        ]
+    );
+    frame(&mut rig);
+    frame(&mut rig);
+    assert!(rig.output().is_empty());
+}
+
+/// The stop and continue events so far, taken.
+fn stops(debugger: &Debugger) -> Vec<Event> {
+    debugger
+        .take_events()
+        .into_iter()
+        .filter(|e| matches!(e, Event::Stopped { .. } | Event::Continued { .. }))
+        .collect()
 }
