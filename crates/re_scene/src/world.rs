@@ -9,7 +9,7 @@ use re_reflect::{Doc, Registry, Value};
 use serde_json::{Value as Json, json};
 
 use crate::attributes::{AttributeChanged, AttributeFeed};
-use crate::components::{GlobalTransform, Name, register_builtins};
+use crate::components::{GlobalTransform, Name, Note, register_builtins};
 use crate::error::SceneError;
 use crate::hierarchy::{self, children, propagate_all, propagate_changed, subtree};
 use crate::ids::{IdGen, IdIndex, StableId};
@@ -153,6 +153,14 @@ impl World {
     pub fn name_of(&self, entity: Entity) -> &str {
         self.ecs
             .get::<Name>(entity)
+            .map(|n| n.0.as_str())
+            .unwrap_or("")
+    }
+
+    /// The note on `entity` (empty if none): its scene file comment.
+    pub fn note_of(&self, entity: Entity) -> &str {
+        self.ecs
+            .get::<Note>(entity)
             .map(|n| n.0.as_str())
             .unwrap_or("")
     }
@@ -432,6 +440,9 @@ impl World {
             let new = out.ecs.spawn((name,)).id();
             if let Some(id) = id {
                 out.ecs.entity_mut(new).insert(id);
+            }
+            if let Some(note) = self.ecs.get::<Note>(old).cloned() {
+                out.ecs.entity_mut(new).insert(note);
             }
             if let Some(p) = hierarchy::parent(&self.ecs, old).and_then(|p| map.get(&p)) {
                 hierarchy::add_child(&mut out.ecs, *p, new);

@@ -658,6 +658,7 @@ Input bindings name winit `KeyCode` variants (`key:KeyW`), mouse buttons (`mouse
     {
       "id": "island",
       "name": "Island",
+      "note": "Seed 1234 keeps the beach on the east side; change it with care.",
       "parent": "world",
       "components": {
         "GraphSource": { "builder": "scripts/tools/island_graph.luau", "graph": "" },
@@ -679,6 +680,7 @@ Rules (verified by the core spike's round-trip tests, ADR-0016):
 - components are sorted by name, fields are in declaration order, and lists of scalars are written on one line;
 - floats are written in shortest round-trip form, and parsed exactly (including the f32 double-rounding fix of ADR-0032);
 - unknown keys are errors that name the entity index, id, component and field;
+- an entity's `note` is its comment (JSON has none): free text for people and agents, kept by every save and set with the `set_note` operation, never read by the game and not part of `state_hash`;
 - generated entities are not written; the schemas of the script-defined components the saving world had registered (including those only generated entities use) are declared in a top-level `script_components` list, so the file loads before any script runs. A declaration stays until it is removed from the file while no world that loaded it saves again;
 - a file always ends with a newline, and save → load → save is byte-identical;
 - the `version` field is migrated forwards by `re_scene::migrate`, one function per version.
