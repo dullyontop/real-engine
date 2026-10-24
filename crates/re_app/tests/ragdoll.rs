@@ -530,7 +530,8 @@ fn a_ragdoll_7_km_out_falls_onto_streamed_terrain() {
 
 /// A walker, the stream focus, leaves the man at spawn and comes back. Left
 /// behind, his ragdoll stays where it is; a man the walker starts 7 km from
-/// gets his ragdoll once the origin comes near. Neither is an error.
+/// gets his ragdoll once the origin comes near. The ragdoll reports nothing
+/// either way.
 #[test]
 fn a_ragdoll_left_behind_waits_for_the_origin_to_come_back() {
     for start in [20.0f32, 7020.0] {
@@ -562,19 +563,32 @@ fn a_ragdoll_left_behind_waits_for_the_origin_to_come_back() {
                 .unwrap();
             let report = app.run_headless(Some(40), None).unwrap();
             assert!(
-                report.ok(),
+                report.diagnostics.is_empty(),
                 "start {start}, x {x}: {:?}",
                 report.diagnostics
             );
         };
         // Out to 7 km, or starting there; a man at spawn has fallen and lies
-        // still before the walker leaves.
-        walk_to(&mut app, start);
+        // still before the walker leaves. A walker starting there leaves his
+        // ground waiting for the origin (ADR-0042), which is reported once.
+        let report = app.run_headless(Some(40), None).unwrap();
+        let reported: Vec<&str> = report.diagnostics.iter().map(|d| &d.message[..]).collect();
+        if start < 100.0 {
+            assert!(reported.is_empty(), "{reported:?}");
+        } else {
+            assert!(
+                report.ok()
+                    && reported.len() == 1
+                    && reported[0].starts_with("body position [0, 9.5, 0]"),
+                "{reported:?}"
+            );
+        }
         for _ in 0..20 {
             if app.physics().ragdoll(id).is_none_or(|s| s.calm) {
                 break;
             }
-            assert!(app.run_headless(Some(30), None).unwrap().ok());
+            let report = app.run_headless(Some(30), None).unwrap();
+            assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
         }
         let lying = app.physics().ragdoll_parts(id);
         if start < 100.0 {
@@ -607,7 +621,11 @@ fn a_ragdoll_left_behind_waits_for_the_origin_to_come_back() {
             walk_to(&mut app, x);
         }
         let report = app.run_headless(Some(240), None).unwrap();
-        assert!(report.ok(), "start {start}: {:?}", report.diagnostics);
+        assert!(
+            report.diagnostics.is_empty(),
+            "start {start}: {:?}",
+            report.diagnostics
+        );
         let state = app.physics().ragdoll(id).expect("the ragdoll is there");
         assert!(state.calm, "start {start}: it came to rest");
         let on_ground = state.root_pos - Vec3::new(0.0, 10.0, 0.0);
