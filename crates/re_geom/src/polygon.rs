@@ -144,6 +144,22 @@ fn check_point(p: [f64; 2], what: &str) -> Result<(), GeomError> {
     Ok(())
 }
 
+/// The box `[min x, min z, max x, max z]` of `points`, or `None` with none.
+fn points_box<'a>(points: impl IntoIterator<Item = &'a [f64; 2]>) -> Option<[f64; 4]> {
+    let mut points = points.into_iter();
+    let first = *points.next()?;
+    Some(
+        points.fold([first[0], first[1], first[0], first[1]], |b, p| {
+            [
+                b[0].min(p[0]),
+                b[1].min(p[1]),
+                b[2].max(p[0]),
+                b[3].max(p[1]),
+            ]
+        }),
+    )
+}
+
 fn check_contour(c: &[[f64; 2]], what: &str) -> Result<(), GeomError> {
     if c.len() < 3 {
         return Err(GeomError::Polygon(format!(
@@ -197,6 +213,12 @@ impl Shapes {
             }
         }
         Ok(())
+    }
+
+    /// The smallest box `[min x, min z, max x, max z]` holding every point,
+    /// or `None` with no shapes.
+    pub fn bbox(&self) -> Option<[f64; 4]> {
+        points_box(self.contours().flatten())
     }
 
     /// The area covered, in square metres (holes subtracted). Exact only for
@@ -318,6 +340,44 @@ impl Shapes {
             .map_err(range_error)
     }
 
+    /// The part of these simplified shapes inside the rectangle from `min` to
+    /// `max` (in X and Z), simplified. A shape whose box lies inside it is
+    /// kept as it is, one whose box misses it is dropped, and the others are
+    /// cut by it, so the rectangles of a grid share out the area exactly,
+    /// with no gap or overlap along their borders.
+    pub fn clip(&self, min: [f64; 2], max: [f64; 2]) -> Result<Shapes, GeomError> {
+        check_point(min, "the clip rectangle")?;
+        check_point(max, "the clip rectangle")?;
+        if !(min[0] < max[0] && min[1] < max[1]) {
+            return Ok(Shapes::new());
+        }
+        let mut inside = Shapes::new();
+        let mut cut = Shapes::new();
+        for s in &self.shapes {
+            match points_box(std::iter::once(&s.outer).chain(&s.holes).flatten()) {
+                Some(b) if b[0] >= min[0] && b[1] >= min[1] && b[2] <= max[0] && b[3] <= max[1] => {
+                    inside.shapes.push(s.clone());
+                }
+                Some(b) if b[0] < max[0] && b[2] > min[0] && b[1] < max[1] && b[3] > min[1] => {
+                    cut.shapes.push(s.clone());
+                }
+                _ => {}
+            }
+        }
+        if !cut.is_empty() {
+            let rect = Shapes::polygon(vec![
+                [min[0], min[1]],
+                [max[0], min[1]],
+                [max[0], max[1]],
+                [min[0], max[1]],
+            ]);
+            inside
+                .shapes
+                .extend(cut.boolean(&rect, BoolOp::Intersect)?.shapes);
+        }
+        Ok(inside)
+    }
+
     /// Grows (positive `distance`) or shrinks (negative) every shape by
     /// `distance` metres. Holes shrink as the shape grows.
     pub fn offset(&self, distance: f64, join: Join) -> Result<Shapes, GeomError> {
@@ -392,8 +452,25 @@ pub fn stroke(path: &[[f64; 2]], style: Stroke, closed: bool) -> Result<Shapes, 
 /// A flat mesh of `shapes` at height `y`, facing +Y, with UVs in metres
 /// (`u = x`, `v = z`).
 pub fn triangulate(shapes: &Shapes, y: f32) -> Result<MeshData, GeomError> {
+    triangulate_at(shapes, y, [0.0, 0.0])
+}
+
+/// [`triangulate`] with positions relative to `origin` in X and Z (UVs stay
+/// in metres from the source's origin), so a mesh far from the origin keeps
+/// its precision.
+pub fn triangulate_at(shapes: &Shapes, y: f32, origin: [f64; 2]) -> Result<MeshData, GeomError> {
+    triangulated(shapes, y, origin).map(|(mesh, _)| mesh)
+}
+
+/// [`triangulate_at`], with each vertex's `[x, z]` in metres.
+pub(crate) fn triangulated(
+    shapes: &Shapes,
+    y: f32,
+    origin: [f64; 2],
+) -> Result<(MeshData, Vec<[f64; 2]>), GeomError> {
     shapes.validate()?;
     let mut mesh = MeshData::default();
+    let mut at: Vec<[f64; 2]> = Vec::new();
     let mut ear = earcut::Earcut::<f64>::new();
     let mut tris: Vec<u32> = Vec::new();
     for (i, s) in shapes.shapes.iter().enumerate() {
@@ -419,12 +496,13 @@ pub fn triangulate(shapes: &Shapes, y: f32) -> Result<MeshData, GeomError> {
         }
         for p in &points {
             mesh.vertices.push(Vertex {
-                pos: [p[0] as f32, y, p[1] as f32],
+                pos: [(p[0] - origin[0]) as f32, y, (p[1] - origin[1]) as f32],
                 normal: [0.0, 1.0, 0.0],
                 uv: [p[0] as f32, p[1] as f32],
                 color: [1.0; 4],
             });
         }
+        at.extend_from_slice(&points);
         let base = base as u32;
         for t in tris.as_chunks::<3>().0 {
             let [a, b, c] = [
@@ -441,7 +519,7 @@ pub fn triangulate(shapes: &Shapes, y: f32) -> Result<MeshData, GeomError> {
             }
         }
     }
-    Ok(mesh)
+    Ok((mesh, at))
 }
 
 #[cfg(test)]
@@ -473,6 +551,48 @@ mod tests {
             area += f64::from(up) * 0.5;
         }
         assert!((area - 64.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn clipping_to_a_grid_shares_out_the_area() {
+        let ring = Shapes {
+            shapes: vec![Shape {
+                outer: square(-30.5, -20.25, 70.0),
+                holes: vec![square(-5.0, -5.0, 12.0)],
+            }],
+        };
+        let all = ring
+            .boolean(&Shapes::polygon(square(50.0, 50.0, 3.0)), BoolOp::Union)
+            .unwrap();
+        assert_eq!(all.shapes.len(), 2);
+        let mut sum = 0.0;
+        let mut whole = 0;
+        for cz in -4..4 {
+            for cx in -4..4 {
+                let min = [f64::from(cx) * 16.0, f64::from(cz) * 16.0];
+                let max = [min[0] + 16.0, min[1] + 16.0];
+                let part = all.clip(min, max).unwrap();
+                if let Some(b) = part.bbox() {
+                    assert!(b[0] >= min[0] && b[1] >= min[1] && b[2] <= max[0] && b[3] <= max[1]);
+                }
+                // The small square lies in one cell and is kept as it is.
+                whole += part
+                    .shapes
+                    .iter()
+                    .filter(|s| s.outer.len() == 4 && s.outer.contains(&[50.0, 50.0]))
+                    .count();
+                sum += part.area();
+                let mesh = triangulate_at(&part, 1.0, min).unwrap();
+                for v in &mesh.vertices {
+                    assert!((0.0..=16.0).contains(&v.pos[0]) && (0.0..=16.0).contains(&v.pos[2]));
+                    assert_eq!(v.uv, [v.pos[0] + min[0] as f32, v.pos[2] + min[1] as f32]);
+                }
+            }
+        }
+        assert_eq!(whole, 1);
+        assert!((sum - all.area()).abs() < 1e-6, "{sum} vs {}", all.area());
+        assert!(all.clip([0.0, 0.0], [0.0, 5.0]).unwrap().is_empty());
+        assert_eq!(Shapes::new().bbox(), None, "no shapes, no box");
     }
 
     #[test]
