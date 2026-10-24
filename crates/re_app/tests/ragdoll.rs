@@ -444,3 +444,150 @@ fn the_state_hash_covers_ragdolls() {
     assert_eq!(app.world().state_hash(), world);
     assert_ne!(app.state_hash(), game);
 }
+
+/// Streamed terrain collision chunks (ADR-0042).
+const LAND: &str = r#"local g = proc.graph("land")
+local h = g:node("terrain.heightfield", { cell = 4.0, height = 6.0, scale = 0.02 }, nil, "h")
+g:node("terrain.chunks", { max_level = 2 }, { field = h }, "ground")
+return g
+"#;
+
+/// The streamed land's entity, for a scene.
+const LAND_ENTITY: &str = r#"{ "id": "land", "components": {
+        "GraphSource": { "builder": "scripts/tools/land.luau" },
+        "Procedural": { "generator": "graph", "seed": 3 },
+        "Streamed": { "bounds": 0.0 },
+        "Transform": {} } },"#;
+
+/// Gives the project at `dir` streamed land, `scene` edited by `edit`.
+fn stream(dir: &Path, edit: impl FnOnce(String) -> String) {
+    let scene = std::fs::read_to_string(dir.join("scenes/main.scene.json")).unwrap();
+    std::fs::write(dir.join("scenes/main.scene.json"), edit(scene)).unwrap();
+    std::fs::create_dir_all(dir.join("scripts/tools")).unwrap();
+    std::fs::write(dir.join("scripts/tools/land.luau"), LAND).unwrap();
+    std::fs::write(
+        dir.join("real.toml"),
+        "[project]\nname = \"ragdoll\"\n\n[stream]\ncell_size = 64.0\nradius = 64.0\n\
+         radius_ahead = 128.0\nunload_margin = 32.0\ndelay_ticks = 2\nphysics_radius = 100.0\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_ragdoll_7_km_out_falls_onto_streamed_terrain() {
+    // The man is the stream focus, 7 km out on streamed land (and no ground
+    // at spawn), so the simulation origin follows him there.
+    let dir = project(r#"{ "mode": "Simulated" }, "StreamFocus": {}"#, None, false);
+    stream(dir.path(), |scene| {
+        scene
+            .replace(
+                r#""Collider": { "shape": "Box", "half_extents": [50.0, 0.5, 50.0] },"#,
+                "",
+            )
+            .replacen(
+                r#"{ "id": "man""#,
+                &format!("{LAND_ENTITY}\n    {{ \"id\": \"man\""),
+                1,
+            )
+            .replace("[0.0, 0.3, 0.0]", "[7020.0, 12.0, 20.0]")
+    });
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(480), None).unwrap();
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+    assert_eq!(app.physics().origin(), Vec3::new(7168.0, 0.0, 0.0));
+    let id = man(&app);
+    let state = app.physics().ragdoll(id).expect("the ragdoll was built");
+    assert!(state.calm, "it came to rest");
+    assert_eq!(app.ragdoll_sync().weight(id), Some(1.0));
+    let hips = app.physics().ragdoll_parts(id).unwrap()[0].1.pos;
+    assert!(
+        (hips - Vec3::new(7020.0, hips.y, 20.0)).length() < 3.0,
+        "{hips}"
+    );
+    let filter = re_physics::QueryFilter {
+        exclude: Some(id),
+        ..re_physics::QueryFilter::default()
+    };
+    let ground = app
+        .physics()
+        .raycast(Vec3::new(hips.x, 50.0, hips.z), Vec3::NEG_Y, 100.0, &filter)
+        .unwrap()
+        .expect("a collision chunk 7 km out")
+        .point
+        .y;
+    assert!(
+        hips.y > ground && hips.y < ground + 0.4,
+        "the man lies on the land: hips at {} over ground {ground}",
+        hips.y
+    );
+    // The skin shows him lying there, below the entity's 12 m.
+    assert!(
+        hips_y(&app) < ground - 12.0 + 0.4,
+        "hips at {}",
+        hips_y(&app)
+    );
+}
+
+/// A walker, the stream focus, leaves the man at spawn and comes back. Left
+/// behind, his ragdoll stays where it is; a man the walker starts 7 km from
+/// gets his ragdoll once the origin comes near. Neither is an error.
+#[test]
+fn a_ragdoll_left_behind_waits_for_the_origin_to_come_back() {
+    for start in [20.0f32, 7020.0] {
+        let dir = project(r#"{ "mode": "Simulated" }"#, None, false);
+        stream(dir.path(), |scene| {
+            let walker = format!(
+                r#"{{ "id": "walker", "components": {{
+        "StreamFocus": {{}},
+        "Transform": {{ "translation": [{start:.1}, 30.0, 20.0] }} }} }},
+    {LAND_ENTITY}
+    {{ "id": "man""#
+            );
+            scene.replacen(r#"{ "id": "man""#, &walker, 1)
+        });
+        let mut app = open(dir.path());
+        let id = man(&app);
+        let walk_to = |app: &mut App, x: f32| {
+            app.world_mut()
+                .set(
+                    "walker",
+                    "Transform",
+                    "translation",
+                    re_reflect::Value::Vec3(Vec3::new(x, 30.0, 20.0)),
+                )
+                .unwrap();
+            let report = app.run_headless(Some(40), None).unwrap();
+            assert!(
+                report.ok(),
+                "start {start}, x {x}: {:?}",
+                report.diagnostics
+            );
+        };
+        for x in [start, 2500.0, 5000.0, 7020.0] {
+            walk_to(&mut app, x);
+        }
+        assert!(
+            app.physics().origin().x > re_physics::WORLD_LIMIT,
+            "{}",
+            app.physics().origin()
+        );
+        // Added at spawn and left behind, or never added while far away.
+        assert_eq!(
+            app.physics().has_ragdoll(id),
+            start < 100.0,
+            "start {start}"
+        );
+        for x in [5000.0, 2500.0, 20.0] {
+            walk_to(&mut app, x);
+        }
+        let report = app.run_headless(Some(240), None).unwrap();
+        assert!(report.ok(), "start {start}: {:?}", report.diagnostics);
+        let state = app.physics().ragdoll(id).expect("the ragdoll is there");
+        assert!(state.calm, "start {start}: it came to rest");
+        assert!(
+            state.root_pos.y > 0.0 && state.root_pos.y < 0.4 && state.root_pos.length() < 3.0,
+            "start {start}: the man lies on the ground at spawn: {}",
+            state.root_pos
+        );
+    }
+}
