@@ -174,6 +174,9 @@ The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each fa
 | uuid | 1.28.0 | Apache-2.0 OR MIT | 1.89 | Asset ids (`.meta.json`). Entity ids are short strings made by `re_scene::IdGen`, not uuids. | `v4`, `serde`, `js` (randomness from the browser on wasm32, ADR-0049) | WP5: `re_assets` sidecar ids (`.meta.json`, its import tests) | Verified |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | 1.85 | Ordered maps in documents, commands and the registry (deterministic file output) | `serde` | core spike | Verified |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 | 1.77 | Library error types | default | WP0, WP4, WP5: `re_reflect`, `re_scene`, `re_command`, `re_geom`, `re_proc`, `re_assets` | Verified |
+| proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | 1.56 | Token streams for `re_reflect_derive` (compile time only) | default | `re_reflect_derive` tests (`re_reflect/tests/derive.rs`); already in the lockfile through bevy_ecs_macros | Verified |
+| quote | 1.0.47 | MIT OR Apache-2.0 | 1.56 | Code generation for `re_reflect_derive` (compile time only) | default | as above | Verified |
+| syn | 2.0.119 | MIT OR Apache-2.0 | 1.61 | Parsing the derive input of `re_reflect_derive` (compile time only) | default | as above | Verified |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | 1.68 | Binaries only (`real`, tools) | default | WP0: `tools/xtask` (`cargo xtask check` and its unit tests) | Verified |
 
 ### Assets, input, audio, platform
@@ -215,7 +218,7 @@ These come from `cargo tree -d -e normal --target <triple>` for the three deskto
 | glam | 0.33.12 and 0.34.1 | kira 0.12.5 (0.33) | runtime | Accept. Never pass kira's glam types across our API; `re_audio` converts with plain arrays. Drop the duplicate when kira moves to 0.34. |
 | hashbrown | 0.16.1 and 0.17.1 | gpu-allocator → wgpu-hal and bevy_platform (0.16); indexmap 2 → naga, wgpu and others (0.17) | runtime | Accept. Drop when those move to one version. |
 | hashbrown, indexmap | 0.12.3 / 1.9.3 next to 0.16–0.17 / 2.14.2 | full_moon_derive | compile-time | Accept |
-| syn | 1.0.109, 2.0.119, 3.0.9 | full_moon_derive (1); gltf-derive, tracing-attributes, thiserror-impl, zerocopy-derive, derive_more-impl, bevy_ecs_macros (2); bytemuck_derive, clap_derive, darling (3) | compile-time | Accept |
+| syn | 1.0.109, 2.0.119, 3.0.9 | full_moon_derive (1); re_reflect_derive, gltf-derive, tracing-attributes, thiserror-impl, zerocopy-derive, derive_more-impl, bevy_ecs_macros (2); bytemuck_derive, clap_derive, darling (3) | compile-time | Accept |
 | derive_more, derive_more-impl | 1.0.0 and 2.1.1 | full_moon (1.0, tooling only); bevy_ecs and bevy_tasks (2.1) | runtime (2.1); tooling (1.0) | Accept. Drop when full_moon moves to derive_more 2. |
 | thiserror, thiserror-impl | 1.0.69 and 2.0.21 | calloop 0.13 (through winit's Wayland stack) | runtime | Accept |
 | getrandom | 0.3.4 and 0.4.3 | ahash through egui (0.3); uuid (0.4) | runtime | Accept |
