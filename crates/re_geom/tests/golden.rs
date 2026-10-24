@@ -76,3 +76,90 @@ fn identity_transform_keeps_positions() {
         assert!((Vec3::from_array(va.normal) - Vec3::from_array(vb.normal)).length() < 1e-6);
     }
 }
+
+fn shapes_hash(shapes: &re_geom::Shapes) -> String {
+    let mut h = blake3::Hasher::new();
+    for s in &shapes.shapes {
+        for c in std::iter::once(&s.outer).chain(&s.holes) {
+            for p in c {
+                h.update(&p[0].to_bits().to_le_bytes());
+                h.update(&p[1].to_bits().to_le_bytes());
+            }
+            h.update(b"|");
+        }
+        h.update(b"/");
+    }
+    h.finalize().to_hex()[..16].to_string()
+}
+
+/// Polygon and road outputs (ADR-0043 §5). i_overlay and earcut are pinned
+/// exactly; an upgrade that changes any of these needs version bumps for the
+/// node kinds it changes.
+#[test]
+fn polygon_and_road_golden_hashes() {
+    use re_geom::polygon::{BoolOp, Cap, Join, Stroke, stroke, triangulate};
+    use re_geom::road::{ControlPoint, RoadStyle, footprint, road_mesh, spline};
+    let square = |x: f64, z: f64, w: f64| vec![[x, z], [x + w, z], [x + w, z + w], [x, z + w]];
+    let a = re_geom::Shapes::polygon(square(0.0, 0.0, 10.0));
+    let b = re_geom::Shapes::polygon(vec![[3.0, -2.0], [14.0, 5.0], [4.0, 12.0]]);
+    let diff = a.boolean(&b, BoolOp::Difference).unwrap();
+    let grown = b.offset(1.5, Join::Round).unwrap();
+    let line = stroke(
+        &[[0.0, 0.0], [10.0, 3.0], [20.0, -2.0]],
+        Stroke {
+            width: 4.0,
+            join: Join::Round,
+            cap: Cap::Round,
+        },
+        false,
+    )
+    .unwrap();
+    let cp = |x: f64, y: f64, z: f64, bank: f64| ControlPoint {
+        position: [x, y, z],
+        width: 6.0,
+        bank,
+    };
+    let r1 = spline(
+        &[
+            cp(-40.0, 0.0, -5.0, 0.0),
+            cp(0.0, 1.0, 0.0, 4.0),
+            cp(40.0, 2.0, 10.0, 0.0),
+        ],
+        1.0,
+        false,
+    )
+    .unwrap();
+    let r2 = spline(
+        &[cp(5.0, 3.0, -40.0, 0.0), cp(-5.0, 1.0, 40.0, 0.0)],
+        1.0,
+        false,
+    )
+    .unwrap();
+    let style = RoadStyle {
+        junction_radius: 9.0,
+        snap: 3.0,
+        bank_fade: 8.0,
+    };
+    let road = road_mesh(&[r1.clone(), r2.clone()], &style).unwrap();
+    let got = [
+        ("difference", shapes_hash(&diff)),
+        ("offset", shapes_hash(&grown)),
+        ("stroke", shapes_hash(&line)),
+        ("triangulated", hash(&triangulate(&diff, 0.5).unwrap())),
+        (
+            "footprint",
+            shapes_hash(&footprint(&[r1, r2], 1.0).unwrap()),
+        ),
+        ("road", hash(&road.mesh)),
+    ];
+    let want: [(&str, &str); 6] = [
+        ("difference", "dab692af6f3a5bd8"),
+        ("offset", "bf668b9bc7c95d6f"),
+        ("stroke", "730567d530cd692e"),
+        ("triangulated", "c8e1074f214b089b"),
+        ("footprint", "d04c951dfc4b2987"),
+        ("road", "5d71273a7f49fa65"),
+    ];
+    let got: Vec<(&str, &str)> = got.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    assert_eq!(got, want, "polygon or road bytes changed");
+}

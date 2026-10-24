@@ -66,6 +66,10 @@ ruzstd = { version = "=0.9.1", default-features = false, features = ["std"] }
 quick-xml = "=0.41.0"
 base64 = "=0.23.1"
 
+# Polygon booleans and triangulation (ADR-0043 §5): re_geom only.
+i_overlay = { version = "=9.1.0", default-features = false }
+earcut = "=0.4.11"
+
 # Core, data and serialization.
 bevy_ecs = { version = "=0.20.0", default-features = false, features = ["std", "multi_threaded"] }
 rayon = "=1.12.0"
