@@ -184,6 +184,26 @@ pub fn output_hash(output: &Output) -> String {
                 h.update(name.as_bytes());
             }
         }
+        Output::Shapes(shapes) => {
+            for s in &shapes.shapes {
+                for c in std::iter::once(&s.outer).chain(&s.holes) {
+                    for p in c {
+                        h.update(&p[0].to_bits().to_le_bytes());
+                        h.update(&p[1].to_bits().to_le_bytes());
+                    }
+                    h.update(b"|");
+                }
+                h.update(b"/");
+            }
+        }
+        Output::Path(path) => {
+            h.update(&[u8::from(path.closed)]);
+            for s in &path.samples {
+                for x in s.position.iter().chain(&[s.width, s.bank, s.distance]) {
+                    h.update(&x.to_bits().to_le_bytes());
+                }
+            }
+        }
     }
     h.finalize().to_hex()[..16].to_string()
 }

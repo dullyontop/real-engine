@@ -89,9 +89,9 @@ Used only inside `re_geom::polygon`, never in its public types (ADR-0043). Pinne
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| i_overlay | 9.1.0 | MIT OR Apache-2.0 | 1.88 | integer-core polygon booleans, offsets and strokes on a fixed 1 mm grid | `default-features = false` | WP24 `overlay-probe` (road strokes, union and intersection, 5,000-square union; identical hashes across runs) | Verified (probe); lands with WP24 PR "booleans and roads" |
-| i_float, i_shape, i_key_sort, i_tree | 5.0.0, 5.0.0, 0.12.0, 0.20.0 | MIT | ≤ 1.88 | i_overlay's own building blocks (same author) | defaults | WP24 probe (resolved with i_overlay) | Verified (probe); transitive |
-| earcut | 0.4.11 | MIT OR Apache-2.0 | ≤ 1.95 | triangulating road unions, junction caps and shapes | defaults | WP24 probe (240-point road union, area matches) | Verified (probe); lands with WP24 PR "booleans and roads" |
+| i_overlay | 9.1.0 | MIT OR Apache-2.0 | 1.88 | integer-core polygon booleans, offsets and strokes on a fixed 1 mm grid | `default-features = false` | WP24 `overlay-probe` (road strokes, union and intersection, 5,000-square union; identical hashes across runs); `re_geom` polygon tests and goldens | Verified; landed with WP24 PR "booleans and roads" |
+| i_float, i_shape, i_key_sort, i_tree | 5.0.0, 5.0.0, 0.12.0, 0.20.0 | MIT | ≤ 1.88 | i_overlay's own building blocks (same author) | defaults | WP24 probe (resolved with i_overlay) | Verified; transitive |
+| earcut | 0.4.11 | MIT OR Apache-2.0 | ≤ 1.95 | triangulating road unions, junction caps and shapes | defaults | WP24 probe (240-point road union, area matches); `re_geom` triangulation tests and goldens | Verified; landed with WP24 PR "booleans and roads" |
 
 `libm` 0.2.16 and `num-traits` 0.2.19, which these pull, are already in the lockfile.
 

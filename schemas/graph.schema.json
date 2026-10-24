@@ -90,7 +90,17 @@
             "mesh.transform",
             "mesh.merge",
             "material.assign",
-            "fragment.merge"
+            "fragment.merge",
+            "shape.polygon",
+            "shape.boolean",
+            "shape.offset",
+            "shape.mesh",
+            "field.from_shapes",
+            "points.mask",
+            "path.spline",
+            "road.mesh",
+            "road.footprint",
+            "terrain.conform"
           ]
         },
         "version": {
@@ -1132,6 +1142,397 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "shape.polygon"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "points": {
+                    "description": "The outer contour, `[x, z]` in metres (3 points or more, either\ndirection).",
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "number",
+                        "format": "double"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "default": []
+                  },
+                  "holes": {
+                    "description": "Holes inside it, each 3 points or more.",
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "number",
+                          "format": "double"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      }
+                    },
+                    "default": []
+                  }
+                },
+                "description": "Parameters of `shape.polygon`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "shape.boolean"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "op": {
+                    "description": "`union`, `intersect`, `difference` (`a` minus `b`) or `xor`.",
+                    "$ref": "#/$defs/shape.boolean.BoolOp"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `shape.boolean`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "shape.offset"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "distance": {
+                    "description": "Metres to grow the shapes by (negative shrinks them).",
+                    "type": "number",
+                    "format": "double",
+                    "default": 0.0
+                  },
+                  "join": {
+                    "description": "`round`, `miter` or `bevel`.",
+                    "$ref": "#/$defs/shape.offset.Join"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `shape.offset`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "shape.mesh"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "height": {
+                    "description": "The height of the flat mesh, in metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.0
+                  },
+                  "material": {
+                    "description": "A material file (`materials/plaza.material.json`), or empty.",
+                    "type": "string",
+                    "default": ""
+                  }
+                },
+                "description": "Parameters of `shape.mesh`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "field.from_shapes"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "size": {
+                    "description": "Samples per side when no `field` is connected (2 to 4097).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 129
+                  },
+                  "cell": {
+                    "description": "Metres between samples when no `field` is connected.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 1.0
+                  },
+                  "falloff": {
+                    "description": "Outside the shapes, the mask falls from 1 to 0 over this many metres\n(0 for a hard edge).",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.0
+                  },
+                  "invert": {
+                    "description": "Gives 0 inside and 1 outside instead.",
+                    "type": "boolean",
+                    "default": false
+                  }
+                },
+                "description": "Parameters of `field.from_shapes`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "points.mask"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "keep": {
+                    "description": "`inside` or `outside`.",
+                    "$ref": "#/$defs/points.mask.Keep"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `points.mask`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "path.spline"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "points": {
+                    "description": "The control points (2 or more; 3 or more when `closed`). With a\n`field` connected, each point's `y` is added to the field's height\nunder it.",
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/path.spline.PointDoc"
+                    }
+                  },
+                  "width": {
+                    "description": "The road's width in metres, where a point does not set one.",
+                    "type": "number",
+                    "format": "double",
+                    "default": 6.0
+                  },
+                  "bank": {
+                    "description": "The bank in degrees, where a point does not set one; positive raises\nthe left edge.",
+                    "type": "number",
+                    "format": "double",
+                    "default": 0.0
+                  },
+                  "spacing": {
+                    "description": "Metres between samples along the centreline.",
+                    "type": "number",
+                    "format": "double",
+                    "default": 1.0
+                  },
+                  "closed": {
+                    "description": "Joins the last point back to the first.",
+                    "type": "boolean",
+                    "default": false
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `path.spline`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "road.mesh"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "junction_radius": {
+                    "description": "Roads are cut back this far (metres) around a junction, and the\njunction surface fills the disc (0 for no junctions).",
+                    "type": "number",
+                    "format": "double",
+                    "default": 8.0
+                  },
+                  "snap": {
+                    "description": "A road end this close (metres) to another road makes a junction.",
+                    "type": "number",
+                    "format": "double",
+                    "default": 2.0
+                  },
+                  "bank_fade": {
+                    "description": "Over this distance (metres) before a junction, the bank fades to 0\nand the road eases to the junction's height.",
+                    "type": "number",
+                    "format": "double",
+                    "default": 10.0
+                  },
+                  "material": {
+                    "description": "A material file (`materials/asphalt.material.json`), or empty.",
+                    "type": "string",
+                    "default": ""
+                  }
+                },
+                "description": "Parameters of `road.mesh`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "road.footprint"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "margin": {
+                    "description": "Metres to grow the footprint by on each side (for a verge, or to\nkeep scattered props off the road).",
+                    "type": "number",
+                    "format": "double",
+                    "default": 0.0
+                  }
+                },
+                "description": "Parameters of `road.footprint`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "terrain.conform"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "shoulder": {
+                    "description": "Flat ground kept on each side beyond the road's edge, in metres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.5
+                  },
+                  "blend": {
+                    "description": "Past the shoulder, the ground blends back to the field over this many\nmetres.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 6.0
+                  },
+                  "depth": {
+                    "description": "The flattened ground sits this far below the road's centreline, so\nthe road surface is drawn above it.",
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.05000000074505806
+                  }
+                },
+                "description": "Parameters of `terrain.conform`.",
+                "type": "object"
+              }
+            }
+          }
         }
       ]
     },
@@ -1331,6 +1732,118 @@
           "description": "A flat plane of `size[0]` by `size[2]`, facing +Y.",
           "type": "string",
           "const": "plane"
+        }
+      ]
+    },
+    "shape.boolean.BoolOp": {
+      "description": "A boolean operation.",
+      "oneOf": [
+        {
+          "description": "Area in `a` or `b`.",
+          "type": "string",
+          "const": "union"
+        },
+        {
+          "description": "Area in both.",
+          "type": "string",
+          "const": "intersect"
+        },
+        {
+          "description": "Area in `a` and not in `b`.",
+          "type": "string",
+          "const": "difference"
+        },
+        {
+          "description": "Area in exactly one of them.",
+          "type": "string",
+          "const": "xor"
+        }
+      ]
+    },
+    "shape.offset.Join": {
+      "description": "How an offset turns corners.",
+      "oneOf": [
+        {
+          "description": "An arc.",
+          "type": "string",
+          "const": "round"
+        },
+        {
+          "description": "A sharp corner (bevelled when very sharp).",
+          "type": "string",
+          "const": "miter"
+        },
+        {
+          "description": "The corner cut off.",
+          "type": "string",
+          "const": "bevel"
+        }
+      ]
+    },
+    "points.mask.Keep": {
+      "description": "Which points `points.mask` keeps.",
+      "oneOf": [
+        {
+          "description": "Points inside the shapes.",
+          "type": "string",
+          "const": "inside"
+        },
+        {
+          "description": "Points outside the shapes.",
+          "type": "string",
+          "const": "outside"
+        }
+      ]
+    },
+    "path.spline.PointDoc": {
+      "description": "A control point of `path.spline`: `[x, y, z]`, or an object that can\nalso set the width and bank there.",
+      "anyOf": [
+        {
+          "description": "A position `[x, y, z]` in metres.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        {
+          "description": "A position with its own width or bank.",
+          "type": "object",
+          "properties": {
+            "position": {
+              "description": "Position `[x, y, z]` in metres.",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "width": {
+              "description": "The road's width here (default: the node's `width`).",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double",
+              "default": null
+            },
+            "bank": {
+              "description": "The bank here in degrees (default: the node's `bank`).",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double",
+              "default": null
+            }
+          },
+          "required": [
+            "position"
+          ]
         }
       ]
     }
