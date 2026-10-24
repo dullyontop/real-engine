@@ -10,7 +10,7 @@
   5000 rpm, 1 s loops of a four-cylinder's exhaust pulses over its firing
   tone. The car script crossfades them by the engine's rpm.
 - `assets/ambience/wind.wav`: wind, a 6 s loop of low-passed noise that
-  swells and settles (at 11,025 Hz: it has nothing above 1 kHz).
+  swells and settles (at 11,025 Hz, plenty for noise low-passed at 400 Hz).
 
 Every sound is made here from sines and seeded noise; there are no recorded
 samples. Loops hold a whole number of cycles of every tone and of their
@@ -96,7 +96,7 @@ def step(seed):
 
 
 def land():
-    """0.3 s: a deeper, longer thud than a step, with a louder rustle."""
+    """0.3 s: a deeper, longer thud than a step."""
     return normalise(thump(0.3, 50.0, 0.08, 1.1, 5), 0.9)
 
 
@@ -139,8 +139,8 @@ WIND_RATE = 11025
 
 
 def wind():
-    """6 s loop: noise low-passed twice around 400 Hz, swelling twice a loop
-    with a slower third gust, every swell a whole number of cycles a loop."""
+    """6 s loop: noise low-passed twice at 400 Hz that swells every 3 s, with
+    a weaker gust every 2 s on top (each a whole number of cycles a loop)."""
     rng = random.Random(11)
     n = 6 * WIND_RATE
     noise = [rng.uniform(-1.0, 1.0) for _ in range(n)]

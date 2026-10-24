@@ -3,7 +3,7 @@
 
 A low-poly figure of boxes, each box skinned wholly to one joint of an
 eleven-joint skeleton (skin `Walker`), with three looping clips: `idle` (2 s),
-`walk` (one stride pair per second at about 1.6 m/s) and `fall` (1 s, in the
+`walk` (one stride pair per second, at 1.69 m/s) and `fall` (1 s, in the
 air). It faces +Z, stands on y = 0 and is 1.8 m tall. Colours are vertex
 colours, so one white material draws it. `anims/walker.animgraph.json` plays
 the clips.

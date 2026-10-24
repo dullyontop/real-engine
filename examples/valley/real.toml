@@ -41,8 +41,9 @@ include = ["models/**"]
 
 # The mixer (ADR-0041). Footsteps and the car have buses under `sfx`, which
 # also feeds a reverb send (`echo`), as if the slopes answered; the wind has
-# `ambience`. The `in_car` snapshot muffles the wind and the echo while the
-# hero drives. tools/make_sounds.py writes every sound in assets/.
+# `ambience`. While the hero drives, the `in_car` snapshot turns the wind
+# down and muffles it, and lowers the echo. tools/make_sounds.py writes every
+# sound in assets/.
 [audio]
 default_bus = "sfx"
 

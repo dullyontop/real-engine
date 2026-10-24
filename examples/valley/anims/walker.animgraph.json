@@ -26,9 +26,21 @@
     },
     {
       "kind": "clip",
+      "id": "walk_brisk",
+      "clip": "models/walker.glb#walk",
+      "speed": 1.5
+    },
+    {
+      "kind": "clip",
       "id": "walk_fast",
       "clip": "models/walker.glb#walk",
-      "speed": 2.5
+      "speed": 2.0
+    },
+    {
+      "kind": "clip",
+      "id": "walk_top",
+      "clip": "models/walker.glb#walk",
+      "speed": 2.37
     },
     {
       "kind": "blend1d",
@@ -41,10 +53,18 @@
         },
         {
           "node": "walk",
-          "threshold": 1.6
+          "threshold": 1.69
+        },
+        {
+          "node": "walk_brisk",
+          "threshold": 2.54
         },
         {
           "node": "walk_fast",
+          "threshold": 3.38
+        },
+        {
+          "node": "walk_top",
           "threshold": 4.0
         }
       ]
@@ -81,7 +101,8 @@
               "param": "airborne",
               "value": true
             }
-          ]
+          ],
+          "interruptible": true
         },
         {
           "id": "land",
@@ -94,7 +115,8 @@
               "param": "airborne",
               "value": false
             }
-          ]
+          ],
+          "interruptible": true
         }
       ]
     }

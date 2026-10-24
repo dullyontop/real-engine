@@ -34,6 +34,7 @@ local car = world.get("car") :: Entity
 local air = 0 -- seconds since the hero left the ground
 local reach = { L = 0, R = 0 } -- each boot's reach ahead of the hips
 local swinging = { L = false, R = false } -- whether it is moving forward
+local fresh = true -- whether the boots' last reach is stale (after the air or the car)
 local steps = 0 -- footsteps so far, to alternate the two takes
 
 body:add("Visible", { visible = true })
@@ -49,27 +50,36 @@ local function get_in()
 	audio.snapshot("in_car", 0.4)
 end
 
+-- The height of the ground under `from`, or nil while none has loaded there.
+local function ground_below(from: vector): number?
+	local hit = physics.raycast(from, DOWN, 50)
+	return if hit then hit.point.y else nil
+end
+
+-- The ground under the entity. The ray starts `below` metres under it, so
+-- the car's own box is not the hit.
+local function ground_under(e: Entity, below: number): number?
+	return ground_below(e:get("Transform", "translation") - vector.create(0, below, 0))
+end
+
 local function get_out()
-	-- Out on the driver's side (the car's left, +X in its own frame), a
-	-- little above the ground so the capsule drops onto it.
+	-- Out on the driver's side (the car's left, +X in its own frame), standing
+	-- on the ground there.
 	local pos: vector = car:get("Transform", "translation")
 	local rot: Quat = car:get("Transform", "rotation")
-	hero:set("Transform", "translation", pos + rot * vector.create(2.2, 0.8, 0))
+	local door = pos + rot * vector.create(2.2, 0.8, 0)
+	local ground = ground_below(door)
+	if ground then
+		door = vector.create(door.x, ground + 0.95, door.z)
+	end
+	hero:set("Transform", "translation", door)
 	hero:add("CharacterController", { height = 1.8, radius = 0.35 })
 	body:set("Visible", "visible", true)
 	rig.driving = false
 	air = 0
-	swinging = { L = false, R = false }
+	fresh = true
 	audio.play(DOOR, pos)
 	audio.snapshot("default", 0.4)
-end
-
--- The height of the ground under the entity, or nil while none has loaded.
--- The ray starts `below` metres under it, so the car's own box is not the hit.
-local function ground_under(e: Entity, below: number): number?
-	local from: vector = e:get("Transform", "translation") - vector.create(0, below, 0)
-	local hit = physics.raycast(from, DOWN, 50)
-	return if hit then hit.point.y else nil
 end
 
 local function start(hero_ground: number, car_ground: number)
@@ -93,7 +103,8 @@ local function sole(side: string): vector
 end
 
 -- A boot lands as it stops swinging forward: when its reach ahead of the
--- hips, which grows through the swing, starts to shrink.
+-- hips, which grows through the swing, starts to shrink. After the air or
+-- the car, the boots are only measured, so that pose is no step.
 local function footsteps()
 	local hips, rot = anim.joint(body, "Hips")
 	local forward = rot * vector.create(0, 0, 1)
@@ -102,7 +113,9 @@ local function footsteps()
 		local foot = sole(side)
 		local now = vector.dot(foot - hips, forward)
 		local was = reach[side]
-		if swinging[side] and now < was - 0.0001 then
+		if fresh then
+			swinging[side] = false
+		elseif swinging[side] and now < was - 0.0001 then
 			swinging[side] = false
 			if was > STEP_REACH then
 				steps += 1
@@ -113,6 +126,7 @@ local function footsteps()
 		end
 		reach[side] = now
 	end
+	fresh = false
 end
 
 input.on_pressed("use", function()
@@ -158,6 +172,9 @@ time.on_step(function(dt)
 	else
 		if air > 0.3 then
 			audio.play(LAND, state.position - vector.create(0, 0.9, 0), 1, "footsteps")
+		end
+		if air > 0 then
+			fresh = true
 		end
 		air = 0
 	end

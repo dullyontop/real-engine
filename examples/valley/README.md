@@ -49,9 +49,10 @@ the wind down and muffles it, and lowers the echo.
 - `models/walker.glb`: the hero, a skinned figure (skin `Walker`, eleven
   joints) with the looping clips `idle`, `walk` and `fall`.
 - `anims/walker.animgraph.json`: the hero's animation graph (ADR-0039). Its
-  `speed` parameter (m/s) blends `idle`, `walk` and `walk` at 2.5 times its
-  speed, so the steps match the ground covered from a stroll to the full
-  4 m/s; while `airborne` is set, it crossfades to `fall`.
+  `speed` parameter (m/s) blends `idle` with `walk` played at four rates, from
+  the clip's own pace (1.69 m/s) to the hero's top speed of 4 m/s, so the
+  boots keep pace with the ground to within a few percent at any speed; while
+  `airborne` is set, it crossfades to `fall`, and back on landing.
 - `assets/`: the sounds. Footsteps (two takes), a landing, the car door,
   three engine layers (about 1000, 2800 and 5000 rpm) and wind.
 - `tools/make_walker.py` and `tools/make_sounds.py` write the model and the
@@ -68,7 +69,7 @@ the wind down and muffles it, and lowers the echo.
 - `scripts/game/game.luau`: the HUD line.
 - `tests/replays/`: `walk` (walk, strafe, turn the camera, jump), `drive`
   (walk to the car, get in, drive along the valley, brake and reverse) and
-  `cross` (turn round and walk 75 s west along the valley, from the cell
+  `cross` (turn round and walk 70 s west along the valley, from the cell
   border at x = 0 across the one at x = -256 while cells load ahead).
   `real verify` runs each twice with the same `state_hash` and checks goldens
   for Vulkan (lavapipe) and GL. CI's `d2` job records every replay's

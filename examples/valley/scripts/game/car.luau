@@ -5,9 +5,9 @@
 -- Parked, the hand brake holds it.
 --
 -- The engine sound is three looping layers (children of the car on the
--- `vehicle` bus), recorded at about 1000, 2800 and 5000 rpm: each plays
--- fully at its own rpm and fades out towards its neighbours', louder with
--- more throttle. Parked, the engine is off.
+-- `vehicle` bus), made at about 1000, 2800 and 5000 rpm: each plays fully at
+-- its own rpm and crossfades with its neighbours' at equal power, louder
+-- with more throttle. Parked, the engine is off.
 local rig = require("./lib/rig")
 
 local car = script.entity :: Entity
@@ -21,7 +21,9 @@ local ENGINE = {
 local armed = false
 
 -- Sets each layer's volume for the engine's `rpm` and `throttle` (0 to 1);
--- `level` 0 is off.
+-- `level` 0 is off. The two layers around `rpm` share it linearly, and each
+-- plays at the square root of its share, so the sum of their powers stays
+-- the same through the crossfade.
 local function engine_sound(rpm: number, throttle: number, level: number)
 	local loud = level * (0.55 + 0.45 * throttle)
 	for i = 1, #ENGINE do
@@ -33,7 +35,7 @@ local function engine_sound(rpm: number, throttle: number, level: number)
 		elseif rpm > layer.rpm and above then
 			share = math.clamp((above.rpm - rpm) / (above.rpm - layer.rpm), 0, 1)
 		end
-		layer.part:set("AudioSource", "volume", loud * share)
+		layer.part:set("AudioSource", "volume", loud * math.sqrt(share))
 	end
 end
 
