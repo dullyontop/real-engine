@@ -140,6 +140,15 @@ pub struct AssetChoice {
     pub reason: String,
 }
 
+/// A texture the packaged game draws uncompressed, and why (ADR-0047).
+#[derive(Clone, Debug, Serialize)]
+pub struct UncompressedTexture {
+    /// The texture file, or a glTF file and the name of its image.
+    pub texture: String,
+    /// Why it is not block-compressed.
+    pub reason: String,
+}
+
 /// What [`pack`] decided.
 #[derive(Debug, Default, Serialize)]
 pub struct PackReport {
@@ -147,6 +156,8 @@ pub struct PackReport {
     pub package: Option<PackageInfo>,
     /// Each importable asset's stored form.
     pub assets: Vec<AssetChoice>,
+    /// The textures that are not block-compressed in the package.
+    pub uncompressed_textures: Vec<UncompressedTexture>,
     /// Sidecars `real build` created in the project (commit them).
     pub created_sidecars: Vec<String>,
     /// Files left out because only processed glTF files use them.
@@ -278,6 +289,7 @@ pub fn pack(project: &Path, config: &AppConfig) -> (PackageWriter, PackReport) {
 
     // Assets: import each (creating missing sidecars), then choose its form.
     let mut server = AssetServer::with_files(files.clone());
+    server.set_config(config.assets);
     let mut processed: BTreeMap<String, ProcessedAsset> = BTreeMap::new();
     for p in paths.iter().filter(|p| importable(p)) {
         let sidecar = format!("{p}.meta.json");
@@ -307,6 +319,10 @@ pub fn pack(project: &Path, config: &AppConfig) -> (PackageWriter, PackReport) {
         let (keep, reason) = match pc.assets {
             AssetStorage::Processed => (true, "[package] assets = \"processed\"".to_owned()),
             AssetStorage::Source => (false, "[package] assets = \"source\"".to_owned()),
+            AssetStorage::Auto if !asset.repeat_at_load => (
+                true,
+                "its textures are block-compressed, which is too slow to repeat at load".to_owned(),
+            ),
             AssetStorage::Auto if processed_size <= source_size.saturating_mul(2) => (
                 true,
                 "the processed copy is at most twice the source's size".to_owned(),
@@ -344,6 +360,36 @@ pub fn pack(project: &Path, config: &AppConfig) -> (PackageWriter, PackReport) {
                 choice.stored = "source";
                 choice.reason = "a glTF file stored as source reads it".to_owned();
             }
+        }
+    }
+
+    // Textures the game draws as RGBA8: stored as source (the runtime has no
+    // encoder) or not encoded at build time.
+    for (path, asset) in &processed {
+        let as_source = stored_processed.get(path) != Some(&true);
+        for t in &asset.textures {
+            let reason = if as_source {
+                "stored as source, which a packaged game imports as RGBA8".to_owned()
+            } else if t.format.is_compressed() {
+                continue;
+            } else if !re_assets::TEXTURE_ENCODER {
+                "this `real` was built without the texture encoder".to_owned()
+            } else if !config.assets.encodes() {
+                "[assets] texture_compression = \"none\"".to_owned()
+            } else {
+                format!(
+                    "{}x{} is not a multiple of 4, which block compression needs",
+                    t.width, t.height
+                )
+            };
+            let texture = if &t.name == path {
+                path.clone()
+            } else {
+                format!("{path} image `{}`", t.name)
+            };
+            report
+                .uncompressed_textures
+                .push(UncompressedTexture { texture, reason });
         }
     }
 

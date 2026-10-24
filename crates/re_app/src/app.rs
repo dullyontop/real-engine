@@ -295,7 +295,7 @@ impl App {
                 .project_dir()
                 .map(Path::to_path_buf)
                 .unwrap_or_default(),
-            media: Media::with_files(files.clone()),
+            media: Media::with_files(files.clone()).with_assets_config(config.assets),
             audio,
             files,
             world,

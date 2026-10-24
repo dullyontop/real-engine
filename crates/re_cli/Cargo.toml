@@ -15,10 +15,11 @@ path = "src/main.rs"
 # optional and enabled by the default-on `tooling` feature; a runtime-only build
 # (`--no-default-features`) links none of them (`cargo xtask check-graph`).
 # WP7 and WP8 may add their crates' optional lines here (docs/M1_PLAN.md,
-# ownership rule).
+# ownership rule). `tooling` also turns on the texture encoder (ADR-0047), so
+# `real build` stores block-compressed textures that the runtime only uploads.
 [features]
 default = ["tooling"]
-tooling = ["dep:re_editor", "dep:re_script_check", "dep:re_agent", "dep:re_mcp", "dep:re_import"]
+tooling = ["dep:re_editor", "dep:re_script_check", "dep:re_agent", "dep:re_mcp", "dep:re_import", "re_assets/texture-encode"]
 # ADR-0037: the packaged game's executable. With it, `real` runs only the game in
 # the `game.rpak` beside it. Built with `--no-default-features --features game`;
 # it adds no crate (windows-sys, Windows only, is already in the runtime graph).

@@ -105,7 +105,7 @@ fn shade(in: VsOut, front_facing: bool) -> vec4<f32> {
     // Samples and derivatives first, while control flow is uniform.
     let base_sample = textureSample(base_texture, material_sampler, in.uv);
     let mr_sample = textureSample(metallic_roughness_texture, material_sampler, in.uv);
-    let normal_sample = textureSample(normal_texture, material_sampler, in.uv).xyz;
+    let normal_sample = textureSample(normal_texture, material_sampler, in.uv).xy;
     let dp_dx = dpdx(in.world_pos);
     let dp_dy = dpdy(in.world_pos);
     let duv_dx = dpdx(in.uv);
@@ -135,7 +135,10 @@ fn shade(in: VsOut, front_facing: bool) -> vec4<f32> {
     let scale = max(dot(t, t), dot(b, b));
     if (material.flags.x > 0.5 && scale > 1e-20) {
         let s = inverseSqrt(scale);
-        let tangent_n = normal_sample * 2.0 - vec3<f32>(1.0);
+        // Z is rebuilt from X and Y for every normal map, so two-channel BC5
+        // maps and RGB ones read the same (ADR-0047).
+        let xy = normal_sample * 2.0 - vec2<f32>(1.0);
+        let tangent_n = vec3<f32>(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
         n = normalize(mat3x3<f32>(t * s, b * s, n) * tangent_n);
     }
 

@@ -605,9 +605,42 @@ pub enum TextureFormat {
     Rgba8Srgb,
     /// 8-bit RGBA, linear data (normal maps, metallic-roughness).
     Rgba8Unorm,
+    /// BC7 blocks of sRGB-encoded colour (base colour and emissive textures;
+    /// ADR-0047).
+    Bc7Srgb,
+    /// BC7 blocks of linear data (metallic-roughness and other linear RGBA
+    /// maps).
+    Bc7Unorm,
+    /// BC5 blocks: the X and Y of a tangent-space normal map, as two linear
+    /// channels. The renderer rebuilds Z.
+    Bc5Unorm,
 }
 
-/// Decoded texture pixels, as given to `Renderer::upload_texture`.
+impl TextureFormat {
+    /// True for the block-compressed formats, whose data is 16-byte blocks of
+    /// 4×4 pixels.
+    pub fn is_compressed(self) -> bool {
+        matches!(self, Self::Bc7Srgb | Self::Bc7Unorm | Self::Bc5Unorm)
+    }
+
+    /// True for the formats that store sRGB-encoded colour.
+    pub fn is_srgb(self) -> bool {
+        matches!(self, Self::Rgba8Srgb | Self::Bc7Srgb)
+    }
+
+    /// The bytes of one `width` x `height` level: 4 a pixel, or 16 a block
+    /// of 4×4 pixels, where a partial block counts whole.
+    pub fn level_bytes(self, width: u32, height: u32) -> u64 {
+        if self.is_compressed() {
+            u64::from(width.div_ceil(4)) * u64::from(height.div_ceil(4)) * 16
+        } else {
+            u64::from(width) * u64::from(height) * 4
+        }
+    }
+}
+
+/// Texture pixels, as given to `Renderer::upload_texture`: decoded RGBA8, or
+/// block-compressed with its mip chain (ADR-0047).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextureData {
     /// Width in pixels.
@@ -616,13 +649,48 @@ pub struct TextureData {
     pub height: u32,
     /// The pixel format.
     pub format: TextureFormat,
-    /// Tightly packed rows, top row first: `width * height * 4` bytes.
+    /// The top mip level, top row first: tightly packed RGBA8 rows
+    /// (`width * height * 4` bytes), or for a block-compressed format, rows
+    /// of blocks.
     pub pixels: Vec<u8>,
+    /// Mip levels 1 to n of a block-compressed texture, laid out like
+    /// `pixels`: each is half the size of the one above, rounded down and at
+    /// least one pixel, down to 1×1, as [`TextureData::mip_sizes`] lists
+    /// them. Empty for RGBA8, whose mips are made at upload.
+    #[serde(default)]
+    pub levels: Vec<Vec<u8>>,
 }
 
 impl TextureData {
-    /// True when `pixels` has exactly `width * height * 4` bytes.
+    /// The width and height of each mip level of a `width` x `height`
+    /// texture, from the top level down to 1×1.
+    pub fn mip_sizes(width: u32, height: u32) -> Vec<(u32, u32)> {
+        let mut sizes = vec![(width, height)];
+        let (mut w, mut h) = (width, height);
+        while w > 1 || h > 1 {
+            (w, h) = ((w / 2).max(1), (h / 2).max(1));
+            sizes.push((w, h));
+        }
+        sizes
+    }
+
+    /// True when the data has the layout of its format: `pixels` holds the
+    /// top level, and a block-compressed texture has a width and height that
+    /// are multiples of 4 and every lower level in `levels`, which an RGBA8
+    /// texture leaves empty.
     pub fn is_well_formed(&self) -> bool {
-        u64::from(self.width) * u64::from(self.height) * 4 == self.pixels.len() as u64
+        let top = self.format.level_bytes(self.width, self.height) == self.pixels.len() as u64;
+        if !self.format.is_compressed() {
+            return top && self.levels.is_empty();
+        }
+        let sizes = Self::mip_sizes(self.width, self.height);
+        top && self.width.is_multiple_of(4)
+            && self.height.is_multiple_of(4)
+            && self.levels.len() + 1 == sizes.len()
+            && self
+                .levels
+                .iter()
+                .zip(&sizes[1..])
+                .all(|(level, &(w, h))| self.format.level_bytes(w, h) == level.len() as u64)
     }
 }
