@@ -1,7 +1,7 @@
 //! The UI layout: from the instance tree to screen rectangles.
 //!
-//! Each root (a `ScreenGui`, or a `BillboardGui` placed by the camera) lays
-//! out its descendants top-down. An element's size is its `Size` against the
+//! Each root (a `ScreenGui`, a `BillboardGui` placed by the camera, or a
+//! `SurfaceGui` on its canvas) lays out its descendants top-down. An element's size is its `Size` against the
 //! parent's content box (the parent's size less its `UIPadding`), limited by
 //! its `UISizeConstraint` and `UIAspectRatioConstraint`, then grown by
 //! `AutomaticSize` to fit its children and text. Its position is its
@@ -57,6 +57,18 @@ impl GuiCamera {
     pub fn focal(&self, viewport: Vec2) -> f32 {
         viewport.y * 0.5 / libm::tanf(self.fov_y.clamp(0.01, 3.1) * 0.5)
     }
+
+    /// The unit direction through screen point `q` of a `viewport`-pixel
+    /// view.
+    pub fn ray(&self, q: Vec2, viewport: Vec2) -> Vec3 {
+        let f = self.focal(viewport);
+        let local = Vec3::new(
+            (q.x - viewport.x * 0.5) / f,
+            -(q.y - viewport.y * 0.5) / f,
+            -1.0,
+        );
+        (self.rotation * local).normalize()
+    }
 }
 
 /// What a drawn element is.
@@ -67,6 +79,8 @@ pub(crate) enum Kind {
     Image,
     TextBox,
     Scrolling,
+    /// A `ViewportFrame`: its background, then the picture of its parts.
+    Viewport,
 }
 
 /// One drawn element.
@@ -550,6 +564,8 @@ impl<'a> Layout<'a> {
                 Kind::Image
             } else if is_a(self, k.e, "ScrollingFrame") {
                 Kind::Scrolling
+            } else if is_a(self, k.e, "ViewportFrame") {
+                Kind::Viewport
             } else {
                 Kind::Frame
             };
