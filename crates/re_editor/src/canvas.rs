@@ -551,6 +551,8 @@ fn colour(ty: Option<PortType>) -> Color32 {
         Some(PortType::Mesh) => Color32::from_rgb(0x4a, 0x90, 0xd9),
         Some(PortType::Points) => Color32::from_rgb(0x5c, 0xb8, 0x5c),
         Some(PortType::Fragment) => Color32::from_rgb(0xa0, 0x6c, 0xd5),
+        Some(PortType::Shapes) => Color32::from_rgb(0xd5, 0x6c, 0x8a),
+        Some(PortType::Path) => Color32::from_rgb(0x6c, 0xc5, 0xd5),
         None => Color32::GRAY,
     }
 }
