@@ -90,7 +90,8 @@ pub fn main() -> ExitCode {
         let path = archive.with_file_name(NOTICES_FILE);
         return match std::fs::read_to_string(&path) {
             Ok(text) => {
-                print!("{text}");
+                // A reader that stops early (`--notices | head`) is no error.
+                let _ = std::io::Write::write_all(&mut std::io::stdout().lock(), text.as_bytes());
                 ExitCode::SUCCESS
             }
             Err(e) => {

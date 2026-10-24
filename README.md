@@ -15,7 +15,7 @@ Real Engine is an open-source 3D game engine written in Rust. It is built around
 **M3 in progress.** Merged so far:
 - Replays end with the same `state_hash` on Linux, Windows and macOS, and a required CI check compares them (D2, ADR-0036).
 - `examples/valley` is a streamed world: you can walk it and drive a car through it, and cells load and unload around you (ADR-0042).
-- `real build` packs a game into `game.rpak` with a runtime-only player, and `real verify --package` checks that it plays like the project (ADR-0037).
+- `real build` packs a game into `game.rpak` with a runtime-only player, laid out as a Linux folder, a Windows folder or a macOS app with the game's icon and the third-party notices, and `real verify --package` checks that it plays like the project (ADR-0037). Releases publish prebuilt runtimes, so a game builds without the engine's source.
 - `real build --target web` makes a folder any static server can host; the game runs in the browser with WebGPU or WebGL2, and saves last across page loads (ADR-0049).
 - The editor has dockable panels, a node canvas over graph files (every edit an undoable `graph.*` command), and translate, rotate and scale gizmos (W, E, R) that move entities live, one undo step per drag (ADR-0044). It also has a script debugger, served over DAP with `--debug`, that stops in native and compat scripts (ADR-0045).
 - The HDR post chain and cascaded shadows, configured in `[render.post]` and `[render.shadows]`; glTF skins and animation graphs (`*.animgraph.json`: blend spaces, layers, state machines and root motion, driven by the `anim` Luau library and the `animgraph.*` commands); vehicles and ragdolls on Jolt; audio buses, effects and snapshots.
@@ -85,7 +85,7 @@ cargo run --locked --release -p re_cli -- verify --project examples/island --jso
 cargo deny check         # needs cargo-deny 0.20.2: cargo install cargo-deny --version 0.20.2 --locked
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same checks, `real verify` on the island, the plaza and the valley (with assertions on the JSON) and windowed smoke runs under Xvfb, plus a build with Rust 1.95.0, the whole suite on Windows and macOS, the browser build, and the cross-platform `state_hash` check. 14 of its checks are required for a merge (ADR-0023). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
+CI (`.github/workflows/ci.yml`) runs the same checks, `real verify` on the island, the plaza and the valley (with assertions on the JSON) and windowed smoke runs under Xvfb, plus a build with Rust 1.95.0, the whole suite on Windows and macOS, the browser build, packaged games on all three platforms, and the cross-platform `state_hash` check. 17 of its checks are required for a merge (ADR-0023). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
 
 ## Running the renderer tests
 
