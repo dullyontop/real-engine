@@ -7,6 +7,7 @@
 //! records no pass.
 
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 
@@ -23,8 +24,12 @@ pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth3
 const MAX_BLOOM_LEVELS: usize = 8;
 /// Passes in one chain at most: sun rays, 2 x 8 bloom, 2 blur and the final one.
 const MAX_PASSES: usize = 1 + 2 * MAX_BLOOM_LEVELS + 2 + 1;
-/// Target sets kept for different sizes (a window and an editor viewport, say).
-const TARGET_CACHE: usize = 4;
+/// Target sets kept for different sizes and sample counts (a window, an
+/// editor viewport, a compat game's `ViewportFrame`s), at most.
+const TARGET_CACHE: usize = 8;
+/// A target set that no scene pass used in this many passes is freed, so the
+/// sizes a resized window went through do not stay allocated.
+const TARGET_IDLE_PASSES: u64 = 64;
 /// Taps on each side of the centre in one blur pass, at most.
 const MAX_BLUR_TAPS: f32 = 24.0;
 
@@ -201,9 +206,57 @@ pub(crate) struct PostChain {
     sampler: wgpu::Sampler,
     uniforms: wgpu::Buffer,
     slot: u64,
-    targets: HashMap<((u32, u32), u32), HdrTargets>,
+    targets: TargetCache<((u32, u32), u32), HdrTargets>,
     /// The targets the last scene pass used.
     active: ((u32, u32), u32),
+}
+
+/// Values by key, the least recently used dropped first when more than
+/// [`TARGET_CACHE`] are wanted, and any unused for [`TARGET_IDLE_PASSES`]
+/// lookups dropped too.
+struct TargetCache<K, V> {
+    entries: HashMap<K, (V, u64)>,
+    /// Lookups so far.
+    uses: u64,
+}
+
+impl<K: Copy + Eq + Hash, V> TargetCache<K, V> {
+    fn new() -> Self {
+        TargetCache {
+            entries: HashMap::new(),
+            uses: 0,
+        }
+    }
+
+    /// The value for `key`, made by `make` when it is not kept.
+    fn get_or_insert_with(&mut self, key: K, make: impl FnOnce() -> V) -> &mut V {
+        self.uses += 1;
+        let now = self.uses;
+        self.entries
+            .retain(|k, (_, last)| *k == key || now - *last <= TARGET_IDLE_PASSES);
+        if !self.entries.contains_key(&key) {
+            while self.entries.len() >= TARGET_CACHE {
+                // Every lookup has its own number, so the oldest is unique.
+                let Some(oldest) = self
+                    .entries
+                    .iter()
+                    .min_by_key(|(_, (_, last))| *last)
+                    .map(|(k, _)| *k)
+                else {
+                    break;
+                };
+                self.entries.remove(&oldest);
+            }
+            self.entries.insert(key, (make(), now));
+        }
+        let (value, last) = self.entries.get_mut(&key).expect("kept or inserted above");
+        *last = now;
+        value
+    }
+
+    fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        self.entries.get_mut(key).map(|(v, _)| v)
+    }
 }
 
 struct Step {
@@ -281,7 +334,7 @@ impl PostChain {
                 mapped_at_creation: false,
             }),
             slot,
-            targets: HashMap::new(),
+            targets: TargetCache::new(),
             active: ((0, 0), 0),
         }
     }
@@ -294,15 +347,9 @@ impl PostChain {
         samples: u32,
     ) -> &HdrTargets {
         let key = (size, samples);
-        if !self.targets.contains_key(&key) {
-            if self.targets.len() >= TARGET_CACHE {
-                self.targets.clear();
-            }
-            self.targets
-                .insert(key, HdrTargets::new(device, size, samples));
-        }
         self.active = key;
-        &self.targets[&key]
+        self.targets
+            .get_or_insert_with(key, || HdrTargets::new(device, size, samples))
     }
 
     fn pipeline(
@@ -675,5 +722,54 @@ mod tests {
         let (step, sigma, taps) = blur_taps(0.5, 720);
         assert!(step > 1.0 && taps <= MAX_BLUR_TAPS, "{step} {taps}");
         assert!((sigma * step - 90.0).abs() < 1e-3);
+    }
+
+    /// Counts the values a cache made, by key.
+    fn made(cache: &mut TargetCache<u32, u32>, made: &mut Vec<u32>, key: u32) {
+        cache.get_or_insert_with(key, || {
+            made.push(key);
+            key
+        });
+    }
+
+    #[test]
+    fn a_frame_with_as_many_views_as_the_cache_holds_makes_nothing_twice() {
+        // A window and seven `ViewportFrame`s of different sizes, every frame.
+        let (mut cache, mut made_now) = (TargetCache::new(), Vec::new());
+        for _ in 0..10 {
+            for key in 0..TARGET_CACHE as u32 {
+                made(&mut cache, &mut made_now, key);
+            }
+        }
+        assert_eq!(made_now, (0..TARGET_CACHE as u32).collect::<Vec<_>>());
+        // One more view drops only the least recently used.
+        made(&mut cache, &mut made_now, 100);
+        made(&mut cache, &mut made_now, 7);
+        made(&mut cache, &mut made_now, 1);
+        made(&mut cache, &mut made_now, 0);
+        assert_eq!(&made_now[TARGET_CACHE..], &[100, 0]);
+    }
+
+    #[test]
+    fn sizes_a_window_went_through_are_freed_once_idle() {
+        let (mut cache, mut made_now) = (TargetCache::new(), Vec::new());
+        // A drag through twenty sizes, then the final one for a while.
+        for key in 0..20 {
+            made(&mut cache, &mut made_now, key);
+        }
+        assert_eq!(cache.entries.len(), TARGET_CACHE);
+        for _ in 0..TARGET_IDLE_PASSES {
+            made(&mut cache, &mut made_now, 19);
+        }
+        assert_eq!(cache.entries.keys().copied().collect::<Vec<_>>(), [19]);
+        // A view drawn now and then within the idle limit is kept.
+        for _ in 0..5 {
+            made(&mut cache, &mut made_now, 50);
+            for _ in 0..TARGET_IDLE_PASSES - 1 {
+                made(&mut cache, &mut made_now, 19);
+            }
+        }
+        assert_eq!(made_now.iter().filter(|k| **k == 50).count(), 1);
+        assert!(cache.get_mut(&50).is_some());
     }
 }
