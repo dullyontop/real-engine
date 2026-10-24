@@ -90,6 +90,37 @@ fn streamed_cells_load_around_the_focus_and_carry_the_character() {
     assert!(ground_under(&app, Vec3::new(460.0, 0.0, 460.0)).is_none());
 }
 
+/// The land as level-of-detail terrain: no mesh per cell, collision chunks
+/// near the focus.
+const CHUNKED: &str = r#"local g = proc.graph("land")
+local h = g:node("terrain.heightfield", { cell = 4.0, height = 6.0, scale = 0.02 }, nil, "h")
+g:node("terrain.chunks", { max_level = 2 }, { field = h }, "ground")
+return g
+"#;
+
+#[test]
+fn the_character_stands_on_terrain_collision_chunks() {
+    let dir = project(&format!("{CONFIG}physics_radius = 100.0\n"));
+    std::fs::write(dir.path().join("scripts/tools/land.luau"), CHUNKED).unwrap();
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(120), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    // The hero at (20, 20) is in chunk t/0_0 (256 m at 4 m spacing).
+    let chunk = app.world().entity("land/t/0_0").expect("a collision chunk");
+    let c = app.world().ecs.get::<re_scene::Collider>(chunk).unwrap();
+    assert!(re_proc::stream::collider_precision(&c.source).is_some());
+    let hero = position(&app, "hero");
+    let ground = ground_under(&app, hero).expect("the chunk's collider");
+    assert!(
+        (hero.y - (ground + 0.9)).abs() < 0.25,
+        "the hero stands on the terrain: y {} over ground {ground}",
+        hero.y
+    );
+    // Chunks beyond physics_radius have no collider.
+    assert!(app.world().entity("land/t/1_1").is_err());
+    assert!(ground_under(&app, Vec3::new(460.0, 0.0, 460.0)).is_none());
+}
+
 #[test]
 fn cells_unload_when_the_focus_leaves() {
     let dir = project(CONFIG);

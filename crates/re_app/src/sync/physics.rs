@@ -50,6 +50,9 @@ pub struct HeightfieldData {
     pub offset: Vec3,
     /// `n × n` heights, `samples[z * n + x]`.
     pub samples: Vec<f32>,
+    /// How finely the physics shape stores them (`None`: the backend's
+    /// defaults).
+    pub precision: Option<re_types::physics::HeightfieldPrecision>,
 }
 
 /// The meshes and heightfields collider `source`s can name, by asset path
@@ -88,6 +91,9 @@ fn heightfield_content(data: &HeightfieldData) -> blake3::Hash {
     }
     for v in &data.samples {
         h.update(&v.to_le_bytes());
+    }
+    if let Some(p) = data.precision {
+        h.update(&[p.bits_per_sample, p.block_size]);
     }
     h.finalize()
 }
@@ -398,6 +404,7 @@ fn shape_of(
                 samples: h.samples.iter().map(|v| v * s.y).collect(),
                 spacing: h.spacing * s.x,
                 offset: h.offset * s,
+                precision: h.precision,
             }
         }
     })
@@ -1104,6 +1111,7 @@ mod tests {
             spacing: 1.0,
             offset: Vec3::ZERO,
             samples: vec![height; 9],
+            precision: None,
         })
     }
 

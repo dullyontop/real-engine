@@ -122,8 +122,6 @@ pub fn referenced_assets(world: &mut World) -> (Vec<String>, Vec<String>) {
         .map(|m| m.asset.clone())
         .filter(|a| !a.is_empty())
         .collect();
-    meshes.sort();
-    meshes.dedup();
     let mut materials: Vec<String> = world
         .ecs
         .query::<&MaterialRef>()
@@ -131,6 +129,16 @@ pub fn referenced_assets(world: &mut World) -> (Vec<String>, Vec<String>) {
         .map(|m| m.asset.clone())
         .filter(|a| !a.is_empty())
         .collect();
+    if let Some(view) = world.ecs.get_resource::<re_proc::stream::TerrainView>() {
+        for c in view.chunks() {
+            meshes.push(c.mesh.clone());
+            if !c.material.is_empty() {
+                materials.push(c.material.clone());
+            }
+        }
+    }
+    meshes.sort();
+    meshes.dedup();
     materials.sort();
     materials.dedup();
     (meshes, materials)
@@ -217,6 +225,36 @@ pub fn build(world: &mut World, inputs: &RenderInputs<'_>) -> RenderSnapshot {
             world: Mat4::from(global(world, inputs, entity)),
             flags: DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS,
         });
+    }
+    // Streamed terrain chunks (ADR-0042): world-space meshes drawn as their
+    // source, which hides them when it is hidden.
+    if let Some(view) = world.ecs.get_resource::<re_proc::stream::TerrainView>() {
+        for c in view.chunks() {
+            if world
+                .ecs
+                .get::<Visible>(c.source)
+                .is_some_and(|v| !v.visible)
+            {
+                continue;
+            }
+            let Some(handle) = inputs.assets.mesh(&c.mesh) else {
+                continue;
+            };
+            let material = Some(c.material.as_str())
+                .filter(|m| !m.is_empty())
+                .and_then(|m| inputs.assets.material(m))
+                .or(inputs.assets.default_material);
+            let Some(material) = material else {
+                continue;
+            };
+            items.push(DrawItem {
+                entity: entity_id(c.source),
+                mesh: handle,
+                material,
+                world: Mat4::IDENTITY,
+                flags: DrawFlags::CAST_SHADOWS | DrawFlags::RECEIVE_SHADOWS,
+            });
+        }
     }
 
     let mut skinned = Vec::new();

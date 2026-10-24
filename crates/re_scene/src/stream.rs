@@ -20,6 +20,11 @@
 //!   of an unloaded cell are kept as an exact [`Snapshot`] (play state
 //!   included) and still written by [`World::save`].
 //!
+//! * [`World::set_terrain_chunk`] / [`World::remove_terrain_chunk`]: a
+//!   source's terrain collision chunks (key `t/<x>_<z>`, marked
+//!   [`TerrainChunk`]), generated entities with a static heightfield
+//!   [`Collider`] near the focuses.
+//!
 //! [`StreamCell`] is the description of a cell that scripts and events see.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -33,7 +38,7 @@ use re_reflect::{Doc, FieldType, Value, component};
 use serde::{Deserialize, Serialize};
 
 use crate::codes;
-use crate::components::{MaterialRef, MeshRef, Name};
+use crate::components::{Collider, ColliderShape, MaterialRef, MeshRef, Name};
 use crate::error::SceneError;
 use crate::hierarchy::{self, children};
 use crate::ids::StableId;
@@ -69,6 +74,25 @@ component! {
 pub struct LoadedCell {
     /// The cell's key (`c/<x>_<z>`).
     pub key: String,
+}
+
+/// Marks a terrain collision chunk of a streamed source (ADR-0042).
+/// Runtime only: never saved.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct TerrainChunk {
+    /// The chunk's key (`t/<x>_<z>`).
+    pub key: String,
+}
+
+/// The key of terrain collision chunk `(x, z)`: `t/<x>_<z>`.
+pub fn chunk_key(x: i32, z: i32) -> String {
+    format!("t/{x}_{z}")
+}
+
+/// The coordinates of a terrain chunk key (`t/<x>_<z>`, canonical decimal
+/// integers), or `None` if `key` is not one.
+pub fn parse_chunk_key(key: &str) -> Option<[i32; 2]> {
+    parse_cell_key(&format!("c/{}", key.strip_prefix("t/")?))
 }
 
 /// One cell of the streamed world, as scripts and events see it.
@@ -292,6 +316,99 @@ impl World {
         let id = format!("{}/{cell}", self.id_of(source)?);
         let e = self.ids().get(&id)?;
         self.ecs.get::<LoadedCell>(e).is_some().then_some(e)
+    }
+
+    /// Sets `source`'s terrain collision chunk `key` (`t/<x>_<z>`): a
+    /// generated child entity `<source id>/t/<x>_<z>` at the source's origin
+    /// with a static heightfield [`Collider`] naming `heightfield` (whose
+    /// samples carry their own offset). An existing chunk gets the new
+    /// heightfield; returns the one it named before. A chunk deleted by an
+    /// override is not created.
+    pub fn set_terrain_chunk(
+        &mut self,
+        source: Entity,
+        key: &str,
+        heightfield: &str,
+    ) -> Result<Option<String>, SceneError> {
+        let src_id = self.streamed_source(source)?;
+        let [x, z] = parse_chunk_key(key)
+            .ok_or_else(|| invalid(format!("{key:?} is not a terrain chunk key (t/<x>_<z>)")))?;
+        let deleted = self
+            .ecs
+            .get::<Overrides>(source)
+            .is_some_and(|o| o.is_deleted(key));
+        if deleted {
+            return Ok(None);
+        }
+        if let Some(e) = self.terrain_chunk(source, key) {
+            let Some(mut c) = self.ecs.get_mut::<Collider>(e) else {
+                return Ok(None);
+            };
+            if c.source == heightfield {
+                return Ok(None);
+            }
+            return Ok(Some(std::mem::replace(
+                &mut c.source,
+                heightfield.to_string(),
+            )));
+        }
+        let id = format!("{src_id}/{key}");
+        if self.ids().get(&id).is_some() {
+            return Err(invalid(format!(
+                "id {id:?} is already taken by another entity"
+            )));
+        }
+        let transform = self.registry.key("Transform")?;
+        let defaults = self.registry.schema(transform).defaults();
+        let e = self
+            .ecs
+            .spawn((
+                StableId(id),
+                Name(format!("Terrain chunk {x},{z}")),
+                Generated {
+                    source,
+                    key: key.to_string(),
+                },
+                TerrainChunk {
+                    key: key.to_string(),
+                },
+                Collider {
+                    shape: ColliderShape::Heightfield,
+                    source: heightfield.to_string(),
+                    ..Collider::default()
+                },
+            ))
+            .id();
+        self.registry
+            .insert(&mut self.ecs, e, transform, defaults)?;
+        hierarchy::add_child(&mut self.ecs, source, e);
+        Ok(None)
+    }
+
+    /// Despawns `source`'s terrain collision chunk `key`; returns the
+    /// heightfield it named, or `None` if there was none.
+    pub fn remove_terrain_chunk(&mut self, source: Entity, key: &str) -> Option<String> {
+        let e = self.terrain_chunk(source, key)?;
+        let heightfield = self.ecs.get::<Collider>(e).map(|c| c.source.clone());
+        hierarchy::despawn_recursive(&mut self.ecs, e);
+        heightfield
+    }
+
+    /// `source`'s terrain collision chunk `key`, if it exists.
+    pub fn terrain_chunk(&self, source: Entity, key: &str) -> Option<Entity> {
+        let id = format!("{}/{key}", self.id_of(source)?);
+        let e = self.ids().get(&id)?;
+        self.ecs.get::<TerrainChunk>(e).is_some().then_some(e)
+    }
+
+    /// The keys of `source`'s terrain collision chunks, sorted.
+    pub fn terrain_chunks(&self, source: Entity) -> Vec<String> {
+        let mut out: Vec<String> = children(&self.ecs, source)
+            .iter()
+            .filter_map(|e| self.ecs.get::<TerrainChunk>(*e).map(|c| c.key.clone()))
+            .collect();
+        out.sort();
+        out
     }
 
     /// The keys of `source`'s loaded cells, sorted.

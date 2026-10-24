@@ -1454,6 +1454,15 @@ impl App {
             {
                 s.set_lateness(self.stream_lateness);
             }
+            // The terrain view is only made for an app that draws.
+            if let Some(mut s) = self
+                .world
+                .ecs
+                .get_resource_mut::<re_proc::stream::Streamer>()
+                && s.view() != self.graphics.is_some()
+            {
+                s.set_view(self.graphics.is_some());
+            }
             let report =
                 re_proc::stream::step(&mut self.world, self.stream_tick, &self.config.stream);
             self.diagnostics.extend(report.diagnostics);
