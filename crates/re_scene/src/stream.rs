@@ -38,7 +38,7 @@ use re_reflect::{Doc, FieldType, Value, component};
 use serde::{Deserialize, Serialize};
 
 use crate::codes;
-use crate::components::{Collider, ColliderShape, MaterialRef, MeshRef, Name};
+use crate::components::{Collider, ColliderShape, MaterialRef, MeshRef, Name, Transform};
 use crate::error::SceneError;
 use crate::hierarchy::{self, children};
 use crate::ids::StableId;
@@ -319,15 +319,17 @@ impl World {
     }
 
     /// Sets `source`'s terrain collision chunk `key` (`t/<x>_<z>`): a
-    /// generated child entity `<source id>/t/<x>_<z>` at the source's origin
-    /// with a static heightfield [`Collider`] naming `heightfield` (whose
-    /// samples carry their own offset). An existing chunk gets the new
-    /// heightfield; returns the one it named before. A chunk deleted by an
-    /// override is not created.
+    /// generated child entity `<source id>/t/<x>_<z>` at `translation` from
+    /// the source's origin (the chunk's corner, so its body lies where its
+    /// ground is, within physics' reach of a floating origin) with a static
+    /// heightfield [`Collider`] naming `heightfield`. An existing chunk gets
+    /// the new heightfield; returns the one it named before. A chunk deleted
+    /// by an override is not created.
     pub fn set_terrain_chunk(
         &mut self,
         source: Entity,
         key: &str,
+        translation: Vec3,
         heightfield: &str,
     ) -> Result<Option<String>, SceneError> {
         let src_id = self.streamed_source(source)?;
@@ -341,6 +343,11 @@ impl World {
             return Ok(None);
         }
         if let Some(e) = self.terrain_chunk(source, key) {
+            if let Some(mut t) = self.ecs.get_mut::<Transform>(e)
+                && t.translation != translation
+            {
+                t.translation = translation;
+            }
             let Some(mut c) = self.ecs.get_mut::<Collider>(e) else {
                 return Ok(None);
             };
@@ -381,6 +388,9 @@ impl World {
             .id();
         self.registry
             .insert(&mut self.ecs, e, transform, defaults)?;
+        if let Some(mut t) = self.ecs.get_mut::<Transform>(e) {
+            t.translation = translation;
+        }
         hierarchy::add_child(&mut self.ecs, source, e);
         Ok(None)
     }

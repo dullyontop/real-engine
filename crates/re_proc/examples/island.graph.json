@@ -8,7 +8,7 @@
     { "id": "mask", "kind": "terrain.island_mask", "version": 1, "params": { "radius": 0.95, "falloff": 0.7 } },
     { "id": "island", "kind": "field.combine", "version": 1, "params": { "op": "mul" } },
     { "id": "shore", "kind": "field.remap", "version": 1, "params": { "mode": "curve", "points": [[0.0, -4.0], [3.0, 1.5], [32.0, 24.0]] } },
-    { "id": "terrain", "kind": "terrain.mesh", "version": 1, "params": { "collider": true, "material": "materials/grass.material.json", "name": "Terrain" } },
+    { "id": "terrain", "kind": "terrain.mesh", "version": 2, "params": { "collider": true, "material": "materials/grass.material.json", "name": "Terrain" } },
     { "id": "water", "kind": "terrain.water_plane", "version": 1, "params": { "level": 0.0, "size": 600.0, "material": "materials/water.material.json" } },
     { "id": "scatter", "kind": "scatter.poisson", "version": 1, "params": { "radius": 7.0, "height_min": 2.0, "slope_max": 0.7 } },
     { "id": "kind", "kind": "points.pick", "version": 1, "params": { "choices": [{ "tag": "palm", "weight": 3.0 }, { "tag": "rock", "weight": 1.0 }] } },

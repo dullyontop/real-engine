@@ -26,7 +26,8 @@ fn graph(nodes: &[(&str, &str, Json)], edges: &[(&str, &str, &str, &str)]) -> Gr
         "name": "world",
         "seed": 7,
         "nodes": nodes.iter().map(|(id, kind, params)| json!({
-            "id": id, "kind": kind, "version": 1, "params": params,
+            "id": id, "kind": kind, "params": params,
+            "version": crate::NodeRegistry::m1().get(kind).map_or(1, |d| d.version),
         })).collect::<Vec<_>>(),
         "edges": edges.iter().map(|(f, fp, t, tp)| json!({
             "from": [f, fp], "to": [t, tp],
@@ -410,6 +411,20 @@ fn stream_refuses_unstreamable_and_moved_sources() {
     let mut st = streamed(odd, 0.0, 0.0, json!([]));
     let r = step(&mut st.world, 0, &config());
     assert_eq!(r.diagnostics[0].code.to_string(), "RE4301");
+    // One that divides it but is not a multiple of 1/1024 m: chunks at their
+    // corners would not meet exactly.
+    let inexact = graph(
+        &[("h", "terrain.heightfield", json!({ "cell": 0.64 }))],
+        &[],
+    );
+    let mut st = streamed(inexact, 0.0, 0.0, json!([]));
+    let r = step(&mut st.world, 0, &config());
+    assert_eq!(r.diagnostics[0].code.to_string(), "RE4301");
+    assert!(
+        r.diagnostics[0].message.contains("1/1024"),
+        "{}",
+        r.diagnostics[0].message
+    );
 
     let mut st = streamed(world_graph(), 0.0, 0.0, json!([]));
     st.world
@@ -844,7 +859,8 @@ fn stream_terrain_chunks_cover_the_source_with_matching_seams() {
         assert_eq!(c.source, terrain);
         assert!(c.mesh.starts_with("derived:terrain/terrain/"), "{}", c.mesh);
         for v in &c.data().vertices {
-            let at = ((v.pos[0] * 16.0) as i64, (v.pos[2] * 16.0) as i64);
+            let (x, z) = (c.corner.x + v.pos[0], c.corner.z + v.pos[2]);
+            let at = ((x * 16.0) as i64, (z * 16.0) as i64);
             let y = *heights.entry(at).or_insert(v.pos[1]);
             assert!(
                 (y - v.pos[1]).abs() < 1e-3,
@@ -1005,7 +1021,14 @@ fn stream_terrain_collision_chunks_share_their_edges() {
     let n = 65usize;
     let (a, b) = (&chunks["t/-1_0"], &chunks["t/0_0"]);
     assert_eq!(a.n, 65);
-    assert_eq!(a.offset, Vec3::new(-256.0, 0.0, 0.0));
+    // Local to the chunk entity, which sits at the chunk's corner.
+    assert_eq!(a.offset, Vec3::ZERO);
+    let corner = |k: &str| match w.get(&format!("terrain/{k}"), "Transform", "translation") {
+        Ok(Value::Vec3(v)) => v,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(corner("t/-1_0"), Vec3::new(-256.0, 0.0, 0.0));
+    assert_eq!(corner("t/0_0"), Vec3::ZERO);
     for z in 0..n {
         // a's last column is b's first, bit for bit.
         assert_eq!(
@@ -1176,6 +1199,162 @@ fn stream_eroded_terrain_streams_with_matching_collision_seams() {
         assert_eq!(
             a.samples[z * 65 + 64].to_bits(),
             b.samples[z * 65].to_bits()
+        );
+    }
+}
+
+#[test]
+fn stream_origin_follows_the_focus_on_its_grid() {
+    let mut st = streamed(world_graph(), 0.0, 0.0, json!([]));
+    let w = &mut st.world;
+    let origin_after = |w: &mut World, x: f32, z: f32, t: u64| {
+        move_to(w, x, z);
+        let r = step(w, t, &config());
+        assert!(r.diagnostics.is_empty(), "{:#?}", r.diagnostics);
+        assert_eq!(r.origin, w.ecs.resource::<Streamer>().origin());
+        r.origin
+    };
+    assert_eq!(origin_after(w, 0.0, 0.0, 0), Vec3::ZERO);
+    // Within origin_shift (2048 m) on both axes: it stays.
+    assert_eq!(origin_after(w, 2000.0, -2040.0, 1), Vec3::ZERO);
+    // Past it: the grid point (1024 m) nearest the focus.
+    assert_eq!(
+        origin_after(w, 2100.0, -300.0, 2),
+        Vec3::new(2048.0, 0.0, 0.0)
+    );
+    assert_eq!(
+        origin_after(w, 4000.0, -300.0, 3),
+        Vec3::new(2048.0, 0.0, 0.0)
+    );
+    assert_eq!(
+        origin_after(w, 4200.0, -2400.0, 4),
+        Vec3::new(4096.0, 0.0, -2048.0)
+    );
+    // A fork carries it.
+    let fork = w.fork();
+    let f = w.ecs.resource::<Streamer>().forked(w, &fork);
+    assert_eq!(f.origin(), Vec3::new(4096.0, 0.0, -2048.0));
+}
+
+#[test]
+fn stream_origin_reports_focuses_out_of_reach_and_content_out_of_precision() {
+    let mut st = streamed(
+        world_graph(),
+        0.0,
+        0.0,
+        json!([{
+            "id": "player2",
+            "name": "Player 2",
+            "components": {
+                "StreamFocus": {},
+                "Transform": { "translation": [12000.0, 0.0, 0.0] }
+            }
+        }]),
+    );
+    let w = &mut st.world;
+    let r = step(w, 0, &config());
+    // The origin sits at the mean (6000 m, so 6144 m): both focuses are
+    // more than 5 km from it.
+    assert_eq!(r.origin, Vec3::new(6144.0, 0.0, 0.0));
+    let codes: Vec<_> = r.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        [crate::codes::ORIGIN_RANGE, crate::codes::ORIGIN_RANGE]
+    );
+    assert!(
+        r.diagnostics[1]
+            .message
+            .contains("focus `player2` is 5.9 km"),
+        "{}",
+        r.diagnostics[1].message
+    );
+    // Reported once.
+    assert!(step(w, 1, &config()).diagnostics.is_empty());
+
+    // An unbounded source with a focus 17 km out: its cells there are
+    // beyond the precision limit.
+    w.set("terrain", "Streamed", "bounds", Value::Float(0.0))
+        .unwrap();
+    w.set(
+        "player2",
+        "Transform",
+        "translation",
+        Value::Vec3(Vec3::new(0.0, 0.0, 0.0)),
+    )
+    .unwrap();
+    move_to(w, 17_000.0, 0.0);
+    let r = step(w, 2, &config());
+    let far: Vec<_> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == crate::codes::PRECISION_LIMIT)
+        .collect();
+    assert!(!far.is_empty(), "{:#?}", r.diagnostics);
+    assert!(far[0].message.contains("beyond the 16 km precision limit"));
+}
+
+#[test]
+fn stream_reports_outdated_nodes_once() {
+    // Streamed cells skip the generator, so the streamer says itself that
+    // `terrain.mesh` 1 still puts streamed cells in world space.
+    let mut doc = world_graph();
+    for n in &mut doc.nodes {
+        if n.kind == "terrain.mesh" {
+            n.version = 1;
+        }
+    }
+    let mut st = streamed(doc, 32.0, 32.0, json!([]));
+    let r = run(&mut st.world, 0..5);
+    let codes: Vec<Vec<String>> = r
+        .iter()
+        .map(|r| r.diagnostics.iter().map(|d| d.code.to_string()).collect())
+        .collect();
+    assert_eq!(codes[0], ["RE4019"], "{:#?}", r[0].diagnostics);
+    assert!(codes[1..].iter().all(Vec::is_empty), "{codes:?}");
+    let d = &r[0].diagnostics[0];
+    assert!(
+        d.message.contains("node `ground` (terrain.mesh)"),
+        "{}",
+        d.message
+    );
+}
+
+#[test]
+fn stream_cell_bounds_span_the_terrain_heights() {
+    // Terrain lifted to 100 m and more: the cell's bounds hold its mesh's
+    // heights, not the corner-local entity's origin at y = 0.
+    let doc = graph(
+        &[
+            (
+                "h",
+                "terrain.heightfield",
+                json!({ "cell": 4.0, "height": 40.0 }),
+            ),
+            (
+                "lift",
+                "field.remap",
+                json!({ "mode": "curve", "points": [[0.0, 100.0], [40.0, 140.0]] }),
+            ),
+            ("ground", "terrain.mesh", json!({})),
+        ],
+        &[
+            ("h", "field", "lift", "field"),
+            ("lift", "field", "ground", "field"),
+        ],
+    );
+    let mut st = streamed(doc, 32.0, 32.0, json!([]));
+    let mut r = run(&mut st.world, 0..3);
+    r.push(step(&mut st.world, 3, &config()));
+    assert!(r.iter().all(|r| r.diagnostics.is_empty()), "{r:?}");
+    let events = st.world.ecs.resource::<StreamEvents>();
+    assert!(!events.loaded.is_empty());
+    for cell in &events.loaded {
+        assert!(
+            cell.min.y >= 99.0 && cell.max.y <= 141.0 && cell.max.y > cell.min.y,
+            "{}: {} to {}",
+            cell.key,
+            cell.min.y,
+            cell.max.y
         );
     }
 }

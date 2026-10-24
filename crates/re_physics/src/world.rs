@@ -69,9 +69,19 @@ pub struct Physics {
     pub(crate) gate: Arc<GroupGate>,
     pub(crate) state: StepState,
     pub(crate) removed: Vec<BodyId>,
-    diagnostics: Vec<Diagnostic>,
+    pub(crate) diagnostics: Vec<Diagnostic>,
     scratch_poses: Vec<oxijolt::BodyPose>,
     pub(crate) parts: PartsState,
+    /// Bodies added out of reach of a moved origin, by entity: added to Jolt
+    /// when a later move of the origin, or a new transform, brings them in
+    /// reach (ADR-0042).
+    pub(crate) waiting: BTreeMap<EntityId, BodyDesc>,
+    /// The latest position or kinematic target each body or character out of
+    /// reach was given, applied as a teleport once it is in reach.
+    pub(crate) far_writes: BTreeMap<EntityId, (Vec3, Quat)>,
+    /// Vehicles and constraints on bodies that wait, in arrival order, added
+    /// once their bodies join.
+    pub(crate) deferred: Vec<PhysicsCmd>,
 }
 
 /// What the world knows about one body.
@@ -88,8 +98,8 @@ pub(crate) struct BodyEntry {
 }
 
 pub(crate) struct CharacterEntry {
-    id: CharacterId,
-    inner: Option<BodyId>,
+    pub(crate) id: CharacterId,
+    pub(crate) inner: Option<BodyId>,
     pub(crate) groups: GroupMask,
     step_height: f32,
     /// The object layers the character collides with, for its query filter.
@@ -142,7 +152,12 @@ pub(crate) struct StepState {
 pub struct PhysicsSnapshot {
     world: WorldState,
     state: StepState,
+    /// The simulation origin the world's positions are relative to.
+    origin: Vec3,
     ragdolls: BTreeMap<EntityId, RagdollSaved>,
+    waiting: BTreeMap<EntityId, BodyDesc>,
+    deferred: Vec<PhysicsCmd>,
+    far_writes: BTreeMap<EntityId, (Vec3, Quat)>,
 }
 
 impl std::fmt::Debug for PhysicsSnapshot {
@@ -186,6 +201,9 @@ pub struct MotionState {
     bodies: Vec<BodyMotion>,
     characters: Vec<CharacterMotion>,
     ragdolls: Vec<RagdollMotion>,
+    /// The origin of the world that took it (characters' Jolt states are
+    /// relative to it).
+    origin: Vec3,
 }
 
 impl MotionState {
@@ -413,6 +431,9 @@ impl Physics {
             diagnostics: Vec::new(),
             scratch_poses: Vec::new(),
             parts,
+            waiting: BTreeMap::new(),
+            far_writes: BTreeMap::new(),
+            deferred: Vec::new(),
         })
     }
 
@@ -438,20 +459,32 @@ impl Physics {
     }
 
     fn apply_one(&mut self, cmd: PhysicsCmd) -> Result<(), Diagnostic> {
+        if let Some(result) = self.apply_waiting(&cmd) {
+            return result;
+        }
+        if self.defers(&cmd) {
+            self.deferred.push(cmd);
+            return Ok(());
+        }
         match cmd {
             PhysicsCmd::AddBody { id, desc } => self.add_body(id, &desc),
-            PhysicsCmd::RemoveBody { id } => self.remove_body(id),
+            PhysicsCmd::RemoveBody { id } => {
+                self.drop_deferred(&cmd);
+                self.far_writes.remove(&id);
+                self.remove_body(id)
+            }
             PhysicsCmd::SetTransform { id, pos, rot } => self.set_transform(id, pos, rot),
             PhysicsCmd::SetKinematicTarget { id, pos, rot } => {
                 let entry = self.bodies.get(&id).ok_or_else(|| unknown(id, "body"))?;
                 if entry.kind != BodyKind::Kinematic {
                     return Err(wrong_kind(id, "a kinematic target", entry.kind));
                 }
-                if !in_world(pos) {
-                    return Err(outside_world(id, "target", pos));
-                }
                 let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
+                if !self.in_reach(pos) {
+                    return self.far_write(id, "target", pos, rot);
+                }
                 self.state.kin_targets.insert(id, (pos, rot));
+                self.far_writes.remove(&id);
                 Ok(())
             }
             PhysicsCmd::ApplyImpulse { id, impulse } => {
@@ -505,7 +538,10 @@ impl Physics {
             PhysicsCmd::AddCharacter { id, desc, pos, rot } => {
                 self.add_character(id, &desc, pos, rot)
             }
-            PhysicsCmd::RemoveCharacter { id } => self.remove_character(id),
+            PhysicsCmd::RemoveCharacter { id } => {
+                self.far_writes.remove(&id);
+                self.remove_character(id)
+            }
             PhysicsCmd::MoveCharacter {
                 id,
                 desired_velocity,
@@ -580,6 +616,7 @@ impl Physics {
 
     fn add_body(&mut self, id: EntityId, desc: &BodyDesc) -> Result<(), Diagnostic> {
         if self.bodies.contains_key(&id)
+            || self.waiting.contains_key(&id)
             || self.characters.contains_key(&id)
             || self.ragdolls.contains_key(&id)
         {
@@ -594,10 +631,22 @@ impl Physics {
         if desc.kind != BodyKind::Static && shapes::is_static_only(&desc.shape) {
             return Err(static_only(id, &desc.shape, desc.kind));
         }
-        if !in_world(desc.pos) {
-            return Err(outside_world(id, "body", desc.pos));
-        }
         let rot = unit_rotation(desc.rot).ok_or_else(|| bad_rotation(id))?;
+        if !self.in_reach(desc.pos) {
+            if self.parts.origin == Vec3::ZERO {
+                return Err(self.out_of_reach(id, "body", desc.pos));
+            }
+            // The origin moved away from it: it waits until it is back in reach.
+            let mut d = self.out_of_reach(id, "body", desc.pos);
+            d.severity = Severity::Warning;
+            d.message = format!(
+                "{}; it is added when the origin comes within reach",
+                d.message
+            );
+            self.diagnostics.push(d);
+            self.waiting.insert(id, desc.clone());
+            return Ok(());
+        }
         let built = shapes::build(&desc.shape).map_err(|d| d.at(at(id)))?;
         if let Some(w) = built.warning {
             self.diagnostics.push(w.at(at(id)));
@@ -610,7 +659,7 @@ impl Physics {
             BodyKind::Kinematic => BodySettings::new_kinematic(),
         }
         .object_layer(object_layer(desc.layer, moving))
-        .position(rv(desc.pos))
+        .position(self.jolt_point(desc.pos))
         .rotation(jq(rot))
         .friction(desc.friction)
         .restitution(desc.restitution)
@@ -699,11 +748,186 @@ impl Physics {
         }
     }
 
-    fn set_transform(&mut self, id: EntityId, pos: Vec3, rot: Quat) -> Result<(), Diagnostic> {
-        if !in_world(pos) {
-            return Err(outside_world(id, "new", pos));
+    /// A new position or target out of reach: an error at the world origin;
+    /// with the origin moved, it is kept (the latest one per entity) and
+    /// applied once a move of the origin brings it in reach, reported once
+    /// until then (ADR-0042).
+    fn far_write(
+        &mut self,
+        id: EntityId,
+        what: &str,
+        p: Vec3,
+        rot: Quat,
+    ) -> Result<(), Diagnostic> {
+        if !self.bodies.contains_key(&id) && !self.characters.contains_key(&id) {
+            return Err(unknown(id, "body or character"));
         }
+        let d = self.out_of_reach(id, what, p);
+        if self.parts.origin == Vec3::ZERO {
+            return Err(d);
+        }
+        if self.far_writes.insert(id, (p, rot)).is_none() {
+            self.diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                message: format!(
+                    "{}; it stays where it is and moves there once in reach",
+                    d.message
+                ),
+                ..d
+            });
+        }
+        Ok(())
+    }
+
+    /// After a move of the origin: the kept writes now in reach apply, and
+    /// the vehicles and constraints whose bodies joined are added.
+    pub(crate) fn catch_up(&mut self) {
+        let due: Vec<(EntityId, (Vec3, Quat))> = self
+            .far_writes
+            .iter()
+            .filter(|(_, w)| self.in_reach(w.0))
+            .map(|(e, w)| (*e, *w))
+            .collect();
+        for (id, (pos, rot)) in due {
+            self.far_writes.remove(&id);
+            // A teleport, also for a kinematic body: a target that far would
+            // sweep it there in one step.
+            self.state.kin_targets.remove(&id);
+            if let Err(d) = self.set_transform(id, pos, rot) {
+                self.diagnostics.push(d);
+            }
+        }
+        self.replay_deferred();
+    }
+
+    /// True when `cmd` adds a vehicle or constraint on a body that waits, or
+    /// drives such a vehicle (only its latest input is kept).
+    fn defers(&mut self, cmd: &PhysicsCmd) -> bool {
+        match cmd {
+            PhysicsCmd::AddVehicle { id, .. } => self.waiting.contains_key(id),
+            PhysicsCmd::SetVehicleInput { id, .. }
+                if self.waiting.contains_key(id)
+                    || self
+                        .deferred
+                        .iter()
+                        .any(|c| matches!(c, PhysicsCmd::AddVehicle { id: v, .. } if v == id)) =>
+            {
+                self.deferred
+                    .retain(|c| !matches!(c, PhysicsCmd::SetVehicleInput { id: v, .. } if v == id));
+                true
+            }
+            PhysicsCmd::AddConstraint { desc, .. } => {
+                self.waiting.contains_key(&desc.a) || self.waiting.contains_key(&desc.b)
+            }
+            _ => false,
+        }
+    }
+
+    /// Adds the deferred vehicles and constraints whose bodies no longer wait.
+    fn replay_deferred(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred);
+        for cmd in deferred {
+            if let Err(d) = self.apply_one(cmd) {
+                self.diagnostics.push(d);
+            }
+        }
+    }
+
+    /// Drops a deferred vehicle or constraint `cmd` removes, returning true
+    /// when there was one.
+    fn drop_deferred(&mut self, cmd: &PhysicsCmd) -> bool {
+        let before = self.deferred.len();
+        match cmd {
+            PhysicsCmd::RemoveVehicle { id } => self.deferred.retain(|c| {
+                !matches!(c, PhysicsCmd::AddVehicle { id: v, .. }
+                    | PhysicsCmd::SetVehicleInput { id: v, .. } if v == id)
+            }),
+            PhysicsCmd::RemoveConstraint { id } => self
+                .deferred
+                .retain(|c| !matches!(c, PhysicsCmd::AddConstraint { id: k, .. } if k == id)),
+            PhysicsCmd::RemoveBody { id } => self.deferred.retain(|c| match c {
+                PhysicsCmd::AddVehicle { id: v, .. }
+                | PhysicsCmd::SetVehicleInput { id: v, .. } => v != id,
+                PhysicsCmd::AddConstraint { desc, .. } => desc.a != *id && desc.b != *id,
+                _ => true,
+            }),
+            _ => {}
+        }
+        self.deferred.len() != before
+    }
+
+    /// Applies `cmd` to a body waiting out of reach, or `None` when `cmd` is
+    /// not for one.
+    fn apply_waiting(&mut self, cmd: &PhysicsCmd) -> Option<Result<(), Diagnostic>> {
+        if matches!(
+            cmd,
+            PhysicsCmd::RemoveVehicle { .. } | PhysicsCmd::RemoveConstraint { .. }
+        ) && self.drop_deferred(cmd)
+        {
+            return Some(Ok(()));
+        }
+        let id = match cmd {
+            PhysicsCmd::RemoveBody { id }
+            | PhysicsCmd::SetTransform { id, .. }
+            | PhysicsCmd::SetKinematicTarget { id, .. }
+            | PhysicsCmd::ApplyImpulse { id, .. }
+            | PhysicsCmd::SetVelocity { id, .. }
+            | PhysicsCmd::SetShape { id, .. } => *id,
+            _ => return None,
+        };
+        let desc = self.waiting.get_mut(&id)?;
+        Some(match cmd {
+            PhysicsCmd::RemoveBody { .. } => {
+                self.waiting.remove(&id);
+                self.drop_deferred(cmd);
+                Ok(())
+            }
+            PhysicsCmd::SetKinematicTarget { .. } if desc.kind != BodyKind::Kinematic => {
+                Err(wrong_kind(id, "a kinematic target", desc.kind))
+            }
+            PhysicsCmd::SetTransform { pos, rot, .. }
+            | PhysicsCmd::SetKinematicTarget { pos, rot, .. } => {
+                if unit_rotation(*rot).is_none() {
+                    return Some(Err(bad_rotation(id)));
+                }
+                desc.pos = *pos;
+                desc.rot = *rot;
+                if self.in_reach(*pos) {
+                    let added = self.add_waiting(id);
+                    self.replay_deferred();
+                    added
+                } else {
+                    Ok(())
+                }
+            }
+            PhysicsCmd::SetShape { shape, .. } => {
+                if desc.kind != BodyKind::Static && shapes::is_static_only(shape) {
+                    Err(static_only(id, shape, desc.kind))
+                } else {
+                    desc.shape = shape.clone();
+                    Ok(())
+                }
+            }
+            // Nothing moves while it waits.
+            _ => Ok(()),
+        })
+    }
+
+    /// Adds waiting body `id` to Jolt.
+    pub(crate) fn add_waiting(&mut self, id: EntityId) -> Result<(), Diagnostic> {
+        match self.waiting.remove(&id) {
+            Some(desc) => self.add_body(id, &desc),
+            None => Ok(()),
+        }
+    }
+
+    fn set_transform(&mut self, id: EntityId, pos: Vec3, rot: Quat) -> Result<(), Diagnostic> {
         let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
+        if !self.in_reach(pos) {
+            return self.far_write(id, "new", pos, rot);
+        }
+        self.far_writes.remove(&id);
+        let at = self.jolt_point(pos);
         if let Some(entry) = self.bodies.get(&id) {
             let activation = if entry.kind == BodyKind::Static {
                 Activation::DontActivate
@@ -714,7 +938,7 @@ impl Physics {
             return self
                 .world
                 .body_mut(body)
-                .and_then(|mut b| b.set_position_and_rotation(rv(pos), jq(rot), activation))
+                .and_then(|mut b| b.set_position_and_rotation(at, jq(rot), activation))
                 .map_err(|e| body_invalid(id, e));
         }
         if let Some(ch) = self.characters.get(&id) {
@@ -722,7 +946,7 @@ impl Physics {
             let filter_layers = ch.sees.clone();
             self.gate.enter(ch.groups, id);
             let result = self.world.character_mut(cid).and_then(|mut c| {
-                c.set_position(rv(pos))?;
+                c.set_position(at)?;
                 c.set_rotation(jq(rot))
             });
             return result
@@ -770,7 +994,10 @@ impl Physics {
         pos: Vec3,
         rot: Quat,
     ) -> Result<(), Diagnostic> {
-        if self.bodies.contains_key(&id) || self.characters.contains_key(&id) {
+        if self.bodies.contains_key(&id)
+            || self.waiting.contains_key(&id)
+            || self.characters.contains_key(&id)
+        {
             return Err(Diagnostic::error(
                 codes::DUPLICATE_ENTITY,
                 format!("entity {id} already has a body or character"),
@@ -800,8 +1027,8 @@ impl Physics {
                 ),
             ));
         }
-        if !in_world(pos) {
-            return Err(outside_world(id, "character", pos));
+        if !self.in_reach(pos) {
+            return Err(self.out_of_reach(id, "character", pos));
         }
         let rot = unit_rotation(rot).ok_or_else(|| bad_rotation(id))?;
         let capsule = Shape::new_capsule(half, desc.radius)
@@ -825,7 +1052,7 @@ impl Physics {
             }));
         let cid = self
             .world
-            .create_character(&settings, rv(pos), jq(rot))
+            .create_character(&settings, self.jolt_point(pos), jq(rot))
             .map_err(|e| character_invalid(id, e.to_string()))?;
         let sees = self.layers_seen_by(desc.layer);
         self.gate.enter(desc.groups, id);
@@ -923,7 +1150,8 @@ impl Physics {
             } => {
                 let axis = axis.normalize();
                 let normal = axis.any_orthonormal_vector();
-                let mut settings = HingeConstraintSettings::new(rv(pivot), jv(axis), jv(normal));
+                let mut settings =
+                    HingeConstraintSettings::new(self.jolt_point(pivot), jv(axis), jv(normal));
                 if let Some([lo, hi]) = limits {
                     settings = settings.limits(lo, hi);
                 }
@@ -941,8 +1169,11 @@ impl Physics {
                 .create_constraint(
                     a,
                     b,
-                    &DistanceConstraintSettings::new(rv(point_a), rv(point_b))
-                        .range(DistanceRange::Range { min, max }),
+                    &DistanceConstraintSettings::new(
+                        self.jolt_point(point_a),
+                        self.jolt_point(point_b),
+                    )
+                    .range(DistanceRange::Range { min, max }),
                 )
                 .map(Into::into),
         };
@@ -1041,10 +1272,11 @@ impl Physics {
             let Some(entry) = self.bodies.get(&id) else {
                 continue;
             };
+            let at = self.jolt_point(pos);
             let moved = self
                 .world
                 .body_mut(entry.id)
-                .and_then(|mut b| b.move_kinematic(rv(pos), jq(rot), dt));
+                .and_then(|mut b| b.move_kinematic(at, jq(rot), dt));
             match moved {
                 Ok(()) => {
                     self.state.kin_moved.insert(id);
@@ -1159,7 +1391,7 @@ impl Physics {
                         let point = manifold
                             .points
                             .first()
-                            .map_or(Vec3::ZERO, |p| grv(p.point_on1));
+                            .map_or(Vec3::ZERO, |p| self.world_point(p.point_on1));
                         d.first = Some((point, gv(manifold.normal), settings.is_sensor()));
                     }
                 }
@@ -1244,6 +1476,7 @@ impl Physics {
     /// read of Jolt's active bodies.
     pub fn poses_into(&mut self, out: &mut Vec<BodyPose>) {
         out.clear();
+        let origin = self.parts.origin;
         self.world.active_body_poses_into(&mut self.scratch_poses);
         for p in &self.scratch_poses {
             if self.world.is_inner_body(p.id) || self.world.ragdoll_of_body(p.id).is_some() {
@@ -1252,7 +1485,7 @@ impl Physics {
             if let Some(&id) = self.entity_of.get(&p.id) {
                 out.push(BodyPose {
                     id,
-                    pos: grv(p.position),
+                    pos: grv(p.position) + origin,
                     rot: gq(p.rotation),
                 });
             }
@@ -1269,7 +1502,7 @@ impl Physics {
             }
             out.push(BodyPose {
                 id,
-                pos: grv(b.position()),
+                pos: grv(b.position()) + origin,
                 rot: gq(b.rotation()),
             });
         }
@@ -1277,7 +1510,7 @@ impl Physics {
             if let Ok(c) = self.world.character(ch.id) {
                 out.push(BodyPose {
                     id,
-                    pos: grv(c.position()),
+                    pos: grv(c.position()) + origin,
                     rot: gq(c.rotation()),
                 });
             }
@@ -1302,11 +1535,11 @@ impl Physics {
     pub fn pose(&self, id: EntityId) -> Option<(Vec3, Quat)> {
         if let Some(entry) = self.bodies.get(&id) {
             let b = self.world.body(entry.id).ok()?;
-            return Some((grv(b.position()), gq(b.rotation())));
+            return Some((self.world_point(b.position()), gq(b.rotation())));
         }
         let ch = self.characters.get(&id)?;
         let c = self.world.character(ch.id).ok()?;
-        Some((grv(c.position()), gq(c.rotation())))
+        Some((self.world_point(c.position()), gq(c.rotation())))
     }
 
     /// Whether an entity's body is awake. `None` if it has no body.
@@ -1321,7 +1554,7 @@ impl Physics {
         let c = self.world.character(ch.id).ok()?;
         let ground = map_ground(c.ground_state());
         Some(CharacterState {
-            pos: grv(c.position()),
+            pos: self.world_point(c.position()),
             rot: gq(c.rotation()),
             velocity: self.character_velocity(id, &c),
             ground,
@@ -1374,7 +1607,11 @@ impl Physics {
         PhysicsSnapshot {
             world: self.world.save_state(),
             state: self.state.clone(),
+            origin: self.parts.origin,
             ragdolls: self.save_ragdolls(),
+            waiting: self.waiting.clone(),
+            deferred: self.deferred.clone(),
+            far_writes: self.far_writes.clone(),
         }
     }
 
@@ -1383,8 +1620,12 @@ impl Physics {
     /// constraints or ragdolls were added or removed (or a ragdoll rebuilt) since it
     /// was saved. Ragdolls get back their mode, frame and target too.
     pub fn restore_state(&mut self, snapshot: &PhysicsSnapshot) -> Result<(), Diagnostic> {
+        let waiting_changed = !self.waiting.keys().eq(snapshot.waiting.keys());
         match self.ragdolls_unrestorable(&snapshot.ragdolls) {
             Some(why) => Err(why),
+            None if waiting_changed => {
+                Err("bodies waiting out of reach were added or removed since".to_string())
+            }
             None => self
                 .world
                 .restore_state(&snapshot.world)
@@ -1402,7 +1643,11 @@ impl Physics {
             )
         })?;
         self.state = snapshot.state.clone();
+        self.parts.origin = snapshot.origin;
         self.restore_ragdolls(&snapshot.ragdolls);
+        self.waiting = snapshot.waiting.clone();
+        self.deferred = snapshot.deferred.clone();
+        self.far_writes = snapshot.far_writes.clone();
         Ok(())
     }
 
@@ -1423,7 +1668,7 @@ impl Physics {
             };
             bodies.push(BodyMotion {
                 id,
-                pos: grv(b.position()),
+                pos: self.world_point(b.position()),
                 rot: gq(b.rotation()),
                 linear: gv(b.linear_velocity()),
                 angular: gv(b.angular_velocity()),
@@ -1445,6 +1690,7 @@ impl Physics {
             bodies,
             characters,
             ragdolls: self.ragdoll_motion(),
+            origin: self.parts.origin,
         }
     }
 
@@ -1476,8 +1722,9 @@ impl Physics {
             }
             let kinematic = entry.kind == BodyKind::Kinematic;
             let body = entry.id;
+            let at = self.jolt_point(m.pos);
             let result = self.world.body_mut(body).and_then(|mut b| {
-                b.set_position_and_rotation(rv(m.pos), jq(m.rot), Activation::DontActivate)?;
+                b.set_position_and_rotation(at, jq(m.rot), Activation::DontActivate)?;
                 if m.awake {
                     b.set_linear_velocity(jv(m.linear))?;
                     b.set_angular_velocity(jv(m.angular))?;
@@ -1509,10 +1756,19 @@ impl Physics {
             self.gate.enter(ch.groups, m.id);
             // The saved ground and contacts name bodies by Jolt id, which differ when the
             // worlds hold different bodies: recompute them against this world.
+            // The saved position is relative to the source's origin.
+            let shift = motion.origin - self.parts.origin;
             let restored = self
                 .world
                 .character_mut(cid)
                 .and_then(|mut c| c.restore_state(&m.jolt))
+                .and_then(|()| {
+                    if shift == Vec3::ZERO {
+                        return Ok(());
+                    }
+                    let p = grv(self.world.character(cid)?.position());
+                    self.world.character_mut(cid)?.set_position(rv(p + shift))
+                })
                 .and_then(|()| {
                     self.world.refresh_character_contacts(
                         cid,

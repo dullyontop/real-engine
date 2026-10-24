@@ -10,7 +10,7 @@ local height = g:node("terrain.heightfield", {
 local mask = g:node("terrain.island_mask", { size = 129, cell = 1.0, falloff = 0.55 }, nil, "mask")
 local land = g:node("field.combine", { op = "mul" }, { a = height, b = mask }, "land")
 
-g:node("terrain.mesh", { collider = true, material = "materials/grass.material.json", name = "Terrain" }, { field = land }, "ground")
+g:node("terrain.mesh@2", { collider = true, material = "materials/grass.material.json", name = "Terrain" }, { field = land }, "ground")
 g:node("terrain.water_plane", { level = 1.2, size = 400.0, material = "materials/water.material.json", name = "Sea" }, nil, "water")
 
 -- Gems on dry, gentle ground, far enough apart to make the player walk.

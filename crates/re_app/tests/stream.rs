@@ -30,7 +30,7 @@ const SCENE: &str = r#"{
 
 const BUILDER: &str = r#"local g = proc.graph("land")
 local h = g:node("terrain.heightfield", { cell = 4.0, height = 6.0, scale = 0.02 }, nil, "h")
-g:node("terrain.mesh", { collider = true }, { field = h }, "ground")
+g:node("terrain.mesh@2", { collider = true }, { field = h }, "ground")
 return g
 "#;
 
@@ -305,4 +305,135 @@ fn only_a_live_run_applies_late_cells() {
     let (report, _, _) = app.play_copy(5, None, &[], false).unwrap();
     assert!(report.ok(), "{:?}", report.diagnostics);
     assert_eq!(lateness(&app), Lateness::Late);
+}
+
+/// Seven kilometres out, beyond Jolt's 5 km from the world origin: the
+/// floating origin follows the hero, so collision chunks there still load
+/// and carry the character.
+#[test]
+fn the_floating_origin_carries_the_character_far_out() {
+    let dir = project(&format!("{CONFIG}physics_radius = 100.0\n"));
+    let scene = SCENE
+        .replace(
+            "\"translation\": [20.0, 30.0, 20.0]",
+            "\"translation\": [7020.0, 30.0, 20.0]",
+        )
+        .replace("\"bounds\": 512.0", "\"bounds\": 0.0");
+    std::fs::write(dir.path().join("scenes/main.scene.json"), scene).unwrap();
+    std::fs::write(dir.path().join("scripts/tools/land.luau"), CHUNKED).unwrap();
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(120), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert_eq!(app.physics().origin(), Vec3::new(7168.0, 0.0, 0.0));
+    let hero = position(&app, "hero");
+    assert!((hero.x - 7020.0).abs() < 1.0, "{hero}");
+    let ground = ground_under(&app, hero).expect("a collision chunk 7 km out");
+    assert!(
+        (hero.y - (ground + 0.9)).abs() < 0.25,
+        "the hero stands on the terrain: y {} over ground {ground}",
+        hero.y
+    );
+}
+
+/// Walking from spawn to 7 km and back: a static pad at spawn neither pins
+/// the origin nor gets lost. Out of reach, it stays where it is; back near
+/// spawn, it is there to stand on. A pad that starts out of reach waits and
+/// joins once the origin comes near it.
+#[test]
+fn authored_bodies_neither_pin_the_origin_nor_get_lost() {
+    let pad = r#"{ "id": "pad", "name": "Pad", "components": {
+        "Collider": { "shape": "Box", "half_extents": [3.0, 0.5, 3.0] },
+        "Transform": { "translation": [20.0, 49.5, 20.0] } } },
+    { "id": "hero""#;
+    for start in [20.0, 7020.0] {
+        let dir = project(&format!("{CONFIG}physics_radius = 100.0\n"));
+        let scene = SCENE
+            .replacen(r#"{ "id": "hero""#, pad, 1)
+            .replace(
+                "\"translation\": [20.0, 30.0, 20.0]",
+                &format!("\"translation\": [{start:.1}, 30.0, 20.0]"),
+            )
+            .replace("\"bounds\": 512.0", "\"bounds\": 0.0");
+        std::fs::write(dir.path().join("scenes/main.scene.json"), scene).unwrap();
+        let mut app = open(dir.path());
+        let walk_to = |app: &mut App, x: f32| {
+            app.world_mut()
+                .set(
+                    "hero",
+                    "Transform",
+                    "translation",
+                    Value::Vec3(Vec3::new(x, 30.0, 20.0)),
+                )
+                .unwrap();
+            let report = app.run_headless(Some(40), None).unwrap();
+            assert!(report.ok(), "x = {x}: {:?}", report.diagnostics);
+        };
+        for x in [start, 2500.0, 5000.0, 7020.0] {
+            walk_to(&mut app, x);
+        }
+        // The pad at spawn is now more than 5 km from the origin.
+        let origin = app.physics().origin();
+        assert!(origin.x > re_physics::WORLD_LIMIT + 20.0, "{origin}");
+        let hero = position(&app, "hero");
+        let ground = ground_under(&app, hero).expect("a collision chunk 7 km out");
+        assert!(
+            (hero.y - (ground + 0.9)).abs() < 0.25,
+            "{hero} over {ground}"
+        );
+        for x in [5000.0, 2500.0, 20.0] {
+            walk_to(&mut app, x);
+        }
+        assert!(
+            app.physics().origin().x <= 2048.0,
+            "{}",
+            app.physics().origin()
+        );
+        let hit = app
+            .physics()
+            .raycast(
+                Vec3::new(20.0, 200.0, 20.0),
+                Vec3::NEG_Y,
+                400.0,
+                &re_physics::QueryFilter::default(),
+            )
+            .unwrap()
+            .expect("the pad");
+        let pad = re_scene::entity_id(app.world().entity("pad").unwrap());
+        assert_eq!(hit.entity, pad, "start {start}");
+        assert!((hit.point.y - 50.0).abs() < 1e-3, "{}", hit.point.y);
+    }
+}
+
+/// The render snapshot is relative to the floating origin: far out, the
+/// camera and the terrain it sees are drawn near zero.
+#[test]
+fn far_terrain_is_drawn_relative_to_the_render_origin() {
+    let dir = project(&format!("{CONFIG}terrain_view = 512.0\n"));
+    let scene = SCENE
+        .replace(
+            "\"translation\": [20.0, 30.0, 20.0]",
+            "\"translation\": [7020.0, 30.0, 20.0]",
+        )
+        .replace(
+            "\"translation\": [0.0, 30.0, 40.0]",
+            "\"translation\": [7000.0, 30.0, 40.0]",
+        )
+        .replace("\"bounds\": 512.0", "\"bounds\": 0.0");
+    std::fs::write(dir.path().join("scenes/main.scene.json"), scene).unwrap();
+    std::fs::write(dir.path().join("scripts/tools/land.luau"), CHUNKED).unwrap();
+    let mut app = open(dir.path());
+    app.ensure_graphics().unwrap();
+    app.run_headless(Some(60), None).unwrap();
+    assert_eq!(app.render_origin(), Vec3::new(7168.0, 0.0, 0.0));
+    let snapshot = app.snapshot();
+    let eye = snapshot.camera.position();
+    assert!(
+        (eye - Vec3::new(-168.0, 30.0, 40.0)).length() < 1e-3,
+        "{eye}"
+    );
+    assert!(!snapshot.items.is_empty(), "the terrain is drawn");
+    for item in &snapshot.items {
+        let at = item.world.w_axis.truncate();
+        assert!(at.abs().max_element() < 2048.0, "{at}");
+    }
 }

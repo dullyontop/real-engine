@@ -15,7 +15,7 @@
     { "id": "grown", "kind": "shape.offset", "version": 1, "params": { "distance": 1.0, "join": "miter" } },
     { "id": "yard_mesh", "kind": "shape.mesh", "version": 1, "params": { "height": 2.0 } },
     { "id": "clear", "kind": "field.from_shapes", "version": 1, "params": { "falloff": 4.0, "invert": true } },
-    { "id": "terrain", "kind": "terrain.mesh", "version": 1, "params": { "name": "Terrain" } },
+    { "id": "terrain", "kind": "terrain.mesh", "version": 2, "params": { "name": "Terrain" } },
     { "id": "spots", "kind": "scatter.grid_jitter", "version": 1, "params": { "spacing": 8.0, "jitter": 0.5 } },
     { "id": "off_road", "kind": "points.mask", "version": 1, "params": { "keep": "outside" } },
     { "id": "few", "kind": "points.filter", "version": 1, "params": { "mask_min": 0.5 } },

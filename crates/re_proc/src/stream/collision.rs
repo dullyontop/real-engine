@@ -272,7 +272,8 @@ impl CollisionState {
                         if let Some(store) = world.ecs.get_resource::<GraphStore>() {
                             store.add_derived(vec![(name.clone(), DerivedAsset::Heightfield(h))]);
                         }
-                        match world.set_terrain_chunk(source.entity, &key, &name) {
+                        match world.set_terrain_chunk(source.entity, &key, corner(source, c), &name)
+                        {
                             Ok(old) => {
                                 if let Some(old) = old {
                                     release(world, &old);
@@ -334,6 +335,17 @@ fn release(world: &World, name: &str) {
     }
 }
 
+/// Chunk `c`'s corner (its sample `(0, 0)`) from the source's origin: where
+/// its entity sits, so its body is where its ground is.
+fn corner(source: &Source, c: [i32; 2]) -> Vec3 {
+    let cells = i64::from(CHUNK_CELLS);
+    Vec3::new(
+        (i64::from(c[0]) * cells) as f32 * source.spacing,
+        0.0,
+        (i64::from(c[1]) * cells) as f32 * source.spacing,
+    )
+}
+
 /// Starts generating chunk `c`'s heights on the pool.
 fn issue(
     pool: &TaskPool,
@@ -355,17 +367,12 @@ fn issue(
         spacing,
     });
     opts.cancel = Some(cancel.clone());
-    let offset = Vec3::new(
-        (i64::from(c[0]) * cells) as f32 * spacing,
-        0.0,
-        (i64::from(c[1]) * cells) as f32 * spacing,
-    );
     pool.spawn(move || {
         let result: ChunkResult = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let evaluation = evaluator.evaluate(&terrain.graph, &opts);
             match evaluation.output(&terrain.field) {
                 Some(Output::Field(f)) => {
-                    Heightfield::new(CHUNK_SAMPLES, spacing, offset, f.0.samples.clone())
+                    Heightfield::new(CHUNK_SAMPLES, spacing, Vec3::ZERO, f.0.samples.clone())
                         .map(Arc::new)
                         .map_err(|e| Diagnostic::error(codes::CELL_FAILED, e.to_string()))
                 }

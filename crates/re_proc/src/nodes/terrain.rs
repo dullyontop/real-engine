@@ -10,7 +10,7 @@ use re_reflect::Value;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
+use super::{Migration, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
 use crate::value::{
     DerivedAsset, FragItem, Fragment, MeshValue, Output, PortType, collider_name, derived_name,
 };
@@ -285,11 +285,27 @@ impl Params for TerrainMeshParams {}
 
 fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, String> {
     let field = ctx.need_field("field")?;
-    let hf = &field.0;
+    // Streamed (version 2), the entity sits at the window's corner and the
+    // mesh and collider are local to it, so both keep their precision
+    // kilometres out (ADR-0042's floating origin). Version 1 stays in world
+    // space.
+    let (hf, transform) = match ctx.domain {
+        Some(_) if ctx.version >= 2 => {
+            let mut local = field.0.clone();
+            let corner = Vec3::new(local.offset.x, 0.0, local.offset.z);
+            local.offset -= corner;
+            (
+                local,
+                vec![("translation".to_string(), Value::Vec3(corner))],
+            )
+        }
+        _ => (field.0.clone(), Vec::new()),
+    };
+    let hf = &hf;
     let mesh = Arc::new(hf.to_mesh());
     let mesh_name = derived_name(&ctx.key);
     let mut components = vec![
-        ("Transform".to_string(), Vec::new()),
+        ("Transform".to_string(), transform),
         (
             "MeshRef".to_string(),
             vec![("asset".to_string(), Value::Str(mesh_name.clone()))],
@@ -478,9 +494,14 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         NodeSpec {
             kind: "terrain.mesh",
-            version: 1,
+            version: 2,
             oldest: 1,
-            migrations: &[],
+            migrations: &[Migration {
+                from: 1,
+                note: "streamed cells put the entity at the window's corner, with the mesh and collider local to it",
+                changes_output: true,
+                params: |_| Ok(()),
+            }],
             streaming: super::Streaming::Cell,
             doc: "Turns a field into a terrain entity: a derived mesh, an optional material and an optional heightfield collider.",
             inputs: &[PortDef {
