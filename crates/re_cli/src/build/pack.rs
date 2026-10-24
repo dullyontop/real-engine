@@ -51,6 +51,78 @@ fn is_script(path: &str) -> bool {
     (path.ends_with(".luau") || path.ends_with(".lua")) && !path.ends_with(".d.luau")
 }
 
+/// Packed JSON files whose string values are checked for project paths:
+/// every one but asset sidecars.
+fn names_files(path: &str) -> bool {
+    path.ends_with(".json") && !path.ends_with(".meta.json")
+}
+
+/// The project files the packed JSON files (scenes, prefabs, materials,
+/// graphs) name in their string values (`assets/hut.glb#mesh0` names
+/// `assets/hut.glb`), each with the first file that names it. Only strings
+/// naming a file that exists count; `.real/` (the engine's defaults) never
+/// does.
+fn named_files(files: &ProjectFiles, paths: &BTreeSet<String>) -> BTreeMap<String, String> {
+    fn walk(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(s) => out.push(s.clone()),
+            serde_json::Value::Array(items) => items.iter().for_each(|v| walk(v, out)),
+            serde_json::Value::Object(map) => map.values().for_each(|v| walk(v, out)),
+            _ => {}
+        }
+    }
+    let mut named = BTreeMap::new();
+    for path in paths.iter().filter(|p| names_files(p)) {
+        let Ok(bytes) = files.read_source(path) else {
+            continue;
+        };
+        let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        let mut strings = Vec::new();
+        walk(&doc, &mut strings);
+        for s in strings {
+            let target = s.split('#').next().unwrap_or_default();
+            if target == path
+                || !target.contains('/')
+                || target.starts_with(".real/")
+                || ProjectPath::new(target).is_err()
+                || !files.is_file(target)
+            {
+                continue;
+            }
+            named
+                .entry(target.to_owned())
+                .or_insert_with(|| path.clone());
+        }
+    }
+    named
+}
+
+/// An `RE0957` error for each file a packed JSON file names that is not
+/// packed: the packaged game would not find it.
+fn unpacked_names(named: &BTreeMap<String, String>, paths: &BTreeSet<String>) -> Vec<Diagnostic> {
+    named
+        .iter()
+        .filter(|(target, _)| !paths.contains(*target))
+        .map(|(target, by)| {
+            let hint = if never_packed(target) {
+                format!("`{target}` is never packed (tests, agent notes): move it under `assets/`")
+            } else {
+                format!(
+                    "add it to `[package] include` (or stop excluding it): include = [\"{target}\"]"
+                )
+            };
+            Diagnostic::error(
+                codes::NOT_PACKED,
+                format!("`{by}` names `{target}`, which is not packed"),
+            )
+            .at(Location::file(by.clone()))
+            .with_hint(hint)
+        })
+        .collect()
+}
+
 /// How one asset was stored, and why.
 #[derive(Clone, Debug, Serialize)]
 pub struct AssetChoice {
@@ -186,6 +258,8 @@ pub fn pack(project: &Path, config: &AppConfig) -> (PackageWriter, PackReport) {
     let pc = config.package.clone().unwrap_or_default();
     let files = re_app::package::dev_files(project);
     let paths = collect(&files, &pc);
+    let named = named_files(&files, &paths);
+    report.diagnostics.extend(unpacked_names(&named, &paths));
 
     // Two paths that differ only by case cannot both be found ignoring case.
     let mut folded: BTreeMap<String, &str> = BTreeMap::new();
@@ -290,6 +364,7 @@ pub fn pack(project: &Path, config: &AppConfig) -> (PackageWriter, PackReport) {
     for path in &paths {
         if only_for_processed.contains(path)
             && !needed_as_source.contains(path)
+            && !named.contains_key(path)
             && !importable(path)
         {
             report.dropped.push(path.clone());

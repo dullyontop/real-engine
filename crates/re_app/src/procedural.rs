@@ -30,6 +30,9 @@ pub fn install(world: &mut World, files: &ProjectFiles) {
     world
         .ecs
         .insert_resource(GraphStore::for_files(files.clone()));
+    world
+        .ecs
+        .insert_resource(re_scene::structure::SceneFiles(files.clone()));
 }
 
 /// Declares the project's Luau node kinds (`scripts/generators/`, ADR-0043

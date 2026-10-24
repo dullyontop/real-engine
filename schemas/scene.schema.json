@@ -241,6 +241,150 @@
                       "const": true
                     }
                   }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "target",
+                    "moved"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "target": {
+                      "type": "string"
+                    },
+                    "moved": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "parent": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "index": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "target",
+                    "replaced"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "target": {
+                      "type": "string"
+                    },
+                    "replaced": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "oneOf": [
+                        {
+                          "required": [
+                            "prefab"
+                          ],
+                          "not": {
+                            "required": [
+                              "components"
+                            ]
+                          }
+                        },
+                        {
+                          "required": [
+                            "components"
+                          ],
+                          "not": {
+                            "required": [
+                              "prefab"
+                            ]
+                          }
+                        }
+                      ],
+                      "properties": {
+                        "prefab": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "components": {
+                          "type": "object"
+                        },
+                        "keep_children": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "insert"
+                  ],
+                  "additionalProperties": false,
+                  "oneOf": [
+                    {
+                      "required": [
+                        "prefab"
+                      ],
+                      "not": {
+                        "required": [
+                          "components"
+                        ]
+                      }
+                    },
+                    {
+                      "required": [
+                        "components"
+                      ],
+                      "not": {
+                        "required": [
+                          "prefab"
+                        ]
+                      }
+                    }
+                  ],
+                  "properties": {
+                    "prefab": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "components": {
+                      "type": "object"
+                    },
+                    "insert": {
+                      "type": "string",
+                      "pattern": "^[^/+~][^/]*$"
+                    },
+                    "parent": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "index": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
                 }
               ]
             }
