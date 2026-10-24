@@ -113,7 +113,7 @@ Used by `re_app::package` to read and write `game.rpak` (ADR-0037), on desktop a
 | zstd | 0.14.2 | BSD-3-Clause | 1.64 | per-entry and index compression in `game.rpak` | `default-features = false` | WP19 measurements (decode 400–700 MB/s at levels 3–9; `ldd` shows only libc and libgcc_s) | Landed (WP19 PR "archive", #121) |
 | zstd-safe, zstd-sys | 8.1.0, 2.1.1+zstd.1.5.7 | BSD-3-Clause | ≤ 1.64 | zstd's bindings and the vendored C library | defaults of `zstd` | WP19 measurements | Landed (#121); transitive |
 
-blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile. `windows-sys` is a direct dependency of `re_cli` on Windows since PR "archive" (`Win32_System_Console`, to attach the game to its parent's console); `re_cli` takes `image` since PR "bundles" (#PRNUM), in its `tooling` feature, to resize the game's icon for the macOS app's `.icns` (the runtime has it through `re_assets` already).
+blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile. `windows-sys` is a direct dependency of `re_cli` on Windows since PR "archive" (`Win32_System_Console`, to attach the game to its parent's console); `re_cli` takes `image` since PR "bundles" (#161), in its `tooling` feature, to resize the game's icon for the macOS app's `.icns` (the runtime has it through `re_assets` already).
 
 ### Editor node canvas and docking (M3, tooling only)
 

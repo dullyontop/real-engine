@@ -619,7 +619,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0023: CI: Linux with lavapipe blocks merges; Windows and macOS are reported only
 
-**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16). Amended in M3: `build-web` is required (WP29 PR "portable", #89), `build-windows` and `build-macos` are required (WP18 PR "blocking"), `verify-valley` is required (WP28, #130), `d2` is required, with goldens required on every platform (WP18 PR "d2", #100), and the three `build-package` jobs are required (WP19 PR "bundles", #PRNUM). The required checks are now 17; see the last amendment.
+**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16). Amended in M3: `build-web` is required (WP29 PR "portable", #89), `build-windows` and `build-macos` are required (WP18 PR "blocking"), `verify-valley` is required (WP28, #130), `d2` is required, with goldens required on every platform (WP18 PR "d2", #100), and the three `build-package` jobs are required (WP19 PR "bundles", #161). The required checks are now 17; see the last amendment.
 
 **Context.** Development containers are Linux with lavapipe, llvmpipe and Xvfb, and no audio device. Nothing has been verified on Windows or macOS.
 
@@ -653,7 +653,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - The merge rule is these 14 checks: `fmt`, `clippy`, `test`, `msrv`, `deny`, `xtask`, `verify-demo`, `xvfb-smoke`, `verify-plaza`, `verify-valley`, `build-windows`, `build-macos`, `build-web` and `d2`.
 - `build-package` (ADR-0037) runs on every PR but is not required yet. It joins the list when WP19 PR "bundles" runs it on all three platforms.
 
-**Amendment (M3, WP19 PR "bundles", #PRNUM).** `build-package` (Ubuntu 22.04), `build-package-windows` and `build-package-macos` are required: each builds the island and the plaza with `real build`, checks that the packaged games play as their projects do, and checks the platform's bundle (ADR-0037's amendment for that PR). The merge rule is now 17 checks: the 14 above and these three.
+**Amendment (M3, WP19 PR "bundles", #161).** `build-package` (Ubuntu 22.04), `build-package-windows` and `build-package-macos` are required: each builds the island and the plaza with `real build`, checks that the packaged games play as their projects do, and checks the platform's bundle (ADR-0037's amendment for that PR). The merge rule is now 17 checks: the 14 above and these three.
 
 ## ADR-0024: Validation suite contract for external script corpora
 
@@ -1148,7 +1148,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Amendment (WP21 PRs "graphs", #145, and its follow-up, #152).** `anims/` is a default packed directory, beside the ones above, for `*.animgraph.json` files. A graph elsewhere is packed when it lies in another default directory or matches `[package] include`; a packed scene or prefab that names one the archive leaves out fails the build with `RE0957`.
 
-**Amendment (WP19 PR "bundles", #PRNUM; 2026-10-24).** Departures found while building it:
+**Amendment (WP19 PR "bundles", #161; 2026-10-24).** Departures found while building it:
 - **Runtime folders.** `real build --runtime-only [--target TRIPLE|web] --out DIR` writes a runtime and no game: `real` (`real.exe` on Windows), `runtime.json` (the `--runtime-info` versions and the target) and `THIRD_PARTY_NOTICES.txt`, or with `--target web` the web runtime's files (ADR-0049 §7). This is the "later step" of prebuilt runtimes: on a `v*` tag the release workflow publishes `real-runtime-<version>-<triple>` for `x86_64-unknown-linux-gnu` (built on Ubuntu 22.04) and `aarch64-apple-darwin` as `.tar.gz`, and for `x86_64-pc-windows-msvc` as `.zip`, beside `real-web-runtime-<version>.tar.gz`.
 - **`--runtime PATH`.** When the binary cannot run here (a runtime for another OS), `real build` reads `runtime.json` beside it instead of its `--runtime-info`. Without `--target`, the build is for the runtime's own target. So a release's Windows or macOS runtime lays out its bundle on Linux; an app laid out off a Mac is not sealed, as planned. The notices come from the runtime's folder: its part, up to any earlier game's own notices, is copied, and the game's part is added.
 - **The order.** `real build` checks or builds the runtime and lists its notices before it clears `--out`, so a build that fails there leaves the earlier output as it was.
@@ -2573,7 +2573,7 @@ ADR-0010 (the frame loop is ours) and ADR-0036 (D2 determinism, which asked the 
 - **§8.** The WebGL2 fallback is chosen with `wgpu::util::is_browser_webgpu_supported` before the surface exists. The static server for the browser checks stays in Node (`tools/web-test/serve.mjs`), since Playwright needs Node anyway; `cargo xtask web-test` is the entry point CI runs. Since ADR-0036's amendment, the browser's replay hashes must match native.
 - **§12.** The codes as built: `RE0620` no WebGPU adapter, `RE0621` the canvas could not be added or its surface failed while presenting, `RE0622` a Rust panic in the browser (reported to the console and the page). A missing exnref is caught by the boot script before the engine loads, without a code. `RE0623`–`RE0649` stay free for WP29. `re_cli`'s `RE0970`–`RE0974` are as listed.
 
-**Amendment (WP19 PR "bundles", #PRNUM).** The web folder's notices are `THIRD_PARTY_NOTICES.txt`, the desktop name (§7 said `THIRD-PARTY-NOTICES.txt`), listed from `re_web`'s crates by ADR-0037's generator. The file is one of the web runtime's files (`RUNTIME_FILES`), so a prebuilt web runtime carries it, and a build with `--runtime DIR` copies it with the game's own notices added. A folder without it is not a web runtime (`RE0971`). `real build --runtime-only --target web` writes a web runtime folder, and the release workflow publishes that folder.
+**Amendment (WP19 PR "bundles", #161).** The web folder's notices are `THIRD_PARTY_NOTICES.txt`, the desktop name (§7 said `THIRD-PARTY-NOTICES.txt`), listed from `re_web`'s crates by ADR-0037's generator. The file is one of the web runtime's files (`RUNTIME_FILES`), so a prebuilt web runtime carries it, and a build with `--runtime DIR` copies it with the game's own notices added. A folder without it is not a web runtime (`RE0971`). `real build --runtime-only --target web` writes a web runtime folder, and the release workflow publishes that folder.
 
 ## ADR-0050: Online play: our own reliable UDP in `re_net`, client-owned characters, and a lockstep check over loopback
 
