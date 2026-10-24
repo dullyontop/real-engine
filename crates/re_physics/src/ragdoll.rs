@@ -1051,6 +1051,7 @@ pub(crate) struct RagdollSaved {
     motor_scale: f32,
     frame: (Vec3, Quat),
     target: Vec<JointPose>,
+    far: bool,
 }
 
 impl Physics {
@@ -1065,6 +1066,7 @@ impl Physics {
                         motor_scale: r.motor_scale,
                         frame: r.frame,
                         target: r.target.clone(),
+                        far: r.far,
                     },
                 )
             })
@@ -1084,7 +1086,8 @@ impl Physics {
         (!same).then(|| "ragdolls were added, removed or rebuilt since it was saved".into())
     }
 
-    /// Puts back each ragdoll's mode, motor scale, frame and target; check first with
+    /// Puts back each ragdoll's mode, motor scale, frame and target, and whether its
+    /// target out of reach was reported; check first with
     /// [`ragdolls_unrestorable`](Self::ragdolls_unrestorable).
     pub(crate) fn restore_ragdolls(&mut self, saved: &BTreeMap<EntityId, RagdollSaved>) {
         for (id, s) in saved {
@@ -1093,6 +1096,7 @@ impl Physics {
                 r.motor_scale = s.motor_scale;
                 r.frame = s.frame;
                 r.target.clone_from(&s.target);
+                r.far = s.far;
             }
         }
     }

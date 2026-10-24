@@ -942,16 +942,23 @@ fn a_ragdoll_left_out_of_reach_waits_for_the_origin() {
     // The player went 7 km away: the man is out of reach of the new origin.
     let before = p.ragdoll_parts(MAN).unwrap();
     p.set_origin(FAR).unwrap();
+    let saved = p.save_state();
     let neutral = humanoid::skeleton().neutral_pose();
-    for _ in 0..30 {
-        p.apply(&mut vec![target(MAN, at, neutral.clone())]);
-        p.step(DT).unwrap();
-    }
-    let d = p.take_diagnostics();
+    let far_steps = |p: &mut Physics| {
+        for _ in 0..30 {
+            p.apply(&mut vec![target(MAN, at, neutral.clone())]);
+            p.step(DT).unwrap();
+        }
+        p.take_diagnostics()
+    };
+    let d = far_steps(&mut p);
     assert_eq!(d.len(), 1, "reported once: {d:?}");
     assert_eq!(d[0].code, re_physics::codes::OUTSIDE_WORLD);
     assert_eq!(d[0].severity, Severity::Warning);
     assert!(d[0].message.contains("once in reach"), "{}", d[0].message);
+    // A replay from before the first far target reports it again.
+    p.restore_state(&saved).unwrap();
+    assert_eq!(far_steps(&mut p), d);
     // It stays as it was, and still reports its state.
     for ((name, a), (_, b)) in before.iter().zip(&p.ragdoll_parts(MAN).unwrap()) {
         assert!(

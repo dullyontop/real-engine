@@ -543,7 +543,11 @@ fn a_ragdoll_left_behind_waits_for_the_origin_to_come_back() {
     {LAND_ENTITY}
     {{ "id": "man""#
             );
-            scene.replacen(r#"{ "id": "man""#, &walker, 1)
+            // The man and his ground stand above the land's highest point.
+            scene
+                .replacen(r#"{ "id": "man""#, &walker, 1)
+                .replace("[0.0, -0.5, 0.0]", "[0.0, 9.5, 0.0]")
+                .replace("[0.0, 0.3, 0.0]", "[0.0, 10.3, 0.0]")
         });
         let mut app = open(dir.path());
         let id = man(&app);
@@ -563,20 +567,42 @@ fn a_ragdoll_left_behind_waits_for_the_origin_to_come_back() {
                 report.diagnostics
             );
         };
-        for x in [start, 2500.0, 5000.0, 7020.0] {
-            walk_to(&mut app, x);
+        // Out to 7 km, or starting there; a man at spawn has fallen and lies
+        // still before the walker leaves.
+        walk_to(&mut app, start);
+        for _ in 0..20 {
+            if app.physics().ragdoll(id).is_none_or(|s| s.calm) {
+                break;
+            }
+            assert!(app.run_headless(Some(30), None).unwrap().ok());
+        }
+        let lying = app.physics().ragdoll_parts(id);
+        if start < 100.0 {
+            for x in [2500.0, 5000.0, 7020.0] {
+                walk_to(&mut app, x);
+            }
         }
         assert!(
             app.physics().origin().x > re_physics::WORLD_LIMIT,
             "{}",
             app.physics().origin()
         );
-        // Added at spawn and left behind, or never added while far away.
-        assert_eq!(
-            app.physics().has_ragdoll(id),
-            start < 100.0,
-            "start {start}"
-        );
+        // Added at spawn and left behind where it lay, or not added while far
+        // away.
+        assert_eq!(lying.is_some(), start < 100.0, "start {start}");
+        if let Some(lying) = lying {
+            let now = app.physics().ragdoll_parts(id).unwrap();
+            for ((name, a), (_, b)) in lying.iter().zip(&now) {
+                assert!(
+                    a.pos.distance(b.pos) < 1e-3,
+                    "{name}: {} to {}",
+                    a.pos,
+                    b.pos
+                );
+            }
+        } else {
+            assert!(!app.physics().has_ragdoll(id));
+        }
         for x in [5000.0, 2500.0, 20.0] {
             walk_to(&mut app, x);
         }
@@ -584,8 +610,9 @@ fn a_ragdoll_left_behind_waits_for_the_origin_to_come_back() {
         assert!(report.ok(), "start {start}: {:?}", report.diagnostics);
         let state = app.physics().ragdoll(id).expect("the ragdoll is there");
         assert!(state.calm, "start {start}: it came to rest");
+        let on_ground = state.root_pos - Vec3::new(0.0, 10.0, 0.0);
         assert!(
-            state.root_pos.y > 0.0 && state.root_pos.y < 0.4 && state.root_pos.length() < 3.0,
+            on_ground.y > 0.0 && on_ground.y < 0.4 && on_ground.length() < 3.0,
             "start {start}: the man lies on the ground at spawn: {}",
             state.root_pos
         );
