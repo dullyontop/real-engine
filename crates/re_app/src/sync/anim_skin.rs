@@ -84,6 +84,9 @@ pub struct SkinSync {
     reported: HashSet<(String, String)>,
     /// Bound graphs by `(graph file, skin asset)`, shared between entities.
     graphs: HashMap<(String, String), Arc<BoundGraph>>,
+    /// The clip references each bound graph plays, to rebind it when one
+    /// changes.
+    graph_clips: HashMap<(String, String), Vec<String>>,
     /// `(graph file, skin asset)` pairs that failed to bind (reported once).
     failed: HashSet<(String, String)>,
     /// Bone attachments already reported for a missing joint or skin.
@@ -186,14 +189,37 @@ impl SkinSync {
     /// Forgets skins, clips and graphs built from `stale` assets (their files
     /// changed).
     pub fn invalidate(&mut self, stale: &[String]) {
+        if stale.is_empty() {
+            return;
+        }
         self.posed.retain(|_, p| {
             !stale.contains(&p.asset) && !stale.contains(&p.clip) && !stale.contains(&p.graph)
         });
-        // A clip a graph plays may have changed too: rebind every graph.
-        self.graphs.clear();
+        // A graph rebinds when its file, its skin or a clip it plays changed;
+        // the others keep playing.
+        let clips = &self.graph_clips;
+        let is_stale = |key: &(String, String)| {
+            stale.contains(&key.0)
+                || stale.contains(&key.1)
+                || clips
+                    .get(key)
+                    .is_some_and(|c| c.iter().any(|c| stale.contains(c)))
+        };
+        let gone: HashSet<(String, String)> = self
+            .graphs
+            .keys()
+            .filter(|k| is_stale(k))
+            .cloned()
+            .collect();
+        self.graphs.retain(|k, _| !gone.contains(k));
+        self.graph_clips.retain(|k, _| !gone.contains(k));
         for p in self.posed.values_mut() {
-            p.graph.clear();
-            p.run = None;
+            let key = (p.graph.clone(), p.asset.clone());
+            // A graph that failed to bind is retried too.
+            if gone.contains(&key) || (p.run.is_none() && !p.graph.is_empty()) {
+                p.graph.clear();
+                p.run = None;
+            }
         }
         self.reported.clear();
         self.failed.clear();
@@ -217,8 +243,10 @@ impl SkinSync {
         if self.failed.contains(&key) {
             return None;
         }
+        let mut clips = Vec::new();
         let bound = media.anim_graph(path).and_then(|graph| {
             BoundGraph::bind(&graph, skin, &mut |clip| {
+                clips.push(clip.to_string());
                 let clip = media.clip(clip)?;
                 Ok(Arc::new(Sampler::new((*clip).clone())?))
             })
@@ -227,6 +255,7 @@ impl SkinSync {
             Ok((graph, warnings)) => {
                 diagnostics.extend(warnings.into_iter().map(|w| w.at(Location::file(path))));
                 let graph = Arc::new(graph);
+                self.graph_clips.insert(key.clone(), clips);
                 self.graphs.insert(key, graph.clone());
                 Some(graph)
             }

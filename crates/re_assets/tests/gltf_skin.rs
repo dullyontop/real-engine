@@ -37,6 +37,9 @@ struct Options {
     duplicate_names: bool,
     /// Give the mesh node a skin but the mesh no weights.
     unweighted: bool,
+    /// Add a second root joint "Prop", listed last, and make it the skin's
+    /// `skeleton`.
+    prop_skeleton: bool,
 }
 
 impl Default for Options {
@@ -47,6 +50,7 @@ impl Default for Options {
             bad_joint: None,
             duplicate_names: false,
             unweighted: false,
+            prop_skeleton: false,
         }
     }
 }
@@ -113,14 +117,17 @@ fn bar(o: &Options) -> Vec<u8> {
     let body = format!(
         r#""scene":0,"scenes":[{{"nodes":[0]}}],
 "nodes":[
- {{"name":"Armature","children":[1,3],"translation":{tr:?},"rotation":{q:?},"scale":{s:?}}},
+ {{"name":"Armature","children":[1,3,4],"translation":{tr:?},"rotation":{q:?},"scale":{s:?}}},
  {{"name":"Root","children":[2]}},
  {{"name":"{tip_name}","translation":[0,1,0]}},
- {{"name":"Bar","mesh":0,"skin":0}}
+ {{"name":"Bar","mesh":0,"skin":0}},
+ {{"name":"Prop","translation":[1,0,0]}}
 ],
 "meshes":[{{"name":"bar","primitives":[{{"attributes":{attributes},"indices":{idx}}}]}}],
-"skins":[{{"name":"rig","joints":[2,1],"inverseBindMatrices":{ibm},"skeleton":1}}],
+"skins":[{{"name":"rig","joints":{skin_joints},"inverseBindMatrices":{ibm},"skeleton":{skeleton}}}],
 "animations":[{{"name":"bend","samplers":[{{"input":{t},"output":{r}}}],"channels":[{{"sampler":0,"target":{{"node":2,"path":"rotation"}}}}]}}]"#,
+        skin_joints = if o.prop_skeleton { "[2,1,4]" } else { "[2,1]" },
+        skeleton = if o.prop_skeleton { 4 } else { 1 },
         tr = tr.to_array(),
         q = q.to_array(),
         s = s.to_array(),
@@ -178,6 +185,28 @@ fn imports_the_skin_in_parent_first_order() {
 
     // The clip targets the joint by name.
     assert_eq!(g.clips[0].targets[0].target, "Tip");
+}
+
+#[test]
+fn the_skeleton_root_becomes_joint_0() {
+    let g = import(&bar(&Options {
+        prop_skeleton: true,
+        ibm_count: 3,
+        ..Options::default()
+    }))
+    .unwrap();
+    let skin = g.skin("rig").unwrap();
+    assert!(skin.is_well_formed());
+    let names: Vec<&str> = skin.joints.iter().map(|j| j.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["Prop", "Root", "Tip"],
+        "the skeleton root comes first"
+    );
+    assert_eq!(skin.joints[2].parent, Some(1));
+    // Weights follow the new order: v0 is all Root.
+    let w = g.meshes[0].skin_weights.as_ref().unwrap();
+    assert_eq!(w.joints[0], [1, 0, 0, 0]);
 }
 
 #[test]

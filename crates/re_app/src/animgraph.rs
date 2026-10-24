@@ -370,7 +370,10 @@ fn edit(app: &mut App, a: EditArgs, call: &mut Call) -> Result<Json, Diagnostic>
             .open_doc(&path, saved)
             .map_err(|e| bad(e.to_string()).at(Location::file(path.clone())))?;
     }
-    let unchanged = app.world().doc(&path).is_some_and(|d| d.value == value);
+    // Compared as graphs, so a file that spells out defaults is unchanged.
+    let unchanged = app.world().doc(&path).is_some_and(|d| {
+        serde_json::from_value::<AnimGraph>(d.value.clone()).is_ok_and(|g| g == graph)
+    });
     let result = if unchanged {
         Ok(())
     } else {

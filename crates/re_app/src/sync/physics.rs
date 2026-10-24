@@ -682,11 +682,19 @@ pub fn push(
         match sync.links.get_mut(&id) {
             Some(link) if link.fingerprint == fp && link.entity == entity => {
                 if link.written != local || link.parent != parent {
+                    // A character only turned (root motion's yaw, ADR-0039):
+                    // it keeps interpolating from where it was.
+                    let turned = link.kind == LinkKind::Character
+                        && link.parent == parent
+                        && link.written.0 == local.0;
                     link.written = local;
                     link.parent = parent;
-                    // A teleport, not motion: nothing to interpolate across.
-                    // (A kinematic target is motion the next step performs.)
-                    if link.kind != LinkKind::Body(BodyKind::Kinematic) {
+                    if turned {
+                        link.cur.1 = rot;
+                    } else if link.kind != LinkKind::Body(BodyKind::Kinematic) {
+                        // A teleport, not motion: nothing to interpolate
+                        // across. (A kinematic target is motion the next step
+                        // performs.)
                         link.prev = (pos, rot);
                         link.cur = (pos, rot);
                     }

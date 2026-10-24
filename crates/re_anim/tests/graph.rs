@@ -941,6 +941,22 @@ fn validation_names_the_bad_element_by_path() {
 }
 
 #[test]
+fn a_clip_at_speed_zero_is_refused() {
+    let problems = codes_of(&graph(
+        "",
+        r#"{ "id": "a", "kind": "clip", "clip": "m.glb#a", "speed": 0 }"#,
+        r#"{ "id": "base", "entry": "s", "states": [{ "id": "s", "node": "a" }] }"#,
+        "",
+    ));
+    assert_eq!(
+        problems,
+        [
+            "RE7607 animation graph: `nodes[0].speed` is 0 (pause a graph with `Animator.playing` or `Animator.speed`)"
+        ]
+    );
+}
+
+#[test]
 fn a_blend_tree_cycle_is_reported() {
     let problems = codes_of(&graph(
         r#"{ "id": "w", "type": "float" }"#,

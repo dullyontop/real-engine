@@ -907,3 +907,47 @@ fn graphs_are_created_edited_and_validated_by_command() {
     );
     assert!(!o.ok);
 }
+
+#[test]
+fn graphs_keep_playing_when_other_files_change() {
+    let dir = project(&[figure_entity("hero", 0.0, "")], &[]);
+    let mut app = open(dir.path());
+    app.run_headless(Some(1), None).unwrap();
+    let o = dispatch(
+        &mut app,
+        "anim.set_param",
+        json!({ "entity": "hero", "param": "waving", "value": true }),
+    );
+    assert!(o.ok, "{:?}", o.diagnostics);
+    app.run_headless(Some(20), None).unwrap();
+    let hero = re_scene::entity_id(app.world().entity("hero").unwrap());
+    let arm = |app: &App| {
+        app.skin_sync()
+            .player(hero)
+            .unwrap()
+            .state(Some("arm"))
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(arm(&app), "up");
+
+    // A new file elsewhere leaves the hero's graph, and its parameters, alone.
+    let o = dispatch(
+        &mut app,
+        "animgraph.create",
+        json!({ "path": "anims/other.animgraph.json" }),
+    );
+    assert!(o.ok, "{:?}", o.diagnostics);
+    app.run_headless(Some(1), None).unwrap();
+    assert_eq!(arm(&app), "up");
+
+    // An edit that changes nothing records nothing, even though the file
+    // spells out values the graph's defaults would give.
+    let o = dispatch(
+        &mut app,
+        "animgraph.edit",
+        json!({ "path": "anims/figure.animgraph.json", "ops": [] }),
+    );
+    assert!(o.ok, "{:?}", o.diagnostics);
+    assert!(o.changes.is_empty(), "{:?}", o.changes);
+}

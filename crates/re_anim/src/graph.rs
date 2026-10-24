@@ -210,6 +210,11 @@ pub fn validate(graph: &AnimGraph) -> Vec<Diagnostic> {
                 }
                 if !speed.is_finite() {
                     c.bad(format!("{at}.speed"), "is not finite");
+                } else if *speed == 0.0 {
+                    c.bad(
+                        format!("{at}.speed"),
+                        "is 0 (pause a graph with `Animator.playing` or `Animator.speed`)",
+                    );
                 }
             }
             NodeKind::Blend1d {
