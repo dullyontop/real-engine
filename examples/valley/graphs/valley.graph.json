@@ -90,7 +90,7 @@
     {
       "id": "ground",
       "kind": "terrain.mesh",
-      "version": 1,
+      "version": 2,
       "params": {
         "collider": true,
         "material": "materials/grass.material.json",

@@ -1438,7 +1438,15 @@ impl App {
             let report =
                 re_proc::stream::step(&mut self.world, self.stream_tick, &self.config.stream);
             self.diagnostics.extend(report.diagnostics);
-            self.follow_origin(report.origin);
+            // A streamer that could not be made has no origin to follow.
+            if self
+                .world
+                .ecs
+                .get_resource::<re_proc::stream::Streamer>()
+                .is_some()
+            {
+                self.follow_origin(report.origin);
+            }
         }
         self.stream_tick += 1;
     }
@@ -2451,6 +2459,7 @@ impl App {
                 }
                 self.physics_sync = PhysicsSync::new();
                 self.physics_cmds.clear();
+                self.origin_refused = None;
                 self.audio_cmds.push(AudioCmd::StopAll);
                 self.audio_sync = AudioSync::new();
                 self.anim_sync = AnimSync::new();

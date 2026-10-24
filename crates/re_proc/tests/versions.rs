@@ -58,6 +58,7 @@ const GOLDEN: &[(&str, u32, &str, &str)] = &[
     ("field.combine", 1, "island", "edb4669e64c03a6d"),
     ("field.remap", 1, "shore", "971fbd42d14be810"),
     ("terrain.mesh", 1, "terrain", "fdab6a0896e440a4"),
+    ("terrain.mesh", 2, "terrain", "8b3790f53e5b46b9"),
     ("terrain.water_plane", 1, "water", "e829d2cfac475f9d"),
     ("scatter.poisson", 1, "scatter", "2e786b66afc3f222"),
     ("points.pick", 1, "kind", "4b41e0ac92d466f8"),
@@ -85,10 +86,10 @@ fn every_supported_kind_version_has_a_golden_output() {
             );
         }
     }
-    for (version, entries) in [(1u32, GOLDEN)] {
+    for (version, entries) in [(1u32, GOLDEN), (2, GOLDEN)] {
         let mut doc = example_with_every_kind();
         for n in &mut doc.nodes {
-            n.version = version;
+            n.version = version.min(registry.get(&n.kind).unwrap().version);
         }
         let g = ProcGraph::from_doc(&doc, &registry).unwrap();
         let e = evaluator(2).evaluate(&g, &example_opts());
@@ -183,7 +184,12 @@ fn keys_from_before_versioning_are_unchanged() {
             "2922c21d47b789261066e6f664c7f5d5a3553ed2f8f0768892b04aa45293d2d4",
         ),
     ];
-    let g = ProcGraph::from_doc(&example(), &NodeRegistry::m1()).unwrap();
+    // The example as it was written before versioning: every node at 1.
+    let mut doc = example();
+    for n in &mut doc.nodes {
+        n.version = 1;
+    }
+    let g = ProcGraph::from_doc(&doc, &NodeRegistry::m1()).unwrap();
     let e = evaluator(1).evaluate(&g, &example_opts());
     let keys: Vec<(&str, &str)> = e
         .report
@@ -456,7 +462,7 @@ fn migration_world(version: u32, overrides: Json) -> (tempfile::TempDir, re_comm
         GraphDoc::from_json(
             &json!({
                 "format": "real-engine/graph", "version": 1, "name": "x", "seed": 0,
-                "nodes": [{ "id": "ground", "kind": "terrain.mesh", "version": 1, "params": {} }],
+                "nodes": [{ "id": "ground", "kind": "terrain.mesh", "version": 2, "params": {} }],
                 "edges": [],
             })
             .to_string(),
@@ -695,4 +701,66 @@ fn erosion_leaves_a_field_too_small_to_carry_water() {
         panic!("no fields");
     };
     assert_eq!(a.0.samples, b.0.samples);
+}
+
+/// Streamed, `terrain.mesh@2` puts its entity at the window's corner with a
+/// corner-local mesh and collider (ADR-0042's floating origin); `@1` keeps
+/// them in world space.
+#[test]
+fn terrain_mesh_2_is_local_to_its_window_corner() {
+    let registry = Arc::new(NodeRegistry::m1());
+    let at = |version: u32| {
+        let doc = json!({
+            "format": "real-engine/graph", "version": 1, "name": "t", "seed": 7,
+            "nodes": [
+                { "id": "h", "kind": "terrain.heightfield", "version": 1,
+                  "params": { "cell": 4.0, "height": 10.0 } },
+                { "id": "ground", "kind": "terrain.mesh", "version": version,
+                  "params": { "collider": true } },
+            ],
+            "edges": [{ "from": ["h", "field"], "to": ["ground", "field"] }],
+        });
+        let g = ProcGraph::from_doc(&GraphDoc::from_json(&doc.to_string()).unwrap(), &registry)
+            .unwrap();
+        let o = EvalOptions {
+            domain: Some(Domain {
+                origin: [1792, -64],
+                n: 17,
+                spacing: 4.0,
+            }),
+            ..Default::default()
+        };
+        let e = Evaluator::new(registry.clone()).evaluate(&g, &o);
+        assert!(e.ok(), "{:#?}", e.report.diagnostics);
+        let Some(Output::Fragment(f)) = e.output("ground") else {
+            panic!("no fragment");
+        };
+        let translation = f.items[0]
+            .components
+            .iter()
+            .find(|(c, _)| c == "Transform")
+            .and_then(|(_, fields)| fields.iter().find(|(n, _)| n == "translation"))
+            .map(|(_, v)| v.clone());
+        let offset = f
+            .assets
+            .iter()
+            .find_map(|(_, a)| match a {
+                re_proc::DerivedAsset::Heightfield(h) => Some(h.offset),
+                _ => None,
+            })
+            .expect("a collider heightfield");
+        (translation, offset)
+    };
+    let (t1, o1) = at(1);
+    assert_eq!(t1, None);
+    assert_eq!([o1.x, o1.z], [7168.0, -256.0]);
+    let (t2, o2) = at(2);
+    assert_eq!(
+        t2,
+        Some(re_reflect::Value::Vec3(glam::Vec3::new(
+            7168.0, 0.0, -256.0
+        )))
+    );
+    assert_eq!([o2.x, o2.z], [0.0, 0.0]);
+    assert_eq!(o1.y, o2.y);
 }

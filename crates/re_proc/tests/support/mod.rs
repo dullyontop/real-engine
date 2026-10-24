@@ -27,7 +27,9 @@ pub fn graph(
         "name": "test",
         "seed": seed,
         "nodes": nodes.iter().map(|(id, kind, params)| json!({
-            "id": id, "kind": kind, "version": 1, "params": params,
+            "id": id, "kind": kind, "params": params,
+            // Each kind's current version.
+            "version": re_proc::NodeRegistry::m1().get(kind).map_or(1, |d| d.version),
         })).collect::<Vec<_>>(),
         "edges": edges.iter().map(|(f, fp, t, tp)| json!({
             "from": [f, fp], "to": [t, tp],
