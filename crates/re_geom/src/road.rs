@@ -248,8 +248,8 @@ pub fn spline(points: &[ControlPoint], spacing: f64, closed: bool) -> Result<Pat
         let end = dense[dense.len() - 1];
         let last = samples.last().map_or(-1.0, |s| s.distance);
         // A last regular sample within a thousandth of the spacing of the
-        // end is replaced by the end itself.
-        if total - last < spacing * 1e-3 {
+        // end is replaced by the end itself (unless it is the start).
+        if samples.len() > 1 && total - last < spacing * 1e-3 {
             samples.pop();
         }
         samples.push(PathSample {
@@ -259,7 +259,13 @@ pub fn spline(points: &[ControlPoint], spacing: f64, closed: bool) -> Result<Pat
             distance: total,
         });
     }
-    Ok(Path { samples, closed })
+    let path = Path { samples, closed };
+    if path.validate().is_err() {
+        return Err(bad(format!(
+            "a spacing of {spacing} leaves too few samples on a path {total} long; use a smaller spacing"
+        )));
+    }
+    Ok(path)
 }
 
 fn sample_between(a: &Dense, b: &Dense, d: f64) -> PathSample {
@@ -706,15 +712,21 @@ pub fn road_mesh(paths: &[Path], style: &RoadStyle) -> Result<Road, GeomError> {
         let m = if path.closed { n } else { n - 1 } as f64;
         // Inside intervals along the path parameter, with their junction.
         let mut inside: Vec<(f64, f64, usize)> = Vec::new();
+        let mut hits: Vec<(f64, f64, usize)> = Vec::new();
         for (i, (a, b)) in path.segments().enumerate() {
             let (a, b) = (xz(a.position), xz(b.position));
+            // A segment can cross several discs: take them in path order.
+            hits.clear();
             for (j, c) in centres.iter().enumerate() {
                 if let Some((t0, t1)) = disc_interval(a, b, *c, r) {
-                    let (s0, s1) = (i as f64 + t0, i as f64 + t1);
-                    match inside.last_mut() {
-                        Some(last) if last.2 == j && last.1 >= s0 => last.1 = last.1.max(s1),
-                        _ => inside.push((s0, s1, j)),
-                    }
+                    hits.push((i as f64 + t0, i as f64 + t1, j));
+                }
+            }
+            hits.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.2.cmp(&y.2)));
+            for &(s0, s1, j) in &hits {
+                match inside.last_mut() {
+                    Some(last) if last.2 == j && last.1 >= s0 => last.1 = last.1.max(s1),
+                    _ => inside.push((s0, s1, j)),
                 }
             }
         }
@@ -731,7 +743,11 @@ pub fn road_mesh(paths: &[Path], style: &RoadStyle) -> Result<Road, GeomError> {
                 junction: j,
             });
         }
-        if inside.is_empty() {
+        // A loop wholly inside one junction is all junction.
+        let whole = path.closed && inside.len() == 1 && inside[0].0 <= 0.0 && inside[0].1 >= m;
+        if whole {
+            // No pieces: the junction's surface covers the loop.
+        } else if inside.is_empty() {
             pieces.push(Piece {
                 stations: stations(path, &tangents, 0.0, m),
                 ends: [None, None],
@@ -964,6 +980,61 @@ mod tests {
     }
 
     #[test]
+    fn a_segment_through_two_junctions_meets_them_in_order() {
+        // One 100 m segment, crossed at x = 70 and x = 30: the junctions are
+        // listed out of path order, and the result is the same either way.
+        let cp = |x: f64| ControlPoint {
+            position: [x, 0.0, 0.0],
+            width: 6.0,
+            bank: 0.0,
+        };
+        let a = spline(&[cp(0.0), cp(100.0)], 100.0, false).unwrap();
+        assert_eq!(a.samples.len(), 2);
+        let b = line(&[[70.0, 0.0, -20.0], [70.0, 0.0, 20.0]], 6.0);
+        let c = line(&[[30.0, 0.0, -20.0], [30.0, 0.0, 20.0]], 6.0);
+        let style = RoadStyle {
+            junction_radius: 5.0,
+            snap: 0.0,
+            bank_fade: 4.0,
+        };
+        let print = footprint(&[a.clone(), b.clone(), c.clone()], 0.0)
+            .unwrap()
+            .area();
+        for paths in [[&a, &b, &c], [&a, &c, &b]] {
+            let paths: Vec<Path> = paths.into_iter().cloned().collect();
+            let road = road_mesh(&paths, &style).unwrap();
+            assert_eq!(road.junctions.len(), 2);
+            let area = upward_area(&road.mesh);
+            assert!((area - print).abs() < 0.01 * print, "{area} vs {print}");
+        }
+    }
+
+    #[test]
+    fn a_loop_inside_a_junction_is_all_junction() {
+        let ring: Vec<ControlPoint> = (0..8)
+            .map(|i| {
+                let (s, c) = crate::math::sin_cos(f64::from(i) * std::f64::consts::FRAC_PI_4);
+                ControlPoint {
+                    position: [3.0 * c, 0.0, 3.0 * s],
+                    width: 1.0,
+                    bank: 0.0,
+                }
+            })
+            .collect();
+        let ring = spline(&ring, 0.5, true).unwrap();
+        let cross = line(&[[-20.0, 0.0, 0.0], [20.0, 0.0, 0.0]], 4.0);
+        let style = RoadStyle {
+            junction_radius: 8.0,
+            snap: 0.0,
+            bank_fade: 4.0,
+        };
+        let road = road_mesh(&[ring.clone(), cross.clone()], &style).unwrap();
+        let area = upward_area(&road.mesh);
+        let print = footprint(&[ring, cross], 0.0).unwrap().area();
+        assert!((area - print).abs() < 0.01 * print, "{area} vs {print}");
+    }
+
+    #[test]
     fn a_road_ending_near_another_makes_a_t_junction() {
         let a = line(&[[-30.0, 0.0, 0.0], [30.0, 0.0, 0.0]], 6.0);
         let b = line(&[[0.0, 0.0, 4.5], [0.0, 0.0, 40.0]], 6.0);
@@ -1012,6 +1083,24 @@ mod tests {
         assert_eq!(code(spline(&[cp(0.0)], 1.0, false)), invalid);
         assert_eq!(code(spline(&[cp(0.0), cp(0.0)], 1.0, false)), invalid);
         assert_eq!(code(spline(&[cp(0.0), cp(1.0)], 0.0, false)), invalid);
+        // A spacing longer than a loop leaves too few samples.
+        let tri = [
+            cp(0.0),
+            cp(10.0),
+            ControlPoint {
+                position: [0.0, 0.0, 10.0],
+                ..cp(0.0)
+            },
+        ];
+        assert_eq!(code(spline(&tri, 1000.0, true)), invalid);
+        // An open path keeps both ends whatever the spacing.
+        assert_eq!(
+            spline(&[cp(0.0), cp(5.0)], 1.0e4, false)
+                .unwrap()
+                .samples
+                .len(),
+            2
+        );
         assert_eq!(code(spline(&[cp(0.0), cp(1.0e5)], 1.0e-4, false)), invalid);
         assert_eq!(
             code(spline(&[cp(0.0), cp(3.0e6)], 1.0, false)),

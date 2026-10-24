@@ -233,7 +233,9 @@ impl Shapes {
     }
 
     /// The input in i_overlay's layout, outer contours counter-clockwise and
-    /// holes clockwise, so the non-zero rule reads them as written.
+    /// holes clockwise, so the positive rule reads them as written: a hole
+    /// only removes area, even where it sticks out of its outer contour or
+    /// overlaps another hole.
     fn raw(&self) -> Result<Raw, GeomError> {
         self.validate()?;
         Ok(self
@@ -281,7 +283,7 @@ impl Shapes {
             return Ok(Shapes::new());
         }
         let empty: Raw = Vec::new();
-        raw.overlay_with_fixed_scale(&empty, OverlayRule::Subject, FillRule::NonZero, GRID)
+        raw.overlay_with_fixed_scale(&empty, OverlayRule::Subject, FillRule::Positive, GRID)
             .map(Shapes::from_raw)
             .map_err(range_error)
     }
@@ -311,7 +313,7 @@ impl Shapes {
             BoolOp::Difference => OverlayRule::Difference,
             BoolOp::Xor => OverlayRule::Xor,
         };
-        a.overlay_with_fixed_scale(&b, rule, FillRule::NonZero, GRID)
+        a.overlay_with_fixed_scale(&b, rule, FillRule::Positive, GRID)
             .map(Shapes::from_raw)
             .map_err(range_error)
     }
@@ -471,6 +473,26 @@ mod tests {
             area += f64::from(up) * 0.5;
         }
         assert!((area - 64.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn holes_only_remove_area() {
+        let with = |holes: Vec<Contour>| {
+            Shapes {
+                shapes: vec![Shape {
+                    outer: square(0.0, 0.0, 10.0),
+                    holes,
+                }],
+            }
+            .simplified()
+            .unwrap()
+            .area()
+        };
+        // A hole sticking out of its outer contour.
+        assert!((with(vec![square(8.0, 4.0, 4.0)]) - 92.0).abs() < 1e-9);
+        // Overlapping holes.
+        let both = with(vec![square(2.0, 2.0, 4.0), square(4.0, 4.0, 4.0)]);
+        assert!((both - 72.0).abs() < 1e-9, "{both}");
     }
 
     #[test]
