@@ -276,22 +276,15 @@ impl CompatView {
             }
         }
         let items = self.draw_items(&f.items);
-        let mut snapshot = RenderSnapshot {
+        let snapshot = RenderSnapshot {
             camera: f.camera,
             lights: f.lights.clone(),
             items,
             clear: f.clear,
-            post: self.post,
+            post: f.post_settings(self.post),
             shadows: self.shadows,
             ..RenderSnapshot::default()
         };
-        snapshot.post.exposure = f.exposure;
-        snapshot.post.grading = f.grading.map(|g| re_types::render::ColorGrading {
-            brightness: g.brightness,
-            contrast: g.contrast,
-            saturation: g.saturation,
-            tint: g.tint,
-        });
         Ok(Some((snapshot, extras(f))))
     }
 

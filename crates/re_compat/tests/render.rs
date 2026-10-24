@@ -340,9 +340,45 @@ fn lights_spots_fog_and_color_correction() {
     assert!((f.spot_lights[0].half_angle - 30f32.to_radians()).abs() < 1e-5);
     let fog = f.fog.unwrap();
     assert_eq!((fog.start, fog.end), (20.0, 200.0));
-    let g = f.grading.unwrap();
+    let g = f.post.grading.unwrap();
     assert_eq!((g.saturation, g.brightness), (-1.0, 0.1));
     assert_eq!(f.exposure, 2.0);
+}
+
+#[test]
+fn bloom_blur_and_sun_rays_reach_the_post_chain() {
+    let mut p = place();
+    let f = p.render(&input());
+    assert_eq!(f.post, render::PostEffects::default());
+    let base = re_types::render::PostSettings::default();
+    assert_eq!(f.post_settings(base).bloom, base.bloom);
+    script(
+        &mut p,
+        r#"
+        local l = game:GetService("Lighting")
+        new("BloomEffect", {Intensity = 0.5, Size = 48, Threshold = 1.5}, l)
+        new("BloomEffect", {Intensity = 0.25, Size = 12, Threshold = 3}, workspace.CurrentCamera)
+        new("BloomEffect", {Intensity = 9, Enabled = false}, l)
+        new("BlurEffect", {Size = 24}, l)
+        new("BlurEffect", {Size = 24}, workspace.CurrentCamera)
+        new("SunRaysEffect", {Intensity = 0.1, Spread = 0.4}, l)
+        new("SunRaysEffect", {Intensity = 0.2, Spread = 2}, l)
+        "#,
+    );
+    let f = p.render(&input());
+    let bloom = f.post.bloom.unwrap();
+    assert!((bloom.intensity - 0.75).abs() < 1e-6);
+    assert!((bloom.radius - 0.1).abs() < 1e-6);
+    assert_eq!(bloom.threshold, 1.5);
+    assert!((f.post.blur_radius - 0.05 * 2f32.sqrt()).abs() < 1e-6);
+    let rays = f.post.sun_rays.unwrap();
+    assert!((rays.intensity - 0.3).abs() < 1e-6);
+    assert_eq!(rays.spread, 1.0);
+    let post = f.post_settings(base);
+    assert_eq!(post.bloom, bloom);
+    assert_eq!(post.blur_radius, f.post.blur_radius);
+    assert_eq!(post.sun_rays, rays);
+    assert_eq!(post.exposure, f.exposure);
 }
 
 #[test]
@@ -502,7 +538,7 @@ impl View3d {
                 r.release_material(h).unwrap();
             }
         }
-        let mut snapshot = RenderSnapshot {
+        let snapshot = RenderSnapshot {
             camera: f.camera,
             lights: f.lights.clone(),
             items: f
@@ -521,15 +557,9 @@ impl View3d {
                 })
                 .collect(),
             clear: f.clear,
+            post: f.post_settings(re_types::render::PostSettings::default()),
             ..RenderSnapshot::default()
         };
-        snapshot.post.exposure = f.exposure;
-        snapshot.post.grading = f.grading.map(|g| re_types::render::ColorGrading {
-            brightness: g.brightness,
-            contrast: g.contrast,
-            saturation: g.saturation,
-            tint: g.tint,
-        });
         let extras = extras(f);
         r.render_with(
             &self.gpu.device,
@@ -795,6 +825,41 @@ fn golden_effects() {
     assert_eq!(f.ribbons.len(), 2);
     v.draw(&f);
     v.golden("effects");
+}
+
+/// Neon parts glowing through `BloomEffect`, and `SunRaysEffect` shafts
+/// between pillars towards a low sun.
+#[test]
+fn golden_post_effects() {
+    let Some(mut v) = View3d::new(480, 320) else {
+        return;
+    };
+    let mut p = place();
+    script(
+        &mut p,
+        r#"
+        local l = game:GetService("Lighting")
+        l.ClockTime = 17.4
+        new("BloomEffect", {Intensity = 1, Size = 24, Threshold = 0.9}, l)
+        new("SunRaysEffect", {Intensity = 0.3, Spread = 0.6}, l)
+        local cam = workspace.CurrentCamera
+        cam.CFrame = CFrame.new(Vector3.new(24, 3, 0), Vector3.new(-20, 6, 0))
+        new("Part", {Anchored = true, Size = Vector3.new(80, 1, 60), Position = Vector3.new(0, -0.5, 0),
+            Color = Color3.fromRGB(60, 62, 58)}, workspace)
+        for i = -3, 3 do
+            new("Part", {Anchored = true, Size = Vector3.new(1.5, 6, 1.5), Position = Vector3.new(-6, 3, i * 4),
+                Color = Color3.fromRGB(90, 85, 80)}, workspace)
+        end
+        new("Part", {Anchored = true, Size = Vector3.new(1, 1, 1), Position = Vector3.new(8, 1.5, -3),
+            Color = Color3.fromRGB(80, 220, 255), Material = Enum.Material.Neon}, workspace)
+        new("Part", {Anchored = true, Size = Vector3.new(1, 3, 1), Position = Vector3.new(6, 1.5, 4),
+            Color = Color3.fromRGB(255, 90, 60), Material = Enum.Material.Neon}, workspace)
+        "#,
+    );
+    let f = p.render(&v.input());
+    assert!(f.post.bloom.is_some() && f.post.sun_rays.is_some());
+    v.draw(&f);
+    v.golden("post_effects");
 }
 
 /// The same `BillboardGui` (sized in studs) over parts 10, 25 and 60 studs

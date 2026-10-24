@@ -4,7 +4,7 @@
 //! The host calls [`build`] once a frame, after the frame's scripts and
 //! simulation, with the viewport. It returns a [`RenderFrame`]: the camera
 //! and lights, one [`FrameItem`] per drawn part or merged static cell, the
-//! environment (ambient light, fog, sky, colour grading), the effects, and
+//! environment (ambient light, fog, sky, post effects), the effects, and
 //! the meshes, materials and textures to upload or release since the last
 //! frame. Nothing here talks to the GPU: the host maps the frame onto its
 //! renderer (`re_render`'s `RenderSnapshot` and `SceneExtras`), keeping a
@@ -34,9 +34,9 @@ use re_core::Diagnostic;
 use re_scene::{Entity, World};
 use re_types::EntityId;
 use re_types::mesh::MeshData;
-use re_types::render::{Camera, Light, MaterialDesc, TextureData};
+use re_types::render::{Camera, Light, MaterialDesc, PostSettings, TextureData};
 
-pub use lighting::sun_direction;
+pub use lighting::{PostEffects, sun_direction};
 pub use looks::{MaterialKey, TEXTURE_SIZE};
 pub use mesh::UV_STUDS;
 pub use viewport::ViewportScene;
@@ -317,8 +317,8 @@ pub struct RenderFrame {
     pub fog: Option<Fog>,
     /// The sky.
     pub sky: Sky,
-    /// Colour correction.
-    pub grading: Option<ColorGrading>,
+    /// Colour correction, bloom, blur and sun rays.
+    pub post: PostEffects,
     /// Particles.
     pub sprites: Vec<Sprite>,
     /// Beams and trails.
@@ -346,6 +346,35 @@ pub struct RenderFrame {
     pub diagnostics: Vec<Diagnostic>,
     /// The work the build did.
     pub stats: BuildStats,
+}
+
+impl RenderFrame {
+    /// `base` (the project's post settings) with this frame's exposure and
+    /// post effects: each kind of effect the place has replaces the base
+    /// setting of that kind, and a kind it lacks leaves the base as it is.
+    pub fn post_settings(&self, base: PostSettings) -> PostSettings {
+        let mut post = base;
+        post.exposure = self.exposure;
+        let fx = &self.post;
+        if let Some(g) = fx.grading {
+            post.grading = Some(re_types::render::ColorGrading {
+                brightness: g.brightness,
+                contrast: g.contrast,
+                saturation: g.saturation,
+                tint: g.tint,
+            });
+        }
+        if let Some(b) = fx.bloom {
+            post.bloom = b;
+        }
+        if fx.blur_radius > 0.0 {
+            post.blur_radius = fx.blur_radius;
+        }
+        if let Some(r) = fx.sun_rays {
+            post.sun_rays = r;
+        }
+        post
+    }
 }
 
 /// What the view needs from the project's configuration.
@@ -648,7 +677,7 @@ fn build_in(
         ambient: env.ambient,
         fog: env.fog,
         sky: env.sky,
-        grading: env.grading,
+        post: env.effects,
         sprites: Vec::new(),
         ribbons: Vec::new(),
         highlights: Vec::new(),
