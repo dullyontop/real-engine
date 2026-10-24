@@ -61,6 +61,9 @@ pub struct AppConfig {
     /// reads and checks it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compat: Option<toml::Table>,
+    /// `[net]`: online play's port, players, rates and timeout (ADR-0050 §6).
+    #[serde(default, skip_serializing_if = "crate::net::NetConfig::is_default")]
+    pub net: crate::net::NetConfig,
     /// `[package]`: how `real build` packs the game (ADR-0037).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<crate::package::PackageConfig>,
@@ -88,6 +91,7 @@ impl Default for AppConfig {
             verify: VerifyConfig::default(),
             stream: re_proc::stream::StreamConfig::default(),
             compat: None,
+            net: crate::net::NetConfig::default(),
             package: None,
             headless: true,
             persist_edits: false,

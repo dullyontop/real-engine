@@ -35,3 +35,7 @@ pub const CLOSED: Code = Code::new("RE8907");
 /// A message cannot be sent: it is too large for its channel, or the
 /// connection does not exist.
 pub const SEND: Code = Code::new("RE8908");
+
+/// A run cannot go online: the project is not a Roblox-style project, or
+/// the game already started.
+pub const NOT_ONLINE: Code = Code::new("RE8909");

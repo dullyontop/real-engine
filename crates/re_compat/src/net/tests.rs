@@ -92,7 +92,7 @@ fn tick(now: Duration, server: &mut Server, clients: &mut [Client], set: &Replic
         if let Event::Message { peer, bytes, .. } = e {
             let (conn, player) = &mut server.conns[peer.0 as usize];
             let f = Frame::decode(&bytes).expect("a frame");
-            conn.apply_up(&mut server.world, set, Some(*player), &f);
+            conn.apply_up(&mut server.world, set, Some(*player), &f, None);
         }
     }
     for peer in server.end.peers() {
@@ -216,7 +216,7 @@ fn pass(
     set: &ReplicationSet,
 ) {
     let up = Frame::decode(&rep.diff_up(client, set).encode()).unwrap();
-    conn.apply_up(server, set, player, &up);
+    conn.apply_up(server, set, player, &up, None);
     let down = Frame::decode(&conn.diff(server, set, player).encode()).unwrap();
     server.ecs.increment_change_tick();
     rep.apply(client, &down);
@@ -252,7 +252,11 @@ fn the_server_takes_only_upstream_components_that_fit() {
         upstream: vec!["Velocity".into()],
         ..ReplicationSet::default()
     };
-    assert_eq!(conn.apply_up(&mut server, &only, Some(p), &up), 0);
+    assert_eq!(
+        conn.apply_up(&mut server, &only, Some(p), &up, None)
+            .written,
+        0
+    );
     assert_ne!(
         position(&server, part),
         Value::Vec3(glam::Vec3::new(5.0, 1.0, 0.0))
@@ -265,9 +269,16 @@ fn the_server_takes_only_upstream_components_that_fit() {
             values.push(WireValue::Bool(true));
         }
     }
-    assert_eq!(conn.apply_up(&mut server, &all, Some(p), &long), 0);
+    assert_eq!(
+        conn.apply_up(&mut server, &all, Some(p), &long, None)
+            .written,
+        0
+    );
 
-    assert_eq!(conn.apply_up(&mut server, &all, Some(p), &up), 1);
+    assert_eq!(
+        conn.apply_up(&mut server, &all, Some(p), &up, None).written,
+        1
+    );
     assert_eq!(
         position(&server, part),
         Value::Vec3(glam::Vec3::new(5.0, 1.0, 0.0))
@@ -302,4 +313,284 @@ fn instances_waiting_under_a_destroyed_parent_arrive_with_their_children() {
         kids.iter().any(|k| client.name_of(*k) == "Y"),
         "Y arrives under X"
     );
+}
+
+// ------------------------------------------------------------- sessions
+
+mod sessions {
+    use re_net::{Config, Endpoint, MemoryNet, MemoryTransport};
+    use re_script::host::{NoServices, WorldHost};
+    use re_script::{ContextKind, RuntimeConfig};
+
+    use super::super::session::{ClientNet, ClientState, ServerNet};
+    use super::super::{
+        CompatWorlds, NetSettings, ReplicationSet, client_world, link_client, pump,
+    };
+    use crate::{CompatSetup, CompatVm, SignalBehavior};
+    use re_scene::World;
+
+    const DT: f64 = 1.0 / 60.0;
+    const PLACE: &[&str] = &[
+        "Workspace",
+        "Players",
+        "ReplicatedStorage",
+        "ServerScriptService",
+    ];
+
+    struct Server {
+        world: World,
+        vm: CompatVm,
+        net: ServerNet<MemoryTransport>,
+        players: u32,
+        diags: Vec<String>,
+    }
+
+    struct Client {
+        world: World,
+        vm: CompatVm,
+        net: ClientNet<MemoryTransport>,
+        set: ReplicationSet,
+        started: bool,
+    }
+
+    fn scene(setup: &CompatSetup) -> World {
+        let mut w = World::new();
+        crate::scene::create_place(&mut w, &setup.classes, PLACE).unwrap();
+        let game = w.entity(crate::GAME_ID).unwrap();
+        let rs = crate::services::core::find_service(&w, game, "ReplicatedStorage").unwrap();
+        crate::scene::spawn_instance(
+            &mut w,
+            &setup.classes,
+            "RemoteEvent",
+            None,
+            "Ping",
+            Some(rs),
+        )
+        .unwrap();
+        w
+    }
+
+    fn vm(
+        setup: &std::sync::Arc<CompatSetup>,
+        kind: ContextKind,
+        w: &mut World,
+        dir: &std::path::Path,
+    ) -> CompatVm {
+        CompatVm::new(
+            setup,
+            kind,
+            w,
+            &RuntimeConfig::new(dir),
+            SignalBehavior::Deferred,
+        )
+        .unwrap()
+    }
+
+    impl Server {
+        fn exec(&mut self, src: &str) {
+            let mut s = NoServices::default();
+            let mut h = WorldHost {
+                world: &mut self.world,
+                services: &mut s,
+            };
+            let d = self.vm.exec(&mut h, "server", src);
+            assert!(d.is_empty(), "{d:?}");
+        }
+
+        fn frame(&mut self) {
+            let mut s = NoServices::default();
+            let mut h = WorldHost {
+                world: &mut self.world,
+                services: &mut s,
+            };
+            let d = self
+                .net
+                .receive(&self.vm, &mut h, &mut self.players)
+                .unwrap();
+            self.diags.extend(d.into_iter().map(|d| d.message));
+            let mut d = pump(&self.vm, &mut h);
+            d.extend(self.vm.step(&mut h, DT));
+            assert!(d.iter().all(|d| !d.is_error()), "{d:?}");
+            let d = self.net.replicate(&mut self.world, DT);
+            self.diags.extend(d.into_iter().map(|d| d.message));
+        }
+    }
+
+    impl Client {
+        fn exec(&mut self, src: &str) {
+            let mut s = NoServices::default();
+            let mut h = WorldHost {
+                world: &mut self.world,
+                services: &mut s,
+            };
+            let d = self.vm.exec(&mut h, "client", src);
+            assert!(d.is_empty(), "{d:?}");
+        }
+
+        fn frame(&mut self) {
+            if !self.started {
+                if !self.net.poll_join(&mut self.world).unwrap() {
+                    return;
+                }
+                self.started = true;
+                // Frame 0: what the scripts did when they started.
+                self.net.send(&mut self.world, &self.set);
+                return;
+            }
+            if matches!(self.net.state(), ClientState::Closed(_)) {
+                return;
+            }
+            self.net.receive(&mut self.world).unwrap();
+            let mut s = NoServices::default();
+            let mut h = WorldHost {
+                world: &mut self.world,
+                services: &mut s,
+            };
+            let mut d = pump(&self.vm, &mut h);
+            d.extend(self.vm.step(&mut h, DT));
+            assert!(d.iter().all(|d| !d.is_error()), "{d:?}");
+            self.net.send(&mut self.world, &self.set);
+        }
+
+        fn out(&self) -> Vec<String> {
+            self.vm.take_output().into_iter().map(|l| l.text).collect()
+        }
+    }
+
+    fn game(names: &[Option<&str>]) -> (Server, Vec<Client>, tempfile::TempDir) {
+        let setup = CompatSetup::standard().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let scene = scene(&setup);
+        let settings = NetSettings::default();
+        let CompatWorlds { mut server, .. } = CompatWorlds::new(&setup, scene.fork()).unwrap();
+        let vm_s = vm(&setup, ContextKind::Server, &mut server, dir.path());
+        let net = MemoryNet::new();
+        let end = Endpoint::server(net.bind(), Config::server(1, 7));
+        let addr = end.local_addr();
+        let snet = ServerNet::new(end, &mut server, settings.clone(), false);
+        let s = Server {
+            world: server,
+            vm: vm_s,
+            net: snet,
+            players: 0,
+            diags: Vec::new(),
+        };
+        let clients = names
+            .iter()
+            .map(|n| {
+                let mut copy = scene.fork();
+                let set = settings.replication_set();
+                let mut w = client_world(&setup, &mut copy, &set).unwrap();
+                link_client(&mut w);
+                let vm_c = vm(&setup, ContextKind::Client, &mut w, dir.path());
+                let end = Endpoint::client(net.bind(), addr, Config::client(1, 7));
+                Client {
+                    world: w,
+                    vm: vm_c,
+                    net: ClientNet::new(end, n.map(str::to_string), false),
+                    set,
+                    started: false,
+                }
+            })
+            .collect();
+        (s, clients, dir)
+    }
+
+    fn run(s: &mut Server, cs: &mut [Client], n: usize) {
+        for _ in 0..n {
+            s.frame();
+            for c in cs.iter_mut() {
+                c.frame();
+            }
+        }
+    }
+
+    #[test]
+    fn players_join_talk_and_are_kicked() {
+        let (mut s, mut cs, _dir) = game(&[Some("Ann"), None]);
+        s.exec(
+            r#"
+            local rs = game:GetService("ReplicatedStorage")
+            rs.Ping.OnServerEvent:Connect(function(p, text)
+                rs.Ping:FireAllClients(p.Name .. ":" .. text)
+            end)
+            game:GetService("Players").PlayerAdded:Connect(function(p)
+                print("joined " .. p.Name .. " " .. p.UserId)
+            end)
+            "#,
+        );
+        run(&mut s, &mut cs[..1], 5);
+        run(&mut s, &mut cs, 5);
+        let joined: Vec<String> = s.vm.take_output().into_iter().map(|l| l.text).collect();
+        assert_eq!(joined, ["joined Ann 1", "joined Player2 2"]);
+        for c in cs.iter_mut() {
+            c.exec(
+                r#"
+                local rs = game:GetService("ReplicatedStorage")
+                rs.Ping.OnClientEvent:Connect(function(t) print("got " .. t) end)
+                print("me " .. game:GetService("Players").LocalPlayer.Name)
+                "#,
+            );
+        }
+        cs[1].exec(r#"game:GetService("ReplicatedStorage").Ping:FireServer("hi")"#);
+        run(&mut s, &mut cs, 5);
+        assert_eq!(cs[0].out(), ["me Ann", "got Player2:hi"]);
+        assert_eq!(cs[1].out(), ["me Player2", "got Player2:hi"]);
+
+        s.exec(r#"game:GetService("Players").Ann:Kick("bye")"#);
+        run(&mut s, &mut cs, 5);
+        let ClientState::Closed(why) = cs[0].net.state() else {
+            panic!("Ann is still connected");
+        };
+        assert!(
+            why.message.contains("Ann was kicked: bye"),
+            "{}",
+            why.message
+        );
+        assert_eq!(s.net.players(), 1);
+        cs[1].exec(r#"print(#game:GetService("Players"):GetPlayers())"#);
+        assert_eq!(cs[1].out(), ["1"]);
+    }
+
+    #[test]
+    fn a_client_that_leaves_is_removed_and_its_messages_are_its_own() {
+        let (mut s, mut cs, _dir) = game(&[None, None]);
+        s.exec(
+            r#"
+            local rs = game:GetService("ReplicatedStorage")
+            rs.Ping.OnServerEvent:Connect(function(p) print("from " .. p.Name) end)
+            game:GetService("Players").PlayerRemoving:Connect(function(p)
+                print("left " .. p.Name)
+            end)
+            "#,
+        );
+        run(&mut s, &mut cs[..1], 5);
+        run(&mut s, &mut cs, 5);
+        // A client that writes another player into its message still sends
+        // as itself.
+        cs[1].exec(
+            r#"
+            local rs = game:GetService("ReplicatedStorage")
+            rs.Ping:FireServer()
+            "#,
+        );
+        run(&mut s, &mut cs, 3);
+        assert_eq!(
+            s.vm.take_output()
+                .into_iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>(),
+            ["from Player2"]
+        );
+        cs[0].net.close();
+        run(&mut s, &mut cs, 3);
+        assert_eq!(
+            s.vm.take_output()
+                .into_iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>(),
+            ["left Player1"]
+        );
+        assert_eq!(s.net.players(), 1);
+    }
 }

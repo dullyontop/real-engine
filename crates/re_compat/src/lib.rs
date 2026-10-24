@@ -176,6 +176,36 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE9440.md"),
     },
     DiagInfo {
+        code: codes::REMOTE_DROPPED,
+        title: "Remote message dropped",
+        page: include_str!("../explain/RE9450.md"),
+    },
+    DiagInfo {
+        code: codes::OWNED_WRITE,
+        title: "Owned change stays on the client",
+        page: include_str!("../explain/RE9451.md"),
+    },
+    DiagInfo {
+        code: codes::OWNED_SPEED,
+        title: "Owned part moved too fast",
+        page: include_str!("../explain/RE9452.md"),
+    },
+    DiagInfo {
+        code: codes::REMOTE_RATE,
+        title: "Too many remote messages",
+        page: include_str!("../explain/RE9453.md"),
+    },
+    DiagInfo {
+        code: codes::UNRELIABLE_SIZE,
+        title: "Unreliable message too large",
+        page: include_str!("../explain/RE9454.md"),
+    },
+    DiagInfo {
+        code: codes::NET_DIFFERS,
+        title: "Networked run differs from the in-process run",
+        page: include_str!("../explain/RE9455.md"),
+    },
+    DiagInfo {
         code: codes::DEPRECATED_MEMBER,
         title: "Deprecated member used",
         page: include_str!("../explain/RE9101.md"),

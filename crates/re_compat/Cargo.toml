@@ -38,11 +38,11 @@ thiserror.workspace = true
 egui.workspace = true
 # WP15: the detail textures of part materials (a contract-layer crate).
 re_noise.workspace = true
+# WP30: a networked game's sessions run over re_net (ADR-0050 §1).
+re_net.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-# WP30: the several-clients test sends frames through re_net endpoints.
-re_net.workspace = true
 # Replays of raw input drive the character tests (WP14).
 re_input.workspace = true
 # The sample runner (tests/samples.rs) imports each sample and boots and
