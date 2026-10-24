@@ -116,6 +116,10 @@
           "name": {
             "type": "string"
           },
+          "note": {
+            "type": "string",
+            "description": "A comment on the entity, kept by every save; the game never reads it."
+          },
           "parent": {
             "type": "string"
           },

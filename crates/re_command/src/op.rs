@@ -25,7 +25,7 @@ use re_scene::hierarchy::{self, check_reparent, sibling_index};
 use re_scene::scene::ComponentsDoc;
 use re_scene::structure::{Insert, Move, Replace, StructuralKind};
 use re_scene::{
-    Entity, EntityDoc, Generated, GeneratedDoc, Name, OverrideDoc, Overrides, SaveOptions,
+    Entity, EntityDoc, Generated, GeneratedDoc, Name, Note, OverrideDoc, Overrides, SaveOptions,
     Snapshot, World, validate_id,
 };
 use schemars::JsonSchema;
@@ -118,6 +118,14 @@ pub enum Op {
         id: String,
         /// The new name.
         name: String,
+    },
+    /// Set an entity's note, the comment kept with it in the scene file
+    /// (empty removes it). The game never reads it.
+    SetNote {
+        /// The entity's id.
+        id: String,
+        /// The new note.
+        note: String,
     },
     /// Recreate a despawned subtree exactly (the inverse of `despawn`). The
     /// entities must form one subtree: every entity after the first has an
@@ -461,6 +469,7 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
             let doc = EntityDoc {
                 id: id.clone(),
                 name: name.clone(),
+                note: String::new(),
                 parent: parent_id.clone(),
                 components: components.clone(),
                 overrides: vec![],
@@ -889,6 +898,28 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
                 vec![Op::Rename {
                     id: id.clone(),
                     name: old,
+                }],
+            ))
+        }
+        Op::SetNote { id, note } => {
+            let e = world.entity(id)?;
+            reject_generated(
+                world,
+                e,
+                id,
+                "generated entities are not saved, so they keep no notes",
+            )?;
+            let old = world.note_of(e).to_string();
+            if note.is_empty() {
+                world.ecs.entity_mut(e).remove::<Note>();
+            } else {
+                world.ecs.entity_mut(e).insert(Note(note.clone()));
+            }
+            Ok((
+                op.clone(),
+                vec![Op::SetNote {
+                    id: id.clone(),
+                    note: old,
                 }],
             ))
         }

@@ -471,6 +471,10 @@ impl Registry {
             "properties": {
                 "id": { "type": "string", "minLength": 1, "pattern": "^[^/]+$" },
                 "name": { "type": "string" },
+                "note": {
+                    "type": "string",
+                    "description": "A comment on the entity, kept by every save; the game never reads it."
+                },
                 "parent": { "type": "string" },
                 "components": {
                     "type": "object",

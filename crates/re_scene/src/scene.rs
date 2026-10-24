@@ -22,7 +22,7 @@ use indexmap::IndexMap;
 use re_reflect::{ComponentKey, ComponentOrigin, ComponentSchemaDoc, Doc, Value};
 use serde::{Deserialize, Serialize};
 
-use crate::components::Name;
+use crate::components::{Name, Note};
 use crate::error::SceneError;
 use crate::hierarchy::{self, children};
 use crate::ids::StableId;
@@ -68,6 +68,10 @@ pub struct EntityDoc {
     /// The display name (omitted when empty).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
+    /// A comment on the entity for the people and agents who read the file
+    /// (omitted when empty). Kept by every save; the game never reads it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
     /// The parent's id; it must appear earlier in the file or exist in the world.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
@@ -134,6 +138,10 @@ impl World {
             .get::<Name>(entity)
             .map(|n| n.0.clone())
             .unwrap_or_default();
+        let note = world
+            .get::<Note>(entity)
+            .map(|n| n.0.clone())
+            .unwrap_or_default();
         let parent = world
             .get::<ChildOf>(entity)
             .and_then(|c| self.id_of(c.parent()).map(str::to_string));
@@ -165,6 +173,7 @@ impl World {
         Some(EntityDoc {
             id,
             name,
+            note,
             parent,
             components,
             overrides,
@@ -438,6 +447,9 @@ impl World {
             spawned.push(entity);
             if !d.overrides.is_empty() {
                 e.insert(Overrides(d.overrides.clone()));
+            }
+            if !d.note.is_empty() {
+                e.insert(Note(d.note.clone()));
             }
             if let Some(p) = parent {
                 match root_index {

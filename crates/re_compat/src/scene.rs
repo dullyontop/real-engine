@@ -109,6 +109,7 @@ pub fn instance_doc(
     Ok(EntityDoc {
         id: id.to_string(),
         name: name.to_string(),
+        note: String::new(),
         parent: parent.map(str::to_string),
         components,
         overrides: Vec::new(),
