@@ -7,8 +7,8 @@ replays from the package in `build-package`, and compares its replays'
 
 The valley is a streamed world (ADR-0042): 16 km square, generated cell by
 cell (256 m cells) around the hero as you go, with the `[stream]` defaults.
-You start on the valley floor next to a car; the hero and the car wait until
-the ground under them has loaded.
+You start on the valley floor next to a car. The hero and the car wait until
+the ground under them has loaded, and are then set down on it.
 
 Walk with WASD (or the left stick), look with the mouse (or the right stick),
 jump with Space. Press E next to the car to get in: W and S are throttle and
@@ -22,48 +22,71 @@ real build --project examples/valley --out dist/valley
 ```
 
 `real.toml` turns on mild post-processing (neutral tone mapping, a little
-bloom and slightly richer colour) and packs `models/`, which is not a default
+bloom and slightly richer colour), sets the sun's shadow cascades (four, out
+to 200 m), defines the mixer and packs `models/`, which is not a default
 package folder.
+
+The mixer (`[audio]`, ADR-0041) has a bus for each kind of sound: `footsteps`
+and `vehicle` under `sfx`, which also feeds a reverb send (`echo`), and
+`ambience` for the wind. While the hero drives, the `in_car` snapshot turns
+the wind down and muffles it, and lowers the echo.
 
 ## Layout
 
 - `graphs/valley.graph.json`: the terrain, as a ProcGraph. Broad fBm hills
   plus inverted ridged noise, whose crest lines become the valley floors; a
-  curve flattens the floor and steepens the slopes. Trees grow on the lower
-  slopes, leaving the floor open to drive along, and rocks lie on steeper
-  ground. Every node streams.
+  curve flattens the floor and steepens the slopes. Droplet erosion
+  (`terrain.erode`, on a 4 m grid) then cuts gullies into the slopes and
+  leaves sediment on the floor. Trees grow on the lower slopes, leaving the
+  floor open to drive along, and rocks lie on steeper ground. Every node
+  streams.
 - `scenes/main.scene.json`: the valley source (`Streamed`, bounds 8000 m,
   inside the ±8 km precision limit), the hero and the car (each a `StreamFocus`,
   so the ground under a parked car stays loaded while the hero walks away),
-  the camera and the sun. The car is kinematic until the ground under it
-  loads; then the player script makes it a dynamic `Vehicle`.
+  the camera, the sun and the wind. The car is kinematic until the ground under
+  it loads; then the player script makes it a dynamic `Vehicle`. The car's
+  engine sound is three looping layers, children of the car.
 - `models/walker.glb`: the hero, a skinned figure (skin `Walker`, eleven
-  joints) with the looping clips `idle` and `walk`. `tools/make_walker.py`
-  writes it (standard-library Python, the same bytes on every run); run it
-  from this directory after changing the figure.
+  joints) with the looping clips `idle`, `walk` and `fall`.
+- `anims/walker.animgraph.json`: the hero's animation graph (ADR-0039). Its
+  `speed` parameter (m/s) blends `idle`, `walk` and `walk` at 2.5 times its
+  speed, so the steps match the ground covered from a stroll to the full
+  4 m/s; while `airborne` is set, it crossfades to `fall`.
+- `assets/`: the sounds. Footsteps (two takes), a landing, the car door,
+  three engine layers (about 1000, 2800 and 5000 rpm) and wind.
+- `tools/make_walker.py` and `tools/make_sounds.py` write the model and the
+  sounds (standard-library Python, the same bytes on every run); run them
+  from this directory after changing them.
 - `scripts/game/player.luau`: walking with `physics.move_character`, the
-  body's facing and its `AnimPlayer` clip, and getting in and out of the car.
-- `scripts/game/car.luau`: the car's driver input through `physics.drive`.
+  body's facing, the graph's parameters (`anim.set`), a footstep where a boot
+  lands (read with `anim.joint`), and getting in and out of the car, with the
+  door and the `in_car` snapshot.
+- `scripts/game/car.luau`: the car's driver input through `physics.drive`, and
+  its engine sound: the three layers, crossfaded by the engine's rpm and
+  louder with more throttle.
 - `scripts/game/camera.luau`: the orbit camera, on the hero or the car.
 - `scripts/game/game.luau`: the HUD line.
 - `tests/replays/`: `walk` (walk, strafe, turn the camera, jump), `drive`
   (walk to the car, get in, drive along the valley, brake and reverse) and
-  `cross` (turn round and walk 70 s west along the valley floor, from the
-  cell border at x = 0 across the one at x = -256 while cells load ahead).
+  `cross` (turn round and walk 75 s west along the valley, from the cell
+  border at x = 0 across the one at x = -256 while cells load ahead).
   `real verify` runs each twice with the same `state_hash` and checks goldens
   for Vulkan (lavapipe) and GL. CI's `d2` job records every replay's
   `state_hash` checkpoints with `cargo xtask d2` on Linux, Windows and macOS,
-  and `d2 compare` checks they match. `cross`'s stick inputs were recorded
-  from a run that steered towards the low ground.
+  and `d2 compare` checks they match.
 
-Everything here is made by the engine's generators or by the script in
+Everything here is made by the engine's generators or by the scripts in
 `tools/`; there are no third-party assets.
 
 ## Not yet
 
-- The engine has erosion, roads, animation graphs and audio buses, but the
-  valley does not use them yet.
-- Shadows use the renderer's default cascades (`[render.shadows]` is not set).
+- Roads: the road nodes (ADR-0043) shape whole paths, which a streamed graph
+  cannot use yet (`RE4301`).
+- Distant terrain: `terrain.chunks` would draw it in levels of detail, but its
+  far chunks swap in when the worker pool finishes them, so screenshots would
+  not repeat; the valley meshes only the loaded cells, with `terrain.mesh`.
+- The engine sound changes layers, not pitch: `AudioSource` has no playback
+  rate.
 - There are no DX12 or Metal goldens yet, so with those backends (the
   defaults on Windows and macOS) `real verify` fails its `goldens` stage with
   `RE0510`.

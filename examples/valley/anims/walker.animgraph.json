@@ -1,0 +1,102 @@
+{
+  "format": "real-engine/animgraph",
+  "version": 1,
+  "params": [
+    {
+      "type": "float",
+      "id": "speed",
+      "default": 0.0
+    },
+    {
+      "type": "bool",
+      "id": "airborne",
+      "default": false
+    }
+  ],
+  "nodes": [
+    {
+      "kind": "clip",
+      "id": "idle",
+      "clip": "models/walker.glb#idle"
+    },
+    {
+      "kind": "clip",
+      "id": "walk",
+      "clip": "models/walker.glb#walk"
+    },
+    {
+      "kind": "clip",
+      "id": "walk_fast",
+      "clip": "models/walker.glb#walk",
+      "speed": 2.5
+    },
+    {
+      "kind": "blend1d",
+      "id": "move",
+      "param": "speed",
+      "children": [
+        {
+          "node": "idle",
+          "threshold": 0.0
+        },
+        {
+          "node": "walk",
+          "threshold": 1.6
+        },
+        {
+          "node": "walk_fast",
+          "threshold": 4.0
+        }
+      ]
+    },
+    {
+      "kind": "clip",
+      "id": "fall",
+      "clip": "models/walker.glb#fall"
+    }
+  ],
+  "layers": [
+    {
+      "id": "base",
+      "entry": "ground",
+      "states": [
+        {
+          "id": "ground",
+          "node": "move"
+        },
+        {
+          "id": "air",
+          "node": "fall"
+        }
+      ],
+      "transitions": [
+        {
+          "id": "take_off",
+          "from": "ground",
+          "to": "air",
+          "duration": 0.2,
+          "conditions": [
+            {
+              "test": "bool",
+              "param": "airborne",
+              "value": true
+            }
+          ]
+        },
+        {
+          "id": "land",
+          "from": "air",
+          "to": "ground",
+          "duration": 0.15,
+          "conditions": [
+            {
+              "test": "bool",
+              "param": "airborne",
+              "value": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

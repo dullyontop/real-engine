@@ -1,36 +1,52 @@
 --!strict
 -- The hero: walks relative to the camera with the move stick, jumps, and
 -- gets in or out of the car with `use`. The skinned body (the `hero_body`
--- child) faces the way it walks and plays `walk` or `idle`.
+-- child) faces the way it walks. Its Animator plays
+-- `anims/walker.animgraph.json`, whose `speed` and `airborne` parameters are
+-- set here every step, and a footstep sounds wherever a boot lands.
 --
 -- The valley streams in around the hero (its StreamFocus), so at the start
--- there is no ground yet. The hero gets its CharacterController, and the car
--- (kinematic in the scene) becomes a dynamic Vehicle, once a ray finds ground
--- under both.
+-- there is no ground yet. Once a ray finds ground under both the hero and the
+-- car, both are set down on it: the hero gets its CharacterController, and
+-- the car (kinematic in the scene) becomes a dynamic Vehicle.
 local rig = require("./lib/rig")
 
 local SPEED = 4.0
 local REACH = 4.5 -- metres from the car's centre to get in
-local WALK = "models/walker.glb#walk"
-local IDLE = "models/walker.glb#idle"
-local STRIDE = 1.6 -- metres per second the walk clip covers at speed 1
+local CAR_RIDE = 1.0 -- metres from the ground to the car's centre on its wheels
+local AIR_DELAY = 0.1 -- seconds in the air before the body shows it
+local STEPS = { "assets/sfx/step_a.wav", "assets/sfx/step_b.wav" }
+local LAND = "assets/sfx/land.wav"
+local DOOR = "assets/sfx/door.wav"
+-- The sole of a boot, from its lower-leg joint (the knee).
+local SOLE = vector.create(0, -0.48, 0.04)
+-- How far ahead of the hips a boot must swing for its landing to sound (a
+-- full stride reaches 0.46 m).
+local STEP_REACH = 0.2
+local SIDES = { "L", "R" }
+local UP = vector.create(0, 1, 0)
+local DOWN = vector.create(0, -1, 0)
 
 local hero = script.entity :: Entity
 local body = world.get("hero_body") :: Entity
 local car = world.get("car") :: Entity
 
-local function play(clip: string, speed: number)
-	if body:get("AnimPlayer", "clip") ~= clip then
-		body:set("AnimPlayer", "clip", clip)
-	end
-	body:set("AnimPlayer", "speed", speed)
-end
+local air = 0 -- seconds since the hero left the ground
+local reach = { L = 0, R = 0 } -- each boot's reach ahead of the hips
+local swinging = { L = false, R = false } -- whether it is moving forward
+local steps = 0 -- footsteps so far, to alternate the two takes
+
+body:add("Visible", { visible = true })
 
 local function get_in()
 	rig.driving = true
 	hero:remove("CharacterController")
 	body:set("Visible", "visible", false)
-	play(IDLE, 1)
+	anim.set(body, "speed", 0)
+	anim.set(body, "airborne", false)
+	audio.play(DOOR, car:get("Transform", "translation"))
+	-- Inside, the wind is muffled.
+	audio.snapshot("in_car", 0.4)
 end
 
 local function get_out()
@@ -42,26 +58,61 @@ local function get_out()
 	hero:add("CharacterController", { height = 1.8, radius = 0.35 })
 	body:set("Visible", "visible", true)
 	rig.driving = false
+	air = 0
+	swinging = { L = false, R = false }
+	audio.play(DOOR, pos)
+	audio.snapshot("default", 0.4)
 end
 
-body:add("Visible", { visible = true })
-
-local DOWN = vector.create(0, -1, 0)
-
--- From `below` metres under the entity, so the car's own box is not the hit.
-local function ground_under(e: Entity, below: number): boolean
+-- The height of the ground under the entity, or nil while none has loaded.
+-- The ray starts `below` metres under it, so the car's own box is not the hit.
+local function ground_under(e: Entity, below: number): number?
 	local from: vector = e:get("Transform", "translation") - vector.create(0, below, 0)
-	return physics.raycast(from, DOWN, 50) ~= nil
+	local hit = physics.raycast(from, DOWN, 50)
+	return if hit then hit.point.y else nil
 end
 
-local function start()
+local function start(hero_ground: number, car_ground: number)
 	rig.ready = true
+	local h: vector = hero:get("Transform", "translation")
+	hero:set("Transform", "translation", vector.create(h.x, hero_ground + 0.95, h.z))
 	hero:add("CharacterController", { height = 1.8, radius = 0.35 })
+	local c: vector = car:get("Transform", "translation")
+	car:set("Transform", "translation", vector.create(c.x, car_ground + CAR_RIDE, c.z))
 	car:set("RigidBody", "kind", "Dynamic")
 	-- A vehicle needs a dynamic chassis, so the car becomes one only now.
 	car:add("Vehicle", { max_torque = 600, max_pitch_roll_deg = 60 })
 	-- Face away from the camera.
-	body:set("Transform", "rotation", quat.from_axis_angle(vector.create(0, 1, 0), rig.yaw + math.pi))
+	body:set("Transform", "rotation", quat.from_axis_angle(UP, rig.yaw + math.pi))
+end
+
+-- The sole of a boot in world space, from the last step's pose.
+local function sole(side: string): vector
+	local knee, rot = anim.joint(body, "LowerLeg." .. side)
+	return knee + rot * SOLE
+end
+
+-- A boot lands as it stops swinging forward: when its reach ahead of the
+-- hips, which grows through the swing, starts to shrink.
+local function footsteps()
+	local hips, rot = anim.joint(body, "Hips")
+	local forward = rot * vector.create(0, 0, 1)
+	for i = 1, #SIDES do
+		local side = SIDES[i]
+		local foot = sole(side)
+		local now = vector.dot(foot - hips, forward)
+		local was = reach[side]
+		if swinging[side] and now < was - 0.0001 then
+			swinging[side] = false
+			if was > STEP_REACH then
+				steps += 1
+				audio.play(STEPS[steps % 2 + 1], foot, 0.8, "footsteps")
+			end
+		elseif not swinging[side] and now > was + 0.0001 then
+			swinging[side] = true
+		end
+		reach[side] = now
+	end
 end
 
 input.on_pressed("use", function()
@@ -78,10 +129,11 @@ input.on_pressed("use", function()
 	end
 end)
 
-time.on_step(function(_dt)
+time.on_step(function(dt)
 	if not rig.ready then
-		if ground_under(hero, 0) and ground_under(car, 1) then
-			start()
+		local h, c = ground_under(hero, 0), ground_under(car, 1)
+		if h and c then
+			start(h, c)
 		end
 		return
 	end
@@ -95,13 +147,26 @@ time.on_step(function(_dt)
 	local right = vector.create(math.cos(rig.yaw), 0, -math.sin(rig.yaw))
 	local velocity = (forward * stick.y + right * stick.x) * SPEED
 	physics.move_character(hero, velocity, input.down("jump"))
-	local speed = vector.magnitude(velocity)
-	if speed > 0.1 then
+	if vector.magnitude(velocity) > 0.1 then
 		-- The model faces +Z; turn it towards the walking direction.
 		local facing = math.atan2(velocity.x, velocity.z)
-		body:set("Transform", "rotation", quat.from_axis_angle(vector.create(0, 1, 0), facing))
-		play(WALK, speed / STRIDE)
+		body:set("Transform", "rotation", quat.from_axis_angle(UP, facing))
+	end
+	local state = physics.character(hero)
+	if state.ground == "in_air" then
+		air += dt
 	else
-		play(IDLE, 1)
+		if air > 0.3 then
+			audio.play(LAND, state.position - vector.create(0, 0.9, 0), 1, "footsteps")
+		end
+		air = 0
+	end
+	-- The legs follow how fast the hero really goes, so walking into a
+	-- slope too steep to climb does not run on the spot.
+	local v = state.velocity
+	anim.set(body, "speed", math.sqrt(v.x * v.x + v.z * v.z))
+	anim.set(body, "airborne", air > AIR_DELAY)
+	if air == 0 then
+		footsteps()
 	end
 end)

@@ -2,10 +2,11 @@
 """Writes models/walker.glb: the valley's walking character.
 
 A low-poly figure of boxes, each box skinned wholly to one joint of an
-eleven-joint skeleton (skin `Walker`), with two looping clips: `idle` (2 s)
-and `walk` (one stride pair per second at about 1.6 m/s). It faces +Z, stands
-on y = 0 and is 1.8 m tall. Colours are vertex colours, so one white material
-draws it.
+eleven-joint skeleton (skin `Walker`), with three looping clips: `idle` (2 s),
+`walk` (one stride pair per second at about 1.6 m/s) and `fall` (1 s, in the
+air). It faces +Z, stands on y = 0 and is 1.8 m tall. Colours are vertex
+colours, so one white material draws it. `anims/walker.animgraph.json` plays
+the clips.
 
 Standard library only. Run from the project directory:
 
@@ -169,6 +170,26 @@ def idle_clip(n=8):
     return times, tracks
 
 
+def fall_clip(n=8):
+    """One second in the air: the arms spread and wave a little, one knee
+    comes up, the other leg trails, and the body leans forward."""
+    times = [i / n for i in range(n + 1)]
+    tracks = {}
+
+    def wave(t, offset=0.0):
+        return math.sin(2 * math.pi * (t + offset))
+
+    tracks[("Spine", "rotation")] = [quat_x(8.0) for _ in times]
+    for side, sign, off in (("L", 1.0, 0.0), ("R", -1.0, 0.5)):
+        tracks[(f"UpperArm.{side}", "rotation")] = [quat_z(sign * (50 + 8 * wave(t, off))) for t in times]
+        tracks[(f"LowerArm.{side}", "rotation")] = [quat_x(-30) for _ in times]
+    tracks[("UpperLeg.L", "rotation")] = [quat_x(-35 + 5 * wave(t)) for t in times]
+    tracks[("LowerLeg.L", "rotation")] = [quat_x(55) for _ in times]
+    tracks[("UpperLeg.R", "rotation")] = [quat_x(10 + 5 * wave(t, 0.5)) for t in times]
+    tracks[("LowerLeg.R", "rotation")] = [quat_x(30) for _ in times]
+    return times, tracks
+
+
 class Bin:
     def __init__(self):
         self.data = bytearray()
@@ -236,7 +257,7 @@ def build():
     nodes.append({"name": "Body", "mesh": 0, "skin": 0})
 
     animations = []
-    for clip_name, (times, tracks) in (("idle", idle_clip()), ("walk", walk_clip())):
+    for clip_name, (times, tracks) in (("idle", idle_clip()), ("walk", walk_clip()), ("fall", fall_clip())):
         a_time = b.floats(times, "SCALAR", minmax=True)
         samplers, channels = [], []
         for (joint, path), values in sorted(tracks.items()):
