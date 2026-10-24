@@ -430,6 +430,57 @@ fn state_hash_is_deterministic_and_bit_sensitive() {
     assert_eq!(a.state_hash(), c.state_hash());
 }
 
+/// Every NaN hashes as one: which NaN an operation returns differs between
+/// x86, arm64 and wasm (ADR-0036). Reflected writes refuse NaN, so this goes
+/// through the component, as a physics write-back could.
+#[test]
+fn state_hash_treats_every_nan_as_one() {
+    let quiet = f32::NAN;
+    let other = f32::from_bits(quiet.to_bits() | 1 | (1 << 31));
+    assert!(other.is_nan() && other.to_bits() != quiet.to_bits());
+    let with_x = |x: f32| {
+        let mut w = built();
+        let e = w.entity("crate").unwrap();
+        w.ecs
+            .get_mut::<re_scene::Transform>(e)
+            .unwrap()
+            .translation
+            .x = x;
+        w.state_hash()
+    };
+    assert_eq!(with_x(quiet), with_x(other));
+    assert_ne!(with_x(quiet), with_x(0.0));
+}
+
+#[test]
+fn a_new_defaulted_field_leaves_state_hash_unchanged() {
+    // The same world, with Health declared as today and with one more field.
+    let with = |extra: Option<FieldSchema>, armor: Option<Value>| {
+        let mut w = grid_world(2, 2);
+        let mut schema = health_schema();
+        schema.fields.extend(extra);
+        let key = w.registry.register_script(&mut w.ecs, schema).unwrap();
+        let e = w.entity("crate").unwrap();
+        let mut values = w.registry.schema(key).defaults();
+        values[0] = Value::Float(42.0);
+        if let Some(armor) = armor {
+            values[2] = armor;
+        }
+        w.registry.insert(&mut w.ecs, e, key, values).unwrap();
+        w.update();
+        w.state_hash()
+    };
+    let armor = || FieldSchema {
+        name: "armor".into(),
+        ty: FieldType::F32,
+        doc: String::new(),
+        default: Value::Float(0.0),
+    };
+    let today = with(None, None);
+    assert_eq!(with(Some(armor()), None), today);
+    assert_ne!(with(Some(armor()), Some(Value::Float(5.0))), today);
+}
+
 #[test]
 fn fork_copies_everything_and_is_independent() {
     let mut original = built();

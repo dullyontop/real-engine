@@ -251,12 +251,11 @@ coroutine.resume = function(co, ...) return check(raw_resume(co, ...)) end
     .call::<()>((oom, NO_MEMORY))
 }
 
-/// The transcendental `math` functions on every machine alike (ADR-0036).
-/// Until WP18's portable maths lands this is the host's `math`, so `sin`,
-/// `exp` and friends may differ in the last bit between platforms; landing
-/// it bumps `CONTEXT_VERSION`.
-fn portable_math(_lua: &Lua) -> mlua::Result<()> {
-    Ok(()) // PENDING-D2: crate::portable_math::install(lua) once #100 lands
+/// The transcendental `math` functions on every machine alike (ADR-0036):
+/// the libm versions the runtime VM uses, with the matching builtins
+/// disabled by [`crate::compile::compiler`].
+fn portable_math(lua: &Lua) -> mlua::Result<()> {
+    crate::portable_math::install(lua)
 }
 
 /// Loads the chunk at `path` (a project path) from `scripts`.

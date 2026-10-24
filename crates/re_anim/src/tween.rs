@@ -130,21 +130,21 @@ impl Easing {
                     1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
                 }
             }
-            Easing::SineIn => 1.0 - (t * FRAC_PI_2).cos(),
-            Easing::SineOut => (t * FRAC_PI_2).sin(),
-            Easing::SineInOut => -((PI * t).cos() - 1.0) / 2.0,
+            Easing::SineIn => 1.0 - libm::cosf(t * FRAC_PI_2),
+            Easing::SineOut => libm::sinf(t * FRAC_PI_2),
+            Easing::SineInOut => -(libm::cosf(PI * t) - 1.0) / 2.0,
             Easing::ExpoIn => {
                 if t == 0.0 {
                     0.0
                 } else {
-                    2f32.powf(10.0 * t - 10.0)
+                    libm::powf(2f32, 10.0 * t - 10.0)
                 }
             }
             Easing::ExpoOut => {
                 if t == 1.0 {
                     1.0
                 } else {
-                    1.0 - 2f32.powf(-10.0 * t)
+                    1.0 - libm::powf(2f32, -10.0 * t)
                 }
             }
             Easing::BackOut => {
@@ -156,7 +156,7 @@ impl Easing {
                 if t == 0.0 || t == 1.0 {
                     t
                 } else {
-                    2f32.powf(-10.0 * t) * ((t * 10.0 - 0.75) * (TAU / 3.0)).sin() + 1.0
+                    libm::powf(2f32, -10.0 * t) * libm::sinf((t * 10.0 - 0.75) * (TAU / 3.0)) + 1.0
                 }
             }
             Easing::BounceOut => bounce_out(t),

@@ -596,7 +596,7 @@ fn billboards_follow_their_adornee() {
         rotation: Quat::IDENTITY,
         fov_y: 70f32.to_radians(),
     });
-    let focal = 300.0 / 35f32.to_radians().tan();
+    let focal = 300.0 / libm::tanf(35f32.to_radians());
     let mut sizes = Vec::new();
     for z in [-10.0, -20.0] {
         place_at(&mut u, z);

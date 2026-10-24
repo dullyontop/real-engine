@@ -358,7 +358,7 @@ pub fn scene(
             f.insert("Shape".into(), Doc::Str(p.shape.into()));
         }
         if let Some(f) = c.get_mut("Transform") {
-            let (s, co) = (p.yaw * 0.5).sin_cos();
+            let (s, co) = libm::sincosf(p.yaw * 0.5);
             f.insert("translation".into(), v3(p.position));
             f.insert(
                 "rotation".into(),

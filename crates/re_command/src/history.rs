@@ -133,16 +133,42 @@ impl Applied {
     }
 
     /// Folds a later transaction's operations into this step: undoing it
-    /// undoes both. When both are `set_field`s on the same fields (a drag),
-    /// only the later values and the earlier inverse are kept.
+    /// undoes both. When both are only `set_field`s (a drag), each field
+    /// keeps its latest value and its earliest inverse, so a step that sets
+    /// a field every frame stays one operation per field.
     fn absorb(&mut self, forward: Vec<Op>, inverse: Vec<Op>, docs: Vec<(String, u64)>) {
         for d in docs {
             if !self.docs.iter().any(|(sd, _)| *sd == d.0) {
                 self.docs.push(d);
             }
         }
-        if same_fields(&self.forward, &forward) {
-            self.forward = forward;
+        if only_set_fields(&self.forward) && only_set_fields(&forward) {
+            let mut fresh = Vec::new();
+            for op in forward {
+                let key = field_of(&op);
+                match self.forward.iter_mut().find(|f| field_of(f) == key) {
+                    Some(f) => *f = op,
+                    None => {
+                        fresh.push(key);
+                        self.forward.push(op);
+                    }
+                }
+            }
+            // A field this step did not set yet is undone with the later
+            // transaction's inverse for it: its `set_field` and the override
+            // restore that follows it on a generated entity.
+            let mut merged = Vec::new();
+            let mut keep = false;
+            for op in inverse {
+                if let Op::SetField { .. } = op {
+                    keep = fresh.contains(&field_of(&op));
+                }
+                if keep {
+                    merged.push(op);
+                }
+            }
+            merged.append(&mut self.inverse);
+            self.inverse = merged;
             return;
         }
         self.forward.extend(forward);
@@ -152,10 +178,15 @@ impl Applied {
     }
 }
 
-/// True when `a` and `b` are both only `set_field` operations, on the same
-/// fields in the same order.
-fn same_fields(a: &[Op], b: &[Op]) -> bool {
-    let target = |op: &Op| match op {
+/// True when `ops` are all `set_field` operations.
+fn only_set_fields(ops: &[Op]) -> bool {
+    ops.iter().all(|op| matches!(op, Op::SetField { .. }))
+}
+
+/// The (entity, component, field) a `set_field` sets; `None` for any other
+/// operation.
+fn field_of(op: &Op) -> Option<(String, String, String)> {
+    match op {
         Op::SetField {
             id,
             component,
@@ -163,12 +194,7 @@ fn same_fields(a: &[Op], b: &[Op]) -> bool {
             ..
         } => Some((id.clone(), component.clone(), field.clone())),
         _ => None,
-    };
-    a.len() == b.len()
-        && a.iter().zip(b).all(|(x, y)| match (target(x), target(y)) {
-            (Some(x), Some(y)) => x == y,
-            _ => false,
-        })
+    }
 }
 
 /// The open documents `ops` edit, each once, with their current epoch.
@@ -378,6 +404,12 @@ impl History {
     /// The label of the transaction an undo would revert.
     pub fn undo_label(&self) -> Option<&str> {
         self.undo.last().map(|a| a.label.as_str())
+    }
+
+    /// The [coalesce](Transaction::coalesce) key of the step an undo would
+    /// revert, while later transactions with that key still merge into it.
+    pub fn undo_key(&self) -> Option<&str> {
+        self.undo.last().and_then(|a| a.coalesce.as_deref())
     }
 
     /// The label of the transaction a redo would reapply.

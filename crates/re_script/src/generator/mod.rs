@@ -80,7 +80,7 @@ pub const BACKSTOP: std::time::Duration = std::time::Duration::from_secs(60);
 /// implementation hash: changing what a script can see or how it computes
 /// (the portable `math` of ADR-0036, a library) bumps it, so cached outputs
 /// are not reused across the change.
-const CONTEXT_VERSION: &str = "re_script luau nodes v1";
+const CONTEXT_VERSION: &str = "re_script luau nodes v2";
 
 /// The limits of every Luau node evaluation (`[proc] luau_budget` and
 /// `luau_memory_mb` in `real.toml`).

@@ -7,9 +7,27 @@ use crate::hierarchy;
 use crate::procedural::{Generated, Overrides};
 use crate::world::World;
 
-struct Writer(blake3::Hasher);
+/// Where a [`Writer`] sends its bytes: the hasher, or a buffer that holds one
+/// field's encoding so it can be compared with its default's.
+trait Sink {
+    fn update(&mut self, b: &[u8]);
+}
 
-impl Writer {
+impl Sink for blake3::Hasher {
+    fn update(&mut self, b: &[u8]) {
+        blake3::Hasher::update(self, b);
+    }
+}
+
+impl Sink for Vec<u8> {
+    fn update(&mut self, b: &[u8]) {
+        self.extend_from_slice(b);
+    }
+}
+
+struct Writer<S>(S);
+
+impl<S: Sink> Writer<S> {
     fn bytes(&mut self, b: &[u8]) {
         self.0.update(&(b.len() as u64).to_le_bytes());
         self.0.update(b);
@@ -25,22 +43,44 @@ impl Writer {
     }
     fn f32s(&mut self, v: &[f32]) {
         for x in v {
-            self.0.update(&x.to_bits().to_le_bytes());
+            self.0.update(&f32_bits(*x).to_le_bytes());
         }
+    }
+}
+
+/// A float's bits, with every NaN as the one canonical quiet NaN: which NaN an
+/// operation returns differs between x86, arm64 and wasm (ADR-0036), and no
+/// script or system can tell NaNs apart by their payload.
+fn f32_bits(x: f32) -> u32 {
+    if x.is_nan() {
+        f32::NAN.to_bits()
+    } else {
+        x.to_bits()
+    }
+}
+
+/// [`f32_bits`] for `f64`.
+fn f64_bits(x: f64) -> u64 {
+    if x.is_nan() {
+        f64::NAN.to_bits()
+    } else {
+        x.to_bits()
     }
 }
 
 impl World {
     /// A hash of the scene state: every entity with a stable id (generated
     /// ones included), in id order, with its name, parent, position among its
-    /// siblings, generated key, registered components and field values (floats
-    /// by their exact bits, entity references by id) and overrides, followed
-    /// by the session's suppressions. Runtime handles (`Entity` bits), derived
+    /// siblings, generated key, registered components and the fields whose
+    /// values differ from their registered defaults, by name (floats by their
+    /// exact bits with every NaN as one, entity references by id) and
+    /// overrides, followed by the session's suppressions. Runtime handles (`Entity` bits), derived
     /// data (`GlobalTransform`) and resources are not included, so two worlds
     /// built the same way, or a world and its [`fork`](World::fork), hash the same.
     pub fn state_hash(&self) -> blake3::Hash {
         let mut w = Writer(blake3::Hasher::new());
-        w.str("real-engine/state-hash/1");
+        w.str("real-engine/state-hash/2");
+        let (mut value, mut default) = (Writer(Vec::new()), Writer(Vec::new()));
         let mut ids: Vec<(&str, _)> = self.ids().iter().collect();
         ids.sort();
         w.u64(ids.len() as u64);
@@ -65,9 +105,26 @@ impl World {
             let keys = self.registry.components_of(&self.ecs, e);
             w.u64(keys.len() as u64);
             for key in keys {
-                w.str(&self.registry.schema(key).name);
-                for v in self.registry.get_all(&self.ecs, e, key).unwrap_or_default() {
-                    self.hash_value(&mut w, &v);
+                let schema = self.registry.schema(key);
+                w.str(&schema.name);
+                // Only fields that differ from their registered default, each by
+                // name: adding a defaulted field to a component leaves the hash as
+                // it was (ADR-0036).
+                let values = self.registry.get_all(&self.ecs, e, key).unwrap_or_default();
+                let mut changed = Vec::new();
+                for (field, v) in schema.fields.iter().zip(&values) {
+                    value.0.clear();
+                    default.0.clear();
+                    self.hash_value(&mut value, v);
+                    self.hash_value(&mut default, &field.default);
+                    if value.0 != default.0 {
+                        changed.push((field.name.as_str(), value.0.clone()));
+                    }
+                }
+                w.u64(changed.len() as u64);
+                for (name, bytes) in changed {
+                    w.str(name);
+                    w.bytes(&bytes);
                 }
             }
             match self.ecs.get::<Overrides>(e) {
@@ -86,7 +143,7 @@ impl World {
         w.0.finalize()
     }
 
-    fn hash_value(&self, w: &mut Writer, v: &Value) {
+    fn hash_value<S: Sink>(&self, w: &mut Writer<S>, v: &Value) {
         match v {
             Value::Bool(b) => {
                 w.tag(1);
@@ -98,7 +155,7 @@ impl World {
             }
             Value::Float(f) => {
                 w.tag(3);
-                w.u64(f.to_bits());
+                w.u64(f64_bits(*f));
             }
             Value::Vec3(v) => {
                 w.tag(4);

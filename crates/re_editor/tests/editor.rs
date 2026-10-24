@@ -626,11 +626,11 @@ fn translation(app: &App, id: &str) -> Vec3 {
     }
 }
 
-/// Dragging the gizmo's X arrow moves only the preview while the button is
-/// held; releasing it sends one `scene.apply`, which moves the entity along
-/// X only and is one undo step. Escape during a drag sends nothing.
+/// Dragging the gizmo's X arrow moves the entity along X while the button is
+/// held; the live edits and the one on release are one undo step, and undo
+/// restores the saved scene. Escape during a drag puts the entity back.
 #[test]
-fn a_gizmo_drag_is_one_transaction() {
+fn a_gizmo_drag_is_one_undo_step() {
     use re_editor::gizmo::Handle;
     let dir = project();
     let before = scene_text(dir.path());
@@ -640,17 +640,18 @@ fn a_gizmo_drag_is_one_transaction() {
     for _ in 0..2 {
         ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
     }
-    let log = app.history().log().len();
+    assert!(!app.history().can_undo());
     let start = ed
         .editor
         .gizmo_handle(&app, Handle::Axis(0))
         .expect("the X arrow is on screen");
     let to = start + egui::vec2(120.0, 40.0);
+    let origin = Vec3::new(0.0, 4.0, 0.0);
 
     let drag = |ed: &mut HeadlessEditor, app: &mut App, last: Vec<egui::Event>| {
         ed.frame(app, &AllowAll, input(pointer(start, Some(true))))
             .unwrap();
-        for t in [0.25, 0.5, 1.0] {
+        for t in [0.25, 0.5, 0.75, 1.0] {
             ed.frame(
                 app,
                 &AllowAll,
@@ -658,38 +659,43 @@ fn a_gizmo_drag_is_one_transaction() {
             )
             .unwrap();
             assert!(ed.editor.gizmo_dragging());
-            assert_eq!(app.history().log().len(), log, "an edit while dragging");
         }
+        let t = translation(app, "box");
+        assert!(t.x > 0.2, "the entity follows the drag: {t}");
+        assert_eq!((t.y, t.z), (4.0, 0.0), "only along X");
+        assert_eq!(app.history().undo_label(), Some("move box"));
         ed.frame(app, &AllowAll, input(last)).unwrap();
         ed.frame(app, &AllowAll, input(vec![])).unwrap();
     };
 
-    // Escape cancels: nothing is sent, nothing moved.
+    // Escape cancels: the entity is back, and no undo step is left.
     drag(&mut ed, &mut app, vec![key(egui::Key::Escape)]);
     ed.frame(&mut app, &AllowAll, input(pointer(to, Some(false))))
         .unwrap();
     assert!(!ed.editor.gizmo_dragging());
-    assert_eq!(app.history().log().len(), log, "{:?}", ed.editor.console());
-    assert_eq!(translation(&app, "box"), Vec3::new(0.0, 4.0, 0.0));
+    assert!(!app.history().can_undo(), "{:?}", ed.editor.console());
+    assert_eq!(translation(&app, "box"), origin);
 
     drag(&mut ed, &mut app, pointer(to, Some(false)));
     assert!(!ed.editor.gizmo_dragging());
-    assert_eq!(
-        app.history().log().len(),
-        log + 1,
-        "{:?}",
-        ed.editor.console()
-    );
-    let entry = app.history().log().last().unwrap();
-    assert_eq!(entry.label, "move box");
-    assert_eq!(entry.ops.len(), 1, "only the translation: {:?}", entry.ops);
     let t = translation(&app, "box");
     assert!(t.x > 0.5, "moved along X: {t}");
     assert_eq!((t.y, t.z), (4.0, 0.0), "only along X");
+    assert_eq!(app.history().undo_label(), Some("move box"));
+    let step = app.history().peek_undo().unwrap();
+    assert_eq!(step.len(), 1, "only the translation: {step:?}");
+    let live = ed
+        .editor
+        .console()
+        .iter()
+        .filter(|l| l.text.contains("do move box"))
+        .count();
+    assert!(live >= 1, "{:?}", ed.editor.console());
 
     let out = ed.editor.undo(&mut app, &AllowAll);
     assert!(out.ok, "{:?}", out.diagnostics);
-    assert_eq!(translation(&app, "box"), Vec3::new(0.0, 4.0, 0.0));
+    assert_eq!(translation(&app, "box"), origin);
+    assert!(!app.history().can_undo(), "the drag was one step");
     assert_eq!(scene_text(dir.path()), before);
 }
 

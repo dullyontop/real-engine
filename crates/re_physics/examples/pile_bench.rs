@@ -47,7 +47,7 @@ fn main() {
             ..BodyDesc::default()
         },
     }];
-    let side = (bodies as f64).cbrt().ceil() as usize;
+    let side = libm::cbrt(bodies as f64).ceil() as usize;
     for i in 0..bodies {
         let (x, y, z) = (i % side, i / (side * side), (i / side) % side);
         let shape = if i % 2 == 0 {
