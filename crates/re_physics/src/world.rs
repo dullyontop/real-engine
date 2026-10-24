@@ -157,6 +157,7 @@ pub struct PhysicsSnapshot {
     ragdolls: BTreeMap<EntityId, RagdollSaved>,
     waiting: BTreeMap<EntityId, BodyDesc>,
     deferred: Vec<PhysicsCmd>,
+    far_writes: BTreeMap<EntityId, (Vec3, Quat)>,
 }
 
 impl std::fmt::Debug for PhysicsSnapshot {
@@ -1610,6 +1611,7 @@ impl Physics {
             ragdolls: self.save_ragdolls(),
             waiting: self.waiting.clone(),
             deferred: self.deferred.clone(),
+            far_writes: self.far_writes.clone(),
         }
     }
 
@@ -1645,8 +1647,7 @@ impl Physics {
         self.restore_ragdolls(&snapshot.ragdolls);
         self.waiting = snapshot.waiting.clone();
         self.deferred = snapshot.deferred.clone();
-        // Positions kept after the save belong to the abandoned timeline.
-        self.far_writes.clear();
+        self.far_writes = snapshot.far_writes.clone();
         Ok(())
     }
 
