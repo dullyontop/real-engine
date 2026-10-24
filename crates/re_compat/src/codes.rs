@@ -101,6 +101,11 @@ pub const DATA_FILE: Code = Code::new("RE9402");
 /// quota, a value or structure too large, or a bad argument.
 pub const MEMORY_REQUEST: Code = Code::new("RE9403");
 
+/// A `SurfaceGui` or `ViewportFrame` cannot be drawn as asked: a surface
+/// with no part to sit on, or a canvas larger than a texture can hold, drawn
+/// scaled down (ADR-0048 §2).
+pub const SURFACE: Code = Code::new("RE9410");
+
 /// A compat script changed on disk during play but does not compile; the
 /// running version stays until a save that compiles (ADR-0048 §3).
 pub const RELOAD_COMPILE: Code = Code::new("RE9420");

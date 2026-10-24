@@ -5,7 +5,6 @@
 //! ([`archive`]), then the folder that holds the archive ([`open_package`]),
 //! and writes only to its per-user folders ([`dirs`]).
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod archive;
 pub mod config;
 pub mod dirs;
@@ -21,7 +20,6 @@ use re_core::Diagnostic;
 use re_core::files::DirLayer;
 use re_core::files::{Form, LayerKind, MemLayer, ProjectFiles, ProjectPath};
 
-#[cfg(not(target_arch = "wasm32"))]
 pub use archive::{ARCHIVE_NAME, Archive, PackageInfo, PackageWriter, RuntimeVersions, StoredForm};
 pub use config::{AssetStorage, PackageConfig, ScriptStorage};
 
