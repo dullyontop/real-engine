@@ -61,7 +61,7 @@ pub struct ScreenshotRequest {
 pub struct RunReport {
     /// Frames run.
     pub frames: u64,
-    /// The world's [`state_hash`](re_scene::World::state_hash) after the last frame, as hex.
+    /// The game's [`state_hash`](App::state_hash) after the last frame, as hex.
     pub state_hash: String,
     /// Everything reported during the run (subsystem errors, failed replay
     /// commands, script errors).
@@ -555,6 +555,23 @@ impl App {
     /// The physics world.
     pub fn physics(&self) -> &Physics {
         &self.physics
+    }
+
+    /// A hash of the game state, for determinism checks: the world's
+    /// [`state_hash`](re_scene::World::state_hash), and with any ragdolls also their
+    /// physics state, which the scene does not hold (the skin shows it). A game
+    /// without ragdolls hashes as its world.
+    pub fn state_hash(&self) -> blake3::Hash {
+        let world = self.world.state_hash();
+        let ragdolls = self.physics.ragdoll_state_bytes();
+        if ragdolls.is_empty() {
+            return world;
+        }
+        let mut h = blake3::Hasher::new();
+        h.update(b"real-engine/state-hash+ragdolls/1");
+        h.update(world.as_bytes());
+        h.update(&ragdolls);
+        h.finalize()
     }
 
     /// Which entity has which body or character.
@@ -1131,7 +1148,7 @@ impl App {
         diagnostics.retain(|d| d.severity != re_core::Severity::Note || d.is_error());
         Ok(RunReport {
             frames: self.frame - start,
-            state_hash: self.world.state_hash().to_hex().to_string(),
+            state_hash: self.state_hash().to_hex().to_string(),
             diagnostics,
             perf: self.perf_report(),
             screenshots: std::mem::take(&mut self.screenshots),
@@ -2148,7 +2165,7 @@ impl App {
         report
             .output
             .extend(std::mem::take(&mut self.script_output));
-        report.state_hash = self.world.state_hash().to_hex().to_string();
+        report.state_hash = self.state_hash().to_hex().to_string();
         report.compat = self.compat.as_ref().map(|c| c.info());
         results
     }

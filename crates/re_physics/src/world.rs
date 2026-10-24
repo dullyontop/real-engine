@@ -30,7 +30,7 @@ use crate::config::{LayerTable, PhysicsConfig};
 use crate::convert::{gq, grv, gv, jq, jv, rv, unit_rotation};
 use crate::jobs::JoltRayonJobs;
 use crate::parts::{PartGate, PartListener, PartsState};
-use crate::ragdoll::{RagdollEntry, RagdollMotion, Settle};
+use crate::ragdoll::{RagdollEntry, RagdollMotion, RagdollSaved, Settle};
 use crate::shapes;
 use crate::vehicle::VehicleEntry;
 
@@ -142,6 +142,7 @@ pub(crate) struct StepState {
 pub struct PhysicsSnapshot {
     world: WorldState,
     state: StepState,
+    ragdolls: BTreeMap<EntityId, RagdollSaved>,
 }
 
 impl std::fmt::Debug for PhysicsSnapshot {
@@ -1373,25 +1374,35 @@ impl Physics {
         PhysicsSnapshot {
             world: self.world.save_state(),
             state: self.state.clone(),
+            ragdolls: self.save_ragdolls(),
         }
     }
 
     /// Returns the world to `snapshot`. Fails with `RE5012` (leaving the world as it
-    /// was) when the snapshot belongs to another world or bodies, characters or
-    /// constraints were added or removed since it was saved.
+    /// was) when the snapshot belongs to another world or bodies, characters,
+    /// constraints or ragdolls were added or removed (or a ragdoll rebuilt) since it
+    /// was saved. Ragdolls get back their mode, frame and target too.
     pub fn restore_state(&mut self, snapshot: &PhysicsSnapshot) -> Result<(), Diagnostic> {
-        self.world.restore_state(&snapshot.world).map_err(|e| {
+        match self.ragdolls_unrestorable(&snapshot.ragdolls) {
+            Some(why) => Err(why),
+            None => self
+                .world
+                .restore_state(&snapshot.world)
+                .map_err(|e| e.to_string()),
+        }
+        .map_err(|e| {
             Diagnostic::error(
                 codes::RESTORE_FAILED,
                 format!("the physics state could not be restored: {e}"),
             )
             .with_hint(
                 "a snapshot restores only into the world that saved it, before any body, \
-                 character or constraint is added or removed; to seed another world, use \
+                 character, constraint or ragdoll is added or removed; to seed another world, use \
                  motion_state and apply_motion_state",
             )
         })?;
         self.state = snapshot.state.clone();
+        self.restore_ragdolls(&snapshot.ragdolls);
         Ok(())
     }
 

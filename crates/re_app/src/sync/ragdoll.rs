@@ -27,7 +27,7 @@ use re_anim::skin::{ModelPose, Pose};
 use re_core::{Diagnostic, Location};
 use re_physics::Physics;
 use re_scene::ecs::entity::Entity;
-use re_scene::{Ragdoll, RagdollMode as SceneMode, SkinnedMesh, World, entity_id};
+use re_scene::{Ragdoll, RagdollControl, SkinnedMesh, World, entity_id};
 use re_types::physics::{
     JointPose, PhysicsCmd, RagdollBlend, RagdollDesc, RagdollMode, RagdollSkeleton, SkeletonJoint,
     blend_pose,
@@ -42,12 +42,34 @@ use crate::sync::physics::{world_affine, world_scale};
 const ROOT: &str = "<skin root>";
 
 /// What a linked ragdoll was built from.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct Built {
-    skin: usize,
+    skin: Arc<SkinData>,
     joints: Vec<String>,
     total_mass: f32,
     scale: f32,
+}
+
+/// The same skin, and the same numbers bit for bit, so a NaN matches itself and an
+/// unchanged component is never rebuilt.
+impl PartialEq for Built {
+    fn eq(&self, other: &Built) -> bool {
+        Arc::ptr_eq(&self.skin, &other.skin)
+            && self.joints == other.joints
+            && self.total_mass.to_bits() == other.total_mass.to_bits()
+            && self.scale.to_bits() == other.scale.to_bits()
+    }
+}
+
+/// The same mode, a strength compared by its bits, so an invalid (NaN) strength is
+/// sent, and refused, once rather than on every step.
+fn same_mode(a: RagdollMode, b: RagdollMode) -> bool {
+    match (a, b) {
+        (RagdollMode::Powered { strength: x }, RagdollMode::Powered { strength: y }) => {
+            x.to_bits() == y.to_bits()
+        }
+        _ => a == b,
+    }
 }
 
 struct Linked {
@@ -85,9 +107,9 @@ impl RagdollSync {
 
 fn mode_of(r: &Ragdoll) -> RagdollMode {
     match r.mode {
-        SceneMode::Animated => RagdollMode::Animated,
-        SceneMode::Simulated => RagdollMode::Simulated,
-        SceneMode::Powered => RagdollMode::Powered {
+        RagdollControl::Animated => RagdollMode::Animated,
+        RagdollControl::Simulated => RagdollMode::Simulated,
+        RagdollControl::Powered => RagdollMode::Powered {
             strength: r.strength,
         },
     }
@@ -195,13 +217,19 @@ pub fn push(
         let scale3 = world_scale(world, entity);
         let scale = scale3.x.abs();
         let built = Built {
-            skin: Arc::as_ptr(&skin) as usize,
+            skin: Arc::clone(&skin),
             joints: component.joints.clone(),
             total_mass: component.total_mass,
             scale,
         };
-        if sync.linked.get(&id).is_some_and(|l| l.built != built) {
-            sync.linked.remove(&id);
+        // A rebuild keeps the mode physics has (a script may have set it), the
+        // component's mode last seen and the blend.
+        let mut kept = None;
+        if sync.linked.get(&id).is_some_and(|l| l.built != built)
+            && let Some(old) = sync.linked.remove(&id)
+        {
+            let now = physics.ragdoll(id).map_or(old.mode, |s| s.mode);
+            kept = Some((now, old.mode, old.blend.weight));
             cmds.push(PhysicsCmd::RemoveRagdoll { id });
         }
         let pose = animated(matrices, scale);
@@ -218,7 +246,7 @@ pub fn push(
             };
             match desc {
                 Ok(desc) => {
-                    let mode = mode_of(&component);
+                    let seen = mode_of(&component);
                     cmds.push(PhysicsCmd::AddRagdoll {
                         id,
                         desc,
@@ -227,22 +255,22 @@ pub fn push(
                         pose: Some(pose.clone()),
                     });
                     // A copied world's ragdoll gets the mode it was copied with, and
-                    // shows it at once.
+                    // shows it at once; a rebuilt one keeps its mode and blend.
                     let copied = physics.pending_ragdoll_mode(id);
+                    let (mode, seen, weight) = match (kept, copied) {
+                        (Some(k), _) => k,
+                        (None, Some(m)) => (m, seen, if m.is_dynamic() { 1.0 } else { 0.0 }),
+                        (None, None) => (seen, seen, 0.0),
+                    };
                     if mode != RagdollMode::Animated && copied.is_none() {
                         cmds.push(PhysicsCmd::SetRagdollMode { id, mode });
                     }
-                    let weight = if copied.is_some_and(|m| m.is_dynamic()) {
-                        1.0
-                    } else {
-                        0.0
-                    };
                     let seconds = component.blend_seconds;
                     sync.linked.insert(
                         id,
                         Linked {
                             built,
-                            mode,
+                            mode: seen,
                             blend: RagdollBlend { weight, seconds },
                         },
                     );
@@ -264,7 +292,7 @@ pub fn push(
         let linked = sync.linked.get_mut(&id).expect("linked above");
         linked.blend.seconds = component.blend_seconds;
         let mode = mode_of(&component);
-        if mode != linked.mode {
+        if !same_mode(mode, linked.mode) {
             linked.mode = mode;
             cmds.push(PhysicsCmd::SetRagdollMode { id, mode });
         }

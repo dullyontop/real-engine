@@ -217,7 +217,7 @@ impl Session {
         diagnostics.extend(app.take_diagnostics());
         Ok(serde_json::json!({
             "frames": frames,
-            "state_hash": app.world().state_hash().to_hex().to_string(),
+            "state_hash": app.state_hash().to_hex().to_string(),
             "errors": errors(&diagnostics),
             "adapter": adapter,
             "drawn": drawn,
