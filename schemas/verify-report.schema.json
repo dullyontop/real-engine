@@ -37,7 +37,7 @@
       "type": "object",
       "properties": {
         "name": {
-          "description": "The stage name (`schema`, `compile`, `scan`, `boot`, `replays`, `goldens`, `perf`).",
+          "description": "The stage name (`schema`, `compile`, `scan`, `net`, `boot`, `replays`, `goldens`, `perf`).",
           "type": "string"
         },
         "ok": {

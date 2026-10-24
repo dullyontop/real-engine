@@ -3759,6 +3759,7 @@ dependencies = [
  "re_geom",
  "re_import",
  "re_input",
+ "re_net",
  "re_physics",
  "re_proc",
  "re_reflect",

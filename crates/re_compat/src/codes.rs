@@ -114,3 +114,28 @@ pub const RELOAD_COMPILE: Code = Code::new("RE9420");
 /// bone names no joint of the skin, or a joint has no bone, so that joint
 /// stays in its rest pose (ADR-0048 §5). Once per part.
 pub const BONE_MISMATCH: Code = Code::new("RE9440");
+
+/// A remote message from a network client was dropped: larger than 64 KiB,
+/// or not a message this build reads (WP30 holds RE9450–RE9499).
+pub const REMOTE_DROPPED: Code = Code::new("RE9450");
+
+/// A client changed a component of an instance it owns that does not flow to
+/// the server (`[compat.net] upstream`); the change stays on that client.
+pub const OWNED_WRITE: Code = Code::new("RE9451");
+
+/// An owned part moved faster than `[compat.net] max_owned_speed`; the server
+/// kept it where it was and sent it back to its owner.
+pub const OWNED_SPEED: Code = Code::new("RE9452");
+
+/// A network player sent more remote messages a second than
+/// `[compat.net] remote_rate`; the excess was dropped.
+pub const REMOTE_RATE: Code = Code::new("RE9453");
+
+/// An `UnreliableRemoteEvent` message was too large for one datagram and was
+/// dropped.
+pub const UNRELIABLE_SIZE: Code = Code::new("RE9454");
+
+/// `real verify`'s `net` stage: a replay played by a server and a client
+/// over loopback in lockstep did not end where the in-process run did, or
+/// the two could not run.
+pub const NET_DIFFERS: Code = Code::new("RE9455");
