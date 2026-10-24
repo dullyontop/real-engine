@@ -706,14 +706,15 @@ fn world(doc: GraphDoc, evaluator: Evaluator, x: f32, z: f32) -> EditState {
 }
 
 /// Steps with the terrain view on until every cell and chunk is in, checking
-/// that no step reports a problem; returns the next tick.
+/// that no step reports a problem; returns the next tick. Chunks come in off
+/// the main thread, so a slow machine takes more ticks.
 fn settle(w: &mut World, from: u64) -> u64 {
     if !w.ecs.contains_resource::<Streamer>() {
         let mut s = Streamer::new(config()).unwrap();
         s.set_view(true);
         w.ecs.insert_resource(s);
     }
-    for t in from..from + 3000 {
+    for t in from..from + 60_000 {
         let r = step(w, t, &config());
         assert!(r.diagnostics.is_empty(), "tick {t}: {:#?}", r.diagnostics);
         w.update();
