@@ -7,6 +7,8 @@
 //! * [`corpus::run`]: the corpus suite over directories of scripts, with
 //!   compile (tier 1, [`re_script::compile_check`]), scan and optional types, as
 //!   a [`corpus::CorpusReport`].
+//! * [`pow_warnings`]: `RE3083` for `^` with an exponent that calls the
+//!   platform's `pow` (D2 determinism, ADR-0036).
 //! * [`roblox::definitions`]: `roblox.d.luau`, the compat API's Luau types,
 //!   generated from `re_compat`'s tables for `real check --types` in a compat
 //!   project.
@@ -22,11 +24,13 @@
 pub mod codes;
 pub mod corpus;
 pub mod gap;
+pub mod portable;
 pub mod roblox;
 pub mod scan;
 pub mod types;
 
 pub use gap::{Coverage, GapReport};
+pub use portable::pow_warnings;
 pub use scan::{ApiUsage, scan, scan_source};
 
 use re_core::DiagInfo;
@@ -47,6 +51,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::TYPE_WARNING,
         title: "Type checker warning",
         page: include_str!("../explain/RE3082.md"),
+    },
+    DiagInfo {
+        code: codes::PLATFORM_POW,
+        title: "`^` calls the platform's pow",
+        page: include_str!("../explain/RE3083.md"),
     },
     DiagInfo {
         code: codes::CHECKER_NOT_FOUND,
