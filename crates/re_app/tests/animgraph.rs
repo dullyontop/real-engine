@@ -1006,3 +1006,24 @@ fn a_character_that_only_turns_keeps_interpolating() {
         "a teleport snaps: {snapped} vs {to}"
     );
 }
+
+/// A paused graph is still part of the state hash: its parameters change
+/// what it plays once it resumes.
+#[test]
+fn a_paused_graph_is_part_of_the_state_hash() {
+    let dir = project(&[figure_entity("hero", 0.0, "")], &[]);
+    let run = |speed: f32| {
+        let mut app = open(dir.path());
+        app.world_mut()
+            .set("hero", "Animator", "playing", Value::Bool(false))
+            .unwrap();
+        app.run_headless(Some(1), None).unwrap();
+        dispatch(
+            &mut app,
+            "anim.set_param",
+            json!({ "entity": "hero", "param": "speed", "value": speed }),
+        );
+        app.run_headless(Some(5), None).unwrap().state_hash
+    };
+    assert_ne!(run(0.0), run(1.0));
+}

@@ -560,8 +560,9 @@ impl App {
     /// A hash of the game state, for determinism checks: the world's
     /// [`state_hash`](re_scene::World::state_hash), and with any ragdolls also their
     /// physics state, which the scene does not hold (the skin shows it), and with
-    /// any animation graphs also their parameters, states and times (ADR-0039).
-    /// A game without ragdolls or graphs hashes as its world.
+    /// any bound animation graph (playing or paused) also its parameters,
+    /// states and times (ADR-0039). A game without ragdolls or graphs hashes as
+    /// its world.
     pub fn state_hash(&self) -> blake3::Hash {
         let world = self.world.state_hash();
         let ragdolls = self.physics.ragdoll_state_bytes();
