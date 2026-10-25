@@ -30,6 +30,11 @@ const NOW: Tween = Tween {
     easing: kira::Easing::Linear,
 };
 
+/// The fastest a source plays (four octaves up); a faster rate plays at this
+/// one. kira steps through every frame of the clip that a sound passes, so its
+/// cost grows with the rate, and a huge rate never finishes a buffer.
+pub const MAX_RATE: f32 = 16.0;
+
 /// A playing sound, and its spatial track when it has one. Dropping the track
 /// handle removes the track, so it lives as long as the sound. Rebuilding the
 /// graph removes the bus tracks, and with them the sounds on them.
@@ -479,9 +484,10 @@ impl Audio {
                         format!("playback rate {rate} is not a finite number > 0"),
                     ));
                 }
+                let rate = f64::from(rate.min(MAX_RATE));
                 with_mixer!(self, m => {
                     if let Some(v) = m.sources.get_mut(entity) {
-                        v.sound.set_playback_rate(f64::from(*rate), NOW);
+                        v.sound.set_playback_rate(rate, NOW);
                     }
                 });
             }

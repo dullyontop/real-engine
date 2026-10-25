@@ -177,6 +177,8 @@ declare physics: {
 declare audio: {
     -- Plays a sound asset once, at a world position or (without `at`) non-spatially; volume defaults to 1, and `bus` to the project's default bus.
     play: (clip: string, at: vector?, volume: number?, bus: string?) -> (),
+    -- Sets the playback speed of `e`'s AudioSource (its `rate` field), above 0: 1 is normal, the pitch shifts with the speed, and it plays at most 16 times as fast. Its playing sound follows, and a sound it starts later plays at that rate.
+    set_rate: (e: Entity, rate: number) -> (),
     -- Tweens a mixer bus's (or send's) volume to `db` decibels (0 is unchanged) over `seconds`, at once by default.
     set_bus_volume: (bus: string, db: number, seconds: number?) -> (),
     -- Tweens parameters of a bus's effect over `seconds` (at once by default). `index` is the effect's place in the bus's `effects` list in real.toml, 1 for the first; `params` are its fields, such as `{ cutoff_hz = 600 }` or `{ mode = "high_pass" }`.
