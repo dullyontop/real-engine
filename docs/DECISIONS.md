@@ -1263,6 +1263,10 @@ Measured (lavapipe and llvmpipe GL, wgpu 30.0.1; measurements §1–§3):
 - A packaged game reads the project's `shaders/` through `ProjectFiles` once at boot (ADR-0037) and never watches; `RE6033` is a `real verify` warning, so it never blocks a packaged run.
 - PerfReport gains `render_submit`, which makes later render-thread decisions measurable in CI and by agents.
 
+**Amendment (WP20, #160, and WP28's valley; 2026-10-25).** The render-thread measurement as built:
+- `render_submit` leaves out the time inside `Queue::submit`, which PerfReport reports beside it as `queue_submit`. Software rasterisers and some GL drivers wait there until the GPU has finished the previous frame, so that time is the GPU's, not work a render thread would take over. The renderer times itself (`Renderer::take_draw_time`), and `re_app` records both once per drawn frame, in a window and for captures.
+- On lavapipe at 1280×720, with culling: the plaza spends 0.58 ms in `render_submit` (14.5% of the frame's CPU time), the 250,000-part bigmap 29.9 ms (5.6%), and the valley's drive replay 3.06 ms (22.8%, measured by WP28). None reaches 4 ms and 25%, so the decision stands: no render thread.
+
 ## ADR-0039: Skins from glTF, GPU skinning, and animation graphs as data
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP21). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: the WP21 probe (`research/m3/wp21/`): the skinned vertex layout and the vertex-stage palette run on wgpu 30.0.1 on Vulkan (lavapipe) and GL (llvmpipe through EGL) and match the CPU to 4.8e-7; pose evaluation costs 20.8 µs for a 65-joint character with three clips; f32 evaluation stays within 8.5e-6 of an f64 reference even on a 63-deep joint chain.

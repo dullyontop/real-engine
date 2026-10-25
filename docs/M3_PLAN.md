@@ -189,6 +189,8 @@ real verify --project examples/island --json
 - Goldens for tone mapping, bloom and cascades on lavapipe and GL.
 - A shadow stability test: the shadowed texels of a static scene do not change as the camera moves along a path.
 
+**Progress (2026-10-25).** Merged: "post" (#98), "shadows" (#110), the `[render.post]` and `[render.shadows]` settings (#122), up to eight HDR target sets (#156), and the render-thread measurement (#160): the plaza, the bigmap and the valley stay under ADR-0038's threshold, so there is no render thread (ADR-0038's amendment). "textures" is open as #164, and "hot reload" is still being written.
+
 **Definition of done:** the four PRs merged; ADR-0038 records the render-thread measurement and decision.
 
 ---
