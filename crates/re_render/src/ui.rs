@@ -73,6 +73,13 @@ impl std::fmt::Debug for UiFrame {
     }
 }
 
+/// The composite shader and its pipelines, as [`UiPainter::replace_blit`]
+/// found them.
+pub(crate) struct UiBlit {
+    shader: wgpu::ShaderModule,
+    blits: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+}
+
 struct Overlay {
     size: [u32; 2],
     view: wgpu::TextureView,
@@ -207,6 +214,28 @@ impl UiPainter {
                 })
             })
             .clone()
+    }
+
+    /// Swaps in `shader` (a new `ui_blit.wgsl`, ADR-0038) and builds the
+    /// composite with it for the formats painted into so far and for a linear
+    /// and a gamma target, so the device checks both entry points now. Returns
+    /// what it replaced, for [`UiPainter::restore_blit`].
+    pub fn replace_blit(&mut self, device: &wgpu::Device, shader: wgpu::ShaderModule) -> UiBlit {
+        let formats = crate::renderer::with_checks(self.blits.keys());
+        let old = UiBlit {
+            shader: std::mem::replace(&mut self.blit_shader, shader),
+            blits: std::mem::take(&mut self.blits),
+        };
+        for format in formats {
+            self.blit_pipeline(device, format);
+        }
+        old
+    }
+
+    /// Puts back what [`UiPainter::replace_blit`] replaced.
+    pub fn restore_blit(&mut self, old: UiBlit) {
+        self.blit_shader = old.shader;
+        self.blits = old.blits;
     }
 
     /// Paints `frame` over `target` (which keeps its contents) and returns the

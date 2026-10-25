@@ -134,6 +134,10 @@ pub struct App {
     snapshot: RenderSnapshot,
     hud: Vec<HudLine>,
     watcher: Option<AssetWatcher>,
+    /// The project's and the engine directory's shader files (ADR-0038).
+    shaders: crate::shaders::ShaderFiles,
+    /// Watches the engine shader directory ([`App::watch_engine_shaders`]).
+    shader_watcher: Option<AssetWatcher>,
     changed_scripts: Vec<String>,
 
     anim_sync: AnimSync,
@@ -270,6 +274,9 @@ impl App {
         re_proc::register_commands(&mut commands);
         let mut app = App::with_world(files, config, world, action_map, Arc::new(commands))?;
         app.diagnostics.extend(problems);
+        let (shaders, problems) = crate::shaders::ShaderFiles::load(&app.files);
+        app.shaders = shaders;
+        app.diagnostics.extend(problems);
         app.edit_frame();
         Ok(app)
     }
@@ -325,6 +332,8 @@ impl App {
             snapshot: RenderSnapshot::default(),
             hud: Vec::new(),
             watcher: None,
+            shaders: Default::default(),
+            shader_watcher: None,
             changed_scripts: Vec::new(),
             anim_sync: AnimSync::new(),
             skin_sync: SkinSync::new(),
@@ -411,6 +420,7 @@ impl App {
             Arc::clone(&self.commands),
         )?;
         copy.alpha = self.alpha;
+        copy.shaders = self.shaders.clone();
         if !restarted {
             copy.stream_tick = self.stream_tick;
         }
@@ -668,10 +678,24 @@ impl App {
         self.graphics.as_mut()
     }
 
-    /// Gives the app a GPU side (the windowed runner's, for its surface).
+    /// Gives the app a GPU side (the windowed runner's, for its surface), and
+    /// its renderer the shader files of the project ([`crate::shaders`]).
     pub fn set_graphics(&mut self, graphics: Graphics) {
         self.render_assets = RenderAssets::default();
         self.graphics = Some(graphics);
+        self.install_shaders();
+    }
+
+    /// Gives the renderer, when there is one, the current shader files, and
+    /// returns the problems of the shaders they change (also in the app's
+    /// diagnostics).
+    fn install_shaders(&mut self) -> Vec<Diagnostic> {
+        let Some(gfx) = &mut self.graphics else {
+            return Vec::new();
+        };
+        let problems = self.shaders.install(gfx.renderer_mut());
+        self.diagnostics.extend(problems.iter().cloned());
+        problems
     }
 
     /// Takes the GPU side away (meshes are uploaded again by the next owner).
@@ -793,8 +817,11 @@ impl App {
     }
 
     /// Watches the project's files: changed meshes, materials and textures are
-    /// re-imported and uploaded again between frames, and changed scripts are
-    /// collected for [`App::take_changed_scripts`].
+    /// re-imported and uploaded again between frames, changed shader files are
+    /// rebuilt ([`crate::shaders`]), and changed scripts are collected for
+    /// [`App::take_changed_scripts`]. When `RE_ENGINE_SHADERS` names a
+    /// directory, its shader files are read and watched too
+    /// ([`App::watch_engine_shaders`]).
     ///
     /// # Errors
     ///
@@ -805,6 +832,26 @@ impl App {
             return Ok(());
         };
         self.watcher = Some(AssetWatcher::new(dir, AssetWatcher::DEFAULT_DEBOUNCE)?);
+        if let Some(engine) = std::env::var_os(crate::shaders::ENGINE_SHADERS_VAR) {
+            self.watch_engine_shaders(Path::new(&engine))?;
+        }
+        Ok(())
+    }
+
+    /// Reads the engine's shader files from `dir` (usually
+    /// `crates/re_render/src/shaders` in an engine checkout) in place of the
+    /// built-in ones, beneath the project's `shaders/`, and rebuilds them when
+    /// they change (ADR-0038). Their problems are the app's diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// `RE7030` when `dir` cannot be watched; nothing is read then.
+    pub fn watch_engine_shaders(&mut self, dir: &Path) -> Result<(), Diagnostic> {
+        let watcher = AssetWatcher::new(dir, AssetWatcher::DEFAULT_DEBOUNCE)?;
+        let problems = self.shaders.read_engine_dir(dir);
+        self.diagnostics.extend(problems);
+        self.shader_watcher = Some(watcher);
+        self.install_shaders();
         Ok(())
     }
 
@@ -1928,19 +1975,28 @@ impl App {
     }
 
     fn poll_files(&mut self) {
-        let Some(watcher) = &self.watcher else {
-            return;
-        };
-        let changes = watcher.poll();
-        if !changes.is_empty() {
-            self.apply_file_changes(&changes);
+        if let Some(watcher) = &self.watcher {
+            let changes = watcher.poll();
+            if !changes.is_empty() {
+                self.apply_file_changes(&changes);
+            }
+        }
+        if let Some(watcher) = &self.shader_watcher {
+            let changes = watcher.poll();
+            if !changes.is_empty() {
+                let problems = self.shaders.engine_changed(&changes);
+                self.diagnostics.extend(problems);
+                self.install_shaders();
+            }
         }
     }
 
     /// Applies file changes (from a watcher, or made by a command): re-imports
     /// what changed, uploads it again and forgets collider shapes built from
-    /// it. Returns the problems re-imports reported (the last good version of
-    /// each stays loaded); they are also in the app's diagnostics.
+    /// it, and rebuilds the shaders of changed shader files
+    /// ([`crate::shaders`]). Returns the problems re-imports and rebuilds
+    /// reported (the last good version of each stays loaded); they are also in
+    /// the app's diagnostics.
     pub fn apply_file_changes(&mut self, changes: &[re_assets::AssetChange]) -> Vec<Diagnostic> {
         let (report, stale) = self.media.apply_changes(changes);
         let mut problems = report.problems.clone();
@@ -1970,6 +2026,19 @@ impl App {
                 re_assets::AssetChange::Renamed { from, to } => vec![from.clone(), to.clone()],
             })
             .collect();
+        let shaders: Vec<&str> = paths
+            .iter()
+            .filter_map(|p| crate::shaders::project_name(p))
+            .collect();
+        if !shaders.is_empty() {
+            for name in shaders {
+                if let Some(d) = self.shaders.read_project(&self.files, name) {
+                    self.diagnostics.push(d.clone());
+                    problems.push(d);
+                }
+            }
+            problems.extend(self.install_shaders());
+        }
         if paths.iter().any(|p| procedural::is_generator_script(p)) {
             let declared = procedural::declare_generators(
                 &mut self.world,
