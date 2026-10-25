@@ -2114,8 +2114,11 @@ impl App {
 
     /// Attaches the game context's VM, and a compat project's server and
     /// client VMs, to `debugger` (ADR-0045), now if the scripts are running
-    /// and again whenever a VM is replaced; `None` detaches them. Breakpoint changes and commands for a parked script are
-    /// carried out at the start of each frame.
+    /// and again whenever a VM is replaced; `None` detaches them. Scripts
+    /// already running reach their breakpoints, and a script thread stopped
+    /// at one is parked while the game runs on. Breakpoint changes and
+    /// commands for a parked script are carried out at the start of each
+    /// frame.
     pub fn set_debugger(&mut self, debugger: Option<re_script::debug::Debugger>) {
         if let (Some(old), Some(scripts)) = (&self.debugger, &self.scripts) {
             old.detach(scripts.context(ContextKind::Game).lua());
@@ -2142,8 +2145,9 @@ impl App {
         let (Some(debugger), Some(scripts)) = (&self.debugger, &self.scripts) else {
             return;
         };
-        let lua = scripts.context(ContextKind::Game).lua();
-        if let Err(e) = debugger.attach(lua, ContextKind::Game.name(), None) {
+        // The scheduler parks a stopped script thread, so the game keeps
+        // running, and the scripts already running reach their breakpoints.
+        if let Err(e) = scripts.context(ContextKind::Game).attach_debugger(debugger) {
             self.diagnostics
                 .push(ScriptError::from_mlua(ContextKind::Game.name(), &e).to_diagnostic());
         }

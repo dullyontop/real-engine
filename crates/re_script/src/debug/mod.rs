@@ -24,7 +24,9 @@
 //! snapshot. Then:
 //! * where the VM's host can park the thread ([`Parking`]: scheduler threads),
 //!   the thread yields with no values and waits, parked, until a command
-//!   arrives; the VM thread keeps running everything else;
+//!   arrives; the VM thread keeps running everything else. A host that drops
+//!   the parked thread (its script reloaded, or `task.cancel`) calls
+//!   [`threads_ended`], and the stop ends as if continued;
 //! * elsewhere, when a client [waits for stops](Debugger::set_client), the
 //!   script waits inside the callback until a command arrives (a
 //!   synchronous stop), with the CPU budget's deadline moved by the time spent
@@ -49,7 +51,7 @@ use std::time::Duration;
 use mlua::Lua;
 use re_core::{Code, Diagnostic};
 
-pub use session::{is_parked, register_chunk, service, unregister_chunk};
+pub use session::{is_parked, register_chunk, service, threads_ended, unregister_chunk};
 
 /// The script has stopped at a breakpoint or step where it could not pause
 /// (no client waits for synchronous stops and the thread cannot be parked);
@@ -220,13 +222,18 @@ pub enum Event {
 ///
 /// After such a yield the host asks [`is_parked`] and, when it says so, keeps
 /// the thread instead of treating the yield as a plain `coroutine.yield()`.
+/// A host that drops a parked thread instead of resuming it calls
+/// [`threads_ended`].
 pub trait Parking {
     /// Whether `thread` (a `lua_State` address) can be stopped by a yield of
     /// no values and parked until [`Parking::resume`]. Asked inside the
     /// breakpoint callback, only when the thread can yield at all.
     fn can_park(&self, lua: &Lua, thread: usize) -> bool;
 
-    /// Resumes the parked `thread` now (it runs to its next yield or stop).
+    /// Schedules the parked `thread` to go on: its host resumes it when it
+    /// next runs its threads ([`DebugParking`](crate::DebugParking) defers it
+    /// to the end of the current resumption cycle), and it runs to its next
+    /// yield or stop.
     fn resume(&self, lua: &Lua, thread: usize);
 }
 
@@ -568,6 +575,20 @@ impl Debugger {
         drop(s);
         self.notify();
         Some(how)
+    }
+
+    /// Ends the stop of `context` without a command, because its thread is
+    /// gone ([`threads_ended`]): clients see it continue.
+    fn end_stop(&self, context: u32) {
+        let mut s = self.lock();
+        if s.stopped.as_ref().is_none_or(|st| st.context != context) {
+            return;
+        }
+        s.stopped = None;
+        s.resume = None;
+        s.event(Event::Continued { context });
+        drop(s);
+        self.notify();
     }
 
     /// Blocks until the stop of `context` gets a command (or the client
