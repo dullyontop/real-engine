@@ -39,3 +39,9 @@ pub const SEND: Code = Code::new("RE8908");
 /// A run cannot go online: the project is not a Roblox-style project, or
 /// the game already started.
 pub const NOT_ONLINE: Code = Code::new("RE8909");
+
+/// A WebSocket did not connect, its handshake failed, or the link broke.
+pub const WEBSOCKET: Code = Code::new("RE8910");
+
+/// This platform cannot serve: a browser build is always a client.
+pub const CANNOT_SERVE: Code = Code::new("RE8911");

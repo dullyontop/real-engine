@@ -242,6 +242,12 @@ impl<T: Transport> Endpoint<T> {
         self.by_id.get(&peer).copied()
     }
 
+    /// A connection's peer for people: its address, and how it is reached
+    /// when that is not plain UDP ([`Transport::describe_peer`]).
+    pub fn describe(&self, peer: PeerId) -> Option<String> {
+        self.addr_of(peer).map(|a| self.transport.describe_peer(a))
+    }
+
     fn peer(&self, peer: PeerId) -> Option<&Conn> {
         self.by_id
             .get(&peer)
@@ -345,6 +351,11 @@ impl<T: Transport> Endpoint<T> {
             }
             self.buf = buf;
         }
+        // A link the transport lost (a closed WebSocket) closes its
+        // connection now rather than at the timeout.
+        for (addr, reason) in self.transport.take_lost() {
+            self.lost(now, addr, reason);
+        }
         let timeout = self.config.timeout;
         let dead: Vec<SocketAddr> = self
             .peers
@@ -358,12 +369,16 @@ impl<T: Transport> Endpoint<T> {
             } else {
                 "the server"
             };
+            let at = self.transport.describe_peer(a);
             self.close(
                 now,
                 a,
                 Some(Diagnostic::error(
                     codes::TIMED_OUT,
-                    format!("{what} at {a} sent nothing for {} s", timeout.as_secs_f64()),
+                    format!(
+                        "{what} at {at} sent nothing for {} s",
+                        timeout.as_secs_f64()
+                    ),
                 )),
                 "timed out",
             );
@@ -383,13 +398,14 @@ impl<T: Transport> Endpoint<T> {
             let peer = self.peers.get_mut(&a).expect("listed");
             if peer.conn.stalled(now, timeout) {
                 let backlog = peer.conn.backlog();
+                let at = self.transport.describe_peer(a);
                 self.close(
                     now,
                     a,
                     Some(Diagnostic::error(
                         codes::TIMED_OUT,
                         format!(
-                            "{a} acknowledged nothing for {} s ({backlog} bytes waiting)",
+                            "{at} acknowledged nothing for {} s ({backlog} bytes waiting)",
                             timeout.as_secs_f64()
                         ),
                     )),
@@ -420,9 +436,23 @@ impl<T: Transport> Endpoint<T> {
         self.handshake = Handshake::None;
     }
 
+    /// Closes the connection to `addr` and releases its link (a WebSocket).
     fn close(&mut self, now: Duration, addr: SocketAddr, event: Option<Diagnostic>, reason: &str) {
+        if self.drop_peer(now, addr, event, reason) {
+            self.transport.release(addr);
+        }
+    }
+
+    /// Closes the connection to `addr`, keeping its link; true if there was one.
+    fn drop_peer(
+        &mut self,
+        now: Duration,
+        addr: SocketAddr,
+        event: Option<Diagnostic>,
+        reason: &str,
+    ) -> bool {
         let Some(p) = self.peers.remove(&addr) else {
-            return;
+            return false;
         };
         self.by_id.remove(&p.id);
         let mut d = packet::begin(Kind::Disconnect, p.conn.salt);
@@ -439,6 +469,21 @@ impl<T: Transport> Endpoint<T> {
         }
         if let Some(reason) = event {
             self.events.push(Event::Disconnected { peer: p.id, reason });
+        }
+        true
+    }
+
+    /// The transport lost its link to `addr`: closes that connection, or
+    /// fails a client's handshake with its server.
+    fn lost(&mut self, now: Duration, addr: SocketAddr, reason: Diagnostic) {
+        if self.peers.contains_key(&addr) {
+            self.close(now, addr, Some(reason), "the link closed");
+        } else if Some(addr) == self.server_addr && !matches!(self.handshake, Handshake::None) {
+            self.handshake = Handshake::None;
+            self.events.push(Event::Disconnected {
+                peer: PeerId(self.next_id),
+                reason,
+            });
         }
     }
 
@@ -487,12 +532,13 @@ impl<T: Transport> Endpoint<T> {
         if give_up {
             self.handshake = Handshake::None;
             let id = PeerId(self.next_id);
+            let at = self.transport.describe_peer(server);
             self.events.push(Event::Disconnected {
                 peer: id,
                 reason: Diagnostic::error(
                     codes::NO_ANSWER,
                     format!(
-                        "no answer from a server at {server} after {} s",
+                        "no answer from a server at {at} after {} s",
                         timeout.as_secs_f64()
                     ),
                 )
@@ -576,13 +622,15 @@ impl<T: Transport> Endpoint<T> {
                     return;
                 }
                 // The same address with a new salt: the old client is gone.
+                // Its link stays: the new connection uses it.
                 if self.peers.get(&from).is_some_and(|p| p.conn.salt != h.salt) {
-                    self.close(
+                    let at = self.transport.describe_peer(from);
+                    self.drop_peer(
                         now,
                         from,
                         Some(Diagnostic::error(
                             codes::CLOSED,
-                            format!("the client at {from} connected again"),
+                            format!("the client at {at} connected again"),
                         )),
                         "replaced by a new connection",
                     );
@@ -683,17 +731,19 @@ impl<T: Transport> Endpoint<T> {
                     .and_then(|n| r.take(n as usize))
                     .map(|b| String::from_utf8_lossy(b).into_owned())
                     .unwrap_or_default();
-                self.peers.remove(&from);
-                self.by_id.remove(&id);
                 let who = if self.server {
                     "the client"
                 } else {
                     "the server"
                 };
+                let at = self.transport.describe_peer(from);
+                self.peers.remove(&from);
+                self.by_id.remove(&id);
+                self.transport.release(from);
                 let message = if reason.is_empty() {
-                    format!("{who} at {from} closed the connection")
+                    format!("{who} at {at} closed the connection")
                 } else {
-                    format!("{who} at {from} closed the connection: {reason}")
+                    format!("{who} at {at} closed the connection: {reason}")
                 };
                 self.events.push(Event::Disconnected {
                     peer: id,
@@ -728,6 +778,7 @@ impl<T: Transport> Endpoint<T> {
     fn denied(&self, version: u16, r: &mut Reader<'_>, from: SocketAddr) -> Diagnostic {
         let reason = r.u8().and_then(DenyReason::from_u8);
         let (protocol, game) = (r.u32(), r.u64());
+        let from = self.transport.describe_peer(from);
         match reason {
             Some(DenyReason::Full) => Diagnostic::error(codes::SERVER_FULL, format!("the server at {from} is full"))
                 .with_hint("try again when a player has left"),
