@@ -877,7 +877,7 @@ A replay may also carry `raw` rows (`RawReplayInput`) for layers that read keys 
 "raw": [ { "frame": 30, "key": "KeyW", "down": true }, { "frame": 31, "mouse_move": [12, -4] } ]
 ```
 
-Goldens are kept per backend, because GL and Vulkan differ in small ways (ADR-0010). `verify` compares against the set for the backend it ran on, using `[verify]` `golden_mean_tolerance` and `golden_max_outliers` from `real.toml`. `real verify --update-goldens` rewrites the current backend's set from this run; review the images before committing them.
+Goldens are kept per backend, because GL and Vulkan differ in small ways (ADR-0010). `verify` compares against the set for the backend it ran on, using `[verify]` `golden_mean_tolerance` and `golden_max_outliers` from `real.toml`. `real verify --update-goldens` rewrites the current backend's set from this run; review the images before committing them. The dx12 and metal sets can only be rendered on Windows and macOS: the `goldens` workflow renders them there for a branch and commits them to it (ADR-0023).
 
 ### Caches
 

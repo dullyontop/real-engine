@@ -655,6 +655,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Amendment (M3, WP19 PR "bundles", #161).** `build-package` (Ubuntu 22.04), `build-package-windows` and `build-package-macos` are required: each builds the island, the plaza and the valley with `real build`, checks that the packaged games play as their projects do, and checks the platform's bundle (ADR-0037's amendment for that PR). The merge rule is now 17 checks: the 14 above and these three.
 
+**Amendment (M3, maintainer; 2026-10-25).** Only Windows renders the dx12 set and only macOS the metal set, so the `goldens` workflow (`.github/workflows/goldens.yml`) re-blesses them for a branch. Started by hand (`gh workflow run goldens --ref <branch> -f project=examples/<name>`), it runs `real verify --update-goldens` on the project on `windows-latest` (dx12) and `macos-latest` (metal), the runners of `build-windows` and `build-macos`, and commits the changed images to that branch, where the PR shows them for review. It refuses the default branch and is not a check. A commit pushed with the workflow's token starts no CI run, so CI runs again on the branch's next push.
+
 ## ADR-0024: Validation suite contract for external script corpora
 
 **Status:** Accepted
