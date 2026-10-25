@@ -158,7 +158,7 @@ out/island-build/island --headless --frames 600
 - The packaged island and plaza boot and replay with the same `state_hash` as `real verify` on the project.
 - The build contains no tooling crate (`cargo xtask check-graph` on the runtime binary).
 
-**Progress (2026-10-24).** "files" (#95), "archive" (#121) and "bundles" (#161) have merged, with the changes in ADR-0037's amendments. `real build --runtime-only` writes the prebuilt runtime folders that release CI publishes, and `--runtime` lays out a game for another OS from one. The notices also list build-dependencies, since Luau's sources come in through one. `build-package`, `build-package-windows` and `build-package-macos` are required (ADR-0023), so the definition of done below holds.
+**Progress (2026-10-25).** "files" (#95), "archive" (#121) and "bundles" (#161) have merged, with the changes in ADR-0037's amendments. `real build --runtime-only` writes the prebuilt runtime folders that release CI publishes, and `--runtime` lays out a game for another OS from one. The notices also list build-dependencies, since Luau's sources come in through one. `build-package`, `build-package-windows` and `build-package-macos` are required (ADR-0023) and pack the valley too, so the definition of done below holds, and so does M3's item 4.
 
 **Definition of done:** both PRs merged, with a `build-package` CI job on all three platforms.
 

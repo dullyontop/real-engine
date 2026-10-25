@@ -264,10 +264,12 @@ fn build_game(
             if let Some(n) = &mut report.notices {
                 n.crates = runtime.notices.as_ref().and_then(|r| r.crates);
                 n.texts = runtime.notices.as_ref().and_then(|r| r.texts);
-                n.standard_texts = runtime
+                let (standard_texts, font_notices) = runtime
                     .notices
-                    .map(|r| r.standard_texts)
+                    .map(|r| (r.standard_texts, r.font_notices))
                     .unwrap_or_default();
+                n.standard_texts = standard_texts;
+                n.font_notices = font_notices;
             }
             web::lay_out(&args.out, &runtime.dir, &config, &game_notices, report)
         }
@@ -277,6 +279,7 @@ fn build_game(
                 n.crates = runtime.report.crates;
                 n.texts = runtime.report.texts;
                 n.standard_texts = runtime.report.standard_texts.clone();
+                n.font_notices = runtime.report.font_notices.clone();
             }
             let layout = bundle::layout(&config, target_os(&runtime.triple));
             write_archive(&args.out, &layout.archive, &writer, report)?;
