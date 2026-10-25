@@ -35,13 +35,14 @@
 
 pub mod remotes;
 mod replicate;
+pub mod session;
 pub mod value;
 pub mod wire;
 
 #[cfg(test)]
 mod tests;
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use mlua::{Function, Lua, MultiValue, Result};
@@ -52,8 +53,8 @@ use re_scene::{Entity, IdGen, World, hierarchy};
 use re_script::{ScriptHost, sched};
 
 pub use replicate::{
-    Conn, NetworkOwner, Replica, ReplicationReport, ServerReplica, UPSTREAM_ALL, network_owner,
-    replicate, set_network_owner,
+    Conn, NetworkOwner, Replica, ReplicationReport, ServerReplica, UPSTREAM_ALL, UpCheck, UpReport,
+    network_owner, replicate, set_network_owner,
 };
 
 use crate::error::CompatError;
@@ -106,6 +107,69 @@ impl Default for ReplicationSet {
     }
 }
 
+/// What an owner may change in a networked game unless `[compat.net]
+/// upstream` says otherwise (ADR-0050 §2): a part's position and
+/// orientation, the joints its animations pose, the `Humanoid`'s movement
+/// input and the floor its controller stands on, and its animation tracks.
+/// A `Component.field` entry lets only that field through.
+pub const NETWORK_UPSTREAM: &[&str] = &[
+    "Transform",
+    "Compat_Motor6D",
+    "Compat_AnimationTrack",
+    "Compat_Humanoid.MoveDirection",
+    "Compat_Humanoid.Jump",
+    "Compat_Humanoid.Sit",
+    "Compat_Humanoid.PlatformStand",
+    "Compat_Humanoid.FloorMaterial",
+];
+
+/// The `[compat.net]` section of `real.toml`: what a networked game lets
+/// its clients do (ADR-0050 §2). The in-process two-world run ignores it.
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct NetSettings {
+    /// The components (or `Component.field`s) an owner's changes send to the
+    /// server; [`NETWORK_UPSTREAM`] when unset, `["*"]` for everything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<Vec<String>>,
+    /// The fastest an owned part may move, in studs per second (`RE9452`).
+    pub max_owned_speed: u32,
+    /// The remote messages a player may send a second, all remotes together
+    /// (`RE9453`).
+    pub remote_rate: u32,
+}
+
+impl Default for NetSettings {
+    fn default() -> NetSettings {
+        NetSettings {
+            upstream: None,
+            max_owned_speed: 1000,
+            remote_rate: 600,
+        }
+    }
+}
+
+impl NetSettings {
+    /// True when nothing is set.
+    pub fn is_default(&self) -> bool {
+        *self == NetSettings::default()
+    }
+
+    /// The replication set of a networked game: the default containers,
+    /// and [`NetSettings::upstream`].
+    pub fn replication_set(&self) -> ReplicationSet {
+        ReplicationSet {
+            upstream: self
+                .upstream
+                .clone()
+                .unwrap_or_else(|| NETWORK_UPSTREAM.iter().map(|s| s.to_string()).collect()),
+            ..ReplicationSet::default()
+        }
+    }
+}
+
 /// Which side of the two worlds a world is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
@@ -119,11 +183,13 @@ pub enum Side {
 #[derive(Clone, Debug)]
 pub(crate) enum Msg {
     /// A remote event: `FireServer` (with the sender), `FireClient` or
-    /// `FireAllClients`.
+    /// `FireAllClients`. An `UnreliableRemoteEvent`'s crosses a network
+    /// on the unreliable channel.
     Event {
         remote: String,
         player: Option<String>,
         args: Vec<NetValue>,
+        unreliable: bool,
     },
     /// A remote function call, answered by a [`Msg::Reply`] with `call`.
     Invoke {
@@ -132,9 +198,12 @@ pub(crate) enum Msg {
         call: u64,
         args: Vec<NetValue>,
     },
-    /// The results of an invocation, or its error message.
+    /// The results of an invocation, or its error message. On the server,
+    /// `player` is the client it came from (set by the network session; an
+    /// in-process client's is `None`), which must be the one invoked.
     Reply {
         call: u64,
+        player: Option<String>,
         result: std::result::Result<Vec<NetValue>, String>,
     },
     /// A proximity prompt action of the local player, client to server.
@@ -159,35 +228,90 @@ pub(crate) enum PromptAction {
 }
 
 /// Messages on their way to one side, as their wire bytes
-/// ([`wire::encode_msg`]), so the in-process run sends what a network would.
+/// ([`wire::encode_msg`]), so the in-process run sends what a network would;
+/// each is marked when it goes on the unreliable channel.
 #[derive(Debug, Default)]
-pub(crate) struct MsgQueue(VecDeque<Vec<u8>>);
+pub(crate) struct MsgQueue(VecDeque<(bool, Vec<u8>)>);
 
 impl MsgQueue {
     /// Queues `m`.
     pub(crate) fn push_back(&mut self, m: Msg) {
-        self.0.push_back(wire::encode_msg(&m));
+        let unreliable = matches!(
+            m,
+            Msg::Event {
+                unreliable: true,
+                ..
+            }
+        );
+        self.0.push_back((unreliable, wire::encode_msg(&m)));
     }
 
     /// Takes every queued message, in order.
     pub(crate) fn take_all(&mut self) -> Vec<Msg> {
         self.0
             .drain(..)
-            .map(|b| wire::decode_msg(&b).expect("a message this build encoded decodes"))
+            .map(|(_, b)| wire::decode_msg(&b).expect("a message this build encoded decodes"))
             .collect()
+    }
+
+    /// Takes every queued message as its bytes, with whether it is
+    /// unreliable, in order.
+    pub(crate) fn take_bytes(&mut self) -> Vec<(bool, Vec<u8>)> {
+        self.0.drain(..).collect()
     }
 }
 
 /// The state both worlds share.
 #[derive(Debug, Default)]
 pub(crate) struct Shared {
+    /// Messages for the server: from the in-process client, or from the
+    /// network session's clients.
     pub(crate) to_server: MsgQueue,
+    /// Messages for the client: the in-process client's, or, in a client
+    /// process, the ones the server sent.
     pub(crate) to_client: MsgQueue,
     /// The stable id of the local player's `Player`.
     pub(crate) local_player: Option<String>,
+    /// On a server: the messages for each player connected over the
+    /// network, by the stable id of its `Player`.
+    pub(crate) remote: BTreeMap<String, MsgQueue>,
+    /// On a server: network players a script kicked, with the message.
+    pub(crate) kicks: Vec<(String, String)>,
     pub(crate) next_call: u64,
     /// Messages for players that have no client in this process.
     pub(crate) undelivered: u64,
+}
+
+impl Shared {
+    /// The queue of `player`'s client: the in-process client's or a network
+    /// player's; `None` for a player simulated on the server only.
+    pub(crate) fn client_queue(&mut self, player: &str) -> Option<&mut MsgQueue> {
+        if self.local_player.as_deref() == Some(player) {
+            Some(&mut self.to_client)
+        } else {
+            self.remote.get_mut(player)
+        }
+    }
+
+    /// Queues `m` for `player`'s client, or counts it undelivered when that
+    /// player has none.
+    pub(crate) fn send_to(&mut self, player: &str, m: Msg) {
+        match self.client_queue(player) {
+            Some(q) => q.push_back(m),
+            None => self.undelivered += 1,
+        }
+    }
+
+    /// Queues `m` for every client: the in-process one and the network
+    /// players'.
+    pub(crate) fn send_to_all(&mut self, m: Msg) {
+        if self.local_player.is_some() {
+            self.to_client.push_back(m.clone());
+        }
+        for q in self.remote.values_mut() {
+            q.push_back(m.clone());
+        }
+    }
 }
 
 /// The link between the two worlds, a resource of each: which side the world
@@ -213,6 +337,16 @@ impl NetLink {
     pub fn undelivered(&self) -> u64 {
         self.lock().undelivered
     }
+}
+
+/// Makes `client` (from [`client_world`]) the world of a network client:
+/// its own link, and an empty replica the server's welcome binds.
+pub fn link_client(client: &mut World) {
+    client.ecs.insert_resource(NetLink {
+        side: Side::Client,
+        shared: Arc::new(Mutex::new(Shared::default())),
+    });
+    client.ecs.insert_resource(Replica::default());
 }
 
 /// The link of the VM's world, if it is one of two worlds.
@@ -262,33 +396,7 @@ impl CompatWorlds {
         mut server: World,
         set: ReplicationSet,
     ) -> std::result::Result<CompatWorlds, CompatError> {
-        setup.classes.register_components(&mut server)?;
-        let game = server
-            .entity(GAME_ID)
-            .ok()
-            .filter(|g| tree::class(&server, *g) == Some(ROOT_CLASS))
-            .ok_or_else(|| {
-                CompatError::Scene(format!(
-                    "the server world has no {ROOT_CLASS} root with id {GAME_ID:?}"
-                ))
-            })?;
-        let mut client = server.fork();
-        let game_c = client.entity(GAME_ID).expect("the fork keeps ids");
-        let _ = game;
-        for child in hierarchy::children(&client.ecs, game_c).to_vec() {
-            let keep = client.ecs.get::<ServiceTag>(child).is_some();
-            let replicated = keep
-                && tree::class(&client, child)
-                    .is_some_and(|c| set.containers.iter().any(|x| x == c));
-            if !keep {
-                let _ = client.despawn_runtime(child);
-            } else if !replicated {
-                for c in hierarchy::children(&client.ecs, child).to_vec() {
-                    let _ = client.despawn_runtime(c);
-                }
-            }
-        }
-        client.ecs.insert_resource(IdGen::seeded(CLIENT_ID_SEED));
+        let mut client = client_world(setup, &mut server, &set)?;
         let shared = Arc::new(Mutex::new(Shared::default()));
         server.ecs.insert_resource(NetLink {
             side: Side::Server,
@@ -339,6 +447,50 @@ impl CompatWorlds {
         let id = self.client.id_of(client_entity)?;
         self.server.entity(id).ok()
     }
+}
+
+/// The client world a play starts from: a copy of `server` (same stable
+/// ids) in which the services outside `set` are empty; the services
+/// themselves stay, as they do on a Roblox client. A network client makes it
+/// from its own copy of the scene, which the server's welcome then binds
+/// ([`session::ClientNet::join`]). Registers the class layer's components
+/// in `server` first.
+///
+/// # Errors
+///
+/// `server` has no `game` root, or the class layer's components do not
+/// register (`RE9004`, `RE9003`).
+pub fn client_world(
+    setup: &CompatSetup,
+    server: &mut World,
+    set: &ReplicationSet,
+) -> std::result::Result<World, CompatError> {
+    setup.classes.register_components(server)?;
+    server
+        .entity(GAME_ID)
+        .ok()
+        .filter(|g| tree::class(server, *g) == Some(ROOT_CLASS))
+        .ok_or_else(|| {
+            CompatError::Scene(format!(
+                "the server world has no {ROOT_CLASS} root with id {GAME_ID:?}"
+            ))
+        })?;
+    let mut client = server.fork();
+    let game_c = client.entity(GAME_ID).expect("the fork keeps ids");
+    for child in hierarchy::children(&client.ecs, game_c).to_vec() {
+        let keep = client.ecs.get::<ServiceTag>(child).is_some();
+        let replicated = keep
+            && tree::class(&client, child).is_some_and(|c| set.containers.iter().any(|x| x == c));
+        if !keep {
+            let _ = client.despawn_runtime(child);
+        } else if !replicated {
+            for c in hierarchy::children(&client.ecs, child).to_vec() {
+                let _ = client.despawn_runtime(c);
+            }
+        }
+    }
+    client.ecs.insert_resource(IdGen::seeded(CLIENT_ID_SEED));
+    Ok(client)
 }
 
 /// Delivers what arrived for `vm` and runs the per-frame work of its side

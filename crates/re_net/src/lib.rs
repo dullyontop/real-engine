@@ -118,6 +118,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "Message cannot be sent",
         page: include_str!("../explain/RE8908.md"),
     },
+    DiagInfo {
+        code: codes::NOT_ONLINE,
+        title: "This run cannot go online",
+        page: include_str!("../explain/RE8909.md"),
+    },
 ];
 
 #[cfg(test)]

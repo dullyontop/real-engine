@@ -19,6 +19,7 @@ mod codes;
 mod explain;
 mod game;
 mod graph;
+mod net_stage;
 mod new;
 mod schema;
 #[cfg(feature = "tooling")]
@@ -237,6 +238,7 @@ enum Command {
 }
 
 #[derive(clap::Args, Debug)]
+#[command(group(clap::ArgGroup::new("online").args(["server", "host", "connect"])))]
 struct RunArgs {
     /// Run without a window.
     #[arg(long)]
@@ -264,6 +266,55 @@ struct RunArgs {
     /// Serve the script debugger over DAP on 127.0.0.1 (default port 4711).
     #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "4711")]
     debug: Option<u16>,
+    /// Run a dedicated server for a Roblox-style project: headless, in real
+    /// time, until stopped or `--frames` (ADR-0050 §6). The traffic is not
+    /// encrypted.
+    #[arg(long, conflicts_with_all = ["host", "connect"])]
+    server: bool,
+    /// Play and serve: the local player plus players who connect.
+    #[arg(long, conflicts_with = "connect")]
+    host: bool,
+    /// Join the server at HOST:PORT (or HOST, on the `[net]` port).
+    #[arg(long, value_name = "HOST:PORT")]
+    connect: Option<String>,
+    /// The player's name on the server (default `Player<n>`).
+    #[arg(long, requires = "connect")]
+    name: Option<String>,
+    /// The port to serve on (default `[net] port`, 47800).
+    #[arg(long, requires = "online")]
+    port: Option<u16>,
+    /// The address to serve on (default 0.0.0.0, every interface).
+    #[arg(long, requires = "online", value_name = "ADDR")]
+    bind: Option<String>,
+    /// The most players who may connect (default `[net] max_players`).
+    #[arg(long, requires = "online", value_name = "N")]
+    max_players: Option<u32>,
+    /// Lockstep, for checks (ADR-0050 §7): a server waits for N players
+    /// (default 1) and then for each player's frame; a client waits for each
+    /// server frame.
+    #[arg(long, requires = "online", value_name = "N", num_args = 0..=1, default_missing_value = "1")]
+    lockstep: Option<u32>,
+}
+
+impl RunArgs {
+    /// The online options these flags ask for, if any.
+    fn net(&self) -> Option<re_app::NetOptions> {
+        let role = if self.server {
+            re_app::NetRole::Server
+        } else if self.host {
+            re_app::NetRole::Host
+        } else {
+            re_app::NetRole::Client(self.connect.clone()?)
+        };
+        Some(re_app::NetOptions {
+            role,
+            port: self.port,
+            bind: self.bind.clone(),
+            max_players: self.max_players,
+            name: self.name.clone(),
+            lockstep: self.lockstep,
+        })
+    }
 }
 
 pub(crate) fn print_diagnostics(diagnostics: &[Diagnostic]) {
@@ -282,15 +333,23 @@ fn open(project: &Path) -> Result<App, Diagnostic> {
     let mut app = App::open(project, AppConfig::load(project)?)?;
     #[cfg(feature = "tooling")]
     app.add_verify_stage(std::sync::Arc::new(tooling::check::ScanStage));
+    if app.config().compat.is_some() {
+        app.add_verify_stage(std::sync::Arc::new(net_stage::NetStage));
+    }
     Ok(app)
 }
 
-/// The verify stages this build adds (the static scan, with `tooling`).
-fn extra_stages() -> Vec<Box<dyn re_app::verify::VerifyStage>> {
-    vec![
+/// The verify stages this build adds: the static scan (with `tooling`) and,
+/// for a Roblox-style project, the networked replays (`net`).
+fn extra_stages(config: &AppConfig) -> Vec<Box<dyn re_app::verify::VerifyStage>> {
+    let mut stages: Vec<Box<dyn re_app::verify::VerifyStage>> = vec![
         #[cfg(feature = "tooling")]
         Box::new(tooling::check::ScanStage),
-    ]
+    ];
+    if config.compat.is_some() {
+        stages.push(Box::new(net_stage::NetStage));
+    }
+    stages
 }
 
 fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
@@ -313,9 +372,34 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         }
         None => None,
     };
+    let net = args.net();
+    let server = args.server;
+    let paced = server && args.lockstep.is_none();
+    if let Some(options) = net {
+        let serving = !matches!(options.role, re_app::NetRole::Client(_));
+        match app.set_net(options) {
+            Ok(addr) if serving => {
+                if addr.ip().is_unspecified() {
+                    eprintln!(
+                        "serving on port {} of every address of this machine",
+                        addr.port()
+                    );
+                } else {
+                    eprintln!("serving on {addr}");
+                }
+                eprintln!(
+                    "note: online play is not encrypted; play with people you trust or on a LAN"
+                );
+            }
+            Ok(_) => {}
+            Err(d) => return fail(d),
+        }
+    }
     let options = PlayOptions {
-        headless: args.headless,
-        frames: args.frames,
+        // A dedicated server has no window.
+        headless: args.headless || server,
+        // and runs until stopped.
+        frames: args.frames.or(server.then_some(u64::MAX)),
         replay: args.replay,
         screenshot: args.screenshot,
         exit_after: args.exit_after,
@@ -323,6 +407,7 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         // A replay must repeat its recording, so only a live run keeps data
         // and reloads changed files.
         live: Live::Development,
+        paced,
         checkpoints: args.checkpoints,
     };
     play(app, options, &mut Vec::new)
@@ -347,6 +432,9 @@ struct PlayOptions {
     exit_after: bool,
     json: bool,
     live: Live,
+    /// Headless frames keep real time (a dedicated server), instead of
+    /// running as fast as they can.
+    paced: bool,
     /// Write the state hash every this many frames (`real run --checkpoints`).
     checkpoints: Option<std::num::NonZeroU64>,
 }
@@ -387,13 +475,25 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
     let (frames, mut diagnostics, mut report) = if options.headless {
         let every = options.checkpoints.map(std::num::NonZeroU64::get);
         let mut checkpoints = Vec::new();
+        let start = re_core::time::Instant::now();
+        let step = app.step();
+        let mut n = 0u32;
         let run = app.run_headless_observed(options.frames, replay, |app| {
             if let Some(k) = every
                 && app.frame_count().is_multiple_of(k)
             {
                 checkpoints.push(checkpoint(app));
             }
+            if options.paced {
+                n = n.saturating_add(1);
+                let due = step.saturating_mul(n);
+                if let Some(wait) = due.checked_sub(start.elapsed()) {
+                    std::thread::sleep(wait);
+                }
+            }
         });
+        let net = net_report(&app);
+        app.close_net();
         match run {
             Ok(r) => {
                 let mut json = serde_json::to_value(&r).unwrap_or_default();
@@ -404,6 +504,9 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
                         checkpoints.push(checkpoint(&app));
                     }
                     json["checkpoints"] = serde_json::Value::Array(checkpoints);
+                }
+                if let Some(net) = net {
+                    json["net"] = net;
                 }
                 (r.frames, r.diagnostics.clone(), json)
             }
@@ -420,7 +523,9 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
             frames,
             ..re_app::WindowOptions::default()
         };
-        match re_app::run_windowed(&mut app, window) {
+        let run = re_app::run_windowed(&mut app, window);
+        app.close_net();
+        match run {
             Ok(r) => {
                 let json = serde_json::json!({
                     "frames": r.frames,
@@ -488,6 +593,28 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
         );
     }
     ExitCode::SUCCESS
+}
+
+/// An online run's connections and their traffic, for the JSON report.
+fn net_report(app: &App) -> Option<serde_json::Value> {
+    let stats = app.net_stats();
+    (!stats.is_empty()).then(|| {
+        serde_json::json!(
+            stats
+                .iter()
+                .map(|(peer, s)| {
+                    serde_json::json!({
+                        "peer": peer.to_string(),
+                        "bytes_sent": s.bytes_sent,
+                        "bytes_received": s.bytes_received,
+                        "packets_sent": s.packets_sent,
+                        "packets_received": s.packets_received,
+                        "fragments_resent": s.fragments_resent,
+                    })
+                })
+                .collect::<Vec<_>>()
+        )
+    })
 }
 
 /// One `checkpoints` entry: the frames run so far and the run's state hash
@@ -572,7 +699,7 @@ fn cmd_verify(project: &Path, json: bool, update_goldens: bool) -> ExitCode {
     };
     let report = match AppConfig::load(project) {
         Ok(config) => {
-            let stages = extra_stages();
+            let stages = extra_stages(&config);
             let refs: Vec<&dyn re_app::verify::VerifyStage> = stages.iter().map(|s| &**s).collect();
             re_app::verify::run_project(project, &config, &options, &refs)
         }

@@ -1,7 +1,9 @@
 # Valley
 
 The M3 example (`docs/M3_PLAN.md`, WP28): a procedural valley to walk and
-drive through. CI checks it with `verify-valley`.
+drive through. CI checks it with `verify-valley`, packs it and plays its
+replays from the package in `build-package`, and compares its replays'
+`state_hash` on Linux, Windows and macOS in `d2`.
 
 The valley is a streamed world (ADR-0042): 16 km square, generated cell by
 cell (256 m cells) around the hero as you go, with the `[stream]` defaults.
@@ -16,7 +18,12 @@ steer, Space is the hand brake. E again gets you out.
 ```sh
 real run --project examples/valley
 real verify --project examples/valley
+real build --project examples/valley --out dist/valley
 ```
+
+`real.toml` turns on mild post-processing (neutral tone mapping, a little
+bloom and slightly richer colour) and packs `models/`, which is not a default
+package folder.
 
 ## Layout
 
@@ -42,17 +49,21 @@ real verify --project examples/valley
 - `tests/replays/`: `walk` (walk, strafe, turn the camera, jump), `drive`
   (walk to the car, get in, drive along the valley, brake and reverse) and
   `cross` (turn round and walk 70 s west along the valley floor, from the
-  cell border at x = 0 across the one at x = -256 while cells load ahead), each run twice
-  by `real verify` with the same `state_hash`, with goldens for Vulkan
-  (lavapipe) and GL. `cross`'s stick inputs were recorded from a run that
-  steered towards the low ground.
+  cell border at x = 0 across the one at x = -256 while cells load ahead).
+  `real verify` runs each twice with the same `state_hash` and checks goldens
+  for Vulkan (lavapipe) and GL. CI's `d2` job records every replay's
+  `state_hash` checkpoints with `cargo xtask d2` on Linux, Windows and macOS,
+  and `d2 compare` checks they match. `cross`'s stick inputs were recorded
+  from a run that steered towards the low ground.
 
 Everything here is made by the engine's generators or by the script in
 `tools/`; there are no third-party assets.
 
 ## Not yet
 
-- Post-processing is off (the defaults) until native projects can set it
-  (WP20); shadows use the renderer's defaults.
-- Erosion, roads, an animation graph and audio buses come as WP23, WP24, WP21
-  and WP22 land them.
+- The engine has erosion, roads, animation graphs and audio buses, but the
+  valley does not use them yet.
+- Shadows use the renderer's default cascades (`[render.shadows]` is not set).
+- There are no DX12 or Metal goldens yet, so with those backends (the
+  defaults on Windows and macOS) `real verify` fails its `goldens` stage with
+  `RE0510`.

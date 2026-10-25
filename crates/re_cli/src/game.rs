@@ -135,6 +135,7 @@ fn run(opened: Package, args: GameArgs) -> ExitCode {
         exit_after: false,
         json: args.json,
         live: Live::Packaged,
+        paced: false,
         checkpoints: None,
     };
     let archive = opened.archive.clone();

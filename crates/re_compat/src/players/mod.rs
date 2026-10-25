@@ -186,7 +186,7 @@ pub fn add_player(
 ) -> (std::result::Result<Entity, Diagnostic>, Vec<Diagnostic>) {
     let mut out = Err(step_error("the player did not join"));
     let diags = vm.run(host, |lua| {
-        out = add_player_lua(lua, spec).map_err(|e| step_error(e.to_string()));
+        out = add_player_lua(lua, spec, false).map_err(|e| step_error(e.to_string()));
         Ok(())
     });
     (out, diags)
@@ -213,7 +213,9 @@ fn check_player(lua: &Lua, player: Entity, what: &str) -> std::result::Result<()
     }
 }
 
-fn add_player_lua(lua: &Lua, spec: &PlayerSpec) -> Result<Entity> {
+/// Adds a player; a `remote` one is a network player, whose client's message
+/// queue exists before `PlayerAdded` fires.
+pub(crate) fn add_player_lua(lua: &Lua, spec: &PlayerSpec, remote: bool) -> Result<Entity> {
     let c = classes(lua)?;
     let players = players_service(lua)?;
     let player = with_world(lua, |w| -> std::result::Result<Entity, CompatError> {
@@ -221,12 +223,13 @@ fn add_player_lua(lua: &Lua, spec: &PlayerSpec) -> Result<Entity> {
         set_own(w, "Player", p, "UserId", Value::Int(spec.user_id))?;
         set_own(w, "Player", p, "DisplayName", Value::Str(spec.name.clone()))?;
         spawn_instance(w, &c, "Backpack", None, "Backpack", Some(p))?;
-        if spec.local
-            && let Some(link) = w.ecs.get_resource::<NetLink>().cloned()
-        {
+        if let Some(link) = w.ecs.get_resource::<NetLink>().cloned() {
             let mut s = link.lock();
-            if s.local_player.is_none() {
-                s.local_player = w.id_of(p).map(str::to_string);
+            let id = w.id_of(p).map(str::to_string);
+            if remote {
+                s.remote.insert(id.unwrap_or_default(), Default::default());
+            } else if spec.local && s.local_player.is_none() {
+                s.local_player = id;
             }
         }
         Ok(p)
@@ -270,7 +273,7 @@ pub fn remove_player(
     (out, diags)
 }
 
-fn remove_player_lua(lua: &Lua, player: Entity) -> Result<()> {
+pub(crate) fn remove_player_lua(lua: &Lua, player: Entity) -> Result<()> {
     let ok = with_world(lua, |w| {
         tree::alive(w, player) && tree::class(w, player) == Some("Player")
     })?;
@@ -300,6 +303,8 @@ fn remove_player_lua(lua: &Lua, player: Entity) -> Result<()> {
         if s.local_player.as_deref() == Some(id.as_str()) {
             s.local_player = None;
         }
+        // Its session sees the queue gone and closes the connection.
+        s.remote.remove(&id);
     }
     pending(lua).0.retain(|p| *p != player);
     destroy_after_handlers(lua, player)
@@ -792,13 +797,10 @@ fn say_lua(lua: &Lua, player: Entity, text: &str) -> Result<()> {
     chat_here(lua, player, source, text)?;
     if let Some(link) = net_link(lua)? {
         let id = with_world(lua, |w| w.id_of(player).map(str::to_string))?.unwrap_or_default();
-        let mut s = link.lock();
-        if s.local_player.is_some() {
-            s.to_client.push_back(net::Msg::Chat {
-                player: id,
-                text: text.to_string(),
-            });
-        }
+        link.lock().send_to_all(net::Msg::Chat {
+            player: id,
+            text: text.to_string(),
+        });
     }
     Ok(())
 }
@@ -966,7 +968,16 @@ fn kick(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
         _ => format!("{name} was kicked"),
     };
     if net::is_server(lua)? {
-        re_script::vm::output(lua, false, text);
+        re_script::vm::output(lua, false, text.clone());
+        // A network player's client is told why, and its connection closes.
+        if let Some(link) = net_link(lua)?
+            && let Some(id) = with_world(lua, |w| w.id_of(e).map(str::to_string))?
+        {
+            let mut s = link.lock();
+            if s.remote.contains_key(&id) {
+                s.kicks.push((id, text));
+            }
+        }
         remove_player_lua(lua, e)?;
     } else {
         // A client can only kick itself: the server removes the player.

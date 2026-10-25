@@ -7,7 +7,9 @@
 //!    replays);
 //! 2. `compile`: every script compiles (tier 1);
 //! 3. `scan`: the static API scan (tier 2), passed in by `re_cli` as a
-//!    [`VerifyStage`] when it is built with `tooling`;
+//!    [`VerifyStage`] when it is built with `tooling`; for a `[compat]`
+//!    project `re_cli` also passes `net`, each replay played by a server and
+//!    a client over loopback in lockstep (ADR-0050 §7);
 //! 4. `boot`: the project opens headless and runs its warm-up frames; a
 //!    `[compat]` project runs [`VerifyOptions::compat_boot_frames`] (600) and
 //!    fails on an uncaught script error or a thread still waiting in
@@ -40,7 +42,7 @@ use crate::perf::PerfReport;
 /// The result of one stage.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StageReport {
-    /// The stage name (`schema`, `compile`, `scan`, `boot`, `replays`, `goldens`, `perf`).
+    /// The stage name (`schema`, `compile`, `scan`, `net`, `boot`, `replays`, `goldens`, `perf`).
     pub name: String,
     /// False when the stage found an error.
     pub ok: bool,

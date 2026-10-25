@@ -5,7 +5,8 @@
 # build-windows and build-macos (the whole suite and `real verify` on the island
 # and the plaza; ADR-0023's M3 amendment, WP18 PR "blocking"), and build-web
 # (ADR-0023's M3 amendment, WP29 PR "portable"), and d2 (the state_hash of every
-# island and plaza replay agrees on the three platforms; ADR-0036, WP18 PR "d2").
+# island, plaza and valley replay agrees on the three platforms; ADR-0036, WP18
+# PR "d2").
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
@@ -160,11 +161,15 @@ jobs:
       - name: Check the verify report (M2_PLAN, definition of done item 2)
         # Every stage ran and passed: the boot ran its 600 frames with no
         # uncaught error or stuck yield, the scan found nothing missing, at least
-        # two replays ran twice with the same state_hash, and the goldens match.
+        # two replays ran twice with the same state_hash, the goldens match, and
+        # each replay played by a server and a client over loopback in lockstep
+        # ended where the in-process run did (ADR-0050 §7).
         run: |
           jq -e '
             .ok == true
-            and ([.stages[].name] | contains(["schema", "compile", "scan", "boot", "replays", "goldens", "perf"]))
+            and ([.stages[].name] | contains(["schema", "compile", "scan", "net", "boot", "replays", "goldens", "perf"]))
+            and ([.stages[] | select(.name == "net") | .data.runs[]] as $n
+                 | ($n | length) >= 2 and all($n[]; .same))
             and all(.stages[]; .ok and ((.data | type) != "object" or (.data | has("skipped") | not)))
             and ([.stages[] | select(.name == "scan") | .data.missing] == [{}])
             and ([.stages[] | select(.name == "boot") | .data] as [$b]
@@ -177,6 +182,7 @@ jobs:
           ' out/verify.json
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
           jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic)"' out/verify.json
+          jq -r '.stages[] | select(.name == "net") | .data.runs[] | "networked \(.replay): \(.frames) frames, same=\(.same)"' out/verify.json
           jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
       - name: Windowed run under Xvfb (must print RUN OK)
         run: |
@@ -268,16 +274,16 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
       - run: cargo build --locked --release -p re_cli
-      - name: real build the island and the plaza
+      - name: real build the island, the plaza and the valley
         run: |
           mkdir -p out
-          for project in island plaza; do
+          for project in island plaza valley; do
             target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
             jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes"' "out/build-$project.json"
           done
       - name: real verify --package
         run: |
-          for project in island plaza; do
+          for project in island plaza valley; do
             target/release/real verify --project "examples/$project" --package "dist/$project"
           done
       - name: The game needs at most glibc 2.35 and links no hot reload
@@ -469,8 +475,8 @@ jobs:
       - name: cargo xtask web-test
         run: cargo xtask web-test
 
-  # D2 (ADR-0036): every replay of the island and the plaza, run on each
-  # platform, writes its state_hash every 60 frames; `d2` compares them.
+  # D2 (ADR-0036): every replay of the island, the plaza and the valley, run on
+  # each platform, writes its state_hash every 60 frames; `d2` compares them.
   d2-run:
     strategy:
       fail-fast: false
@@ -489,7 +495,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          cargo xtask d2 --project examples/island --project examples/plaza --json --out out/d2.json
+          cargo xtask d2 --project examples/island --project examples/plaza --project examples/valley --json --out out/d2.json
       - uses: actions/upload-artifact@v7
         with:
           name: d2-${{ runner.os }}

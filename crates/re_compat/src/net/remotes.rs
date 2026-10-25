@@ -14,8 +14,10 @@
 //! * `InvokeServer`, `InvokeClient` and `Invoke` park the caller until the
 //!   handler, run in a new thread on the other side, returns; an error in the
 //!   handler is raised in the caller (`RE9301`).
-//! * In M2 there is one client: messages for other (simulated) players are
-//!   counted as undelivered ([`NetLink::undelivered`]).
+//! * A server's messages go to the in-process client or to a network
+//!   player's queue, which its session sends; messages for players simulated
+//!   on the server only are counted as undelivered
+//!   ([`NetLink::undelivered`]).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -99,19 +101,9 @@ fn fire_server(lua: &Lua, e: Entity, a: MultiValue, class: &str) -> Result<Multi
         remote,
         player,
         args,
+        unreliable: class == "UnreliableRemoteEvent",
     });
     Ok(MultiValue::new())
-}
-
-/// Queues `msg` for `player`'s client, or counts it undelivered when that
-/// player has none here.
-fn to_client(l: &NetLink, player: &str, msg: Msg) {
-    let mut s = l.lock();
-    if s.local_player.as_deref() == Some(player) {
-        s.to_client.push_back(msg);
-    } else {
-        s.undelivered += 1;
-    }
 }
 
 fn fire_client(lua: &Lua, e: Entity, a: MultiValue, class: &str) -> Result<MultiValue> {
@@ -122,13 +114,13 @@ fn fire_client(lua: &Lua, e: Entity, a: MultiValue, class: &str) -> Result<Multi
     let args = encode_all(lua, rest, &what)?;
     let remote = id_of(lua, e)?;
     let player = id_of(lua, p)?;
-    to_client(
-        &l,
+    l.lock().send_to(
         &player,
         Msg::Event {
             remote,
             player: None,
             args,
+            unreliable: class == "UnreliableRemoteEvent",
         },
     );
     Ok(MultiValue::new())
@@ -140,19 +132,18 @@ fn fire_all(lua: &Lua, e: Entity, a: MultiValue, class: &str) -> Result<MultiVal
     let args = encode_all(lua, a, &what)?;
     let remote = id_of(lua, e)?;
     let players = crate::players::players_of(lua)?;
-    let local = l.local_player();
     let mut s = l.lock();
     for p in players {
-        let id = with_world(lua, |w| w.id_of(p).map(str::to_string))?;
-        if id.is_some() && id == local {
-            s.to_client.push_back(Msg::Event {
+        let id = with_world(lua, |w| w.id_of(p).map(str::to_string))?.unwrap_or_default();
+        s.send_to(
+            &id,
+            Msg::Event {
                 remote: remote.clone(),
                 player: None,
                 args: args.clone(),
-            });
-        } else {
-            s.undelivered += 1;
-        }
+                unreliable: class == "UnreliableRemoteEvent",
+            },
+        );
     }
     Ok(MultiValue::new())
 }
@@ -198,20 +189,23 @@ fn invoke_client(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
     let player = id_of(lua, p)?;
     let call = {
         let mut s = l.lock();
-        if s.local_player.as_deref() != Some(player.as_str()) {
+        if s.client_queue(&player).is_none() {
             return Err(call_error(
                 what,
-                "the player has no client in this process (only the local player has one)",
+                "the player has no client (it is simulated on the server only)",
             ));
         }
         s.next_call += 1;
         let call = s.next_call;
-        s.to_client.push_back(Msg::Invoke {
-            remote,
-            player: None,
-            call,
-            args,
-        });
+        s.send_to(
+            &player,
+            Msg::Invoke {
+                remote,
+                player: None,
+                call,
+                args,
+            },
+        );
         call
     };
     park_call(lua, what, call, Some(player))
@@ -368,6 +362,29 @@ pub(crate) fn deliver(lua: &Lua, l: &NetLink) -> Result<()> {
     Ok(())
 }
 
+/// Queues the reply to invocation `call`: on the server to the client of
+/// `player` (who invoked), on a client to the server.
+fn send_reply(
+    l: &NetLink,
+    server: bool,
+    player: Option<&str>,
+    call: u64,
+    result: std::result::Result<Vec<NetValue>, String>,
+) {
+    let mut s = l.lock();
+    let msg = Msg::Reply {
+        call,
+        player: None,
+        result,
+    };
+    match (server, player) {
+        (false, _) => s.to_server.push_back(msg),
+        (true, Some(p)) => s.send_to(p, msg),
+        // An in-process client that called before its player joined.
+        (true, None) => s.to_client.push_back(msg),
+    }
+}
+
 /// Delivers one message; gives it back when it must wait for a listener.
 fn deliver_one(lua: &Lua, l: &NetLink, m: Msg) -> Result<Option<Msg>> {
     let server = l.side == Side::Server;
@@ -376,6 +393,7 @@ fn deliver_one(lua: &Lua, l: &NetLink, m: Msg) -> Result<Option<Msg>> {
             ref remote,
             ref player,
             ref args,
+            ..
         } => {
             let Some(e) = with_world(lua, |w| instance_by_id(w, Some(remote)))? else {
                 return Ok(None); // the remote is gone on this side
@@ -406,13 +424,7 @@ fn deliver_one(lua: &Lua, l: &NetLink, m: Msg) -> Result<Option<Msg>> {
             ref args,
         } => {
             let reply_to = |result: std::result::Result<Vec<NetValue>, String>| {
-                let mut s = l.lock();
-                let msg = Msg::Reply { call, result };
-                if server {
-                    s.to_client.push_back(msg);
-                } else {
-                    s.to_server.push_back(msg);
-                }
+                send_reply(l, server, player.as_deref(), call, result);
             };
             let Some(e) = with_world(lua, |w| instance_by_id(w, Some(remote)))? else {
                 reply_to(Err(format!(
@@ -439,6 +451,7 @@ fn deliver_one(lua: &Lua, l: &NetLink, m: Msg) -> Result<Option<Msg>> {
             }
             values.extend(decode_all(lua, args, Target::OtherWorld)?);
             let link = l.clone();
+            let caller = player.clone();
             let label = format!("RemoteFunction.{name}");
             let done = lua.create_function(move |lua, results: MultiValue| {
                 let mut it = results.into_iter();
@@ -455,24 +468,28 @@ fn deliver_one(lua: &Lua, l: &NetLink, m: Msg) -> Result<Option<Msg>> {
                         error_text(rest.front())
                     ))
                 };
-                let mut s = link.lock();
-                let msg = Msg::Reply { call, result };
-                if server {
-                    s.to_client.push_back(msg);
-                } else {
-                    s.to_server.push_back(msg);
-                }
+                send_reply(&link, server, caller.as_deref(), call, result);
                 Ok(())
             })?;
             let queued = state(lua)?.behavior == crate::signal::SignalBehavior::Deferred;
             run_handler(lua, cb, done, values, &label, queued)?;
             Ok(None)
         }
-        Msg::Reply { call, result } => {
-            let token = lua
-                .app_data_mut::<Calls>()
-                .and_then(|mut c| c.0.remove(&call))
-                .map(|(t, _)| t);
+        Msg::Reply {
+            call,
+            player,
+            result,
+        } => {
+            // A network client may only answer what it was asked.
+            let token = lua.app_data_mut::<Calls>().and_then(|mut c| {
+                let mine = match (&player, c.0.get(&call)) {
+                    (None, _) => true,
+                    (Some(from), Some((_, asked))) => asked.as_deref() == Some(from.as_str()),
+                    (Some(_), None) => false,
+                };
+                mine.then(|| c.0.remove(&call)).flatten()
+            });
+            let token = token.map(|(t, _)| t);
             let Some(token) = token else {
                 return Ok(None);
             };

@@ -376,6 +376,8 @@ fn resume(lua: &Lua, task: Task, now: f64) -> Result<()> {
         s.cancelled.remove(&p)
     })?;
     if cancelled {
+        // Cancelled while it ran: a debugger stop it parked at ends with it.
+        crate::debug::threads_ended(lua, &[p]);
         return Ok(());
     }
     match result {
@@ -645,10 +647,11 @@ pub(crate) fn connect(lua: &Lua, signal: Signal, f: Function) -> Result<Connecti
 }
 
 /// Stops everything `owner` started: disconnects its callbacks and drops its
-/// waiting and deferred threads (a running one stops when it next yields).
-/// Returns how many callbacks and threads went.
+/// waiting and deferred threads, and those parked at a debugger stop (a
+/// running one stops when it next yields). Returns how many callbacks and
+/// threads went.
 pub(crate) fn drop_owner(lua: &Lua, owner: Owner) -> Result<usize> {
-    let (removed, threads, chunks) = sched(lua, |s| {
+    let (removed, threads, chunks, stopped) = sched(lua, |s| {
         let ids: Vec<u64> = s
             .connections
             .iter()
@@ -664,7 +667,11 @@ pub(crate) fn drop_owner(lua: &Lua, owner: Owner) -> Result<usize> {
         s.deferred.retain(|t| t.owner != Some(owner));
         let parked_before = s.parked.len() + s.debug_parked.len();
         s.parked.retain(|_, p| p.owner != Some(owner));
-        s.debug_parked.retain(|_, t| t.owner != Some(owner));
+        let stopped: Vec<usize> = s
+            .debug_parked
+            .extract_if(.., |_, t| t.owner == Some(owner))
+            .map(|(p, _)| p)
+            .collect();
         let threads = before - s.sleeping.len() - s.deferred.len() + parked_before
             - s.parked.len()
             - s.debug_parked.len();
@@ -676,8 +683,10 @@ pub(crate) fn drop_owner(lua: &Lua, owner: Owner) -> Result<usize> {
             .collect();
         s.cancelled.extend(running);
         let chunks = s.debug_chunks.remove(&owner).unwrap_or_default();
-        (removed, threads, chunks)
+        (removed, threads, chunks, stopped)
     })?;
+    // A debugger stop of a dropped thread ends with it.
+    crate::debug::threads_ended(lua, &stopped);
     let n = removed.len() + threads;
     for c in removed {
         lua.remove_registry_value(c.func)?;
@@ -976,13 +985,19 @@ pub(crate) fn task_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         "Cancels a thread made by task.spawn, task.defer or task.delay, or one waiting in task.wait.",
         |lua, t: Thread| {
             let p = ptr(&t);
-            sched(lua, |s| {
+            let stopped = sched(lua, |s| {
+                let stopped = s.debug_parked.contains_key(&p);
                 if !s.unschedule(p) && s.running.iter().any(|(r, _)| *r == p) {
                     // A running thread (itself, or one that spawned the caller)
                     // stops when it next yields.
                     s.cancelled.insert(p);
                 }
+                stopped
             })?;
+            if stopped {
+                // It was parked at a debugger stop, which ends with it.
+                crate::debug::threads_ended(lua, &[p]);
+            }
             Ok(())
         },
     )?;

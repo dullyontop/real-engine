@@ -2645,7 +2645,6 @@ impl Renderer {
         let quad_offset = |n: usize| [(n as u64 * quad_slot) as u32];
 
         self.pipelines_for(samples);
-        self.post.targets(device, (width, height), samples);
         let pipelines = &self.pipelines[&samples];
         let targets = self.post.targets(device, (width, height), samples);
         // The HDR target is cleared to transparent black; the post chain puts

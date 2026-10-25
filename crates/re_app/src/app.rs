@@ -165,6 +165,10 @@ pub struct App {
     persist_data: bool,
     /// A compat game's 3D view and UI on the renderer.
     compat_view: crate::compat_view::CompatView,
+    /// Online play ([`App::set_net`]).
+    net: Option<crate::net::NetPlay>,
+    /// The run should end: a network client was kicked or lost its server.
+    stopped: bool,
     /// The size (physical pixels) and scale of the last window draw.
     view_size: [u32; 2],
     view_ppp: f32,
@@ -337,6 +341,8 @@ impl App {
             compat_failed: false,
             persist_data: false,
             compat_view: crate::compat_view::CompatView::new(&config.render),
+            net: None,
+            stopped: false,
             view_size: [config.render.width, config.render.height],
             view_ppp: 1.0,
             script_output: Vec::new(),
@@ -1176,6 +1182,9 @@ impl App {
         let dt = self.clock.dt();
         let start = self.frame;
         for _ in 0..frames {
+            if self.stopped {
+                break;
+            }
             self.frame(dt);
             observe(self);
         }
@@ -1207,8 +1216,12 @@ impl App {
         if self.debugger.is_some()
             && let Some(c) = &self.compat
         {
-            for kind in [ContextKind::Server, ContextKind::Client] {
-                re_script::debug::service(c.vm(kind).context().lua());
+            // An online server has no client VM, and a client no server VM.
+            for vm in [ContextKind::Server, ContextKind::Client]
+                .into_iter()
+                .filter_map(|kind| c.vm(kind))
+            {
+                re_script::debug::service(vm.context().lua());
             }
         }
 
@@ -1268,6 +1281,7 @@ impl App {
         self.ensure_compat();
         if self.compat.is_some() {
             let dt = frame_time.as_secs_f64();
+            self.net_receive_server();
             self.compat_call(ContextKind::Server, |vm, h| {
                 let mut d = re_compat::net::pump(vm, h);
                 d.extend(vm.pre_render(h, dt));
@@ -1313,6 +1327,11 @@ impl App {
         };
         self.snapshot = render::build(shown, &inputs);
         self.hud = hud::collect(shown);
+        // A network client sends its frame once its world is propagated, as
+        // the in-process pass reads the client world after the Sync phase:
+        // the compat simulation moves welded parts without change detection,
+        // and the propagation is what marks them moved.
+        self.net_send_client();
         if self.compat.is_some() && self.graphics.is_some() {
             self.compat_render(self.view_size, self.view_ppp, 1, true);
         }
@@ -2065,15 +2084,21 @@ impl App {
 
     /// Attaches the game context's VM, and a compat project's server and
     /// client VMs, to `debugger` (ADR-0045), now if the scripts are running
-    /// and again whenever a VM is replaced; `None` detaches them. Breakpoint changes and commands for a parked script are
-    /// carried out at the start of each frame.
+    /// and again whenever a VM is replaced; `None` detaches them. Scripts
+    /// already running reach their breakpoints, and a script thread stopped
+    /// at one is parked while the game runs on. Breakpoint changes and
+    /// commands for a parked script are carried out at the start of each
+    /// frame.
     pub fn set_debugger(&mut self, debugger: Option<re_script::debug::Debugger>) {
         if let (Some(old), Some(scripts)) = (&self.debugger, &self.scripts) {
             old.detach(scripts.context(ContextKind::Game).lua());
         }
         if let (Some(old), Some(c)) = (&self.debugger, &self.compat) {
-            for kind in [ContextKind::Server, ContextKind::Client] {
-                old.detach(c.vm(kind).context().lua());
+            for vm in [ContextKind::Server, ContextKind::Client]
+                .into_iter()
+                .filter_map(|kind| c.vm(kind))
+            {
+                old.detach(vm.context().lua());
             }
         }
         self.debugger = debugger;
@@ -2090,8 +2115,9 @@ impl App {
         let (Some(debugger), Some(scripts)) = (&self.debugger, &self.scripts) else {
             return;
         };
-        let lua = scripts.context(ContextKind::Game).lua();
-        if let Err(e) = debugger.attach(lua, ContextKind::Game.name(), None) {
+        // The scheduler parks a stopped script thread, so the game keeps
+        // running, and the scripts already running reach their breakpoints.
+        if let Err(e) = scripts.context(ContextKind::Game).attach_debugger(debugger) {
             self.diagnostics
                 .push(ScriptError::from_mlua(ContextKind::Game.name(), &e).to_diagnostic());
         }
@@ -2104,7 +2130,10 @@ impl App {
             return;
         };
         for kind in [ContextKind::Server, ContextKind::Client] {
-            if let Err(e) = c.vm(kind).attach_debugger(debugger) {
+            let Some(vm) = c.vm(kind) else {
+                continue;
+            };
+            if let Err(e) = vm.attach_debugger(debugger) {
                 self.diagnostics
                     .push(ScriptError::from_mlua(kind.name(), &e).to_diagnostic());
             }
@@ -2182,6 +2211,10 @@ impl App {
                 clips.insert(path.clone(), secs);
             }
         }
+        let role = self
+            .net
+            .as_ref()
+            .map_or(crate::compat::Role::InProcess, |n| n.role());
         match crate::compat::CompatPlay::new(
             &self.files,
             &self.config,
@@ -2189,16 +2222,27 @@ impl App {
             &mut self.world,
             clips,
             self.persist_data,
+            role,
         ) {
             Ok(play) => self.compat = Some(play),
             Err(d) => {
                 self.compat_failed = true;
-                self.diagnostics.push(d);
+                if self.net.is_some() {
+                    // An online run with no game stops rather than serving
+                    // (or playing) nothing.
+                    self.net_failed(d);
+                } else {
+                    self.diagnostics.push(d);
+                }
                 return;
             }
         }
         // Attached before the scripts start, so their first lines can stop.
         self.attach_compat_debugger();
+        if self.net.is_some() {
+            self.start_online(&cfg);
+            return;
+        }
         for kind in [ContextKind::Server, ContextKind::Client] {
             self.compat_call(kind, |vm, h| crate::compat::start_scripts(vm, h));
         }
@@ -2206,6 +2250,230 @@ impl App {
             if let Err(d) = self.join_player() {
                 self.diagnostics.push(d);
             }
+        }
+    }
+
+    /// Puts a compat game online (ADR-0050 §6): runs the server side or the
+    /// client side of the network session that [`App::set_net`] bound, and
+    /// starts the scripts in the order the in-process game does.
+    ///
+    /// - A server binds the scene as loaded, then starts its scripts. In
+    ///   lockstep it waits for its network players, then joins the
+    ///   `[compat] players` they do not fill, so its game matches the
+    ///   in-process one (whose first player is the local one).
+    /// - A host starts as the in-process game does, with remote players
+    ///   joining after its `[compat] players`.
+    /// - A client joins (the server's welcome binds its copy of the scene),
+    ///   starts its scripts and sends its frame 0.
+    fn start_online(&mut self, cfg: &re_compat::CompatConfig) {
+        use crate::net::{NetPlay, NetRole};
+        let Some(NetPlay::Bound { end, options }) = self.net.take() else {
+            return;
+        };
+        let lockstep = options.lockstep;
+        match options.role {
+            NetRole::Server | NetRole::Host => {
+                let host = options.role == NetRole::Host;
+                let server = re_compat::net::session::ServerNet::new(
+                    *end,
+                    &mut self.world,
+                    cfg.net.clone(),
+                    lockstep.is_some(),
+                );
+                self.net = Some(NetPlay::Server(Box::new(server)));
+                let kinds: &[ContextKind] = if host {
+                    &[ContextKind::Server, ContextKind::Client]
+                } else {
+                    &[ContextKind::Server]
+                };
+                for kind in kinds {
+                    self.compat_call(*kind, |vm, h| crate::compat::start_scripts(vm, h));
+                }
+                if let Some(n) = lockstep.filter(|_| !host) {
+                    let mut players = 0;
+                    let mut failed = None;
+                    let mut net = self.net.take();
+                    if let Some(NetPlay::Server(s)) = &mut net {
+                        self.compat_call(ContextKind::Server, |vm, h| {
+                            match s.wait_for_players(n as usize, vm, h, &mut players) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    failed = Some(e);
+                                    Vec::new()
+                                }
+                            }
+                        });
+                    }
+                    self.net = net;
+                    if let Some(c) = self.compat.as_mut() {
+                        c.players = players;
+                    }
+                    if let Some(d) = failed {
+                        self.net_failed(d);
+                        return;
+                    }
+                }
+                if host || lockstep.is_some() {
+                    let have = self.compat.as_ref().map_or(0, |c| c.players);
+                    for _ in have..cfg.players {
+                        if let Err(d) = self.join_player() {
+                            self.diagnostics.push(d);
+                        }
+                    }
+                }
+            }
+            NetRole::Client(_) => {
+                let mut client =
+                    re_compat::net::session::ClientNet::new(*end, options.name, lockstep.is_some());
+                let joined = match self.compat.as_mut() {
+                    Some(c) => client.join(&mut c.client),
+                    None => return,
+                };
+                if let Err(d) = joined {
+                    self.net_failed(d);
+                    return;
+                }
+                self.net = Some(NetPlay::Client(Box::new(client)));
+                self.compat_call(ContextKind::Client, |vm, h| {
+                    crate::compat::start_scripts(vm, h)
+                });
+                // Frame 0: what the client's scripts did as they started.
+                self.net_send_client();
+            }
+        }
+    }
+
+    /// Ends the network session after `d` (reported) and stops the run.
+    fn net_failed(&mut self, d: Diagnostic) {
+        if let Some(net) = &mut self.net {
+            net.close();
+        }
+        self.net = Some(crate::net::NetPlay::Closed);
+        self.diagnostics.push(d);
+        self.stopped = true;
+    }
+
+    /// A server's receive, before its remotes are delivered.
+    fn net_receive_server(&mut self) {
+        let mut net = self.net.take();
+        let mut failed = None;
+        if let Some(crate::net::NetPlay::Server(s)) = &mut net {
+            let mut players = self.compat.as_ref().map_or(0, |c| c.players);
+            self.compat_call(ContextKind::Server, |vm, h| {
+                match s.receive(vm, h, &mut players) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        failed = Some(e);
+                        Vec::new()
+                    }
+                }
+            });
+            if let Some(c) = self.compat.as_mut() {
+                c.players = players;
+            }
+        }
+        self.net = net;
+        if let Some(d) = failed {
+            self.net_failed(d);
+        }
+    }
+
+    /// A server's replication to its network players, after the
+    /// in-process one.
+    fn net_replicate(&mut self, dt: f64) {
+        if let Some(crate::net::NetPlay::Server(s)) = &mut self.net {
+            let diags = s.replicate(&mut self.world, dt);
+            self.report_script_errors(diags);
+        }
+    }
+
+    /// A client's receive: the server's frames into the client world, and
+    /// their messages for the client VM.
+    fn net_receive_client(&mut self) {
+        let Some(crate::net::NetPlay::Client(net)) = &mut self.net else {
+            return;
+        };
+        let Some(c) = self.compat.as_mut() else {
+            return;
+        };
+        let result = net.receive(&mut c.client);
+        let closed = match (result, net.state()) {
+            (Err(d), _) => Some(d),
+            (Ok(()), re_compat::net::session::ClientState::Closed(d)) => Some(d.clone()),
+            _ => None,
+        };
+        if let Some(d) = closed {
+            self.net_failed(d);
+        }
+    }
+
+    /// A client's send: its owned changes and messages, to the server.
+    fn net_send_client(&mut self) {
+        let Some(crate::net::NetPlay::Client(net)) = &mut self.net else {
+            return;
+        };
+        let Some(c) = self.compat.as_mut() else {
+            return;
+        };
+        let diags = net.send(&mut c.client, &c.set);
+        self.report_script_errors(diags);
+    }
+
+    /// Puts the game online (ADR-0050 §6) before its first frame: binds the
+    /// socket now, so a port in use fails here, and starts the session with
+    /// the compat game. Returns the address bound.
+    ///
+    /// # Errors
+    ///
+    /// The project is not a compat project (`RE8909`), the game already
+    /// started, or the socket does not bind (`RE8900`, `RE8901`).
+    pub fn set_net(
+        &mut self,
+        options: crate::net::NetOptions,
+    ) -> Result<std::net::SocketAddr, Diagnostic> {
+        if self.compat_config.is_none() {
+            return Err(Diagnostic::error(
+                re_net::codes::NOT_ONLINE,
+                "online play needs a Roblox-style project ([compat] in real.toml)",
+            )
+            .at(Location::file(crate::config::CONFIG_FILE)));
+        }
+        if self.compat.is_some() {
+            return Err(Diagnostic::error(
+                re_net::codes::NOT_ONLINE,
+                "the game already started; go online before its first frame",
+            ));
+        }
+        let net = crate::net::NetPlay::bind(options, &self.config.net, &self.files)?;
+        let addr = net.local_addr().expect("a bound socket has an address");
+        self.net = Some(net);
+        Ok(addr)
+    }
+
+    /// A compat game's client world (the local player's, which is drawn),
+    /// once the game started; `None` on a dedicated server.
+    pub fn compat_client(&self) -> Option<&World> {
+        self.compat
+            .as_ref()
+            .filter(|c| c.client_vm.is_some())
+            .map(|c| &c.client)
+    }
+
+    /// True once the run should end early: a network client was kicked, its
+    /// server went away, or a lockstep peer stopped sending.
+    pub fn stopped(&self) -> bool {
+        self.stopped
+    }
+
+    /// Each open network connection's counts (peer address, traffic).
+    pub fn net_stats(&self) -> Vec<(std::net::SocketAddr, re_net::ConnStats)> {
+        self.net.as_ref().map(|n| n.stats()).unwrap_or_default()
+    }
+
+    /// Leaves the network game, or stops serving it, at the end of a run.
+    pub fn close_net(&mut self) {
+        if let Some(net) = &mut self.net {
+            net.close();
         }
     }
 
@@ -2366,8 +2634,11 @@ impl App {
             return;
         };
         let (world, vm) = match kind {
-            ContextKind::Client => (&mut c.client, &c.client_vm),
-            _ => (&mut self.world, &c.server_vm),
+            ContextKind::Client => (&mut c.client, c.client_vm.as_ref()),
+            _ => (&mut self.world, c.server_vm.as_ref()),
+        };
+        let Some(vm) = vm else {
+            return;
         };
         let mut host = PlayHost {
             world,
@@ -2405,8 +2676,18 @@ impl App {
     /// sounds),
     /// then the sound commands for the mixer.
     fn compat_client_frame(&mut self, frame_dt: f64, steps: u32) {
-        if let Some(c) = &mut self.compat {
+        let role = self.net.as_ref().map(|n| n.role());
+        if let Some(c) = &mut self.compat
+            && c.server_vm.is_some()
+            && c.client_vm.is_some()
+        {
             c.replicate(&mut self.world);
+        }
+        if role.is_some() {
+            // The simulated time this frame ran, for the server's limits.
+            let dt = f64::from(steps.max(1)) * f64::from(self.clock.dt_secs());
+            self.net_replicate(dt);
+            self.net_receive_client();
         }
         let step_dt: f64 = self.clock.dt_secs().into();
         self.compat_call(ContextKind::Client, |vm, h| {
@@ -2424,7 +2705,8 @@ impl App {
         let sounds = self
             .compat
             .as_ref()
-            .map(|c| crate::compat::client_sounds(&c.client_vm, None))
+            .and_then(|c| c.client_vm.as_ref())
+            .map(|vm| crate::compat::client_sounds(vm, None))
             .unwrap_or_default();
         self.audio_cmds.extend(sounds);
     }
@@ -2553,7 +2835,13 @@ impl App {
                 self.skin_sync = SkinSync::new();
                 self.ragdoll_sync = RagdollSync::new();
                 self.script_errors.clear();
-                // The compat contexts start again on the next frame.
+                // The compat contexts start again on the next frame, offline:
+                // a network session does not survive a restart.
+                if let Some(net) = &mut self.net {
+                    net.close();
+                    self.stopped = true;
+                }
+                self.net = None;
                 self.compat = None;
                 self.compat_failed = false;
                 // The new client VM numbers its meshes from the start.
