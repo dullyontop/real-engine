@@ -114,14 +114,17 @@ fn skeleton_pose(root: Vec3, relative: impl Iterator<Item = JointPose>) -> Skele
     }
 }
 
+/// The first joint of `pose` (the root first) beyond Jolt's limits, in Jolt's frame.
+fn beyond(pose: &SkeletonPose) -> Option<Vec3> {
+    let root = grv(pose.root_offset);
+    std::iter::once(root)
+        .chain(pose.joints.iter().map(|t| root + gv(t.translation)))
+        .find(|&p| !in_world(p))
+}
+
 /// Whether every joint of `pose` is within Jolt's limits.
 fn reachable(pose: &SkeletonPose) -> bool {
-    let root = grv(pose.root_offset);
-    in_world(root)
-        && pose
-            .joints
-            .iter()
-            .all(|t| in_world(root + gv(t.translation)))
+    beyond(pose).is_none()
 }
 
 /// The joint between a part at `at` (its neutral world pose) and its parent part, with
@@ -410,7 +413,7 @@ impl Physics {
             ));
         }
         if !self.in_reach(pos) {
-            return Err(self.far_ragdoll(id, pos));
+            return Err(self.far_ragdoll(id, "ragdoll", pos));
         }
         let rot = unit_rotation(rot).ok_or_else(|| ragdoll_invalid(id, "the rotation is zero"))?;
         let target = match pose {
@@ -481,8 +484,8 @@ impl Physics {
             pos - self.parts.origin,
             joints.iter().map(|&j| turned(rot, &target[j])),
         );
-        if !reachable(&start) {
-            return Err(self.far_ragdoll(id, pos));
+        if let Some(part) = beyond(&start) {
+            return Err(self.far_ragdoll(id, "ragdoll part", part + self.parts.origin));
         }
         let rid = self
             .world
@@ -516,14 +519,15 @@ impl Physics {
         Ok(())
     }
 
-    /// `RE5006` for a ragdoll added at `pos`, out of reach: an error at the world
-    /// origin, a warning while the origin is moved (content left behind, ADR-0042).
-    fn far_ragdoll(&self, id: EntityId, pos: Vec3) -> Diagnostic {
-        let mut d = self.out_of_reach(id, "ragdoll", pos);
+    /// `RE5006` for a ragdoll added with its `what` at `pos`, out of reach: an error
+    /// at the world origin, a warning while the origin is moved (content left
+    /// behind, ADR-0042).
+    fn far_ragdoll(&self, id: EntityId, what: &str, pos: Vec3) -> Diagnostic {
+        let mut d = self.out_of_reach(id, what, pos);
         if self.parts.origin != Vec3::ZERO && pos.is_finite() {
             d.severity = Severity::Warning;
             d.message = format!(
-                "{}; it is not added: add it again once the origin comes within reach",
+                "{}; the ragdoll is not added: add it again once the origin comes within reach",
                 d.message
             );
         }

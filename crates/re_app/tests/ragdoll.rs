@@ -636,3 +636,60 @@ fn a_ragdoll_left_behind_waits_for_the_origin_to_come_back() {
         );
     }
 }
+
+/// A man within reach of the origin but for his right forearm (physics refuses
+/// a ragdoll with a part out of reach) waits for the origin like one left
+/// behind, and gets his ragdoll once the origin comes near. Nothing is reported.
+#[test]
+fn a_ragdoll_with_a_joint_out_of_reach_waits_for_the_origin() {
+    // The walker starts 2.5 km out, so the origin is [2048, 0, 0] from the
+    // first step, and the man stands 4999.7 m from it.
+    let spawn = Vec3::new(-2951.7, 10.3, 0.0);
+    let dir = project(r#"{ "mode": "Simulated" }"#, None, false);
+    stream(dir.path(), |scene| {
+        let walker = format!(
+            r#"{{ "id": "walker", "components": {{
+        "StreamFocus": {{}},
+        "Transform": {{ "translation": [2500.0, 30.0, 20.0] }} }} }},
+    {LAND_ENTITY}
+    {{ "id": "man""#
+        );
+        scene
+            .replacen(r#"{ "id": "man""#, &walker, 1)
+            .replace("[0.0, -0.5, 0.0]", "[-2951.7, 9.5, 0.0]")
+            .replace("[0.0, 0.3, 0.0]", "[-2951.7, 10.3, 0.0]")
+    });
+    let mut app = open(dir.path());
+    let id = man(&app);
+    let report = app.run_headless(Some(40), None).unwrap();
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+    assert_eq!(app.physics().origin(), Vec3::new(2048.0, 0.0, 0.0));
+    let forearm = spawn + Vec3::new(-0.48, 1.5, 0.0);
+    assert!(app.physics().in_reach(spawn) && !app.physics().in_reach(forearm));
+    assert!(!app.physics().has_ragdoll(id));
+    // The walker comes home, and the origin with him.
+    app.world_mut()
+        .set(
+            "walker",
+            "Transform",
+            "translation",
+            re_reflect::Value::Vec3(Vec3::new(-500.0, 30.0, 20.0)),
+        )
+        .unwrap();
+    for _ in 0..20 {
+        let report = app.run_headless(Some(30), None).unwrap();
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        if app.physics().ragdoll(id).is_some_and(|s| s.calm) {
+            break;
+        }
+    }
+    assert_eq!(app.physics().origin().x, 0.0);
+    let state = app.physics().ragdoll(id).expect("the ragdoll is there");
+    assert!(state.calm, "it came to rest");
+    let on_ground = state.root_pos - (spawn - Vec3::new(0.0, 0.3, 0.0));
+    assert!(
+        on_ground.y > 0.0 && on_ground.y < 0.4 && on_ground.length() < 3.0,
+        "the man lies on his ground: {}",
+        state.root_pos
+    );
+}

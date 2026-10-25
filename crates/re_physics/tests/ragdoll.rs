@@ -983,6 +983,21 @@ fn a_ragdoll_left_out_of_reach_waits_for_the_origin() {
         (re_physics::codes::OUTSIDE_WORLD, Severity::Warning)
     );
     assert!(!p.has_ragdoll(EntityId(6)));
+    // So is one within reach but for its right forearm, which the warning names.
+    p.apply(&mut vec![add_man(
+        EntityId(6),
+        FAR + Vec3::new(-4999.7, 0.0, 0.0),
+        Quat::IDENTITY,
+    )]);
+    let e = p.take_diagnostics();
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert_eq!(e[0].severity, Severity::Warning);
+    assert!(
+        e[0].message.starts_with("ragdoll part position [2167.8"),
+        "{}",
+        e[0].message
+    );
+    assert!(!p.has_ragdoll(EntityId(6)));
 
     // Back home, it follows its latest target again.
     p.set_origin(Vec3::ZERO).unwrap();

@@ -8,9 +8,9 @@
 //! the component's mode when that field is edited, and sets this step's target
 //! from the animated pose, placed by the entity's world transform. Scripts switch
 //! modes with `physics.ragdoll`, which holds until the next edit of the field.
-//! An entity out of reach of a moved simulation origin (ADR-0042) gets its
-//! ragdoll, its rebuild and its targets once the origin comes within reach of
-//! it; until then physics keeps its ragdoll where it is.
+//! An entity with a joint out of reach of a moved simulation origin (ADR-0042)
+//! gets its ragdoll, its rebuild and its targets once the origin comes within
+//! reach of all of them; until then physics keeps its ragdoll where it is.
 //!
 //! [`pull`] runs after `PostSimulation`: it moves each ragdoll's blend weight
 //! toward 1 while physics simulates it and toward 0 while it is animated, and
@@ -228,11 +228,18 @@ pub fn push(
             total_mass: component.total_mass,
             scale,
         };
-        // Left behind by a moved origin: physics would refuse it, so it is added
-        // or rebuilt once the origin comes within reach, and gets no target
-        // until then (physics keeps it where it is, and a waiting rebuild's pose
-        // may not fit the old ragdoll).
-        let far = physics.origin() != Vec3::ZERO && !physics.in_reach(pos);
+        let pose = animated(matrices, scale);
+        // Left behind by a moved origin, or a joint of it is: physics would refuse
+        // it, so it is added or rebuilt once the origin comes within reach of every
+        // joint (the added root is the entity's position), and gets no target until
+        // then (physics keeps it where it is, and a waiting rebuild's pose may not
+        // fit the old ragdoll). A position that is not finite goes to physics, which
+        // reports it.
+        let far = physics.origin() != Vec3::ZERO
+            && pose.iter().any(|j| {
+                let at = pos + rot * j.pos;
+                at.is_finite() && !physics.in_reach(at)
+            });
         // A rebuild keeps the mode physics has (a script may have set it), the
         // component's mode last seen and the blend.
         let mut kept = None;
@@ -244,7 +251,6 @@ pub fn push(
             kept = Some((now, old.mode, old.blend.weight));
             cmds.push(PhysicsCmd::RemoveRagdoll { id });
         }
-        let pose = animated(matrices, scale);
         if !sync.linked.contains_key(&id) {
             if far
                 || sync
