@@ -495,3 +495,82 @@ fn screenshots_draw_the_streamed_terrain_whole() {
     drawn.run_headless(Some(3), None).unwrap();
     assert!(image.rgba == drawn.screenshot(None).unwrap().rgba);
 }
+
+/// Only a run that must repeat waits for the terrain view: a live run's
+/// screenshot shows the chunks made so far, and a screenshot of the scene
+/// being edited streams nothing.
+#[test]
+fn live_and_edited_screenshots_do_not_wait_for_the_terrain() {
+    use re_proc::stream::{Lateness, Streamer, TerrainView};
+    let dir = project(&format!("{CONFIG}terrain_view = 512.0\n"));
+    std::fs::write(dir.path().join("scripts/tools/land.luau"), CHUNKED).unwrap();
+    let mut edited = open(dir.path());
+    edited.screenshot(None).unwrap();
+    assert!(!edited.world().ecs.resource::<Streamer>().view());
+    assert!(!edited.world().ecs.contains_resource::<TerrainView>());
+
+    let mut live = open(dir.path());
+    live.set_stream_lateness(Lateness::Late);
+    live.ensure_graphics().unwrap();
+    // The first step only starts the chunks.
+    live.run_headless(Some(1), None).unwrap();
+    live.screenshot(None).unwrap();
+    let missing = live.world().ecs.resource::<Streamer>().view_missing();
+    assert!(missing > 0, "a live run does not wait");
+}
+
+/// The land's heights scaled past `f32::MAX`: every terrain chunk fails.
+const OVERFLOWING: &str = r#"local g = proc.graph("land")
+local h = g:node("terrain.heightfield", { cell = 4.0, height = 6.0, scale = 0.02 }, nil, "h")
+local up = g:node("field.remap", { mode = "linear", in_min = 0.0, in_max = 0.001, out_min = 0.0, out_max = 3.0e38 }, { field = h }, "up")
+g:node("terrain.chunks", { max_level = 2 }, { field = up }, "ground")
+return g
+"#;
+
+/// A play copy's screenshot completes the copy's terrain view, and what goes
+/// wrong as it does is in the run's report. Here every chunk fails, and the
+/// screenshot is the first to try them: the copy has no GPU side before it.
+#[test]
+fn a_play_copy_reports_what_its_screenshot_finds() {
+    let dir = project(&format!("{CONFIG}terrain_view = 512.0\n"));
+    std::fs::write(dir.path().join("scripts/tools/land.luau"), OVERFLOWING).unwrap();
+    let mut app = open(dir.path());
+    let (report, _, image) = app.play_copy(3, None, &[], true).unwrap();
+    assert!(image.is_some());
+    let failed: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("terrain view chunk"))
+        .collect();
+    assert_eq!(failed.len(), 1, "{:#?}", report.diagnostics);
+    assert_eq!(failed[0].code.to_string(), "RE4307");
+}
+
+/// Play copies draw with the live app's GPU side, which keeps meshes by name:
+/// a copy whose terrain differs from an earlier copy's draws its own chunks.
+#[test]
+fn play_copies_draw_their_own_terrain() {
+    let dir = project(&format!("{CONFIG}terrain_view = 512.0\n"));
+    std::fs::write(dir.path().join("scripts/tools/land.luau"), CHUNKED).unwrap();
+    let reseed = |app: &mut App, seed: i64| {
+        app.world_mut()
+            .set("land", "Procedural", "seed", Value::Int(seed))
+            .unwrap();
+    };
+    let shot = |app: &mut App| {
+        let (report, _, image) = app.play_copy(3, None, &[], true).unwrap();
+        assert!(report.ok(), "{:?}", report.diagnostics);
+        image.unwrap()
+    };
+    let mut app = open(dir.path());
+    app.ensure_graphics().unwrap();
+    let first = shot(&mut app);
+    reseed(&mut app, 4);
+    let second = shot(&mut app);
+    let mut fresh = open(dir.path());
+    fresh.ensure_graphics().unwrap();
+    reseed(&mut fresh, 4);
+    let expected = shot(&mut fresh);
+    assert!(first.rgba != expected.rgba, "another seed, another image");
+    assert!(second.rgba == expected.rgba, "the copy drew its own chunks");
+}

@@ -52,7 +52,10 @@ pub struct ViewChunk {
     pub key: ChunkKey,
     /// The edges stitched to a coarser neighbour.
     pub edges: Edges,
-    /// The mesh's `derived:` name; a new name whenever the mesh changes.
+    /// The mesh's `derived:` name, from the source, the chunk, its stitching
+    /// and the source's inputs: another name whenever the mesh differs, and
+    /// the same name for the same mesh in every world (a play copy draws
+    /// with the live app's GPU side).
     pub mesh: String,
     /// The material file, or empty.
     pub material: String,
@@ -173,11 +176,9 @@ struct SourceTerrain {
     /// versions come in.
     stale: BTreeSet<ChunkKey>,
     /// Selected chunks whose generation failed with these inputs: left bare,
-    /// and not tried again until the inputs change (they would fail the same
-    /// way).
+    /// and not tried again while they stay selected with these inputs (they
+    /// would fail the same way).
     failed: BTreeSet<ChunkKey>,
-    /// Meshes built so far, for unique names.
-    built: u64,
 }
 
 /// How much one [`TerrainState::step`] does.
@@ -206,6 +207,12 @@ impl TerrainState {
     /// Generation jobs in flight.
     pub fn in_flight(&self) -> usize {
         self.sources.values().map(|s| s.jobs.len()).sum()
+    }
+
+    /// True when no source had terrain at the last step: nothing is drawn or
+    /// in the making.
+    pub fn is_empty(&self) -> bool {
+        self.sources.is_empty()
     }
 
     /// Selected chunks not drawn as selected yet: not drawn, drawn from
@@ -330,24 +337,37 @@ impl TerrainState {
             }
             let budget = (!wait).then_some(started);
             swap(&mut view, st, source, terrain, &grid, &desired, budget);
-            self.missing += desired
-                .iter()
-                .filter(|(k, edges)| {
-                    st.stale.contains(*k)
-                        || view
-                            .chunks
-                            .get(&(source.id.clone(), **k))
-                            .is_none_or(|c| c.edges != **edges)
-                })
-                .count();
+            self.missing += missing(&view, st, &source.id, &desired);
         }
         world.ecs.insert_resource(view);
         failures
     }
 }
 
+/// The chunks of `desired` that source `id` does not draw as selected: not
+/// drawn, drawn from earlier inputs, or drawn with another stitching.
+fn missing(
+    view: &TerrainView,
+    st: &SourceTerrain,
+    id: &str,
+    desired: &BTreeMap<ChunkKey, Edges>,
+) -> usize {
+    desired
+        .iter()
+        .filter(|(k, edges)| {
+            st.stale.contains(*k)
+                || view
+                    .chunks
+                    .get(&(id.to_string(), **k))
+                    .is_none_or(|c| c.edges != **edges)
+        })
+        .count()
+}
+
 /// Takes the finished jobs of `source` in (every job, waiting for it, if
-/// `wait`): ready chunks, and failed ones with the problem to report.
+/// `wait`): ready chunks, and failed ones with the problem to report, once
+/// per kind of cause and inputs (a field that is not finite fails each chunk
+/// at another sample, and one report stands for them all).
 fn take_finished(
     st: &mut SourceTerrain,
     source: &Source,
@@ -375,7 +395,7 @@ fn take_finished(
             Err(d) => {
                 st.failed.insert(k);
                 failures.push((
-                    format!("{}: terrain view: {}", source.id, d.message),
+                    format!("{}/view/{}/{}", source.id, source.inputs, d.code),
                     Diagnostic::error(
                         crate::codes::CELL_FAILED,
                         format!(
@@ -534,11 +554,10 @@ fn swap(
             continue;
         }
         if let Some(r) = st.ready.get(&k) {
-            st.built += 1;
             if let Some(c) = view.chunks.get_mut(&(id.clone(), k)) {
                 c.source = source.entity;
                 c.edges = r.edges;
-                c.mesh = mesh_name(&id, k, r.edges, st.built);
+                c.mesh = mesh_name(source, k, r.edges);
                 c.material = terrain.material.clone();
                 c.corner = corner(grid, k);
                 c.data = r.mesh.clone();
@@ -548,14 +567,13 @@ fn swap(
     }
     for k in add {
         let Some(r) = st.ready.get(&k) else { continue };
-        st.built += 1;
         view.chunks.insert(
             (id.clone(), k),
             ViewChunk {
                 source: source.entity,
                 key: k,
                 edges: r.edges,
-                mesh: mesh_name(&id, k, r.edges, st.built),
+                mesh: mesh_name(source, k, r.edges),
                 material: terrain.material.clone(),
                 corner: corner(grid, k),
                 data: r.mesh.clone(),
@@ -581,10 +599,9 @@ fn swap(
         if let Ok(mesh) = chunk_mesh(&r.heights, grid.spacing(k.level), *want) {
             r.edges = *want;
             r.mesh = Arc::new(mesh);
-            st.built += 1;
             c.edges = *want;
             c.data = r.mesh.clone();
-            c.mesh = mesh_name(&id, *k, *want, st.built);
+            c.mesh = mesh_name(source, *k, *want);
         }
     }
 }
@@ -596,10 +613,18 @@ fn corner(grid: &TerrainGrid, k: ChunkKey) -> Vec3 {
     Vec3::new(x as f32 * s, 0.0, z as f32 * s)
 }
 
-fn mesh_name(source: &str, k: ChunkKey, edges: Edges, n: u64) -> String {
+/// The derived name of `source`'s chunk `k` mesh with `edges` stitched, for
+/// its current inputs: the chunk's samples depend on nothing else, so one
+/// name is one mesh in every world that draws it.
+fn mesh_name(source: &Source, k: ChunkKey, edges: Edges) -> String {
     format!(
-        "derived:terrain/{source}/{}_{}_{}/{}/{n}",
-        k.level, k.x, k.z, edges.0
+        "derived:terrain/{}/{}_{}_{}/{}/{}",
+        source.id,
+        k.level,
+        k.x,
+        k.z,
+        edges.0,
+        &source.inputs.to_hex()[..16]
     )
 }
 
@@ -615,5 +640,45 @@ mod tests {
         assert!(!overlaps(k(0, 4, 0), k(1, 1, 0)));
         assert!(overlaps(k(1, 1, 1), k(1, 1, 1)));
         assert!(!overlaps(k(1, 1, 1), k(1, 1, 2)));
+    }
+
+    #[test]
+    fn stream_terrain_missing_is_what_is_not_drawn_as_selected() {
+        let k = |x| ChunkKey { level: 0, x, z: 0 };
+        let chunk = |x, edges| ViewChunk {
+            source: Entity::PLACEHOLDER,
+            key: k(x),
+            edges,
+            mesh: String::new(),
+            material: String::new(),
+            corner: Vec3::ZERO,
+            data: Arc::new(MeshData::default()),
+        };
+        let stitched = Edges(Edges::NEG_X);
+        let mut view = TerrainView::default();
+        // Another source's chunk draws none of this one's ground.
+        view.chunks
+            .insert(("other".into(), k(0)), chunk(0, Edges::default()));
+        for x in 1..4 {
+            view.chunks
+                .insert(("land".into(), k(x)), chunk(x, Edges::default()));
+        }
+        let mut st = SourceTerrain::default();
+        st.stale.insert(k(2));
+        let desired: BTreeMap<ChunkKey, Edges> = [
+            (k(0), Edges::default()),
+            (k(1), Edges::default()),
+            (k(2), Edges::default()),
+            (k(3), stitched),
+        ]
+        .into();
+        // Chunk 0 is not drawn, 2 is from earlier inputs and 3 has another
+        // stitching; 1 is drawn as selected.
+        assert_eq!(missing(&view, &st, "land", &desired), 3);
+        st.stale.clear();
+        view.chunks
+            .insert(("land".into(), k(0)), chunk(0, Edges::default()));
+        view.chunks.get_mut(&("land".into(), k(3))).unwrap().edges = stitched;
+        assert_eq!(missing(&view, &st, "land", &desired), 0);
     }
 }

@@ -302,14 +302,16 @@ impl Streamer {
         &self.config
     }
 
-    /// True when nothing is loaded, requested or pinned: a world without
-    /// streamed sources can skip [`step`] while this holds.
+    /// True when nothing is loaded, requested, pinned or drawn: a world
+    /// without streamed sources can skip [`step`] while this holds (the step
+    /// after its last source goes takes that source's terrain view away).
     pub fn is_idle(&self) -> bool {
         self.loaded.is_empty()
             && self.pending.is_empty()
             && self.pinned.is_empty()
             && self.collision.len() == 0
             && self.collision.pending() == 0
+            && self.terrain.is_empty()
     }
 
     /// The loaded cells, in key order.

@@ -941,11 +941,13 @@ fn stream_terrain_view_regenerates_when_the_inputs_change() {
     }
 }
 
-/// The drawn chunks: key, stitching, corner, material and mesh, in order.
+/// The drawn chunks: key, stitching, corner, material, mesh name and mesh,
+/// in order.
 type Drawn = Vec<(
     re_geom::terrain::ChunkKey,
     re_geom::terrain::Edges,
     Vec3,
+    String,
     String,
     re_types::mesh::MeshData,
 )>;
@@ -960,6 +962,7 @@ fn drawn(w: &World) -> Drawn {
                 c.edges,
                 c.corner,
                 c.material.clone(),
+                c.mesh.clone(),
                 (**c.data()).clone(),
             )
         })
@@ -983,7 +986,8 @@ fn stream_terrain_view_completes_whatever_came_before() {
     assert_eq!(a.state_hash(), before, "the view is not simulation state");
 
     // Another world gets there from far away, with its one worker held
-    // busy for a few ticks: jobs queued, coarse chunks still drawn.
+    // busy for a few ticks: the chunks it needs are not made yet, and coarse
+    // ones are still drawn.
     let mut walked = streamed(chunked_graph(), 1200.0, -1200.0, json!([]));
     let b = &mut walked.world;
     let pool = Arc::new(re_core::TaskPool::new(1).unwrap());
@@ -1008,7 +1012,11 @@ fn stream_terrain_view_completes_whatever_came_before() {
     release.send(()).unwrap();
     complete_view(b);
     assert_eq!(b.ecs.resource::<Streamer>().view_missing(), 0);
-    assert_eq!(drawn(b), drawn(a), "the same chunks, stitching and meshes");
+    assert_eq!(
+        drawn(b),
+        drawn(a),
+        "the same chunks, stitching, meshes and mesh names"
+    );
 }
 
 #[test]
@@ -1178,6 +1186,186 @@ fn stream_terrain_view_completes_the_same_after_its_inputs_change() {
     assert_eq!(near.2, Vec3::new(-128.0, 0.0, -128.0), "64 cells of 2 m");
     assert!(fresh.iter().all(|c| c.3 == "materials/rock.material.json"));
     assert_eq!(drawn(b), fresh);
+}
+
+#[test]
+fn stream_terrain_view_completes_new_stitching_after_a_move() {
+    // A source 2 km across, so the view has every level and stitched seams;
+    // driven by hand.
+    let world = || {
+        let st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+        let e = st.world.entity("terrain").unwrap();
+        let mut cache = source::DescribeCache::new();
+        let mut s = source::describe(&st.world, e, &terrain_config(), &mut cache).unwrap();
+        s.bounds = 1024.0;
+        (st, s)
+    };
+    let pool = re_core::TaskPool::new(1).unwrap();
+    let step =
+        |w: &mut World, view: &mut terrain::TerrainState, s: &source::Source, at: Vec3, pace| {
+            view.step(w, std::slice::from_ref(s), &[at], 1024.0, &pool, pace)
+        };
+    let (from, to) = (
+        Vec3::new(-900.0, 0.0, -900.0),
+        Vec3::new(-900.0, 0.0, -400.0),
+    );
+
+    let (mut fresh, s) = world();
+    let a = &mut fresh.world;
+    let mut view_a = terrain::TerrainState::default();
+    step(a, &mut view_a, &s, to, terrain::Pace::Complete);
+    assert_eq!(view_a.missing(), 0);
+    let whole = drawn(a);
+    assert!(whole.iter().any(|c| c.0.level == 1));
+    assert!(
+        whole
+            .iter()
+            .any(|c| c.1 != re_geom::terrain::Edges::default()),
+        "stitched seams"
+    );
+
+    // A world drawn for the old focus, with jobs for the new one in flight
+    // behind its held worker when it completes.
+    let (mut moved, s) = world();
+    let b = &mut moved.world;
+    let mut view_b = terrain::TerrainState::default();
+    step(b, &mut view_b, &s, from, terrain::Pace::Complete);
+    let before = drawn(b);
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    pool.spawn(move || {
+        let _ = held.recv();
+    });
+    step(b, &mut view_b, &s, to, terrain::Pace::Jobs(4));
+    assert_eq!(view_b.in_flight(), 4);
+    release.send(()).unwrap();
+    step(b, &mut view_b, &s, to, terrain::Pace::Complete);
+    assert_eq!((view_b.missing(), view_b.in_flight()), (0, 0));
+    let after = drawn(b);
+    assert!(
+        before
+            .iter()
+            .any(|c| after.iter().any(|d| d.0 == c.0 && d.1 != c.1)),
+        "a chunk drawn for both focuses is stitched another way"
+    );
+    assert_eq!(after, whole);
+    assert_no_overlap(b);
+}
+
+/// [`chunked_graph`]'s heights scaled past `f32::MAX`: every terrain chunk
+/// fails (heights that are not finite), while cells are made as before.
+fn overflowing_graph() -> GraphDoc {
+    graph(
+        &[
+            (
+                "h",
+                "terrain.heightfield",
+                json!({ "cell": 4.0, "height": 40.0, "scale": 0.01 }),
+            ),
+            (
+                "up",
+                "field.remap",
+                json!({
+                    "mode": "linear", "in_min": 0.0, "in_max": 0.001,
+                    "out_min": 0.0, "out_max": 3.0e38,
+                }),
+            ),
+            ("ground", "terrain.chunks", json!({ "max_level": 2 })),
+        ],
+        &[
+            ("h", "field", "up", "field"),
+            ("up", "field", "ground", "field"),
+        ],
+    )
+}
+
+/// Steps with the terrain view on until no terrain job is in flight, and
+/// returns the next tick and the problems reported.
+fn run_view(w: &mut World, from: u64) -> (u64, Vec<re_core::Diagnostic>) {
+    if !w.ecs.contains_resource::<Streamer>() {
+        let mut s = Streamer::new(terrain_config()).unwrap();
+        s.set_view(true);
+        w.ecs.insert_resource(s);
+    }
+    let mut problems = Vec::new();
+    for t in from..from + 2000 {
+        problems.extend(step(w, t, &terrain_config()).diagnostics);
+        w.update();
+        if w.ecs.resource::<Streamer>().in_flight() == 0 && t > from + 10 {
+            return (t + 1, problems);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    panic!("the terrain view never settled");
+}
+
+#[test]
+fn stream_terrain_view_reports_failed_chunks_once_per_cause() {
+    // The source's ground is in view, but no cell or collision chunk is near
+    // the focus: only view chunks are made, and every one fails.
+    let mut st = streamed(overflowing_graph(), 600.0, 600.0, json!([]));
+    let w = &mut st.world;
+    let (t, problems) = run_view(w, 0);
+    assert!(loaded(w).is_empty());
+    let s = w.ecs.resource::<Streamer>();
+    assert!(s.view_missing() > 1, "{} chunks failed", s.view_missing());
+    assert_eq!(problems.len(), 1, "{problems:#?}");
+    assert_eq!(problems[0].code.to_string(), "RE4307");
+    assert!(
+        problems[0].message.contains("terrain view chunk"),
+        "{}",
+        problems[0].message
+    );
+    assert!(complete_view(w).is_empty(), "already reported");
+    // Another seed fails again, with other inputs: one more report.
+    w.set("terrain", "Procedural", "seed", Value::Int(8))
+        .unwrap();
+    let (_, again) = run_view(w, t);
+    assert_eq!(again.len(), 1, "{again:#?}");
+}
+
+#[test]
+fn stream_terrain_view_takes_a_removed_source_away_before_going_idle() {
+    // The source's ground is in view, but no cell or collision chunk is near
+    // the focus: the view is all the manager holds.
+    let mut st = streamed(chunked_graph(), 600.0, 600.0, json!([]));
+    let w = &mut st.world;
+    let t = settle_view(w, 0);
+    assert!(loaded(w).is_empty());
+    let terrain = w.entity("terrain").unwrap();
+    w.despawn_runtime(terrain).unwrap();
+    // A world without streamed sources steps until its manager is idle.
+    assert!(
+        !w.ecs.resource::<Streamer>().is_idle(),
+        "its chunks are still drawn"
+    );
+    step(w, t, &terrain_config());
+    assert!(w.ecs.resource::<TerrainView>().is_empty());
+    assert!(w.ecs.resource::<Streamer>().is_idle());
+}
+
+#[test]
+fn stream_terrain_mesh_names_name_one_mesh_in_every_world() {
+    // A play copy draws with the live app's GPU side, which keeps meshes by
+    // name: worlds whose chunks differ share no name, and worlds whose chunks
+    // are the same share them all.
+    let complete = |seed: i64| {
+        let mut st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+        let w = &mut st.world;
+        w.set("terrain", "Procedural", "seed", Value::Int(seed))
+            .unwrap();
+        w.ecs
+            .insert_resource(Streamer::new(terrain_config()).unwrap());
+        complete_view(w);
+        drawn(w)
+    };
+    let (a, b) = (complete(7), complete(8));
+    assert_eq!(a.len(), b.len());
+    for (x, y) in a.iter().zip(&b) {
+        assert_eq!(x.0, y.0);
+        assert_ne!(x.5, y.5, "{:?}: another seed, other heights", x.0);
+        assert!(!a.iter().any(|z| z.4 == y.4), "{} is in both", y.4);
+    }
+    assert_eq!(complete(7), a);
 }
 
 fn collision_config() -> StreamConfig {

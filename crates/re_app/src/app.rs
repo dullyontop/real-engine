@@ -442,7 +442,7 @@ impl App {
             g.set_keep_derived(true);
         }
         copy.render_assets = std::mem::take(&mut self.render_assets);
-        let run = copy.run_headless(Some(frames), replay).map(|mut r| {
+        let mut run = copy.run_headless(Some(frames), replay).map(|mut r| {
             let results = copy.play_steps(steps, &mut r);
             (r, results)
         });
@@ -450,6 +450,13 @@ impl App {
             (Ok(_), true) => Some(copy.screenshot(None)),
             _ => None,
         };
+        // The screenshot's own problems (a terrain chunk that failed as the
+        // view completed, a mesh it could not upload) belong to the run.
+        if let Ok((r, _)) = &mut run {
+            let mut problems = copy.take_diagnostics();
+            problems.retain(|d| d.severity != re_core::Severity::Note || d.is_error());
+            r.diagnostics.extend(problems);
+        }
         std::mem::swap(&mut copy.media, &mut self.media);
         if let Some(g) = &mut copy.graphics {
             copy.compat_view.release_all(g.renderer_mut());
@@ -1510,12 +1517,15 @@ impl App {
     /// terrain view ([`re_proc::stream::complete_view`]), so the image shows
     /// the terrain whole, however fast its chunks were made. A live run
     /// ([`Lateness::Late`]) never waits, and a world that has not streamed
-    /// yet (a scene being edited) has no view to complete.
+    /// yet (a scene being edited) has no view to complete. Nor does the
+    /// browser, which has no worker threads (every chunk would be made on
+    /// the page's thread) and reads no screenshot back.
     ///
     /// [`Lateness::Wait`]: re_proc::stream::Lateness::Wait
     /// [`Lateness::Late`]: re_proc::stream::Lateness::Late
     fn complete_terrain_view(&mut self) {
-        if self.stream_lateness == re_proc::stream::Lateness::Wait
+        if !cfg!(target_arch = "wasm32")
+            && self.stream_lateness == re_proc::stream::Lateness::Wait
             && self.stream_tick > 0
             && self.streams()
         {
