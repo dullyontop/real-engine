@@ -106,12 +106,12 @@ ADR-0047. Checked against crates.io on 2026-10-15; `cargo deny check` passes wit
 
 ### Package archive (M3, runtime)
 
-Used by `re_app::package` to read and write `game.rpak` (ADR-0037), on desktop and in the web runtime, where zstd-sys is built with wasi-sdk's clang (ADR-0049 §6). With `default-features = false` it builds the bundled libzstd with `cc` (no pkg-config, no system library) and drops the legacy decoders and the dictionary builder. Checked against crates.io on 2026-10-15.
+Used by `re_app::package` to read and write `game.rpak` (ADR-0037), on desktop and in the web runtime, where zstd-sys is built with wasi-sdk's clang (ADR-0049 §6). With `default-features = false` it builds the bundled libzstd with `cc` (no pkg-config, no system library) and drops the legacy decoders and the dictionary builder. Checked against crates.io on 2026-10-15, and moved to zstd 0.14.3 on 2026-10-26 for four RustSec advisories (ADR-0037's amendment of that date).
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| zstd | 0.14.2 | BSD-3-Clause | 1.64 | per-entry and index compression in `game.rpak` | `default-features = false` | WP19 measurements (decode 400–700 MB/s at levels 3–9; `ldd` shows only libc and libgcc_s) | Landed (WP19 PR "archive", #121) |
-| zstd-safe, zstd-sys | 8.1.0, 2.1.1+zstd.1.5.7 | BSD-3-Clause | ≤ 1.64 | zstd's bindings and the vendored C library | defaults of `zstd` | WP19 measurements | Landed (#121); transitive |
+| zstd | 0.14.3 | BSD-3-Clause | 1.64 | per-entry and index compression in `game.rpak` | `default-features = false` | WP19 measurements (decode 400–700 MB/s at levels 3–9; `ldd` shows only libc and libgcc_s) | Landed (WP19 PR "archive", #121); 0.14.3 since 2026-10-26 (RUSTSEC-2026-0391) |
+| zstd-safe, zstd-sys | 8.2.0, 2.1.2+zstd.1.5.7 | BSD-3-Clause | 1.64 | zstd's bindings and the vendored C library | defaults of `zstd` | WP19 measurements | Landed (#121); transitive; these versions since 2026-10-26 (RUSTSEC-2026-0398, -0403 and -0410) |
 
 blake3, `image` and `windows-sys` 0.61.2 (Windows only) are already in the lockfile. `windows-sys` is a direct dependency of `re_cli` on Windows since PR "archive" (`Win32_System_Console`, to attach the game to its parent's console); `re_cli` takes `image` since PR "bundles" (#161), in its `tooling` feature, to resize the game's icon for the macOS app's `.icns` (the runtime has it through `re_assets` already).
 
