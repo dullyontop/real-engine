@@ -63,10 +63,10 @@ the wind down and muffles it, and lowers the echo.
   body's facing, the graph's parameters (`anim.set`), a footstep where a boot
   lands (read with `anim.joint`), and getting in and out of the car, with the
   door and the `in_car` snapshot. The hero gets out by a door, or else behind
-  or in front, wherever there is room to stand and the car cannot come down
-  onto the hero (falling back from a raised side, or creeping down a slope
-  steeper than 20°); with no room anywhere, the hero stays in and the HUD
-  says so.
+  or in front, wherever there is room to stand and the car could not reach
+  the hero: falling back from a raised side, driving on, or creeping down a
+  slope steeper than 20°. With no room anywhere, the hero stays in and the
+  HUD says so.
 - `scripts/game/car.luau`: the car's driver input through `physics.drive`, and
   its engine sound: the three layers, crossfaded by the engine's rpm and
   louder with more throttle.

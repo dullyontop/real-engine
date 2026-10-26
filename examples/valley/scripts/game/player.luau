@@ -28,25 +28,33 @@ local UP = vector.create(0, 1, 0)
 local DOWN = vector.create(0, -1, 0)
 -- Where the hero gets out, from the car's centre in its own frame: by the
 -- driver's door (the car's left, +X), else the other door, behind or in
--- front, but never where the car could come down (`in_the_way`).
+-- front, but never where the car could reach the hero (`in_the_way`).
 local EXITS = {
 	vector.create(2.2, 0, 0),
 	vector.create(-2.2, 0, 0),
 	vector.create(0, 0, -3.1),
 	vector.create(0, 0, 3.1),
 }
--- 16 ways out from a spot to stand on, round the hero's width.
+-- 16 ways out from a spot to stand on.
 local AROUND: { vector } = {}
 for i = 1, 16 do
 	local a = math.pi * i / 8
 	AROUND[i] = vector.create(math.cos(a), 0, math.sin(a))
 end
+-- Rings round a spot, metres out, each with how far the underside of the
+-- capsule's rounded foot is below the foot's middle there. The foot is a
+-- sphere of the hero's radius, 0.35 m, and Jolt keeps 0.02 m of padding
+-- round it, so 0.37 m in all.
+local RINGS = {
+	{ out = 0.175, depth = math.sqrt(0.37 * 0.37 - 0.175 * 0.175) },
+	{ out = 0.35, depth = math.sqrt(0.37 * 0.37 - 0.35 * 0.35) },
+}
 -- How far up the ground's normal points on a 45° slope, the steepest the
 -- hero walks (the CharacterController's max_slope_deg).
 local STEEPEST = math.cos(math.rad(45))
--- How far up the car points on a 20° slope. On steeper ground the parked car
--- creeps downhill, even with the hand brake on, and from about 30° it rolls
--- or slides.
+-- How far up the ground's normal points on a 20° slope. On steeper ground the
+-- parked car creeps downhill, even with the hand brake on, and from about
+-- 30° it rolls or slides.
 local SLIDES = math.cos(math.rad(20))
 
 local hero = script.entity :: Entity
@@ -88,10 +96,11 @@ end
 -- tilted car still lets the hero out beside it), or nil. A ray from just
 -- above the car's centre finds the ground at the spot: no higher than that
 -- centre (not a bank, a tall rock, or a trunk the ray starts inside), no
--- more than 2 m below the wheels, and no steeper than 45°. Round the hero's
--- rim, 0.35 m out, the ground may rise no more than on such a slope. And
--- nothing may stand within 0.4 m (the hero's radius, Jolt's 0.02 m of
--- padding, and a little more) of the middle of the capsule's rounded foot.
+-- more than 2 m below the wheels, and no steeper than 45°. The hero's
+-- capsule would stand on it, its rounded foot just clear. Rays down on the
+-- `RINGS` must find the ground (or a rock's top) below the foot's padded
+-- underside there, and rays out from the foot's middle must meet nothing
+-- within 0.5 m (ground up to 45° steep is farther out).
 local function exit_at(pos: vector, rot: Quat, offset: vector): vector?
 	local o = rot * offset
 	local spot = pos + vector.normalize(vector.create(o.x, 0, o.z)) * vector.magnitude(offset)
@@ -100,13 +109,17 @@ local function exit_at(pos: vector, rot: Quat, offset: vector): vector?
 	if not hit or hit.point.y > pos.y or hit.point.y < pos.y - 3 or hit.normal.y < STEEPEST then
 		return nil
 	end
-	local ground = hit.point.y
-	-- That middle, 0.4 m from the ground along its normal, so that the foot
-	-- (0.35 m in radius) is 5 cm clear of it, slope or not.
-	local foot = vector.create(spot.x, ground + 0.4 / hit.normal.y, spot.z)
+	-- The foot's middle, 0.4 m from the ground along its normal, so that the
+	-- foot is 5 cm clear of it, slope or not.
+	local foot = vector.create(spot.x, hit.point.y + 0.4 / hit.normal.y, spot.z)
 	for i = 1, #AROUND do
-		local rim = ground_below(from + AROUND[i] * 0.35)
-		if not rim or rim > ground + 0.35 or physics.raycast(foot, AROUND[i], 0.4) then
+		for _, ring in RINGS do
+			local ground = ground_below(from + AROUND[i] * ring.out)
+			if not ground or ground > foot.y - ring.depth then
+				return nil
+			end
+		end
+		if physics.raycast(foot, AROUND[i], 0.5) then
 			return nil
 		end
 	end
@@ -114,16 +127,18 @@ local function exit_at(pos: vector, rot: Quat, offset: vector): vector?
 	return foot + vector.create(0, 0.55, 0)
 end
 
--- Whether the car could come down onto a hero who got out `offset` from it
--- (in its frame). Standing on wheels away from there alone, with its side or
--- end towards it raised, it falls back that way. On all its wheels on
--- ground steeper than 20°, it slides or rolls down the slope, so the spot
--- must not lie below it. Where a wheel touches the ground says where it is.
+-- Whether the car could reach a hero who got out `offset` from it (in its
+-- frame). Where a wheel touches the ground says where it is. On wheels away
+-- from the spot alone, with its side or end towards it raised, the car falls
+-- back that way; with no wheel down, it comes down on a side or end it holds
+-- more than about 15° up. Moving, it runs over a spot ahead of it (or behind
+-- it, reversing). And on ground steeper than 20°, it creeps, rolls or slides
+-- down the slope, so the spot must not lie below it.
 local function in_the_way(pos: vector, rot: Quat, offset: vector): boolean
 	local towards = rot * vector.normalize(offset)
-	local wheels = physics.vehicle(car).wheels
+	local state = physics.vehicle(car)
 	local near, far = 0, 0
-	for _, wheel in wheels do
+	for _, wheel in state.wheels do
 		if wheel.on_ground then
 			if vector.dot(wheel.contact_point - pos, towards) > 0 then
 				near += 1
@@ -132,15 +147,21 @@ local function in_the_way(pos: vector, rot: Quat, offset: vector): boolean
 			end
 		end
 	end
-	if near == 0 then
-		return far > 0
+	if near == 0 and (far > 0 or towards.y > 0.25) then
+		return true
 	end
+	if math.abs(state.speed) > 0.5 and offset.z * state.speed > 0 then
+		return true
+	end
+	-- The ground under the car, from below its box (0.35 m from its centre to
+	-- its floor), however it is tilted.
 	local up = rot * UP
-	if near + far < #wheels or up.y > SLIDES then
+	local under = physics.raycast(pos - UP * (0.35 / math.max(up.y, 0.5) + 0.05), DOWN, 10)
+	if not under or under.distance == 0 or under.normal.y > SLIDES then
 		return false
 	end
-	-- Down the slope is where the car's up leans; below it is within 60° of that.
-	local down_slope = vector.normalize(vector.create(up.x, 0, up.z))
+	-- Below the car is within 60° of straight down the slope.
+	local down_slope = vector.normalize(vector.create(under.normal.x, 0, under.normal.z))
 	return vector.dot(vector.normalize(vector.create(towards.x, 0, towards.z)), down_slope) > 0.5
 end
 
@@ -166,6 +187,7 @@ local function get_out()
 	hero:add("CharacterController", { height = 1.8, radius = 0.35 })
 	body:set("Visible", "visible", true)
 	rig.driving = false
+	rig.no_room = -math.huge
 	air = 0
 	fresh = true
 	audio.play(DOOR, pos)
