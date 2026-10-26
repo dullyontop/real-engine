@@ -1,10 +1,14 @@
 //! Audio through the headless capture backend. No test opens an audio device.
 
+use std::time::Duration;
+
 use glam::{Quat, Vec3};
 use re_audio::{Audio, AudioCmd, CaptureSettings, rms, sine};
 use re_types::EntityId;
 
 const RATE: u32 = 48_000;
+/// A frame of the engine's 60 Hz clock.
+const FRAME: Duration = Duration::from_nanos(16_666_667);
 
 fn audio() -> Audio {
     let a = Audio::headless_with(CaptureSettings { sample_rate: RATE });
@@ -354,4 +358,51 @@ fn a_source_without_attenuation_keeps_its_volume_far_away() {
         flat > 0.1 && attenuated < flat * 0.5,
         "unattenuated {flat}, attenuated {attenuated}"
     );
+}
+
+#[test]
+fn advance_renders_the_time_it_is_given() {
+    let mut a = audio();
+    a.insert_clip("tone", sine(440.0, 0.25, RATE, 0.5));
+    assert!(a.apply(&[one_shot("tone", 1.0)]).is_empty());
+    for _ in 0..14 {
+        a.advance(FRAME);
+    }
+    assert_eq!(a.playing(), 1, "playing at 0.233 s");
+    a.advance(FRAME * 2);
+    assert_eq!(a.playing(), 0, "over by 0.267 s");
+
+    // Short steps add up: 1,000 of 333 µs are 15,984 frames, not 1,000 × 15.
+    a.insert_clip("short", sine(440.0, 0.32, RATE, 0.5));
+    assert!(a.apply(&[one_shot("short", 1.0)]).is_empty());
+    for _ in 0..1_000 {
+        a.advance(Duration::from_micros(333));
+    }
+    assert_eq!(a.playing(), 0, "over by 0.333 s");
+
+    // A stalled frame renders 250 ms and skips the rest.
+    a.insert_clip("long", sine(440.0, 0.4, RATE, 0.5));
+    assert!(a.apply(&[one_shot("long", 1.0)]).is_empty());
+    a.advance(Duration::from_secs(10));
+    assert_eq!(a.playing(), 1, "playing after a stall");
+    a.advance(Duration::from_millis(200));
+    assert_eq!(a.playing(), 0, "over by 0.45 s");
+}
+
+#[test]
+fn one_shots_that_end_free_their_voices() {
+    // A spatial one-shot holds one of its bus's 256 voices until it ends.
+    let mut a = audio();
+    a.insert_clip("step", sine(440.0, 0.05, RATE, 0.5));
+    let step = AudioCmd::PlayOneShot {
+        clip: "step".into(),
+        position: Some(Vec3::X),
+        volume: 1.0,
+    };
+    for frame in 0..300 {
+        let problems = a.apply(std::slice::from_ref(&step));
+        assert!(problems.is_empty(), "frame {frame}: {problems:?}");
+        a.advance(FRAME);
+    }
+    assert!(a.playing() <= 4, "{} playing", a.playing());
 }

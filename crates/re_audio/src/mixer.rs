@@ -35,6 +35,9 @@ const NOW: Tween = Tween {
 /// cost grows with the rate, and a huge rate never finishes a buffer.
 pub const MAX_RATE: f32 = 16.0;
 
+/// The most audio one [`Audio::advance`] renders.
+const MAX_ADVANCE: Duration = Duration::from_millis(250);
+
 /// A playing sound, and its spatial track when it has one. Dropping the track
 /// handle removes the track, so it lives as long as the sound. Rebuilding the
 /// graph removes the bus tracks, and with them the sounds on them.
@@ -170,6 +173,10 @@ pub struct Audio {
     sample_rate: u32,
     files: Option<ProjectFiles>,
     clips: HashMap<String, StaticSoundData>,
+    /// The time [`Audio::advance`] has rendered, and the frames that came to:
+    /// counting whole frames of the total keeps steps of any length exact.
+    advanced: Duration,
+    advanced_frames: u64,
 }
 
 impl Audio {
@@ -216,6 +223,8 @@ impl Audio {
             sample_rate,
             files: None,
             clips: HashMap::new(),
+            advanced: Duration::ZERO,
+            advanced_frames: 0,
         }
     }
 
@@ -263,6 +272,24 @@ impl Audio {
         match &mut self.output {
             Output::Headless(m) => Some(m.manager.backend_mut().render(frames)),
             Output::Device(_) => None,
+        }
+    }
+
+    /// Renders `dt` of audio on the headless backend and drops it, so sounds
+    /// play on and end, their voices are freed and the meters read what plays,
+    /// as on a device. A device renders by itself, so there this does nothing.
+    /// A `dt` over 250 ms renders 250 ms: a stalled frame skips the rest, as a
+    /// device does.
+    pub fn advance(&mut self, dt: Duration) {
+        if !self.is_headless() {
+            return;
+        }
+        self.advanced += dt.min(MAX_ADVANCE);
+        let due = (self.advanced.as_nanos() * u128::from(self.sample_rate) / 1_000_000_000) as u64;
+        let frames = (due - self.advanced_frames) as usize;
+        self.advanced_frames = due;
+        if frames > 0 {
+            self.render_headless(frames);
         }
     }
 

@@ -1476,9 +1476,12 @@ impl App {
         self.perf.add(Phase::Sync, t.elapsed());
 
         // Render: the windowed driver draws `snapshot()` and the HUD after
-        // `frame` returns; here the audio commands reach the mixer.
+        // `frame` returns; here the audio commands reach the mixer. Without a
+        // device nothing else renders the mixer, so the frame's audio renders
+        // here, and sounds end and free their voices as on a device.
         let t = Instant::now();
         self.diagnostics.extend(self.audio.apply(&self.audio_cmds));
+        self.audio.advance(frame_time);
         self.last_audio_cmds = std::mem::take(&mut self.audio_cmds);
         self.bus_levels = self.audio.bus_levels();
         if let Some(gfx) = &self.graphics {
