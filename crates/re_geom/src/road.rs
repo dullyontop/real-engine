@@ -12,6 +12,9 @@
 //! output is the same on every platform. Coordinates are in the source's
 //! local space, Y up; a road lies along X and Z.
 
+use std::collections::HashMap;
+use std::ops::Range;
+
 use re_types::mesh::{MeshData, Vertex};
 use serde::{Deserialize, Serialize};
 
@@ -462,9 +465,87 @@ fn overlaps(a: [f64; 4], b: [f64; 4]) -> bool {
     a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]
 }
 
+/// Boxes in X and Z on a uniform grid, to find the boxes that may overlap
+/// another without testing them all.
+struct Grid {
+    size: f64,
+    cells: HashMap<(i64, i64), Vec<usize>>,
+    /// Boxes over more than [`Grid::MAX_CELLS`] cells, in every answer.
+    big: Vec<usize>,
+}
+
+impl Grid {
+    /// A box over more cells than this is kept apart.
+    const MAX_CELLS: i64 = 64;
+
+    /// An empty grid of cells `size` metres wide (at least 1 mm).
+    fn new(size: f64) -> Grid {
+        Grid {
+            size: if size.is_finite() {
+                size.max(1e-3)
+            } else {
+                1e-3
+            },
+            cells: HashMap::new(),
+            big: Vec::new(),
+        }
+    }
+
+    /// The cells `[x0, z0, x1, z1]` (inclusive) under box `b`, and how many.
+    fn span(&self, b: [f64; 4]) -> ([i64; 4], i64) {
+        let c = |v: f64| (v / self.size).floor() as i64;
+        let s = [c(b[0]), c(b[1]), c(b[2]), c(b[3])];
+        let side = |lo: i64, hi: i64| hi.saturating_sub(lo).saturating_add(1);
+        (s, side(s[0], s[2]).saturating_mul(side(s[1], s[3])))
+    }
+
+    /// Adds box `b` as item `id` (ids in increasing order).
+    fn insert(&mut self, id: usize, b: [f64; 4]) {
+        let ([x0, z0, x1, z1], count) = self.span(b);
+        if count > Self::MAX_CELLS {
+            self.big.push(id);
+            return;
+        }
+        for z in z0..=z1 {
+            for x in x0..=x1 {
+                self.cells.entry((x, z)).or_default().push(id);
+            }
+        }
+    }
+
+    /// Every item whose box overlaps box `b` (and some that do not), in
+    /// increasing order, into `out`.
+    fn query(&self, b: [f64; 4], out: &mut Vec<usize>) {
+        out.clear();
+        out.extend_from_slice(&self.big);
+        let ([x0, z0, x1, z1], count) = self.span(b);
+        if count > self.cells.len() as i64 {
+            for ((x, z), ids) in &self.cells {
+                if (x0..=x1).contains(x) && (z0..=z1).contains(z) {
+                    out.extend_from_slice(ids);
+                }
+            }
+        } else {
+            for z in z0..=z1 {
+                for x in x0..=x1 {
+                    if let Some(ids) = self.cells.get(&(x, z)) {
+                        out.extend_from_slice(ids);
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+    }
+}
+
 /// Junction centres in X and Z: crossings between different paths, and
 /// open ends within `snap` of another path. Points closer than twice the
 /// radius are merged into their mean, so junction discs never overlap.
+///
+/// Segments are found on a grid, and the points are taken in the order a
+/// search of every pair of segments finds them, so the centres are that
+/// search's.
 fn junction_centres(paths: &[Path], style: &RoadStyle) -> Vec<[f64; 2]> {
     let mut points: Vec<[f64; 2]> = Vec::new();
     let segs: Vec<Vec<Segment>> = paths
@@ -478,20 +559,45 @@ fn junction_centres(paths: &[Path], style: &RoadStyle) -> Vec<[f64; 2]> {
                 .collect()
         })
         .collect();
-    for i in 0..paths.len() {
-        for j in i + 1..paths.len() {
-            for (a0, a1, ba) in &segs[i] {
-                for (b0, b1, bb) in &segs[j] {
-                    if overlaps(*ba, *bb)
-                        && let Some(c) = crossing(*a0, *a1, *b0, *b1)
-                    {
-                        points.push(c);
-                    }
+    // Every segment, numbered path by path, on a grid as wide as an
+    // average segment.
+    let index: Vec<(usize, usize)> = segs
+        .iter()
+        .enumerate()
+        .flat_map(|(i, s)| (0..s.len()).map(move |k| (i, k)))
+        .collect();
+    let extent = segs
+        .iter()
+        .flatten()
+        .map(|(_, _, b)| (b[2] - b[0]).max(b[3] - b[1]))
+        .sum::<f64>()
+        / index.len().max(1) as f64;
+    let mut grid = Grid::new(extent);
+    for (id, &(i, k)) in index.iter().enumerate() {
+        grid.insert(id, segs[i][k].2);
+    }
+    let mut near = Vec::new();
+    // Crossings, in (path, later path, segment of each) order.
+    let mut crossings: Vec<([usize; 4], [f64; 2])> = Vec::new();
+    for (i, path_segs) in segs.iter().enumerate() {
+        for (a, (a0, a1, ba)) in path_segs.iter().enumerate() {
+            grid.query(*ba, &mut near);
+            for &id in &near {
+                let (j, b) = index[id];
+                let (b0, b1, bb) = &segs[j][b];
+                if j > i
+                    && overlaps(*ba, *bb)
+                    && let Some(c) = crossing(*a0, *a1, *b0, *b1)
+                {
+                    crossings.push(([i, j, a, b], c));
                 }
             }
         }
     }
+    crossings.sort_by_key(|(order, _)| *order);
+    points.extend(crossings.into_iter().map(|(_, c)| c));
     let snap2 = style.snap * style.snap;
+    let mid = |e: [f64; 2], c: [f64; 2]| [(e[0] + c[0]) * 0.5, (e[1] + c[1]) * 0.5];
     for (i, path) in paths.iter().enumerate() {
         if path.closed || style.snap <= 0.0 {
             continue;
@@ -500,23 +606,32 @@ fn junction_centres(paths: &[Path], style: &RoadStyle) -> Vec<[f64; 2]> {
         for end in ends {
             let e = xz(end.position);
             let reach = bbox(e, e, style.snap);
-            for (j, other) in segs.iter().enumerate() {
+            grid.query(reach, &mut near);
+            // Each other path's nearest point (on the first of equally near
+            // segments), path by path: `near` runs in path order.
+            let mut best: Option<(usize, f64, [f64; 2])> = None;
+            for &id in &near {
+                let (j, k) = index[id];
                 if j == i {
                     continue;
                 }
-                let mut best: Option<(f64, [f64; 2])> = None;
-                for (a, b, bb) in other {
-                    if !overlaps(reach, *bb) {
-                        continue;
-                    }
-                    let (t, d2) = closest_on_segment(e, *a, *b);
-                    if d2 <= snap2 && best.is_none_or(|(bd, _)| d2 < bd) {
-                        best = Some((d2, [lerp(a[0], b[0], t), lerp(a[1], b[1], t)]));
-                    }
+                if let Some((bj, _, c)) = best
+                    && bj != j
+                {
+                    points.push(mid(e, c));
+                    best = None;
                 }
-                if let Some((_, c)) = best {
-                    points.push([(e[0] + c[0]) * 0.5, (e[1] + c[1]) * 0.5]);
+                let (a, b, bb) = &segs[j][k];
+                if !overlaps(reach, *bb) {
+                    continue;
                 }
+                let (t, d2) = closest_on_segment(e, *a, *b);
+                if d2 <= snap2 && best.is_none_or(|(_, bd, _)| d2 < bd) {
+                    best = Some((j, d2, [lerp(a[0], b[0], t), lerp(a[1], b[1], t)]));
+                }
+            }
+            if let Some((_, _, c)) = best {
+                points.push(mid(e, c));
             }
         }
     }
@@ -585,9 +700,46 @@ struct Run {
 
 /// A stretch of a path outside every junction, with the junction (if any)
 /// at each end.
+#[derive(Clone, Debug)]
 struct Piece {
     stations: Vec<Station>,
     ends: [Option<usize>; 2],
+    /// How far its ribbon's edges reach from its centreline in X and Z (half
+    /// its widest width, with room for rounding).
+    pad: f64,
+    /// A box `[min x, min z, max x, max z]` holding its ribbon.
+    bbox: [f64; 4],
+}
+
+impl Piece {
+    fn new(stations: Vec<Station>, ends: [Option<usize>; 2]) -> Piece {
+        let half = stations
+            .iter()
+            .map(|s| s.sample.width * 0.5)
+            .fold(0.0, f64::max);
+        let pad = half * (1.0 + 1e-9) + 1e-9;
+        let mut b = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for s in &stations {
+            let [x, _, z] = s.sample.position;
+            b = [
+                b[0].min(x - pad),
+                b[1].min(z - pad),
+                b[2].max(x + pad),
+                b[3].max(z + pad),
+            ];
+        }
+        Piece {
+            stations,
+            ends,
+            pad,
+            bbox: b,
+        }
+    }
 }
 
 /// The station at parameter `s` (segment index plus fraction).
@@ -679,13 +831,45 @@ fn push_station(out: &mut Vec<Station>, st: Station) {
 /// and along, in metres), cut back by `junction_radius` around every
 /// junction, and each junction's surface (the roads' footprints inside its
 /// radius, flat at the mean height of the roads where they were cut, UVs
-/// in metres).
+/// in metres). It is [`network`]'s [`Network::mesh`].
 ///
 /// A curve tighter than half the road's width folds the ribbon's inner edge
 /// back on itself; [`footprint`] still covers the right area, but the mesh
 /// has overlapping triangles there, so control points should keep curves
 /// wider than that.
 pub fn road_mesh(paths: &[Path], style: &RoadStyle) -> Result<Road, GeomError> {
+    let network = network(paths, style)?;
+    Ok(Road {
+        mesh: network.mesh()?,
+        junctions: network.junctions(),
+    })
+}
+
+/// Roads joined into one network: the stretches between junctions and the
+/// junction surfaces. [`road_mesh`] gives its whole [`Network::mesh`]; a
+/// streamed world joins the roads once and builds each cell's part with
+/// [`Network::mesh_in`].
+#[derive(Clone, Debug, Default)]
+pub struct Network {
+    pieces: Vec<Piece>,
+    /// Each junction centre's height, which the ribbons ease to.
+    heights: Vec<f64>,
+    /// The junctions with a surface, in centre order.
+    junctions: Vec<Junction>,
+    fade: f64,
+}
+
+/// A junction with a surface: its centre `[x, y, z]` (`y` the surface's
+/// height), the surface's area and that area's box (`None` when empty).
+#[derive(Clone, Debug)]
+struct Junction {
+    centre: [f64; 3],
+    area: Shapes,
+    bbox: Option<[f64; 4]>,
+}
+
+/// Joins `paths` into a [`Network`] (see [`road_mesh`]).
+pub fn network(paths: &[Path], style: &RoadStyle) -> Result<Network, GeomError> {
     for (name, v) in [
         ("junction_radius", style.junction_radius),
         ("snap", style.snap),
@@ -704,6 +888,14 @@ pub fn road_mesh(paths: &[Path], style: &RoadStyle) -> Result<Road, GeomError> {
         Vec::new()
     };
     let r = style.junction_radius;
+    // The centres on a grid. A centre farther than `reach` from a segment's
+    // box is out of its disc's reach, with room for rounding.
+    let mut grid = Grid::new(2.0 * r);
+    for (j, c) in centres.iter().enumerate() {
+        grid.insert(j, [c[0], c[1], c[0], c[1]]);
+    }
+    let reach = r + 1e-3 + r * 1e-3;
+    let mut near = Vec::new();
     let mut runs: Vec<Run> = Vec::new();
     let mut pieces: Vec<Piece> = Vec::new();
     for path in paths {
@@ -717,8 +909,9 @@ pub fn road_mesh(paths: &[Path], style: &RoadStyle) -> Result<Road, GeomError> {
             let (a, b) = (xz(a.position), xz(b.position));
             // A segment can cross several discs: take them in path order.
             hits.clear();
-            for (j, c) in centres.iter().enumerate() {
-                if let Some((t0, t1)) = disc_interval(a, b, *c, r) {
+            grid.query(bbox(a, b, reach), &mut near);
+            for &j in &near {
+                if let Some((t0, t1)) = disc_interval(a, b, centres[j], r) {
                     hits.push((i as f64 + t0, i as f64 + t1, j));
                 }
             }
@@ -748,36 +941,33 @@ pub fn road_mesh(paths: &[Path], style: &RoadStyle) -> Result<Road, GeomError> {
         if whole {
             // No pieces: the junction's surface covers the loop.
         } else if inside.is_empty() {
-            pieces.push(Piece {
-                stations: stations(path, &tangents, 0.0, m),
-                ends: [None, None],
-            });
+            pieces.push(Piece::new(stations(path, &tangents, 0.0, m), [None, None]));
         } else if path.closed {
             for k in 0..inside.len() {
                 let (_, e, j0) = inside[k];
                 let (s, _, j1) = inside[(k + 1) % inside.len()];
                 let e = if e >= m { e - m } else { e };
-                pieces.push(Piece {
-                    stations: stations(path, &tangents, e, s),
-                    ends: [Some(j0), Some(j1)],
-                });
+                pieces.push(Piece::new(
+                    stations(path, &tangents, e, s),
+                    [Some(j0), Some(j1)],
+                ));
             }
         } else {
             let mut from = (0.0, None);
             for &(s0, s1, j) in &inside {
                 if s0 > from.0 {
-                    pieces.push(Piece {
-                        stations: stations(path, &tangents, from.0, s0),
-                        ends: [from.1, Some(j)],
-                    });
+                    pieces.push(Piece::new(
+                        stations(path, &tangents, from.0, s0),
+                        [from.1, Some(j)],
+                    ));
                 }
                 from = (s1, Some(j));
             }
             if from.0 < m {
-                pieces.push(Piece {
-                    stations: stations(path, &tangents, from.0, m),
-                    ends: [from.1, None],
-                });
+                pieces.push(Piece::new(
+                    stations(path, &tangents, from.0, m),
+                    [from.1, None],
+                ));
             }
         }
     }
@@ -793,10 +983,6 @@ pub fn road_mesh(paths: &[Path], style: &RoadStyle) -> Result<Road, GeomError> {
         .iter()
         .map(|&(sum, n)| if n > 0 { sum / n as f64 } else { 0.0 })
         .collect();
-    let mut meshes: Vec<MeshData> = pieces
-        .iter()
-        .map(|p| ribbon_mesh(p, &heights, style.bank_fade))
-        .collect();
     let mut junctions = Vec::new();
     for (j, c) in centres.iter().enumerate() {
         let prints = runs
@@ -808,11 +994,131 @@ pub fn road_mesh(paths: &[Path], style: &RoadStyle) -> Result<Road, GeomError> {
             continue;
         }
         let area = polygon::union_all(&prints)?;
-        meshes.push(polygon::triangulate(&area, heights[j] as f32)?);
-        junctions.push([c[0], heights[j], c[1]]);
+        let bbox = area
+            .bbox()
+            .map(|b| [b[0] - 1e-9, b[1] - 1e-9, b[2] + 1e-9, b[3] + 1e-9]);
+        junctions.push(Junction {
+            centre: [c[0], heights[j], c[1]],
+            area,
+            bbox,
+        });
     }
-    let mesh = crate::merge(meshes.iter())?;
-    Ok(Road { mesh, junctions })
+    Ok(Network {
+        pieces,
+        heights,
+        junctions,
+        fade: style.bank_fade,
+    })
+}
+
+impl Network {
+    /// About how many bytes it holds, for a cache's budget.
+    pub fn bytes(&self) -> u64 {
+        let stations: usize = self.pieces.iter().map(|p| p.stations.len()).sum();
+        let points: usize = self.junctions.iter().map(|j| j.area.point_count()).sum();
+        (size_of::<Network>()
+            + self.pieces.len() * size_of::<Piece>()
+            + stations * size_of::<Station>()
+            + self.heights.len() * size_of::<f64>()
+            + self.junctions.len() * size_of::<Junction>()
+            + points * size_of::<[f64; 2]>()) as u64
+    }
+
+    /// Each junction's centre `[x, y, z]`, `y` being its surface height.
+    pub fn junctions(&self) -> Vec<[f64; 3]> {
+        self.junctions.iter().map(|j| j.centre).collect()
+    }
+
+    /// The whole road surface (see [`road_mesh`]).
+    pub fn mesh(&self) -> Result<MeshData, GeomError> {
+        let mut meshes: Vec<MeshData> = self
+            .pieces
+            .iter()
+            .map(|p| ribbon(p, 0..p.stations.len(), &self.heights, self.fade).0)
+            .collect();
+        for j in &self.junctions {
+            meshes.push(polygon::triangulate(&j.area, j.centre[1] as f32)?);
+        }
+        crate::merge(meshes.iter())
+    }
+
+    /// The part of [`Network::mesh`] in the square from `min` to `max` (in
+    /// X and Z): the triangles whose centroid lies in it, `max` excluded, so
+    /// the squares of a grid share out every triangle exactly once. Positions
+    /// are relative to `min`, so a part far from the origin keeps its
+    /// precision; normals and UVs are the whole mesh's.
+    pub fn mesh_in(&self, min: [f64; 2], max: [f64; 2]) -> Result<MeshData, GeomError> {
+        let touches =
+            |b: [f64; 4]| b[0] <= max[0] && b[2] >= min[0] && b[1] <= max[1] && b[3] >= min[1];
+        let mut out = MeshData::default();
+        for piece in &self.pieces {
+            if !touches(piece.bbox) {
+                continue;
+            }
+            // The quads (station k to k + 1) that can hold a triangle here,
+            // with a neighbour on each side so the normals are the whole
+            // ribbon's.
+            let st = &piece.stations;
+            let quads = (0..st.len().saturating_sub(1)).filter(|&k| {
+                let (a, b) = (xz(st[k].sample.position), xz(st[k + 1].sample.position));
+                touches(bbox(a, b, piece.pad))
+            });
+            let Some((first, last)) = quads.fold(None, |r: Option<(usize, usize)>, k| {
+                Some(r.map_or((k, k), |(f, _)| (f, k)))
+            }) else {
+                continue;
+            };
+            let range = first.saturating_sub(1)..(last + 3).min(st.len());
+            let (mesh, at) = ribbon(piece, range, &self.heights, self.fade);
+            keep_owned(&mut out, &mesh, &at, min, max)?;
+        }
+        for j in &self.junctions {
+            if !j.bbox.is_some_and(touches) {
+                continue;
+            }
+            let (mesh, at) = polygon::triangulated(&j.area, j.centre[1] as f32, [0.0, 0.0])?;
+            keep_owned(&mut out, &mesh, &at, min, max)?;
+        }
+        Ok(out)
+    }
+}
+
+/// Appends the triangles of `mesh` whose centroid lies in `[min, max)`,
+/// from `at` (each vertex's `[x, z]` in metres), with positions relative to
+/// `min`.
+fn keep_owned(
+    out: &mut MeshData,
+    mesh: &MeshData,
+    at: &[[f64; 2]],
+    min: [f64; 2],
+    max: [f64; 2],
+) -> Result<(), GeomError> {
+    let mut remap = vec![u32::MAX; mesh.vertices.len()];
+    for t in mesh.indices.as_chunks::<3>().0 {
+        let p = t.map(|i| at[i as usize]);
+        let c = [
+            (p[0][0] + p[1][0] + p[2][0]) / 3.0,
+            (p[0][1] + p[1][1] + p[2][1]) / 3.0,
+        ];
+        if !(c[0] >= min[0] && c[0] < max[0] && c[1] >= min[1] && c[1] < max[1]) {
+            continue;
+        }
+        for &i in t {
+            let i = i as usize;
+            if remap[i] == u32::MAX {
+                if out.vertices.len() >= u32::MAX as usize {
+                    return Err(GeomError::TooLarge(out.vertices.len() as u64 + 1));
+                }
+                remap[i] = out.vertices.len() as u32;
+                let mut v = mesh.vertices[i];
+                v.pos[0] = (at[i][0] - min[0]) as f32;
+                v.pos[2] = (at[i][1] - min[1]) as f32;
+                out.vertices.push(v);
+            }
+            out.indices.push(remap[i]);
+        }
+    }
+    Ok(())
 }
 
 /// The flat area swept by a run of stations: the union of the triangles
@@ -846,13 +1152,22 @@ fn swept(stations: &[Station]) -> Result<Shapes, GeomError> {
     tris.simplified()
 }
 
-/// A piece's ribbon: two vertices per station. Within `fade` metres of a
-/// junction end, the bank fades to 0 and the height eases to the junction's.
-fn ribbon_mesh(piece: &Piece, heights: &[f64], fade: f64) -> MeshData {
+/// A piece's ribbon over its stations `range`: two vertices per station,
+/// and each vertex's `[x, z]` in metres. Within `fade` metres of a junction
+/// end, the bank fades to 0 and the height eases to the junction's. A
+/// station whose neighbours are in `range` has the whole ribbon's normals.
+fn ribbon(
+    piece: &Piece,
+    range: Range<usize>,
+    heights: &[f64],
+    fade: f64,
+) -> (MeshData, Vec<[f64; 2]>) {
     let st = &piece.stations;
     let (d0, d1) = (st[0].sample.distance, st[st.len() - 1].sample.distance);
-    let mut vertices = Vec::with_capacity(st.len() * 2);
-    for s in st {
+    let count = range.len();
+    let mut vertices = Vec::with_capacity(count * 2);
+    let mut xzs = Vec::with_capacity(count * 2);
+    for s in &st[range] {
         let mut sample = s.sample;
         for (end, at) in [(piece.ends[0], d0), (piece.ends[1], d1)] {
             let Some(j) = end else { continue };
@@ -873,16 +1188,17 @@ fn ribbon_mesh(piece: &Piece, heights: &[f64], fade: f64) -> MeshData {
                 uv: [u, v],
                 color: [1.0; 4],
             });
+            xzs.push([p[0], p[2]]);
         }
     }
-    let mut indices = Vec::with_capacity(st.len().saturating_sub(1) * 6);
-    for i in 0..st.len().saturating_sub(1) as u32 {
+    let mut indices = Vec::with_capacity(count.saturating_sub(1) * 6);
+    for i in 0..count.saturating_sub(1) as u32 {
         let (l0, r0, l1, r1) = (2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 3);
         indices.extend([l0, r0, l1, r0, r1, l1]);
     }
     let mut mesh = MeshData { vertices, indices };
     crate::compute_normals(&mut mesh);
-    mesh
+    (mesh, xzs)
 }
 
 #[cfg(test)]
@@ -1069,6 +1385,262 @@ mod tests {
         assert!(v[0].pos[2] < 0.0 && v[0].pos[1] > 0.3, "{:?}", v[0]);
         assert!(v[1].pos[2] > 0.0 && v[1].pos[1] < -0.3, "{:?}", v[1]);
         assert_eq!((v[0].uv[0], v[1].uv[0]), (0.0, 1.0));
+    }
+
+    /// The junction search before the grid: every pair of segments.
+    fn every_pair_centres(paths: &[Path], style: &RoadStyle) -> Vec<[f64; 2]> {
+        let mut points: Vec<[f64; 2]> = Vec::new();
+        let segs: Vec<Vec<Segment>> = paths
+            .iter()
+            .map(|p| {
+                p.segments()
+                    .map(|(a, b)| {
+                        let (a, b) = (xz(a.position), xz(b.position));
+                        (a, b, bbox(a, b, 0.0))
+                    })
+                    .collect()
+            })
+            .collect();
+        for i in 0..paths.len() {
+            for j in i + 1..paths.len() {
+                for (a0, a1, ba) in &segs[i] {
+                    for (b0, b1, bb) in &segs[j] {
+                        if overlaps(*ba, *bb)
+                            && let Some(c) = crossing(*a0, *a1, *b0, *b1)
+                        {
+                            points.push(c);
+                        }
+                    }
+                }
+            }
+        }
+        let snap2 = style.snap * style.snap;
+        for (i, path) in paths.iter().enumerate() {
+            if path.closed || style.snap <= 0.0 {
+                continue;
+            }
+            let ends = [path.samples[0], path.samples[path.samples.len() - 1]];
+            for end in ends {
+                let e = xz(end.position);
+                let reach = bbox(e, e, style.snap);
+                for (j, other) in segs.iter().enumerate() {
+                    if j == i {
+                        continue;
+                    }
+                    let mut best: Option<(f64, [f64; 2])> = None;
+                    for (a, b, bb) in other {
+                        if !overlaps(reach, *bb) {
+                            continue;
+                        }
+                        let (t, d2) = closest_on_segment(e, *a, *b);
+                        if d2 <= snap2 && best.is_none_or(|(bd, _)| d2 < bd) {
+                            best = Some((d2, [lerp(a[0], b[0], t), lerp(a[1], b[1], t)]));
+                        }
+                    }
+                    if let Some((_, c)) = best {
+                        points.push([(e[0] + c[0]) * 0.5, (e[1] + c[1]) * 0.5]);
+                    }
+                }
+            }
+        }
+        let reach = 2.0 * style.junction_radius;
+        let mut clusters: Vec<(f64, f64, f64)> = Vec::new();
+        for p in points {
+            merge_point(&mut clusters, p, 1.0, reach);
+        }
+        loop {
+            let before = clusters.len();
+            let old = std::mem::take(&mut clusters);
+            for (x, z, w) in old {
+                merge_point(&mut clusters, [x / w, z / w], w, reach);
+            }
+            if clusters.len() == before {
+                break;
+            }
+        }
+        clusters
+            .into_iter()
+            .map(|(x, z, w)| [x / w, z / w])
+            .collect()
+    }
+
+    /// Test numbers in `[0, 1)`, the same on every run.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> f64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (self.0 >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    /// `count` random roads within a square `size` metres wide around the
+    /// origin, every fifth one a loop.
+    fn random_roads(rng: &mut Lcg, count: usize, size: f64, spacing: f64) -> Vec<Path> {
+        (0..count)
+            .map(|k| {
+                let closed = k % 5 == 4;
+                let n = if closed {
+                    4
+                } else {
+                    2 + (rng.next() * 4.0) as usize
+                };
+                let cps: Vec<ControlPoint> = (0..n)
+                    .map(|_| ControlPoint {
+                        position: [
+                            (rng.next() - 0.5) * size,
+                            rng.next() * 4.0,
+                            (rng.next() - 0.5) * size,
+                        ],
+                        width: 2.0 + rng.next() * 6.0,
+                        bank: rng.next() * 10.0 - 5.0,
+                    })
+                    .collect();
+                spline(&cps, spacing, closed).unwrap()
+            })
+            .collect()
+    }
+
+    fn bits(points: &[[f64; 2]]) -> Vec<[u64; 2]> {
+        points
+            .iter()
+            .map(|p| [p[0].to_bits(), p[1].to_bits()])
+            .collect()
+    }
+
+    #[test]
+    fn the_junction_grid_finds_what_every_pair_finds() {
+        let mut rng = Lcg(42);
+        let mut found = 0;
+        for round in 0..24 {
+            let spacing = [0.5, 1.0, 3.0, 40.0][round % 4];
+            let roads = random_roads(&mut rng, 4 + round % 6, 300.0, spacing);
+            let style = RoadStyle {
+                junction_radius: 1.0 + rng.next() * 10.0,
+                snap: rng.next() * 30.0,
+                bank_fade: 4.0,
+            };
+            let grid = junction_centres(&roads, &style);
+            assert_eq!(bits(&grid), bits(&every_pair_centres(&roads, &style)));
+            found += grid.len();
+        }
+        assert!(found > 50, "{found}");
+    }
+
+    #[test]
+    fn the_disc_grid_misses_no_disc() {
+        // Every centre whose disc a segment enters is among the grid's
+        // answers, so junction intervals are those of a search over every
+        // centre.
+        let mut rng = Lcg(7);
+        let mut entered = 0;
+        for round in 0..40 {
+            let r = [0.01, 0.5, 4.0, 25.0][round % 4] * (0.5 + rng.next());
+            let centres: Vec<[f64; 2]> = (0..300)
+                .map(|_| [(rng.next() - 0.5) * 400.0, (rng.next() - 0.5) * 400.0])
+                .collect();
+            let mut grid = Grid::new(2.0 * r);
+            for (j, c) in centres.iter().enumerate() {
+                grid.insert(j, [c[0], c[1], c[0], c[1]]);
+            }
+            let reach = r + 1e-3 + r * 1e-3;
+            let mut near = Vec::new();
+            for k in 0..200 {
+                let a = [(rng.next() - 0.5) * 400.0, (rng.next() - 0.5) * 400.0];
+                let len = [0.0, 1.0, 50.0, 2000.0][k % 4] * rng.next();
+                let (s, c) = crate::math::sin_cos(rng.next() * std::f64::consts::TAU);
+                let b = [a[0] + len * c, a[1] + len * s];
+                grid.query(bbox(a, b, reach), &mut near);
+                for (j, centre) in centres.iter().enumerate() {
+                    if disc_interval(a, b, *centre, r).is_some() {
+                        assert!(near.contains(&j), "{a:?} {b:?} {centre:?} {r}");
+                        entered += 1;
+                    }
+                }
+            }
+        }
+        assert!(entered > 100, "{entered}");
+    }
+
+    #[test]
+    fn cells_share_out_the_road_mesh() {
+        let mut rng = Lcg(3);
+        let roads = random_roads(&mut rng, 7, 200.0, 1.0);
+        let style = RoadStyle {
+            junction_radius: 7.0,
+            snap: 3.0,
+            bank_fade: 5.0,
+        };
+        let net = network(&roads, &style).unwrap();
+        assert!(net.junctions().len() > 2, "{:?}", net.junctions());
+        let whole = net.mesh().unwrap();
+        // The whole mesh's triangles by their exact normals, UVs and heights,
+        // with their positions in X and Z.
+        let key = |v: [&Vertex; 3]| -> Vec<u32> {
+            v.iter()
+                .flat_map(|v| {
+                    [
+                        v.normal[0].to_bits(),
+                        v.normal[1].to_bits(),
+                        v.normal[2].to_bits(),
+                        v.uv[0].to_bits(),
+                        v.uv[1].to_bits(),
+                        v.pos[1].to_bits(),
+                    ]
+                })
+                .collect()
+        };
+        let mut left: HashMap<Vec<u32>, Vec<[[f64; 2]; 3]>> = HashMap::new();
+        for t in whole.indices.as_chunks::<3>().0 {
+            let v = t.map(|i| &whole.vertices[i as usize]);
+            left.entry(key(v))
+                .or_default()
+                .push(v.map(|v| [f64::from(v.pos[0]), f64::from(v.pos[2])]));
+        }
+        let cell = 16.0;
+        let mut shared = 0;
+        for cz in -10..10 {
+            for cx in -10..10 {
+                let min = [f64::from(cx) * cell, f64::from(cz) * cell];
+                let max = [min[0] + cell, min[1] + cell];
+                let part = net.mesh_in(min, max).unwrap();
+                assert!(part.is_well_formed());
+                for t in part.indices.as_chunks::<3>().0 {
+                    let v = t.map(|i| &part.vertices[i as usize]);
+                    let world =
+                        v.map(|v| [f64::from(v.pos[0]) + min[0], f64::from(v.pos[2]) + min[1]]);
+                    let c = [
+                        (world[0][0] + world[1][0] + world[2][0]) / 3.0,
+                        (world[0][1] + world[1][1] + world[2][1]) / 3.0,
+                    ];
+                    let eps = 1e-3;
+                    assert!(
+                        c[0] > min[0] - eps
+                            && c[0] < max[0] + eps
+                            && c[1] > min[1] - eps
+                            && c[1] < max[1] + eps,
+                        "{c:?} outside {min:?}"
+                    );
+                    let same = left.get_mut(&key(v)).expect("a triangle of the whole mesh");
+                    let k = same
+                        .iter()
+                        .position(|w| {
+                            (0..3).all(|i| {
+                                (w[i][0] - world[i][0]).abs() < eps
+                                    && (w[i][1] - world[i][1]).abs() < eps
+                            })
+                        })
+                        .expect("the same triangle");
+                    same.swap_remove(k);
+                    shared += 1;
+                }
+            }
+        }
+        assert_eq!(shared, whole.indices.len() / 3);
+        assert!(left.values().all(Vec::is_empty));
     }
 
     #[test]
