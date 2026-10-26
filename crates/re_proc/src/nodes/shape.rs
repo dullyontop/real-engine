@@ -7,11 +7,13 @@
 
 use std::sync::Arc;
 
-use re_geom::polygon::{self, Shape};
+use re_geom::polygon::{self, Shape, Triangles};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef, within};
+use super::{
+    NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef, Streaming, within,
+};
 use crate::value::{Field, MeshValue, Output, Points, PortType, Shapes};
 
 /// The largest distance (offsets, falloffs) a shape node takes, in metres.
@@ -150,12 +152,42 @@ impl Params for ShapeMeshParams {
 
 fn shape_mesh(ctx: &NodeCtx, p: &ShapeMeshParams) -> Result<Output, NodeError> {
     let s = ctx.need_shapes("shapes")?;
-    let mesh = polygon::triangulate(s, p.height)?;
+    let mesh = match ctx.domain {
+        // Streamed: the cell's part of one triangulation every cell shares,
+        // cut at the cell's sides, local to its corner.
+        Some(d) => {
+            let (min, max) = (d.min().map(f64::from), d.max().map(f64::from));
+            shared_triangles(ctx, s)?.mesh_in(p.height, min, max)?
+        }
+        None => polygon::triangulate(s, p.height)?,
+    };
     Ok(Output::Mesh(Arc::new(MeshValue {
         mesh,
         material: p.material.clone(),
         asset: ctx.key,
     })))
+}
+
+/// `shapes` triangulated once for all the cells that ask, and kept in the
+/// evaluator's memory cache ([`NodeCtx::shared`]).
+fn shared_triangles(ctx: &NodeCtx, shapes: &Shapes) -> Result<Arc<Triangles>, NodeError> {
+    let mut h = blake3::Hasher::new();
+    h.update(b"re_proc shape.mesh triangles v1");
+    for s in &shapes.shapes {
+        h.update(&(s.holes.len() as u64).to_le_bytes());
+        for c in std::iter::once(&s.outer).chain(&s.holes) {
+            h.update(&(c.len() as u64).to_le_bytes());
+            for p in c {
+                h.update(&p[0].to_le_bytes());
+                h.update(&p[1].to_le_bytes());
+            }
+        }
+    }
+    ctx.shared(*h.finalize().as_bytes(), || {
+        let t = polygon::triangles(shapes)?;
+        let bytes = t.bytes();
+        Ok((t, bytes))
+    })
 }
 
 /// Parameters of `field.from_shapes`.
@@ -209,9 +241,11 @@ fn edges_of(shapes: &Shapes) -> Vec<Edge> {
 
 fn from_shapes(ctx: &NodeCtx, p: &FromShapesParams) -> Result<Output, NodeError> {
     let shapes = ctx.need_shapes("shapes")?;
-    let grid = match ctx.field("field") {
-        Some(f) => f.like(vec![0.0; f.0.samples.len()])?,
-        None => {
+    let grid = match (ctx.field("field"), ctx.domain) {
+        (Some(f), _) => f.like(vec![0.0; f.0.samples.len()])?,
+        // Streamed: the window's samples.
+        (None, Some(d)) => Field::at(&d, vec![0.0; (d.n as usize).pow(2)])?,
+        (None, None) => {
             let n = p.size;
             Field::new(n, p.cell, vec![0.0; (n * n) as usize])?
         }
@@ -313,12 +347,12 @@ fn mask(ctx: &NodeCtx, p: &MaskParams) -> Result<Output, String> {
 const SHAPES: &[PortType] = &[PortType::Shapes];
 
 pub(super) fn register(r: &mut NodeRegistry) {
-    let spec = |kind, doc, inputs, output| NodeSpec {
+    let spec = |kind, streaming, doc, inputs, output| NodeSpec {
         kind,
         version: 1,
         oldest: 1,
         migrations: &[],
-        streaming: super::Streaming::Whole,
+        streaming,
         doc,
         inputs,
         variadic: None,
@@ -329,6 +363,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         spec(
             "shape.polygon",
+            Streaming::Global,
             "A polygon with holes from its points, `[x, z]` in metres.",
             &[],
             PortType::Shapes,
@@ -338,6 +373,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         spec(
             "shape.boolean",
+            Streaming::Global,
             "Union, intersection, difference (a minus b) or xor of two sets of shapes, on a 1 mm grid.",
             &[
                 PortDef {
@@ -360,6 +396,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         spec(
             "shape.offset",
+            Streaming::Global,
             "Grows (or, with a negative distance, shrinks) shapes by a distance in metres.",
             &[PortDef {
                 name: "shapes",
@@ -374,7 +411,8 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         spec(
             "shape.mesh",
-            "A flat mesh of the shapes at a height, facing up, with UVs in metres.",
+            Streaming::Cell,
+            "A flat mesh of the shapes at a height, facing up, with UVs in metres. Streamed: per cell, the shapes cut to the cell, local to its corner.",
             &[PortDef {
                 name: "shapes",
                 accepts: SHAPES,
@@ -388,7 +426,8 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         spec(
             "field.from_shapes",
-            "A mask field: 1 inside the shapes, falling to 0 over `falloff` metres outside. On the connected field's grid, or a centred grid of `size` samples.",
+            Streaming::Pointwise,
+            "A mask field: 1 inside the shapes, falling to 0 over `falloff` metres outside. On the connected field's grid, or a centred grid of `size` samples. Streamed: pointwise, over the window.",
             &[
                 PortDef {
                     name: "shapes",
@@ -410,6 +449,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         spec(
             "points.mask",
+            Streaming::Cell,
             "Keeps the points inside (or outside) the shapes, in X and Z.",
             &[
                 PortDef {

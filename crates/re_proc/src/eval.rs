@@ -12,11 +12,24 @@
 //! state and the order of their results is fixed, so the output is the same
 //! on 1 or N threads, and adding a node changes no other node's random
 //! numbers.
+//!
+//! **Global nodes.** In a streamed evaluation a [`Streaming::Global`] node
+//! is keyed and run without the window: its key hashes the global keys of
+//! its inputs (their keys without a window, at
+//! [`EvalOptions::global_spacing`]), so every cell and chunk of a source
+//! shares its output. It samples its fields through
+//! [`NodeCtx::sample`](crate::NodeCtx::sample) instead of taking them over
+//! the window, so a node that only feeds a global node's fields does not
+//! run over the window. Windows evaluated at the same moment on a cold
+//! cache may each run it; they get the same output. What a cell node makes
+//! from global inputs for every cell, such as a joined road network, is
+//! kept in the memory cache too ([`NodeCtx::shared`](crate::NodeCtx::shared)).
 
-use std::collections::HashMap;
+use std::any::Any;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use re_core::files::{ProjectFiles, ProjectPath, WritableDir};
@@ -32,8 +45,11 @@ use crate::cache::DiskCache;
 use crate::canon::{canonical_json, fragment_hash, hash64};
 use crate::codes;
 use crate::graph::ProcGraph;
-use crate::nodes::{Domain, NodeCtx, NodeDef, NodeRegistry, Streaming, natural_cmp, sink_fragment};
-use crate::value::{DerivedAsset, Fragment, Output, PortType};
+use crate::nodes::{
+    Domain, NodeCtx, NodeDef, NodeError, NodeRegistry, SharedValue, Streaming, natural_cmp,
+    sink_fragment_in,
+};
+use crate::value::{DerivedAsset, Field, Fragment, Output, PortType};
 
 /// Where a node's output came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,7 +61,9 @@ pub enum CacheState {
     Disk,
     /// Computed.
     Miss,
-    /// Not run, because an input failed or the budget ran out.
+    /// Not run, because an input failed or the budget ran out, or, in a
+    /// streamed evaluation, because only global nodes' fields need it
+    /// (they sample it themselves).
     Skipped,
     /// Ran and failed.
     Failed,
@@ -171,6 +189,12 @@ pub struct EvalOptions {
     /// Stops before the next level of nodes once this flag is set (`RE4310`);
     /// a streaming job's request was cancelled.
     pub cancel: Option<Arc<AtomicBool>>,
+    /// In a streamed evaluation, the spacing (metres) at which
+    /// [`Streaming::Global`] nodes sample their fields, part of their keys:
+    /// the streamed source's spacing, so a level-of-detail chunk at a
+    /// coarser spacing sees the same roads as a cell. The domain's spacing
+    /// when `None`.
+    pub global_spacing: Option<f32>,
 }
 
 struct MemEntry {
@@ -179,9 +203,22 @@ struct MemEntry {
     used: u64,
 }
 
+/// A value nodes share ([`NodeCtx::shared`](crate::NodeCtx::shared)):
+/// made once, by whichever node asks first.
+type SharedSlot = Arc<OnceLock<Result<SharedValue, NodeError>>>;
+
+struct SharedEntry {
+    slot: SharedSlot,
+    /// Counted in the cache's bytes once made.
+    bytes: u64,
+    used: u64,
+}
+
 #[derive(Default)]
 struct MemCache {
     map: HashMap<[u8; 32], MemEntry>,
+    /// Values made from nodes' inputs and shared, by key.
+    shared: HashMap<[u8; 32], SharedEntry>,
     bytes: u64,
     tick: u64,
 }
@@ -346,9 +383,20 @@ impl Evaluator {
         if !problems.is_empty() {
             report.diagnostics = problems;
             report.ms = ms_since(start);
-            return Evaluation::new(graph, report, outputs);
+            return Evaluation::new(graph, report, outputs, opts.domain);
         }
         let levels = graph.levels().unwrap_or_default();
+        // In a streamed evaluation: the spacing global nodes sample at, each
+        // node's global key (its key without the window, when its output is
+        // the same for every window), and the nodes the output needs.
+        let global = opts
+            .domain
+            .map(|d| opts.global_spacing.unwrap_or(d.spacing));
+        let mut gkeys: Vec<Option<[u8; 32]>> = vec![None; n];
+        let needed = match global {
+            Some(_) => self.needed(graph, &levels),
+            None => vec![true; n],
+        };
         let base = Pcg32::from_seed(seed);
         let tick = {
             let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
@@ -400,8 +448,24 @@ impl Evaluator {
                 };
                 let mut inputs = graph.inputs_of(index);
                 inputs.sort_by(|a, b| natural_cmp(a.0, b.0));
-                if inputs.iter().any(|(_, from)| outputs[*from].is_none()) {
-                    continue; // An input failed or was skipped.
+                // A global node in a streamed evaluation samples its fields.
+                let as_global = global.is_some() && def.streaming == Streaming::Global;
+                let sampled = |from: usize| {
+                    as_global && self.output_type(graph, from) == Some(PortType::Field)
+                };
+                // An input failed or was skipped, or the output does not need it.
+                let runs = needed[index]
+                    && inputs
+                        .iter()
+                        .all(|(_, from)| outputs[*from].is_some() || sampled(*from));
+                let global_key = global.filter(|_| {
+                    matches!(
+                        def.streaming,
+                        Streaming::Global | Streaming::Pointwise | Streaming::Region
+                    ) && inputs.iter().all(|(_, from)| gkeys[*from].is_some())
+                });
+                if !runs && global_key.is_none() {
+                    continue;
                 }
                 let node_seed = base.fork(hash64(id)).next_u64();
                 // Validation above guarantees the migration succeeds.
@@ -410,7 +474,7 @@ impl Evaluator {
                 };
                 let params = params.into_owned();
                 let files = load_files(def, &params, opts);
-                let key = node_key(&KeyInputs {
+                let key_inputs = KeyInputs {
                     id,
                     def,
                     version: node.version,
@@ -420,7 +484,36 @@ impl Evaluator {
                     seed: node_seed,
                     files: &files,
                     domain: opts.domain,
-                });
+                    global: None,
+                };
+                if let Some(spacing) = global_key {
+                    gkeys[index] = Some(node_key(&KeyInputs {
+                        keys: &gkeys,
+                        domain: None,
+                        global: Some(spacing),
+                        ..key_inputs
+                    }));
+                }
+                if !runs {
+                    continue;
+                }
+                let key = if as_global {
+                    let Some(key) = gkeys[index] else {
+                        let nr = &mut report.nodes[index];
+                        nr.cache = CacheState::Failed;
+                        nr.diagnostics.push(Diagnostic::error(
+                            codes::NOT_STREAMABLE,
+                            format!(
+                                "node `{id}` ({}) is global, but not all its inputs are global, pointwise or region nodes",
+                                node.kind
+                            ),
+                        ));
+                        continue;
+                    };
+                    key
+                } else {
+                    node_key(&key_inputs)
+                };
                 keys[index] = Some(key);
                 report.nodes[index].key = blake3::Hash::from_bytes(key).to_hex().to_string();
                 let hit = {
@@ -439,6 +532,7 @@ impl Evaluator {
                 }
                 let inputs = inputs
                     .into_iter()
+                    .filter(|(_, from)| !sampled(*from))
                     .map(|(port, from)| {
                         (
                             port.to_string(),
@@ -515,7 +609,36 @@ impl Evaluator {
         }
         self.evict(tick);
         report.ms = ms_since(start);
-        Evaluation::new(graph, report, outputs)
+        Evaluation::new(graph, report, outputs, opts.domain)
+    }
+
+    /// The output type of node `index`'s kind.
+    fn output_type(&self, graph: &ProcGraph, index: usize) -> Option<PortType> {
+        let (_, node) = graph.nodes.get_index(index)?;
+        self.registry.get(&node.kind).map(|d| d.output)
+    }
+
+    /// The nodes a streamed evaluation of `graph` runs: all but those whose
+    /// output reaches the graph's output only as fields of global nodes,
+    /// which sample their fields themselves.
+    fn needed(&self, graph: &ProcGraph, levels: &[Vec<usize>]) -> Vec<bool> {
+        let mut needed: Vec<bool> = (0..graph.nodes.len()).map(|i| graph.is_sink(i)).collect();
+        for &index in levels.iter().rev().flatten() {
+            if !needed[index] {
+                continue;
+            }
+            let global = graph
+                .nodes
+                .get_index(index)
+                .and_then(|(_, node)| self.registry.get(&node.kind))
+                .is_some_and(|d| d.streaming == Streaming::Global);
+            for (_, from) in graph.inputs_of(index) {
+                if !(global && self.output_type(graph, from) == Some(PortType::Field)) {
+                    needed[from] = true;
+                }
+            }
+        }
+        needed
     }
 
     fn run_job(
@@ -548,26 +671,24 @@ impl Evaluator {
                 Err(e) => warnings.push(cache_warning(id, e)),
             }
         }
+        let global = opts
+            .domain
+            .map(|d| opts.global_spacing.unwrap_or(d.spacing));
         // A region node reads its inputs over its tiles' windows: the graph
-        // upstream of it, evaluated again with the tile as the domain.
-        let sub = (job.def.streaming == Streaming::Region && opts.domain.is_some())
-            .then(|| upstream_graph(graph, job.index));
-        let read = |port: &str, domain: Domain| -> Result<Arc<crate::value::Field>, String> {
-            let Some(sub) = &sub else {
+        // an input comes from, evaluated again with the tile as the domain.
+        let region = job.def.streaming == Streaming::Region && opts.domain.is_some();
+        let read = |port: &str, domain: Domain| -> Result<Arc<Field>, String> {
+            if !region {
                 return Err("not a streamed region node".into());
-            };
-            let from = graph
-                .inputs_of(job.index)
-                .into_iter()
-                .find(|(p, _)| *p == port)
-                .and_then(|(_, from)| graph.nodes.get_index(from))
-                .map(|(id, _)| id.clone())
+            }
+            let (sub, from) = input_graph(graph, job.index, port)
                 .ok_or_else(|| format!("input `{port}` is not connected"))?;
             let opts = EvalOptions {
                 domain: Some(domain),
+                global_spacing: global,
                 ..opts.clone()
             };
-            let e = self.evaluate(sub, &opts);
+            let e = self.evaluate(&sub, &opts);
             match e.output(&from) {
                 Some(Output::Field(f)) => Ok(f.clone()),
                 _ => Err(e
@@ -577,18 +698,56 @@ impl Evaluator {
                     .unwrap_or_else(|| format!("input `{port}` has no field"))),
             }
         };
+        // A global node samples its fields on the source's grid: the graph
+        // the field comes from, evaluated over small windows around the
+        // points at the global spacing.
+        let sampling = global.filter(|_| job.def.streaming == Streaming::Global);
+        let sample = |port: &str, points: &[[f64; 2]]| -> Result<Option<Vec<f64>>, String> {
+            let Some(spacing) = sampling else {
+                return Err("not a streamed global node".into());
+            };
+            let Some((sub, from)) = input_graph(graph, job.index, port) else {
+                return Ok(None);
+            };
+            sample_field(points, spacing, |domain| {
+                let opts = EvalOptions {
+                    domain: Some(domain),
+                    global_spacing: Some(spacing),
+                    ..opts.clone()
+                };
+                let e = self.evaluate(&sub, &opts);
+                match e.output(&from) {
+                    Some(Output::Field(f)) => Ok(f.clone()),
+                    _ => Err(e
+                        .report
+                        .first_error()
+                        .map(|d| d.message.clone())
+                        .unwrap_or_else(|| format!("input `{port}` has no field"))),
+                }
+            })
+            .map(Some)
+        };
+        let share = |key: [u8; 32], make: &mut dyn FnMut() -> Result<SharedValue, NodeError>| {
+            self.shared(key, make)
+        };
         let ctx = NodeCtx {
             node_id: id,
             key: job.key,
             version: node.version,
-            domain: opts.domain,
+            domain: if sampling.is_some() {
+                None
+            } else {
+                opts.domain
+            },
             serial: opts.serial,
             seed: job.seed,
             inputs: job.inputs.clone(),
             files: job.files.clone(),
             pool,
             logs: Default::default(),
-            upstream: sub.as_ref().map(|_| &read as &crate::nodes::Upstream),
+            upstream: region.then_some(&read as &crate::nodes::Upstream),
+            sample: sampling.map(|_| &sample as &crate::nodes::Sampler),
+            share: Some(&share as &crate::nodes::Share),
         };
         let output = job.def.eval(&ctx, &job.params).map_err(|e| {
             Diagnostic::error(
@@ -611,25 +770,85 @@ impl Evaluator {
         }
     }
 
-    /// Drops least recently used entries until the cache fits its budget;
-    /// entries used by the evaluation that just ran (`tick`) are kept.
+    /// The value shared under `key`, made by `make` if no node has made it
+    /// (see [`NodeCtx::shared`](crate::NodeCtx::shared)). A node asking
+    /// while another makes it waits for that one.
+    fn shared(
+        &self,
+        key: [u8; 32],
+        make: &mut dyn FnMut() -> Result<SharedValue, NodeError>,
+    ) -> Result<Arc<dyn Any + Send + Sync>, NodeError> {
+        let slot = {
+            let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
+            let tick = m.tick;
+            let e = m.shared.entry(key).or_insert_with(|| SharedEntry {
+                slot: SharedSlot::default(),
+                bytes: 0,
+                used: tick,
+            });
+            e.used = tick;
+            e.slot.clone()
+        };
+        let mut made = false;
+        let r = slot.get_or_init(|| {
+            made = true;
+            make()
+        });
+        if made {
+            // Count what was made, unless it was dropped meanwhile; a
+            // failure is not kept.
+            let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
+            let ours = m
+                .shared
+                .get(&key)
+                .is_some_and(|e| Arc::ptr_eq(&e.slot, &slot));
+            match r {
+                Ok((_, bytes)) if ours => {
+                    if let Some(e) = m.shared.get_mut(&key) {
+                        e.bytes = *bytes;
+                    }
+                    m.bytes += bytes;
+                }
+                Err(_) if ours => {
+                    m.shared.remove(&key);
+                }
+                _ => {}
+            }
+        }
+        r.as_ref().map(|(v, _)| v.clone()).map_err(Clone::clone)
+    }
+
+    /// Drops least recently used entries (outputs and shared values) until
+    /// the cache fits its budget; entries used by the evaluation that just
+    /// ran (`tick`) are kept, and so are shared values still being made,
+    /// which hold nothing yet.
     fn evict(&self, tick: u64) {
         let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
         if m.bytes <= self.budget {
             return;
         }
-        let mut old: Vec<([u8; 32], u64, u64)> = m
+        let mut old: Vec<(u64, bool, [u8; 32], u64)> = m
             .map
             .iter()
             .filter(|(_, e)| e.used < tick)
-            .map(|(k, e)| (*k, e.used, e.bytes))
+            .map(|(k, e)| (e.used, false, *k, e.bytes))
             .collect();
-        old.sort_by_key(|(k, used, _)| (*used, *k));
-        for (k, _, bytes) in old {
+        old.extend(
+            m.shared
+                .iter()
+                .filter(|(_, e)| e.used < tick && e.slot.get().is_some())
+                .map(|(k, e)| (e.used, true, *k, e.bytes)),
+        );
+        old.sort_unstable();
+        for (_, shared, k, bytes) in old {
             if m.bytes <= self.budget {
                 break;
             }
-            m.map.remove(&k);
+            if shared {
+                m.shared.remove(&k);
+            } else {
+                m.map.remove(&k);
+            }
             m.bytes -= bytes;
         }
     }
@@ -738,6 +957,8 @@ struct KeyInputs<'a> {
     seed: u64,
     files: &'a HashMap<String, Result<Arc<Vec<u8>>, String>>,
     domain: Option<Domain>,
+    /// For a global key: the global spacing (and `keys` are global keys).
+    global: Option<f32>,
 }
 
 /// A node's key. For a node at its kind's current version, outside a
@@ -754,6 +975,7 @@ fn node_key(k: &KeyInputs) -> [u8; 32] {
         seed,
         files,
         domain,
+        global,
     } = *k;
     let mut h = blake3::Hasher::new();
     let s = |h: &mut blake3::Hasher, t: &str| {
@@ -801,7 +1023,92 @@ fn node_key(k: &KeyInputs) -> [u8; 32] {
         h.update(&d.n.to_le_bytes());
         h.update(&d.spacing.to_bits().to_le_bytes());
     }
+    if let Some(spacing) = global {
+        h.update(b"global");
+        h.update(&spacing.to_bits().to_le_bytes());
+    }
     *h.finalize().as_bytes()
+}
+
+/// The values of a field at points `[x, z]` (metres): its samples on the
+/// global grid of `spacing`, from windows that `window` evaluates,
+/// interpolated on the grid's triangles (split as
+/// [`Heightfield::height_at`](re_geom::Heightfield::height_at) splits them).
+/// Every window agrees on shared samples (ADR-0042), so the values do not
+/// depend on which window a point is read from; the points of each block of
+/// 16 × 16 grid cells share one.
+fn sample_field(
+    points: &[[f64; 2]],
+    spacing: f32,
+    mut window: impl FnMut(Domain) -> Result<Arc<Field>, String>,
+) -> Result<Vec<f64>, String> {
+    const BLOCK: i64 = 16;
+    let s = f64::from(spacing);
+    if !(s.is_finite() && s > 0.0) {
+        return Err(format!(
+            "fields are sampled on a grid of {spacing} m; its spacing must be positive"
+        ));
+    }
+    let mut cells = Vec::with_capacity(points.len());
+    for p in points {
+        if !p
+            .iter()
+            .all(|v| v.is_finite() && v.abs() <= re_geom::polygon::MAX_COORD)
+        {
+            return Err(format!(
+                "a field cannot be sampled at {p:?}: positions must be finite and within ±{} m",
+                re_geom::polygon::MAX_COORD
+            ));
+        }
+        cells.push([(p[0] / s).floor() as i64, (p[1] / s).floor() as i64]);
+    }
+    let block = |c: [i64; 2]| [c[0].div_euclid(BLOCK), c[1].div_euclid(BLOCK)];
+    // Each block's window: the box of its points' cells, one sample wider.
+    let mut boxes: BTreeMap<[i64; 2], [i64; 4]> = BTreeMap::new();
+    for &c in &cells {
+        let b = boxes.entry(block(c)).or_insert([c[0], c[1], c[0], c[1]]);
+        *b = [
+            b[0].min(c[0]),
+            b[1].min(c[1]),
+            b[2].max(c[0]),
+            b[3].max(c[1]),
+        ];
+    }
+    let mut fields: BTreeMap<[i64; 2], (Domain, Arc<Field>)> = BTreeMap::new();
+    for (k, b) in boxes {
+        let domain = Domain {
+            origin: [b[0], b[1]],
+            n: ((b[2] - b[0]).max(b[3] - b[1]) + 2) as u32,
+            spacing,
+        };
+        let field = window(domain)?;
+        if field.n() != domain.n {
+            return Err(format!(
+                "a field over a {0} × {0} window has {1} × {1} samples",
+                domain.n,
+                field.n()
+            ));
+        }
+        fields.insert(k, (domain, field));
+    }
+    Ok(points
+        .iter()
+        .zip(&cells)
+        .map(|(p, &c)| {
+            let (d, f) = &fields[&block(c)];
+            let (x, z) = ((c[0] - d.origin[0]) as u32, (c[1] - d.origin[1]) as u32);
+            let h = |dx: u32, dz: u32| f64::from(f.0.sample(x + dx, z + dz));
+            let tx = (p[0] / s - c[0] as f64).clamp(0.0, 1.0);
+            let tz = (p[1] / s - c[1] as f64).clamp(0.0, 1.0);
+            let (h00, h10, h01, h11) = (h(0, 0), h(1, 0), h(0, 1), h(1, 1));
+            let v = if tz >= tx {
+                h00 + tz * (h01 - h00) + tx * (h11 - h01)
+            } else {
+                h00 + tx * (h10 - h00) + tz * (h11 - h10)
+            };
+            v + f64::from(f.0.offset.y)
+        })
+        .collect())
 }
 
 /// The result of [`Evaluator::evaluate`]: the report and every node's output.
@@ -812,15 +1119,22 @@ pub struct Evaluation {
     ids: Vec<String>,
     sinks: Vec<bool>,
     outputs: Vec<Option<Output>>,
+    domain: Option<Domain>,
 }
 
 impl Evaluation {
-    fn new(graph: &ProcGraph, report: EvalReport, outputs: Vec<Option<Output>>) -> Self {
+    fn new(
+        graph: &ProcGraph,
+        report: EvalReport,
+        outputs: Vec<Option<Output>>,
+        domain: Option<Domain>,
+    ) -> Self {
         Evaluation {
             report,
             ids: graph.nodes.keys().cloned().collect(),
             sinks: (0..graph.nodes.len()).map(|i| graph.is_sink(i)).collect(),
             outputs,
+            domain,
         }
     }
 
@@ -836,9 +1150,10 @@ impl Evaluation {
     }
 
     /// The graph's output: the fragments of every node no edge leaves (a mesh
-    /// becomes one entity `<node>/mesh`), in document order, with the derived
-    /// assets they reference. Fails with the first error of the evaluation,
-    /// or `RE4013` when two entities share a key.
+    /// becomes one entity `<node>/mesh`; in a streamed window it sits at the
+    /// window's corner, and an empty one adds nothing), in document order,
+    /// with the derived assets they reference. Fails with the first error of
+    /// the evaluation, or `RE4013` when two entities share a key.
     pub fn fragment(&self) -> Result<Fragment, Diagnostic> {
         if let Some(d) = self.report.first_error() {
             return Err(d.clone());
@@ -849,7 +1164,10 @@ impl Evaluation {
             if !self.sinks[i] {
                 continue;
             }
-            let Some(f) = self.outputs[i].as_ref().and_then(|o| sink_fragment(id, o)) else {
+            let Some(f) = self.outputs[i]
+                .as_ref()
+                .and_then(|o| sink_fragment_in(id, o, self.domain.as_ref()))
+            else {
                 continue;
             };
             for item in &f.items {
@@ -942,14 +1260,21 @@ pub fn fragment_hash_hex(fragment: &SceneFragment) -> String {
     fragment_hash(fragment).to_hex().to_string()
 }
 
-/// The part of `graph` that node `index` depends on: its ancestors, without
-/// the node itself.
-fn upstream_graph(graph: &ProcGraph, index: usize) -> ProcGraph {
-    let mut keep: std::collections::BTreeSet<usize> = graph
+/// The part of `graph` that input `port` of node `index` comes from: the
+/// node it comes from, which is the part's one output, and that node's
+/// ancestors; with that node's id.
+fn input_graph(graph: &ProcGraph, index: usize, port: &str) -> Option<(ProcGraph, String)> {
+    let (_, from) = graph
         .inputs_of(index)
         .into_iter()
-        .map(|(_, from)| from)
-        .collect();
+        .find(|(p, _)| *p == port)?;
+    let (id, _) = graph.nodes.get_index(from)?;
+    Some((subgraph(graph, &[from]), id.clone()))
+}
+
+/// The nodes `roots` and their ancestors.
+fn subgraph(graph: &ProcGraph, roots: &[usize]) -> ProcGraph {
+    let mut keep: std::collections::BTreeSet<usize> = roots.iter().copied().collect();
     let mut todo: Vec<usize> = keep.iter().copied().collect();
     while let Some(i) = todo.pop() {
         for (_, from) in graph.inputs_of(i) {

@@ -3,13 +3,16 @@
 
 use std::sync::Arc;
 
-use re_geom::road::{self, ControlPoint, RoadStyle};
+use re_geom::polygon::MAX_COORD;
+use re_geom::road::{self, ControlPoint, Network, RoadStyle};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::shape::dist2_to_segment;
-use super::{NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef, within};
-use crate::value::{MeshValue, Output, PortType};
+use super::{
+    NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef, Streaming, within,
+};
+use crate::value::{MeshValue, Output, PortType, RoadPath};
 
 /// The largest width, radius or distance a road node takes, in metres.
 const MAX_DISTANCE: f64 = 10_000.0;
@@ -131,9 +134,27 @@ impl Params for SplineParams {
 
 fn spline(ctx: &NodeCtx, p: &SplineParams) -> Result<Output, NodeError> {
     let mut points = p.control_points();
-    if let Some(field) = ctx.field("field") {
-        // Drape the control points; the spline then runs smoothly between
-        // them rather than following every bump.
+    // Drape the control points; the spline then runs smoothly between them
+    // rather than following every bump.
+    if let Some(sample) = ctx.sample {
+        // Streamed: the field on the source's grid, the same for every cell.
+        // A point out of range stays as it is, and `road::spline` says why.
+        let usable = |c: &ControlPoint| {
+            c.position
+                .iter()
+                .all(|v| v.is_finite() && v.abs() <= MAX_COORD)
+        };
+        let at: Vec<[f64; 2]> = points
+            .iter()
+            .filter(|c| usable(c))
+            .map(|c| [c.position[0], c.position[2]])
+            .collect();
+        if let Some(heights) = sample("field", &at)? {
+            for (c, h) in points.iter_mut().filter(|c| usable(c)).zip(heights) {
+                c.position[1] += h;
+            }
+        }
+    } else if let Some(field) = ctx.field("field") {
         for c in &mut points {
             let [x, _, z] = c.position;
             if let Some(h) = field.0.height_at(x as f32, z as f32) {
@@ -194,15 +215,60 @@ fn road_mesh(ctx: &NodeCtx, p: &RoadMeshParams) -> Result<Output, NodeError> {
         snap: p.snap,
         bank_fade: p.bank_fade,
     };
-    let road = road::road_mesh(&paths(ctx)?, &style)?;
-    if !road.junctions.is_empty() {
-        ctx.log(&format!("{} junctions", road.junctions.len()));
+    let (mesh, junctions) = match ctx.domain {
+        // Streamed: the cell's part of the network every cell shares, local
+        // to the cell's corner.
+        Some(d) => {
+            let network = shared_network(ctx, &ctx.paths(), &style)?;
+            let (min, max) = (d.min().map(f64::from), d.max().map(f64::from));
+            (network.mesh_in(min, max)?, network.junctions().len())
+        }
+        None => {
+            let road = road::road_mesh(&paths(ctx)?, &style)?;
+            (road.mesh, road.junctions.len())
+        }
+    };
+    if junctions > 0 {
+        ctx.log(&format!("{junctions} junctions"));
     }
     Ok(Output::Mesh(Arc::new(MeshValue {
-        mesh: road.mesh,
+        mesh,
         material: p.material.clone(),
         asset: ctx.key,
     })))
+}
+
+/// The network of `paths`, joined once for all the cells that ask and kept
+/// in the evaluator's memory cache ([`NodeCtx::shared`]).
+fn shared_network(
+    ctx: &NodeCtx,
+    paths: &[&Arc<RoadPath>],
+    style: &RoadStyle,
+) -> Result<Arc<Network>, NodeError> {
+    if paths.is_empty() {
+        return Err("no path is connected".to_string().into());
+    }
+    let mut h = blake3::Hasher::new();
+    h.update(b"re_proc road.mesh network v1");
+    for v in [style.junction_radius, style.snap, style.bank_fade] {
+        h.update(&v.to_le_bytes());
+    }
+    for p in paths {
+        h.update(&[u8::from(p.closed)]);
+        h.update(&(p.samples.len() as u64).to_le_bytes());
+        for s in &p.samples {
+            let [x, y, z] = s.position;
+            for v in [x, y, z, s.width, s.bank, s.distance] {
+                h.update(&v.to_le_bytes());
+            }
+        }
+    }
+    ctx.shared(*h.finalize().as_bytes(), || {
+        let owned: Vec<road::Path> = paths.iter().map(|p| (***p).clone()).collect();
+        let network = road::network(&owned, style)?;
+        let bytes = network.bytes();
+        Ok((network, bytes))
+    })
 }
 
 /// Parameters of `road.footprint`.
@@ -354,12 +420,12 @@ fn conform(ctx: &NodeCtx, p: &ConformParams) -> Result<Output, NodeError> {
 const PATHS: &[PortType] = &[PortType::Path];
 
 pub(super) fn register(r: &mut NodeRegistry) {
-    let spec = |kind, doc, inputs, variadic, output| NodeSpec {
+    let spec = |kind, streaming, doc, inputs, variadic, output| NodeSpec {
         kind,
         version: 1,
         oldest: 1,
         migrations: &[],
-        streaming: super::Streaming::Whole,
+        streaming,
         doc,
         inputs,
         variadic,
@@ -370,7 +436,8 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         spec(
             "path.spline",
-            "A road centreline: a centripetal Catmull-Rom spline through control points, sampled every `spacing` metres, with width and bank per point.",
+            Streaming::Global,
+            "A road centreline: a centripetal Catmull-Rom spline through control points, sampled every `spacing` metres, with width and bank per point. Streamed: one path for every cell, draped on the field sampled at the source's spacing.",
             &[PortDef {
                 name: "field",
                 accepts: &[PortType::Field],
@@ -385,7 +452,8 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         spec(
             "road.mesh",
-            "The road surface of the connected paths (on any port names): ribbons cut back around junctions, and a flat surface for each junction.",
+            Streaming::Cell,
+            "The road surface of the connected paths (on any port names): ribbons cut back around junctions, and a flat surface for each junction. Streamed: per cell, the triangles whose centre lies in the cell, local to its corner, from one network every cell shares.",
             &[],
             Some(PATHS),
             PortType::Mesh,
@@ -395,6 +463,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         spec(
             "road.footprint",
+            Streaming::Global,
             "The area the connected paths (on any port names) cover, grown by a margin, as shapes.",
             &[],
             Some(PATHS),
@@ -405,7 +474,8 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         spec(
             "terrain.conform",
-            "Flattens a field under the connected paths (on any port names other than `field`) to the road's height, blending back to the field beside them.",
+            Streaming::Pointwise,
+            "Flattens a field under the connected paths (on any port names other than `field`) to the road's height, blending back to the field beside them. Streamed: pointwise, each sample against the whole of every path.",
             &[PortDef {
                 name: "field",
                 accepts: &[PortType::Field],
