@@ -196,7 +196,9 @@ fn read(project: &Path, file: &str) -> Result<String, Diagnostic> {
 }
 
 /// Stage 1: every content file parses and loads.
-/// Every `scripts/**/*.luau` compiles (validation tier 1).
+/// Every `scripts/**/*.luau` compiles (validation tier 1), and so does every
+/// shader the project's `shaders/*.wgsl` change, which also get a warning for
+/// each engine file they replace (ADR-0038).
 fn stage_compile(project: &Path) -> StageReport {
     let scripts = content_files(project, "scripts", ".luau");
     let mut diags = Vec::new();
@@ -212,7 +214,13 @@ fn stage_compile(project: &Path) -> StageReport {
             ),
         }
     }
-    StageReport::new("compile", diags, json!({ "scripts": scripts.len() }))
+    let (shaders, problems) = crate::shaders::check(&crate::package::dev_files(project));
+    diags.extend(problems);
+    StageReport::new(
+        "compile",
+        diags,
+        json!({ "scripts": scripts.len(), "shaders": shaders }),
+    )
 }
 
 fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {

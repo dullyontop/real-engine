@@ -35,6 +35,7 @@ pub mod package;
 pub mod perf;
 pub mod play;
 pub mod procedural;
+pub mod shaders;
 pub mod sync;
 pub mod verify;
 pub mod web;

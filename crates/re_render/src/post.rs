@@ -14,7 +14,7 @@ use std::num::NonZeroU64;
 use glam::Vec2;
 use re_types::render::{PostSettings, ToneMapping};
 
-use crate::renderer::stores_gamma;
+use crate::renderer::{stores_gamma, with_checks};
 use crate::shader;
 
 /// The scene's colour format on every backend.
@@ -192,6 +192,47 @@ pub(crate) fn blur_taps(radius: f32, height: u32) -> (f32, f32, f32) {
     let step = (2.0 * sigma / MAX_BLUR_TAPS).max(1.0);
     let sigma = sigma / step;
     (step, sigma, (2.0 * sigma).ceil().min(MAX_BLUR_TAPS))
+}
+
+/// The passes into `Rgba16Float` targets, by entry point, and whether each adds
+/// to its target.
+const HDR_PASSES: [(&str, bool); 6] = [
+    ("fs_sun_rays", false),
+    ("fs_bloom_prefilter", false),
+    ("fs_bloom_down", false),
+    ("fs_bloom_up", true),
+    ("fs_blur", false),
+    ("fs_blur_bloom", false),
+];
+
+/// The blend of a pass that adds to its target, or none.
+fn pass_blend(add: bool) -> Option<wgpu::BlendState> {
+    add.then_some(wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent::REPLACE,
+    })
+}
+
+/// The final pass's entry point for a target of `format`: a gamma target is
+/// written encoded.
+fn final_entry(format: wgpu::TextureFormat) -> &'static str {
+    if stores_gamma(format) {
+        "fs_final_gamma"
+    } else {
+        "fs_final_linear"
+    }
+}
+
+/// The post shader and its pipelines, as [`PostChain::replace_shader`] found
+/// them.
+pub(crate) struct PostShader {
+    shader: wgpu::ShaderModule,
+    hdr_pipelines: HashMap<&'static str, wgpu::RenderPipeline>,
+    final_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
 }
 
 /// The pipelines, sampler and targets of the chain.
@@ -386,6 +427,39 @@ impl PostChain {
         })
     }
 
+    /// Swaps in `shader` (a new `post.wgsl`, ADR-0038) and builds every pass
+    /// with it, the final pass for the formats drawn into so far and for a
+    /// linear and a gamma target, so the device checks all of its entry points
+    /// now. Returns what it replaced, for [`PostChain::restore_shader`].
+    pub(crate) fn replace_shader(
+        &mut self,
+        device: &wgpu::Device,
+        shader: wgpu::ShaderModule,
+    ) -> PostShader {
+        let formats = with_checks(self.final_pipelines.keys());
+        let old = PostShader {
+            shader: std::mem::replace(&mut self.shader, shader),
+            hdr_pipelines: std::mem::take(&mut self.hdr_pipelines),
+            final_pipelines: std::mem::take(&mut self.final_pipelines),
+        };
+        for (entry, add) in HDR_PASSES {
+            let p = self.pipeline(device, entry, HDR_FORMAT, pass_blend(add));
+            self.hdr_pipelines.insert(entry, p);
+        }
+        for format in formats {
+            let p = self.pipeline(device, final_entry(format), format, None);
+            self.final_pipelines.insert(format, p);
+        }
+        old
+    }
+
+    /// Puts back what [`PostChain::replace_shader`] replaced.
+    pub(crate) fn restore_shader(&mut self, old: PostShader) {
+        self.shader = old.shader;
+        self.hdr_pipelines = old.hdr_pipelines;
+        self.final_pipelines = old.final_pipelines;
+    }
+
     /// Records the chain from the resolved scene into `output`; returns the
     /// number of passes recorded.
     pub(crate) fn record(
@@ -577,11 +651,7 @@ impl PostChain {
             wgpu::Color { r, g, b, a }
         });
         steps.push(Step {
-            entry: if stores_gamma(format) {
-                "fs_final_gamma"
-            } else {
-                "fs_final_linear"
-            },
+            entry: final_entry(format),
             target: output.clone(),
             add: false,
             output: true,
@@ -627,15 +697,7 @@ impl PostChain {
                     self.final_pipelines.insert(format, p);
                 }
             } else if !self.hdr_pipelines.contains_key(step.entry) {
-                let blend = step.add.then_some(wgpu::BlendState {
-                    color: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::One,
-                        dst_factor: wgpu::BlendFactor::One,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                    alpha: wgpu::BlendComponent::REPLACE,
-                });
-                let p = self.pipeline(device, step.entry, HDR_FORMAT, blend);
+                let p = self.pipeline(device, step.entry, HDR_FORMAT, pass_blend(step.add));
                 self.hdr_pipelines.insert(step.entry, p);
             }
         }
@@ -702,6 +764,21 @@ impl PostChain {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_passes_are_the_fragment_entry_points_of_the_shader() {
+        let source = crate::shader::preprocess("post.wgsl", crate::shader::SOURCES).unwrap();
+        let mut entries: Vec<&str> = source
+            .split("@fragment")
+            .skip(1)
+            .filter_map(|s| s.trim_start().strip_prefix("fn ")?.split('(').next())
+            .collect();
+        let mut passes: Vec<&str> = HDR_PASSES.iter().map(|&(entry, _)| entry).collect();
+        passes.extend(["fs_final_linear", "fs_final_gamma"]);
+        entries.sort_unstable();
+        passes.sort_unstable();
+        assert_eq!(entries, passes);
+    }
 
     #[test]
     fn bloom_stops_where_a_texel_covers_the_radius() {

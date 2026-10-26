@@ -29,6 +29,7 @@ pub const DEFAULT_DIRS: &[&str] = &[
     "graphs",
     "anims",
     "scripts",
+    "shaders",
     "assets",
     "data/seed",
 ];
