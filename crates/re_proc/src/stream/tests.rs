@@ -1251,8 +1251,10 @@ fn stream_terrain_view_completes_new_stitching_after_a_move() {
     assert_no_overlap(b);
 }
 
-/// [`chunked_graph`]'s heights scaled past `f32::MAX`: every terrain chunk
-/// fails (heights that are not finite), while cells are made as before.
+/// [`chunked_graph`]'s heights, scaled past `f32::MAX` wherever they rise
+/// above 22.7 m: a chunk over such ground fails (heights that are not
+/// finite) at its first sample there, so chunks fail at other samples. The
+/// graph makes no cells.
 fn overflowing_graph() -> GraphDoc {
     graph(
         &[
@@ -1265,7 +1267,7 @@ fn overflowing_graph() -> GraphDoc {
                 "up",
                 "field.remap",
                 json!({
-                    "mode": "linear", "in_min": 0.0, "in_max": 0.001,
+                    "mode": "linear", "in_min": 0.0, "in_max": 20.0,
                     "out_min": 0.0, "out_max": 3.0e38,
                 }),
             ),
@@ -1301,13 +1303,31 @@ fn run_view(w: &mut World, from: u64) -> (u64, Vec<re_core::Diagnostic>) {
 #[test]
 fn stream_terrain_view_reports_failed_chunks_once_per_cause() {
     // The source's ground is in view, but no cell or collision chunk is near
-    // the focus: only view chunks are made, and every one fails.
-    let mut st = streamed(overflowing_graph(), 600.0, 600.0, json!([]));
+    // the focus: only view chunks are made, and those over high ground fail,
+    // each at its own sample. Their problems share one subject.
+    let at = Vec3::new(600.0, 0.0, 600.0);
+    let mut by_hand = streamed(overflowing_graph(), at.x, at.z, json!([]));
+    let w = &mut by_hand.world;
+    let e = w.entity("terrain").unwrap();
+    let mut cache = source::DescribeCache::new();
+    let s = source::describe(w, e, &terrain_config(), &mut cache).unwrap();
+    let pool = re_core::TaskPool::new(2).unwrap();
+    let mut view = terrain::TerrainState::default();
+    let failures = view.step(w, &[s], &[at], 1024.0, &pool, terrain::Pace::Complete);
+    let causes: std::collections::BTreeSet<&str> = failures
+        .iter()
+        .map(|(_, d)| d.related[0].message.as_str())
+        .collect();
+    assert!(causes.len() > 1, "{causes:?}");
+    assert!(failures.iter().all(|(s, _)| *s == failures[0].0));
+
+    // The streamer reports the first of them.
+    let mut st = streamed(overflowing_graph(), at.x, at.z, json!([]));
     let w = &mut st.world;
     let (t, problems) = run_view(w, 0);
     assert!(loaded(w).is_empty());
-    let s = w.ecs.resource::<Streamer>();
-    assert!(s.view_missing() > 1, "{} chunks failed", s.view_missing());
+    let failed = w.ecs.resource::<Streamer>().view_missing();
+    assert_eq!(failed, failures.len());
     assert_eq!(problems.len(), 1, "{problems:#?}");
     assert_eq!(problems[0].code.to_string(), "RE4307");
     assert!(
@@ -1315,7 +1335,15 @@ fn stream_terrain_view_reports_failed_chunks_once_per_cause() {
         "{}",
         problems[0].message
     );
-    assert!(complete_view(w).is_empty(), "already reported");
+    // Out of view and back: the chunks are made again and fail the same
+    // way, unreported.
+    move_to(w, 1900.0, 1900.0);
+    let (t, away) = run_view(w, t);
+    assert_eq!(w.ecs.resource::<Streamer>().view_missing(), 0);
+    move_to(w, at.x, at.z);
+    let (t, back) = run_view(w, t);
+    assert_eq!(w.ecs.resource::<Streamer>().view_missing(), failed);
+    assert!(away.is_empty() && back.is_empty(), "{away:#?} {back:#?}");
     // Another seed fails again, with other inputs: one more report.
     w.set("terrain", "Procedural", "seed", Value::Int(8))
         .unwrap();
@@ -1324,16 +1352,28 @@ fn stream_terrain_view_reports_failed_chunks_once_per_cause() {
 }
 
 #[test]
-fn stream_terrain_view_takes_a_removed_source_away_before_going_idle() {
+fn stream_terrain_view_goes_with_its_source_or_when_turned_off() {
     // The source's ground is in view, but no cell or collision chunk is near
     // the focus: the view is all the manager holds.
     let mut st = streamed(chunked_graph(), 600.0, 600.0, json!([]));
     let w = &mut st.world;
     let t = settle_view(w, 0);
     assert!(loaded(w).is_empty());
+    // Turned off, the view goes at the next step.
+    w.ecs.resource_mut::<Streamer>().set_view(false);
+    assert!(
+        !w.ecs.resource::<Streamer>().is_idle(),
+        "its chunks are still drawn"
+    );
+    step(w, t, &terrain_config());
+    assert!(!w.ecs.contains_resource::<TerrainView>());
+    assert!(w.ecs.resource::<Streamer>().is_idle());
+    // On again, and the source goes: a world without streamed sources steps
+    // until its manager is idle.
+    w.ecs.resource_mut::<Streamer>().set_view(true);
+    let t = settle_view(w, t + 1);
     let terrain = w.entity("terrain").unwrap();
     w.despawn_runtime(terrain).unwrap();
-    // A world without streamed sources steps until its manager is idle.
     assert!(
         !w.ecs.resource::<Streamer>().is_idle(),
         "its chunks are still drawn"

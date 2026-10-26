@@ -366,8 +366,8 @@ fn missing(
 
 /// Takes the finished jobs of `source` in (every job, waiting for it, if
 /// `wait`): ready chunks, and failed ones with the problem to report, once
-/// per kind of cause and inputs (a field that is not finite fails each chunk
-/// at another sample, and one report stands for them all).
+/// per code of its cause and the source's inputs (chunks over a field that
+/// is not finite fail at other samples, and one report stands for them all).
 fn take_finished(
     st: &mut SourceTerrain,
     source: &Source,

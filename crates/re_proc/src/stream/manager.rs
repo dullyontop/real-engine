@@ -234,7 +234,8 @@ impl Streamer {
 
     /// Keeps the [`TerrainView`](super::TerrainView) of the world's terrain
     /// sources up to date while `on` (off by default: only something that
-    /// draws needs it). The view is not simulation state.
+    /// draws needs it); turned off, the next [`step`] drops it. The view is
+    /// not simulation state.
     pub fn set_view(&mut self, on: bool) {
         self.view = on;
     }
@@ -304,7 +305,8 @@ impl Streamer {
 
     /// True when nothing is loaded, requested, pinned or drawn: a world
     /// without streamed sources can skip [`step`] while this holds (the step
-    /// after its last source goes takes that source's terrain view away).
+    /// after its last source goes, or after the view is turned off, takes
+    /// the terrain view away).
     pub fn is_idle(&self) -> bool {
         self.loaded.is_empty()
             && self.pending.is_empty()
@@ -998,6 +1000,10 @@ impl Streamer {
             for (subject, d) in failures {
                 self.report_once(&mut report.diagnostics, &subject, d);
             }
+        } else if !self.terrain.is_empty() {
+            // Turned off: the view goes, and the chunks in the making with it.
+            self.terrain = Default::default();
+            world.ecs.remove_resource::<super::TerrainView>();
         }
         report.entities = done;
         report.resident = self.loaded.len();
