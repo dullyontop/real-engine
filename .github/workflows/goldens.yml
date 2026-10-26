@@ -1,0 +1,103 @@
+# Blesses a project's dx12 and metal goldens (ADR-0023's amendment of
+# 2026-10-25). Only Windows renders dx12 and only macOS renders Metal, so a
+# change to how a project looks cannot re-bless those two sets on Linux. Started
+# by hand on a branch other than main, this renders them with
+# `real verify --update-goldens` on the runners build-windows and build-macos
+# use, and commits the changed images to that branch, where they are reviewed
+# in the PR like any golden. It is not a check: build-windows and build-macos
+# then compare against the committed sets.
+#
+#   gh workflow run goldens --ref <branch> -f project=examples/valley
+
+name: Goldens
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "The project folder, such as examples/valley"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: goldens-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  render:
+    if: github.ref_type == 'branch' && github.ref_name != github.event.repository.default_branch
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            backend: dx12
+          - os: macos-latest
+            backend: metal
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the project
+        shell: bash
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: |
+          if [[ ! "$PROJECT" =~ ^examples/[A-Za-z0-9_-]+$ ]] || [ ! -f "$PROJECT/real.toml" ]; then
+            echo "::error::$PROJECT is not a project folder under examples/"
+            exit 1
+          fi
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Render the ${{ matrix.backend }} goldens
+        shell: bash
+        env:
+          PROJECT: ${{ inputs.project }}
+          RE_BACKENDS: ${{ matrix.backend }}
+        run: |
+          cargo build --locked --release -p re_cli
+          target/release/real verify --project "$PROJECT" --update-goldens --json > verify.json || true
+          jq -r '.stages[] | "\(.name): ok=\(.ok)"' verify.json
+          jq -r '.stages[] | select(.name == "goldens") | .data.checks[]? | "\(.golden): \(if .written then "written" else .summary end)"' verify.json
+          # The goldens stage ran on this backend, passed, and took at least one image.
+          jq -e '[.stages[] | select(.name == "goldens")] | length == 1 and all(.[]; .ok and ((.data.checks // []) | length) > 0)' verify.json > /dev/null
+      - uses: actions/upload-artifact@v7
+        with:
+          name: goldens-${{ matrix.backend }}
+          path: ${{ inputs.project }}/tests/goldens/${{ matrix.backend }}/
+          if-no-files-found: error
+
+  commit:
+    needs: render
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: goldens-*
+          path: out
+      - name: Commit the goldens to the branch
+        env:
+          PROJECT: ${{ inputs.project }}
+        run: |
+          for backend in dx12 metal; do
+            mkdir -p "$PROJECT/tests/goldens/$backend"
+            cp out/goldens-$backend/*.png "$PROJECT/tests/goldens/$backend/"
+          done
+          git add "$PROJECT/tests/goldens"
+          if git diff --cached --quiet; then
+            echo "The dx12 and metal goldens of $PROJECT are unchanged."
+            exit 0
+          fi
+          git diff --cached --stat
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "goldens: $PROJECT on dx12 and metal" -m "Rendered by the goldens workflow, run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID."
+          git push origin "HEAD:$GITHUB_REF_NAME"

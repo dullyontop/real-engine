@@ -29,7 +29,7 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 | Large static map size and budgets (ADR-0031) | **250,000 anchored parts.** Load in ≤ 30 s, a mean fixed step ≤ 8 ms over 600 frames, and peak RSS ≤ 4 GB, in the reference container. | Owner |
 | Networking | **One process.** Server and client run as two contexts with two worlds in one process (WP12). There is no real networking in M2. | Plan |
 | Online services (data storage, memory store, teleport, text filtering, marketplace) | They exist and fail with `RE9002`. Nothing hangs. Local-file persistence is M3. | Plan |
-| Determinism in tests | Verify and the sample runner use a virtual clock and seed `math.random`, `Random.new()` and `os.clock` from the run seed. | Plan |
+| Determinism in tests | Verify and the sample runner use a virtual clock and seed `math.random`, `Random.new()` and `os.clock` from the run seed. Done for the compat contexts in M3 (WP27 follow-up, #168): `math.random` and `Random.new()` start from `[compat] seed`, and `os.clock()` reads the virtual clock. | Plan |
 | License and Windows/macOS blocking | Unchanged: the license is open, and Windows and macOS become blocking at M3 ([DECISIONS.md, open questions](DECISIONS.md#open-questions-for-the-owner)). | Owner |
 
 ## Ownership in M2

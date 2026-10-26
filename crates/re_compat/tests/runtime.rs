@@ -820,6 +820,37 @@ mod model {
         );
     }
 
+    /// `math.random` starts from the run seed (the client from `seed + 1`)
+    /// and `os.clock()` reads the game time, so runs with the same seed
+    /// print the same; another seed draws other numbers.
+    #[test]
+    fn math_random_and_os_clock_repeat_with_the_run_seed() {
+        let probe = r#"
+            local start = os.clock()
+            print(math.random(), math.random(1, 1000000))
+            task.wait(0.5)
+            print(string.format("%.4f %.4f", start, os.clock() - start))
+        "#;
+        let run = |seed: u64| {
+            let mut p = Project::new().compat(&format!("seed = {seed}\n"));
+            let sss = p.service("ServerScriptService");
+            p.script("Script", "Probe", sss, None, probe);
+            let sps = p.world.entity("StarterPlayerScripts").unwrap();
+            p.script("LocalScript", "Probe", sps, None, probe);
+            let (mut h, _dir) = p.open();
+            h.start();
+            h.step(40);
+            no_errors(&h);
+            (out(&mut h, Side::Server), out(&mut h, Side::Client))
+        };
+        let (server, client) = run(7);
+        assert_eq!((server.clone(), client.clone()), run(7));
+        assert_eq!(server[1], "86400.0000 0.5000");
+        assert_eq!(client[1], server[1]);
+        assert_ne!(client[0], server[0], "the client draws from seed + 1");
+        assert_ne!(run(8).0[0], server[0]);
+    }
+
     #[test]
     fn run_service_queries_and_game_fields_come_from_real_toml() {
         let probe = r#"
