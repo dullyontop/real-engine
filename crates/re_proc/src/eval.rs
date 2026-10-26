@@ -20,12 +20,16 @@
 //! shares its output. It samples its fields through
 //! [`NodeCtx::sample`](crate::NodeCtx::sample) instead of taking them over
 //! the window, so a node that only feeds a global node's fields does not
-//! run over the window.
+//! run over the window. Windows evaluated at the same moment on a cold
+//! cache may each run it; they get the same output. What a cell node makes
+//! from global inputs for every cell, such as a joined road network, is
+//! kept in the memory cache too ([`NodeCtx::shared`](crate::NodeCtx::shared)).
 
+use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use re_core::files::{ProjectFiles, ProjectPath, WritableDir};
@@ -42,7 +46,8 @@ use crate::canon::{canonical_json, fragment_hash, hash64};
 use crate::codes;
 use crate::graph::ProcGraph;
 use crate::nodes::{
-    Domain, NodeCtx, NodeDef, NodeRegistry, Streaming, natural_cmp, sink_fragment_in,
+    Domain, NodeCtx, NodeDef, NodeError, NodeRegistry, SharedValue, Streaming, natural_cmp,
+    sink_fragment_in,
 };
 use crate::value::{DerivedAsset, Field, Fragment, Output, PortType};
 
@@ -198,9 +203,22 @@ struct MemEntry {
     used: u64,
 }
 
+/// A value nodes share ([`NodeCtx::shared`](crate::NodeCtx::shared)):
+/// made once, by whichever node asks first.
+type SharedSlot = Arc<OnceLock<Result<SharedValue, NodeError>>>;
+
+struct SharedEntry {
+    slot: SharedSlot,
+    /// Counted in the cache's bytes once made.
+    bytes: u64,
+    used: u64,
+}
+
 #[derive(Default)]
 struct MemCache {
     map: HashMap<[u8; 32], MemEntry>,
+    /// Values made from nodes' inputs and shared, by key.
+    shared: HashMap<[u8; 32], SharedEntry>,
     bytes: u64,
     tick: u64,
 }
@@ -709,6 +727,9 @@ impl Evaluator {
             })
             .map(Some)
         };
+        let share = |key: [u8; 32], make: &mut dyn FnMut() -> Result<SharedValue, NodeError>| {
+            self.shared(key, make)
+        };
         let ctx = NodeCtx {
             node_id: id,
             key: job.key,
@@ -726,6 +747,7 @@ impl Evaluator {
             logs: Default::default(),
             upstream: region.then_some(&read as &crate::nodes::Upstream),
             sample: sampling.map(|_| &sample as &crate::nodes::Sampler),
+            share: Some(&share as &crate::nodes::Share),
         };
         let output = job.def.eval(&ctx, &job.params).map_err(|e| {
             Diagnostic::error(
@@ -748,25 +770,84 @@ impl Evaluator {
         }
     }
 
-    /// Drops least recently used entries until the cache fits its budget;
-    /// entries used by the evaluation that just ran (`tick`) are kept.
+    /// The value shared under `key`, made by `make` if no node has made it
+    /// (see [`NodeCtx::shared`](crate::NodeCtx::shared)). A node asking
+    /// while another makes it waits for that one.
+    fn shared(
+        &self,
+        key: [u8; 32],
+        make: &mut dyn FnMut() -> Result<SharedValue, NodeError>,
+    ) -> Result<Arc<dyn Any + Send + Sync>, NodeError> {
+        let slot = {
+            let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
+            let tick = m.tick;
+            let e = m.shared.entry(key).or_insert_with(|| SharedEntry {
+                slot: SharedSlot::default(),
+                bytes: 0,
+                used: tick,
+            });
+            e.used = tick;
+            e.slot.clone()
+        };
+        let mut made = false;
+        let r = slot.get_or_init(|| {
+            made = true;
+            make()
+        });
+        if made {
+            // Count what was made, unless it was dropped meanwhile; a
+            // failure is not kept.
+            let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
+            let ours = m
+                .shared
+                .get(&key)
+                .is_some_and(|e| Arc::ptr_eq(&e.slot, &slot));
+            match r {
+                Ok((_, bytes)) if ours => {
+                    if let Some(e) = m.shared.get_mut(&key) {
+                        e.bytes = *bytes;
+                    }
+                    m.bytes += bytes;
+                }
+                Err(_) if ours => {
+                    m.shared.remove(&key);
+                }
+                _ => {}
+            }
+        }
+        r.as_ref().map(|(v, _)| v.clone()).map_err(Clone::clone)
+    }
+
+    /// Drops least recently used entries (outputs and shared values) until
+    /// the cache fits its budget; entries used by the evaluation that just
+    /// ran (`tick`) are kept.
     fn evict(&self, tick: u64) {
         let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
         if m.bytes <= self.budget {
             return;
         }
-        let mut old: Vec<([u8; 32], u64, u64)> = m
+        let mut old: Vec<(u64, bool, [u8; 32], u64)> = m
             .map
             .iter()
             .filter(|(_, e)| e.used < tick)
-            .map(|(k, e)| (*k, e.used, e.bytes))
+            .map(|(k, e)| (e.used, false, *k, e.bytes))
             .collect();
-        old.sort_by_key(|(k, used, _)| (*used, *k));
-        for (k, _, bytes) in old {
+        old.extend(
+            m.shared
+                .iter()
+                .filter(|(_, e)| e.used < tick)
+                .map(|(k, e)| (e.used, true, *k, e.bytes)),
+        );
+        old.sort_unstable();
+        for (_, shared, k, bytes) in old {
             if m.bytes <= self.budget {
                 break;
             }
-            m.map.remove(&k);
+            if shared {
+                m.shared.remove(&k);
+            } else {
+                m.map.remove(&k);
+            }
             m.bytes -= bytes;
         }
     }
@@ -962,6 +1043,11 @@ fn sample_field(
 ) -> Result<Vec<f64>, String> {
     const BLOCK: i64 = 16;
     let s = f64::from(spacing);
+    if !(s.is_finite() && s > 0.0) {
+        return Err(format!(
+            "fields are sampled on a grid of {spacing} m; its spacing must be positive"
+        ));
+    }
     let mut cells = Vec::with_capacity(points.len());
     for p in points {
         if !p

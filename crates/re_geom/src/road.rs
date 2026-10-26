@@ -1012,6 +1012,18 @@ pub fn network(paths: &[Path], style: &RoadStyle) -> Result<Network, GeomError> 
 }
 
 impl Network {
+    /// About how many bytes it holds, for a cache's budget.
+    pub fn bytes(&self) -> u64 {
+        let stations: usize = self.pieces.iter().map(|p| p.stations.len()).sum();
+        let points: usize = self.junctions.iter().map(|j| j.area.point_count()).sum();
+        (size_of::<Network>()
+            + self.pieces.len() * size_of::<Piece>()
+            + stations * size_of::<Station>()
+            + self.heights.len() * size_of::<f64>()
+            + self.junctions.len() * size_of::<Junction>()
+            + points * size_of::<[f64; 2]>()) as u64
+    }
+
     /// Each junction's centre `[x, y, z]`, `y` being its surface height.
     pub fn junctions(&self) -> Vec<[f64; 3]> {
         self.junctions.iter().map(|j| j.centre).collect()

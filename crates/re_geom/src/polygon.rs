@@ -12,6 +12,8 @@
 //! counter-clockwise in `(x, z)` and holes clockwise, so even-odd and
 //! non-zero filling agree on them ([`Shapes::contains`]).
 
+use std::collections::HashMap;
+
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::scale::{FixedScaleFloatOverlay, FixedScaleOverlayError};
@@ -340,44 +342,6 @@ impl Shapes {
             .map_err(range_error)
     }
 
-    /// The part of these simplified shapes inside the rectangle from `min` to
-    /// `max` (in X and Z), simplified. A shape whose box lies inside it is
-    /// kept as it is, one whose box misses it is dropped, and the others are
-    /// cut by it, so the rectangles of a grid share out the area exactly,
-    /// with no gap or overlap along their borders.
-    pub fn clip(&self, min: [f64; 2], max: [f64; 2]) -> Result<Shapes, GeomError> {
-        check_point(min, "the clip rectangle")?;
-        check_point(max, "the clip rectangle")?;
-        if !(min[0] < max[0] && min[1] < max[1]) {
-            return Ok(Shapes::new());
-        }
-        let mut inside = Shapes::new();
-        let mut cut = Shapes::new();
-        for s in &self.shapes {
-            match points_box(std::iter::once(&s.outer).chain(&s.holes).flatten()) {
-                Some(b) if b[0] >= min[0] && b[1] >= min[1] && b[2] <= max[0] && b[3] <= max[1] => {
-                    inside.shapes.push(s.clone());
-                }
-                Some(b) if b[0] < max[0] && b[2] > min[0] && b[1] < max[1] && b[3] > min[1] => {
-                    cut.shapes.push(s.clone());
-                }
-                _ => {}
-            }
-        }
-        if !cut.is_empty() {
-            let rect = Shapes::polygon(vec![
-                [min[0], min[1]],
-                [max[0], min[1]],
-                [max[0], max[1]],
-                [min[0], max[1]],
-            ]);
-            inside
-                .shapes
-                .extend(cut.boolean(&rect, BoolOp::Intersect)?.shapes);
-        }
-        Ok(inside)
-    }
-
     /// Grows (positive `distance`) or shrinks (negative) every shape by
     /// `distance` metres. Holes shrink as the shape grows.
     pub fn offset(&self, distance: f64, join: Join) -> Result<Shapes, GeomError> {
@@ -522,6 +486,255 @@ pub(crate) fn triangulated(
     Ok((mesh, at))
 }
 
+/// Shapes triangulated once (as [`triangulate`] triangulates them), to be cut
+/// rectangle by rectangle with [`Triangles::mesh_in`]: the cells of a
+/// streamed world share one triangulation.
+#[derive(Clone, Debug, Default)]
+pub struct Triangles {
+    /// Each vertex's `[x, z]`, in metres.
+    points: Vec<[f64; 2]>,
+    /// Each triangle's vertices, clockwise in `(x, z)` (facing +Y).
+    triangles: Vec<[u32; 3]>,
+    /// Each triangle's box, `[min x, min z, max x, max z]`.
+    boxes: Vec<[f64; 4]>,
+}
+
+/// `shapes` triangulated, to be cut rectangle by rectangle (see
+/// [`Triangles`]).
+pub fn triangles(shapes: &Shapes) -> Result<Triangles, GeomError> {
+    let (mesh, points) = triangulated(shapes, 0.0, [0.0, 0.0])?;
+    let triangles: Vec<[u32; 3]> = mesh.indices.as_chunks::<3>().0.to_vec();
+    let boxes = triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(|i| points[i as usize]);
+            [
+                a[0].min(b[0]).min(c[0]),
+                a[1].min(b[1]).min(c[1]),
+                a[0].max(b[0]).max(c[0]),
+                a[1].max(b[1]).max(c[1]),
+            ]
+        })
+        .collect();
+    Ok(Triangles {
+        points,
+        triangles,
+        boxes,
+    })
+}
+
+impl Triangles {
+    /// About how many bytes it holds, for a cache's budget.
+    pub fn bytes(&self) -> u64 {
+        (self.points.len() * size_of::<[f64; 2]>()
+            + self.triangles.len() * (size_of::<[u32; 3]>() + size_of::<[f64; 4]>())) as u64
+    }
+
+    /// The area inside the rectangle from `min` to `max` as a flat mesh at
+    /// height `y`, facing +Y, with positions relative to `min` and UVs in
+    /// metres (as [`triangulate_at`] makes them). Each triangle is cut by
+    /// the rectangle's sides, and each point where a triangle's edge crosses
+    /// a side is worked out from that edge and that side alone. So the
+    /// rectangles of a grid put the points of their shared borders in the
+    /// same places, bit for bit: their meshes meet with no gap, overlap or
+    /// T-junction, and add up to the whole.
+    pub fn mesh_in(&self, y: f32, min: [f64; 2], max: [f64; 2]) -> Result<MeshData, GeomError> {
+        let (at, triangles) = self.cut(min, max)?;
+        Ok(MeshData {
+            vertices: at
+                .iter()
+                .map(|p| Vertex {
+                    pos: [(p[0] - min[0]) as f32, y, (p[1] - min[1]) as f32],
+                    normal: [0.0, 1.0, 0.0],
+                    uv: [p[0] as f32, p[1] as f32],
+                    color: [1.0; 4],
+                })
+                .collect(),
+            indices: triangles.into_iter().flatten().collect(),
+        })
+    }
+
+    /// [`Triangles::mesh_in`]'s points and triangles.
+    pub(crate) fn cut(&self, min: [f64; 2], max: [f64; 2]) -> Result<Cut, GeomError> {
+        check_point(min, "the rectangle")?;
+        check_point(max, "the rectangle")?;
+        let mut at: Vec<[f64; 2]> = Vec::new();
+        let mut out: Vec<[u32; 3]> = Vec::new();
+        if !(min[0] < max[0] && min[1] < max[1]) {
+            return Ok((at, out));
+        }
+        // The rectangle's sides, x first: (axis, at, keep the side above,
+        // the range the crossing's other coordinate stays in). A side of z
+        // is cut after both of x, so its crossings stay in the column.
+        let all = [f64::NEG_INFINITY, f64::INFINITY];
+        let sides = [
+            (0, min[0], true, all),
+            (0, max[0], false, all),
+            (1, min[1], true, [min[0], max[0]]),
+            (1, max[1], false, [min[0], max[0]]),
+        ];
+        let mut index: HashMap<[u64; 2], u32> = HashMap::new();
+        let mut piece: Vec<Corner> = Vec::with_capacity(8);
+        let mut next: Vec<Corner> = Vec::with_capacity(8);
+        let mut ring: Vec<u32> = Vec::with_capacity(8);
+        for (t, b) in self.triangles.iter().zip(&self.boxes) {
+            if b[0] > max[0] || b[2] < min[0] || b[1] > max[1] || b[3] < min[1] {
+                continue;
+            }
+            let p = t.map(|i| self.points[i as usize]);
+            piece.clear();
+            piece.extend((0..3).map(|k| Corner {
+                p: p[k],
+                next: Line::edge(p[k], p[(k + 1) % 3]),
+            }));
+            for &(axis, at, above, range) in &sides {
+                keep_side(&piece, axis, at, above, range, &mut next);
+                std::mem::swap(&mut piece, &mut next);
+            }
+            // A corner on a side can come out twice.
+            piece.dedup_by(|b, a| a.p == b.p);
+            while piece.len() > 1 && piece[0].p == piece[piece.len() - 1].p {
+                piece.pop();
+            }
+            if piece.len() < 3 {
+                continue;
+            }
+            ring.clear();
+            for c in &piece {
+                // Adding 0.0 makes -0.0 into 0.0, the same point.
+                let p = [c.p[0] + 0.0, c.p[1] + 0.0];
+                let key = p.map(f64::to_bits);
+                let i = match index.get(&key) {
+                    Some(&i) => i,
+                    None => {
+                        let i = u32::try_from(at.len())
+                            .map_err(|_| GeomError::TooLarge(at.len() as u64 + 1))?;
+                        at.push(p);
+                        index.insert(key, i);
+                        i
+                    }
+                };
+                ring.push(i);
+            }
+            fan(&ring, &mut at, &mut out)?;
+        }
+        Ok((at, out))
+    }
+}
+
+/// Points `[x, z]` (metres), and triangles of indices into them.
+pub(crate) type Cut = (Vec<[f64; 2]>, Vec<[u32; 3]>);
+
+/// A corner of a triangle being cut, and the line its edge to the next
+/// corner lies on.
+#[derive(Clone, Copy, Debug)]
+struct Corner {
+    p: [f64; 2],
+    next: Line,
+}
+
+/// The line an edge of a triangle being cut lies on.
+#[derive(Clone, Copy, Debug)]
+enum Line {
+    /// The triangle's edge between these points, lowest first, so that both
+    /// triangles sharing the edge work out the same crossings.
+    Edge([f64; 2], [f64; 2]),
+    /// A rectangle's side, at this coordinate across it.
+    Side(f64),
+}
+
+impl Line {
+    fn edge(a: [f64; 2], b: [f64; 2]) -> Line {
+        if (a[0], a[1]) <= (b[0], b[1]) {
+            Line::Edge(a, b)
+        } else {
+            Line::Edge(b, a)
+        }
+    }
+
+    /// Where the line crosses the side where coordinate `axis` is `at`, the
+    /// other coordinate kept within `range`.
+    fn cross(self, axis: usize, at: f64, range: [f64; 2]) -> [f64; 2] {
+        let o = 1 - axis;
+        let v = match self {
+            // An end on the side is the crossing itself.
+            Line::Edge(a, _) if a[axis] == at => a[o],
+            Line::Edge(_, b) if b[axis] == at => b[o],
+            Line::Edge(a, b) => a[o] + (at - a[axis]) * (b[o] - a[o]) / (b[axis] - a[axis]),
+            // A side only crosses the sides across it.
+            Line::Side(s) => s,
+        };
+        let mut p = [at; 2];
+        p[o] = v.clamp(range[0], range[1]);
+        p
+    }
+}
+
+/// The part of convex `piece` where coordinate `axis` is at least (`above`)
+/// or at most `at`, into `out` (Sutherland–Hodgman).
+fn keep_side(
+    piece: &[Corner],
+    axis: usize,
+    at: f64,
+    above: bool,
+    range: [f64; 2],
+    out: &mut Vec<Corner>,
+) {
+    out.clear();
+    let inside = |p: [f64; 2]| if above { p[axis] >= at } else { p[axis] <= at };
+    for (i, c) in piece.iter().enumerate() {
+        let n = piece[(i + 1) % piece.len()];
+        let (ci, ni) = (inside(c.p), inside(n.p));
+        if ci {
+            out.push(*c);
+        }
+        if ci != ni {
+            let p = c.next.cross(axis, at, range);
+            out.push(Corner {
+                p,
+                // Leaving runs along the side; entering, on along the edge.
+                next: if ci { Line::Side(at) } else { c.next },
+            });
+        }
+    }
+}
+
+/// Triangulates the convex polygon `ring` (indices into `at`, clockwise)
+/// into `out`, using every corner and making no triangle without area:
+/// fanned from the first corner that allows it, or else from a new point
+/// at the corners' mean, which lies inside. A ring without area makes
+/// nothing.
+fn fan(ring: &[u32], at: &mut Vec<[f64; 2]>, out: &mut Vec<[u32; 3]>) -> Result<(), GeomError> {
+    let n = ring.len();
+    let flat = |t: [u32; 3], at: &[[f64; 2]]| {
+        let [a, b, c] = t.map(|i| at[i as usize]);
+        (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]) == 0.0
+    };
+    let from =
+        |s: usize| (1..n - 1).map(move |k| [ring[s], ring[(s + k) % n], ring[(s + k + 1) % n]]);
+    if from(0).all(|t| flat(t, at)) {
+        return Ok(());
+    }
+    if let Some(s) = (0..n).find(|&s| !from(s).any(|t| flat(t, at))) {
+        out.extend(from(s));
+        return Ok(());
+    }
+    let mut mean = [0.0; 2];
+    for &i in ring {
+        mean[0] += at[i as usize][0];
+        mean[1] += at[i as usize][1];
+    }
+    let c = u32::try_from(at.len()).map_err(|_| GeomError::TooLarge(at.len() as u64 + 1))?;
+    at.push([mean[0] / n as f64, mean[1] / n as f64]);
+    for k in 0..n {
+        let t = [c, ring[k], ring[(k + 1) % n]];
+        if !flat(t, at) {
+            out.push(t);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,46 +766,169 @@ mod tests {
         assert!((area - 64.0).abs() < 1e-3);
     }
 
-    #[test]
-    fn clipping_to_a_grid_shares_out_the_area() {
-        let ring = Shapes {
-            shapes: vec![Shape {
-                outer: square(-30.5, -20.25, 70.0),
-                holes: vec![square(-5.0, -5.0, 12.0)],
-            }],
-        };
-        let all = ring
-            .boolean(&Shapes::polygon(square(50.0, 50.0, 3.0)), BoolOp::Union)
-            .unwrap();
-        assert_eq!(all.shapes.len(), 2);
+    /// Cuts `t` on a grid of `size` m cells (`cells` × `cells` of them),
+    /// checks each cell's part, and returns the parts' area. Every point
+    /// must lie in its cell, every triangle face +Y with area, and two
+    /// neighbouring cells with something in them must put the same points on
+    /// their shared border.
+    fn cut_on_grid(t: &Triangles, size: f64, cells: std::ops::Range<i32>) -> f64 {
         let mut sum = 0.0;
-        let mut whole = 0;
-        for cz in -4..4 {
-            for cx in -4..4 {
-                let min = [f64::from(cx) * 16.0, f64::from(cz) * 16.0];
-                let max = [min[0] + 16.0, min[1] + 16.0];
-                let part = all.clip(min, max).unwrap();
-                if let Some(b) = part.bbox() {
-                    assert!(b[0] >= min[0] && b[1] >= min[1] && b[2] <= max[0] && b[3] <= max[1]);
+        // Each cell's points on its sides: min x, max x, min z, max z.
+        let mut sides: HashMap<(i32, i32), [Vec<[u64; 2]>; 4]> = HashMap::new();
+        for cz in cells.clone() {
+            for cx in cells.clone() {
+                let min = [f64::from(cx) * size, f64::from(cz) * size];
+                let max = [f64::from(cx + 1) * size, f64::from(cz + 1) * size];
+                let (at, tris) = t.cut(min, max).unwrap();
+                for p in &at {
+                    assert!(
+                        p[0] >= min[0] && p[0] <= max[0] && p[1] >= min[1] && p[1] <= max[1],
+                        "{p:?} is outside {min:?}..{max:?}"
+                    );
                 }
-                // The small square lies in one cell and is kept as it is.
-                whole += part
-                    .shapes
-                    .iter()
-                    .filter(|s| s.outer.len() == 4 && s.outer.contains(&[50.0, 50.0]))
-                    .count();
-                sum += part.area();
-                let mesh = triangulate_at(&part, 1.0, min).unwrap();
-                for v in &mesh.vertices {
-                    assert!((0.0..=16.0).contains(&v.pos[0]) && (0.0..=16.0).contains(&v.pos[2]));
-                    assert_eq!(v.uv, [v.pos[0] + min[0] as f32, v.pos[2] + min[1] as f32]);
+                for tri in &tris {
+                    let [a, b, c] = tri.map(|i| at[i as usize]);
+                    let cross = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+                    assert!(cross < 0.0, "{a:?} {b:?} {c:?} is flat or faces down");
+                    sum -= cross * 0.5;
                 }
+                // Triangles sharing an edge cross a side at the same point,
+                // not at two points a rounding apart.
+                for (i, p) in at.iter().enumerate() {
+                    for q in &at[i + 1..] {
+                        let d = (p[0] - q[0]).abs().max((p[1] - q[1]).abs());
+                        assert!(d > 1e-9, "{p:?} and {q:?} in {min:?}..{max:?}");
+                    }
+                }
+                if tris.is_empty() {
+                    continue;
+                }
+                let mut s: [Vec<[u64; 2]>; 4] = Default::default();
+                for p in &at {
+                    let bits = p.map(f64::to_bits);
+                    for (k, on) in [
+                        p[0] == min[0],
+                        p[0] == max[0],
+                        p[1] == min[1],
+                        p[1] == max[1],
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        if on {
+                            s[k].push(bits);
+                        }
+                    }
+                }
+                s.iter_mut().for_each(|v| v.sort_unstable());
+                sides.insert((cx, cz), s);
             }
         }
-        assert_eq!(whole, 1);
-        assert!((sum - all.area()).abs() < 1e-6, "{sum} vs {}", all.area());
-        assert!(all.clip([0.0, 0.0], [0.0, 5.0]).unwrap().is_empty());
+        for (&(cx, cz), s) in &sides {
+            if let Some(right) = sides.get(&(cx + 1, cz)) {
+                assert_eq!(s[1], right[0], "cells ({cx}, {cz}) and ({}, {cz})", cx + 1);
+            }
+            if let Some(up) = sides.get(&(cx, cz + 1)) {
+                assert_eq!(s[3], up[2], "cells ({cx}, {cz}) and ({cx}, {})", cz + 1);
+            }
+        }
+        sum
+    }
+
+    /// The area of every triangle of `t`.
+    fn whole_area(t: &Triangles) -> f64 {
+        t.triangles
+            .iter()
+            .map(|tri| {
+                let [a, b, c] = tri.map(|i| t.points[i as usize]);
+                -((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) * 0.5
+            })
+            .sum()
+    }
+
+    #[test]
+    fn cut_cells_meet_exactly_and_add_up_to_the_whole() {
+        // Points off any millimetre grid, a concave outline and a hole.
+        let a = Shapes::polygon(vec![
+            [-20.3137, -18.7071],
+            [25.1234, -21.9876],
+            [29.4142, 23.3333],
+            [-17.6543, 26.2109],
+        ]);
+        let b = Shapes {
+            shapes: vec![Shape {
+                outer: vec![
+                    [30.77, -40.31],
+                    [71.9137, -33.0021],
+                    [64.4441, 12.5813],
+                    [48.1234, 1.0303],
+                    [36.0101, 30.3131],
+                    [12.3457, -12.9876],
+                ],
+                holes: vec![vec![
+                    [38.1, -20.2],
+                    [52.37, -24.61],
+                    [55.05, -5.5],
+                    [41.7, -3.3],
+                ]],
+            }],
+        };
+        let all = a.boolean(&b, BoolOp::Union).unwrap();
+        let t = triangles(&all).unwrap();
+        let whole = whole_area(&t);
+        assert!(
+            (whole - all.area()).abs() < 1e-6,
+            "{whole} vs {}",
+            all.area()
+        );
+        for size in [16.0, 10.0, 12.5, 64.0] {
+            let n = (128.0 / size) as i32;
+            let sum = cut_on_grid(&t, size, -n..n);
+            assert!(
+                (sum - whole).abs() < 1e-9 * whole,
+                "{size} m cells: {sum} vs {whole}"
+            );
+        }
+    }
+
+    #[test]
+    fn cut_cells_keep_nothing_they_only_touch() {
+        // A ring along the grid's lines, and a diamond touching four cells'
+        // sides with its corners.
+        let ring = Shapes {
+            shapes: vec![Shape {
+                outer: square(0.0, 0.0, 32.0),
+                holes: vec![square(8.0, 8.0, 16.0)],
+            }],
+        };
+        let diamond = Shapes::polygon(vec![[48.0, 8.0], [56.0, 0.0], [64.0, 8.0], [56.0, 16.0]]);
+        let t = triangles(&ring.boolean(&diamond, BoolOp::Union).unwrap()).unwrap();
+        let sum = cut_on_grid(&t, 16.0, -2..6);
+        assert!((sum - (1024.0 - 256.0 + 128.0)).abs() < 1e-9, "{sum}");
+        assert!(t.cut([-16.0, 0.0], [0.0, 16.0]).unwrap().1.is_empty());
+        assert!(t.cut([32.0, 0.0], [48.0, 16.0]).unwrap().1.is_empty());
+        // The diamond is in one cell, whole.
+        let (at, tris) = t.cut([48.0, 0.0], [64.0, 16.0]).unwrap();
+        assert_eq!((at.len(), tris.len()), (4, 2));
+        assert!(t.cut([0.0, 0.0], [0.0, 5.0]).unwrap().1.is_empty());
         assert_eq!(Shapes::new().bbox(), None, "no shapes, no box");
+    }
+
+    #[test]
+    fn a_cut_mesh_sits_at_its_corner_with_uvs_in_metres() {
+        let s = Shapes::polygon(vec![[1.25, 2.5], [9.75, 3.0], [5.0, 11.5]]);
+        let t = triangles(&s).unwrap();
+        let whole = triangulate(&s, 2.0).unwrap();
+        for min in [[0.0, 0.0], [-16.0, -32.0]] {
+            let mesh = t.mesh_in(2.0, min, [16.0, 16.0]).unwrap();
+            assert!(mesh.is_well_formed());
+            assert_eq!(mesh.indices.len(), whole.indices.len());
+            for v in &mesh.vertices {
+                let world = [v.pos[0] + min[0] as f32, v.pos[2] + min[1] as f32];
+                assert_eq!((v.uv, v.pos[1], v.normal), (world, 2.0, [0.0, 1.0, 0.0]));
+            }
+        }
+        assert!(t.bytes() > 0);
     }
 
     #[test]

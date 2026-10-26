@@ -1,10 +1,8 @@
 //! `path.spline`, `road.mesh`, `road.footprint` and `terrain.conform`
 //! (ADR-0043 §5).
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
-use re_geom::GeomError;
 use re_geom::polygon::MAX_COORD;
 use re_geom::road::{self, ControlPoint, Network, RoadStyle};
 use schemars::JsonSchema;
@@ -221,7 +219,7 @@ fn road_mesh(ctx: &NodeCtx, p: &RoadMeshParams) -> Result<Output, NodeError> {
         // Streamed: the cell's part of the network every cell shares, local
         // to the cell's corner.
         Some(d) => {
-            let network = shared_network(&ctx.paths(), &style)?;
+            let network = shared_network(ctx, &ctx.paths(), &style)?;
             let (min, max) = (d.min().map(f64::from), d.max().map(f64::from));
             (network.mesh_in(min, max)?, network.junctions().len())
         }
@@ -240,24 +238,15 @@ fn road_mesh(ctx: &NodeCtx, p: &RoadMeshParams) -> Result<Output, NodeError> {
     })))
 }
 
-/// Road networks joined for streamed cells, least recently used first.
-const NETWORKS: usize = 4;
-
-type NetworkSlot = Arc<OnceLock<Result<Arc<Network>, GeomError>>>;
-
-/// The networks by the hash of what they were joined from.
-type Networks = Mutex<VecDeque<([u8; 32], NetworkSlot)>>;
-
-fn networks() -> &'static Networks {
-    static CACHE: OnceLock<Networks> = OnceLock::new();
-    CACHE.get_or_init(Default::default)
-}
-
-/// The network of `paths`, joined once for all the cells that ask: a cell
-/// asking while another joins it waits for that one.
-fn shared_network(paths: &[&Arc<RoadPath>], style: &RoadStyle) -> Result<Arc<Network>, String> {
+/// The network of `paths`, joined once for all the cells that ask and kept
+/// in the evaluator's memory cache ([`NodeCtx::shared`]).
+fn shared_network(
+    ctx: &NodeCtx,
+    paths: &[&Arc<RoadPath>],
+    style: &RoadStyle,
+) -> Result<Arc<Network>, NodeError> {
     if paths.is_empty() {
-        return Err("no path is connected".into());
+        return Err("no path is connected".to_string().into());
     }
     let mut h = blake3::Hasher::new();
     h.update(b"re_proc road.mesh network v1");
@@ -274,26 +263,12 @@ fn shared_network(paths: &[&Arc<RoadPath>], style: &RoadStyle) -> Result<Arc<Net
             }
         }
     }
-    let key = *h.finalize().as_bytes();
-    let slot = {
-        let mut cache = networks().lock().unwrap_or_else(|e| e.into_inner());
-        let entry = match cache.iter().position(|(k, _)| *k == key) {
-            Some(i) => cache.remove(i).expect("the entry was found"),
-            None => (key, NetworkSlot::default()),
-        };
-        let slot = entry.1.clone();
-        cache.push_back(entry);
-        while cache.len() > NETWORKS {
-            cache.pop_front();
-        }
-        slot
-    };
-    slot.get_or_init(|| {
+    ctx.shared(*h.finalize().as_bytes(), || {
         let owned: Vec<road::Path> = paths.iter().map(|p| (***p).clone()).collect();
-        road::network(&owned, style).map(Arc::new)
+        let network = road::network(&owned, style)?;
+        let bytes = network.bytes();
+        Ok((network, bytes))
     })
-    .clone()
-    .map_err(|e| e.to_string())
 }
 
 /// Parameters of `road.footprint`.

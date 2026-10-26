@@ -17,6 +17,7 @@ mod scatter;
 mod shape;
 mod terrain;
 
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
@@ -834,6 +835,9 @@ pub struct NodeCtx<'a> {
     /// chunk (`Ok(None)` when the port is not connected). Its fields are not
     /// in [`NodeCtx::inputs`] then.
     pub sample: Option<&'a Sampler<'a>>,
+    /// The evaluator's store of values made from inputs and shared between
+    /// evaluations ([`NodeCtx::shared`]); `None` makes them every time.
+    pub share: Option<&'a Share<'a>>,
 }
 
 /// Evaluates the field on input `port` over a window (see
@@ -843,6 +847,18 @@ pub type Upstream<'a> = dyn Fn(&str, Domain) -> Result<Arc<Field>, String> + Syn
 /// Samples the field on input `port` at points `[x, z]` (see
 /// [`NodeCtx::sample`]).
 pub type Sampler<'a> = dyn Fn(&str, &[[f64; 2]]) -> Result<Option<Vec<f64>>, String> + Sync + 'a;
+
+/// A value made for [`NodeCtx::shared`], and about how many bytes it holds.
+pub type SharedValue = (Arc<dyn Any + Send + Sync>, u64);
+
+/// Gives the value shared under a key, made by the function the first time
+/// (see [`NodeCtx::shared`]).
+pub type Share<'a> = dyn Fn(
+        [u8; 32],
+        &mut dyn FnMut() -> Result<SharedValue, NodeError>,
+    ) -> Result<Arc<dyn Any + Send + Sync>, NodeError>
+    + Sync
+    + 'a;
 
 /// At most this many lines of a node's log reach its report.
 pub const MAX_LOG_LINES: usize = 100;
@@ -935,6 +951,37 @@ impl NodeCtx<'_> {
             .collect();
         paths.sort_by(|a, b| natural_cmp(a.0, b.0));
         paths.into_iter().map(|(_, p)| p).collect()
+    }
+
+    /// The value `make` makes, made once per `key` and kept in the
+    /// evaluator's memory cache with the outputs (counted against its budget
+    /// as the bytes `make` gives, least recently used out), so the cells and
+    /// chunks of a streamed source share one road network or triangulation.
+    /// A node asking while another makes it waits for that one, so `make`
+    /// must not evaluate graphs or wait on the pool. `key` hashes everything
+    /// the value depends on, with a tag naming what it is. A failure is
+    /// given to the nodes waiting, and not kept.
+    pub fn shared<T: Any + Send + Sync>(
+        &self,
+        key: [u8; 32],
+        make: impl FnOnce() -> Result<(T, u64), NodeError>,
+    ) -> Result<Arc<T>, NodeError> {
+        let Some(share) = self.share else {
+            return make().map(|(v, _)| Arc::new(v));
+        };
+        let mut make = Some(make);
+        let mut once = || -> Result<SharedValue, NodeError> {
+            let make = make
+                .take()
+                .ok_or_else(|| "a shared value was made twice".to_string())?;
+            let (v, bytes) = make()?;
+            Ok((Arc::new(v) as Arc<dyn Any + Send + Sync>, bytes))
+        };
+        share(key, &mut once)?.downcast::<T>().map_err(|_| {
+            "a value of another type is shared under the same key"
+                .to_string()
+                .into()
+        })
     }
 
     /// The required field on `port` (validation guarantees it).

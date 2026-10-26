@@ -7,14 +7,15 @@
 mod support;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use glam::Vec3;
 use re_command::EditState;
 use re_proc::stream::{StreamConfig, Streamer, TerrainView, step};
 use re_proc::{
     CacheState, Domain, EvalOptions, Evaluation, Evaluator, Field, GraphStore, MeshValue, NodeCtx,
-    NodeDef, NodeRegistry, NodeSpec, Output, Params, PortDef, PortType, ProcGraph, RoadPath,
-    Streaming, register_generator,
+    NodeDef, NodeError, NodeRegistry, NodeSpec, Output, Params, Points, PortDef, PortType,
+    ProcGraph, RoadPath, Streaming, register_generator,
 };
 use re_reflect::Value;
 use re_scene::World;
@@ -445,6 +446,7 @@ fn cells_share_out_the_road_surface() {
 
 #[test]
 fn cells_share_out_shape_meshes() {
+    // Points off any millimetre grid, so cut points are not round numbers.
     let doc = graph(
         7,
         &[
@@ -452,8 +454,8 @@ fn cells_share_out_shape_meshes() {
                 "plaza",
                 "shape.polygon",
                 json!({
-                    "points": [[10.0, -5.0], [40.0, -5.0], [40.0, 25.0], [10.0, 25.0]],
-                    "holes": [[[15.0, 15.0], [25.0, 15.0], [20.0, 25.0]]],
+                    "points": [[10.3137, -5.2071], [40.1234, -4.9876], [39.4142, 25.3333], [9.6543, 24.2109]],
+                    "holes": [[[15.1, 15.2], [25.37, 14.61], [20.05, 24.5]]],
                 }),
             ),
             ("pad", "shape.mesh", json!({ "height": 2.0 })),
@@ -463,9 +465,12 @@ fn cells_share_out_shape_meshes() {
     let g = build(&doc);
     let ev = evaluator(2);
     let whole = area(&mesh_of(&evaluate(&ev, &g, &EvalOptions::default()), "pad").mesh);
-    assert!((whole - 850.0).abs() < 1e-6, "{whole}");
-    // 16 m cells.
+    assert!((whole - 850.0).abs() < 20.0, "{whole}");
+    // 16 m cells: each cell's points on its sides (min x, max x, min z, max
+    // z), in world metres (the UVs).
+    type Sides = [Vec<[u32; 2]>; 4];
     let mut total = 0.0;
+    let mut sides: Vec<((i64, i64), Sides)> = Vec::new();
     for z in -1..2 {
         for x in 0..3 {
             let d = Domain {
@@ -475,19 +480,147 @@ fn cells_share_out_shape_meshes() {
             };
             let m = mesh_of(&evaluate(&ev, &g, &streamed(d, Some(4.0))), "pad");
             let [cx, cz] = d.min();
+            let mut s = Sides::default();
             for v in &m.mesh.vertices {
                 // Within the cell, local to its corner, at the pad's height;
                 // texture coordinates stay in world metres.
-                assert!((-1e-3..16.001).contains(&v.pos[0]), "{v:?}");
-                assert!((-1e-3..16.001).contains(&v.pos[2]), "{v:?}");
+                assert!((0.0..=16.0).contains(&v.pos[0]), "{v:?}");
+                assert!((0.0..=16.0).contains(&v.pos[2]), "{v:?}");
                 assert_eq!(v.pos[1], 2.0);
                 assert!((v.uv[0] - (v.pos[0] + cx)).abs() < 1e-4, "{v:?}");
                 assert!((v.uv[1] - (v.pos[2] + cz)).abs() < 1e-4, "{v:?}");
+                let uv = v.uv.map(f32::to_bits);
+                for (k, on) in [
+                    v.pos[0] == 0.0,
+                    v.pos[0] == 16.0,
+                    v.pos[2] == 0.0,
+                    v.pos[2] == 16.0,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if on {
+                        s[k].push(uv);
+                    }
+                }
             }
+            s.iter_mut().for_each(|v| v.sort_unstable());
             total += area(&m.mesh);
+            sides.push(((x, z), s));
         }
     }
-    assert!((total - 850.0).abs() < 1e-3, "{total}");
+    assert!((total - whole).abs() < 1e-3, "{total} vs {whole}");
+    // Neighbouring cells put the same points on their shared border.
+    let side = |x: i64, z: i64| sides.iter().find(|(c, _)| *c == (x, z)).map(|(_, s)| s);
+    let mut shared = 0;
+    for ((x, z), s) in &sides {
+        if let Some(right) = side(x + 1, *z) {
+            assert_eq!(s[1], right[0], "cells ({x}, {z}) and ({}, {z})", x + 1);
+            shared += s[1].len();
+        }
+        if let Some(up) = side(*x, z + 1) {
+            assert_eq!(s[3], up[2], "cells ({x}, {z}) and ({x}, {})", z + 1);
+            shared += s[3].len();
+        }
+    }
+    assert!(shared > 8, "{shared} points on shared borders");
+}
+
+/// How many values `test.shared` nodes have made.
+static MADE: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct KeyParams {
+    key: u8,
+}
+
+impl Params for KeyParams {}
+
+/// A cell kind that shares a value under its `key`, as `road.mesh` shares
+/// its network.
+fn shared_kind() -> NodeDef {
+    NodeDef::new(
+        NodeSpec {
+            kind: "test.shared",
+            version: 1,
+            oldest: 1,
+            migrations: &[],
+            streaming: Streaming::Cell,
+            doc: "Shares a value.",
+            inputs: &[],
+            variadic: None,
+            output: PortType::Points,
+            uses_seed: false,
+            file_params: &[],
+        },
+        |ctx: &NodeCtx, p: &KeyParams| -> Result<Output, NodeError> {
+            let v = ctx.shared([p.key; 32], || {
+                MADE.fetch_add(1, Ordering::Relaxed);
+                Ok((u64::from(p.key), 8))
+            })?;
+            assert_eq!(*v, u64::from(p.key));
+            Ok(Output::Points(Arc::new(Points::default())))
+        },
+    )
+}
+
+#[test]
+fn shared_values_are_made_once_however_many_nodes_share() {
+    let mut r = NodeRegistry::m1();
+    r.register(shared_kind());
+    let r = Arc::new(r);
+    let shares = |keys: std::ops::Range<u8>| {
+        let nodes: Vec<(String, Json)> = keys
+            .map(|k| (format!("s{k}"), json!({ "key": k })))
+            .collect();
+        let nodes: Vec<(&str, &str, Json)> = nodes
+            .iter()
+            .map(|(id, p)| (id.as_str(), "test.shared", p.clone()))
+            .collect();
+        ProcGraph::from_doc(&graph(7, &nodes, &[]), &r).unwrap()
+    };
+    // Six networks, more than a memo of four would keep, in every cell.
+    let six = shares(0..6);
+    let ev = Evaluator::new(r.clone());
+    for z in 0..2 {
+        for x in 0..4 {
+            evaluate(&ev, &six, &streamed(cell(x, z), None));
+        }
+    }
+    assert_eq!(MADE.load(Ordering::Relaxed), 6);
+    // Values the last evaluation did not use go when the cache is over its
+    // budget, and are made again when asked for.
+    let small = Evaluator::new(r.clone()).with_memory_budget(1);
+    evaluate(&small, &six, &streamed(cell(0, 0), None));
+    evaluate(&small, &six, &streamed(cell(1, 0), None));
+    assert_eq!(MADE.load(Ordering::Relaxed), 12);
+    evaluate(&small, &shares(6..9), &streamed(cell(0, 0), None));
+    evaluate(&small, &six, &streamed(cell(0, 0), None));
+    assert_eq!(MADE.load(Ordering::Relaxed), 21);
+}
+
+#[test]
+fn a_global_spacing_must_be_positive() {
+    let doc = graph(
+        7,
+        &[
+            (
+                "h",
+                "terrain.heightfield",
+                json!({ "cell": 4.0, "height": 40.0, "scale": 0.01 }),
+            ),
+            ("road", "path.spline", json!({ "points": ROAD })),
+        ],
+        &[("h", "field", "road", "field")],
+    );
+    let e = evaluator(1).evaluate(&build(&doc), &streamed(cell(0, 0), Some(0.0)));
+    let message = e
+        .report
+        .first_error()
+        .map(|d| d.message.clone())
+        .unwrap_or_default();
+    assert!(message.contains("must be positive"), "{message}");
 }
 
 #[derive(Default, Deserialize, JsonSchema)]

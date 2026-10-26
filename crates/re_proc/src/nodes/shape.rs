@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use re_geom::polygon::{self, Shape};
+use re_geom::polygon::{self, Shape, Triangles};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -153,10 +153,11 @@ impl Params for ShapeMeshParams {
 fn shape_mesh(ctx: &NodeCtx, p: &ShapeMeshParams) -> Result<Output, NodeError> {
     let s = ctx.need_shapes("shapes")?;
     let mesh = match ctx.domain {
-        // Streamed: the shapes cut to the cell, local to its corner.
+        // Streamed: the cell's part of one triangulation every cell shares,
+        // cut at the cell's sides, local to its corner.
         Some(d) => {
             let (min, max) = (d.min().map(f64::from), d.max().map(f64::from));
-            polygon::triangulate_at(&s.clip(min, max)?, p.height, min)?
+            shared_triangles(ctx, s)?.mesh_in(p.height, min, max)?
         }
         None => polygon::triangulate(s, p.height)?,
     };
@@ -165,6 +166,28 @@ fn shape_mesh(ctx: &NodeCtx, p: &ShapeMeshParams) -> Result<Output, NodeError> {
         material: p.material.clone(),
         asset: ctx.key,
     })))
+}
+
+/// `shapes` triangulated once for all the cells that ask, and kept in the
+/// evaluator's memory cache ([`NodeCtx::shared`]).
+fn shared_triangles(ctx: &NodeCtx, shapes: &Shapes) -> Result<Arc<Triangles>, NodeError> {
+    let mut h = blake3::Hasher::new();
+    h.update(b"re_proc shape.mesh triangles v1");
+    for s in &shapes.shapes {
+        h.update(&(s.holes.len() as u64).to_le_bytes());
+        for c in std::iter::once(&s.outer).chain(&s.holes) {
+            h.update(&(c.len() as u64).to_le_bytes());
+            for p in c {
+                h.update(&p[0].to_le_bytes());
+                h.update(&p[1].to_le_bytes());
+            }
+        }
+    }
+    ctx.shared(*h.finalize().as_bytes(), || {
+        let t = polygon::triangles(shapes)?;
+        let bytes = t.bytes();
+        Ok((t, bytes))
+    })
 }
 
 /// Parameters of `field.from_shapes`.

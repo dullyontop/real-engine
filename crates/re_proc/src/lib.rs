@@ -21,8 +21,9 @@
 //! * [`register_commands`]: `graph.set_param`, `graph.regenerate`,
 //!   `graph.generate` and `graph.report`;
 //! * [`stream`]: world streaming (ADR-0042), cells generated and applied
-//!   around focus points at deterministic ticks; shape and road nodes are
-//!   [global](Streaming::Global), one result for every cell and chunk.
+//!   around focus points at deterministic ticks; shapes and road paths are
+//!   [global](Streaming::Global) (one result for every cell and chunk), and
+//!   road and shape meshes are cut cell by cell.
 //!
 //! # Ports and the graph's output
 //!
