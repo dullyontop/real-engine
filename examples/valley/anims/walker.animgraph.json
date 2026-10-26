@@ -21,6 +21,18 @@
     },
     {
       "kind": "clip",
+      "id": "walk_slow",
+      "clip": "models/walker.glb#walk",
+      "speed": 0.5
+    },
+    {
+      "kind": "clip",
+      "id": "walk_easy",
+      "clip": "models/walker.glb#walk",
+      "speed": 0.75
+    },
+    {
+      "kind": "clip",
       "id": "walk",
       "clip": "models/walker.glb#walk"
     },
@@ -50,6 +62,14 @@
         {
           "node": "idle",
           "threshold": 0.0
+        },
+        {
+          "node": "walk_slow",
+          "threshold": 0.85
+        },
+        {
+          "node": "walk_easy",
+          "threshold": 1.27
         },
         {
           "node": "walk",

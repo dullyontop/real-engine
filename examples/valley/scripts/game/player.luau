@@ -26,6 +26,14 @@ local STEP_REACH = 0.2
 local SIDES = { "L", "R" }
 local UP = vector.create(0, 1, 0)
 local DOWN = vector.create(0, -1, 0)
+-- Where the hero gets out, from the car's centre in its own frame: by the
+-- driver's door (the car's left, +X), else the other door, behind or in front.
+local EXITS = {
+	vector.create(2.2, 0, 0),
+	vector.create(-2.2, 0, 0),
+	vector.create(0, 0, -3.1),
+	vector.create(0, 0, 3.1),
+}
 
 local hero = script.entity :: Entity
 local body = world.get("hero_body") :: Entity
@@ -34,7 +42,7 @@ local car = world.get("car") :: Entity
 local air = 0 -- seconds since the hero left the ground
 local reach = { L = 0, R = 0 } -- each boot's reach ahead of the hips
 local swinging = { L = false, R = false } -- whether it is moving forward
-local fresh = true -- whether the boots' last reach is stale (after the air or the car)
+local fresh = true -- whether the boots' last reach is stale (after a fall or the car)
 local steps = 0 -- footsteps so far, to alternate the two takes
 
 body:add("Visible", { visible = true })
@@ -62,17 +70,34 @@ local function ground_under(e: Entity, below: number): number?
 	return ground_below(e:get("Transform", "translation") - vector.create(0, below, 0))
 end
 
+-- Standing room `offset` from the car (in its frame, but level, so that a
+-- tilted car still lets the hero out beside it), or nil. The ray starts just
+-- above the car's centre: ground above that (a bank, a tall rock, a trunk
+-- the ray starts inside) or more than 2 m below the wheels is no place to
+-- stand.
+local function exit_at(pos: vector, rot: Quat, offset: vector): vector?
+	local o = rot * offset
+	local spot = pos + vector.normalize(vector.create(o.x, 0, o.z)) * vector.magnitude(offset)
+	local ground = ground_below(vector.create(spot.x, pos.y + 0.5, spot.z))
+	if ground and ground <= pos.y and ground >= pos.y - 3 then
+		return vector.create(spot.x, ground + 0.95, spot.z)
+	end
+	return nil
+end
+
 local function get_out()
-	-- Out on the driver's side (the car's left, +X in its own frame), standing
-	-- on the ground there.
 	local pos: vector = car:get("Transform", "translation")
 	local rot: Quat = car:get("Transform", "rotation")
-	local door = pos + rot * vector.create(2.2, 0.8, 0)
-	local ground = ground_below(door)
-	if ground then
-		door = vector.create(door.x, ground + 0.95, door.z)
+	-- With no room by the car, the hero climbs out onto its roof.
+	local out = pos + vector.create(0, 2, 0)
+	for i = 1, #EXITS do
+		local spot = exit_at(pos, rot, EXITS[i])
+		if spot then
+			out = spot
+			break
+		end
 	end
-	hero:set("Transform", "translation", door)
+	hero:set("Transform", "translation", out)
 	hero:add("CharacterController", { height = 1.8, radius = 0.35 })
 	body:set("Visible", "visible", true)
 	rig.driving = false
@@ -103,7 +128,7 @@ local function sole(side: string): vector
 end
 
 -- A boot lands as it stops swinging forward: when its reach ahead of the
--- hips, which grows through the swing, starts to shrink. After the air or
+-- hips, which grows through the swing, starts to shrink. After a fall or
 -- the car, the boots are only measured, so that pose is no step.
 local function footsteps()
 	local hips, rot = anim.joint(body, "Hips")
@@ -173,7 +198,9 @@ time.on_step(function(dt)
 		if air > 0.3 then
 			audio.play(LAND, state.position - vector.create(0, 0.9, 0), 1, "footsteps")
 		end
-		if air > 0 then
+		-- A fall (the body showed it) leaves the boots' reach stale; after a
+		-- shorter hop, a boot that landed meanwhile still sounds, late.
+		if air > AIR_DELAY then
 			fresh = true
 		end
 		air = 0

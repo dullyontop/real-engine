@@ -49,10 +49,10 @@ the wind down and muffles it, and lowers the echo.
 - `models/walker.glb`: the hero, a skinned figure (skin `Walker`, eleven
   joints) with the looping clips `idle`, `walk` and `fall`.
 - `anims/walker.animgraph.json`: the hero's animation graph (ADR-0039). Its
-  `speed` parameter (m/s) blends `idle` with `walk` played at four rates, from
-  the clip's own pace (1.69 m/s) to the hero's top speed of 4 m/s, so the
-  boots keep pace with the ground to within a few percent at any speed; while
-  `airborne` is set, it crossfades to `fall`, and back on landing.
+  `speed` parameter (m/s) blends `idle` with `walk` played at six rates, from
+  half the clip's own pace of 1.69 m/s up to the hero's top speed of 4 m/s, so
+  the boots keep pace with the ground to within a few percent at any speed;
+  while `airborne` is set, it crossfades to `fall`, and back on landing.
 - `assets/`: the sounds. Footsteps (two takes), a landing, the car door,
   three engine layers (about 1000, 2800 and 5000 rpm) and wind.
 - `tools/make_walker.py` and `tools/make_sounds.py` write the model and the
