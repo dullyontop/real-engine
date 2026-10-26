@@ -109,13 +109,11 @@ fn walks_up_a_30_degree_slope_and_stops_at_a_wall() {
     assert_eq!(c.ground_entity, Some(EntityId(3)));
 }
 
-/// A character standing on a 20° slope stays put: gravity presses it into the
-/// ground and does not slide it downhill.
-#[test]
-fn stands_still_on_a_20_degree_slope() {
+/// A world with a 20° slope rising along +X through the origin, and the player
+/// standing on it.
+fn on_a_20_degree_slope() -> re_physics::Physics {
     let mut p = world(1);
     let rot = Quat::from_rotation_z(20f32.to_radians());
-    // The slab's top face rises along +X through the origin.
     let slope = slab(
         Vec3::new(10.0, 0.25, 3.0),
         rot * Vec3::new(0.0, -0.25, 0.0),
@@ -127,14 +125,125 @@ fn stands_still_on_a_20_degree_slope() {
     }
     let c = p.character(PLAYER).unwrap();
     assert!(c.on_ground(), "landed: {:?} at {}", c.ground, c.pos);
-    let start = c.pos;
-    for _ in 0..600 {
+    p
+}
+
+/// A character standing on a 20° slope stays put: gravity does not slide it
+/// downhill. Neither does a walk too slow to see, such as the tail of a smoothed
+/// stop.
+#[test]
+fn stands_still_on_a_20_degree_slope() {
+    let mut p = on_a_20_degree_slope();
+    for velocity in [Vec3::ZERO, Vec3::new(1e-5, 0.0, 0.0)] {
+        let start = p.character(PLAYER).unwrap().pos;
+        for _ in 0..600 {
+            walk(&mut p, velocity);
+        }
+        let moved = p.character(PLAYER).unwrap().pos - start;
+        assert!(
+            moved.length() < 1e-3,
+            "crept {moved} m in 10 s, walking at {velocity} m/s"
+        );
+        let (v, _) = p.velocity(PLAYER).unwrap();
+        assert!(v.length() < 1e-3, "moving at {v} m/s");
+    }
+}
+
+/// A character standing on hilly heightfield terrain (2 m cells, as the valley's)
+/// stays put wherever it lands, on the triangles' edges too.
+#[test]
+fn stands_still_on_a_heightfield() {
+    const N: u32 = 33;
+    const CELL: f32 = 2.0;
+    let height = |x: f32, z: f32| {
+        6.0 * libm::sinf(x * 0.1) * libm::cosf(z * 0.08) + 2.0 * libm::sinf(x * 0.23 + z * 0.17)
+    };
+    let mut samples = Vec::new();
+    for row in 0..N {
+        for column in 0..N {
+            samples.push(height(column as f32 * CELL, row as f32 * CELL));
+        }
+    }
+    let terrain = ShapeDesc::Heightfield {
+        n: N,
+        samples,
+        spacing: CELL,
+        offset: Vec3::ZERO,
+        precision: None,
+    };
+    let mut stood = 0;
+    for i in 0..8 {
+        for j in 0..8 {
+            let (x, z) = (8.0 + i as f32 * 6.17, 8.0 + j as f32 * 5.93);
+            let mut p = world(1);
+            apply(
+                &mut p,
+                vec![
+                    add(1, body(BodyKind::Static, terrain.clone(), Vec3::ZERO)),
+                    spawn(Vec3::new(x, height(x, z) + 1.5, z)),
+                ],
+            );
+            for _ in 0..90 {
+                walk(&mut p, Vec3::ZERO);
+            }
+            let c = p.character(PLAYER).unwrap();
+            if !c.on_ground() {
+                continue;
+            }
+            stood += 1;
+            for _ in 0..600 {
+                walk(&mut p, Vec3::ZERO);
+            }
+            let moved = p.character(PLAYER).unwrap().pos - c.pos;
+            assert!(
+                moved.length() < 1e-3,
+                "crept {moved} m in 10 s from {} (ground normal {})",
+                c.pos,
+                c.ground_normal
+            );
+        }
+    }
+    assert!(stood >= 48, "stood on only {stood} of 64 spots");
+}
+
+/// A face steeper than 50° does not hold a standing character, even one whose max
+/// slope lets it walk there (compat's is 89°): it slides down, as before, and does
+/// not hang on a wall it jumped against.
+#[test]
+fn slides_down_a_steep_face_it_may_walk_on() {
+    let mut p = world(1);
+    let rot = Quat::from_rotation_z(80f32.to_radians());
+    let face = slab(
+        Vec3::new(10.0, 0.25, 3.0),
+        rot * Vec3::new(0.0, -0.25, 0.0),
+        rot,
+    );
+    let desc = CharacterDesc {
+        max_slope_deg: 89.0,
+        ..CharacterDesc::default()
+    };
+    apply(
+        &mut p,
+        vec![
+            add(1, face),
+            PhysicsCmd::AddCharacter {
+                id: PLAYER,
+                desc,
+                pos: Vec3::new(0.0, 1.5, 0.0),
+                rot: Quat::IDENTITY,
+            },
+        ],
+    );
+    for _ in 0..30 {
         walk(&mut p, Vec3::ZERO);
     }
-    let moved = p.character(PLAYER).unwrap().pos - start;
-    assert!(moved.length() < 1e-3, "crept {moved} m in 10 s");
-    let (v, _) = p.velocity(PLAYER).unwrap();
-    assert!(v.length() < 1e-3, "moving at {v} m/s");
+    let start = p.character(PLAYER).unwrap();
+    assert!(start.on_ground(), "on the face: {:?}", start.ground);
+    for _ in 0..120 {
+        walk(&mut p, Vec3::ZERO);
+    }
+    let fell = start.pos.y - p.character(PLAYER).unwrap().pos.y;
+    assert!(fell > 0.1, "slid down only {fell} m in 2 s");
 }
 
 /// With its inner body, a character walking into a sensor produces a `ContactEvent`
