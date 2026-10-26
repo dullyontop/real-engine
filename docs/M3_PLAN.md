@@ -191,7 +191,7 @@ real verify --project examples/island --json
 - Goldens for tone mapping, bloom and cascades on lavapipe and GL.
 - A shadow stability test: the shadowed texels of a static scene do not change as the camera moves along a path.
 
-**Progress (2026-10-26).** Merged: "post" (#98), "shadows" (#110), the `[render.post]` and `[render.shadows]` settings (#122), up to eight HDR target sets (#156), and the render-thread measurement (#160): the plaza, the bigmap and the valley stay under ADR-0038's threshold, so there is no render thread (ADR-0038's amendment). "textures" (#164) has merged with block-compressed textures encoded at import (ADR-0047), and "hot reload" is open as #169.
+**Progress (2026-10-26).** Merged: "post" (#98), "shadows" (#110), the `[render.post]` and `[render.shadows]` settings (#122), up to eight HDR target sets (#156), and the render-thread measurement (#160): the plaza, the bigmap and the valley stay under ADR-0038's threshold, so there is no render thread (ADR-0038's amendment). "textures" (#164) has merged with block-compressed textures encoded at import (ADR-0047), and so has "hot reload" (#169): a development run reloads the `.wgsl` files in the project's `shaders/` folder and in the folder `RE_ENGINE_SHADERS` names, keeps the last good pipelines when a file fails, and reports the problem at its file and line (`RE6030`–`RE6032`). `real verify` and `real build` check the project's shaders without a GPU (ADR-0038's amendment). WP20 is complete.
 
 **Definition of done:** the four PRs merged; ADR-0038 records the render-thread measurement and decision.
 

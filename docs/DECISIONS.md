@@ -1170,7 +1170,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0038: HDR post chain, cascaded sun shadows, shader hot reload, and no render thread yet
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP20). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: WP20's phase-0 measurements (research bundle `m3/wp20/measurements.md`, with the scratch tests that produced them).
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP20). Built in WP20 PRs "post" (#98), "shadows" (#110) and "hot reload" (#169), with the settings in #122 and up to eight HDR target sets in #156; the render-thread measurement (#160) and hot reload as built are in the amendments at the end. Evidence: WP20's phase-0 measurements (research bundle `m3/wp20/measurements.md`, with the scratch tests that produced them).
 
 **Context.** M3's WP20 adds HDR rendering with tone mapping and bloom, cascaded shadows for the sun, shader hot reload, and a render thread only if PerfReport shows render submission is the bottleneck (M3_PLAN, WP20). WP27 draws the compat `BloomEffect`, `BlurEffect` and `SunRaysEffect` through this chain, and WP28's valley uses it. What exists today:
 - `re_render` draws the forward pass straight into the caller's target (ADR-0010). Shading is linear; lights, ambient and emissive are multiplied by `RendererSettings::exposure`; colour correction (`SceneExtras::grading`) is applied per fragment in the forward and effect shaders; the target's format does the sRGB encoding (or the shader does, for `Rgba8Unorm`-style targets). Values above 1 are clipped by the target.
