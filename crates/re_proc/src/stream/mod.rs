@@ -13,6 +13,9 @@
 //! * [`StreamEvents`]: the cells loaded and unloaded at the last tick, as
 //!   [`re_scene::StreamCell`]s, for scripts' `stream.on_loaded` and
 //!   `stream.on_unloaded`.
+//! * [`TerrainView`]: the level-of-detail terrain chunks to draw, kept up to
+//!   date by [`step`] as chunks are ready; [`complete_view`] waits for all of
+//!   them before a screenshot.
 //!
 //! A streamed procedural source (a `graph` source with
 //! [`re_scene::Streamed`] and an identity transform, else `RE4302`) has its
@@ -35,7 +38,7 @@ pub use collision::collider_precision;
 pub use config::StreamConfig;
 pub use manager::{
     ENTITY_BYTES, Focus, Lateness, SHAPE_BYTES, StepReport, StreamEvents, Streamer, cell_at,
-    focuses, step,
+    complete_view, focuses, step,
 };
 pub use terrain::{TerrainView, ViewChunk};
 
