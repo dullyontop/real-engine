@@ -97,7 +97,7 @@ fn the_project_graph_is_built_and_a_source_plays_on_its_bus() {
         )),
         "{cmds:?}"
     );
-    // Nothing renders headless between frames, so the bus is silent.
+    // Scripts read silence on the headless backend (see below).
     assert_eq!(
         report.output,
         [
@@ -106,6 +106,27 @@ fn the_project_graph_is_built_and_a_source_plays_on_its_bus() {
             "[game] effect true false",
             "[game] bus false snapshot true false",
         ],
+        "{:?}",
+        report.output
+    );
+    // Then the frame renders its audio (headless, nothing else does), and the
+    // bus meters the tone: a 0.5 sine peaks at -6 dB.
+    let steps = app
+        .bus_levels()
+        .iter()
+        .find(|l| l.bus == "footsteps")
+        .expect("the footsteps bus is metered");
+    assert!(
+        steps.peak_db > -7.0 && steps.rms_db > -12.0,
+        "{:?}",
+        app.bus_levels()
+    );
+    // The script still reads silence: what it writes from `on_frame` is in the
+    // state hash, and a rendered mix depends on the platform's maths.
+    let report = app.run_headless(Some(1), None).unwrap();
+    assert_eq!(
+        report.output.first().map(String::as_str),
+        Some("[game] levels -60 -60"),
         "{:?}",
         report.output
     );
@@ -254,4 +275,35 @@ fn a_source_plays_at_its_rate_and_scripts_change_it() {
     let report = app.run_headless(Some(1), None).unwrap();
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     assert!(rates(app.audio_commands(), engine).is_empty());
+}
+
+const WALKER: &str = r#"{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    { "id": "walker", "components": { "ScriptRef": { "path": "scripts/steps.luau" } } }
+  ]
+}
+"#;
+
+const STEPS: &str = r#"time.on_frame(function()
+	audio.play("step", vector.create(1, 0, 0), 1, "footsteps")
+end)
+"#;
+
+#[test]
+fn one_shots_end_and_free_their_voices_in_a_headless_run() {
+    // A spatial one-shot holds one of its bus's 256 voices until it ends, and
+    // it ends only as the mixer renders.
+    let dir = project(AUDIO);
+    std::fs::write(dir.path().join("scenes/main.scene.json"), WALKER).unwrap();
+    std::fs::write(dir.path().join("scripts/steps.luau"), STEPS).unwrap();
+    let mut app = open(dir.path());
+    app.audio_mut()
+        .insert_clip("step", re_audio::sine(440.0, 0.1, 48_000, 0.5));
+    // A step every frame for 5 s, each 0.1 s long: 6 or 7 at a time.
+    let report = app.run_headless(Some(300), None).unwrap();
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+    let playing = app.audio_mut().playing();
+    assert!((5..=8).contains(&playing), "{playing} playing");
 }

@@ -241,7 +241,7 @@ mod templated {
             apply_recipe(recipe, &args, &specs, ApplyOptions::default(), &mut run)?;
         }
         if options.check {
-            for report in check_template(&template, &values, &mut run)? {
+            for report in check_template(&template, &values, &specs, &mut run)? {
                 println!("check: {} ({})", report.check, report.detail);
             }
         }

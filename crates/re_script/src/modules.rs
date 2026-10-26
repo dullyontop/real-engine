@@ -215,7 +215,7 @@ impl Require for ProjectRequirer {
             .load(data.bytes.to_vec())
             .set_name(format!("@{key}"))
             .set_mode(mode)
-            .set_compiler(crate::compile::compiler())
+            .set_compiler(crate::compile::compiler_for(&self.files))
             .set_environment(env)
             .into_function()?;
         crate::scheduler::register_module_chunk(lua, &key, &chunk)?;
@@ -235,13 +235,20 @@ pub enum Reload {
     Replaced,
 }
 
-/// Reloads module `key` from `source`, giving the chunk its current value as
-/// `...`. A compile or runtime error leaves the old version in place.
-pub(crate) fn reload_module(lua: &Lua, key: &str, source: &[u8], env: Table) -> Result<Reload> {
+/// Reloads module `key` from `source` with `compiler`, giving the chunk its
+/// current value as `...`. A compile or runtime error leaves the old version in
+/// place.
+pub(crate) fn reload_module(
+    lua: &Lua,
+    key: &str,
+    source: &[u8],
+    env: Table,
+    compiler: mlua::chunk::Compiler,
+) -> Result<Reload> {
     let chunk = lua
         .load(source)
         .set_name(format!("@{key}"))
-        .set_compiler(crate::compile::compiler())
+        .set_compiler(compiler)
         .set_environment(env)
         .into_function()?;
     let cache: Table = lua.named_registry_value(LOADER_CACHE)?;

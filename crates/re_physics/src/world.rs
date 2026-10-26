@@ -102,6 +102,9 @@ pub(crate) struct CharacterEntry {
     pub(crate) inner: Option<BodyId>,
     pub(crate) groups: GroupMask,
     step_height: f32,
+    /// The cosine of the steepest ground the character stands still on: its max slope,
+    /// at most 50°.
+    hold_cos: f32,
     /// The object layers the character collides with, for its query filter.
     sees: Vec<ObjectLayer>,
 }
@@ -330,6 +333,14 @@ fn collision_layers(table: &LayerTable) -> CollisionLayers {
 /// [`oxijolt::limits::MAX_LINEAR_VELOCITY`], so a clamped velocity's rounding
 /// stays inside it.
 const TERMINAL_SPEED: f32 = 0.98 * oxijolt::limits::MAX_LINEAR_VELOCITY;
+
+/// Slower than this, in m/s, a character's walk and the ground under it count as
+/// still: a still character on still ground feels no gravity (see `update_characters`).
+const STILL_SPEED: f32 = 1e-3;
+
+/// The steepest ground, in degrees, a still character holds on, whatever its max slope
+/// (compat's default is 89°), so it does not hang on a steep face it jumped against.
+const HOLD_MAX_SLOPE_DEG: f32 = 50.0;
 
 /// How far from the simulation origin, per axis, a body may be (Jolt's
 /// limit for single precision), in studs.
@@ -1073,6 +1084,7 @@ impl Physics {
                 inner,
                 groups: desc.groups,
                 step_height: desc.step_height,
+                hold_cos: libm::cosf(desc.max_slope_deg.min(HOLD_MAX_SLOPE_DEG).to_radians()),
                 sees,
             },
         );
@@ -1301,9 +1313,9 @@ impl Physics {
             let on_ground = c.ground_state() == JGroundState::OnGround;
             // Jolt's CharacterVirtual sample: on the ground the character takes the
             // ground's velocity (moving platforms) unless it is moving away from it; in
-            // the air it keeps its vertical speed. Gravity always applies.
-            let mut new_velocity = if on_ground && velocity.dot(up) - ground_velocity.dot(up) < 0.1
-            {
+            // the air it keeps its vertical speed.
+            let grounded = on_ground && velocity.dot(up) - ground_velocity.dot(up) < 0.1;
+            let mut new_velocity = if grounded {
                 let mut v = ground_velocity;
                 if jump {
                     v += up * self.config.character_jump_speed;
@@ -1312,8 +1324,30 @@ impl Physics {
             } else {
                 up * velocity.dot(up)
             };
-            new_velocity += gravity * dt;
-            new_velocity += desired - up * desired.dot(up);
+            let walk = desired - up * desired.dot(up);
+            // A character standing still on still ground feels no gravity: Jolt slides
+            // a character's velocity along the ground, so gravity's part along a slope
+            // would carry it downhill, about 1 mm a step on 20° at 60 Hz. As in Jolt's
+            // CharacterVirtual sample, that holds only on ground it can stand on, a
+            // contact no steeper than its max slope (and never steeper than 50°) that
+            // is not moving. A walking, jumping or falling character, one on a moving
+            // platform and one touching only steeper ground feel all of gravity.
+            let still = |v: Vec3| v.length_squared() < STILL_SPEED * STILL_SPEED;
+            let holds = grounded
+                && !jump
+                && still(walk)
+                && still(ground_velocity)
+                && c.active_contacts().iter().any(|k| {
+                    k.had_collision
+                        && !k.was_discarded
+                        && !k.is_sensor
+                        && still(gv(k.linear_velocity))
+                        && gv(k.contact_normal).dot(up) >= ch.hold_cos
+                });
+            if !holds {
+                new_velocity += gravity * dt;
+            }
+            new_velocity += walk;
             // Jolt refuses a faster character; a long fall stops speeding up
             // a little below that (a terminal velocity).
             new_velocity = new_velocity.clamp_length_max(TERMINAL_SPEED);

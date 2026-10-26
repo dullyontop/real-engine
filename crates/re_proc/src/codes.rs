@@ -107,7 +107,8 @@ pub const LUAU_OUTPUT: Code = Code::new("RE4103");
 /// does not output a fragment, needs inputs, or the graph file exists.
 pub const CREATE_SOURCE: Code = Code::new("RE4104");
 
-/// The `[stream]` section of `real.toml` has an unknown key or a bad value.
+/// A value in the `[stream]` section of `real.toml` is out of range (an
+/// unknown key is refused when the file is parsed, as `RE0501`).
 pub const STREAM_CONFIG: Code = Code::new("RE4300");
 
 /// A streamed source's graph uses a node that cannot be evaluated per cell.

@@ -35,8 +35,9 @@
 //!   ([`Debugger::last_unpaused`]) with an `RE3070` warning and the script
 //!   continues, so an editor without a DAP client never freezes.
 //!
-//! Locals need debug level 2 (`compile::compiler` keeps level 1 until the
-//! runtime is switched for development runs).
+//! Locals need debug level 2, which a development run compiles at
+//! (`compile::compiler_for`); a packaged game's bytecode keeps level 1, so its
+//! stops show no local names.
 
 pub mod dap;
 mod session;

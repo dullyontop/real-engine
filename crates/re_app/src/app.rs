@@ -195,8 +195,10 @@ pub struct App {
     audio_sync: AudioSync,
     audio_cmds: Vec<AudioCmd>,
     last_audio_cmds: Vec<AudioCmd>,
-    /// Every bus's level over the last frame (ADR-0041), for scripts.
+    /// Every bus's level over the last frame (ADR-0041).
     bus_levels: Vec<BusLevel>,
+    /// What scripts read for `bus_levels` (see [`script_levels`]).
+    script_levels: Vec<BusLevel>,
 
     pending: Pending,
     screenshots: Vec<ScreenshotRequest>,
@@ -308,6 +310,7 @@ impl App {
         let mut audio = headless_audio(&files);
         let audio_problems = audio.set_graph(&config.audio);
         let bus_levels = audio.bus_levels();
+        let script_levels = script_levels(&audio, &bus_levels);
         Ok(App {
             project: files
                 .project_dir()
@@ -372,6 +375,7 @@ impl App {
             audio_cmds: Vec::new(),
             last_audio_cmds: Vec::new(),
             bus_levels,
+            script_levels,
             pending: Pending::default(),
             screenshots: Vec::new(),
             captures: Vec::new(),
@@ -672,6 +676,7 @@ impl App {
         audio.set_files(self.files.clone());
         self.diagnostics.extend(audio.set_graph(&self.config.audio));
         self.bus_levels = audio.bus_levels();
+        self.script_levels = script_levels(&audio, &self.bus_levels);
         self.audio = audio;
         self.audio_sync = AudioSync::new();
     }
@@ -990,7 +995,7 @@ impl App {
             raw: &self.raw_frame,
             physics_cmds: &mut self.physics_cmds,
             audio_cmds: &mut self.audio_cmds,
-            bus_levels: &self.bus_levels,
+            bus_levels: &self.script_levels,
             audio_graph: self.audio.graph(),
             pending: &mut self.pending,
             skins: &mut self.skin_sync,
@@ -1476,11 +1481,18 @@ impl App {
         self.perf.add(Phase::Sync, t.elapsed());
 
         // Render: the windowed driver draws `snapshot()` and the HUD after
-        // `frame` returns; here the audio commands reach the mixer.
+        // `frame` returns; here the audio commands reach the mixer. Without a
+        // device nothing else renders the mixer, so the frame's audio renders
+        // here, and sounds end and free their voices as on a device; a
+        // dedicated server has no one to hear it.
         let t = Instant::now();
         self.diagnostics.extend(self.audio.apply(&self.audio_cmds));
+        if !self.is_dedicated_server() {
+            self.audio.advance(frame_time);
+        }
         self.last_audio_cmds = std::mem::take(&mut self.audio_cmds);
         self.bus_levels = self.audio.bus_levels();
+        self.script_levels = script_levels(&self.audio, &self.bus_levels);
         if let Some(gfx) = &self.graphics {
             self.diagnostics.extend(gfx.take_errors());
         }
@@ -2345,7 +2357,7 @@ impl App {
                 raw: &self.raw_frame,
                 physics_cmds: &mut self.physics_cmds,
                 audio_cmds: &mut self.audio_cmds,
-                bus_levels: &self.bus_levels,
+                bus_levels: &self.script_levels,
                 audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
                 skins: &mut self.skin_sync,
@@ -2650,6 +2662,11 @@ impl App {
             .map(|c| &c.client)
     }
 
+    /// True for a compat game with no client side (`real run --server`).
+    fn is_dedicated_server(&self) -> bool {
+        self.compat.is_some() && self.compat_client().is_none()
+    }
+
     /// True once the run should end early: a network client was kicked, its
     /// server went away, or a lockstep peer stopped sending.
     pub fn stopped(&self) -> bool {
@@ -2841,7 +2858,7 @@ impl App {
                 raw: &self.raw_frame,
                 physics_cmds: &mut self.physics_cmds,
                 audio_cmds: &mut self.audio_cmds,
-                bus_levels: &self.bus_levels,
+                bus_levels: &self.script_levels,
                 audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
                 skins: &mut self.skin_sync,
@@ -3091,6 +3108,26 @@ fn headless_audio(files: &ProjectFiles) -> Audio {
     let mut audio = Audio::headless();
     audio.set_files(files.clone());
     audio
+}
+
+/// The bus levels scripts read (`audio.levels`): `levels` on a device, and
+/// silence on the headless backend, as before it rendered. What a script writes
+/// from `on_frame` is in the state hash, and kira's effects use the platform's
+/// maths, so a replay that read a rendered mix could hash differently on
+/// another platform.
+fn script_levels(audio: &Audio, levels: &[BusLevel]) -> Vec<BusLevel> {
+    if !audio.is_headless() {
+        return levels.to_vec();
+    }
+    let silence = re_audio::linear_to_decibels(0.0).0;
+    levels
+        .iter()
+        .map(|l| BusLevel {
+            bus: l.bus.clone(),
+            peak_db: silence,
+            rms_db: silence,
+        })
+        .collect()
 }
 
 /// An empty World with the components the project's content may use: in a

@@ -4,17 +4,19 @@ use std::cell::RefCell;
 
 use mlua::Lua;
 use mlua::chunk::{ChunkMode, Compiler};
-use re_core::files::Form;
+use re_core::files::{Form, LayerKind, ProjectFiles};
 use re_core::{Diagnostic, Location};
 
 use crate::codes;
 
 use crate::diag::ScriptError;
 
-/// The compiler every context uses, native and compat: optimisation level 1 and
-/// debug level 1 (line info and function names, enough for tracebacks), which are
-/// Luau's defaults, with the builtins that [`crate::portable_math`] replaces
-/// disabled (ADR-0036). [`COMPILER_ID`] names these options.
+/// The engine's compiler options, native and compat alike: optimisation level 1
+/// and debug level 1 (line info and function names, enough for tracebacks),
+/// which are Luau's defaults, with the builtins that [`crate::portable_math`]
+/// replaces disabled (ADR-0036). [`COMPILER_ID`] names these options, which
+/// `real build` compiles packaged bytecode with; a development run compiles at
+/// debug level 2 ([`compiler_for`]).
 pub fn compiler() -> Compiler {
     Compiler::new()
         .set_optimization_level(1)
@@ -26,6 +28,24 @@ pub fn compiler() -> Compiler {
 /// A packaged game refuses bytecode compiled with another id, so this changes
 /// whenever the options do.
 pub const COMPILER_ID: &str = "o1d1-m";
+
+/// The compiler for the scripts of a run that reads its files through `files`
+/// (ADR-0045): in a development run, [`compiler`] at debug level 2, which also
+/// keeps the names of locals and upvalues, so the debugger can show them; in a
+/// packaged game (its files come from an archive), [`compiler`] itself, the
+/// options its bytecode was built with. Debug level 2 changes nothing a script
+/// can observe and costs no measurable time; the bytecode is 5% to 11% larger.
+pub fn compiler_for(files: &ProjectFiles) -> Compiler {
+    let packaged = files
+        .layers()
+        .iter()
+        .any(|l| l.kind() == LayerKind::Archive);
+    if packaged {
+        compiler()
+    } else {
+        compiler().set_debug_level(2)
+    }
+}
 
 /// The version of the Luau the engine links, such as `"0.740"`, stored with
 /// packaged bytecode (ADR-0037). `"unknown"` when mlua was built without it,
@@ -159,6 +179,22 @@ mod tests {
             .unwrap();
         assert_eq!(COMPILER_ID, "o1d1-m");
         assert_eq!(compile_bytecode(probe, "scripts/p.luau").unwrap(), expected);
+    }
+
+    #[test]
+    fn a_development_run_keeps_local_names_and_a_packaged_game_the_package_options() {
+        use re_core::files::MemLayer;
+        // A constant local: at debug level 1 it is folded away, at level 2 it
+        // keeps its register and its name.
+        let probe = "local label = \"done\"\nprint(label)";
+        let package = compiler().compile(probe).unwrap();
+        let project = ProjectFiles::for_tests(MemLayer::new(LayerKind::Memory));
+        let dev = compiler_for(&project).compile(probe).unwrap();
+        let named = |code: &[u8]| code.windows(5).any(|w| w == b"label");
+        assert!(named(&dev), "level 2 keeps the local's name");
+        assert!(!named(&package), "level 1 drops it");
+        let archive = ProjectFiles::for_tests(MemLayer::new(LayerKind::Archive));
+        assert_eq!(compiler_for(&archive).compile(probe).unwrap(), package);
     }
 
     #[test]
