@@ -285,8 +285,8 @@ impl Params for TerrainMeshParams {}
 
 fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, String> {
     let field = ctx.need_field("field")?;
-    // Streamed (version 2), the entity sits at the window's corner and the
-    // mesh and collider are local to it, so both keep their precision
+    // Streamed (from version 2), the entity sits at the window's corner and
+    // the mesh and collider are local to it, so both keep their precision
     // kilometres out (ADR-0042's floating origin). Version 1 stays in world
     // space.
     let (hf, transform) = match ctx.domain {
@@ -302,7 +302,25 @@ fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, S
         _ => (field.0.clone(), Vec::new()),
     };
     let hf = &hf;
-    let mesh = Arc::new(hf.to_mesh());
+    // Streamed (version 3), a vertex's normal also takes in the triangles
+    // beyond the window, from the field one sample past it, so cells that
+    // share an edge shade it alike, as one mesh of the whole field would.
+    // Version 2 leaves them out, which shows each cell's edges.
+    let mesh = match (ctx.domain, ctx.upstream) {
+        (Some(d), Some(read)) if ctx.version >= 3 => {
+            let apron = read(
+                "field",
+                super::Domain {
+                    origin: [d.origin[0] - 1, d.origin[1] - 1],
+                    n: d.n + 2,
+                    spacing: d.spacing,
+                },
+            )?;
+            re_geom::terrain::window_mesh(hf, &apron.0.samples).map_err(|e| e.to_string())?
+        }
+        _ => hf.to_mesh(),
+    };
+    let mesh = Arc::new(mesh);
     let mesh_name = derived_name(&ctx.key);
     let mut components = vec![
         ("Transform".to_string(), transform),
@@ -494,14 +512,22 @@ pub(super) fn register(r: &mut NodeRegistry) {
     r.register(NodeDef::new(
         NodeSpec {
             kind: "terrain.mesh",
-            version: 2,
+            version: 3,
             oldest: 1,
-            migrations: &[Migration {
-                from: 1,
-                note: "streamed cells put the entity at the window's corner, with the mesh and collider local to it",
-                changes_output: true,
-                params: |_| Ok(()),
-            }],
+            migrations: &[
+                Migration {
+                    from: 1,
+                    note: "streamed cells put the entity at the window's corner, with the mesh and collider local to it",
+                    changes_output: true,
+                    params: |_| Ok(()),
+                },
+                Migration {
+                    from: 2,
+                    note: "streamed cells take their edge normals over the field beyond the cell too, so neighbouring cells shade their shared edge alike",
+                    changes_output: true,
+                    params: |_| Ok(()),
+                },
+            ],
             streaming: super::Streaming::Cell,
             doc: "Turns a field into a terrain entity: a derived mesh, an optional material and an optional heightfield collider.",
             inputs: &[PortDef {

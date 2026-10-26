@@ -1,5 +1,6 @@
 //! Terrain for streamed worlds (ADR-0042): the chunked level-of-detail
-//! quadtree, stitched chunk meshes, and hydraulic erosion on region tiles.
+//! quadtree, stitched chunk meshes, window meshes that shade like their
+//! neighbours, and hydraulic erosion on region tiles.
 //!
 //! Everything here is pure computation and follows the crate's determinism
 //! rules (no libm transcendental functions, no fused multiply-add, fixed
@@ -19,7 +20,7 @@ mod mesh;
 
 pub use erode::{APRON, ErosionParams, TILE_CELLS, erode, tile_blend, tile_window};
 pub use lod::{ChunkKey, Edges, TerrainGrid, select};
-pub use mesh::{chunk_indices, chunk_mesh};
+pub use mesh::{chunk_indices, chunk_mesh, window_mesh};
 
 /// Cells per chunk side at every level; a chunk has `CHUNK_CELLS + 1`
 /// samples per side.

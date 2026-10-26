@@ -286,9 +286,9 @@ fn prepare(
 }
 
 /// The terrain branch of `doc`, split off: the graph cells evaluate (without
-/// the `terrain.chunks` node, and without the nodes that only fed it), and,
-/// when there is a `terrain.chunks` node, the graph of its field with the
-/// field node's id, the material and `max_level`.
+/// the `terrain.chunks` node and its edges, and without the nodes that only
+/// fed it), and, when there is a `terrain.chunks` node, the graph of its
+/// field with the field node's id, the material and `max_level`.
 #[allow(clippy::type_complexity)]
 fn split_terrain(
     doc: &GraphDoc,
@@ -345,12 +345,16 @@ fn split_terrain(
             .collect(),
         ..doc.clone()
     };
-    // The cells' graph: without the chunks node, then without every field,
-    // points, shapes or path node whose output nothing uses any more (a mesh
-    // or fragment left unused is output, so it stays).
+    // The cells' graph: without the chunks node and its edges (a node it
+    // feeds, such as a `fragment.merge`, gets the rest, as streaming draws
+    // the terrain), then without every field, points, shapes or path node
+    // whose output nothing uses any more (a mesh or fragment left unused is
+    // output, so it stays).
     let mut cells = doc.clone();
     cells.nodes.retain(|n| n.id != chunk.id);
-    cells.edges.retain(|e| e.to.0 != chunk.id);
+    cells
+        .edges
+        .retain(|e| e.to.0 != chunk.id && e.from.0 != chunk.id);
     loop {
         let used: BTreeSet<&str> = cells.edges.iter().map(|e| e.from.0.as_str()).collect();
         let dead: BTreeSet<String> = cells

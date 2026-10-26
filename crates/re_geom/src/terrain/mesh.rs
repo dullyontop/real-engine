@@ -1,12 +1,14 @@
 //! Chunk meshes: indices with stitched edges, and vertices with normals that
-//! agree across chunk borders.
+//! agree across chunk borders. Window meshes: a heightfield window whose
+//! normals agree with its neighbours' along shared edges.
 
+use glam::Vec3;
 use re_types::mesh::{MeshData, Vertex};
 
 use super::lod::Edges;
 use super::{CHUNK_CELLS, CHUNK_SAMPLES};
 use crate::error::GeomError;
-use crate::heightfield::grid_indices;
+use crate::heightfield::{Heightfield, grid_indices};
 
 /// The index list of a chunk (`CHUNK_SAMPLES²` vertices, row-major, `x`
 /// fastest), counter-clockwise seen from +Y.
@@ -130,6 +132,43 @@ pub fn chunk_mesh(heights: &[f32], spacing: f32, edges: Edges) -> Result<MeshDat
     })
 }
 
+/// The render mesh of a window of a larger surface, such as a streamed cell
+/// (ADR-0042): [`Heightfield::to_mesh`] of `hf`, with each vertex's normal
+/// taken over every triangle around it, those beyond the window's edges
+/// included, so windows that share an edge shade it alike.
+///
+/// `apron` holds the surface's heights over the window grown by one sample
+/// on every side: `(hf.n + 2)²` of them, row-major, `hf.spacing` apart and
+/// in `hf`'s frame. Within the window `hf`'s own samples are used.
+/// Positions, UVs and triangles are `hf.to_mesh()`'s, and so are the normals
+/// away from the edges. With a spacing that is a multiple of 1/1024 m (world
+/// streaming refuses others) every normal is, bit for bit, the one a single
+/// mesh of the whole surface has at that sample.
+pub fn window_mesh(hf: &Heightfield, apron: &[f32]) -> Result<MeshData, GeomError> {
+    let n = hf.n as usize;
+    let w = n + 2;
+    if apron.len() != w * w {
+        return Err(GeomError::Heightfield(format!(
+            "a window of {n} * {n} samples needs {w} * {w} with its apron, got {}",
+            apron.len()
+        )));
+    }
+    let mut samples = apron.to_vec();
+    for (z, row) in hf.samples.chunks_exact(n).enumerate() {
+        let at = (z + 1) * w + 1;
+        samples[at..at + n].copy_from_slice(row);
+    }
+    let s = hf.spacing;
+    let grown = Heightfield::new(hf.n + 2, s, hf.offset - Vec3::new(s, 0.0, s), samples)?;
+    let around = grown.to_mesh();
+    let mut mesh = hf.to_mesh();
+    for (i, v) in mesh.vertices.iter_mut().enumerate() {
+        let (x, z) = (i % n, i / n);
+        v.normal = around.vertices[(z + 1) * w + x + 1].normal;
+    }
+    Ok(mesh)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,5 +262,49 @@ mod tests {
         }
         assert!(a.is_well_formed());
         assert!(chunk_mesh(&[0.0; 4], s, Edges(0)).is_err());
+    }
+
+    #[test]
+    fn windows_shade_like_one_mesh_of_the_whole_surface() {
+        // A height function of the global sample, 0.75 m apart.
+        let f = |gx: i64, gz: i64| ((gx * 7 + gz * 13) % 17) as f32 * 0.25 + (gx * gz % 5) as f32;
+        let grid = |o: [i64; 2], n: i64| {
+            let mut v = Vec::new();
+            for z in 0..n {
+                for x in 0..n {
+                    v.push(f(o[0] + x, o[1] + z));
+                }
+            }
+            v
+        };
+        let s = 0.75;
+        // One mesh of global samples -1 to 17, and four windows of 9 samples
+        // inside it, local to their corners.
+        let whole = Heightfield::new(19, s, Vec3::new(-s, 0.0, -s), grid([-1, -1], 19))
+            .unwrap()
+            .to_mesh();
+        let n = 9;
+        for o in [[0, 0], [8, 0], [0, 8], [8, 8]] {
+            let hf = Heightfield::new(n as u32, s, Vec3::ZERO, grid(o, n)).unwrap();
+            let plain = hf.to_mesh();
+            let mesh = window_mesh(&hf, &grid([o[0] - 1, o[1] - 1], n + 2)).unwrap();
+            assert_eq!(mesh.indices, plain.indices);
+            let mut edges_changed = 0;
+            for (i, (v, p)) in mesh.vertices.iter().zip(&plain.vertices).enumerate() {
+                let (x, z) = (i as i64 % n, i as i64 / n);
+                assert_eq!((v.pos, v.uv, v.color), (p.pos, p.uv, p.color));
+                let g = whole.vertices[((o[1] + z + 1) * 19 + o[0] + x + 1) as usize];
+                assert_eq!(v.normal, g.normal, "window {o:?}, sample ({x}, {z})");
+                if x == 0 || z == 0 || x == n - 1 || z == n - 1 {
+                    edges_changed += usize::from(v.normal != p.normal);
+                } else {
+                    assert_eq!(v.normal, p.normal, "window {o:?}, sample ({x}, {z})");
+                }
+            }
+            assert!(edges_changed > 0, "window {o:?}");
+        }
+        let hf = Heightfield::new(3, s, Vec3::ZERO, vec![0.0; 9]).unwrap();
+        assert!(window_mesh(&hf, &[0.0; 9]).is_err());
+        assert!(window_mesh(&hf, &[f32::NAN; 25]).is_err());
     }
 }
