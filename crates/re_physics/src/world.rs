@@ -1301,9 +1301,9 @@ impl Physics {
             let on_ground = c.ground_state() == JGroundState::OnGround;
             // Jolt's CharacterVirtual sample: on the ground the character takes the
             // ground's velocity (moving platforms) unless it is moving away from it; in
-            // the air it keeps its vertical speed. Gravity always applies.
-            let mut new_velocity = if on_ground && velocity.dot(up) - ground_velocity.dot(up) < 0.1
-            {
+            // the air it keeps its vertical speed.
+            let grounded = on_ground && velocity.dot(up) - ground_velocity.dot(up) < 0.1;
+            let mut new_velocity = if grounded {
                 let mut v = ground_velocity;
                 if jump {
                     v += up * self.config.character_jump_speed;
@@ -1312,8 +1312,20 @@ impl Physics {
             } else {
                 up * velocity.dot(up)
             };
-            new_velocity += gravity * dt;
-            new_velocity += desired - up * desired.dot(up);
+            let walk = desired - up * desired.dot(up);
+            // Gravity always applies, but a character standing on the ground (not
+            // asked to walk or jump) is only pressed into it: Jolt slides the velocity
+            // along the ground, so gravity's part along a slope would carry it
+            // downhill, 1 mm a step on 20° at 60 Hz. Jolt's sample stops a standing
+            // character sliding too; a walking one feels all of gravity.
+            let fall = gravity * dt;
+            new_velocity += if grounded && !jump && walk == Vec3::ZERO {
+                let normal = gv(c.ground_normal());
+                normal * fall.dot(normal)
+            } else {
+                fall
+            };
+            new_velocity += walk;
             // Jolt refuses a faster character; a long fall stops speeding up
             // a little below that (a terminal velocity).
             new_velocity = new_velocity.clamp_length_max(TERMINAL_SPEED);

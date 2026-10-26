@@ -109,6 +109,34 @@ fn walks_up_a_30_degree_slope_and_stops_at_a_wall() {
     assert_eq!(c.ground_entity, Some(EntityId(3)));
 }
 
+/// A character standing on a 20° slope stays put: gravity presses it into the
+/// ground and does not slide it downhill.
+#[test]
+fn stands_still_on_a_20_degree_slope() {
+    let mut p = world(1);
+    let rot = Quat::from_rotation_z(20f32.to_radians());
+    // The slab's top face rises along +X through the origin.
+    let slope = slab(
+        Vec3::new(10.0, 0.25, 3.0),
+        rot * Vec3::new(0.0, -0.25, 0.0),
+        rot,
+    );
+    apply(&mut p, vec![add(1, slope), spawn(Vec3::new(0.0, 1.2, 0.0))]);
+    for _ in 0..60 {
+        walk(&mut p, Vec3::ZERO);
+    }
+    let c = p.character(PLAYER).unwrap();
+    assert!(c.on_ground(), "landed: {:?} at {}", c.ground, c.pos);
+    let start = c.pos;
+    for _ in 0..600 {
+        walk(&mut p, Vec3::ZERO);
+    }
+    let moved = p.character(PLAYER).unwrap().pos - start;
+    assert!(moved.length() < 1e-3, "crept {moved} m in 10 s");
+    let (v, _) = p.velocity(PLAYER).unwrap();
+    assert!(v.length() < 1e-3, "moving at {v} m/s");
+}
+
 /// With its inner body, a character walking into a sensor produces a `ContactEvent`
 /// that names the sensor and the character.
 #[test]

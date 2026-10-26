@@ -207,6 +207,7 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
   - `position()` is the shape origin, not the centre of mass.
   - Mesh and heightfield shapes are refused on dynamic and kinematic bodies. We report this as `RE5003`, not a panic.
   - World positions are limited to ±5 km, because `Real` is f32. re_physics refuses bodies, characters and transforms beyond that with RE5006, and the command is dropped.
+  - A character standing on a slope crept downhill (found in M3 by the valley): Jolt slides a character's velocity along the ground, so gravity's part along the slope moved it 1 mm a step on 20° at 60 Hz. A character on the ground that is not walking or jumping takes only gravity's part into the ground, as Jolt's own sample stops a standing character sliding.
 
 **Alternatives.**
 - rapier3d. It was not chosen in the physics spike.
