@@ -66,10 +66,10 @@ the wind down and muffles it, and lowers the echo.
   or in front: where the car could not reach the hero (falling back from a
   raised side, moving, swinging round or tipping towards the spot, or
   creeping down a slope steeper than 20°), and where the hero fits. For that,
-  the hero, still hidden and with the hand brake on, stands at each such spot
-  in turn for a step, and gets out at the first where its CharacterController
-  didn't push it clear of a trunk or a rock. With nowhere to get out, the hero
-  stays in and the HUD says so.
+  the hero, still hidden, stands at each such spot in turn for a step while
+  the car drives on, and gets out at the first where its CharacterController
+  didn't push it clear of a trunk or a rock and the car still could not reach
+  it. With nowhere to get out, the hero stays in and the HUD says so.
 - `scripts/game/car.luau`: the car's driver input through `physics.drive`, and
   its engine sound: the three layers, crossfaded by the engine's rpm, pitched
   to it (`audio.set_rate`) and louder with more throttle.

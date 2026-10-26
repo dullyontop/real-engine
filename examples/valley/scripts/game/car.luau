@@ -2,15 +2,13 @@
 -- The car: while the hero drives, the move stick's Y is the throttle (against
 -- the way the car rolls it brakes first, then reverses or goes forward), its X
 -- steers, and `brake` pulls the hand brake.
--- Parked, and while the hero gets out, the hand brake holds it.
+-- Parked, the hand brake holds it.
 --
 -- The engine sound is three looping layers (children of the car on the
 -- `vehicle` bus), made at 1020, 2820 and 4980 rpm (a four-cylinder firing 34,
 -- 94 and 166 times a second): each plays fully at its own rpm and crossfades
 -- with its neighbours' at equal power, louder with more throttle, and is
--- pitched to the engine's rpm. Parked, the engine is off. While the hero
--- tries to get out it runs on, with no throttle, so that it doesn't cut out
--- when there is no room and the hero drives on.
+-- pitched to the engine's rpm. Parked, the engine is off.
 local rig = require("./lib/rig")
 
 local car = script.entity :: Entity
@@ -61,13 +59,8 @@ time.on_step(function(_dt)
 		engine_sound(0, 0, 0)
 		return
 	end
-	local state = physics.vehicle(car)
-	if rig.leaving then
-		physics.drive(car, { handbrake = 1 })
-		engine_sound(state.rpm, 0, 1)
-		return
-	end
 	local stick = input.axis("move")
+	local state = physics.vehicle(car)
 	local speed = state.speed
 	local throttle = stick.y
 	local brake = 0

@@ -70,8 +70,10 @@ local reach = { L = 0, R = 0 } -- each boot's reach ahead of the hips
 local swinging = { L = false, R = false } -- whether it is moving forward
 local fresh = true -- whether the boots' last reach is stale (after a fall or the car)
 local steps = 0 -- footsteps so far, to alternate the two takes
--- Getting out: the spots to try, and how many have been (`leave`).
-type Leaving = { spots: { vector }, tried: number }
+-- Getting out: the spots to try (where the hero would stand, and the
+-- `EXITS` offset it is for), and how many have been (`leave`).
+type Spot = { at: vector, offset: vector }
+type Leaving = { spots: { Spot }, tried: number }
 local leaving: Leaving? = nil
 
 body:add("Visible", { visible = true })
@@ -125,10 +127,10 @@ end
 -- back that way; with no wheel down, it comes down on a side or end it holds
 -- more than about 15° up. Moving, it runs into a spot that any of its
 -- corners heads for faster than 0.2 m/s: rolling on, sliding sideways in a
--- turn, or swinging round as it turns, spins or tips (the hand brake, on as
--- soon as the hero starts to get out, stops it slowly and can spin it). And
--- on ground steeper than 20°, it creeps, rolls or slides down the slope, so
--- the spot must not lie below it.
+-- turn, or swinging round as it turns, spins or tips (the hand brake, on
+-- once the hero is out, stops it slowly and can spin it). And on ground
+-- steeper than 20°, it creeps, rolls or slides down the slope, so the spot
+-- must not lie below it.
 local function in_the_way(pos: vector, rot: Quat, offset: vector): boolean
 	local towards = rot * vector.normalize(offset)
 	local level = vector.normalize(vector.create(towards.x, 0, towards.z))
@@ -169,20 +171,19 @@ local function in_the_way(pos: vector, rot: Quat, offset: vector): boolean
 end
 
 -- Getting out starts with the spots the car could not reach that have
--- ground, which `leave` tries in turn; meanwhile the hand brake holds the
--- car (`rig.leaving`).
+-- ground, which `leave` tries in turn while the car drives on.
 local function get_out()
 	if leaving then
 		return
 	end
 	local pos: vector = car:get("Transform", "translation")
 	local rot: Quat = car:get("Transform", "rotation")
-	local spots: { vector } = {}
+	local spots: { Spot } = {}
 	for i = 1, #EXITS do
 		if not in_the_way(pos, rot, EXITS[i]) then
 			local at = exit_at(pos, rot, EXITS[i])
 			if at then
-				table.insert(spots, at)
+				table.insert(spots, { at = at, offset = EXITS[i] })
 			end
 		end
 	end
@@ -192,7 +193,6 @@ local function get_out()
 		return
 	end
 	leaving = { spots = spots, tried = 0 }
-	rig.leaving = true
 end
 
 -- A step of getting out. The hero, still hidden, and still in the car for
@@ -201,13 +201,17 @@ end
 -- clear of anything it overlaps, by as much as it overlaps (a trunk, a
 -- rock's edge), so a hero that moved sideways or up in it has no room
 -- there, and the next spot is tried. One that only started to fall gets
--- out there. With no spot left, the hero stays in, and the HUD says so.
+-- out there, unless the car, driven on meanwhile, could reach it now. With
+-- no spot left, the hero stays in, and the HUD says so.
 local function leave(l: Leaving)
 	if l.tried > 0 then
-		local moved = physics.character(hero).position - l.spots[l.tried]
-		if moved.x * moved.x + moved.z * moved.z < SETTLED * SETTLED and moved.y < 0 then
+		local spot = l.spots[l.tried]
+		local moved = physics.character(hero).position - spot.at
+		local fits = moved.x * moved.x + moved.z * moved.z < SETTLED * SETTLED and moved.y < 0
+		local pos: vector = car:get("Transform", "translation")
+		local rot: Quat = car:get("Transform", "rotation")
+		if fits and not in_the_way(pos, rot, spot.offset) then
 			leaving = nil
-			rig.leaving = false
 			body:set("Visible", "visible", true)
 			rig.driving = false
 			rig.no_exit = -math.huge
@@ -219,15 +223,14 @@ local function leave(l: Leaving)
 		end
 	end
 	l.tried += 1
-	local at = l.spots[l.tried]
-	if not at then
+	local spot = l.spots[l.tried]
+	if not spot then
 		leaving = nil
-		rig.leaving = false
 		hero:remove("CharacterController")
 		rig.no_exit = time.now()
 		return
 	end
-	hero:set("Transform", "translation", at)
+	hero:set("Transform", "translation", spot.at)
 	if l.tried == 1 then
 		hero:add("CharacterController", { height = 1.8, radius = 0.35 })
 	end
