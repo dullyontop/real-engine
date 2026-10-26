@@ -35,20 +35,10 @@ local EXITS = {
 	vector.create(0, 0, -3.1),
 	vector.create(0, 0, 3.1),
 }
--- 16 ways out from a spot to stand on.
-local AROUND: { vector } = {}
-for i = 1, 16 do
-	local a = math.pi * i / 8
-	AROUND[i] = vector.create(math.cos(a), 0, math.sin(a))
-end
--- Rings round a spot, metres out, each with how far the underside of the
--- capsule's rounded foot is below the foot's middle there. The foot is a
--- sphere of the hero's radius, 0.35 m, and Jolt keeps 0.02 m of padding
--- round it, so 0.37 m in all.
-local RINGS = {
-	{ out = 0.175, depth = math.sqrt(0.37 * 0.37 - 0.175 * 0.175) },
-	{ out = 0.35, depth = math.sqrt(0.37 * 0.37 - 0.35 * 0.35) },
-}
+-- How far (m) the hero may move sideways in its first step at a spot. Any
+-- more, or any rise, is its CharacterController pushing the capsule clear of
+-- something; on its own, the capsule just starts to fall.
+local SETTLED = 0.002
 -- How far up the ground's normal points on a 45° slope, the steepest the
 -- hero walks (the CharacterController's max_slope_deg).
 local STEEPEST = math.cos(math.rad(45))
@@ -56,6 +46,15 @@ local STEEPEST = math.cos(math.rad(45))
 -- parked car creeps downhill, even with the hand brake on, and from about
 -- 30° it rolls or slides.
 local SLIDES = math.cos(math.rad(20))
+-- The corners of the car's box (0.95 m by 2.1 m from its centre), in its frame.
+local CORNERS = {
+	vector.create(0.95, 0, 2.1),
+	vector.create(-0.95, 0, 2.1),
+	vector.create(0.95, 0, -2.1),
+	vector.create(-0.95, 0, -2.1),
+}
+-- How fast (m/s) a corner of the car may move towards a spot.
+local APPROACH = 0.2
 
 local hero = script.entity :: Entity
 local body = world.get("hero_body") :: Entity
@@ -66,6 +65,9 @@ local reach = { L = 0, R = 0 } -- each boot's reach ahead of the hips
 local swinging = { L = false, R = false } -- whether it is moving forward
 local fresh = true -- whether the boots' last reach is stale (after a fall or the car)
 local steps = 0 -- footsteps so far, to alternate the two takes
+-- Getting out: the spots to try, and how many have been (`leave`).
+type Leaving = { spots: { vector }, tried: number }
+local leaving: Leaving? = nil
 
 body:add("Visible", { visible = true })
 
@@ -92,53 +94,41 @@ local function ground_under(e: Entity, below: number): number?
 	return ground_below(e:get("Transform", "translation") - vector.create(0, below, 0))
 end
 
--- Standing room `offset` from the car (in its frame, but level, so that a
--- tilted car still lets the hero out beside it), or nil. A ray from just
--- above the car's centre finds the ground at the spot: no higher than that
--- centre (not a bank, a tall rock, or a trunk the ray starts inside), no
--- more than 2 m below the wheels, and no steeper than 45°. The hero's
--- capsule would stand on it, its rounded foot just clear. Rays down on the
--- `RINGS` must find the ground (or a rock's top) below the foot's padded
--- underside there, and rays out from the foot's middle must meet nothing
--- within 0.5 m (ground up to 45° steep is farther out).
+-- Where the hero would stand `offset` from the car (in its frame, but
+-- level, so that a tilted car still lets the hero out beside it), or nil. A
+-- ray from just above the car's centre finds the ground at the spot: no
+-- higher than that centre (not a bank, a tall rock, or a trunk the ray
+-- starts inside), no more than 2 m below the wheels, and no steeper than
+-- 45°. Whether the hero fits there, clear of trunks and rocks, `leave`
+-- finds out.
 local function exit_at(pos: vector, rot: Quat, offset: vector): vector?
 	local o = rot * offset
 	local spot = pos + vector.normalize(vector.create(o.x, 0, o.z)) * vector.magnitude(offset)
-	local from = vector.create(spot.x, pos.y + 0.5, spot.z)
-	local hit = physics.raycast(from, DOWN, 50)
+	local hit = physics.raycast(vector.create(spot.x, pos.y + 0.5, spot.z), DOWN, 50)
 	if not hit or hit.point.y > pos.y or hit.point.y < pos.y - 3 or hit.normal.y < STEEPEST then
 		return nil
 	end
-	-- The foot's middle, 0.4 m from the ground along its normal, so that the
-	-- foot is 5 cm clear of it, slope or not.
-	local foot = vector.create(spot.x, hit.point.y + 0.4 / hit.normal.y, spot.z)
-	for i = 1, #AROUND do
-		for _, ring in RINGS do
-			local ground = ground_below(from + AROUND[i] * ring.out)
-			if not ground or ground > foot.y - ring.depth then
-				return nil
-			end
-		end
-		if physics.raycast(foot, AROUND[i], 0.5) then
-			return nil
-		end
-	end
-	-- The capsule's middle (it is 1.8 m tall).
-	return foot + vector.create(0, 0.55, 0)
+	-- The capsule's middle: its rounded foot (0.35 m in radius) 5 cm clear of
+	-- the ground along its normal, slope or not, and 0.55 m below the middle
+	-- (the capsule is 1.8 m tall).
+	return vector.create(spot.x, hit.point.y + 0.4 / hit.normal.y + 0.55, spot.z)
 end
 
 -- Whether the car could reach a hero who got out `offset` from it (in its
 -- frame). Where a wheel touches the ground says where it is. On wheels away
 -- from the spot alone, with its side or end towards it raised, the car falls
 -- back that way; with no wheel down, it comes down on a side or end it holds
--- more than about 15° up. Moving, it runs over a spot ahead of it (or behind
--- it, reversing). And on ground steeper than 20°, it creeps, rolls or slides
--- down the slope, so the spot must not lie below it.
+-- more than about 15° up. Moving, it runs into a spot that any of its
+-- corners heads for faster than 0.2 m/s: rolling on, sliding sideways in a
+-- turn, or swinging round as it turns or spins (the hand brake, on once the
+-- hero is out, stops it slowly and can spin it). And on ground steeper than
+-- 20°, it creeps, rolls or slides down the slope, so the spot must not lie
+-- below it.
 local function in_the_way(pos: vector, rot: Quat, offset: vector): boolean
 	local towards = rot * vector.normalize(offset)
-	local state = physics.vehicle(car)
+	local level = vector.normalize(vector.create(towards.x, 0, towards.z))
 	local near, far = 0, 0
-	for _, wheel in state.wheels do
+	for _, wheel in physics.vehicle(car).wheels do
 		if wheel.on_ground then
 			if vector.dot(wheel.contact_point - pos, towards) > 0 then
 				near += 1
@@ -150,48 +140,88 @@ local function in_the_way(pos: vector, rot: Quat, offset: vector): boolean
 	if near == 0 and (far > 0 or towards.y > 0.25) then
 		return true
 	end
-	if math.abs(state.speed) > 0.5 and offset.z * state.speed > 0 then
-		return true
+	local velocity, spin = physics.velocity(car)
+	for _, corner in CORNERS do
+		if vector.dot(velocity + vector.cross(spin, rot * corner), level) > APPROACH then
+			return true
+		end
 	end
-	-- The ground under the car, from below its box (0.35 m from its centre to
-	-- its floor), however it is tilted.
+	-- How steep the car's ground is: the ground under its middle, from below
+	-- its box (0.35 m from its centre to its floor) however it is tilted, or
+	-- on three or four wheels, the car's own tilt where that is steeper. Where
+	-- the ray starts inside a rock, or finds nothing, the car's tilt alone.
 	local up = rot * UP
 	local under = physics.raycast(pos - UP * (0.35 / math.max(up.y, 0.5) + 0.05), DOWN, 10)
-	if not under or under.distance == 0 or under.normal.y > SLIDES then
+	local ground = up
+	if under and under.distance > 0 and (near + far < 3 or under.normal.y < up.y) then
+		ground = under.normal
+	end
+	if ground.y > SLIDES then
 		return false
 	end
 	-- Below the car is within 60° of straight down the slope.
-	local down_slope = vector.normalize(vector.create(under.normal.x, 0, under.normal.z))
-	return vector.dot(vector.normalize(vector.create(towards.x, 0, towards.z)), down_slope) > 0.5
+	return vector.dot(level, vector.normalize(vector.create(ground.x, 0, ground.z))) > 0.5
 end
 
+-- Getting out starts with the spots the car could not reach that have
+-- ground, which `leave` tries in turn.
 local function get_out()
+	if leaving then
+		return
+	end
 	local pos: vector = car:get("Transform", "translation")
 	local rot: Quat = car:get("Transform", "rotation")
-	local out: vector? = nil
+	local spots: { vector } = {}
 	for i = 1, #EXITS do
 		if not in_the_way(pos, rot, EXITS[i]) then
-			out = exit_at(pos, rot, EXITS[i])
-			if out then
-				break
+			local at = exit_at(pos, rot, EXITS[i])
+			if at then
+				table.insert(spots, at)
 			end
 		end
 	end
-	if not out then
-		-- No room to stand anywhere by the car: the hero stays in, and the
-		-- HUD says so.
-		rig.no_room = time.now()
+	if #spots == 0 then
+		-- Nowhere to get out: the hero stays in, and the HUD says so.
+		rig.no_exit = time.now()
 		return
 	end
-	hero:set("Transform", "translation", out)
-	hero:add("CharacterController", { height = 1.8, radius = 0.35 })
-	body:set("Visible", "visible", true)
-	rig.driving = false
-	rig.no_room = -math.huge
-	air = 0
-	fresh = true
-	audio.play(DOOR, pos)
-	audio.snapshot("default", 0.4)
+	leaving = { spots = spots, tried = 0 }
+end
+
+-- A step of getting out. The hero, still hidden, and still in the car for
+-- every other script, is set down at the next spot with its
+-- CharacterController. That controller's first step pushes the capsule
+-- clear of anything it overlaps, by as much as it overlaps (a trunk, a
+-- rock's edge), so a hero that moved sideways or up in it has no room
+-- there, and the next spot is tried. One that only started to fall gets
+-- out there. With no spot left, the hero stays in, and the HUD says so.
+local function leave(l: Leaving)
+	if l.tried > 0 then
+		local moved = physics.character(hero).position - l.spots[l.tried]
+		if moved.x * moved.x + moved.z * moved.z < SETTLED * SETTLED and moved.y < 0 then
+			leaving = nil
+			body:set("Visible", "visible", true)
+			rig.driving = false
+			rig.no_exit = -math.huge
+			air = 0
+			fresh = true
+			audio.play(DOOR, car:get("Transform", "translation"))
+			audio.snapshot("default", 0.4)
+			return
+		end
+	end
+	l.tried += 1
+	local at = l.spots[l.tried]
+	if not at then
+		leaving = nil
+		hero:remove("CharacterController")
+		rig.no_exit = time.now()
+		return
+	end
+	hero:set("Transform", "translation", at)
+	if l.tried == 1 then
+		hero:add("CharacterController", { height = 1.8, radius = 0.35 })
+	end
 end
 
 local function start(hero_ground: number, car_ground: number)
@@ -261,6 +291,10 @@ time.on_step(function(dt)
 		if h and c then
 			start(h, c)
 		end
+		return
+	end
+	if leaving then
+		leave(leaving)
 		return
 	end
 	if rig.driving then
