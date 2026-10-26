@@ -601,7 +601,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Decision.**
 - `real verify [--project DIR] [--json]` runs these stages in order:
   1. schema check of all content files;
-  2. script compile (tier 1; the stage's `data.scripts` counts the scripts compiled);
+  2. script compile (tier 1; the stage's `data.scripts` counts the scripts compiled) and the project's `shaders/*.wgsl` (`data.shaders` counts them; `RE6030` and `RE6031` are errors, `RE6033` a warning; ADR-0038's amendment);
   3. static API scan (tier 2; present when `real` is built with `tooling`, otherwise reported as skipped). Its `data` is `{ scripts, covered, missing }`. API gaps are warnings (`RE0903`, "scripts use an API the engine does not provide"), and a script the scan cannot parse is an error;
   4. headless boot;
   5. input replays under `tests/replays/*.replay.json`, with `state_hash` compared across two runs. Each run also reports `regenerations[]` (`frame`, `characters_kept`, `grounded`, `collected_kept`, `script_errors`): a terrain regeneration during a replay (a change in the set of derived heightfield colliders) must keep each character's `Entity`, get each character on the ground within 60 frames, and keep collected (suppressed) ids absent, or the stage fails with `RE0525`. A restart drops the pending checks;
