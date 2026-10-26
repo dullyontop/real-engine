@@ -70,8 +70,8 @@ the wind down and muffles it, and lowers the echo.
   first where its CharacterController didn't push it clear of a trunk or a
   rock. With nowhere to get out, the hero stays in and the HUD says so.
 - `scripts/game/car.luau`: the car's driver input through `physics.drive`, and
-  its engine sound: the three layers, crossfaded by the engine's rpm and
-  louder with more throttle.
+  its engine sound: the three layers, crossfaded by the engine's rpm, pitched
+  to it (`audio.set_rate`) and louder with more throttle.
 - `scripts/game/camera.luau`: the orbit camera, on the hero or the car.
 - `scripts/game/game.luau`: the HUD line.
 - `tests/replays/`: `walk` (walk, strafe, turn the camera, jump), `drive`
@@ -93,8 +93,6 @@ Everything here is made by the engine's generators or by the scripts in
 - Distant terrain: `terrain.chunks` would draw it in levels of detail, but its
   far chunks swap in when the worker pool finishes them, so screenshots would
   not repeat; the valley meshes only the loaded cells, with `terrain.mesh`.
-- The engine sound changes layers, not pitch: `AudioSource` has no playback
-  rate.
 - There are no DX12 or Metal goldens yet, so with those backends (the
   defaults on Windows and macOS) `real verify` fails its `goldens` stage with
   `RE0510`.

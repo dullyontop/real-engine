@@ -8,7 +8,8 @@
 - `assets/sfx/engine_idle.wav`, `assets/sfx/engine_mid.wav`,
   `assets/sfx/engine_high.wav`: the car's engine at about 1000, 2800 and
   5000 rpm, 1 s loops of a four-cylinder's exhaust pulses over its firing
-  tone. The car script crossfades them by the engine's rpm.
+  tone. The car script crossfades them by the engine's rpm and pitches them
+  to it.
 - `assets/ambience/wind.wav`: wind, a 6 s loop of low-passed noise that
   swells and settles (at 11,025 Hz, plenty for noise low-passed at 400 Hz).
 

@@ -5,16 +5,17 @@
 -- Parked, the hand brake holds it.
 --
 -- The engine sound is three looping layers (children of the car on the
--- `vehicle` bus), made at about 1000, 2800 and 5000 rpm: each plays fully at
--- its own rpm and crossfades with its neighbours' at equal power, louder
--- with more throttle. Parked, the engine is off.
+-- `vehicle` bus), made at 1020, 2820 and 4980 rpm (a four-cylinder firing 34,
+-- 94 and 166 times a second): each plays fully at its own rpm and crossfades
+-- with its neighbours' at equal power, louder with more throttle, and is
+-- pitched to the engine's rpm. Parked, the engine is off.
 local rig = require("./lib/rig")
 
 local car = script.entity :: Entity
 local ENGINE = {
-	{ part = world.get("engine_idle") :: Entity, rpm = 1000 },
-	{ part = world.get("engine_mid") :: Entity, rpm = 2800 },
-	{ part = world.get("engine_high") :: Entity, rpm = 5000 },
+	{ part = world.get("engine_idle") :: Entity, rpm = 1020 },
+	{ part = world.get("engine_mid") :: Entity, rpm = 2820 },
+	{ part = world.get("engine_high") :: Entity, rpm = 4980 },
 }
 -- The Vehicle that player.luau adds when `rig.ready` turns true exists only
 -- from the next step on, whichever script steps first.
@@ -23,7 +24,10 @@ local armed = false
 -- Sets each layer's volume for the engine's `rpm` and `throttle` (0 to 1);
 -- `level` 0 is off. The two layers around `rpm` share it linearly, and each
 -- plays at the square root of its share, so the sum of their powers stays
--- the same through the crossfade.
+-- the same through the crossfade. A layer that sounds plays `rpm / layer.rpm`
+-- times as fast, so the two play the same firing tone; a silent one keeps its
+-- last rate, so none plays more than 2.8 times as fast (a faster sound costs
+-- more to mix).
 local function engine_sound(rpm: number, throttle: number, level: number)
 	local loud = level * (0.55 + 0.45 * throttle)
 	for i = 1, #ENGINE do
@@ -36,6 +40,9 @@ local function engine_sound(rpm: number, throttle: number, level: number)
 			share = math.clamp((above.rpm - rpm) / (above.rpm - layer.rpm), 0, 1)
 		end
 		layer.part:set("AudioSource", "volume", loud * math.sqrt(share))
+		if loud > 0 and share > 0 then
+			audio.set_rate(layer.part, rpm / layer.rpm)
+		end
 	end
 end
 
