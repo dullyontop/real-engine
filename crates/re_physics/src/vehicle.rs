@@ -5,7 +5,8 @@
 //! wheels cast against the scene, then engine, brakes and tire friction act through
 //! the constraint. `re_physics` adds what Jolt leaves to the caller:
 //!
-//! * differentials and anti-roll bars are derived from the wheels' axles;
+//! * differentials and anti-roll bars are derived from the wheels' axles, and the
+//!   differentials are open, where Jolt's default limits their slip;
 //! * the wheel tester queries as the chassis layer's moving object layer, so wheels
 //!   touch what the chassis touches in the [`LayerTable`](crate::LayerTable);
 //! * a new driver input wakes a sleeping chassis (Jolt gives a sleeping chassis no
@@ -33,6 +34,17 @@ use crate::world::{Physics, at, object_layer, unknown};
 
 /// Driven wheels whose local `z` differ by at most this share an axle, metres.
 const AXLE_TOLERANCE: f32 = 0.01;
+
+/// The limited-slip ratio of an open differential, which splits its torque evenly
+/// whatever its sides' speeds. Jolt's default of 1.4 sends more of a differential's
+/// torque to its slower side the faster the other side turns, and all of it once that
+/// side turns 1.4 times as fast. Jolt shifts up only on a step on which no wheel that
+/// gets torque slips, so with limited slip within and between the differentials a car
+/// with more torque than grip can put all of it on one wheel and shift up the first
+/// step that wheel grips, even while the others spin: its first gear change hangs on
+/// tiny differences (ADR-0040). With open differentials every driven wheel gets
+/// torque, so a car stays in its gear while any of them spins.
+const OPEN: f32 = f32::MAX;
 
 /// The vehicle of one chassis entity.
 #[derive(Clone, Copy, Debug)]
@@ -161,7 +173,8 @@ fn settings(desc: &VehicleDesc, layer: ObjectLayer) -> Result<WheeledVehicleSett
         differentials.push(
             VehicleDifferentialSettings::new(left, right)
                 .differential_ratio(desc.transmission.differential_ratio)
-                .engine_torque_ratio(ratio),
+                .engine_torque_ratio(ratio)
+                .limited_slip_ratio(OPEN),
         );
     }
     let mut bars = Vec::new();
@@ -176,6 +189,7 @@ fn settings(desc: &VehicleDesc, layer: ObjectLayer) -> Result<WheeledVehicleSett
     Ok(
         WheeledVehicleSettings::new(wheels, differentials, tester(desc.tester, layer))
             .max_pitch_roll_angle(desc.max_pitch_roll_deg.to_radians())
+            .differential_limited_slip_ratio(OPEN)
             .anti_roll_bars(bars)
             .engine(
                 VehicleEngineSettings::default()
@@ -405,6 +419,21 @@ mod tests {
         assert_eq!(axles(&wheels, |_| true), vec![vec![0, 1], vec![2, 3]]);
         assert_eq!(sides(&wheels, &[3]).unwrap(), (None, Some(3)));
         assert!(sides(&wheels, &[0, 1, 2]).is_err());
+    }
+
+    #[test]
+    fn differentials_are_open_on_each_axle_and_between_axles() {
+        // The settings' fields are private, so read the ratios from their debug text:
+        // each axle's `limited_slip_ratio` and the `differential_limited_slip_ratio`
+        // between the axles.
+        let mut desc = VehicleDesc::car(Vec3::new(0.9, -0.1, 1.4), 0.35);
+        for wheel in &mut desc.wheels {
+            wheel.driven = true;
+        }
+        let text = format!("{:?}", settings(&desc, ObjectLayer::new(1)).unwrap());
+        let open = format!("limited_slip_ratio: {:?}", f32::MAX);
+        assert_eq!(text.matches("limited_slip_ratio").count(), 3, "{text}");
+        assert_eq!(text.matches(&open).count(), 3, "{text}");
     }
 
     #[test]
