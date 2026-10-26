@@ -5,12 +5,13 @@
 use mlua::{Function, IntoLua, Lua, MultiValue, Result, Table, Value};
 use re_command::Origin;
 use re_core::Code;
+use re_reflect::Value as ReflectValue;
 use re_scene::{Entity, entity_from_id, entity_id};
 use re_types::audio::{AudioCmd, EffectParam};
 use re_types::host::HostError;
 use re_types::physics::{GroundState, GroupMask, RagdollMode, VehicleInput};
 
-use super::entity::{EntityRef, handle};
+use super::entity::{EntityRef, alive, handle, reflect_err};
 use super::math::{LQuat, V3};
 use super::{Lib, json};
 use crate::codes;
@@ -445,6 +446,34 @@ fn audio_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
                     }),
                 }
                 .map_err(host_err)
+            })
+        },
+    )?;
+    lib.func(
+        lua,
+        "set_rate",
+        "(e: Entity, rate: number) -> ()",
+        "Sets the playback speed of `e`'s AudioSource (its `rate` field), above 0: 1 is normal, the pitch shifts with the speed, and it plays at most 16 times as fast. Its playing sound follows, and a sound it starts later plays at that rate.",
+        |lua, (e, rate): (Value, f32)| {
+            let e = entity_arg(&e, "audio.set_rate")?;
+            if !(rate.is_finite() && rate > 0.0) {
+                return Err(super::error(
+                    codes::BAD_ARGUMENT,
+                    format!("audio.set_rate: rate {rate} is not a finite number above 0"),
+                ));
+            }
+            with_host(lua, |h| {
+                let w = h.world();
+                alive(w, e)?;
+                let key = w.registry.key("AudioSource").map_err(reflect_err)?;
+                let index = w
+                    .registry
+                    .schema(key)
+                    .field_index("rate")
+                    .map_err(reflect_err)?;
+                w.registry
+                    .set_field(&mut w.ecs, e, key, index, ReflectValue::Float(rate.into()))
+                    .map_err(reflect_err)
             })
         },
     )?;

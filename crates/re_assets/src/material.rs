@@ -13,7 +13,7 @@
 //! unknown keys are errors. Texture paths are relative to the project root. Each
 //! texture becomes a [`TextureRef::Asset`] holding the texture's id from its
 //! `.meta.json` sidecar (created when missing; normal and metallic-roughness maps
-//! get `"color_space": "linear"`).
+//! get `"color_space": "linear"`, and normal maps `"normal_map": true`).
 
 use std::path::{Path, PathBuf};
 
@@ -186,7 +186,7 @@ pub fn load_material_from(files: &ProjectFiles, path: &str) -> Result<MaterialDe
 
     let texture = |key: &str,
                    value: &Option<String>,
-                   linear: bool|
+                   settings: serde_json::Value|
      -> Result<Option<TextureRef>, Diagnostic> {
         let Some(tex) = value else { return Ok(None) };
         let tex_rel = id::normalize_path(tex).map_err(|d| d.at(located(key)))?;
@@ -198,26 +198,30 @@ pub fn load_material_from(files: &ProjectFiles, path: &str) -> Result<MaterialDe
             .at(located(key))
             .with_hint("texture paths are relative to the project root, for example `assets/textures/rock.png`"));
         }
-        let settings = if linear {
-            serde_json::json!({ "color_space": "linear" })
-        } else {
-            serde_json::json!({})
-        };
         let meta = AssetMeta::read_or_create_in(files, &tex_rel, settings)?;
         Ok(Some(TextureRef::Asset(meta.id().to_string())))
     };
 
     Ok(MaterialDesc {
         base_color: file.base_color,
-        base_color_texture: texture("base_color_texture", &file.base_color_texture, false)?,
+        base_color_texture: texture(
+            "base_color_texture",
+            &file.base_color_texture,
+            serde_json::json!({}),
+        )?,
         metallic: file.metallic,
         roughness: file.roughness,
         metallic_roughness_texture: texture(
             "metallic_roughness_texture",
             &file.metallic_roughness_texture,
-            true,
+            serde_json::json!({ "color_space": "linear" }),
         )?,
-        normal_texture: texture("normal_texture", &file.normal_texture, true)?,
+        // Normal maps are stored as BC5, two channels (ADR-0047).
+        normal_texture: texture(
+            "normal_texture",
+            &file.normal_texture,
+            serde_json::json!({ "color_space": "linear", "normal_map": true }),
+        )?,
         emissive: file.emissive,
         emissive_strength: file.emissive_strength,
         alpha_mode: match file.alpha_mode {

@@ -303,6 +303,29 @@ fn rate_and_seek_move_through_the_clip() {
 }
 
 #[test]
+fn a_rate_above_the_fastest_plays_at_the_fastest() {
+    let mut a = audio();
+    // 2 s clip: at MAX_RATE (16) it lasts 0.125 s; at 100 it would last 0.02 s,
+    // and the largest rate would never finish a buffer.
+    assert_eq!(re_audio::MAX_RATE, 16.0);
+    a.insert_clip("tone", sine(440.0, 2.0, RATE, 0.5));
+    let e = EntityId(3);
+    for rate in [100.0, f32::MAX] {
+        assert!(
+            a.apply(&[
+                start(e, "tone", false, Vec3::ZERO),
+                AudioCmd::SetSourceRate { entity: e, rate },
+            ])
+            .is_empty()
+        );
+        a.render_headless(RATE as usize / 20);
+        assert!(a.is_source_playing(e), "{rate}: playing at 0.05 s");
+        a.render_headless(RATE as usize / 10);
+        assert!(!a.is_source_playing(e), "{rate}: over by 0.15 s");
+    }
+}
+
+#[test]
 fn a_source_without_attenuation_keeps_its_volume_far_away() {
     let mut a = audio();
     a.insert_clip("tone", sine(440.0, 2.0, RATE, 0.5));

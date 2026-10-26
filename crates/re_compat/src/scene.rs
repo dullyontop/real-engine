@@ -291,9 +291,10 @@ pub struct CompatConfig {
     /// (`[compat.game]`); Studio-like by default.
     #[serde(default, skip_serializing_if = "GameInfo::is_default")]
     pub game: GameInfo,
-    /// Seeds `Random.new()` called without a seed (the client context uses
-    /// `seed + 1`), so runs repeat. TOML integers are signed, so a seed
-    /// written to `real.toml` must be at most `i64::MAX`.
+    /// Seeds `Random.new()` called without a seed and Luau's `math.random`
+    /// (the client context uses `seed + 1`), so runs repeat. TOML integers
+    /// are signed, so a seed written to `real.toml` must be at most
+    /// `i64::MAX`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub seed: u64,
     /// Asset substitutes: an asset id (`"rbxassetid://123"` or `"123"`, both

@@ -243,6 +243,9 @@ component! {
         /// The mixer bus it plays on (ADR-0041); empty for the project's
         /// `default_bus`.
         pub bus: String = String::new(),
+        /// Playback speed, above 0: 1 is normal, and the pitch shifts with the
+        /// speed. A source plays at most 16 times as fast.
+        pub rate: f32 = 1.0,
     }
 }
 

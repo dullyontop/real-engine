@@ -1,5 +1,5 @@
-//! The legacy globals `wait`, `delay` and `spawn`, and `debug.profilebegin`
-//! and `debug.profileend`.
+//! The legacy globals `wait`, `delay` and `spawn`, `debug.profilebegin` and
+//! `debug.profileend`, and `os.clock` on the virtual clock.
 //!
 //! The legacy globals work over the `task` library and write one `RE9101`
 //! note per context the first time each is used:
@@ -14,6 +14,12 @@
 //! `profileend` is ignored). The engine's profiler takes static scope names
 //! only (`profile_scope!`), so the script labels are not recorded yet: script
 //! time shows under the runtime's own scopes.
+//!
+//! `os.clock()` is [`CLOCK_START`] plus the game time (the virtual clock
+//! `task.wait` counts), not the process clock, so code that times itself
+//! with it repeats run to run. It moves once per fixed step and stands still
+//! within one: a loop that spins on it without yielding never sees it
+//! change.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -25,6 +31,11 @@ use crate::codes::DEPRECATED_MEMBER;
 
 /// The deepest `debug.profilebegin` nesting kept; deeper labels are dropped.
 pub const MAX_PROFILE_DEPTH: usize = 256;
+
+/// What `os.clock()` reads when a context starts, in seconds: a day, so a
+/// cooldown stamped at 0 has already passed, as it has for the process clock
+/// of a machine that has been up a while.
+pub const CLOCK_START: f64 = 86_400.0;
 
 /// The legacy globals already noted in this context.
 #[derive(Default)]
@@ -130,7 +141,22 @@ fn debug_lib(lua: &Lua) -> Result<LuaValue> {
     Ok(LuaValue::Table(t))
 }
 
-/// Registers `wait`, `delay`, `spawn` and the extended `debug`.
+/// The `os` library with `clock` on the virtual clock.
+fn os_lib(lua: &Lua) -> Result<LuaValue> {
+    let std_os: Table = lua.globals().raw_get("os")?;
+    let t = lua.create_table()?;
+    for pair in std_os.pairs::<LuaValue, LuaValue>() {
+        let (k, v) = pair?;
+        t.raw_set(k, v)?;
+    }
+    t.raw_set(
+        "clock",
+        lua.create_function(|lua, ()| Ok(CLOCK_START + re_script::sched::now(lua)?))?,
+    )?;
+    Ok(LuaValue::Table(t))
+}
+
+/// Registers `wait`, `delay`, `spawn`, the extended `debug` and `os`.
 pub(crate) fn register(b: &mut Bindings) {
     b.global(
         "wait",
@@ -145,4 +171,5 @@ pub(crate) fn register(b: &mut Bindings) {
         Arc::new(|lua, _| Ok(LuaValue::Function(legacy(lua)?.2))),
     );
     b.global("debug", Arc::new(|lua, _| debug_lib(lua)));
+    b.global("os", Arc::new(|lua, _| os_lib(lua)));
 }

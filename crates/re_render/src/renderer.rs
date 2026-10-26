@@ -1,6 +1,7 @@
 //! The forward renderer: GPU resources behind generation-checked handles, the
 //! scene pass, the shadow pass, debug lines and egui painting.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
 use std::num::NonZeroU64;
@@ -387,6 +388,11 @@ pub struct Renderer {
     skinning: Option<Skinning>,
     /// Whether `RE6040` was given.
     warned_no_skinning: bool,
+    /// Whether the device takes BC formats; without them, block-compressed
+    /// textures are decoded at upload (ADR-0047).
+    bc_native: bool,
+    /// Whether decoding block-compressed textures was logged.
+    warned_bc_decode: bool,
     highlight_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     mask_targets: Option<MaskTargets>,
     highlight_buffer: wgpu::Buffer,
@@ -718,6 +724,91 @@ fn solid_texture(
         },
     );
     texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// Why `data` (which [`TextureData::is_well_formed`] refused) cannot be
+/// uploaded.
+fn malformed_texture(data: &TextureData) -> String {
+    let (w, h, f) = (data.width, data.height, data.format);
+    if !f.is_compressed() {
+        let want = f.level_bytes(w, h);
+        return if data.pixels.len() as u64 == want {
+            format!(
+                "a {w}x{h} RGBA8 texture carries no mip levels (they are made at upload), \
+                 not {}",
+                data.levels.len()
+            )
+        } else {
+            format!(
+                "a {w}x{h} RGBA8 texture needs {want} bytes of pixels, not {}",
+                data.pixels.len()
+            )
+        };
+    }
+    if !w.is_multiple_of(4) || !h.is_multiple_of(4) {
+        return format!(
+            "a {w}x{h} {f:?} texture is not possible: block-compressed sizes are multiples of 4"
+        );
+    }
+    let sizes = TextureData::mip_sizes(w, h);
+    if data.levels.len() + 1 != sizes.len() {
+        return format!(
+            "a {w}x{h} {f:?} texture needs {} mip levels below the top one, not {}",
+            sizes.len() - 1,
+            data.levels.len()
+        );
+    }
+    let blocks = std::iter::once(&data.pixels).chain(&data.levels);
+    for (level, (&(lw, lh), b)) in sizes.iter().zip(blocks).enumerate() {
+        let want = f.level_bytes(lw, lh);
+        if b.len() as u64 != want {
+            return format!(
+                "level {level} ({lw}x{lh}) of a {f:?} texture needs {want} bytes of blocks, not {}",
+                b.len()
+            );
+        }
+    }
+    format!("the {w}x{h} {f:?} texture data is malformed")
+}
+
+/// One level of block-compressed `blocks` decoded to `width` x `height` RGBA8,
+/// for a device without BC formats (ADR-0047). BC5's two channels become red
+/// and green, with blue 0 and alpha 255.
+pub(crate) fn decode_blocks(
+    format: TextureFormat,
+    width: u32,
+    height: u32,
+    blocks: &[u8],
+) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    let blocks_wide = w.div_ceil(4);
+    let mut out = vec![0u8; w * h * 4];
+    for (i, block) in blocks.as_chunks::<16>().0.iter().enumerate() {
+        let (bx, by) = (i % blocks_wide * 4, i / blocks_wide * 4);
+        let mut rgba = [0u8; 64];
+        if format == TextureFormat::Bc5Unorm {
+            let mut rg = [0u8; 32];
+            bcdec_rs::bc5(block, &mut rg, 8, false);
+            for (px, c) in rgba
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(rg.as_chunks::<2>().0)
+            {
+                *px = [c[0], c[1], 0, 255];
+            }
+        } else {
+            bcdec_rs::bc7(block, &mut rgba, 16);
+        }
+        // The block's pixels inside the level (a level under 4x4 uses part
+        // of its one block).
+        for y in 0..4.min(h - by) {
+            let row = (by + y) * w + bx;
+            let n = 4.min(w - bx);
+            out[row * 4..(row + n) * 4].copy_from_slice(&rgba[y * 16..y * 16 + n * 4]);
+        }
+    }
+    out
 }
 
 /// The mip chain of an RGBA8 image, level 0 first, by 2x2 box filtering. Colour
@@ -1052,6 +1143,10 @@ impl Renderer {
             mask_pipelines,
             skinning,
             warned_no_skinning: false,
+            bc_native: device
+                .features()
+                .contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
+            warned_bc_decode: false,
             highlight_pipelines: HashMap::new(),
             mask_targets: None,
             highlight_buffer,
@@ -1687,8 +1782,13 @@ impl Renderer {
         Ok(MeshHandle::new(index, generation))
     }
 
-    /// Uploads a texture with a full mip chain. Fails with `RE6015` when the data is
-    /// malformed or larger than the GPU allows.
+    /// Uploads a texture with a full mip chain. RGBA8 data gets its mips here;
+    /// block-compressed data brings its own (ADR-0047) and is uploaded as it is
+    /// when the device has `TEXTURE_COMPRESSION_BC`, or decoded to RGBA8 first
+    /// when it does not (logged once).
+    ///
+    /// Fails with `RE6015` when the data is malformed
+    /// ([`TextureData::is_well_formed`]) or larger than the GPU allows.
     pub fn upload_texture(&mut self, data: &TextureData) -> Result<TextureHandle, Diagnostic> {
         let max = self.device.limits().max_texture_dimension_2d;
         if data.width == 0 || data.height == 0 || data.width > max || data.height > max {
@@ -1703,20 +1803,45 @@ impl Renderer {
         if !data.is_well_formed() {
             return Err(Diagnostic::error(
                 codes::BAD_TEXTURE,
-                format!(
-                    "a {}x{} RGBA8 texture needs {} bytes of pixels, not {}",
-                    data.width,
-                    data.height,
-                    u64::from(data.width) * u64::from(data.height) * 4,
-                    data.pixels.len()
-                ),
+                malformed_texture(data),
             ));
         }
-        let (format, srgb) = match data.format {
-            TextureFormat::Rgba8Srgb => (wgpu::TextureFormat::Rgba8UnormSrgb, true),
-            TextureFormat::Rgba8Unorm => (wgpu::TextureFormat::Rgba8Unorm, false),
+        let compressed = data.format.is_compressed();
+        let native = compressed && self.bc_native;
+        let format = match (data.format, native) {
+            (TextureFormat::Bc7Srgb, true) => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+            (TextureFormat::Bc7Unorm, true) => wgpu::TextureFormat::Bc7RgbaUnorm,
+            (TextureFormat::Bc5Unorm, true) => wgpu::TextureFormat::Bc5RgUnorm,
+            (f, _) if f.is_srgb() => wgpu::TextureFormat::Rgba8UnormSrgb,
+            _ => wgpu::TextureFormat::Rgba8Unorm,
         };
-        let levels = mip_chain(data.width, data.height, &data.pixels, srgb);
+        let levels: Vec<(u32, u32, Cow<'_, [u8]>)> = if compressed {
+            if !native && !self.warned_bc_decode {
+                self.warned_bc_decode = true;
+                tracing::info!(
+                    "the GPU has no BC texture formats; block-compressed textures are decoded \
+                     to RGBA8 at upload"
+                );
+            }
+            let blocks = std::iter::once(&data.pixels).chain(&data.levels);
+            TextureData::mip_sizes(data.width, data.height)
+                .into_iter()
+                .zip(blocks)
+                .map(|((w, h), b)| {
+                    let level = if native {
+                        Cow::Borrowed(b.as_slice())
+                    } else {
+                        Cow::Owned(decode_blocks(data.format, w, h, b))
+                    };
+                    (w, h, level)
+                })
+                .collect()
+        } else {
+            mip_chain(data.width, data.height, &data.pixels, data.format.is_srgb())
+                .into_iter()
+                .map(|(w, h, p)| (w, h, Cow::Owned(p)))
+                .collect()
+        };
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("re_render texture"),
             size: wgpu::Extent3d {
@@ -1734,6 +1859,14 @@ impl Renderer {
         let mut bytes = 0u64;
         for (level, (w, h, pixels)) in levels.iter().enumerate() {
             bytes += pixels.len() as u64;
+            // Block rows for a compressed format, whose copies cover whole
+            // blocks (a level smaller than a block is stored as one).
+            let (bytes_per_row, rows, extent) = if native {
+                let (bw, bh) = (w.div_ceil(4), h.div_ceil(4));
+                (bw * 16, bh, (bw * 4, bh * 4))
+            } else {
+                (w * 4, *h, (*w, *h))
+            };
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
@@ -1744,12 +1877,12 @@ impl Renderer {
                 pixels,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(w * 4),
-                    rows_per_image: Some(*h),
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(rows),
                 },
                 wgpu::Extent3d {
-                    width: *w,
-                    height: *h,
+                    width: extent.0,
+                    height: extent.1,
                     depth_or_array_layers: 1,
                 },
             );
@@ -3296,6 +3429,99 @@ fn pow2(e: i32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use block_compression::{BC7Settings, CompressionVariant, decode, encode};
+
+    /// `width` x `height` RGBA8 in which every channel varies, alpha included.
+    fn pattern(width: u32, height: u32) -> Vec<u8> {
+        (0..width * height)
+            .flat_map(|i| {
+                let (x, y) = (i % width, i / width);
+                [
+                    (x * 37 % 256) as u8,
+                    (y * 59 % 256) as u8,
+                    ((x + y) * 23 % 256) as u8,
+                    (255 - (x * y * 13) % 128) as u8,
+                ]
+            })
+            .collect()
+    }
+
+    /// `rgba` as blocks; the sizes are multiples of 4.
+    fn compress(variant: CompressionVariant, width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+        let mut blocks = vec![0; variant.blocks_byte_size(width, height)];
+        encode::compress_rgba8(variant, rgba, &mut blocks, width, height, width * 4);
+        blocks
+    }
+
+    const BC7: CompressionVariant = CompressionVariant::BC7(BC7Settings::alpha_very_fast());
+
+    #[test]
+    fn bc7_blocks_decode_like_the_encoders_own_decoder() {
+        let blocks = compress(BC7, 8, 12, &pattern(8, 12));
+        let mut want = vec![0; 8 * 12 * 4];
+        decode::decompress_blocks_as_rgba8(BC7, 8, 12, &blocks, &mut want);
+        assert_eq!(decode_blocks(TextureFormat::Bc7Srgb, 8, 12, &blocks), want);
+        assert_eq!(decode_blocks(TextureFormat::Bc7Unorm, 8, 12, &blocks), want);
+    }
+
+    #[test]
+    fn bc5_blocks_decode_to_red_and_green() {
+        let bc5 = CompressionVariant::BC5;
+        let blocks = compress(bc5, 8, 8, &pattern(8, 8));
+        let mut want = vec![0; 8 * 8 * 4];
+        decode::decompress_blocks_as_rgba8(bc5, 8, 8, &blocks, &mut want);
+        let got = decode_blocks(TextureFormat::Bc5Unorm, 8, 8, &blocks);
+        // The decoders round the values between the endpoints differently
+        // (bcdec_rs adds one before dividing, block_compression truncates), so
+        // a channel may be one level apart.
+        for (got, want) in got.as_chunks::<4>().0.iter().zip(want.as_chunks::<4>().0) {
+            let near = |c: usize| got[c].abs_diff(want[c]) <= 1;
+            assert!(near(0) && near(1), "{got:?} decoded where {want:?} was");
+            assert_eq!(got[2..], [0, 255]);
+        }
+    }
+
+    #[test]
+    fn levels_smaller_than_a_block_are_its_top_left_corner() {
+        let block = compress(BC7, 4, 4, &pattern(4, 4));
+        let whole = decode_blocks(TextureFormat::Bc7Unorm, 4, 4, &block);
+        for (w, h) in [(2, 2), (1, 1), (4, 2), (2, 1), (1, 4)] {
+            let corner: Vec<u8> = (0..h)
+                .flat_map(|y| &whole[y * 16..y * 16 + w * 4])
+                .copied()
+                .collect();
+            assert_eq!(
+                decode_blocks(TextureFormat::Bc7Unorm, w as u32, h as u32, &block),
+                corner,
+                "{w}x{h}"
+            );
+        }
+    }
+
+    /// Without BC formats, every level of a block-compressed texture is
+    /// decoded to RGBA8 at upload (ADR-0047).
+    #[test]
+    fn block_compressed_textures_are_decoded_without_bc_formats() {
+        let backends = crate::backends_from_env().expect("RE_BACKENDS");
+        let gpu = crate::Gpu::headless(backends).unwrap_or_else(|d| panic!("{}", d.render_human()));
+        let mut renderer = Renderer::new(&gpu, crate::Capture::FORMAT);
+        renderer.bc_native = false;
+        let block = compress(BC7, 4, 4, &pattern(4, 4));
+        let data = TextureData {
+            width: 8,
+            height: 8,
+            format: TextureFormat::Bc7Srgb,
+            pixels: compress(BC7, 8, 8, &pattern(8, 8)),
+            levels: vec![block.clone(), block.clone(), block],
+        };
+        renderer.upload_texture(&data).unwrap();
+        assert_eq!(
+            renderer.stats().textures.bytes,
+            (8 * 8 + 4 * 4 + 2 * 2 + 1) * 4,
+            "RGBA8 levels, not blocks"
+        );
+        assert_eq!(gpu.errors().count(), 0, "{:?}", gpu.errors().take());
+    }
 
     #[test]
     fn mip_chains_halve_to_one_pixel() {
