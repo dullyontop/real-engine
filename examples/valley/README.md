@@ -2,8 +2,9 @@
 
 The M3 example (`docs/M3_PLAN.md`, WP28): a procedural valley to walk and
 drive through. CI checks it with `verify-valley`, packs it and plays its
-replays from the package in `build-package`, and compares its replays'
-`state_hash` on Linux, Windows and macOS in `d2`.
+replays from the package on Linux, Windows and macOS (`build-package`,
+`build-package-windows` and `build-package-macos`), and compares its replays'
+`state_hash` on the three in `d2`.
 
 The valley is a streamed world (ADR-0042): 16 km square, generated cell by
 cell (256 m cells) around the hero as you go, with the `[stream]` defaults.
@@ -13,7 +14,7 @@ the ground under them has loaded, and are then set down on it.
 Walk with WASD (or the left stick), look with the mouse (or the right stick),
 jump with Space. Press E next to the car to get in: W and S are throttle and
 brake (against the way the car rolls they brake first, then drive), A and D
-steer, Space is the hand brake. E again gets you out.
+steer, Space is the hand brake. E again gets you out, where there is room.
 
 ```sh
 real run --project examples/valley
@@ -23,8 +24,8 @@ real build --project examples/valley --out dist/valley
 
 `real.toml` turns on mild post-processing (neutral tone mapping, a little
 bloom and slightly richer colour), sets the sun's shadow cascades (four, out
-to 200 m), defines the mixer and packs `models/`, which is not a default
-package folder.
+to 200 m), defines the mixer, names the packaged game (`com.example.valley`)
+and packs `models/`, which is not a default package folder.
 
 The mixer (`[audio]`, ADR-0041) has a bus for each kind of sound: `footsteps`
 and `vehicle` under `sfx`, which also feeds a reverb send (`echo`), and
@@ -62,7 +63,10 @@ the wind down and muffles it, and lowers the echo.
   body's facing, the graph's parameters (`anim.set`), a footstep where a boot
   lands (read with `anim.joint`), and getting in and out of the car, with the
   door and the `in_car` snapshot. The hero gets out by a door, or else behind
-  or in front, wherever there is room to stand; with none, the hero stays in.
+  or in front, wherever there is room to stand and the car cannot come down
+  onto the hero (falling back from a raised side, or creeping down a slope
+  steeper than 20°); with no room anywhere, the hero stays in and the HUD
+  says so.
 - `scripts/game/car.luau`: the car's driver input through `physics.drive`, and
   its engine sound: the three layers, crossfaded by the engine's rpm and
   louder with more throttle.

@@ -35,8 +35,11 @@ cascades = 4
 distance = 200.0
 split_lambda = 0.85
 
-# models/ (the walker) is not a default package folder.
+# `real build` (ADR-0037): the identifier names the folders the packaged game
+# saves in. models/ (the walker) is not a default package folder.
 [package]
+identifier = "com.example.valley"
+display_name = "Valley"
 include = ["models/**"]
 
 # The mixer (ADR-0041). Footsteps and the car have buses under `sfx`, which
