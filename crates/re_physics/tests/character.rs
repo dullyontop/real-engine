@@ -246,6 +246,89 @@ fn slides_down_a_steep_face_it_may_walk_on() {
     assert!(fell > 0.1, "slid down only {fell} m in 2 s");
 }
 
+/// A character standing on a box's edge stays there while the edge is ground it can
+/// stand on, a contact no steeper than its max slope (45°, so its centre up to
+/// 0.28 m past the edge), and falls off past that, as in Jolt's sample.
+#[test]
+fn stands_on_a_ledge_until_the_edge_is_too_steep() {
+    for (past, stands) in [(0.15, true), (0.25, true), (0.35, false)] {
+        let mut p = world(1);
+        // The ledge's top is at y = 0 and its edge at x = 0; the ground is 3 m below.
+        apply(
+            &mut p,
+            vec![
+                floor(1, -5.0, 0.0, 0.0, 5.0),
+                floor(2, 0.0, 0.0, -3.0, 20.0),
+                spawn(Vec3::new(past, 0.95, 0.0)),
+            ],
+        );
+        for _ in 0..240 {
+            walk(&mut p, Vec3::ZERO);
+        }
+        let c = p.character(PLAYER).unwrap();
+        if stands {
+            assert!(
+                c.ground_entity == Some(EntityId(1)) && (c.pos.x - past).abs() < 0.02,
+                "{past} m past the edge: at {} on {:?}",
+                c.pos,
+                c.ground_entity
+            );
+        } else {
+            assert_eq!(c.ground_entity, Some(EntityId(2)), "{past} m past the edge");
+        }
+    }
+}
+
+/// A character standing on a tilted platform that moves down rides it: on moving
+/// ground it feels all of gravity, so it neither slides down nor creeps up the
+/// platform.
+#[test]
+fn rides_a_tilted_platform_down() {
+    let mut p = world(1);
+    let rot = Quat::from_rotation_z(20f32.to_radians());
+    let top = Vec3::new(0.0, 20.0, 0.0);
+    let at = |shift: Vec3| top + shift + rot * Vec3::new(0.0, -0.25, 0.0);
+    let mut platform = body(
+        BodyKind::Kinematic,
+        ShapeDesc::Box {
+            half_extents: Vec3::new(6.0, 0.25, 6.0),
+        },
+        at(Vec3::ZERO),
+    );
+    platform.rot = rot;
+    apply(
+        &mut p,
+        vec![add(1, platform), spawn(top + Vec3::new(0.0, 1.2, 0.0))],
+    );
+    for _ in 0..60 {
+        walk(&mut p, Vec3::ZERO);
+    }
+    let start = p.character(PLAYER).unwrap().pos - top;
+    let velocity = Vec3::new(0.0, -1.0, 0.0);
+    let mut shift = Vec3::ZERO;
+    for _ in 0..300 {
+        shift += velocity * DT;
+        apply(
+            &mut p,
+            vec![PhysicsCmd::SetKinematicTarget {
+                id: EntityId(1),
+                pos: at(shift),
+                rot,
+            }],
+        );
+        walk(&mut p, Vec3::ZERO);
+        assert!(
+            p.character(PLAYER).unwrap().on_ground(),
+            "left the platform"
+        );
+    }
+    let drift = p.character(PLAYER).unwrap().pos - top - shift - start;
+    assert!(
+        drift.x.abs() < 0.01 && drift.z.abs() < 0.01,
+        "drifted {drift} m across the platform in 5 s"
+    );
+}
+
 /// With its inner body, a character walking into a sensor produces a `ContactEvent`
 /// that names the sensor and the character.
 #[test]
