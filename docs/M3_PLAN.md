@@ -28,7 +28,7 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 | Question | Default | Who decides |
 |---|---|---|
 | Scope of M3 | **Every item of ROADMAP "M3 and later"**, grouped into WP18–WP27, with `examples/valley` as the goal. The render thread is built only if PerfReport shows render submission is the bottleneck (WP20). | **Decided** (owner: "finish the whole thing") |
-| Platforms for packaged games | **Windows x86_64, macOS (arm64 and x86_64), Linux x86_64, and the browser** (wasm32 with WebGPU, WebGL2 as fallback; WP29). Consoles are not in M3. | **Decided** (owner, 2026-10-15: "Both") |
+| Platforms for packaged games | **Windows x86_64, macOS (arm64 and x86_64), Linux x86_64, and the browser** (wasm32 with WebGPU, WebGL2 as fallback; WP29). Consoles are not in M3. As built, CI and releases make macOS builds for arm64 only; nothing builds or tests macOS x86_64. | **Decided** (owner, 2026-10-15: "Both") |
 | Second platform for the D2 exit check | **Windows x86_64**, the most common target that differs from Linux in compiler and maths library. | Plan |
 | Real networking for Roblox-style projects | **In M3 (WP30):** a dedicated or listen server and clients over UDP, and players in a browser over a WebSocket (ADR-0050 and its amendment for PR "web"). | **Decided** (owner, 2026-10-15: "Both") |
 | Luau type checker (DECISIONS, open question 2) | **(a) unchanged**: luau-lsp as an external tool. `real build` does not need it. | Owner |
@@ -82,17 +82,17 @@ A contract is **frozen** at the point named here. After that, changing it follow
 
 | Contract | Defined in | Defined by | Frozen at | Consumed by |
 |---|---|---|---|---|
-| D2 harness: `cargo xtask d2` input (project, replay, frames) and its JSON report (`state_hash` per platform and frame) | `tools/xtask/src/d2.rs` | WP18 | WP18 PR "d2" | every WP that changes simulation |
+| D2 harness: `cargo xtask d2` input (projects, replays, checkpoint spacing) and its JSON report (`state_hash` per platform, replay and checkpoint) | `tools/xtask/src/d2.rs` | WP18 | WP18 PR "d2" | every WP that changes simulation |
 | Package layout: the archive format, its index, the runtime-only binary's lookup order (archive, then project directory) and `real build` options | `crates/re_app/src/package/`, `crates/re_core/src/files.rs` (`ProjectFiles`, maintainer-reviewed, frozen at WP19 PR "files" (#95), `writable()` and its `WritableDir` included, in the ADR-0049 §6 shape; WP29 PR "portable" had merged), `docs/ARCHITECTURE.md` §8 | WP19 | WP19 PR "archive" | WP23, WP28 |
 | Post-processing settings in `RenderSnapshot` (exposure, tone mapping, bloom, colour grading) and the cascade settings of the sun | `crates/re_types/src/render.rs` | WP20 | WP20 PR "post" | WP27 (compat effects), WP28 |
-| Skins: `SkinData` (joints, inverse bind matrices, per-vertex weights) and the skinned draw item | `crates/re_types/src/render.rs` | WP21 | WP21 PR "skins" | WP20 (skinning path), WP22 (ragdolls), WP27, WP28 |
+| Skins: `SkinData` (joints, inverse bind matrices), `SkinWeights` (per-vertex joints and weights) and the skinned draw item | `crates/re_types/src/anim.rs` (`SkinData`), `mesh.rs` (`SkinWeights`) and `render.rs` (`SkinnedDrawItem`) | WP21 | WP21 PR "skins" | WP20 (skinning path), WP22 (ragdolls), WP27, WP28 |
 | Animation graphs: `AnimGraph` (states, transitions, blend nodes) as plain data, and its parameters | `crates/re_types/src/anim.rs` | WP21 | WP21 PR "graphs" | WP25 (editing), WP28 |
 | Vehicle commands in `PhysicsCmd` and vehicle poses in the physics readout | `crates/re_types/src/physics.rs` | WP22 | WP22 PR "vehicles" | WP28 |
 | Ragdoll commands in `PhysicsCmd`, their poses and the animated/simulated blend | `crates/re_types/src/physics.rs` | WP22 | WP22 PR "ragdolls" | WP27, WP28 |
 | Generator versions: a version per generator and node kind in the per-node cache key, and the bake format | `crates/re_proc/src/` | WP24 | WP24 PR "versioning" | WP23, WP25 |
 | Streaming: `StreamCell` (key, bounds, generator version), the load and unload events scripts see, and the budget settings in `real.toml` | `crates/re_proc/src/stream/`, `crates/re_scene/` | WP23 | WP23 PR "cells" | WP28 |
 | Network protocol: the packet header, the protocol version, the handshake and Deny reasons, and the `[net]` keys in `real.toml` | `crates/re_net/src/`, `docs/ARCHITECTURE.md` (networking section) | WP30 | WP30 PR "transport" | WP19 (packaged servers), WP29 (PR "web") |
-| The web build's output folder (`index.html`, `real.js`, `wasi.js`, `real_bg.wasm`, `game.rpak`, notices) and the boot script's exports | `crates/re_web/`, `docs/ARCHITECTURE.md` (web section) | WP29 | WP29 PR "build" | WP19 (build layouts), WP30 (PR "web") |
+| The web build's output folder (`index.html`, `boot.js`, `wasi.js`, `real.js`, `real_bg.wasm`, `runtime.json`, `game.rpak`, notices) and the boot script's exports | `crates/re_web/`, `docs/ARCHITECTURE.md` (web section) | WP29 | WP29 PR "build" | WP19 (build layouts), WP30 (PR "web") |
 
 Changes to `re_types` stay maintainer-reviewed frozen-contract changes, as in M2: a new field is added with a default, so nothing else breaks.
 
@@ -135,7 +135,7 @@ cargo xtask d2 --project examples/plaza --json
 
 **Goal.** `real build` turns a project into a standalone game: a runtime-only binary, a packed asset archive and the platform's bundle, with no tooling linked.
 
-**Owned paths:** `crates/re_cli/src/build/`, `crates/re_app/src/package/` (was `package.rs` until PR "archive"), `tests/build/` under `re_cli`.
+**Owned paths:** `crates/re_cli/src/build/`, `crates/re_app/src/package/` (was `package.rs` until PR "archive"), `crates/re_cli/tests/build.rs`.
 
 **Starts after:** ADR-0037 is accepted. It needs WP18 PR "blocking" to test the bundles on all three platforms.
 
@@ -221,7 +221,7 @@ cargo test --locked -p re_anim
 
 **Definition of done:** both PRs merged.
 
-**Progress (2026-10-24).** Done: "skins" (#97, with the `SkinnedMesh` component in #101) and "graphs" (#145: `Animator`, `BoneAttachment`, the `anim` library and the `animgraph.*` commands; ADR-0039's amendment).
+**Progress (2026-10-26).** Done: "skins" (#97, with the `SkinnedMesh` component in #101) and "graphs" (#145: `Animator`, `BoneAttachment`, the `anim` library and the `animgraph.*` commands; ADR-0039's amendment). Its follow-up PR (#152) packs `anims/` by default and puts paused graphs in the state hash. WP21 is complete.
 
 ---
 
@@ -279,7 +279,7 @@ cargo run --release --locked -p re_proc --example stream_walk -- --json > out/st
 
 **Definition of done:** the three PRs merged.
 
-**Progress (2026-10-26).** Done: "cells" (#108, with the `re_scene` hooks in #106), "async" (#128) and "terrain" (#139), plus "stream-app" (#118: streaming in the runtime and the `stream` library) and "floating origin" (#148: physics, streaming and the render snapshot follow the focus past 5 km; ADR-0042's amendment). After them, "terrain view" (#162) makes a frame that takes a screenshot under `Lateness::Wait` complete the terrain view first, so golden images of a streamed world do not depend on how fast the workers were (ADR-0042's amendment). WP23 is complete. A follow-up, "terrain seams" (#172), makes streamed `terrain.mesh` cells shade their shared edges alike (version 3 of the node).
+**Progress (2026-10-26).** Done: "cells" (#108, with the `re_scene` hooks in #106), "async" (#128) and "terrain" (#139), plus "stream-app" (#118: streaming in the runtime and the `stream` library) and "floating origin" (#148: physics, streaming and the render snapshot follow the focus past 5 km; ADR-0042's amendment). After them, "terrain view" (#162) makes a frame that takes a screenshot under `Lateness::Wait` complete the terrain view first, so golden images of a streamed world do not depend on how fast the workers were (ADR-0042's amendment). WP23 is complete. Two follow-ups: "terrain seams" (#172) makes streamed `terrain.mesh` cells shade their shared edges alike (version 3 of the node), and "focus forward" (#176) loads cells ahead of the way each focus is going, so a car, which drives along its +Z, loads the cells ahead of it (ADR-0042's amendments).
 
 ---
 
@@ -311,7 +311,7 @@ cargo test --locked -p re_geom
 
 **Definition of done:** the five PRs merged.
 
-**Progress (2026-10-26).** Done: "versioning" (#93), "bake" (#105), "luau" (#125), "overrides" (#136) and "booleans and roads" (#142). After them, "streamed roads" (#159) lets roads and shapes stream, so the valley (WP28) can have roads on its streamed terrain (ADR-0042's and ADR-0043's amendments).
+**Progress (2026-10-26).** Done: "versioning" (#93), "bake" (#105), "luau" (#125), "overrides" (#136) and "booleans and roads" (#142). After them, "streamed roads" (#159) lets roads and shapes stream, so the valley (WP28) can have roads on its streamed terrain (ADR-0042's and ADR-0043's amendments). WP24 is complete.
 
 ---
 
@@ -339,7 +339,7 @@ cargo test --locked -p re_script debug
 - Editor tests drive the canvas and gizmos through their commands and check the transactions.
 - Debugger tests stop at a breakpoint, step over and into, and read locals in a fixture.
 
-**Progress (2026-10-24).** Done: "gizmos and docking" (#91), "debugger" (#103, wired into `real run --debug` and `real editor --debug` in #109) and "canvas" (#123, over graph files opened as documents in the entity core, #113). After them, a gizmo drag moves the entity live and is one undo step (#140, on #133's coalescing transactions), and game scripts pause at breakpoints in play (#157). ADR-0044's amendment records the editor as built, and WP27 attached compat scripts to the debugger (#146 and #154, ADR-0045's amendments). WP25 is complete.
+**Progress (2026-10-26).** Done: "gizmos and docking" (#91), "debugger" (#103, wired into `real run --debug` and `real editor --debug` in #109) and "canvas" (#123, over graph files opened as documents in the entity core, #113). After them, a gizmo drag moves the entity live and is one undo step (#140, on #133's coalescing transactions), and game scripts pause at breakpoints in play (#157). ADR-0044's amendment records the editor as built, and WP27 attached compat scripts to the debugger (#146 and #154, ADR-0045's amendments). WP25 is complete. A maintainer follow-up, #177, compiles development runs at debug level 2, so a stop lists the locals by name.
 
 **Definition of done:** the canvas and gizmo PRs merged, and the debugger merged or declined by ADR-0045 with the spike's numbers.
 
@@ -368,7 +368,7 @@ cargo test --locked -p re_mcp
 - Every template creates a project that passes `real verify`.
 - The M1 and M2 MCP end-to-end tests pass over both stdio and HTTP.
 
-**Progress (2026-10-21).** Done: "http" (#92), "templates" (#104) and "eval" (#124: `real agent eval`), as ADR-0046's amendment records. #120 and #166 drain the body of a refused HTTP request, so a Windows client gets the refusal instead of a reset. The MCP end-to-end tests (`crates/re_mcp/tests/wire.rs`) run each protocol test once over stdio and once over HTTP. WP26 is complete.
+**Progress (2026-10-26).** Done: "http" (#92), "templates" (#104) and "eval" (#124: `real agent eval`), as ADR-0046's amendments record. #120 and #166 drain the body of a refused HTTP request, so a Windows client gets the refusal instead of a reset. The MCP end-to-end tests (`crates/re_mcp/tests/wire.rs`) run each protocol test once over stdio and once over HTTP. WP26 is complete. A maintainer follow-up, #177, refuses a template check that is not a read-tier command (`RE8019`), as recipes and evaluations already did (ADR-0046's amendments).
 
 **Definition of done:** the three PRs merged.
 
@@ -467,6 +467,7 @@ real build --project examples/valley --out out/valley-build
 
 **Acceptance:**
 ```sh
+eval "$(tools/ci/wasi-sdk.sh)"   # wasi-sdk's compilers and flags for Luau and Jolt
 cargo check --locked --target wasm32-unknown-unknown -p re_web
 cargo xtask web-test
 real build --project examples/island --out out/island-web --target web
@@ -476,13 +477,18 @@ real build --project examples/island --out out/island-web --target web
 - The private samples run in the web build and play their scripted checks (private sample checks: passing).
 - `cargo xtask check-graph` passes for `re_web`: no tooling crate and no tokio.
 
-**Progress (2026-10-24).** "portable" (#89), "toolchain" (#99), "runtime" (#119) and "build" (#132) have merged, with these changes to the plan:
+**Progress (2026-10-26).** "portable" (#89), "toolchain" (#99), "runtime" (#119) and "build" (#132) have merged, with these changes to the plan:
+- The desktop window keeps winit's `run_app` (`re_app/src/window.rs`); the browser's event loop is `re_app/src/web/play.rs` on `spawn_app` (#119).
+- The wasm32 settings are environment variables, not a section of `.cargo/config.toml`: `tools/ci/wasi-sdk.sh` prints them (or writes them to `$GITHUB_ENV` in CI), namely wasi-sdk's compilers, `CXXFLAGS_wasm32_unknown_unknown` and the target's link flags. `real build --target web` passes the link flags to cargo itself with `--config`.
+- The web is not in `cargo xtask d2`'s reports. Instead, `cargo xtask web-test` plays each replay in the browser and requires its final `state_hash` to equal the native run's.
 - The panic code is `RE0622` (not `RE0623`), and `RE0621` is the canvas failing; `RE0623`–`RE0625` stay free (ADR-0049's amendment).
 - `cargo xtask web-test` and WebGL2 moved from "runtime" to "build". The static server stays in Node (`tools/web-test/serve.mjs`), not xtask.
 - `RE0975` stays undefined: a web build has no command line, so nothing asks it to serve, and the runtime refuses a server or host role with `RE8911` (ADR-0050's amendment for WP30 PR "web", #165). The notices file in the web folder came with WP19 PR "bundles" (#161).
 - Saved data on the web is persisted since WP27's "saved data" (#131).
 - The `web` job's checks run as `cargo xtask web-test` in `build-web`, which is required, rather than as a job of their own.
 - Release CI publishing the prebuilt web runtime: `.github/workflows/release.yml` builds it on a `v*` tag and attaches `real-web-runtime-<version>.tar.gz` (the runtime files) to the release, for `real build --target web --runtime DIR`. Since WP19 PR "bundles" (#161), the desktop runtimes are published beside it, as `real-runtime-<version>-<triple>` for Linux x86_64, Windows x86_64 and macOS arm64, and every runtime folder is written by `real build --runtime-only`.
+
+The full runtime's size and the private-sample results are recorded under `research/m3/wp29/`. WP29 is complete.
 
 **Definition of done:** PRs "portable", "toolchain", "runtime" and "build" merged; `build-web` and `web` CI jobs required and green; ADR-0049 Accepted with the full runtime's size and the private-sample results recorded under `research/m3/wp29/`.
 
@@ -533,13 +539,13 @@ real verify --project examples/plaza --json
 
 **Definition of done:** PRs "transport", "wire", "sessions" and "web" merged; the `net-plaza` job is required and green on all three platforms; ADR-0050 is Accepted with the private-sample measurements recorded.
 
-**Progress (2026-10-26).** Merged: "transport" (#90), "wire" (#117), "sessions" (#138) and "web" (#165: players in a browser join a server over a WebSocket, and a built game serves and joins). The `net-plaza` job is the `net` stage of `real verify`, which `verify-plaza`, `build-windows` and `build-macos` require (#166). It plays each of the plaza's replays with the client over UDP and again over a WebSocket, and `build-web` plays them from headless Chromium against a native server.
+**Progress (2026-10-26).** Merged: "transport" (#90), "wire" (#117), "sessions" (#138) and "web" (#165: players in a browser join a server over a WebSocket, and a built game serves and joins). The `net-plaza` job is the `net` stage of `real verify`, which `verify-plaza`, `build-windows` and `build-macos` require (#166). It plays each of the plaza's replays with the client over UDP and again over a WebSocket, and `build-web` plays them from headless Chromium against a native server. ADR-0050 is Accepted, and the private-sample measurements are recorded under `research/m3/wp30/`. WP30 is complete.
 
 ---
 
 ## Dependencies and ADRs
 
-New dependencies are expected for texture compression (WP20), the node canvas and docking (WP25), and possibly `libm` (WP18) and `i_overlay` (WP24). rmcp's HTTP transport (WP26) is a feature of a crate already in the workspace, but it brings new transitive crates, which `cargo deny` checks. Each goes through an ADR and a `DEPENDENCIES.md` row.
+New dependencies came in for D2 (`libm`, WP18), the package archive (`zstd`, WP19), texture compression (WP20), polygon booleans and roads (`i_overlay`, `earcut`, WP24), the node canvas and docking (WP25), place files (WP27), the browser build (WP29) and WebSockets (`tungstenite`, WP30). rmcp's HTTP transport (WP26) is a feature of a crate already in the workspace, and it brought `hyper`, `hyper-util` and new transitive crates. Each has an ADR and a row in `DEPENDENCIES.md`, which lists them by section; `cargo deny` checks them all.
 
 The ADRs this plan adds:
 - ADR-0036 (WP18): D2 determinism.
@@ -557,7 +563,7 @@ The ADRs this plan adds:
 - ADR-0048 (WP27): local persistence for data services, `SurfaceGui` and `ViewportFrame`, the `.rbxl`/`.rbxlx` reader, and incremental compat rendering.
 - ADR-0049 (WP29): browser builds.
 - ADR-0050 (WP30): online play.
-- ADR-0023 amendments (WP18, WP28): Windows, macOS, `d2` and `verify-valley` become required jobs.
+- ADR-0023 amendments (WP18, WP19, WP28, WP29): Windows, macOS, `d2`, `verify-valley`, `build-web` and the three `build-package` jobs become required jobs.
 
 ## Dependency graph
 

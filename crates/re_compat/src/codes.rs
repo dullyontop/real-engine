@@ -8,8 +8,8 @@
 
 use re_core::Code;
 
-/// A member that needs an online service (data stores, teleport, the
-/// marketplace and the like) was called; it is not available offline.
+/// A member that needs an online service (teleport, the marketplace and the
+/// like) was called; it is not available offline.
 pub const NOT_AVAILABLE_OFFLINE: Code = Code::new("RE9002");
 
 /// A class, enum or library data file is malformed or inconsistent.
