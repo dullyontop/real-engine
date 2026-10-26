@@ -820,7 +820,8 @@ impl Evaluator {
 
     /// Drops least recently used entries (outputs and shared values) until
     /// the cache fits its budget; entries used by the evaluation that just
-    /// ran (`tick`) are kept.
+    /// ran (`tick`) are kept, and so are shared values still being made,
+    /// which hold nothing yet.
     fn evict(&self, tick: u64) {
         let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
         if m.bytes <= self.budget {
@@ -835,7 +836,7 @@ impl Evaluator {
         old.extend(
             m.shared
                 .iter()
-                .filter(|(_, e)| e.used < tick)
+                .filter(|(_, e)| e.used < tick && e.slot.get().is_some())
                 .map(|(k, e)| (e.used, true, *k, e.bytes)),
         );
         old.sort_unstable();

@@ -533,11 +533,13 @@ impl Triangles {
     /// The area inside the rectangle from `min` to `max` as a flat mesh at
     /// height `y`, facing +Y, with positions relative to `min` and UVs in
     /// metres (as [`triangulate_at`] makes them). Each triangle is cut by
-    /// the rectangle's sides, and each point where a triangle's edge crosses
-    /// a side is worked out from that edge and that side alone. So the
-    /// rectangles of a grid put the points of their shared borders in the
-    /// same places, bit for bit: their meshes meet with no gap, overlap or
-    /// T-junction, and add up to the whole.
+    /// the rectangle's sides. Each point where a triangle's edge crosses a
+    /// side is worked out from that edge and that side alone, and a point
+    /// the cut already put on the side is kept as it is. So the rectangles
+    /// of a grid put the points of their shared borders in the same places,
+    /// bit for bit: their meshes meet with no gap, overlap or T-junction,
+    /// and add up to the whole. An edge passing within a rounding of a
+    /// rectangle's corner can leave a sliver of no visible size there.
     pub fn mesh_in(&self, y: f32, min: [f64; 2], max: [f64; 2]) -> Result<MeshData, GeomError> {
         let (at, triangles) = self.cut(min, max)?;
         Ok(MeshData {
@@ -689,7 +691,17 @@ fn keep_side(
             out.push(*c);
         }
         if ci != ni {
-            let p = c.next.cross(axis, at, range);
+            // A corner on the side, such as where an edge crossed the other
+            // axis's side at the rectangle's corner, is the crossing itself:
+            // worked out again from the edge, it could land a rounding away
+            // in this rectangle and not in its neighbour.
+            let p = if c.p[axis] == at {
+                c.p
+            } else if n.p[axis] == at {
+                n.p
+            } else {
+                c.next.cross(axis, at, range)
+            };
             out.push(Corner {
                 p,
                 // Leaving runs along the side; entering, on along the edge.
@@ -770,8 +782,17 @@ mod tests {
     /// checks each cell's part, and returns the parts' area. Every point
     /// must lie in its cell, every triangle face +Y with area, and two
     /// neighbouring cells with something in them must put the same points on
-    /// their shared border.
-    fn cut_on_grid(t: &Triangles, size: f64, cells: std::ops::Range<i32>) -> f64 {
+    /// their shared border. With `near_corners`, for edges through or near
+    /// the cells' corners, a cell may have two points a rounding apart and a
+    /// point at a corner its neighbour lacks: such an edge's crossings of x
+    /// and z can disagree about which side of the corner it passes. A corner
+    /// is never inside a neighbour's edge, so that leaves no crack.
+    fn cut_on_grid(
+        t: &Triangles,
+        size: f64,
+        cells: std::ops::Range<i32>,
+        near_corners: bool,
+    ) -> f64 {
         let mut sum = 0.0;
         // Each cell's points on its sides: min x, max x, min z, max z.
         let mut sides: HashMap<(i32, i32), [Vec<[u64; 2]>; 4]> = HashMap::new();
@@ -797,7 +818,10 @@ mod tests {
                 for (i, p) in at.iter().enumerate() {
                     for q in &at[i + 1..] {
                         let d = (p[0] - q[0]).abs().max((p[1] - q[1]).abs());
-                        assert!(d > 1e-9, "{p:?} and {q:?} in {min:?}..{max:?}");
+                        assert!(
+                            near_corners || d > 1e-9,
+                            "{p:?} and {q:?} in {min:?}..{max:?}"
+                        );
                     }
                 }
                 if tris.is_empty() {
@@ -805,6 +829,11 @@ mod tests {
                 }
                 let mut s: [Vec<[u64; 2]>; 4] = Default::default();
                 for p in &at {
+                    let corner =
+                        (p[0] == min[0] || p[0] == max[0]) && (p[1] == min[1] || p[1] == max[1]);
+                    if near_corners && corner {
+                        continue;
+                    }
                     let bits = p.map(f64::to_bits);
                     for (k, on) in [
                         p[0] == min[0],
@@ -883,11 +912,50 @@ mod tests {
         );
         for size in [16.0, 10.0, 12.5, 64.0] {
             let n = (128.0 / size) as i32;
-            let sum = cut_on_grid(&t, size, -n..n);
+            let sum = cut_on_grid(&t, size, -n..n, false);
             assert!(
                 (sum - whole).abs() < 1e-9 * whole,
                 "{size} m cells: {sum} vs {whole}"
             );
+        }
+    }
+
+    #[test]
+    fn cut_cells_meet_exactly_where_edges_pass_through_corners() {
+        // The first edge crosses x = 16 at the corner (16, 16) exactly.
+        // Worked out again at z = 16 it lands a rounding away, a point the
+        // cell above must not add.
+        let t = triangles(&Shapes::polygon(vec![
+            [15.7, 15.9],
+            [16.3, 16.1],
+            [15.0, 17.5],
+        ]))
+        .unwrap();
+        let sum = cut_on_grid(&t, 16.0, -1..3, false);
+        assert!((sum - whole_area(&t)).abs() < 1e-12, "{sum}");
+        // Edges through the corner on a 10 cm grid, in many directions, with
+        // the triangle on either side.
+        let at = |x: i32, z: i32| [f64::from(x) / 10.0, f64::from(z) / 10.0];
+        for dx in -5i32..=5 {
+            for dz in -5i32..=5 {
+                let (mut a, mut b) = (dx.abs(), dz.abs());
+                while b != 0 {
+                    (a, b) = (b, a % b);
+                }
+                if dx == 0 || dz == 0 || a != 1 {
+                    continue;
+                }
+                for (s, k) in [(1, -3), (1, 2), (2, -1), (3, 5)] {
+                    let t = triangles(&Shapes::polygon(vec![
+                        at(160 - s * dx, 160 - s * dz),
+                        at(160 + 2 * dx, 160 + 2 * dz),
+                        at(160 - s * dx - k * dz, 160 - s * dz + k * dx),
+                    ]))
+                    .unwrap();
+                    let sum = cut_on_grid(&t, 16.0, -1..3, true);
+                    assert!((sum - whole_area(&t)).abs() < 1e-12, "{sum}");
+                }
+            }
         }
     }
 
@@ -903,7 +971,7 @@ mod tests {
         };
         let diamond = Shapes::polygon(vec![[48.0, 8.0], [56.0, 0.0], [64.0, 8.0], [56.0, 16.0]]);
         let t = triangles(&ring.boolean(&diamond, BoolOp::Union).unwrap()).unwrap();
-        let sum = cut_on_grid(&t, 16.0, -2..6);
+        let sum = cut_on_grid(&t, 16.0, -2..6, false);
         assert!((sum - (1024.0 - 256.0 + 128.0)).abs() < 1e-9, "{sum}");
         assert!(t.cut([-16.0, 0.0], [0.0, 16.0]).unwrap().1.is_empty());
         assert!(t.cut([32.0, 0.0], [48.0, 16.0]).unwrap().1.is_empty());
