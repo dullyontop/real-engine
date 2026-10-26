@@ -3,8 +3,10 @@
 //!
 //! `Random.new()` without a seed draws its seed from the VM's run seed, so a
 //! run with the same seed creates the same generators in the same order.
+//! Luau's own `math.random` starts from the run seed too, instead of the VM's
+//! address and the time.
 
-use mlua::{Lua, MetaMethod, Result, Table, UserData, UserDataMethods, Value};
+use mlua::{Function, Lua, MetaMethod, Result, Table, UserData, UserDataMethods, Value};
 
 use super::{bad_argument, num_arg, set_lib, strict, type_name, vec_value};
 
@@ -93,6 +95,13 @@ fn splitmix64(mut x: u64) -> u64 {
     x ^ (x >> 31)
 }
 
+/// The seed `math.random` starts from in a VM with run seed `seed`: the
+/// 32 bits `math.randomseed` takes, from the derivation `Random.new()` uses
+/// at count 0, which no generator gets.
+fn math_random_seed(seed: u64) -> i32 {
+    splitmix64(seed ^ splitmix64(0)) as u32 as i32
+}
+
 fn int_arg(v: &Value, n: usize, f: &str) -> Result<i64> {
     let x = num_arg(v, n, f, None)?;
     if !x.is_finite() {
@@ -162,9 +171,16 @@ impl UserData for Random {
     }
 }
 
-/// Installs `Random`.
+/// Installs `Random`, and seeds Luau's `math.random` from `seed` (a script's
+/// `math.randomseed` still reseeds it).
 pub(crate) fn install(lua: &Lua, globals: &Table, seed: u64) -> Result<()> {
     lua.set_app_data(SeedSource { seed, count: 0 });
+    let randomseed = globals
+        .get::<Table>("math")
+        .and_then(|math| math.get::<Function>("randomseed"));
+    if let Ok(randomseed) = randomseed {
+        randomseed.call::<()>(math_random_seed(seed))?;
+    }
     let new = lua.create_function(|lua, s: Value| {
         let seed = match s {
             Value::Nil => {

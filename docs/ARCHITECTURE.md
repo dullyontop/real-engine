@@ -265,6 +265,7 @@ pub struct BodyPose { pub id: EntityId, pub pos: Vec3, pub rot: Quat }   // acti
 ```
 
 - `re_types` depends only on `glam`, `serde` and `serde_json` (plus `schemars` behind its optional `schemars` feature, for the schemas of the graph and replay file formats).
+- `RenderSnapshot` positions (draw items, skinned items, terrain chunks, the camera and the lights) are relative to `App::render_origin()`: world streaming's floating origin (ADR-0042), which is zero without streaming. `re_app` subtracts it when it builds the snapshot, so precision near the camera does not depend on where the camera is in the world; the editor's gizmo adds it back.
 - The pose pull is one batched call to oxijolt's `active_body_poses_into`, which returns position and rotation for **active** bodies; `Physics::poses_into` adds the bodies that fell asleep during the step (with their final pose) and every character. A sleeping body is not returned again until it wakes; its `Transform` keeps the exact value it had when it fell asleep. Velocities are read per body (`Physics::velocity`) only for the entities that need them, such as characters and scripted bodies.
 - egui output is not part of the snapshot. `re_app` runs egui, tessellates the shapes with `egui::Context::tessellate` (`UiFrame::from_output` does it), and passes a `UiFrame { primitives, textures_delta, size_px, pixels_per_point }` to `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`. egui types therefore appear only in `re_render`, `re_app` and `re_editor`. `re_render` paints egui into an `Rgba8Unorm` overlay and composites it with a manual-gamma blit on every backend, so the UI looks the same on Vulkan and GL (ADR-0010).
 - **Lighting convention.** A directional light's (sun's) intensity is in lux: at exposure 1, an illuminance of 1 lux makes a white diffuse surface white. A point light's intensity is in lumens (it shines `lumens / 4π` candela) with a windowed falloff that reaches zero at its `range`. Emissive colour is multiplied by the exposure too. Exposure and the ambient light (a sky and a ground colour, a hemisphere) are renderer settings (`re_render::RendererSettings`), not snapshot data: `RenderSnapshot` has no ambient field.
@@ -370,7 +371,7 @@ The runtime as built so far (WP10, WP11, WP12, WP13, WP14, WP15, WP16 "boot"):
 - Instance handles (`InstanceRef`) compare by identity. A destroyed handle becomes a tombstone. `Destroy` fires `Destroying`, locks `Parent`, keeps the subtree readable until the resumption cycle settles, then despawns it. `Clone` honours `Archivable` and remaps references inside the copy.
 - Signals are deferred by default: handlers run in the phase after the event. `[compat] signal_behavior = "immediate"` in `real.toml` switches. Child and descendant events come from observers on `ChildOf`, attribute and tag events from the `re_scene` feeds, and `Changed` from per-field diffs gated by change ticks.
 - Scripts start from the tree by the rules of M2_PLAN WP11: a `Script` runs in `server` under `Workspace` or `ServerScriptService`, a `LocalScript` runs in `client` under a player's containers or character, and `RunContext` `Server` or `Client` overrides the place, except under storage and the templates. Each started script owns its threads, so destroying it stops them. `require(module)` runs a `ModuleScript` once per context in the requiring thread and caches the result; a cycle is `RE3004` with the chain, and a module that raised raises again on every later `require`.
-- `RunService` (`Heartbeat`, `Stepped`, `RenderStepped` in the client, `IsServer`, `IsClient`, `IsStudio`), `task` (`spawn`, `defer`, `delay`, `wait`, `cancel`) and the deprecated `wait`, `delay` and `spawn` run on the virtual clock. `game`'s session fields (`PlaceId`, `JobId`, ...) come from `[compat.game]`, and `Random.new()` without a seed uses `[compat] seed` (the client context uses `seed + 1`), so runs repeat.
+- `RunService` (`Heartbeat`, `Stepped`, `RenderStepped` in the client, `IsServer`, `IsClient`, `IsStudio`), `task` (`spawn`, `defer`, `delay`, `wait`, `cancel`) and the deprecated `wait`, `delay` and `spawn` run on the virtual clock, and `os.clock()` reads it (86,400 s plus the game time). `game`'s session fields (`PlaceId`, `JobId`, ...) come from `[compat.game]`, and `Random.new()` without a seed and Luau's `math.random` start from `[compat] seed` (the client context uses `seed + 1`), so runs repeat.
 - `re_compat::testing::Harness` is the public headless harness: `open` or `open_with` loads a project's entry scene into a `server` and a `client` world, `start` starts their scripts, `step(n)` runs frames on the virtual clock, and `close` ends the run. `uncaught`, `stuck`, `required`, `unsupported` and `take_output` report what happened. By default the client world is a second copy of the scene without the server-only containers, with the template client scripts started in place; with `HarnessOptions::two_worlds` the run is a play test as described next.
 - Two worlds (WP12): `net::CompatWorlds` holds a server world, which is authoritative and runs physics, and the local player's client world. An instance is the same instance in both when it has the same stable id; entities are never compared across worlds, and entities without a stable id are runtime-only and do not replicate. Each frame, `net::replicate` first copies the upstream components the client changed on instances the local player owns (`NetworkOwner`) to the server, then walks the replicated containers on the server and creates, diffs and removes on the client, remapping entity references by stable id. Only what the server changed since the last pass is written, per field, attribute key and tag. This is the **client-local write rule**: a client's own write to a replicated instance stays until the server next changes that same field.
 - Players (WP12): `[compat] players` players join at start (default 1, and 0 is refused with `RE9302`); the first is the client's `LocalPlayer`, and the others exist only on the server and in replication. The client makes `PlayerScripts` and `PlayerGui` from their templates, and they exist only in the client world. `LoadCharacter` copies `StarterPlayer.StarterCharacter` or builds the default rig (WP14), copies `StarterCharacterScripts`, spawns at a `SpawnLocation` with a `ForceField`, and gives the player network ownership. A remote or bindable call that fails is `RE9301`.
@@ -388,6 +389,21 @@ The runtime as built so far (WP10, WP11, WP12, WP13, WP14, WP15, WP16 "boot"):
 - Datatypes: `Vector3` is Luau's native vector with a frozen type metatable, so its methods stay fast calls. `CFrame` stores an f32 position and rotation matrix and looks along −Z. The other datatypes are Rust userdata. `Enum` tables are built from `enums/*.json`, with one object per item per VM, so `==`, `rawequal` and table keys work. `Random` is our own seeded generator, so its numbers differ from Roblox's (marked `partial`).
 
 Coverage is a data file, `crates/re_compat/coverage.json`, listing each class and member with its status (`implemented`, `partial`, `stub-error` or `missing`). The static scan (§7) compares real scripts against this file. M2 also ships a compatibility definitions file, so the type checker knows the Roblox-style globals.
+
+### Online play (M3, WP30, ADR-0050)
+
+A compat project can be played by several people on different machines. The server world is authoritative, and each player's client owns its character (`NetworkOwner`), as on the vendor's platform. The traffic is not encrypted, so play on a LAN or with people you trust. Native `game` scripts have no networking API in M3, and packaged games (§8) take no online flags yet.
+- **Roles.** A run is one of these:
+  - **in-process**, the default and editor play: the server world and the local player's client world in one process, replicated every frame through the same wire frames, encoded and decoded as bytes;
+  - **dedicated server** (`real run --server`): the server world only, headless, with no GPU or audio device, stepping in real time until it is stopped or `--frames` ends;
+  - **host** (`real run --host`): the in-process run, which remote players join too;
+  - **client** (`real run --connect HOST[:PORT]`): the local player's world only, in a window or headless. Its local player is the one the server gives it.
+
+  A server listens on `0.0.0.0` (every interface) unless `--bind` names an address, and prints its port. `App::set_net` binds the socket before the first frame (`re_app/src/net.rs`), and `re_compat::net::session` runs the game over a `re_net` endpoint (`ServerNet` and `ClientNet`).
+- **Joining.** `re_net`'s handshake (Hello, a Challenge with a stateless cookie, Response, then Accept or Deny) checks the transport and protocol versions and the game hash, so a client with other content is refused (`RE8905`). The game hash is a blake3 of `real.toml`, the scenes and the scripts as the run reads them (`re_app::net::game_hash`), without `.real/`. The client then sends `Join` with its name. The server adds the `Player`, named by `--name` or `Player<n>` in join order and made unique with a number, before `PlayerAdded` fires. It answers `Welcome` with the player's stable id, the server's frame and a frame that binds the client's own copy of the scene; its next frame carries everything that changed since the server started, so a player who joins a game in progress gets its current state. The client starts its scripts once bound.
+- **Frames.** Each side sends one reliable frame per frame: the server, a connection's replication ops and the messages for its player; a client, its owned changes and its messages. An `UnreliableRemoteEvent` message goes alone in an unreliable datagram (`RE9454` when it is too large for one). A message larger than one transport message, such as a large game's first frame, crosses in parts.
+- **Limits.** The server drops a remote message over 64 KiB or one it cannot decode (`RE9450`), and a player's messages past `[compat.net] remote_rate` a second (`RE9453`). It takes only `upstream` components of instances the player owns (`RE9451` for the rest, which stays on that client), and keeps an owned part that moves faster than `max_owned_speed` where it was (`RE9452`). A connection over its backlog gets no ops that frame, and the next diff carries the difference. A connection whose unacknowledged data passes 4 MiB is closed. A disconnect or a timeout removes the player as `Players:remove_player` does, and `Player:Kick` closes the connection with its message.
+- **Lockstep** (`--lockstep [N]`, for checks): a server waits for N players (default 1), then runs each frame only when every player's frame of that number arrived, and a client runs each frame only when the server's arrived. A side that waits longer than `[net] timeout_ms` with no traffic moving fails the run. A lockstep server then ends where the in-process run ends, and `real verify`'s `net` stage checks that for a compat project: each replay is played by a dedicated server and one client, as child processes over loopback, and a different state hash is `RE9455`.
 
 ## 5. Procedural system
 
@@ -512,6 +528,7 @@ This works during play. The M1 demo regenerates the island with a new seed while
 | `real describe --luau-defs` / `engine.d.luau` | The exact native Luau API, for type checkers, editors and agents (prints `engine.d.luau`; not combinable with `--json`) | The binding registry in `re_script` |
 | `real check [--types] [--checker PATH] [--corpus] [--scripts-dir DIR…] [--json]` | Compile and scan scripts; `--types` runs the external type checker (without luau-lsp it reports `RE3090` and exits 1); `--corpus` runs the corpus suite over the `--scripts-dir` directories (exit 2 without any); `--scripts-dir` works without a project | `re_script`, `re_script_check` |
 | `real do <command> [--args '{json}'] [--dry-run] [--json]` (tooling build) | One edit from a shell. It sends the command to the editor if one is running; otherwise it takes the headless lock for the command's duration and saves the scene unless `--dry-run`. `--json` prints the `CommandOutcome` plus `via` (`"local"`, `"editor"`, or `null` when the project was never reached). Exit 0 on success, 1 when the command fails, the project is unreachable or the scene save fails (`RE0518`), 2 when `--args` is not a JSON object | The registry |
+| `real run [--headless] [--frames N] [--replay FILE] [--screenshot FILE] [--exit-after] [--json] [--checkpoints K] [--debug [PORT]]`, and online `--server`, `--host` or `--connect HOST[:PORT]` with `--name NAME`, `--port P`, `--bind ADDR`, `--max-players N` and `--lockstep [N]` | Play the project in a window or headless; serve, host or join a compat game over UDP (§4, ADR-0050; the traffic is not encrypted, so play on trusted networks) | `re_app` (`App`, `App::set_net`) |
 | `real verify --json` | Is the project healthy? | ADR-0022 |
 | `real import <INPUT> --project <DIR> [--parent PATH] [--dry-run] [--keep-stale] [--json]` (tooling build) | Bring a Rojo-style project, a Studio loader script, or a place or model file (`.rbxl`, `.rbxlx`, `.rbxm`, `.rbxmx`, M3) into a compat project, without running its Luau; `--parent` puts a place or model file's instances under that instance; re-import is idempotent | `re_import` (`ImportReport`) |
 | `real new <DIR> [--name NAME] [--template native\|roblox\|terrain\|DIR] [--set KEY=VALUE]… [--check]`, `real new --list-templates [--json]` | Create a project from a template (ADR-0046; the format is in `templates/README.md`); `roblox` makes an empty compat place; every template but `native` needs the tooling build | `re_cli`, `re_agent::templates`, `re_import::new_project` |
@@ -748,7 +765,7 @@ A compat project adds a `[compat]` section. Every key but `api` is optional, and
 [compat]
 api = "roblox"
 signal_behavior = "deferred"   # or "immediate"
-seed = 0                       # seeds Random.new() without a seed; i64 range
+seed = 0                       # seeds math.random and Random.new() without a seed; i64 range
 players = 1                    # players that join at start; the first is the local player
 effect_budget = 20000          # particles plus beam and trail segments per frame
 
@@ -777,6 +794,23 @@ enabled = true                 # false fails every call with error 403
 latency_frames = 1             # frames a request takes
 epoch = "2026-01-01T00:00:00Z" # the data clock's start outside `real run`
 mode = "persist"               # or "session": never keep data, even in `real run`
+```
+
+Online play (M3, ADR-0050) reads `[net]`, and a compat project also `[compat.net]`. A command-line flag overrides the file:
+
+```toml
+[net]
+port = 47800                   # a server listens on it; --connect HOST uses it
+max_players = 16               # the most network players a server accepts
+server_rate = 262144           # bytes a second a server sends each client (256 KiB/s)
+client_rate = 65536            # bytes a second a client sends its server (64 KiB/s)
+timeout_ms = 10000             # a silent connection closes after this; lockstep waits this long
+
+[compat.net]                   # what a networked game takes from its clients
+# upstream = ["Transform"]     # components (or "Component.field") an owner's changes send; unset: a part's
+                               # pose, its animation joints and tracks, and the Humanoid's movement fields
+max_owned_speed = 1000         # studs a second an owned part may move (RE9452)
+remote_rate = 600              # remote messages a player may send a second (RE9453)
 ```
 
 The `[render.post]` and `[render.shadows]` values are checked at load: a value out of range is `RE0501`, naming the key and the range, and is not clamped. In a compat project the place's own exposure and grading (its `Lighting` and post effects) win over the TOML, while bloom, sun rays and the shadow settings still apply. Without `[audio]`, the mixer has the buses `music`, `sfx` and `ui` and no effects. A project without `[audio]` sounds as before.
@@ -849,7 +883,7 @@ A replay may also carry `raw` rows (`RawReplayInput`) for layers that read keys 
 "raw": [ { "frame": 30, "key": "KeyW", "down": true }, { "frame": 31, "mouse_move": [12, -4] } ]
 ```
 
-Goldens are kept per backend, because GL and Vulkan differ in small ways (ADR-0010). `verify` compares against the set for the backend it ran on, using `[verify]` `golden_mean_tolerance` and `golden_max_outliers` from `real.toml`. `real verify --update-goldens` rewrites the current backend's set from this run; review the images before committing them.
+Goldens are kept per backend, because GL and Vulkan differ in small ways (ADR-0010). `verify` compares against the set for the backend it ran on, using `[verify]` `golden_mean_tolerance` and `golden_max_outliers` from `real.toml`. `real verify --update-goldens` rewrites the current backend's set from this run; review the images before committing them. The dx12 and metal sets can only be rendered on Windows and macOS: the `goldens` workflow renders them there for a branch and commits them to it (ADR-0023).
 
 ### Caches
 

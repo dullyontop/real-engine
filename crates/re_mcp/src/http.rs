@@ -13,7 +13,9 @@
 
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::task::{Context, Poll};
 
 use hyper::body::Incoming;
 use hyper::service::service_fn;
@@ -250,6 +252,39 @@ async fn drain(body: Incoming) {
     let _ = tokio::time::timeout(std::time::Duration::from_secs(1), read_all).await;
 }
 
+/// A request's body as rmcp reads it, through a handle shared with the
+/// connection. rmcp refuses a foreign `Host`, a browser `Origin`, another
+/// method or a missing `Accept` without reading the body, so what it leaves
+/// unread is drained before its refusal goes out ([`drain`] says why).
+struct SharedBody(Arc<Mutex<Incoming>>);
+
+impl hyper::body::Body for SharedBody {
+    type Data = hyper::body::Bytes;
+    type Error = hyper::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        let mut body = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        Pin::new(&mut *body).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .size_hint()
+    }
+}
+
 /// Serves MCP over HTTP on `listener` until `stop` completes. Must run inside
 /// a multi-threaded tokio runtime.
 ///
@@ -313,7 +348,22 @@ pub async fn serve_http_async(
                         drain(request.into_body()).await;
                         return Ok(refuse(status));
                     }
-                    mcp.call(request).await
+                    let (parts, body) = request.into_parts();
+                    let body = Arc::new(Mutex::new(body));
+                    let response = mcp
+                        .call(hyper::Request::from_parts(
+                            parts,
+                            SharedBody(Arc::clone(&body)),
+                        ))
+                        .await;
+                    // Whatever rmcp has let go of unread is drained.
+                    if let Ok(body) = Arc::try_unwrap(body) {
+                        let body = body.into_inner().unwrap_or_else(PoisonError::into_inner);
+                        if !hyper::body::Body::is_end_stream(&body) {
+                            drain(body).await;
+                        }
+                    }
+                    response
                 }
             });
             let _ = hyper::server::conn::http1::Builder::new()
