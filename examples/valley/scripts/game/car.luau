@@ -2,7 +2,7 @@
 -- The car: while the hero drives, the move stick's Y is the throttle (against
 -- the way the car rolls it brakes first, then reverses or goes forward), its X
 -- steers, and `brake` pulls the hand brake.
--- Parked, the hand brake holds it.
+-- Parked, and while the hero gets out, the hand brake holds it.
 --
 -- The engine sound is three looping layers (children of the car on the
 -- `vehicle` bus), made at 1020, 2820 and 4980 rpm (a four-cylinder firing 34,
@@ -54,7 +54,7 @@ time.on_step(function(_dt)
 		armed = true
 		return
 	end
-	if not rig.driving then
+	if not rig.driving or rig.leaving then
 		physics.drive(car, { handbrake = 1 })
 		engine_sound(0, 0, 0)
 		return

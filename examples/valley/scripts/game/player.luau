@@ -46,13 +46,18 @@ local STEEPEST = math.cos(math.rad(45))
 -- parked car creeps downhill, even with the hand brake on, and from about
 -- 30° it rolls or slides.
 local SLIDES = math.cos(math.rad(20))
--- The corners of the car's box (0.95 m by 2.1 m from its centre), in its frame.
-local CORNERS = {
-	vector.create(0.95, 0, 2.1),
-	vector.create(-0.95, 0, 2.1),
-	vector.create(0.95, 0, -2.1),
-	vector.create(-0.95, 0, -2.1),
-}
+-- The eight corners of the car's box (0.95 m by 0.35 m by 2.1 m from its
+-- centre), in its frame, from its centre of mass 0.35 m below that centre
+-- (its RigidBody's center_of_mass_offset), whose velocity physics.velocity
+-- gives.
+local CORNERS: { vector } = {}
+for _, x in { 0.95, -0.95 } do
+	for _, y in { 0, 0.7 } do
+		for _, z in { 2.1, -2.1 } do
+			table.insert(CORNERS, vector.create(x, y, z))
+		end
+	end
+end
 -- How fast (m/s) a corner of the car may move towards a spot.
 local APPROACH = 0.2
 
@@ -120,10 +125,10 @@ end
 -- back that way; with no wheel down, it comes down on a side or end it holds
 -- more than about 15° up. Moving, it runs into a spot that any of its
 -- corners heads for faster than 0.2 m/s: rolling on, sliding sideways in a
--- turn, or swinging round as it turns or spins (the hand brake, on once the
--- hero is out, stops it slowly and can spin it). And on ground steeper than
--- 20°, it creeps, rolls or slides down the slope, so the spot must not lie
--- below it.
+-- turn, or swinging round as it turns, spins or tips (the hand brake, on as
+-- soon as the hero starts to get out, stops it slowly and can spin it). And
+-- on ground steeper than 20°, it creeps, rolls or slides down the slope, so
+-- the spot must not lie below it.
 local function in_the_way(pos: vector, rot: Quat, offset: vector): boolean
 	local towards = rot * vector.normalize(offset)
 	local level = vector.normalize(vector.create(towards.x, 0, towards.z))
@@ -164,7 +169,8 @@ local function in_the_way(pos: vector, rot: Quat, offset: vector): boolean
 end
 
 -- Getting out starts with the spots the car could not reach that have
--- ground, which `leave` tries in turn.
+-- ground, which `leave` tries in turn; meanwhile the car is parked
+-- (`rig.leaving`).
 local function get_out()
 	if leaving then
 		return
@@ -186,10 +192,11 @@ local function get_out()
 		return
 	end
 	leaving = { spots = spots, tried = 0 }
+	rig.leaving = true
 end
 
 -- A step of getting out. The hero, still hidden, and still in the car for
--- every other script, is set down at the next spot with its
+-- the camera and the HUD, is set down at the next spot with its
 -- CharacterController. That controller's first step pushes the capsule
 -- clear of anything it overlaps, by as much as it overlaps (a trunk, a
 -- rock's edge), so a hero that moved sideways or up in it has no room
@@ -200,6 +207,7 @@ local function leave(l: Leaving)
 		local moved = physics.character(hero).position - l.spots[l.tried]
 		if moved.x * moved.x + moved.z * moved.z < SETTLED * SETTLED and moved.y < 0 then
 			leaving = nil
+			rig.leaving = false
 			body:set("Visible", "visible", true)
 			rig.driving = false
 			rig.no_exit = -math.huge
@@ -214,6 +222,7 @@ local function leave(l: Leaving)
 	local at = l.spots[l.tried]
 	if not at then
 		leaving = nil
+		rig.leaving = false
 		hero:remove("CharacterController")
 		rig.no_exit = time.now()
 		return

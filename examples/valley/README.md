@@ -64,11 +64,12 @@ the wind down and muffles it, and lowers the echo.
   lands (read with `anim.joint`), and getting in and out of the car, with the
   door and the `in_car` snapshot. The hero gets out by a door, or else behind
   or in front: where the car could not reach the hero (falling back from a
-  raised side, moving or swinging round towards the spot, or creeping down a
-  slope steeper than 20°), and where the hero fits. For that, the hero, still
-  hidden, stands at each such spot in turn for a step, and gets out at the
-  first where its CharacterController didn't push it clear of a trunk or a
-  rock. With nowhere to get out, the hero stays in and the HUD says so.
+  raised side, moving, swinging round or tipping towards the spot, or
+  creeping down a slope steeper than 20°), and where the hero fits. For that,
+  the hero, still hidden and with the car parked, stands at each such spot in
+  turn for a step, and gets out at the first where its CharacterController
+  didn't push it clear of a trunk or a rock. With nowhere to get out, the hero
+  stays in and the HUD says so.
 - `scripts/game/car.luau`: the car's driver input through `physics.drive`, and
   its engine sound: the three layers, crossfaded by the engine's rpm, pitched
   to it (`audio.set_rate`) and louder with more throttle.
