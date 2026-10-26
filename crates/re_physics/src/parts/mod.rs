@@ -950,9 +950,10 @@ impl Physics {
     /// new position for one is kept (reported once as an `RE5006` warning)
     /// and applied then. Bodies added out of reach while the origin is moved
     /// wait, with their vehicles and constraints, and join Jolt once in
-    /// reach. Fails with `RE5016`,
-    /// leaving the world unchanged, for a point that is not finite, a move
-    /// larger than twice the limits, or while the world has ragdolls. A
+    /// reach. Ragdolls move with the world too; one whose target the move
+    /// leaves out of reach stays where it is, undriven, until its target is
+    /// back in reach. Fails with `RE5016`, leaving the world unchanged, for a
+    /// point that is not finite or a move larger than twice the limits. A
     /// [`PhysicsSnapshot`](crate::PhysicsSnapshot) saved before the move no
     /// longer restores (`RE5012`).
     pub fn set_origin(&mut self, origin: Vec3) -> Result<(), Diagnostic> {
@@ -968,22 +969,23 @@ impl Physics {
         if origin == self.parts.origin {
             return Ok(());
         }
-        if !self.ragdolls.is_empty() {
-            return Err(refuse(
-                "the world has ragdolls, which do not follow the origin yet",
-            ));
-        }
         let shift = self.parts.origin - origin;
         if !crate::world::in_world(shift * 0.5) {
             return Err(refuse("the move is larger than twice the world limits"));
         }
         // Every body of the Jolt world, in a stable order: plain bodies by
-        // entity, then assemblies, then characters' inner bodies. Bodies the
-        // move leaves out of reach stay where they are, far from every focus,
-        // until a later move brings them back.
+        // entity, then assemblies, then characters' inner bodies, then ragdoll
+        // parts by entity and part. Bodies the move leaves out of reach stay
+        // where they are, far from every focus, until a later move brings
+        // them back.
         let mut bodies: Vec<BodyId> = self.bodies.values().map(|b| b.id).collect();
         bodies.extend(self.parts.assemblies.values().map(|a| a.body));
         bodies.extend(self.characters.values().filter_map(|c| c.inner));
+        bodies.extend(
+            self.ragdolls
+                .values()
+                .flat_map(|r| r.bodies.iter().copied()),
+        );
         self.world
             .rebase(&bodies, jq(Quat::IDENTITY), rv(shift))
             .map_err(|e| refuse(&e.to_string()))?;
@@ -1014,8 +1016,10 @@ impl Physics {
         out
     }
 
-    /// True if world point `p` is within Jolt's limits of the origin.
-    pub(crate) fn in_reach(&self, p: Vec3) -> bool {
+    /// True if world point `p` is within Jolt's limits of the simulation
+    /// origin ([`WORLD_LIMIT`](crate::WORLD_LIMIT) per axis), where physics
+    /// can simulate it.
+    pub fn in_reach(&self, p: Vec3) -> bool {
         crate::world::in_world(p - self.parts.origin)
     }
 

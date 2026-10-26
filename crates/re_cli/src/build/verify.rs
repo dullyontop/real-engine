@@ -1,10 +1,10 @@
 //! `real verify --package DIR` (ADR-0037): runs the packaged game as a child
 //! process and compares each run's state hash with a run of the project.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, ExitCode};
 
-use re_app::package::{ARCHIVE_NAME, Archive};
+use re_app::package::Archive;
 use re_app::{App, AppConfig};
 use re_core::{Diagnostic, Location};
 use serde::Serialize;
@@ -48,16 +48,6 @@ struct Planned {
     args: Vec<String>,
     frames: Option<u64>,
     replay: Option<re_types::ReplayDoc>,
-}
-
-/// The game executable in `dir`, for the project named `name`.
-fn executable(dir: &Path, name: &str) -> PathBuf {
-    let exe = super::executable_name(name);
-    if cfg!(windows) {
-        dir.join(format!("{exe}.exe"))
-    } else {
-        dir.join(exe)
-    }
 }
 
 /// Runs the packaged game with `args` (and a fresh `--data-dir`), returning
@@ -147,7 +137,10 @@ pub fn check(dir: &Path, project: &Path) -> PackageReport {
             return report;
         }
     };
-    match Archive::open(&dir.join(ARCHIVE_NAME)) {
+    // The game is laid out for this machine's OS (a macOS app keeps the
+    // archive in its resources).
+    let layout = super::bundle::layout(&config, super::target_os(&crate::game::target_triple()));
+    match Archive::open(&dir.join(&layout.archive)) {
         Ok(archive) => {
             if let Err(ds) = archive.check_all() {
                 report.diagnostics.extend(ds);
@@ -158,7 +151,7 @@ pub fn check(dir: &Path, project: &Path) -> PackageReport {
             return report;
         }
     }
-    let exe = executable(dir, &config.project.name);
+    let exe = dir.join(&layout.exe);
     let mut runs = vec![Planned {
         name: "boot".into(),
         args: vec!["--frames".into(), BOOT_FRAMES.to_string()],

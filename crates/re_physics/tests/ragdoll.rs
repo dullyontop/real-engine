@@ -1,10 +1,12 @@
 //! Ragdolls (ADR-0040): falling and coming to rest, following an animation, powered
-//! recovery, the mapped pose, strength changes, queries, errors and determinism.
+//! recovery, the mapped pose, strength changes, queries, errors, determinism, and
+//! the floating origin (ADR-0042).
 
 mod common;
 
 use common::humanoid::{self, joint, posed};
 use common::*;
+use re_core::Severity;
 use re_physics::{Physics, PhysicsConfig, QueryFilter};
 use re_types::EntityId;
 use re_types::glam::{Quat, Vec3};
@@ -730,4 +732,290 @@ fn ragdoll_state_bytes_follow_the_parts() {
     let before = p.ragdoll_state_bytes();
     steps(&mut p, 5);
     assert_ne!(p.ragdoll_state_bytes(), before);
+}
+
+/// Where world streaming puts the simulation origin for a player 7 km out (ADR-0042).
+const FAR: Vec3 = Vec3::new(7168.0, 0.0, 7168.0);
+
+/// A man pushed over onto a floor around `at`, with the simulation origin at
+/// `origin`: his model-space pose and whether he is calm, every 30 steps for 10 s.
+fn fall_at(at: Vec3, origin: Vec3) -> (Physics, Vec<(Vec<JointPose>, bool)>) {
+    let mut p = world(2);
+    p.set_origin(origin).unwrap();
+    apply(
+        &mut p,
+        vec![
+            floor(0, at.x, at.z, 0.0, 20.0),
+            add_man(MAN, at + Vec3::new(0.0, 0.25, 0.0), Quat::IDENTITY),
+        ],
+    );
+    apply(
+        &mut p,
+        vec![
+            mode(MAN, RagdollMode::Simulated),
+            PhysicsCmd::ApplyRagdollImpulse {
+                id: MAN,
+                joint: "neck".into(),
+                impulse: Vec3::new(0.0, 0.0, 30.0),
+            },
+        ],
+    );
+    let mut seen = Vec::new();
+    for _ in 0..20 {
+        steps(&mut p, 30);
+        let s = state(&p, MAN);
+        seen.push((s.pose, s.calm));
+    }
+    assert!(p.take_diagnostics().is_empty());
+    (p, seen)
+}
+
+#[test]
+fn a_ragdoll_7_km_out_falls_as_one_at_the_origin_does() {
+    let (near, near_seen) = fall_at(Vec3::ZERO, Vec3::ZERO);
+    let (far, far_seen) = fall_at(FAR, FAR);
+    // Jolt sees the same numbers relative to the origin, so the fall and the pose
+    // (relative to the frame) are the same bit for bit.
+    assert_eq!(far_seen, near_seen);
+    assert!(far_seen.last().unwrap().1, "it comes to rest");
+    let lying = state(&far, MAN);
+    assert!(lying.root_pos.y < 0.4, "it lies down: {}", lying.root_pos);
+    assert!((lying.root_pos - FAR).length() < 3.0, "{}", lying.root_pos);
+    // World positions are the same up to their rounding 7 km out.
+    let near_parts = near.ragdoll_parts(MAN).unwrap();
+    let far_parts = far.ragdoll_parts(MAN).unwrap();
+    for ((name, a), (_, b)) in near_parts.iter().zip(&far_parts) {
+        assert!((b.pos - FAR).distance(a.pos) < 1e-3, "{name}: {}", b.pos);
+        assert_eq!(b.rot, a.rot, "{name}");
+    }
+    assert_ne!(far.ragdoll_state_bytes(), near.ragdoll_state_bytes());
+}
+
+#[test]
+fn a_far_ragdoll_replays_and_carries_into_a_copy() {
+    let (mut p, _) = fall_at(FAR, FAR);
+    apply(
+        &mut p,
+        vec![PhysicsCmd::ApplyRagdollImpulse {
+            id: MAN,
+            joint: "head".into(),
+            impulse: Vec3::new(20.0, 10.0, 0.0),
+        }],
+    );
+    let saved = p.save_state();
+    steps(&mut p, 30);
+    let first = (p.ragdoll_parts(MAN).unwrap(), p.ragdoll_state_bytes());
+    p.restore_state(&saved).unwrap();
+    steps(&mut p, 30);
+    assert_eq!(
+        (p.ragdoll_parts(MAN).unwrap(), p.ragdoll_state_bytes()),
+        first
+    );
+
+    // A copy at the same origin takes the parts' world poses.
+    let motion = p.motion_state();
+    let mut q = world(2);
+    q.set_origin(FAR).unwrap();
+    apply(
+        &mut q,
+        vec![
+            floor(0, FAR.x, FAR.z, 0.0, 20.0),
+            add_man(MAN, FAR + Vec3::new(0.0, 0.25, 0.0), Quat::IDENTITY),
+        ],
+    );
+    q.apply_motion_state(&motion);
+    assert!(q.take_diagnostics().is_empty());
+    assert_eq!(state(&q, MAN).mode, RagdollMode::Simulated);
+    for ((name, a), (_, b)) in p
+        .ragdoll_parts(MAN)
+        .unwrap()
+        .iter()
+        .zip(&q.ragdoll_parts(MAN).unwrap())
+    {
+        assert!(
+            a.pos.distance(b.pos) < 1e-3,
+            "{name}: {} vs {}",
+            a.pos,
+            b.pos
+        );
+    }
+}
+
+#[test]
+fn ragdolls_keep_falling_and_following_across_a_move_of_the_origin() {
+    let mut p = world(2);
+    let dancer = EntityId(6);
+    let frame = Vec3::new(3.0, 0.0, -2.0);
+    let turn = Quat::from_rotation_y(0.7);
+    apply(
+        &mut p,
+        vec![
+            floor(0, 0.0, 0.0, 0.0, 20.0),
+            add_man(MAN, Vec3::new(0.0, 0.25, 0.0), Quat::IDENTITY),
+            add_man(dancer, frame, turn),
+        ],
+    );
+    apply(
+        &mut p,
+        vec![
+            mode(MAN, RagdollMode::Simulated),
+            PhysicsCmd::ApplyRagdollImpulse {
+                id: MAN,
+                joint: "neck".into(),
+                impulse: Vec3::new(0.0, 0.0, 30.0),
+            },
+        ],
+    );
+    let dance = |p: &mut Physics, pose: &[JointPose], n: usize| {
+        for _ in 0..n {
+            apply(
+                p,
+                vec![PhysicsCmd::SetRagdollTarget {
+                    id: dancer,
+                    pos: frame,
+                    rot: turn,
+                    pose: pose.to_vec(),
+                }],
+            );
+            p.step(DT).unwrap();
+        }
+    };
+    dance(&mut p, &bent(), 20);
+    // Mid-fall, the origin moves 2 km: every part keeps its world pose.
+    let before = p.ragdoll_parts(MAN).unwrap();
+    p.set_origin(Vec3::new(2048.0, 0.0, 0.0)).unwrap();
+    for ((name, a), (_, b)) in before.iter().zip(&p.ragdoll_parts(MAN).unwrap()) {
+        assert!(
+            a.pos.distance(b.pos) < 1e-3,
+            "{name}: {} to {}",
+            a.pos,
+            b.pos
+        );
+        assert_eq!(a.rot, b.rot, "{name}");
+    }
+    // The dancer follows a new target within a centimetre.
+    let want = humanoid::skeleton().neutral_pose();
+    dance(&mut p, &want, 5);
+    for (name, part) in p.ragdoll_parts(dancer).unwrap() {
+        let w = JointPose::new(frame, turn).mul(&want[joint(&name)]);
+        assert!(part.pos.distance(w.pos) < 0.01, "{name}: {}", part.pos);
+    }
+    for (g, w) in state(&p, dancer).pose.iter().zip(&want) {
+        assert!(g.pos.distance(w.pos) < 0.01);
+    }
+    // The fallen man comes to rest on the floor.
+    let mut calm = false;
+    for _ in 0..900 {
+        dance(&mut p, &want, 1);
+        if state(&p, MAN).calm {
+            calm = true;
+            break;
+        }
+    }
+    assert!(calm, "the man comes to rest");
+    assert!(p.take_diagnostics().is_empty());
+    assert!(state(&p, MAN).root_pos.y < 0.4);
+    for (name, part) in p.ragdoll_parts(MAN).unwrap() {
+        assert!(part.pos.y > -0.05, "{name} sank: {}", part.pos);
+    }
+}
+
+#[test]
+fn a_ragdoll_left_out_of_reach_waits_for_the_origin() {
+    let mut p = world(2);
+    let at = Vec3::new(0.0, 0.25, 0.0);
+    apply(
+        &mut p,
+        vec![
+            floor(0, 0.0, 0.0, 0.0, 20.0),
+            add_man(MAN, at, Quat::IDENTITY),
+        ],
+    );
+    // Walking: the parts are moving when the origin leaves.
+    for i in 1..=3 {
+        apply(
+            &mut p,
+            vec![target(MAN, at + Vec3::X * (0.02 * i as f32), bent())],
+        );
+        p.step(DT).unwrap();
+    }
+    // The player went 7 km away: the man is out of reach of the new origin.
+    let before = p.ragdoll_parts(MAN).unwrap();
+    p.set_origin(FAR).unwrap();
+    let saved = p.save_state();
+    let neutral = humanoid::skeleton().neutral_pose();
+    let far_steps = |p: &mut Physics| {
+        for _ in 0..30 {
+            p.apply(&mut vec![target(MAN, at, neutral.clone())]);
+            p.step(DT).unwrap();
+        }
+        p.take_diagnostics()
+    };
+    let d = far_steps(&mut p);
+    assert_eq!(d.len(), 1, "reported once: {d:?}");
+    assert_eq!(d[0].code, re_physics::codes::OUTSIDE_WORLD);
+    assert_eq!(d[0].severity, Severity::Warning);
+    assert!(d[0].message.contains("once in reach"), "{}", d[0].message);
+    // A replay from before the first far target reports it again.
+    p.restore_state(&saved).unwrap();
+    assert_eq!(far_steps(&mut p), d);
+    // It stays as it was, and still reports its state.
+    for ((name, a), (_, b)) in before.iter().zip(&p.ragdoll_parts(MAN).unwrap()) {
+        assert!(
+            a.pos.distance(b.pos) < 1e-3,
+            "{name}: {} to {}",
+            a.pos,
+            b.pos
+        );
+    }
+    assert!(state(&p, MAN).pose.iter().all(|j| j.pos.is_finite()));
+    // A ragdoll added out of reach is refused, with a warning while the origin is
+    // moved: re_app adds it again when the origin moves.
+    p.apply(&mut vec![add_man(
+        EntityId(6),
+        Vec3::new(3.0, 0.0, 0.0),
+        Quat::IDENTITY,
+    )]);
+    let e = p.take_diagnostics();
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert_eq!(
+        (e[0].code, e[0].severity),
+        (re_physics::codes::OUTSIDE_WORLD, Severity::Warning)
+    );
+    assert!(!p.has_ragdoll(EntityId(6)));
+    // So is one within reach but for its right forearm, which the warning names.
+    p.apply(&mut vec![add_man(
+        EntityId(6),
+        FAR + Vec3::new(-4999.7, 0.0, 0.0),
+        Quat::IDENTITY,
+    )]);
+    let e = p.take_diagnostics();
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert_eq!(e[0].severity, Severity::Warning);
+    assert!(
+        e[0].message.starts_with("ragdoll part position [2167.8"),
+        "{}",
+        e[0].message
+    );
+    assert!(!p.has_ragdoll(EntityId(6)));
+
+    // Back home, it follows its latest target again.
+    p.set_origin(Vec3::ZERO).unwrap();
+    for _ in 0..5 {
+        apply(&mut p, vec![target(MAN, at, neutral.clone())]);
+        p.step(DT).unwrap();
+    }
+    assert!(p.take_diagnostics().is_empty());
+    for (name, part) in p.ragdoll_parts(MAN).unwrap() {
+        let w = JointPose::new(at, Quat::IDENTITY).mul(&neutral[joint(&name)]);
+        assert!(part.pos.distance(w.pos) < 0.01, "{name}: {}", part.pos);
+    }
+    // At the world origin, out of reach stays an error.
+    let e = refused(
+        &mut p,
+        add_man(EntityId(6), Vec3::new(8000.0, 0.0, 0.0), Quat::IDENTITY),
+    );
+    assert!(e.starts_with("RE5006"), "{e}");
+    let e = refused(&mut p, target(MAN, Vec3::new(8000.0, 0.0, 0.0), neutral));
+    assert!(e.starts_with("RE5006"), "{e}");
 }

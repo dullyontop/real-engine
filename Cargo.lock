@@ -3837,6 +3837,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "image",
  "re_agent",
  "re_anim",
  "re_app",
@@ -3863,6 +3864,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "toml",
  "windows-sys 0.61.2",
 ]
 
