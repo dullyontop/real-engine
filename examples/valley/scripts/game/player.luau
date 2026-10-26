@@ -169,8 +169,8 @@ local function in_the_way(pos: vector, rot: Quat, offset: vector): boolean
 end
 
 -- Getting out starts with the spots the car could not reach that have
--- ground, which `leave` tries in turn; meanwhile the car is parked
--- (`rig.leaving`).
+-- ground, which `leave` tries in turn; meanwhile the hand brake holds the
+-- car (`rig.leaving`).
 local function get_out()
 	if leaving then
 		return

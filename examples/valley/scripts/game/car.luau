@@ -8,7 +8,9 @@
 -- `vehicle` bus), made at 1020, 2820 and 4980 rpm (a four-cylinder firing 34,
 -- 94 and 166 times a second): each plays fully at its own rpm and crossfades
 -- with its neighbours' at equal power, louder with more throttle, and is
--- pitched to the engine's rpm. Parked, the engine is off.
+-- pitched to the engine's rpm. Parked, the engine is off. While the hero
+-- tries to get out it runs on, with no throttle, so that it doesn't cut out
+-- when there is no room and the hero drives on.
 local rig = require("./lib/rig")
 
 local car = script.entity :: Entity
@@ -54,13 +56,18 @@ time.on_step(function(_dt)
 		armed = true
 		return
 	end
-	if not rig.driving or rig.leaving then
+	if not rig.driving then
 		physics.drive(car, { handbrake = 1 })
 		engine_sound(0, 0, 0)
 		return
 	end
-	local stick = input.axis("move")
 	local state = physics.vehicle(car)
+	if rig.leaving then
+		physics.drive(car, { handbrake = 1 })
+		engine_sound(state.rpm, 0, 1)
+		return
+	end
+	local stick = input.axis("move")
 	local speed = state.speed
 	local throttle = stick.y
 	local brake = 0

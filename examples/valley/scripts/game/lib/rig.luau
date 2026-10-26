@@ -6,7 +6,7 @@
 -- the horizon), so "forward" on the move stick is away from the camera.
 -- driving: true while the hero sits in the car.
 -- leaving: true while the hero tries to get out of the car (player.luau);
--- the car is parked meanwhile.
+-- the hand brake holds the car meanwhile (car.luau).
 -- no_exit: when (time.now()) the hero last found nowhere to get out of the
 -- car, for the HUD.
 -- ready: false until the streamed ground under the hero and the car has
