@@ -19,11 +19,20 @@ use crate::gltf::{
 use crate::image_decode::decode_image;
 use crate::material::load_material_from;
 use crate::meta::AssetMeta;
+use crate::texture::{self, AssetsConfig, TextureRole};
 use crate::watch::AssetChange;
 use crate::{AssetId, codes, id};
 
-/// The version of the texture importer. Bump it whenever its output changes.
-pub const TEXTURE_IMPORTER_VERSION: u32 = 1;
+/// The version of the texture importer. Bump it whenever its output changes,
+/// a new version of the encoder crate or a change to its presets included.
+/// Version 2: BC7 and BC5 mip chains from block_compression 0.10.1 (ADR-0047).
+pub const TEXTURE_IMPORTER_VERSION: u32 = 2;
+
+/// Whether the texture importer is quick enough to repeat when a packaged game
+/// loads. It is not: encoding blocks takes seconds a texture, so `[package]
+/// assets = "auto"` always stores imported textures processed (ADR-0037,
+/// ADR-0047).
+pub const TEXTURE_REPEAT_AT_LOAD: bool = false;
 
 /// The importer name stored with processed glTF files (ADR-0037).
 pub const GLTF_IMPORTER: &str = "gltf";
@@ -44,6 +53,41 @@ pub struct ProcessedAsset {
     /// The project files the source pulls in (a glTF's external buffers and
     /// images).
     pub dependencies: Vec<String>,
+    /// The textures it holds, as stored.
+    pub textures: Vec<ProcessedTexture>,
+    /// False when importing it again is too slow for a packaged game's load:
+    /// its textures are block-compressed ([`TEXTURE_REPEAT_AT_LOAD`]), so
+    /// `[package] assets = "auto"` stores it processed (ADR-0037, ADR-0047).
+    pub repeat_at_load: bool,
+}
+
+/// A texture of a [`ProcessedAsset`], for `real build`'s report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessedTexture {
+    /// The texture file, or the name of the glTF image.
+    pub name: String,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// The stored format: block-compressed, or RGBA8 when it was not encoded.
+    pub format: TextureFormat,
+}
+
+impl ProcessedTexture {
+    fn of(name: &str, data: &TextureData) -> ProcessedTexture {
+        ProcessedTexture {
+            name: name.to_owned(),
+            width: data.width,
+            height: data.height,
+            format: data.format,
+        }
+    }
+}
+
+/// Whether an import holding `textures` may be repeated at load.
+fn repeatable(textures: &[ProcessedTexture]) -> bool {
+    TEXTURE_REPEAT_AT_LOAD || !textures.iter().any(|t| t.format.is_compressed())
 }
 
 /// A reference to a loaded asset of type `T`.
@@ -229,6 +273,7 @@ pub struct ReloadReport {
 pub struct AssetServer {
     files: ProjectFiles,
     cache: ProcessedCache,
+    config: AssetsConfig,
     gltfs: Assets<ImportedGltf>,
     textures: Assets<TextureData>,
     materials: Assets<MaterialDesc>,
@@ -254,6 +299,7 @@ impl AssetServer {
     pub fn with_files(files: ProjectFiles) -> AssetServer {
         AssetServer {
             cache: ProcessedCache::in_dir(files.writable(Writable::Cache).sub("assets")),
+            config: AssetsConfig::default(),
             files,
             gltfs: Assets::default(),
             textures: Assets::default(),
@@ -261,6 +307,17 @@ impl AssetServer {
             by_path: HashMap::new(),
             id_paths: HashMap::new(),
         }
+    }
+
+    /// Sets how imported textures are stored (`[assets]` in `real.toml`,
+    /// ADR-0047). Assets already loaded keep the form they were imported in.
+    pub fn set_config(&mut self, config: AssetsConfig) {
+        self.config = config;
+    }
+
+    /// How imported textures are stored.
+    pub fn config(&self) -> AssetsConfig {
+        self.config
     }
 
     /// The project directory; empty when the files have none (a packaged game).
@@ -312,20 +369,30 @@ impl AssetServer {
         Ok(match Kind::of(&rel) {
             Some(Kind::Gltf) => {
                 let (imported, _, dependencies) = self.import_gltf_file(&rel)?;
+                let textures: Vec<ProcessedTexture> = imported
+                    .textures
+                    .iter()
+                    .map(|t| ProcessedTexture::of(&t.name, &t.data))
+                    .collect();
                 Some(ProcessedAsset {
                     importer: GLTF_IMPORTER,
                     version: GLTF_IMPORTER_VERSION,
                     bytes: encode_entry(&CachedGltf::from_imported(&imported)),
                     dependencies,
+                    repeat_at_load: repeatable(&textures),
+                    textures,
                 })
             }
             Some(Kind::Texture) => {
                 let (data, _) = self.import_texture_file(&rel)?;
+                let textures = vec![ProcessedTexture::of(&rel, &data)];
                 Some(ProcessedAsset {
                     importer: TEXTURE_IMPORTER,
                     version: TEXTURE_IMPORTER_VERSION,
                     bytes: encode_entry(&data),
                     dependencies: Vec::new(),
+                    repeat_at_load: repeatable(&textures),
+                    textures,
                 })
             }
             Some(Kind::Material) | None => None,
@@ -728,7 +795,7 @@ impl AssetServer {
         let key = cache_key(
             "gltf",
             GLTF_IMPORTER_VERSION,
-            &meta.settings_bytes(),
+            &self.config.cache_settings(&meta.settings_bytes()),
             &sources,
         );
         if let Some(cached) = self
@@ -748,7 +815,8 @@ impl AssetServer {
                 .map(|b| b.to_vec())
                 .map_err(|e| e.to_string())
         };
-        let imported = import_gltf_with(&bytes, &read, id, rel)?;
+        let mut imported = import_gltf_with(&bytes, &read, id, rel)?;
+        encode_gltf_textures(&mut imported, &self.config);
         if let Err(d) = self.cache.put(&key, &CachedGltf::from_imported(&imported)) {
             tracing::warn!(code = %d.code, "{}", d.message);
         }
@@ -765,28 +833,60 @@ impl AssetServer {
             return Ok((texture, id));
         }
         let bytes = source_bytes(rel, data)?;
-        let format = match meta.settings.get("color_space").and_then(|v| v.as_str()) {
-            None | Some("srgb") => TextureFormat::Rgba8Srgb,
-            Some("linear") => TextureFormat::Rgba8Unorm,
+        let sidecar = || Location::file(format!("{rel}.meta.json"));
+        let normal_map = match meta.settings.get("normal_map") {
+            None => false,
+            Some(serde_json::Value::Bool(b)) => *b,
             Some(other) => {
+                return Err(Diagnostic::error(
+                    codes::META_INVALID,
+                    format!(
+                        "normal_map is {other} in the sidecar of `{rel}`; it must be true or false"
+                    ),
+                )
+                .at(sidecar()));
+            }
+        };
+        let format = match (
+            meta.settings.get("color_space").and_then(|v| v.as_str()),
+            normal_map,
+        ) {
+            (None | Some("srgb"), false) => TextureFormat::Rgba8Srgb,
+            (Some("linear"), _) | (None, true) => TextureFormat::Rgba8Unorm,
+            (Some("srgb"), true) => {
+                return Err(Diagnostic::error(
+                    codes::META_INVALID,
+                    format!("`{rel}` is a normal map, which holds linear data, but its sidecar sets color_space \"srgb\""),
+                )
+                .at(sidecar())
+                .with_hint("remove color_space, or set it to \"linear\""));
+            }
+            (Some(other), _) => {
                 return Err(Diagnostic::error(
                     codes::META_INVALID,
                     format!("unknown color_space `{other}` in the sidecar of `{rel}`"),
                 )
-                .at(Location::file(format!("{rel}.meta.json")))
+                .at(sidecar())
                 .with_hint(
                     "use \"srgb\" for colour textures or \"linear\" for normal and data maps",
                 ));
             }
         };
+        let role = if normal_map {
+            TextureRole::Normal
+        } else {
+            TextureRole::Rgba
+        };
         let key = cache_key(
             "texture",
             TEXTURE_IMPORTER_VERSION,
-            &meta.settings_bytes(),
+            &self.config.cache_settings(&meta.settings_bytes()),
             &[&bytes],
         );
+        let config = self.config;
         let (data, _) = self.cache.get_or_insert_with(&key, || {
             decode_image(&bytes, format, &format!("`{rel}`"), rel)
+                .map(|data| texture::process(data, role, &config))
         })?;
         Ok((data, id))
     }
@@ -837,6 +937,31 @@ impl From<Handle<TextureData>> for LoadedAsset {
 impl From<Handle<MaterialDesc>> for LoadedAsset {
     fn from(h: Handle<MaterialDesc>) -> Self {
         LoadedAsset::Material(h)
+    }
+}
+
+/// Encodes the images of a glTF import as `config` stores textures: an image
+/// used only as a normal map becomes BC5, the others BC7 (ADR-0047).
+fn encode_gltf_textures(imported: &mut ImportedGltf, config: &AssetsConfig) {
+    if !config.encodes() {
+        return;
+    }
+    let id = |t: &Option<TextureRef>| t.as_ref().and_then(TextureRef::asset).map(str::to_owned);
+    let mut normal = Vec::new();
+    let mut other = Vec::new();
+    for m in &imported.materials {
+        normal.extend(id(&m.desc.normal_texture));
+        other.extend(id(&m.desc.base_color_texture));
+        other.extend(id(&m.desc.metallic_roughness_texture));
+    }
+    for t in &mut imported.textures {
+        let name = t.id.to_string();
+        let role = if normal.contains(&name) && !other.contains(&name) {
+            TextureRole::Normal
+        } else {
+            TextureRole::Rgba
+        };
+        t.data = texture::process(std::mem::take(&mut t.data), role, config);
     }
 }
 

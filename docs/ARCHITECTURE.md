@@ -686,6 +686,10 @@ distance = 150.0              # how far from the camera shadows reach
 split_lambda = 0.75           # logarithmic (1) to uniform (0) splits
 blend = 0.1                   # fraction of each cascade that fades into the next
 
+[assets]                      # how imported textures are stored (M3, ADR-0047)
+texture_compression = "bc"    # BC7, and BC5 for normal maps; or "none" (RGBA8)
+texture_quality = "fast"      # or "high": about 1 dB better, 3 to 4 times slower to import
+
 [scripts]
 contexts = ["game", "tools"]
 cpu_budget_ms = 4

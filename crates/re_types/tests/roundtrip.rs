@@ -251,10 +251,64 @@ fn render() {
         height: 1,
         format: TextureFormat::Rgba8Unorm,
         pixels: vec![0, 1, 2, 3, 4, 5, 6, 7],
+        levels: Vec::new(),
     };
     assert!(texture.is_well_formed());
     round_trip(&texture);
+    // Texture JSON from before block-compressed formats still reads.
+    let old: TextureData = serde_json::from_str(
+        r#"{"width":2,"height":1,"format":"Rgba8Unorm","pixels":[0,1,2,3,4,5,6,7]}"#,
+    )
+    .unwrap();
+    assert_eq!(old, texture);
     assert_eq!(round_trip(&DrawFlags::SELECTED), "4");
+}
+
+#[test]
+fn block_compressed_textures_carry_their_mip_chain() {
+    assert_eq!(
+        TextureData::mip_sizes(8, 4),
+        vec![(8, 4), (4, 2), (2, 1), (1, 1)]
+    );
+    assert_eq!(TextureData::mip_sizes(1, 1), vec![(1, 1)]);
+    // 16 bytes a 4×4 block, a partial block counting whole; 4 bytes a pixel.
+    assert_eq!(TextureFormat::Bc7Srgb.level_bytes(8, 4), 32);
+    assert_eq!(TextureFormat::Bc5Unorm.level_bytes(2, 1), 16);
+    assert_eq!(TextureFormat::Rgba8Srgb.level_bytes(2, 1), 8);
+    assert!(TextureFormat::Bc5Unorm.is_compressed() && !TextureFormat::Rgba8Unorm.is_compressed());
+    assert!(TextureFormat::Bc7Srgb.is_srgb() && !TextureFormat::Bc7Unorm.is_srgb());
+
+    let bc = TextureData {
+        width: 8,
+        height: 4,
+        format: TextureFormat::Bc7Srgb,
+        pixels: vec![7; 32],
+        levels: vec![vec![1; 16], vec![2; 16], vec![3; 16]],
+    };
+    assert!(bc.is_well_formed());
+    round_trip(&bc);
+    let mut missing = bc.clone();
+    missing.levels.pop();
+    assert!(!missing.is_well_formed());
+    let mut short = bc.clone();
+    short.levels[0].pop();
+    assert!(!short.is_well_formed());
+    // Block-compressed textures need a width and height that are multiples of 4.
+    let unaligned = TextureData {
+        width: 6,
+        levels: vec![vec![0; 16], vec![0; 16]],
+        ..bc.clone()
+    };
+    assert!(!unaligned.is_well_formed());
+    // RGBA8 mips are made at upload, so RGBA8 data carries none.
+    let rgba = TextureData {
+        width: 1,
+        height: 1,
+        format: TextureFormat::Rgba8Unorm,
+        pixels: vec![0; 4],
+        levels: vec![vec![0; 4]],
+    };
+    assert!(!rgba.is_well_formed());
 }
 
 #[test]

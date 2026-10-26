@@ -323,6 +323,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
+name = "bcdec_rs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f09c37bc0e9f0924b7dae9988265ef3c76c88538f41a3b06caf4bed07cee5226"
+
+[[package]]
 name = "bevy_ecs"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -545,6 +551,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdeb9d870516001442e364c5220d3574d2da8dc765554b4a617230d33fa58ef5"
 dependencies = [
  "objc2 0.6.5",
+]
+
+[[package]]
+name = "block_compression"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fa36716e629480f3c38e3c5f85323c8f4f56c08f73fa7e91ed8a6dc0d75d571"
+dependencies = [
+ "bytemuck",
 ]
 
 [[package]]
@@ -3783,9 +3798,11 @@ name = "re_assets"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "block_compression",
  "glam 0.34.1",
  "gltf",
  "image",
+ "libm",
  "notify",
  "notify-debouncer-full",
  "postcard",
@@ -4086,6 +4103,8 @@ dependencies = [
 name = "re_render"
 version = "0.1.0"
 dependencies = [
+ "bcdec_rs",
+ "block_compression",
  "bytemuck",
  "egui",
  "egui-wgpu",
