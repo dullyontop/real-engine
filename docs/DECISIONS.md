@@ -924,7 +924,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0036: D2 determinism: Jolt's cross-platform build, one portable maths library, and a three-platform `state_hash` check
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP18). Built in WP18 PR "d2" (#100), with the departures in the amendment at the end. The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: the WP18 measurements (`research/m3/wp18/measurements.md`): the physics benchmarks built with and without oxijolt's `cross-platform-deterministic` feature, the platform C library against the `libm` crate, and Luau's maths builtins against Rust callbacks. WP22's vehicle measurements (`research/m3/wp22/measurements.md`) agree.
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP18). Built in WP18 PR "d2" (#100), with the departures in the amendments at the end. Evidence: the WP18 measurements (`research/m3/wp18/measurements.md`): the physics benchmarks built with and without oxijolt's `cross-platform-deterministic` feature, the platform C library against the `libm` crate, and Luau's maths builtins against Rust callbacks. WP22's vehicle measurements (`research/m3/wp22/measurements.md`) agree.
 
 **Context.** ADR-0018 gave us D1: the same binary on the same machine replays to the same `state_hash`. It deferred D2, the same `state_hash` across machines and operating systems, to M3, with its seam "the oxijolt feature flag plus the harness itself". The M3 exit check is identical hashes for the island's, the plaza's and the valley's replays on Linux x86_64 and Windows x86_64 (M3_PLAN, WP18 and definition of done item 2); macOS is reported. Facts checked for this ADR:
 
@@ -1009,7 +1009,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0037: Packaged games: one archive behind `ProjectFiles`, Luau bytecode, zstd, and per-platform bundles
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP19). The code waits for M2's definition of done (M3_PLAN, "How M3 starts") and WP18 PR "blocking". The departures from the plan listed at the end of the Decision are accepted. Evidence: the WP19 measurements (`research/m3/wp19/measurements.md`): the runtime-only `real` built and inspected on Linux x86_64, the glTF importer run on public sample models, Luau bytecode compiled and loaded with mlua 0.12.2, the archive index encoding timed, and four compressors compared on the same data.
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP19). Built in WP19 PRs "files" (#95), "archive" (#121) and "bundles" (#161), with the changes in the amendments at the end. The departures from the plan listed at the end of the Decision are accepted. Evidence: the WP19 measurements (`research/m3/wp19/measurements.md`): the runtime-only `real` built and inspected on Linux x86_64, the glTF importer run on public sample models, Luau bytecode compiled and loaded with mlua 0.12.2, the archive index encoding timed, and four compressors compared on the same data.
 
 **Context.** `real build` must turn a project into a standalone game: a runtime-only binary, one packed archive and the platform's bundle, with no tooling linked (M3 plan, WP19; ADR-0027). Facts checked for this ADR:
 - **The runtime reads project files at about 40 call sites in seven crates**, each with `std::fs` on `project.join(rel)`: `re_app` (`real.toml`, the entry scene, graph files, compat default scripts), `re_assets` (sources, `.meta.json` sidecars, materials, a `.gltf`'s external buffers and images, the processed cache), `re_script` (`runtime.rs` script loads; `modules.rs`'s `ProjectRequirer`, which also asks `is_file` and `is_dir` and reads `.luaurc`), `re_compat` (`runtime/scripts.rs` reads script source as UTF-8 text), `re_audio` (WAV) and `re_proc` (graph file inputs and its node-output cache); `re_input` also reads replay files, which are run inputs rather than project content. A few sites do more than read a file: `ProjectRequirer` refuses symlinks that leave `scripts/` with `canonicalize` (`re_script/src/modules.rs:194`), the glTF importer joins external URIs to the file's directory (`gltf_import.rs:465`), and `material.rs:228` walks up directories to find `real.toml`. Runtime paths also **write** into the project: `.real/cache/assets` and `.real/cache/proc`, the crash hook, the compat default scripts under `.real/defaults/` (when missing or changed, `re_app/src/compat.rs:304`), new `.meta.json` sidecars with fresh uuids for assets that have none (`re_assets/src/meta.rs:100`) and sidecar renames (`server.rs:535`), `.real/out/` captures from runtime commands, `save_scene`, and the planned `.real/data/` (ADR-0048). An installed game can be read-only (a macOS `.app`, `Program Files`), so none of these may write next to the game.
@@ -1144,7 +1144,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Amendment (WP19 PR "archive", #121; 2026-10-21).** Departures found while building it:
 - The cargo profile is `[profile.packaged]`, not `package`, because cargo reserves `package` as a profile name. `real build` runs `cargo build --profile packaged --locked -p re_cli --no-default-features --features game --target <triple>`.
 - `data/seed` is in the default packed content, beside the directories listed above, because a game's saved data starts from it (ADR-0048).
-- Headless packaged runs do not save data, so `real verify --package` can repeat them. Windowed runs save it.
+- Headless packaged runs do not save data, so `real verify --package` can repeat them. Windowed runs save it, and so does a dedicated server since WP30 PR "web" (below).
 - The archive format lives in `crates/re_app/src/package/` (`archive.rs`, `config.rs`, `dirs.rs`), not one `package.rs`.
 - Notices, icons and the Windows and macOS bundles stay in PR "bundles"; until then those platforms get the plain folder, and the build report says so.
 
@@ -1166,11 +1166,13 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Amendment (WP20 PR "hot reload", #169).** `shaders/` is a default packed directory, beside the ones above, for `*.wgsl` files (ADR-0038). A packaged game reads the `.wgsl` files directly in it once, at boot, and never watches them; `real build` checks them in its compile stage and stops on one that does not compile (`RE6030`, `RE6031`). The renderer now names FXC as its DX12 shader compiler (ADR-0038's amendment), which settles the call the Windows notes above leave to WP20.
 
+**Amendment (WP30 PR "web", #165).** The game's executable also takes `real run`'s online flags: `--server`, `--host`, `--connect`, `--name`, `--port`, `--bind` and `--max-players` (ADR-0050's amendment for PR "web"). A dedicated server runs headless and paced, and it saves data so that its players keep their progress; `real verify --package` and the other headless runs still save nothing. `real run --package DIR|FILE` runs a built game's archive with the `real` binary; DIR may hold `game.rpak`, be a macOS build's app, or hold one such app.
+
 **Evidence.** `research/m3/wp19/measurements.md`: the compression table (four codecs, three models and the content text), the importer and cache-hit timings, Luau bytecode size, determinism and load time, the index timings, the runtime binary's size, `ldd` and glibc symbols, the license-file scan of the runtime crates, and the API facts checked in mlua 0.12.2, mlua-sys 0.13.0, luau0-src 0.22.0+luau740, wgpu-types 30.0.1 and zstd 0.14.2.
 
 ## ADR-0038: HDR post chain, cascaded sun shadows, shader hot reload, and no render thread yet
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP20). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: WP20's phase-0 measurements (research bundle `m3/wp20/measurements.md`, with the scratch tests that produced them).
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP20). Built in WP20 PRs "post" (#98), "shadows" (#110) and "hot reload" (#169), with the settings in #122 and up to eight HDR target sets in #156; the render-thread measurement (#160) and hot reload as built are in the amendments at the end. Evidence: WP20's phase-0 measurements (research bundle `m3/wp20/measurements.md`, with the scratch tests that produced them).
 
 **Context.** M3's WP20 adds HDR rendering with tone mapping and bloom, cascaded shadows for the sun, shader hot reload, and a render thread only if PerfReport shows render submission is the bottleneck (M3_PLAN, WP20). WP27 draws the compat `BloomEffect`, `BlurEffect` and `SunRaysEffect` through this chain, and WP28's valley uses it. What exists today:
 - `re_render` draws the forward pass straight into the caller's target (ADR-0010). Shading is linear; lights, ambient and emissive are multiplied by `RendererSettings::exposure`; colour correction (`SceneExtras::grading`) is applied per fragment in the forward and effect shaders; the target's format does the sRGB encoding (or the shader does, for `Rgba8Unorm`-style targets). Values above 1 are clipped by the target.
@@ -1280,7 +1282,7 @@ Measured (lavapipe and llvmpipe GL, wgpu 30.0.1; measurements §1–§3):
 
 ## ADR-0039: Skins from glTF, GPU skinning, and animation graphs as data
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP21). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: the WP21 probe (`research/m3/wp21/`): the skinned vertex layout and the vertex-stage palette run on wgpu 30.0.1 on Vulkan (lavapipe) and GL (llvmpipe through EGL) and match the CPU to 4.8e-7; pose evaluation costs 20.8 µs for a 65-joint character with three clips; f32 evaluation stays within 8.5e-6 of an f64 reference even on a 63-deep joint chain.
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP21). Built in WP21 PRs "skins" (#97, with the `SkinnedMesh` component in #101) and "graphs" (#145), with the changes in the amendment at the end. Evidence: the WP21 probe (`research/m3/wp21/`): the skinned vertex layout and the vertex-stage palette run on wgpu 30.0.1 on Vulkan (lavapipe) and GL (llvmpipe through EGL) and match the CPU to 4.8e-7; pose evaluation costs 20.8 µs for a 65-joint character with three clips; f32 evaluation stays within 8.5e-6 of an f64 reference even on a 63-deep joint chain.
 
 **Context.** ADR-0030 limited `re_anim` in M1 to sampling glTF node clips onto entity transforms, plus tweens; M2 WP14 added keyframe tracks, a priority mixer and a two-bone solver for jointed rigs. There is no skinning: `re_assets` ignores glTF skins, `JOINTS_n` and `WEIGHTS_n`, and `re_render` has one vertex layout (`Vertex`, 48 bytes, locations 0–3) plus the instance stream (locations 4–11). M3 needs skinned characters driven by an animation graph that scripts, the editor and agents can change (M3 plan, WP21). The graph must be plain data, like the ProcGraph (`*.graph.json`, ADR-0016), so commands can edit it. Facts checked for this ADR:
 - **gltf 1.4.1** (the pinned version, MIT OR Apache-2.0) exposes everything needed: `Document::skins()`, `Skin::joints()`, `Skin::skeleton()`, `Skin::reader(..).read_inverse_bind_matrices()`, `Node::skin()`, and `Reader::read_joints(set)` / `read_weights(set)` with `into_u16()` and `into_f32()` casts over the U8, U16 and F32 encodings glTF allows. No new dependency is needed.
@@ -1375,7 +1377,7 @@ Measured (lavapipe and llvmpipe GL, wgpu 30.0.1; measurements §1–§3):
 
 ## ADR-0040: Vehicles and ragdolls: oxijolt's `vehicle` and `ragdoll` modules behind `PhysicsCmd`
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP22). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: WP22's phase-0 benches. They are summarised under "Measured"; the full tables are in the maintainers' research bundle.
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP22). Built in WP22 PRs "vehicles" (#94) and "ragdolls" (#134), with the follow-ups #143 and #158 and the changes in the amendments at the end. Evidence: WP22's phase-0 benches. They are summarised under "Measured"; the full tables are in the maintainers' research bundle.
 
 **Context.** M3 needs drivable vehicles and ragdolls for skinned characters (M3_PLAN, WP22). The valley example (WP28) drives a car, and WP27 maps Roblox-style characters onto ragdolls. The pinned `oxijolt =1.1.0+jolt-5.6.0` (MIT OR Apache-2.0, ADR-0008) already wraps both Jolt features, so neither needs a new dependency.
 
@@ -1572,7 +1574,7 @@ Budgets for M3, checked by benches in `re_physics`:
 
 ## ADR-0041: Audio effects graph: named buses on kira tracks, kira's built-in effects, snapshots in `real.toml`
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP22). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: WP22's phase-0 kira bench, summarised under "Measured".
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP22). Built in WP22 PR "audio" (#115), with the changes in the amendment at the end; #167 added `AudioSource.rate`. Evidence: WP22's phase-0 kira bench, summarised under "Measured".
 
 **Context.** M3 needs audio buses with per-bus effects (reverb, low-pass and high-pass filters, delay, compressor), a mixer snapshot in `real.toml`, a Luau API, and a headless path that applies the same graph so tests can check levels without a device (M3_PLAN, WP22). `re_audio` today plays every sound on kira's main track. Spatial voices are spatial sub-tracks under it, and `CaptureBackend` (ADR-0030) drives kira's real `Renderer` at a fixed 48 kHz. The pinned `kira =0.12.5` (MIT OR Apache-2.0) provides the following, read from its source:
 
@@ -1855,7 +1857,7 @@ PR "async" measures these on the walk; if a budget cannot be met, the PR changes
 
 ## ADR-0043: Procedural workflow: generator versions, bake, structural overrides, Luau generators, polygon booleans and roads
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP24). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: two probes in `research/m3/wp24/` (sources and output): `luau-node-bench` (mlua 0.12.2, Luau 0.740, the workspace's pins) and `overlay-probe` (i_overlay 9.1.0 and earcut 0.4.11). Measured on one core of the reference container (Intel Xeon @ 2.80 GHz).
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP24). Built in WP24 PRs "versioning" (#93), "bake" (#105), "luau" (#125), "overrides" (#136), "booleans and roads" (#142) and "streamed roads" (#159), with the changes in the amendments at the end. Evidence: two probes in `research/m3/wp24/` (sources and output): `luau-node-bench` (mlua 0.12.2, Luau 0.740, the workspace's pins) and `overlay-probe` (i_overlay 9.1.0 and earcut 0.4.11). Measured on one core of the reference container (Intel Xeon @ 2.80 GHz).
 
 **Context.** The M3 plan (WP24) asks for five things on top of ADR-0015 and ADR-0017: a version per generator and node kind in the cache key with an explicit `real migrate-graph`; bake to authored entities as one undoable transaction with a record of where they came from; structural overrides (move, replace, insert) kept across re-runs; generators and ProcGraph nodes written in Luau in a `generator` context with a CPU budget and no world access; and polygon booleans with a road node, re-checking `i_overlay`. Facts found in the code at `69ed909`:
 
@@ -2068,7 +2070,7 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 
 ## ADR-0044: Editor node canvas, docking and gizmos: egui-snarl, egui_dock and our own gizmos; graph files become open documents edited by `graph.*` commands
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP25). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). The maintainer chose our own gizmos over transform-gizmo-egui (below).
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP25). Built in WP25 PRs "gizmos and docking" (#91) and "canvas" (#123), with open documents in the entity core (#113) and live gizmo drags (#140), as the amendment at the end records. The maintainer chose our own gizmos over transform-gizmo-egui (below).
 
 **Context.**
 - WP25 (M3_PLAN) adds a node canvas for ProcGraph, translate/rotate/scale gizmos and dockable panels to `re_editor`. Every edit must be a command, so it is undoable and agents see the same changes (ADR-0003).
@@ -2138,7 +2140,7 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 
 ## ADR-0045: The script debugger: Luau's own breakpoints, stepping on temporary breakpoints, pausing by yield
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP25). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). The spike shows the full debugger can be built at no measurable cost when no breakpoint is hit, so WP25 builds it (editor panel and DAP) rather than the "stack and locals on error" fallback.
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP25). Built in WP25 PR "debugger" (#103), wired into the app in #109, with a follow-up in #157; WP27 attached compat scripts to it (the amendments at the end). The spike shows the full debugger can be built at no measurable cost when no breakpoint is hit, so WP25 builds it (editor panel and DAP) rather than the "stack and locals on error" fallback.
 
 **Context.**
 - WP25 (M3_PLAN) asks for breakpoints, step, locals and the call stack, in the editor and over the Debug Adapter Protocol (DAP), if a spike shows an acceptable cost; otherwise a stack and locals dump on error. ROADMAP's premise was that Luau has no `set_hook`, so a debugger would have to sit on the interrupt callback.
@@ -2213,7 +2215,7 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 
 ## ADR-0046: The M3 AI track: templates and recipes as data, an evaluation harness that never calls a model, and MCP over streamable HTTP on localhost
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP26). The code waits for M2's definition of done (M3_PLAN, "How M3 starts").
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP26). Built in WP26 PRs "http" (#92), "templates" (#104) and "eval" (#124), as the amendment at the end records.
 
 **Context.** ROADMAP's AI track gives M3 three items: natural-language starting points for beginners (project templates and generator recipes that an agent fills in through ordinary commands), an evaluation harness that runs scripted agent tasks against sample projects and scores them with `real verify`, and the HTTP MCP transport. ADR-0020 (tiers, policy, no shell tier), ADR-0025 (rmcp over stdio, schema hygiene, client configs) and ADR-0026 (one writer, error shape, protocol revisions) stay in force; this ADR adds to them and supersedes nothing.
 
@@ -2311,7 +2313,7 @@ What was checked for this ADR (2026-10-15, on `main` at 69ed909):
 
 ## ADR-0047: Block-compressed textures with block_compression 0.10.1, encoded at import
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP20). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: WP20's phase-0 measurements (research bundle `m3/wp20/measurements.md` §2 and §4, and the encoder bench they summarise). Agreed with WP19 for ADR-0037 (see Consequences).
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP20). Built in WP20 PR "textures" (#164), with the changes in the amendment at the end. Evidence: WP20's phase-0 measurements (research bundle `m3/wp20/measurements.md` §2 and §4, and the encoder bench they summarise). Agreed with WP19 for ADR-0037 (see Consequences).
 
 **Context.** Textures are imported by `re_assets` as RGBA8 (`re_types::render::TextureData`, `TextureFormat::{Rgba8Srgb, Rgba8Unorm}`), cached in `.real/cache` with postcard, and uploaded by `Renderer::upload_texture`, which builds the mip chain on the CPU. A 2048² texture is 16 MB in the cache and 21 MB on the GPU with mips. M3 asks for BC7 or BC1/BC3 on desktop through the asset cache, picked per adapter feature, with an uncompressed fallback, and for the encoder crate to be chosen after checking crates.io (M3_PLAN, WP20 PR "textures").
 
@@ -2361,7 +2363,7 @@ What was checked (measurements §4):
 
 ## ADR-0048: Compat follow-ups: local data services, surfaces and viewports, script reload, skins and effects, and our own place-file reader
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP27). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: the formats and limits below were checked on 2026-10-15 against the vendor's current reference pages and the rbx-dom project's format notes (MIT); the four crates were resolved from crates.io and built and exercised together in a probe crate on the reference container (LZ4 block and ZSTD frame round trips, an XML read, a base64 decode). Nothing here is copied prose: facts are restated for this repository (ADR-0034).
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP27). Built in WP27 PRs "persistence" (#96), "reload" (#107), "place files" (#112), "incremental render" (#127), "saved data" (#131), "surfaces" (#137) and "skins and effects" (#153), with the changes in the amendments at the end. Evidence: the formats and limits below were checked on 2026-10-15 against the vendor's current reference pages and the rbx-dom project's format notes (MIT); the four crates were resolved from crates.io and built and exercised together in a probe crate on the reference container (LZ4 block and ZSTD frame round trips, an XML read, a base64 decode). Nothing here is copied prose: facts are restated for this repository (ADR-0034).
 
 **Context.** M2 left five parts of the Roblox-style layer for later (M2_PLAN "Non-goals"; M3_PLAN WP27):
 - `DataStoreService` and `MemoryStoreService` raise `RE9002` on every call (`services/extra/mod.rs`, the `OFFLINE` table), so a game that saves progress cannot run its save path at all.
@@ -2509,7 +2511,7 @@ The engine already has what these need underneath: the scheduler's `park`/`wake`
 
 ## ADR-0049: Browser builds: `wasm32-unknown-unknown` with wasi-sdk for Luau and Jolt, WebGPU first, the archive in memory, one thread
 
-**Status:** Accepted (maintainer, 2026-10-20). §2 approved by the owner on 2026-10-20 ("Copies plus upstream"): the patched copies go in `third_party/` until releases carry the changes, and the owner submits the patches upstream. §11 is a recommendation to ADR-0036, which WP18 decides in PR "d2". Evidence: a spike on 2026-10-15 in the reference container that ran Luau, Jolt, `re_render`, egui and `re_audio` in one wasm module in headless Chromium 141, plus type-checking all of `re_app` for wasm. Numbers are in `research/m3/wp29/measurements.md`; sources, the build environment and every patch are in `research/m3/wp29/spike/`. crates.io was checked the same day: mlua 0.12.2 and oxijolt 1.1.0 are the newest releases.
+**Status:** Accepted (maintainer, 2026-10-20). §2 approved by the owner on 2026-10-20 ("Copies plus upstream"): the patched copies go in `third_party/` until releases carry the changes, and the owner submits the patches upstream. Built in WP29 PRs "portable" (#89), "toolchain" (#99), "runtime" (#119) and "build" (#132), with the changes in the amendments at the end. §11's recommendation was taken by ADR-0036's amendment for WP18 PR "d2" (#100). Evidence: a spike on 2026-10-15 in the reference container that ran Luau, Jolt, `re_render`, egui and `re_audio` in one wasm module in headless Chromium 141, plus type-checking all of `re_app` for wasm. Numbers are in `research/m3/wp29/measurements.md`; sources, the build environment and every patch are in `research/m3/wp29/spike/`. crates.io was checked the same day: mlua 0.12.2 and oxijolt 1.1.0 are the newest releases.
 
 **Context.** The owner chose to add browser builds to M3 ("Both", 2026-10-15). This reverses the M3 plan's default "The web (wasm with WebGPU) and consoles are not in M3" and WP19's non-goal "the web". A game made with Real Engine must also run in a browser, from a folder a static web server can host.
 
@@ -2629,7 +2631,7 @@ ADR-0010 (the frame loop is ours) and ADR-0036 (D2 determinism, which asked the 
 
 ## ADR-0050: Online play: our own reliable UDP in `re_net`, client-owned characters, and a lockstep check over loopback
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP30). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: a two-process spike of the transport below over loopback with seeded loss and delay, a probe of quinn's dependency graph, and a measurement of the plaza's replication traffic, all on 2026-10-15 in the reference container (`research/m3/wp30/measurements.md`, `research/m3/wp30/spike/`). quinn 0.11.12 and quinn-proto 0.11.19 were checked on crates.io the same day.
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP30). Built in WP30 PRs "transport" (#90), "wire" (#117), "sessions" (#138) and "web" (#165), with the changes in the amendments at the end. Evidence: a two-process spike of the transport below over loopback with seeded loss and delay, a probe of quinn's dependency graph, and a measurement of the plaza's replication traffic, all on 2026-10-15 in the reference container (`research/m3/wp30/measurements.md`, `research/m3/wp30/spike/`). quinn 0.11.12 and quinn-proto 0.11.19 were checked on crates.io the same day.
 
 **Context.** The owner chose to add online multiplayer to M3, so a Roblox-style game must be playable by people on different machines. This reverses the M3 plan's default "Real networking for Roblox-style projects: not in M3" and WP27's non-goal "real networking".
 

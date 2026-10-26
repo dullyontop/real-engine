@@ -22,13 +22,13 @@ Real Engine is an open-source 3D game engine written in Rust. It is built around
 - Generator versions with `real migrate-graph`, `proc.bake`, structural overrides, node kinds written in Luau, and polygon booleans and roads with junctions as graph nodes.
 - Project templates (`real new DIR --template native|roblox|terrain`, `--set KEY=VALUE`, `--list-templates`; the format is in [templates/README.md](templates/README.md)), generator recipes, `real agent eval`, and MCP over streamable HTTP on localhost (`real mcp --http`).
 - For Roblox-style projects: saved data, script reload during play, SurfaceGui and ViewportFrame, and `real import` of `.rbxl`, `.rbxlx`, `.rbxm` and `.rbxmx` files (with `--parent`).
-- Online play for Roblox-style projects (ADR-0050): `real run --server` runs a dedicated server, `--host` plays while serving, and `--connect HOST[:PORT]` joins, over `re_net`, our reliable UDP transport. The traffic is not encrypted, so play on a LAN or with people you trust.
+- Online play for Roblox-style projects (ADR-0050): `real run --server` runs a dedicated server, `--host` plays while serving, and `--connect HOST[:PORT]` joins, over `re_net`, our reliable UDP transport. A browser build joins a server over a WebSocket (`?connect=ws://HOST:PORT/` on its page), and a built game serves and joins with the same flags (`real run --package DIR`, or the game's own executable). The traffic is not encrypted, so play on a LAN or with people you trust.
 
 The workspace holds:
 
 - The contract layer: `re_core`, `re_noise` and `re_types`.
 - The entity model: `re_reflect` (the component registry), `re_scene` (the World facade over bevy_ecs, scenes, prefabs and procedural sources) and `re_command` (edit operations, undo and redo, and the command registry).
-- The subsystems: `re_render` (wgpu), `re_physics` (Jolt), `re_assets`, `re_input`, `re_audio`, `re_anim` and `re_net` (UDP transport).
+- The subsystems: `re_render` (wgpu), `re_physics` (Jolt), `re_assets`, `re_input`, `re_audio`, `re_anim` and `re_net` (UDP and WebSocket transports).
 - Procedural generation: `re_geom` and `re_proc` (the ProcGraph).
 - Scripting: `re_script` (Luau through mlua) and `re_script_check` (the validation suite).
 - The runtime and CLI: `re_app` and `re_cli` (the `real` binary), and `re_web` (the browser runtime).
