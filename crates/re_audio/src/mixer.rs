@@ -170,6 +170,10 @@ pub struct Audio {
     sample_rate: u32,
     files: Option<ProjectFiles>,
     clips: HashMap<String, StaticSoundData>,
+    /// The time [`Audio::advance`] has rendered, and the frames that came to:
+    /// counting whole frames of the total keeps steps of any length exact.
+    advanced: Duration,
+    advanced_frames: u64,
 }
 
 impl Audio {
@@ -216,6 +220,8 @@ impl Audio {
             sample_rate,
             files: None,
             clips: HashMap::new(),
+            advanced: Duration::ZERO,
+            advanced_frames: 0,
         }
     }
 
@@ -263,6 +269,28 @@ impl Audio {
         match &mut self.output {
             Output::Headless(m) => Some(m.manager.backend_mut().render(frames)),
             Output::Device(_) => None,
+        }
+    }
+
+    /// Renders `dt` of audio on the headless backend and drops it, so sounds
+    /// play on and end, their voices are freed and the meters read what plays,
+    /// as on a device. A device renders by itself, so there this does nothing.
+    pub fn advance(&mut self, dt: Duration) {
+        if !self.is_headless() {
+            return;
+        }
+        self.advanced = self.advanced.saturating_add(dt);
+        let due = self.advanced.as_nanos() * u128::from(self.sample_rate) / 1_000_000_000;
+        let due = u64::try_from(due).unwrap_or(u64::MAX);
+        let mut frames = due.saturating_sub(self.advanced_frames);
+        self.advanced_frames = due;
+        // A long `dt` renders a quarter of a second at a time, so the buffer
+        // stays small.
+        let piece = u64::from(self.sample_rate / 4).max(1);
+        while frames > 0 {
+            let n = frames.min(piece);
+            self.render_headless(n as usize);
+            frames -= n;
         }
     }
 

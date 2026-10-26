@@ -53,7 +53,8 @@ pub struct Host<'a> {
     pub physics_cmds: &'a mut Vec<PhysicsCmd>,
     /// Audio commands for this frame.
     pub audio_cmds: &'a mut Vec<AudioCmd>,
-    /// Every mixer bus's level over the last frame.
+    /// Every mixer bus's level over the last frame, as scripts read it
+    /// (silence on the headless backend).
     pub bus_levels: &'a [BusLevel],
     /// The mixer graph the audio commands are checked against.
     pub audio_graph: &'a re_types::AudioGraphDesc,
