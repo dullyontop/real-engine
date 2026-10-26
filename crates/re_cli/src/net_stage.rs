@@ -1,9 +1,9 @@
 //! `real verify`'s `net` stage (ADR-0050 §7): each replay of a compat
 //! project played by a dedicated server and one client, as child processes
 //! of this `real` over loopback in lockstep, must end with the server world
-//! the in-process run ends with. Each replay is played twice: the client
-//! joins over UDP, then over a WebSocket (ADR-0050's amendment for PR
-//! "web"). Only a compat project has the stage.
+//! the in-process run ends with, and with no error on either side. Each
+//! replay is played twice: the client joins over UDP, then over a WebSocket
+//! (ADR-0050's amendment for PR "web"). Only a compat project has the stage.
 
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -61,6 +61,7 @@ impl VerifyStage for NetStage {
                                 .at(Location::file(file.clone())),
                             );
                         }
+                        diags.extend(reported(&run, file, transport));
                         runs.push(run);
                     }
                     Err(d) => diags.push(d.at(Location::file(file.clone()))),
@@ -69,6 +70,26 @@ impl VerifyStage for NetStage {
         }
         StageReport::new("net", diags, json!({ "runs": runs }))
     }
+}
+
+/// The errors the networked server and client of `run` reported, each with a
+/// note saying which.
+fn reported(run: &Json, file: &str, transport: Transport) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for (who, key) in [("server", "server_errors"), ("client", "client_errors")] {
+        for d in run[key].as_array().into_iter().flatten() {
+            if let Ok(d) = serde_json::from_value::<Diagnostic>(d.clone()) {
+                out.push(d.with_related(Diagnostic::note(
+                    NET_DIFFERS,
+                    format!(
+                        "reported by the networked {who} (a client over {}) playing {file}",
+                        transport.name()
+                    ),
+                )));
+            }
+        }
+    }
+    out
 }
 
 /// How the client reaches its server.

@@ -4,11 +4,11 @@
 //   node net.mjs [--expect FILE [--reported]] <real> <web build dir> <project dir> <replay path>...
 // For each replay, <real> serves the build's game.rpak (`real run --package`) on a free
 // port of 127.0.0.1 for the replay's frames, and the page, which boots the same
-// game.rpak, joins it with `Session.netRun`. Each server must run all the frames with
-// no error. With --expect, its state_hash must also equal the one in FILE, the JSON
-// lines `cargo run -p re_web --example replay` prints; --reported prints a different
-// hash without failing. The client's own errors are printed and fail nothing: its
-// session ends when the server stops.
+// game.rpak, joins it with `Session.netRun`. Each server and each client must run all
+// the frames with no error (a lockstep client runs the frame it waited for even when the
+// server stops right after it). With --expect, the server's state_hash must also equal
+// the one in FILE, the JSON lines `cargo run -p re_web --example replay` prints;
+// --reported prints a different hash without failing.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -177,6 +177,11 @@ for (const { replay, frames, client, code, report, stderr } of runs) {
   }
   if (report.frames !== frames || serverErrors.length) {
     console.error(`${replay}: the server ran ${report.frames} of ${frames} frames${serverErrors.length ? ': ' + serverErrors.join('; ') : ''}`);
+    failed = true;
+  }
+  const clientErrors = client.error ? [client.error] : (client.errors ?? []);
+  if (client.frames !== frames || clientErrors.length) {
+    console.error(`${replay}: the client ran ${client.frames ?? 0} of ${frames} frames${clientErrors.length ? ': ' + clientErrors.join('; ') : ''}`);
     failed = true;
   }
   if (expectFile && expected.get(replay) !== report.state_hash) {

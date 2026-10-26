@@ -240,8 +240,8 @@ enum Command {
 #[derive(clap::Args, Debug)]
 struct RunArgs {
     /// Run the game `real build` wrote in DIR, or its `game.rpak`, instead
-    /// of the project, as the game's own executable does. DIR may hold a
-    /// macOS build's app.
+    /// of the project, as the game's own executable does. DIR may also be a
+    /// macOS build's app, or hold one.
     #[arg(long, value_name = "DIR|FILE", conflicts_with = "debug")]
     package: Option<PathBuf>,
     /// With --package: keep the game's cache, saved data and crash reports in
@@ -278,7 +278,8 @@ struct RunArgs {
     net: NetArgs,
     /// Lockstep, for checks (ADR-0050 §7): a server waits for N players
     /// (default 1) and then for each player's frame; a client waits for each
-    /// server frame.
+    /// server frame. As a replay does, it starts from `data/seed/` and keeps
+    /// no data.
     #[arg(long, requires = "online", value_name = "N", num_args = 0..=1, default_missing_value = "1")]
     lockstep: Option<u32>,
 }
@@ -454,7 +455,9 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         json: args.json,
         // A replay must repeat its recording, so only a live run keeps data
         // and reloads changed files.
-        live: if package.is_some() {
+        live: if args.lockstep.is_some() {
+            Live::Check
+        } else if package.is_some() {
             Live::Packaged
         } else {
             Live::Development
@@ -490,23 +493,28 @@ fn open_built(
 }
 
 /// The archive of the game `real build` wrote in `dir`: its `game.rpak`, or
-/// for a macOS build, the one in `NAME.app/Contents/Resources/` when `dir`
-/// holds a single app. With neither it is `dir/game.rpak`, which reports as
+/// for a macOS build, the app's in `Contents/Resources/`, when `dir` is that
+/// app or holds it alone. Otherwise it is `dir/game.rpak`, which reports as
 /// missing (`RE0604`).
 fn built_archive(dir: &Path) -> PathBuf {
+    let in_app = |app: &Path| {
+        app.join("Contents")
+            .join("Resources")
+            .join(re_app::package::ARCHIVE_NAME)
+    };
     let beside = dir.join(re_app::package::ARCHIVE_NAME);
     if beside.is_file() {
         return beside;
+    }
+    if in_app(dir).is_file() {
+        return in_app(dir);
     }
     let mut apps = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .filter_map(|entry| {
             let app = entry.ok()?.path();
-            let archive = app
-                .join("Contents")
-                .join("Resources")
-                .join(re_app::package::ARCHIVE_NAME);
+            let archive = in_app(&app);
             (app.extension().is_some_and(|e| e == "app") && archive.is_file()).then_some(archive)
         });
     match (apps.next(), apps.next()) {
@@ -520,9 +528,28 @@ fn built_archive(dir: &Path) -> PathBuf {
 enum Live {
     /// `real run`: keep data and reload changed files.
     Development,
-    /// A packaged game: keep data only in a window; never reload (a packaged
-    /// game reads its archive, which does not change while it runs).
+    /// A packaged game: keep data in a window or as a dedicated server; never
+    /// reload (a packaged game reads its archive, which does not change while
+    /// it runs).
     Packaged,
+    /// A lockstep run (`--lockstep`), which is a check: as a replay does, it
+    /// starts from `data/seed/` on the fixed clock and reloads nothing, so it
+    /// repeats.
+    Check,
+}
+
+impl Live {
+    /// Whether a live run keeps its saved data (ADR-0048), `headless` and
+    /// `paced` as in [`PlayOptions`]. Headless packaged runs other than a
+    /// dedicated server are checks (`real verify --package`), which must
+    /// repeat.
+    fn keeps_data(self, headless: bool, paced: bool) -> bool {
+        match self {
+            Live::Development => true,
+            Live::Packaged => !headless || paced,
+            Live::Check => false,
+        }
+    }
 }
 
 /// How [`play`] runs an open app.
@@ -555,18 +582,12 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
     // A watcher that cannot start is reported; the run goes on without reload.
     let mut watch_problem = None;
     if replay.is_none() {
-        match options.live {
-            Live::Development => {
-                app.persist_data();
-                // A game build never links the watcher in (ADR-0037).
-                if !cfg!(feature = "game") {
-                    watch_problem = app.enable_hot_reload().err();
-                }
-            }
-            // Headless packaged runs are checks (`real verify --package`),
-            // which must repeat; a played game keeps its data.
-            Live::Packaged if !options.headless => app.persist_data(),
-            Live::Packaged => {}
+        if options.live.keeps_data(options.headless, options.paced) {
+            app.persist_data();
+        }
+        // A game build never links the watcher in (ADR-0037).
+        if options.live == Live::Development && !cfg!(feature = "game") {
+            watch_problem = app.enable_hot_reload().err();
         }
         // A live window never stalls a frame on a streamed cell; headless
         // runs wait for it, so they repeat (ADR-0042).
@@ -1003,6 +1024,17 @@ fn tooling_exit(result: anyhow::Result<ExitCode>) -> ExitCode {
 mod tests {
     use super::*;
 
+    /// A built game keeps its data in a window and as a dedicated server
+    /// (`--server`, paced); `real verify --package` and lockstep runs repeat.
+    #[test]
+    fn servers_and_windows_keep_their_data_and_checks_do_not() {
+        assert!(Live::Packaged.keeps_data(true, true));
+        assert!(Live::Packaged.keeps_data(false, false));
+        assert!(!Live::Packaged.keeps_data(true, false));
+        assert!(!Live::Check.keeps_data(true, false));
+        assert!(Live::Development.keeps_data(true, false));
+    }
+
     /// `real run --package DIR` finds a macOS build's archive in its app.
     #[test]
     fn a_build_folder_names_its_archive() {
@@ -1014,6 +1046,10 @@ mod tests {
         std::fs::create_dir_all(&app).unwrap();
         std::fs::write(app.join(re_app::package::ARCHIVE_NAME), "").unwrap();
         assert_eq!(built_archive(out), app.join(re_app::package::ARCHIVE_NAME));
+        assert_eq!(
+            built_archive(&out.join("Island Demo.app")),
+            app.join(re_app::package::ARCHIVE_NAME)
+        );
         // With two apps the build is unclear, so the missing archive reports.
         let other = out.join("Other.app/Contents/Resources");
         std::fs::create_dir_all(&other).unwrap();

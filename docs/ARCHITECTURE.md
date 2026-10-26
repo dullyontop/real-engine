@@ -853,7 +853,7 @@ Caches are postcard with a `(magic, format_version)` header, stored in `.real/ca
 
 Every runtime read of a project file goes through `re_core::files::ProjectFiles` (ADR-0037): an ordered list of read-only layers, first match wins, plus the writable folders (`writable(Cache | Data | Crash | Out)`, each a `WritableDir`).
 - A development run (`real run`, `real verify`, the editor, MCP): the engine layer (`.real/defaults/**`), then the project directory. The writable folders are `.real/cache`, `.real/data`, `.real/crash` and `.real/out`.
-- A packaged game: the engine layer, then `game.rpak`, then the folder that holds it (source files only). The writable folders are per user, under `[package] identifier`: the cache in `$XDG_CACHE_HOME` (default `~/.cache`), `~/Library/Caches` or `%LOCALAPPDATA%`; data, crash reports and captures in `$XDG_DATA_HOME` (default `~/.local/share`), `~/Library/Application Support` or `%APPDATA%`. `--data-dir DIR` overrides both. Headless packaged runs do not save data.
+- A packaged game: the engine layer, then `game.rpak`, then the folder that holds it (source files only). The writable folders are per user, under `[package] identifier`: the cache in `$XDG_CACHE_HOME` (default `~/.cache`), `~/Library/Caches` or `%LOCALAPPDATA%`; data, crash reports and captures in `$XDG_DATA_HOME` (default `~/.local/share`), `~/Library/Application Support` or `%APPDATA%`. `--data-dir DIR` overrides both. Headless packaged runs do not save data, except a dedicated server's (`--server`); lockstep runs (`--lockstep`, for checks) never do.
 - A browser build: the same layers over the archive in memory; the writable folders are memory, with data and crash reports mirrored to IndexedDB (below).
 
 ### Packaged games

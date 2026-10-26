@@ -127,11 +127,16 @@ pub struct NetBound {
 /// a project directory or a packaged game's archive. Each file counts with
 /// its path, how it is stored (source, bytecode or processed) and its bytes,
 /// so a browser and a desktop server that play one archive agree. Left out:
-/// what the engine provides itself, the folder beside a packaged game,
-/// `tests/` (replays, goldens), and whatever is at the top under a name that
+/// what the engine provides itself; in a packaged game, every file from
+/// outside its archive (the folder beside it, the files a page adds);
+/// `tests/` (replays, goldens); and whatever is at the top under a name that
 /// starts with `.` (`.real/` with its data and caches, `.git/`, an editor's
 /// settings).
 pub fn game_hash(files: &ProjectFiles) -> u64 {
+    let packaged = files
+        .layers()
+        .iter()
+        .any(|l| l.kind() == LayerKind::Archive);
     let mut h = blake3::Hasher::new();
     h.update(b"real-engine/game-hash/2");
     let mut paths: Vec<String> = [".toml", ".json", ".luau", ".lua"]
@@ -146,7 +151,12 @@ pub fn game_hash(files: &ProjectFiles) -> u64 {
         let Ok(data) = files.read(&p) else {
             continue;
         };
-        if matches!(data.layer, LayerKind::Engine | LayerKind::Folder) {
+        let counted = match data.layer {
+            LayerKind::Archive => true,
+            LayerKind::Engine | LayerKind::Folder => false,
+            _ => !packaged,
+        };
+        if !counted {
             continue;
         }
         let form: u8 = match data.form {
@@ -215,7 +225,8 @@ impl NetPlay {
             NetRole::Server | NetRole::Host => {
                 let max_players = options.max_players.unwrap_or(config.max_players);
                 let ip = options.bind.as_deref().unwrap_or("0.0.0.0");
-                let (transport, websocket) = serve(ip, port, config.websocket, max_players)?;
+                let (transport, websocket) =
+                    serve(ip, port, config.websocket, max_players, timeout)?;
                 let mut cfg = Config::server(PROTOCOL, game);
                 cfg.send_rate = f64::from(config.server_rate.max(1));
                 cfg.max_connections = max_players as usize;
@@ -313,6 +324,7 @@ fn serve(
     port: u16,
     websocket: bool,
     max_players: u32,
+    timeout: Duration,
 ) -> Result<(Link, Option<SocketAddr>), Diagnostic> {
     let addr = re_net::resolve(ip, port)?;
     let addr = SocketAddr::new(addr.ip(), port);
@@ -320,7 +332,8 @@ fn serve(
         return Ok((Box::new(re_net::ServerTransport::udp(addr)?), None));
     }
     let links = 2 * max_players as usize + 16;
-    let transport = re_net::ServerTransport::with_websocket(addr, links)?;
+    let mut transport = re_net::ServerTransport::with_websocket(addr, links)?;
+    transport.set_link_timeout(timeout);
     let at = transport.websocket_addr();
     Ok((Box::new(transport), at))
 }
@@ -332,6 +345,7 @@ fn serve(
     _port: u16,
     _websocket: bool,
     _max_players: u32,
+    _timeout: Duration,
 ) -> Result<(Link, Option<SocketAddr>), Diagnostic> {
     Err(Diagnostic::error(
         re_net::codes::CANNOT_SERVE,
@@ -409,6 +423,12 @@ mod tests {
             base
         );
         assert_eq!(hash(vec![layer(LayerKind::Archive, game), tests]), base);
+        // A page's added files beside the archive, as the folder beside it.
+        let page = layer(
+            LayerKind::Project,
+            &[("settings/page.json", b"{}", Form::Source)],
+        );
+        assert_eq!(hash(vec![layer(LayerKind::Archive, game), page]), base);
         // A project folder's data, history and editor settings.
         let project = |extra: &[(&str, &[u8], Form)]| {
             let source: Vec<_> = game

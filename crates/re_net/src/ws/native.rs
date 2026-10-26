@@ -37,8 +37,10 @@ const MAX_ACCEPTS: usize = 64;
 /// How long a WebSocket handshake may take before the server drops it.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A link that receives nothing for this long closes. A connected peer sends
-/// every 100 ms, so only links that never joined, or were refused, go quiet.
+/// A link that receives nothing for this long closes, or for the endpoint's
+/// timeout when that is longer ([`ServerTransport::set_link_timeout`]). A
+/// connected peer sends every 100 ms, so only links that never joined, or were
+/// refused, go quiet.
 const LINK_IDLE: Duration = Duration::from_secs(15);
 
 /// How long a closing link may take to finish its close handshake.
@@ -47,8 +49,10 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 /// The most datagrams one link delivers in a step, so none starves the rest.
 const MAX_PER_LINK: usize = 256;
 
-/// The most forged datagrams (from `100::/64`) one receive skips.
-const MAX_FORGED: usize = 64;
+/// The most forged datagrams (from `100::/64`) a server skips in a step: as
+/// many as its endpoint reads in one, so crowding out the players takes as
+/// large a flood of them as of any other datagram.
+const MAX_FORGED: usize = 4096;
 
 /// Each link's limits: a 4 KiB read buffer, eager writes, 1 MiB waiting to be
 /// written, and messages of at most [`MAX_WS_MESSAGE`] bytes.
@@ -70,7 +74,7 @@ enum Ending {
     Refused(CloseCode, &'static str, String),
     /// The connection broke.
     Broke(String),
-    /// It sent nothing for [`LINK_IDLE`].
+    /// It sent nothing for the listener's idle time.
     Idle,
 }
 
@@ -201,6 +205,8 @@ pub struct ServerTransport {
     udp: UdpTransport,
     ws: Option<Listener>,
     ws_first: bool,
+    /// The forged datagrams skipped in this step.
+    forged: usize,
 }
 
 impl fmt::Debug for ServerTransport {
@@ -224,6 +230,7 @@ impl ServerTransport {
             udp: UdpTransport::bind(addr)?,
             ws: None,
             ws_first: false,
+            forged: 0,
         })
     }
 
@@ -249,6 +256,7 @@ impl ServerTransport {
                         udp,
                         ws: Some(listener),
                         ws_first: false,
+                        forged: 0,
                     });
                 }
                 Err(e) => failed = Some((at, e)),
@@ -274,10 +282,19 @@ impl ServerTransport {
         self.ws.as_ref().map_or(0, |l| l.links.len())
     }
 
+    /// Lets a WebSocket link stay quiet for `timeout`, when that is longer
+    /// than 15 s, before it closes. Given the endpoint's timeout, a quiet
+    /// player (a hidden browser tab) stays as long as one on UDP.
+    pub fn set_link_timeout(&mut self, timeout: Duration) {
+        if let Some(l) = &mut self.ws {
+            l.idle = timeout.max(LINK_IDLE);
+        }
+    }
+
     fn recv_udp(&mut self, buf: &mut [u8]) -> io::Result<Option<(usize, SocketAddr)>> {
-        for _ in 0..MAX_FORGED {
+        while self.forged < MAX_FORGED {
             match self.udp.recv_from(buf)? {
-                Some((_, from)) if is_websocket_peer(from) => {}
+                Some((_, from)) if is_websocket_peer(from) => self.forged += 1,
                 got => return Ok(got),
             }
         }
@@ -320,6 +337,7 @@ impl Transport for ServerTransport {
     }
 
     fn advance(&mut self, now: Duration) {
+        self.forged = 0;
         if let Some(l) = &mut self.ws {
             l.advance(now);
         }
@@ -385,6 +403,8 @@ struct Listener {
     listener: TcpListener,
     local: SocketAddr,
     max_links: usize,
+    /// How long a link may receive nothing before it closes.
+    idle: Duration,
     now: Duration,
     /// The last link's number (its address, [`super::virtual_addr`]).
     next: u64,
@@ -407,6 +427,7 @@ impl Listener {
             listener,
             local,
             max_links: max_links.max(1),
+            idle: LINK_IDLE,
             now: Duration::ZERO,
             next: 1,
             pending: Vec::new(),
@@ -546,11 +567,11 @@ impl Listener {
     }
 
     fn expire(&mut self) {
-        let now = self.now;
+        let (now, limit) = (self.now, self.idle);
         let idle: Vec<SocketAddr> = self
             .links
             .iter()
-            .filter(|(_, l)| now.saturating_sub(l.heard) > LINK_IDLE)
+            .filter(|(_, l)| now.saturating_sub(l.heard) > limit)
             .map(|(a, _)| *a)
             .collect();
         for addr in idle {
@@ -610,7 +631,7 @@ impl Listener {
                         codes::TIMED_OUT,
                         format!(
                             "the client at {at} sent nothing for {} s",
-                            LINK_IDLE.as_secs()
+                            self.idle.as_secs_f64()
                         ),
                     ),
                     Some(true),
@@ -689,6 +710,33 @@ impl Listener {
             .map(|l| l.peer)
             .or_else(|| self.lost.iter().find(|l| l.addr == addr).map(|l| l.peer))
             .or_else(|| self.closing.iter().find(|c| c.addr == addr).map(|c| c.peer))
+    }
+}
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        // Every link closes, and each close gets its handshake (for at most
+        // CLOSE_TIMEOUT) with what the peer sends read meanwhile, so the
+        // socket closes with a FIN and not a reset that could lose what the
+        // server sent last: its last frame and its Disconnect.
+        for (addr, mut link) in self.links.drain() {
+            start_close(&mut link.ws);
+            self.closing.push(Closing {
+                addr,
+                peer: link.peer,
+                ws: link.ws,
+                since: self.now,
+                read: true,
+            });
+        }
+        let start = re_core::time::Instant::now();
+        loop {
+            self.closing.retain_mut(|c| step_close(&mut c.ws, c.read));
+            if self.closing.is_empty() || start.elapsed() > CLOSE_TIMEOUT {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 }
 

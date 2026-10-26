@@ -596,6 +596,52 @@ fn links_past_the_limit_are_closed_and_quiet_ones_expire() {
 }
 
 #[test]
+fn a_longer_timeout_keeps_a_quiet_link_open() {
+    let mut net = Net::new(1);
+    net.server
+        .transport_mut()
+        .set_link_timeout(Duration::from_secs(30));
+    let _quiet = raw_websocket(&mut net);
+    net.until(30, "the link opening", |n| {
+        n.server.transport().websocket_links() == 1
+    });
+    // 20 s: past the listener's own 15 s, short of the 30 s timeout.
+    for _ in 0..1200 {
+        net.frame();
+    }
+    assert_eq!(net.server.transport().websocket_links(), 1);
+    net.until(900, "the quiet link expiring", |n| {
+        n.server.transport().websocket_links() == 0
+    });
+}
+
+/// A server that stops closes each link with the close handshake, reading
+/// what the peer sent meanwhile, so the socket ends with a FIN: a reset could
+/// make the peer's system drop what the server sent last.
+#[test]
+fn a_server_that_stops_closes_its_links_cleanly() {
+    let mut net = Net::new(4);
+    let mut s = raw_websocket(&mut net);
+    net.until(30, "the link opening", |n| {
+        n.server.transport().websocket_links() == 1
+    });
+    // Unread by the server when it stops.
+    s.write_all(&frame(0x2, b"late")).unwrap();
+    let server = net.server;
+    let stopping = std::thread::spawn(move || drop(server));
+    let mut close = [0u8; 2];
+    s.read_exact(&mut close).unwrap();
+    assert_eq!(close[0], 0x88, "a close frame");
+    let mut rest = vec![0u8; usize::from(close[1] & 0x7f)];
+    s.read_exact(&mut rest).unwrap();
+    s.write_all(&frame(0x8, &rest[..2.min(rest.len())]))
+        .unwrap();
+    let mut buf = [0u8; 64];
+    assert_eq!(s.read(&mut buf).unwrap(), 0, "the server's FIN");
+    stopping.join().unwrap();
+}
+
+#[test]
 fn the_listener_can_be_left_out() {
     let udp = ServerTransport::udp(([127, 0, 0, 1], 0).into()).unwrap();
     assert_eq!(udp.websocket_addr(), None);
