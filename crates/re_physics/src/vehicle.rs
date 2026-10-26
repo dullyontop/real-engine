@@ -5,7 +5,8 @@
 //! wheels cast against the scene, then engine, brakes and tire friction act through
 //! the constraint. `re_physics` adds what Jolt leaves to the caller:
 //!
-//! * differentials and anti-roll bars are derived from the wheels' axles;
+//! * differentials and anti-roll bars are derived from the wheels' axles, and the
+//!   differentials are open, where Jolt's default limits their slip;
 //! * the wheel tester queries as the chassis layer's moving object layer, so wheels
 //!   touch what the chassis touches in the [`LayerTable`](crate::LayerTable);
 //! * a new driver input wakes a sleeping chassis (Jolt gives a sleeping chassis no
@@ -33,6 +34,15 @@ use crate::world::{Physics, at, object_layer, unknown};
 
 /// Driven wheels whose local `z` differ by at most this share an axle, metres.
 const AXLE_TOLERANCE: f32 = 0.01;
+
+/// The limited-slip ratio of an open differential, which splits its torque evenly
+/// whatever its sides' speeds. Jolt's default of 1.4 sends more of a differential's
+/// torque to its slower side the faster the other side turns, and all of it once that
+/// side turns 1.4 times as fast. A car with more torque than grip then throws its
+/// torque from one axle to the other step by step, and since Jolt shifts up only on a
+/// step on which no driven wheel slips, its first gear change hangs on tiny
+/// differences (ADR-0040).
+const OPEN: f32 = f32::MAX;
 
 /// The vehicle of one chassis entity.
 #[derive(Clone, Copy, Debug)]
@@ -161,7 +171,8 @@ fn settings(desc: &VehicleDesc, layer: ObjectLayer) -> Result<WheeledVehicleSett
         differentials.push(
             VehicleDifferentialSettings::new(left, right)
                 .differential_ratio(desc.transmission.differential_ratio)
-                .engine_torque_ratio(ratio),
+                .engine_torque_ratio(ratio)
+                .limited_slip_ratio(OPEN),
         );
     }
     let mut bars = Vec::new();
@@ -176,6 +187,7 @@ fn settings(desc: &VehicleDesc, layer: ObjectLayer) -> Result<WheeledVehicleSett
     Ok(
         WheeledVehicleSettings::new(wheels, differentials, tester(desc.tester, layer))
             .max_pitch_roll_angle(desc.max_pitch_roll_deg.to_radians())
+            .differential_limited_slip_ratio(OPEN)
             .anti_roll_bars(bars)
             .engine(
                 VehicleEngineSettings::default()

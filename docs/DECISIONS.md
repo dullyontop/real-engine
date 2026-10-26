@@ -1380,7 +1380,7 @@ Measured (lavapipe and llvmpipe GL, wgpu 30.0.1; measurements §1–§3):
 
 ## ADR-0040: Vehicles and ragdolls: oxijolt's `vehicle` and `ragdoll` modules behind `PhysicsCmd`
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP22). Built in WP22 PRs "vehicles" (#94) and "ragdolls" (#134), with the follow-ups #143 and #158 and the changes in the amendments at the end. Evidence: WP22's phase-0 benches. They are summarised under "Measured"; the full tables are in the maintainers' research bundle.
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP22). Built in WP22 PRs "vehicles" (#94) and "ragdolls" (#134), with the follow-ups #143, #158 and #181 and the changes in the amendments at the end. Evidence: WP22's phase-0 benches. They are summarised under "Measured"; the full tables are in the maintainers' research bundle.
 
 **Context.** M3 needs drivable vehicles and ragdolls for skinned characters (M3_PLAN, WP22). The valley example (WP28) drives a car, and WP27 maps Roblox-style characters onto ragdolls. The pinned `oxijolt =1.1.0+jolt-5.6.0` (MIT OR Apache-2.0, ADR-0008) already wraps both Jolt features, so neither needs a new dependency.
 
@@ -1574,6 +1574,11 @@ Budgets for M3, checked by benches in `re_physics`:
 - A target a caller sends out of reach of the moved origin is kept, with one `RE5006` warning; a snapshot saved before it replays to the same one warning. A ragdoll whose stored target a move leaves out of reach behaves the same way, without a warning. Until it is back in reach, an animated ragdoll stops where it is (its parts' velocities are zeroed) and a powered one keeps its last aim; then it follows the target, jumping to it when it is too far for one step. At the world origin an out-of-reach target is still an `RE5006` error.
 - `re_app` sends no add, rebuild or target for an entity with any joint of its pose out of reach of a moved origin (`Physics::in_reach`, now public), so a ragdoll left behind reports nothing, like a still body. It adds, rebuilds or drives the ragdoll again the first step every joint is in reach. A caller that sends the add anyway gets an `RE5006` warning naming the part out of reach, and nothing is added.
 - Motion state and the ragdoll part of `App::state_hash` hold world positions, as bodies' poses do. Jolt is single precision, so a move rounds mid-fall positions to its grid there (up to about 0.12 mm after a 2048 m move): a run with a move is not bit-identical to one without, and a replay moves the origin at the same ticks.
+
+**Amendment (WP22 follow-up "differentials", #181).** Differentials are open, each one and between them: `re_physics` sets both of Jolt's limited-slip ratios to `f32::MAX`, where Jolt's default is 1.4 for each. With the default, a differential sends more of its torque to its slower side the faster the other side turns, and all of it once that side turns 1.4 times as fast. A car with more torque than grip then throws its torque from one axle to the other step by step, with its wheels spinning at up to 33 times the ground speed, and since Jolt shifts up only on a step on which no driven wheel slips, its first gear change hangs on tiny differences. The valley's four-wheel-drive car shifted into second at frame 228, 404 or 444 of its drive replay, depending on such things as the hero stopping 10 frames sooner (found in M3 by the valley; WP28's measurements are in `research/m3/wp28/launch`).
+- In `re_physics`'s test, a four-wheel-drive car at 600 N·m launched from eight starts 0.1 mm or one tick apart shifts into second between ticks 268 and 278. With the default it shifted anywhere from tick 66 to 238.
+- Open differentials also steady the fixed-path test's front-wheel-drive car through its gentle turn: a start 1 µm to the side moves its end by 0.7 mm (6.4 cm with the default), and a start turned by 0.001° by 1.8 cm (6.9 cm). Its reference pose is recorded again.
+- The Decision's explicit `differentials` list was not built: a vehicle's differentials always come from its driven wheels' axles.
 
 ## ADR-0041: Audio effects graph: named buses on kira tracks, kira's built-in effects, snapshots in `real.toml`
 

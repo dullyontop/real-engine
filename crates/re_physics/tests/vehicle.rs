@@ -129,6 +129,47 @@ fn throttle_drives_steering_turns_right_and_brakes_stop() {
     assert!(state.speed.abs() < 0.2, "still moving at {}", state.speed);
 }
 
+/// A car with all four wheels driven and more torque than grip, launched at full
+/// throttle, shifts into second at much the same tick whatever tiny difference it
+/// starts with: its differentials are open. With Jolt's limited-slip defaults the
+/// torque went to the front and the rear axle in turn, step by step, and starts 0.1 mm
+/// or one tick apart shifted at ticks from 66 to 238.
+#[test]
+fn a_four_wheel_drive_launch_shifts_up_alike_after_tiny_differences() {
+    let mut desc = car_desc(WheelTester::default());
+    for wheel in &mut desc.wheels {
+        wheel.driven = true;
+    }
+    desc.engine.max_torque = 600.0;
+    let mut shifts = Vec::new();
+    for n in 0..8 {
+        // Four starts 0.1 mm apart, then four throttle onsets a tick apart.
+        let (side, onset) = if n < 4 {
+            (n as f32 * 1e-4, 60)
+        } else {
+            (0.0, 57 + n)
+        };
+        let mut p = world(1);
+        apply(
+            &mut p,
+            vec![
+                floor(1, 0.0, 0.0, 0.0, 200.0),
+                chassis(Vec3::new(side, 1.0, 0.0), Quat::IDENTITY),
+                add_car(CAR, desc.clone()),
+            ],
+        );
+        steps(&mut p, onset);
+        apply(&mut p, vec![input(1.0, 0.0, 0.0)]);
+        let shift = (0..600).find(|_| {
+            p.step(DT).unwrap();
+            p.vehicle(CAR).unwrap().gear >= 2
+        });
+        shifts.push(shift.expect("never shifted into second"));
+    }
+    let spread = shifts.iter().max().unwrap() - shifts.iter().min().unwrap();
+    assert!(spread <= 20, "shifted into second at ticks {shifts:?}");
+}
+
 #[test]
 fn reverse_throttle_backs_up() {
     let mut p = flat(1);
@@ -471,13 +512,15 @@ fn drive_path(threads: usize) -> ((Vec3, Quat), Vec<u32>, f32) {
 
 /// The end pose of the path, recorded in the reference container (Linux x86_64) with
 /// Jolt's cross-platform-deterministic build (WP18's PR "d2"; the test prints the
-/// pose).
-const REFERENCE_POS: Vec3 = Vec3::new(-50.152733, 4.995464, 59.908962);
-const REFERENCE_ROT: Quat = Quat::from_xyzw(3.0249626e-5, -0.76230896, 3.5547266e-5, 0.64721334);
+/// pose), with open differentials.
+const REFERENCE_POS: Vec3 = Vec3::new(-48.888832, 4.9954643, 69.95685);
+const REFERENCE_ROT: Quat = Quat::from_xyzw(1.370076e-5, -0.65639836, 1.1676474e-5, 0.75441456);
 
 /// Position and rotation tolerance before D2 (ADR-0040). Measured on this path with
-/// the ray tester: the cross-platform-deterministic build moves the end 4 cm, a start
-/// 1 µm to the side 3.4 cm and a start turned by 0.001° 7 cm, each under 0.1°.
+/// the ray tester: the cross-platform-deterministic build moved the end 4 cm (with
+/// limited-slip differentials), and with open differentials a start 1 µm to the side
+/// moves it 0.7 mm, 1 mm to the side 1.4 cm and a start turned by 0.001° 1.8 cm, each
+/// under 0.001°.
 const TOLERANCE_M: f32 = 0.15;
 const TOLERANCE_DEG: f32 = 1.0;
 
