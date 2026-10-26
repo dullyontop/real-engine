@@ -189,6 +189,8 @@ real verify --project examples/island --json
 - Goldens for tone mapping, bloom and cascades on lavapipe and GL.
 - A shadow stability test: the shadowed texels of a static scene do not change as the camera moves along a path.
 
+**Progress (2026-10-25).** Merged: "post" (#98), "shadows" (#110), the `[render.post]` and `[render.shadows]` settings (#122), up to eight HDR target sets (#156), and the render-thread measurement (#160): the plaza, the bigmap and the valley stay under ADR-0038's threshold, so there is no render thread (ADR-0038's amendment). "textures" is open as #164, and "hot reload" is still being written.
+
 **Definition of done:** the four PRs merged; ADR-0038 records the render-thread measurement and decision.
 
 ---
@@ -275,6 +277,8 @@ cargo run --release --locked -p re_proc --example stream_walk -- --json > out/st
 
 **Definition of done:** the three PRs merged.
 
+**Progress (2026-10-24).** Done: "cells" (#108, with the `re_scene` hooks in #106), "async" (#128) and "terrain" (#139), plus "stream-app" (#118: streaming in the runtime and the `stream` library) and "floating origin" (#148: physics, streaming and the render snapshot follow the focus past 5 km; ADR-0042's amendment).
+
 ---
 
 ## WP24: Procedural workflow
@@ -305,7 +309,7 @@ cargo test --locked -p re_geom
 
 **Definition of done:** the five PRs merged.
 
-**Progress (2026-10-24).** Done: "versioning" (#93), "bake" (#105), "luau" (#125), "overrides" (#136) and "booleans and roads" (#142).
+**Progress (2026-10-26).** Done: "versioning" (#93), "bake" (#105), "luau" (#125), "overrides" (#136) and "booleans and roads" (#142). After them, "streamed roads" (#159) lets roads and shapes stream, so the valley (WP28) can have roads on its streamed terrain (ADR-0042's and ADR-0043's amendments).
 
 ---
 
