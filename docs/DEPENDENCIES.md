@@ -295,10 +295,10 @@ apt-get install -y \
 
 ### macOS
 
-Xcode command line tools and `cmake` (Homebrew). wgpu uses Metal. CI (`macos-latest`, Apple silicon) runs the whole test suite, the GPU crates on Metal, then `real verify` on the island and the plaza, goldens included. The job is required (ADR-0023's amendment for WP18 PR "blocking", #87). `build-package-macos` builds and checks the app bundle, and `d2-run` produces the macOS replay hashes that the `d2` job compares with Linux and Windows (ADR-0036).
+Xcode command line tools and `cmake` (Homebrew). wgpu uses Metal. CI (`macos-latest`, Apple silicon) runs the whole test suite, the GPU crates on Metal, then `real verify` on the island, the plaza and the valley, goldens included. The job is required (ADR-0023's amendment for WP18 PR "blocking", #87). `build-package-macos` builds and checks the app bundle, and `d2-run` produces the macOS replay hashes that the `d2` job compares with Linux and Windows (ADR-0036).
 
 ### Windows
 
-Visual Studio 2022 Build Tools with the C++ workload and `cmake`. wgpu uses DX12 or Vulkan. CI (`windows-latest`) runs the whole test suite, the GPU crates on DX12 (WARP), then `real verify` on the island and the plaza, goldens included. The job is required (#87). `build-package-windows` builds and runs the packaged games, and `d2-run` produces the Windows replay hashes for `d2`.
+Visual Studio 2022 Build Tools with the C++ workload and `cmake`. wgpu uses DX12 or Vulkan. CI (`windows-latest`) runs the whole test suite, the GPU crates on DX12 (WARP), then `real verify` on the island, the plaza and the valley, goldens included. The job is required (#87). `build-package-windows` builds and runs the packaged games, and `d2-run` produces the Windows replay hashes for `d2`.
 
 Both jobs install luau-lsp's own release zip for their platform (see External tools). The raw Luau interrupt (ADR-0011) works on MSVC and on macOS: `re_script`'s `cpu_budget_stops_runaway_loops_and_the_context_stays_usable` passes in both jobs.
