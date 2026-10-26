@@ -61,7 +61,8 @@ the wind down and muffles it, and lowers the echo.
 - `scripts/game/player.luau`: walking with `physics.move_character`, the
   body's facing, the graph's parameters (`anim.set`), a footstep where a boot
   lands (read with `anim.joint`), and getting in and out of the car, with the
-  door and the `in_car` snapshot.
+  door and the `in_car` snapshot. The hero gets out by a door, or else behind
+  or in front, wherever there is room to stand; with none, the hero stays in.
 - `scripts/game/car.luau`: the car's driver input through `physics.drive`, and
   its engine sound: the three layers, crossfaded by the engine's rpm and
   louder with more throttle.

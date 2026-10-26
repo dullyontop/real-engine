@@ -34,6 +34,13 @@ local EXITS = {
 	vector.create(0, 0, -3.1),
 	vector.create(0, 0, 3.1),
 }
+-- Around a spot to stand on, the hero's width.
+local AROUND = {
+	vector.create(0.35, 0, 0),
+	vector.create(-0.35, 0, 0),
+	vector.create(0, 0, 0.35),
+	vector.create(0, 0, -0.35),
+}
 
 local hero = script.entity :: Entity
 local body = world.get("hero_body") :: Entity
@@ -71,31 +78,44 @@ local function ground_under(e: Entity, below: number): number?
 end
 
 -- Standing room `offset` from the car (in its frame, but level, so that a
--- tilted car still lets the hero out beside it), or nil. The ray starts just
--- above the car's centre: ground above that (a bank, a tall rock, a trunk
--- the ray starts inside) or more than 2 m below the wheels is no place to
--- stand.
+-- tilted car still lets the hero out beside it), or nil. Rays start just
+-- above the car's centre, at the spot and the hero's width around it. Ground
+-- above that centre (a bank, a tall rock, a trunk a ray starts inside), more
+-- than 2 m below the wheels, or 0.3 m higher anywhere under the hero is no
+-- place to stand.
 local function exit_at(pos: vector, rot: Quat, offset: vector): vector?
 	local o = rot * offset
 	local spot = pos + vector.normalize(vector.create(o.x, 0, o.z)) * vector.magnitude(offset)
-	local ground = ground_below(vector.create(spot.x, pos.y + 0.5, spot.z))
-	if ground and ground <= pos.y and ground >= pos.y - 3 then
-		return vector.create(spot.x, ground + 0.95, spot.z)
+	local from = vector.create(spot.x, pos.y + 0.5, spot.z)
+	local ground = ground_below(from)
+	if not ground or ground > pos.y or ground < pos.y - 3 then
+		return nil
 	end
-	return nil
+	for i = 1, #AROUND do
+		local edge = ground_below(from + AROUND[i])
+		if not edge or edge > ground + 0.3 then
+			return nil
+		end
+	end
+	return vector.create(spot.x, ground + 0.95, spot.z)
 end
 
 local function get_out()
 	local pos: vector = car:get("Transform", "translation")
 	local rot: Quat = car:get("Transform", "rotation")
-	-- With no room by the car, the hero climbs out onto its roof.
-	local out = pos + vector.create(0, 2, 0)
-	for i = 1, #EXITS do
-		local spot = exit_at(pos, rot, EXITS[i])
-		if spot then
-			out = spot
+	-- A car tipped onto its right wheels falls back onto whoever got out on
+	-- its raised left side, so then the right door comes first.
+	local order = if (rot * vector.create(1, 0, 0)).y > 0.25 then { 2, 1, 3, 4 } else { 1, 2, 3, 4 }
+	local out: vector? = nil
+	for i = 1, #order do
+		out = exit_at(pos, rot, EXITS[order[i]])
+		if out then
 			break
 		end
+	end
+	if not out then
+		-- No room to stand anywhere by the car: the hero stays in.
+		return
 	end
 	hero:set("Transform", "translation", out)
 	hero:add("CharacterController", { height = 1.8, radius = 0.35 })
