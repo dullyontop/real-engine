@@ -30,7 +30,7 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 | Scope of M3 | **Every item of ROADMAP "M3 and later"**, grouped into WP18–WP27, with `examples/valley` as the goal. The render thread is built only if PerfReport shows render submission is the bottleneck (WP20). | **Decided** (owner: "finish the whole thing") |
 | Platforms for packaged games | **Windows x86_64, macOS (arm64 and x86_64), Linux x86_64, and the browser** (wasm32 with WebGPU, WebGL2 as fallback; WP29). Consoles are not in M3. | **Decided** (owner, 2026-10-15: "Both") |
 | Second platform for the D2 exit check | **Windows x86_64**, the most common target that differs from Linux in compiler and maths library. | Plan |
-| Real networking for Roblox-style projects | **In M3 (WP30):** a dedicated or listen server and clients over UDP, desktop only (ADR-0050). | **Decided** (owner, 2026-10-15: "Both") |
+| Real networking for Roblox-style projects | **In M3 (WP30):** a dedicated or listen server and clients over UDP, and players in a browser over a WebSocket (ADR-0050 and its amendment for PR "web"). | **Decided** (owner, 2026-10-15: "Both") |
 | Luau type checker (DECISIONS, open question 2) | **(a) unchanged**: luau-lsp as an external tool. `real build` does not need it. | Owner |
 | License (DECISIONS, open question 1) | Whatever the owner settles. Packaged games (WP19) list the third-party notices the build contains either way. | Owner |
 | Scripts in packaged games | **Luau bytecode**, compiled at build time with mlua's `Compiler` at the engine's Luau version. Source is not shipped unless the project asks. | Plan (ADR-0037) |
@@ -125,6 +125,8 @@ cargo xtask d2 --project examples/plaza --json
 - The CI `d2` job shows identical hashes on Linux x86_64 and Windows x86_64 for both projects, and reports macOS.
 - The physics benchmarks with `cross-platform-deterministic` are within the ADR's stated cost.
 
+**Progress (2026-10-24).** Done: "blocking" (#87) and "d2" (#100: ADR-0036 and its amendment, with glam's `scalar-math` and `libm` features on every target). `build-windows`, `build-macos` and `d2` are required (ADR-0023). The `d2` job requires macOS arm64 as well as Linux x86_64 and Windows x86_64, since its hashes matched from the first run, and it has compared the valley's replays since WP28's #135. So the definition of done below holds, and so does M3's item 2.
+
 **Definition of done:** both PRs merged; Windows and macOS block merges; the `d2` job is required.
 
 ---
@@ -189,7 +191,7 @@ real verify --project examples/island --json
 - Goldens for tone mapping, bloom and cascades on lavapipe and GL.
 - A shadow stability test: the shadowed texels of a static scene do not change as the camera moves along a path.
 
-**Progress (2026-10-25).** Merged: "post" (#98), "shadows" (#110), the `[render.post]` and `[render.shadows]` settings (#122), up to eight HDR target sets (#156), and the render-thread measurement (#160): the plaza, the bigmap and the valley stay under ADR-0038's threshold, so there is no render thread (ADR-0038's amendment). "textures" is open as #164, and "hot reload" is still being written.
+**Progress (2026-10-26).** Merged: "post" (#98), "shadows" (#110), the `[render.post]` and `[render.shadows]` settings (#122), up to eight HDR target sets (#156), and the render-thread measurement (#160): the plaza, the bigmap and the valley stay under ADR-0038's threshold, so there is no render thread (ADR-0038's amendment). "textures" (#164) has merged with block-compressed textures encoded at import (ADR-0047), and so has "hot reload" (#169): a development run reloads the `.wgsl` files in the project's `shaders/` folder and in the folder `RE_ENGINE_SHADERS` names, keeps the last good pipelines when a file fails, and reports the problem at its file and line (`RE6030`–`RE6032`). `real verify` and `real build` check the project's shaders without a GPU (ADR-0038's amendment). WP20 is complete.
 
 **Definition of done:** the four PRs merged; ADR-0038 records the render-thread measurement and decision.
 
@@ -248,7 +250,7 @@ cargo test --locked -p re_audio
 
 **Definition of done:** the three PRs merged.
 
-**Progress (2026-10-24).** Done: "vehicles" (#94), "audio" (#115) and "ragdolls" (#134), with review follow-ups in #143 (snapshots restore ragdoll modes and targets, and `state_hash` covers ragdolls).
+**Progress (2026-10-26).** Done: "vehicles" (#94), "audio" (#115) and "ragdolls" (#134), with review follow-ups in #143 (snapshots restore ragdoll modes and targets, and `state_hash` covers ragdolls). After them, #158 lets ragdolls follow the floating origin (ADR-0040's amendment), and #167 adds `AudioSource.rate` and `audio.set_rate`, played at most 16 times as fast (ADR-0041). WP22 is complete.
 
 ---
 
@@ -337,6 +339,8 @@ cargo test --locked -p re_script debug
 - Editor tests drive the canvas and gizmos through their commands and check the transactions.
 - Debugger tests stop at a breakpoint, step over and into, and read locals in a fixture.
 
+**Progress (2026-10-24).** Done: "gizmos and docking" (#91), "debugger" (#103, wired into `real run --debug` and `real editor --debug` in #109) and "canvas" (#123, over graph files opened as documents in the entity core, #113). After them, a gizmo drag moves the entity live and is one undo step (#140, on #133's coalescing transactions), and game scripts pause at breakpoints in play (#157). ADR-0044's amendment records the editor as built, and WP27 attached compat scripts to the debugger (#146 and #154, ADR-0045's amendments). WP25 is complete.
+
 **Definition of done:** the canvas and gizmo PRs merged, and the debugger merged or declined by ADR-0045 with the spike's numbers.
 
 ---
@@ -363,6 +367,8 @@ cargo test --locked -p re_mcp
 ```
 - Every template creates a project that passes `real verify`.
 - The M1 and M2 MCP end-to-end tests pass over both stdio and HTTP.
+
+**Progress (2026-10-21).** Done: "http" (#92), "templates" (#104) and "eval" (#124: `real agent eval`), as ADR-0046's amendment records. #120 and #166 drain the body of a refused HTTP request, so a Windows client gets the refusal instead of a reset. The MCP end-to-end tests (`crates/re_mcp/tests/wire.rs`) run each protocol test once over stdio and once over HTTP. WP26 is complete.
 
 **Definition of done:** the three PRs merged.
 
@@ -395,7 +401,7 @@ real verify --project examples/plaza --json
 
 **Definition of done:** the six PRs merged; `verify-plaza` stays green.
 
-**Progress (2026-10-24).** Merged: "persistence" (#96), "reload" (#107), "place files" (#112), "incremental render" (#127), "saved data" (#131: compat data writes through `writable(Data)`, so browser saves last across page loads, which closes the gap WP29's runtime PR named) and "surfaces" (#137: `SurfaceGui` and `ViewportFrame` are drawn through render-to-texture). "skins and effects" (#153: skinned `MeshPart`s, and bloom, blur and sun rays). Outside the six, "debug hooks" (#146) registers compat scripts with the debugger, and #154 attaches the compat `server` and `client` contexts to the app's debugger (ADR-0045's amendments). WP27 is complete.
+**Progress (2026-10-26).** Merged: "persistence" (#96), "reload" (#107), "place files" (#112), "incremental render" (#127), "saved data" (#131: compat data writes through `writable(Data)`, so browser saves last across page loads, which closes the gap WP29's runtime PR named) and "surfaces" (#137: `SurfaceGui` and `ViewportFrame` are drawn through render-to-texture). "skins and effects" (#153: skinned `MeshPart`s, and bloom, blur and sun rays). Outside the six, "debug hooks" (#146) registers compat scripts with the debugger, and #154 attaches the compat `server` and `client` contexts to the app's debugger (ADR-0045's amendments). WP27 is complete. A follow-up, #168, makes compat runs repeat: Luau's `math.random` starts from `[compat] seed` and `os.clock()` reads the game time, which closes the gap WP30 found and M2_PLAN's "Determinism in tests" default asked for.
 
 ---
 
@@ -473,8 +479,9 @@ real build --project examples/island --out out/island-web --target web
 **Progress (2026-10-24).** "portable" (#89), "toolchain" (#99), "runtime" (#119) and "build" (#132) have merged, with these changes to the plan:
 - The panic code is `RE0622` (not `RE0623`), and `RE0621` is the canvas failing; `RE0623`–`RE0625` stay free (ADR-0049's amendment).
 - `cargo xtask web-test` and WebGL2 moved from "runtime" to "build". The static server stays in Node (`tools/web-test/serve.mjs`), not xtask.
-- `RE0975` waits for WP30's server role, since nothing triggers it yet. The notices file in the web folder came with WP19 PR "bundles" (#161).
+- `RE0975` stays undefined: a web build has no command line, so nothing asks it to serve, and the runtime refuses a server or host role with `RE8911` (ADR-0050's amendment for WP30 PR "web", #165). The notices file in the web folder came with WP19 PR "bundles" (#161).
 - Saved data on the web is persisted since WP27's "saved data" (#131).
+- The `web` job's checks run as `cargo xtask web-test` in `build-web`, which is required, rather than as a job of their own.
 - Release CI publishing the prebuilt web runtime: `.github/workflows/release.yml` builds it on a `v*` tag and attaches `real-web-runtime-<version>.tar.gz` (the runtime files) to the release, for `real build --target web --runtime DIR`. Since WP19 PR "bundles" (#161), the desktop runtimes are published beside it, as `real-runtime-<version>-<triple>` for Linux x86_64, Windows x86_64 and macOS arm64, and every runtime folder is written by `real build --runtime-only`.
 
 **Definition of done:** PRs "portable", "toolchain", "runtime" and "build" merged; `build-web` and `web` CI jobs required and green; ADR-0049 Accepted with the full runtime's size and the private-sample results recorded under `research/m3/wp29/`.
@@ -525,6 +532,8 @@ real verify --project examples/plaza --json
 - `cargo xtask check-graph` passes: the runtime-only build reaches `re_net` and no tokio.
 
 **Definition of done:** PRs "transport", "wire", "sessions" and "web" merged; the `net-plaza` job is required and green on all three platforms; ADR-0050 is Accepted with the private-sample measurements recorded.
+
+**Progress (2026-10-26).** Merged: "transport" (#90), "wire" (#117), "sessions" (#138) and "web" (#165: players in a browser join a server over a WebSocket, and a built game serves and joins). The `net-plaza` job is the `net` stage of `real verify`, which `verify-plaza`, `build-windows` and `build-macos` require (#166). It plays each of the plaza's replays with the client over UDP and again over a WebSocket, and `build-web` plays them from headless Chromium against a native server.
 
 ---
 
