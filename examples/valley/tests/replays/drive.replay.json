@@ -70,12 +70,32 @@
       ]
     },
     {
-      "frame": 720,
+      "frame": 830,
       "action": "move",
       "axis": [
         0.0,
         0.0
       ]
+    },
+    {
+      "frame": 830,
+      "action": "brake",
+      "down": true
+    },
+    {
+      "frame": 890,
+      "action": "use",
+      "down": true
+    },
+    {
+      "frame": 892,
+      "action": "use",
+      "down": false
+    },
+    {
+      "frame": 892,
+      "action": "brake",
+      "down": false
     }
   ],
   "checks": [

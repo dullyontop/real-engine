@@ -45,7 +45,7 @@
         "Transform": {
           "translation": [
             0.0,
-            5.0,
+            8.0,
             18.0
           ]
         },
@@ -60,8 +60,8 @@
         "SkinnedMesh": {
           "asset": "models/walker.glb#Walker"
         },
-        "AnimPlayer": {
-          "clip": "models/walker.glb#idle"
+        "Animator": {
+          "graph": "anims/walker.animgraph.json"
         },
         "MaterialRef": {
           "asset": "materials/walker.material.json"
@@ -103,7 +103,7 @@
         "Transform": {
           "translation": [
             7.0,
-            4.5,
+            8.0,
             18.0
           ],
           "rotation": [
@@ -342,6 +342,69 @@
       }
     },
     {
+      "id": "engine_idle",
+      "name": "Engine",
+      "parent": "car",
+      "components": {
+        "AudioSource": {
+          "clip": "assets/sfx/engine_idle.wav",
+          "volume": 0.0,
+          "looping": true,
+          "autoplay": true,
+          "bus": "vehicle"
+        },
+        "Transform": {
+          "translation": [
+            0.0,
+            0.0,
+            1.5
+          ]
+        }
+      }
+    },
+    {
+      "id": "engine_mid",
+      "name": "Engine",
+      "parent": "car",
+      "components": {
+        "AudioSource": {
+          "clip": "assets/sfx/engine_mid.wav",
+          "volume": 0.0,
+          "looping": true,
+          "autoplay": true,
+          "bus": "vehicle"
+        },
+        "Transform": {
+          "translation": [
+            0.0,
+            0.0,
+            1.5
+          ]
+        }
+      }
+    },
+    {
+      "id": "engine_high",
+      "name": "Engine",
+      "parent": "car",
+      "components": {
+        "AudioSource": {
+          "clip": "assets/sfx/engine_high.wav",
+          "volume": 0.0,
+          "looping": true,
+          "autoplay": true,
+          "bus": "vehicle"
+        },
+        "Transform": {
+          "translation": [
+            0.0,
+            0.0,
+            1.5
+          ]
+        }
+      }
+    },
+    {
       "id": "valley",
       "name": "Valley",
       "components": {
@@ -374,6 +437,19 @@
             0.10050379,
             0.8040303
           ]
+        }
+      }
+    },
+    {
+      "id": "wind",
+      "name": "Wind",
+      "components": {
+        "AudioSource": {
+          "clip": "assets/ambience/wind.wav",
+          "looping": true,
+          "spatial": false,
+          "autoplay": true,
+          "bus": "ambience"
         }
       }
     }

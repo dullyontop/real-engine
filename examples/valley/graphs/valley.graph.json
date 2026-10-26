@@ -88,6 +88,15 @@
       }
     },
     {
+      "id": "erode",
+      "kind": "terrain.erode",
+      "version": 1,
+      "params": {
+        "spacing": 4.0,
+        "droplets": 0.5
+      }
+    },
+    {
       "id": "ground",
       "kind": "terrain.mesh",
       "version": 2,
@@ -211,13 +220,23 @@
         "field"
       ],
       "to": [
+        "erode",
+        "field"
+      ]
+    },
+    {
+      "from": [
+        "erode",
+        "field"
+      ],
+      "to": [
         "ground",
         "field"
       ]
     },
     {
       "from": [
-        "shape",
+        "erode",
         "field"
       ],
       "to": [
@@ -237,7 +256,7 @@
     },
     {
       "from": [
-        "shape",
+        "erode",
         "field"
       ],
       "to": [

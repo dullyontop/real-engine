@@ -1,0 +1,144 @@
+{
+  "format": "real-engine/animgraph",
+  "version": 1,
+  "params": [
+    {
+      "type": "float",
+      "id": "speed",
+      "default": 0.0
+    },
+    {
+      "type": "bool",
+      "id": "airborne",
+      "default": false
+    }
+  ],
+  "nodes": [
+    {
+      "kind": "clip",
+      "id": "idle",
+      "clip": "models/walker.glb#idle"
+    },
+    {
+      "kind": "clip",
+      "id": "walk_slow",
+      "clip": "models/walker.glb#walk",
+      "speed": 0.5
+    },
+    {
+      "kind": "clip",
+      "id": "walk_easy",
+      "clip": "models/walker.glb#walk",
+      "speed": 0.75
+    },
+    {
+      "kind": "clip",
+      "id": "walk",
+      "clip": "models/walker.glb#walk"
+    },
+    {
+      "kind": "clip",
+      "id": "walk_brisk",
+      "clip": "models/walker.glb#walk",
+      "speed": 1.5
+    },
+    {
+      "kind": "clip",
+      "id": "walk_fast",
+      "clip": "models/walker.glb#walk",
+      "speed": 2.0
+    },
+    {
+      "kind": "clip",
+      "id": "walk_top",
+      "clip": "models/walker.glb#walk",
+      "speed": 2.37
+    },
+    {
+      "kind": "blend1d",
+      "id": "move",
+      "param": "speed",
+      "children": [
+        {
+          "node": "idle",
+          "threshold": 0.0
+        },
+        {
+          "node": "walk_slow",
+          "threshold": 0.85
+        },
+        {
+          "node": "walk_easy",
+          "threshold": 1.27
+        },
+        {
+          "node": "walk",
+          "threshold": 1.69
+        },
+        {
+          "node": "walk_brisk",
+          "threshold": 2.54
+        },
+        {
+          "node": "walk_fast",
+          "threshold": 3.38
+        },
+        {
+          "node": "walk_top",
+          "threshold": 4.0
+        }
+      ]
+    },
+    {
+      "kind": "clip",
+      "id": "fall",
+      "clip": "models/walker.glb#fall"
+    }
+  ],
+  "layers": [
+    {
+      "id": "base",
+      "entry": "ground",
+      "states": [
+        {
+          "id": "ground",
+          "node": "move"
+        },
+        {
+          "id": "air",
+          "node": "fall"
+        }
+      ],
+      "transitions": [
+        {
+          "id": "take_off",
+          "from": "ground",
+          "to": "air",
+          "duration": 0.2,
+          "conditions": [
+            {
+              "test": "bool",
+              "param": "airborne",
+              "value": true
+            }
+          ],
+          "interruptible": true
+        },
+        {
+          "id": "land",
+          "from": "air",
+          "to": "ground",
+          "duration": 0.15,
+          "conditions": [
+            {
+              "test": "bool",
+              "param": "airborne",
+              "value": false
+            }
+          ],
+          "interruptible": true
+        }
+      ]
+    }
+  ]
+}

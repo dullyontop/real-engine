@@ -27,6 +27,50 @@ threshold = 1.0
 [render.post.grading]
 saturation = 0.1
 
-# models/ (the walker) is not a default package folder.
+# Sun shadows in four cascades out to 200 m (ADR-0038): far enough for the
+# trees on the slopes around the car, with the splits leaning towards the
+# camera so the hero's shadow stays sharp.
+[render.shadows]
+cascades = 4
+distance = 200.0
+split_lambda = 0.85
+
+# `real build` (ADR-0037): the identifier names the folders the packaged game
+# saves in. models/ (the walker) is not a default package folder.
 [package]
+identifier = "com.example.valley"
+display_name = "Valley"
 include = ["models/**"]
+
+# The mixer (ADR-0041). Footsteps and the car have buses under `sfx`, which
+# also feeds a reverb send (`echo`), as if the slopes answered; the wind has
+# `ambience`. While the hero drives, the `in_car` snapshot turns the wind
+# down and muffles it, and lowers the echo. tools/make_sounds.py writes every
+# sound in assets/.
+[audio]
+default_bus = "sfx"
+
+[audio.buses.sfx]
+sends = { echo = -14.0 }
+
+[audio.buses.footsteps]
+parent = "sfx"
+volume_db = -4.0
+
+[audio.buses.vehicle]
+parent = "sfx"
+volume_db = -2.0
+effects = [
+    { kind = "compressor", threshold_db = -12.0, ratio = 3.0, attack_ms = 5.0, release_ms = 150.0, makeup_db = 3.0 },
+]
+
+[audio.buses.ambience]
+volume_db = -8.0
+effects = [{ kind = "filter", mode = "low_pass", cutoff_hz = 12000.0 }]
+
+[audio.sends.echo]
+effects = [{ kind = "reverb", feedback = 0.8, damping = 0.4, mix = 1.0 }]
+
+[audio.snapshots.in_car]
+buses = { ambience = -14.0, echo = -8.0 }
+effects = [{ bus = "ambience", effect = 0, cutoff_hz = 600.0 }]

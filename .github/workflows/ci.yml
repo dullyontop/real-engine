@@ -203,10 +203,10 @@ jobs:
           echo "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567  /tmp/luau-lsp.zip" | sha256sum -c -
           sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
       - run: cargo build --locked --release -p re_cli
-      - name: The committed walker model is what its generator writes
+      - name: The committed walker model and sounds are what their generators write
         run: |
-          (cd examples/valley && python3 tools/make_walker.py)
-          git diff --exit-code -- examples/valley/models/walker.glb
+          (cd examples/valley && python3 tools/make_walker.py && python3 tools/make_sounds.py)
+          git diff --exit-code -- examples/valley/models/walker.glb examples/valley/assets
       - name: real check --types on the valley
         run: target/release/real check --types --project examples/valley
       - name: real verify on the valley
