@@ -13,6 +13,7 @@ use re_app::package::{
 use re_assets::{AssetServer, ProcessedAsset};
 use re_core::files::{ProjectFiles, ProjectPath};
 use re_core::{Diagnostic, Location};
+use re_types::render::{TextureData, TextureFormat};
 use serde::Serialize;
 
 use crate::codes;
@@ -185,7 +186,7 @@ pub fn package_info(config: &AppConfig) -> (PackageInfo, Vec<Diagnostic>) {
         }
     }
     if let Some(icon) = &pc.icon
-        && !(icon.to_ascii_lowercase().ends_with(".png") && ProjectPath::new(icon).is_ok())
+        && !icon_named(icon)
     {
         diags.push(
             Diagnostic::error(
@@ -215,6 +216,50 @@ pub fn package_info(config: &AppConfig) -> (PackageInfo, Vec<Diagnostic>) {
         version: pc.version_or_default().to_owned(),
     };
     (info, diags)
+}
+
+/// The smallest `[package] icon` side, in pixels.
+pub const ICON_MIN: u32 = 512;
+
+/// True when `[package] icon` names a PNG by a valid project path
+/// ([`package_info`] reports the others).
+fn icon_named(icon: &str) -> bool {
+    icon.to_ascii_lowercase().ends_with(".png") && ProjectPath::new(icon).is_ok()
+}
+
+/// The `[package] icon` decoded, checked to be a square PNG of at least
+/// [`ICON_MIN`] pixels.
+///
+/// # Errors
+///
+/// `RE0950` when the file is missing, not a PNG, not square or too small.
+pub fn icon_image(files: &ProjectFiles, icon: &str) -> Result<TextureData, Diagnostic> {
+    let problem = |why: String| {
+        Diagnostic::error(
+            codes::PACKAGE_CONFIG,
+            format!("[package] icon `{icon}` {why}"),
+        )
+        .at(Location::file("real.toml"))
+    };
+    let bytes = files
+        .read_source(icon)
+        .map_err(|e| problem(format!("cannot be read: {e}")))?;
+    let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+        .map_err(|e| problem(format!("is not a PNG image: {e}")))?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    if width != height || width < ICON_MIN {
+        return Err(problem(format!(
+            "is {width}×{height} px; it must be square and at least {ICON_MIN} px across"
+        ))
+        .with_hint("a 1024×1024 PNG gives every size the platforms ask for"));
+    }
+    Ok(TextureData {
+        width,
+        height,
+        format: TextureFormat::Rgba8Srgb,
+        pixels: image.into_raw(),
+    })
 }
 
 /// The project paths to pack, sorted.
@@ -258,7 +303,19 @@ pub fn pack(project: &Path, config: &AppConfig) -> (PackageWriter, PackReport) {
     let mut writer = PackageWriter::new(info);
     let pc = config.package.clone().unwrap_or_default();
     let files = re_app::package::dev_files(project);
-    let paths = collect(&files, &pc);
+    let mut paths = collect(&files, &pc);
+    // The icon is packed wherever it is, and stored as source: the game reads
+    // it as its window icon. One outside the packed folders is not imported.
+    let icon = pc.icon.clone().filter(|i| icon_named(i));
+    let icon_only = icon.clone().filter(|i| !paths.contains(i));
+    if let Some(icon) = &icon {
+        match icon_image(&files, icon) {
+            Ok(_) => {
+                paths.insert(icon.clone());
+            }
+            Err(d) => report.diagnostics.push(d),
+        }
+    }
     let named = named_files(&files, &paths);
     report.diagnostics.extend(unpacked_names(&named, &paths));
 
@@ -279,7 +336,10 @@ pub fn pack(project: &Path, config: &AppConfig) -> (PackageWriter, PackReport) {
     // Assets: import each (creating missing sidecars), then choose its form.
     let mut server = AssetServer::with_files(files.clone());
     let mut processed: BTreeMap<String, ProcessedAsset> = BTreeMap::new();
-    for p in paths.iter().filter(|p| importable(p)) {
+    for p in paths
+        .iter()
+        .filter(|p| importable(p) && icon_only.as_ref() != Some(*p))
+    {
         let sidecar = format!("{p}.meta.json");
         let had_sidecar = files.is_file(&sidecar);
         match server.processed(p) {
@@ -344,6 +404,16 @@ pub fn pack(project: &Path, config: &AppConfig) -> (PackageWriter, PackReport) {
                 choice.stored = "source";
                 choice.reason = "a glTF file stored as source reads it".to_owned();
             }
+        }
+    }
+
+    if let Some(icon) = &icon
+        && stored_processed.get(icon) == Some(&true)
+    {
+        stored_processed.insert(icon.clone(), false);
+        if let Some(choice) = report.assets.iter_mut().find(|c| &c.path == icon) {
+            choice.stored = "source";
+            choice.reason = "[package] icon: the game reads it as its window icon".to_owned();
         }
     }
 

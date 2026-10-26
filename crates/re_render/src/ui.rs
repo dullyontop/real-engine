@@ -9,8 +9,10 @@
 //! alias an sRGB texture as `Unorm`.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use re_core::Diagnostic;
+use re_core::time::Instant;
 
 use crate::{codes, shader};
 
@@ -207,14 +209,15 @@ impl UiPainter {
             .clone()
     }
 
-    /// Paints `frame` over `target` (which keeps its contents).
+    /// Paints `frame` over `target` (which keeps its contents) and returns the
+    /// time spent in `Queue::submit`.
     pub fn paint(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         target: &wgpu::TextureView,
         frame: &UiFrame,
-    ) -> Result<(), Diagnostic> {
+    ) -> Result<Duration, Diagnostic> {
         let texture = target.texture();
         let size = [texture.width(), texture.height()];
         if !texture
@@ -307,10 +310,13 @@ impl UiPainter {
             pass.set_bind_group(0, &overlay.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
-        queue.submit(user_commands.into_iter().chain([encoder.finish()]));
+        let commands = encoder.finish();
+        let submitting = Instant::now();
+        queue.submit(user_commands.into_iter().chain([commands]));
+        let waited = submitting.elapsed();
         for id in &frame.textures_delta.free {
             self.egui.free_texture(id);
         }
-        Ok(())
+        Ok(waited)
     }
 }

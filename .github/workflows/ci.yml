@@ -4,9 +4,10 @@
 # and verify-plaza (all on Ubuntu; verify-plaza by ADR-0023's M2 amendment), and
 # build-windows and build-macos (the whole suite and `real verify` on the island
 # and the plaza; ADR-0023's M3 amendment, WP18 PR "blocking"), and build-web
-# (ADR-0023's M3 amendment, WP29 PR "portable"), and d2 (the state_hash of every
-# island, plaza and valley replay agrees on the three platforms; ADR-0036, WP18
-# PR "d2").
+# (ADR-0023's M3 amendment, WP29 PR "portable"), verify-valley (WP28), d2 (the
+# state_hash of every island, plaza and valley replay agrees on the three
+# platforms; ADR-0036, WP18 PR "d2"), and build-package, build-package-windows
+# and build-package-macos (packaged games; ADR-0037, WP19 PR "bundles").
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
@@ -264,11 +265,14 @@ jobs:
           grep -qx 'RUN OK' out/run.log
 
   build-package:
-    # ADR-0037, WP19 PR "archive": `real build` makes the Linux game folder,
-    # and the packaged game plays as its project does (`real verify --package`).
-    # Ubuntu 22.04 is the oldest supported runner, so a packaged game needs at
-    # most its glibc (2.35). Not required yet: it joins ADR-0023's required
-    # checks when PR "bundles" runs it on all three platforms.
+    # ADR-0037 (WP19): `real build` makes the Linux game folder (with its
+    # icon, desktop entry and third-party notices), and the packaged game plays
+    # as its project does (`real verify --package`). Ubuntu 22.04 is the oldest
+    # supported runner, so a packaged game needs at most its glibc (2.35). A
+    # runtime folder from `real build --runtime-only` then builds the plaza
+    # with `--runtime`, as a release's does. build-package-windows and
+    # build-package-macos do the same on the other platforms. All three are
+    # required (ADR-0023's amendment for WP19 PR "bundles").
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -279,7 +283,7 @@ jobs:
           mkdir -p out
           for project in island plaza valley; do
             target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
-            jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes"' "out/build-$project.json"
+            jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes; notices for \(.notices.crates) crates"' "out/build-$project.json"
           done
       - name: real verify --package
         run: |
@@ -296,16 +300,120 @@ jobs:
           fi
           dist/island/island --runtime-info
           dist/island/island --version
+          dist/island/island --notices | head -4
       - name: The packaged game in a window under Xvfb
         # xvfb-run merges the command's stderr into its stdout, so the game's log
         # lines go to their own file and stdout stays one JSON document.
         run: |
           xvfb-run -a -s "-screen 0 1280x720x24" sh -c 'dist/island/island --frames 300 --json 2> out/run.log' > out/run.json
           jq -e '.frames == 300 and ([.diagnostics[] | select(.severity == "error")] | length == 0)' out/run.json
+      - name: A runtime folder builds the plaza with --runtime
+        run: |
+          target/release/real build --runtime-only --out dist/runtime
+          target/release/real build --project examples/plaza --runtime dist/runtime/real --out dist/plaza-prebuilt
+          target/release/real verify --project examples/plaza --package dist/plaza-prebuilt
+          cmp dist/plaza/THIRD_PARTY_NOTICES.txt dist/plaza-prebuilt/THIRD_PARTY_NOTICES.txt
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: build-package-linux
+          path: |
+            out/
+            dist/island/THIRD_PARTY_NOTICES.txt
+          if-no-files-found: ignore
+
+  build-package-windows:
+    # ADR-0037 (WP19 PR "bundles"): the Windows game folder. The runtime links
+    # the C runtime statically (+crt-static, Jolt's CMake build included), so
+    # the game imports no Visual C++ runtime DLL; it plays in a window on DX12
+    # (WARP, the runner has no GPU).
+    runs-on: windows-latest
+    env:
+      RE_BACKENDS: dx12
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p re_cli
+      - name: real build the island, the plaza and the valley
+        shell: bash
+        run: |
+          mkdir -p out
+          for project in island plaza valley; do
+            target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
+            jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes; notices for \(.notices.crates) crates"' "out/build-$project.json"
+          done
+      - name: real verify --package
+        shell: bash
+        run: |
+          for project in island plaza valley; do
+            target/release/real verify --project "examples/$project" --package "dist/$project"
+          done
+      - name: The game imports no C runtime DLL
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          $deps = & $dumpbin /nologo /dependents dist\island\island.exe
+          $deps
+          if ($deps -match '(?i)vcruntime|msvcp|ucrtbase|api-ms-win-crt') { throw "the game imports the C runtime" }
+          dist\island\island.exe --version
+      - name: The packaged game in a window on DX12 (WARP)
+        shell: bash
+        run: |
+          dist/island/island.exe --frames 120 --json 2> out/run.log > out/run.json
+          jq -e '.frames == 120 and ([.diagnostics[] | select(.severity == "error")] | length == 0)' out/run.json
+      - name: A runtime folder builds the plaza with --runtime
+        shell: bash
+        run: |
+          target/release/real build --runtime-only --out dist/runtime
+          target/release/real build --project examples/plaza --runtime dist/runtime/real.exe --out dist/plaza-prebuilt
+          target/release/real verify --project examples/plaza --package dist/plaza-prebuilt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: build-package-windows
+          path: out/
+          if-no-files-found: ignore
+
+  build-package-macos:
+    # ADR-0037 (WP19 PR "bundles"): the macOS app, sealed ad hoc by
+    # `real build`, with its Info.plist, icon and notices in the bundle.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p re_cli
+      - name: real build the island, the plaza and the valley
+        run: |
+          mkdir -p out
+          for project in island plaza valley; do
+            target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
+            jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes; notices for \(.notices.crates) crates"' "out/build-$project.json"
+          done
+      - name: real verify --package
+        run: |
+          for project in island plaza valley; do
+            target/release/real verify --project "examples/$project" --package "dist/$project"
+          done
+      - name: The app is sealed, and its Info.plist is valid
+        run: |
+          plutil -lint dist/island/Island.app/Contents/Info.plist
+          codesign --verify --deep --strict --verbose=2 dist/island/Island.app
+          ls -l dist/island/Island.app/Contents/Resources
+          dist/island/Island.app/Contents/MacOS/island --version
+          dist/island/Island.app/Contents/MacOS/island --notices | head -4
+      - name: A runtime folder builds the plaza with --runtime
+        run: |
+          target/release/real build --runtime-only --out dist/runtime
+          target/release/real build --project examples/plaza --runtime dist/runtime/real --out dist/plaza-prebuilt
+          target/release/real verify --project examples/plaza --package dist/plaza-prebuilt
+          codesign --verify --deep --strict dist/plaza-prebuilt/plaza.app
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: build-package-macos
           path: out/
           if-no-files-found: ignore
 
