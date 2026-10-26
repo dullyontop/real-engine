@@ -12,9 +12,9 @@ grants you.
 
 ## The loop
 
-1. Look first: `describe` lists every component, generator and command;
-   `query` finds entities; `entity.get` shows one; `command.describe` gives a
-   command's full input schema.
+1. Look first: `describe` lists every component, generator, graph node kind,
+   project script and command; `query` finds entities; `entity.get` shows
+   one; `command.describe` gives a command's full input schema.
 2. Preview: every command that changes something accepts `"dry_run": true`
    and returns the operations it would apply, without applying them. Dry runs
    are allowed whatever the tier (budgets still apply).
@@ -24,6 +24,10 @@ grants you.
 4. Check: `verify` runs the project's checks, `screenshot` renders a frame
    (the PNG path is in the result), and `play.run` steps a copy of the game
    for some frames and reports what happened. None of them change the project.
+   `verify.diff` runs verify and lists only what changed since your latest
+   checkpoint: stages that now fail or pass, new or fixed diagnostics, and
+   changed values. Take a checkpoint with `checkpoint.create` when the
+   project is in a state you want to compare against.
 5. If it went wrong: `undo`, or `checkpoint.restore` to return the scene and
    every file you touched to the start of your session. A restore saves the
    state it replaces as a new checkpoint (its id, `saved`, is in the result);
@@ -78,6 +82,55 @@ syntax error nothing is written and the result carries the errors with their
 line. Scripts live under `scripts/`. `checkpoint.restore` returns a script to its
 earlier contents.
 
+## Project tools written in Luau
+
+The project can add its own commands: each script under
+`scripts/tools/commands/` returns a table with a `name`, a `summary`, a
+`tier` (`read` or `edit`), an `input` JSON Schema and a `run(args)` function
+that changes the project through `command.run(...)`. They appear in the tool
+list with the engine's commands, follow the same policy, and each call is one
+undoable transaction. `real explain RE8015` shows the shape. A tool you write
+with `script.write` is listed after the MCP server restarts.
+
+## Reference material
+
+The explain pages, the engine's documents and the Luau definitions
+(`engine.d.luau`, and `roblox.d.luau` for the Roblox-style API) are MCP
+resources (`real://explain/RE2005`,
+`real://docs/ARCHITECTURE.md`, `real://luau/engine.d.luau`). Without
+resources, `resource.list` and `resource.read` return the same text.
+
+## Roblox-style projects
+
+`compat.coverage` says which Roblox-style classes, members, enums and
+libraries the engine implements (`implemented`, `partial` with the gap,
+`stub-error`, `missing`); ask for one class by `name` to see its inherited
+members. `scene.dump_tree` returns the instance tree with each entity's class,
+attributes and tags.
+
+`project.import` brings a Rojo-style project, a Studio loader script, or a
+place or model file (`.rbxl`, `.rbxlx`, `.rbxm`, `.rbxmx`; a model's `parent`
+says where its instances go) that is inside the project into it. It only
+reports what would change until you pass `write: true`. A write takes a
+checkpoint and returns it: `undo` reverts the scene, and `checkpoint.restore`
+with that checkpoint reverts the scene and the files. It removes instances an
+earlier import made that the input no longer declares, which needs
+`destructive`; pass `keep_stale: true` to keep them.
+
+`play.run` takes `steps`, run in order after its first `frames`, and returns
+one result per step:
+
+- `{"frames": 30}` plays more frames;
+- `"add_player"` joins the next player and returns its name and id;
+- `{"say": {"text": "/shop"}}` chats as player 1 (or `"player": 2`);
+- `{"invoke": {"path": "ServerStorage.Hooks.Score", "args": [1]}}` calls a
+  `BindableFunction` (a project's own test hook) and returns its results;
+- `{"dump_tree": {"path": "Workspace", "depth": 2}}` returns the tree as
+  `scene.dump_tree` does.
+
+All but `frames` and `dump_tree` need a `[compat]` project. A failed step is
+`RE0527`, and the report's `output` holds what scripts printed.
+
 ## What you may do
 
 `.real/agent-policy.toml` sets the most an agent may do. Every command has a
@@ -103,21 +156,35 @@ The MCP tool of each is its name with `_` for `.` (`entity.spawn` is `entity_spa
 
 | Command | Arguments | What it does |
 |---|---|---|
+| `animgraph.validate` | `path`, `skin`? | Check an animation graph (the open document if there is one): ids, references, parameter types, ranges and blend-tree cycles; with `skin`, also bind it to that skinned mesh, loading its clips and resolving its masks. |
+| `checkpoint.create` | `label`? | Save the scene and every file the agent session touched as a new checkpoint (it changes nothing in the project). `verify.diff` compares against the latest checkpoint, and `checkpoint.restore` can return to it. |
 | `command.describe` | `name` | Describe one command: summary, tier, input schema and annotations. |
+| `compat.coverage` | `name`?, `search`?, `status`?, `limit`? | Query the Roblox-style API coverage table: which classes, members, enums and libraries are implemented, partial (with the gap), stub-error or missing. Give a `name` for one class (with inherited members), enum or library, or `search` and `status` to filter. |
 | `describe` | none | Describe what exists: every component (fields, types, defaults, docs), every generator, every procedural node kind, the project's scripts and every command. |
 | `entity.get` | `id`, `components`? | Read one entity: name, parent, children, generated source and key, components and overrides. |
 | `explain` | `code` | Explain a diagnostic code (RE####): what it means, an example and how to fix it. |
 | `graph.generate` | `source`, `seed`?, `params`?, `max_ms`?, `max_entities`? | Try a seed or parameters on a copy of the world, within a budget, and report the result; changes nothing. |
+| `graph.migration_report` | `source`? | What upgrading every node to its kind's current version would change, per procedural source: nodes, output, keys added and removed, orphaned overrides. Changes nothing; `real migrate-graph` writes it. |
 | `graph.report` | `source` | The last evaluation report of a procedural source's graph: per node, cache hit or miss, time, output size and diagnostics. |
-| `play.run` | `frames`?, `replay`?, `screenshot`? | Play a copy of the world for N frames (at most 3600), optionally driven by a replay, and return a report (state hash, diagnostics, timings) and a screenshot of the last frame. The live world is not changed. |
+| `play.run` | `frames`?, `replay`?, `screenshot`?, `steps`? | Play a copy of the world for N frames (at most 3600), optionally driven by a replay, then optional steps (more frames; in a Roblox-style project, add_player, say, invoke a BindableFunction; dump_tree), and return a report (state hash, diagnostics, timings, script output, step results) and a screenshot of the last frame. The live world is not changed. |
+| `project.status` | none | Report unsaved work: every open document (ADR-0044) with its revision and dirty flag, and the paths of those with unsaved changes (the next scene save writes them). |
 | `query` | `with`?, `name`?, `parent`?, `generated`?, `limit`?, `offset`? | List entities by components, name, parent or generated state, sorted by id. |
+| `recipe.list` | none | List the generator recipes `recipe.apply` runs: what each makes, its parameters, the commands it runs and what it checks afterwards. |
+| `resource.list` | `prefix`? | List the reference material agents can read: explain pages, engine documents and Luau definitions (the same items MCP serves as resources). |
+| `resource.read` | `uri` | Read one reference item by URI (an explain page, an engine document or a Luau definitions file). |
+| `scene.dump_tree` | `root`?, `depth`?, `components`?, `max_nodes`? | The entity tree as JSON: each entity's id, name, Roblox-style class, attributes and tags (and with `components: true`, every component), from a `root` or from every root. |
 | `screenshot` | `path`? | Capture the current view (the scene and the HUD) as a PNG in the project; returns its path, size and graphics backend. |
+| `template.list` | none | List the project templates `real new --template` offers, with their parameters and the checks a new project passes. |
 | `verify` | `boot_frames`? | Check the project as saved on disk: content files, scripts, a headless boot, replays (twice, comparing state hashes), golden screenshots and frame times. Returns the verify report. |
+| `verify.diff` | `checkpoint`?, `boot_frames`?, `include_timings`? | Run verify and report what changed since the agent session's latest checkpoint (or `checkpoint`): stages that now pass or fail, diagnostics that appeared or went away, and values that changed. Timings are left out unless `include_timings` is set. |
 
 ### Edit: needs `max_tier = "edit"`
 
 | Command | Arguments | What it does |
 |---|---|---|
+| `anim.set_param` | `entity`, `param`, `value` | Set a parameter of the animation graph an entity's Animator plays (runtime state, not undoable): a number for a float, a boolean for a bool, true to set a trigger. |
+| `animgraph.create` | `path`, `graph`? | Create an animation graph file (`*.animgraph.json`, ADR-0039): an empty graph, or the `graph` given, validated. Fails if the file exists. |
+| `animgraph.edit` | `path`, `ops` | Edit an animation graph file: a batch of `{op: "upsert", element, layer?, value}` and `{op: "remove", element, layer?, id}` changes (element: param, node, layer, mask, state or transition; layer for states and transitions), validated together and applied as one undo step. The project save writes the file. |
 | `asset.import` | `source`, `dest`?, `overwrite`? | Copy a file (glTF, PNG, JPEG, material) into the project's assets/ folder, give it a .meta.json sidecar with a stable asset id, and import it once to check it. |
 | `checkpoint.restore` | `checkpoint`? | Return the scene and every file the agent session touched to a checkpoint (default: the session start); the current state is saved first as a new checkpoint, so the restore can be undone. |
 | `component.add` | `id`, `component`, `fields`? | Add a component to an entity; omitted fields take their defaults. |
@@ -126,8 +193,22 @@ The MCP tool of each is its name with `_` for `.` (`entity.spawn` is `entity_spa
 | `entity.reparent` | `id`, `parent`?, `index`? | Move an entity under a new parent (null makes it a root), optionally at a child index. |
 | `entity.set` | `id`, `component`, `field`, `value` | Set one field of one component. On a generated entity this also records an override on its source. |
 | `entity.spawn` | `id`?, `name`?, `parent`?, `index`?, `components`? | Create an entity with components; returns its id (generated when not given). |
+| `graph.add_node` | `graph`, `kind`, `id`?, `params`?, `pos`? | Add a node to a graph file (opened for editing, saved by scene.save): its kind and parameters are checked; a fresh id is chosen when none is given, so a retry without an id adds another node. |
+| `graph.connect` | `graph`, `from`, `to` | Connect a node's output to another node's input in a graph file; ports and types are checked, cycles refused, and an edge already into that input is replaced. |
+| `graph.disconnect` | `graph`, `from`, `to` | Remove the edge from a node's output to another node's input in a graph file. |
+| `graph.move_nodes` | `graph`, `positions` | Set the canvas positions of nodes in a graph file (layout only: nothing regenerates). |
 | `graph.regenerate` | `source`, `seed`? | Regenerate a procedural source now, optionally with a new seed, and report what changed. |
+| `graph.remove_node` | `graph`, `node` | Remove a node from a graph file, with its edges, its canvas position and the procedural sources' parameter overrides of it, in one undoable step. Its generated entities' keys go away; overrides of them are listed and kept. |
+| `graph.set_default` | `graph`, `node`, `param`, `value` | Set a node's parameter in the graph file itself (checked against the node kind; null removes it). graph.set_param sets a per-source override instead. |
 | `graph.set_param` | `source`, `node`, `param`, `value` | Set one parameter of one node of a procedural source's graph (stored on the source, undoable). |
+| `proc.bake` | `source`, `keys`?, `keep_source`? | Turn a procedural source's generated entities into authored ones (ids `<source>.<key>`, a `Baked` record each, derived meshes and heightfields written under assets/baked/), as one undoable transaction. By default the source stops generating; with `keys` or `keep_source` it keeps generating the rest. |
+| `proc.clear_structure` | `source`, `key`? | Remove a procedural source's structural overrides (moves, replacements, inserts), all or one key's; undoable. |
+| `proc.create_source` | `kind`, `params`?, `id`?, `name`?, `parent`?, `seed`?, `graph`? | Create a procedural source from one node kind (a Luau generator): writes a one-node graph file and spawns the source; its parameters are then set with graph.set_param. |
+| `proc.insert` | `source`, `key`, `parent`?, `index`?, `name`?, `prefab`?, `components`? | Add an authored entity (a prefab or components) to a procedural source's output with id `<source>/+<key>`, kept across regenerations; undoable. |
+| `proc.move` | `id`, `parent`?, `index`? | Move a generated entity under another entity of its source's output (or the source itself), kept across regenerations as an override; undoable. |
+| `proc.replace` | `id`, `prefab`?, `components`?, `keep_children`? | Replace what a generated entity is with a prefab or components, keeping its key, id and generated Transform; kept across regenerations; undoable. |
+| `project.import` | `input`, `parent`?, `write`?, `keep_stale`? | Import a Rojo-style project, a Studio loader script or a place or model file from inside the project into this compat project. Only reports what would change unless `write` is true. A write checkpoints first and returns the checkpoint: `undo` reverts the World, `checkpoint.restore` reverts the World and the files. Without `keep_stale` it deletes the scripts of instances the input no longer declares (destructive tier). |
+| `recipe.apply` | `recipe`, `args`? | Apply a generator recipe: run its edit commands with `args`, then its checks (verify stages, read commands, `verify.diff`). All or nothing: a failed step or check restores the checkpoint taken first. A dry run previews each step against the project as it is. |
 | `redo` | none | Redo the last undone transaction. |
 | `scene.apply` | `label`?, `ops`, `coalesce`? | Apply a list of operations as one atomic transaction: if any fails, nothing changes. |
 | `script.write` | `path`, `source` | Write a Luau script file (create or replace) after checking that it compiles; with compile errors nothing is written and the errors are returned. The agent session keeps the old contents. |

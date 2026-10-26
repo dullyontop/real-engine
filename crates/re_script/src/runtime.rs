@@ -128,8 +128,14 @@ impl Context {
                 )),
             ));
         }
-        let lua = vm::create_compat(kind, config.cpu_budget, config.memory_limit, install)
-            .map_err(|e| ScriptError::from_mlua(kind.name(), &e))?;
+        let lua = vm::create_compat(
+            &config.files,
+            kind,
+            config.cpu_budget,
+            config.memory_limit,
+            install,
+        )
+        .map_err(|e| ScriptError::from_mlua(kind.name(), &e))?;
         Ok(Context {
             kind,
             lua,
@@ -544,7 +550,7 @@ impl ScriptRuntime {
                 .load(source)
                 .set_name(format!("@{path}"))
                 .set_mode(mode)
-                .set_compiler(crate::compile::compiler())
+                .set_compiler(crate::compile::compiler_for(&self.config.files))
                 .set_environment(env)
                 .into_function()?;
             scheduler::register_owned_chunk(lua, owner, path, &f)?;
@@ -575,7 +581,7 @@ impl ScriptRuntime {
             let f = lua
                 .load(source)
                 .set_name(format!("={name}"))
-                .set_compiler(crate::compile::compiler())
+                .set_compiler(crate::compile::compiler_for(&self.config.files))
                 .set_environment(env)
                 .into_function()?;
             let out: MultiValue = scheduler::call_budgeted(lua, || f.call(()))?;
@@ -605,7 +611,7 @@ impl ScriptRuntime {
                 .load(source)
                 .set_name(format!("@{path}"))
                 .set_mode(mode)
-                .set_compiler(crate::compile::compiler())
+                .set_compiler(crate::compile::compiler_for(&self.config.files))
                 .set_environment(env)
                 .into_function()?;
             // A builder's chunk is only live while it runs.
@@ -666,6 +672,7 @@ impl ScriptRuntime {
             report.diagnostics = compile;
             return report;
         }
+        let compiler = crate::compile::compiler_for(&self.config.files);
         for kind in ContextKind::ALL {
             let ctx = self.context(kind);
             if !ctx.loaded.borrow().contains(path) {
@@ -674,7 +681,8 @@ impl ScriptRuntime {
             let mut outcome = None;
             report.diagnostics.extend(run_in(ctx, host, |lua| {
                 let env = vm::new_env(lua, path, kind, None)?;
-                outcome = Some(modules::reload_module(lua, path, &source, env)?);
+                let compiler = compiler.clone();
+                outcome = Some(modules::reload_module(lua, path, &source, env, compiler)?);
                 Ok(())
             }));
             if let Some(o) = outcome {

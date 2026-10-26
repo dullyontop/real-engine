@@ -4,12 +4,14 @@
 //! * [`StreamConfig`]: `[stream]` in `real.toml` (`RE4300`).
 //! * [`Streamer`]: the manager, a world resource. [`step`] runs it once per
 //!   fixed tick: the focuses ([`re_scene::StreamFocus`], else the active
-//!   camera) give the desired cells; a cell requested at tick `t` is
-//!   generated and applied at tick `t + delay_ticks`, in key order, within
+//!   camera) give the desired cells, near them and further ahead of the way
+//!   each one is going; a cell requested at tick `t` is generated and
+//!   applied at tick `t + delay_ticks`, in key order, within
 //!   `apply_entities` per tick; loaded cells farther than `radius_ahead +
 //!   unload_margin` from every focus unload; memory is accounted from data
-//!   sizes. Everything depends only on the world and the tick, so a replay
-//!   loads the same cells at the same ticks on any machine.
+//!   sizes. Everything depends only on the world, the way its focuses came
+//!   and the tick, so a replay loads the same cells at the same ticks on any
+//!   machine.
 //! * [`StreamEvents`]: the cells loaded and unloaded at the last tick, as
 //!   [`re_scene::StreamCell`]s, for scripts' `stream.on_loaded` and
 //!   `stream.on_unloaded`.

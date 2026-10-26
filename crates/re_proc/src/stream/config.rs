@@ -7,8 +7,9 @@ use crate::codes;
 
 /// The `[stream]` section of `real.toml`: the cell grid, the load radii and
 /// the per-tick budgets of world streaming (ADR-0042). Every field has a
-/// default; an unknown key is refused when the file is parsed and a bad value
-/// by [`StreamConfig::validate`], both `RE4300`.
+/// default; an unknown key is refused when the file is parsed (`RE0501`, as
+/// in any section of `real.toml`) and a bad value by
+/// [`StreamConfig::validate`] (`RE4300`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct StreamConfig {
@@ -16,7 +17,7 @@ pub struct StreamConfig {
     pub cell_size: f32,
     /// Cells within this distance of a focus load.
     pub radius: f32,
-    /// And out to this distance, within ±60° of a focus's forward.
+    /// And out to this distance, within ±60° of the way a focus is going.
     pub radius_ahead: f32,
     /// Hysteresis: a loaded cell unloads only when every focus is farther
     /// than `radius_ahead + unload_margin` from it, so turning never unloads.

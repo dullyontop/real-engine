@@ -29,9 +29,14 @@ pub const ENTITY_BYTES: u64 = 512;
 /// and block size 4, in bytes (measured: 10.8 KiB per 65² chunk).
 pub const SHAPE_BYTES: u64 = 11_059;
 
-/// The angle each side of a focus's forward within which cells load out to
-/// `radius_ahead`: ±60°, as its cosine.
+/// The angle each side of a focus's forward (the way it is going) within
+/// which cells load out to `radius_ahead`: ±60°, as its cosine.
 const AHEAD_COS: f32 = 0.5;
+
+/// How far a focus travels across X and Z, in metres, before the way it is
+/// going is taken again: far enough that a body settling or a character
+/// swaying where it stands does not turn it.
+const TRAVEL_STEP: f32 = 1.0;
 
 /// How far from the simulation origin, per axis, physics simulates (Jolt's
 /// single-precision limit, `re_physics::WORLD_LIMIT`), in metres.
@@ -46,8 +51,22 @@ const PRECISION_LIMIT: f32 = 16_000.0;
 pub struct Focus {
     /// World X and Z.
     pub position: Vec2,
-    /// The horizontal forward direction (normalised), or zero.
+    /// The horizontal direction cells load ahead in (normalised), or zero.
+    /// [`step`] points it the way the focus is going, along the last metre
+    /// it travelled; until it has moved a metre, it is the focus's −Z (the
+    /// way a camera looks), as [`focuses`] gives it.
     pub forward: Vec2,
+}
+
+/// The way a focus is going.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Travel {
+    /// Where the focus was at the last step.
+    at: Vec2,
+    /// Where it was when its way was last taken.
+    from: Vec2,
+    /// Normalised, or zero until the focus has travelled [`TRAVEL_STEP`].
+    way: Vec2,
 }
 
 /// One loaded cell, as the manager tracks it.
@@ -190,6 +209,9 @@ pub struct Streamer {
     collision: super::collision::CollisionState,
     /// The floating origin (simulation state).
     origin: Vec3,
+    /// The way each focus is going, by focus id (simulation state: it picks
+    /// the cells wanted ahead).
+    travel: BTreeMap<String, Travel>,
 }
 
 impl Streamer {
@@ -212,6 +234,7 @@ impl Streamer {
             terrain: Default::default(),
             collision: Default::default(),
             origin: Vec3::ZERO,
+            travel: BTreeMap::new(),
         })
     }
 
@@ -385,6 +408,40 @@ impl Streamer {
         }
     }
 
+    /// Points each focus's `forward` the way it is going: along the last
+    /// [`TRAVEL_STEP`] it travelled across X and Z, whichever way it faces.
+    /// A car drives along its +Z while a camera looks along its −Z, and a
+    /// character's root may never turn, so where a focus goes is what says
+    /// where it will be. A focus keeps its −Z until it has travelled that far
+    /// (since it appeared, since its world was loaded, or since it jumped
+    /// more than a cell in one step, as a teleport does), and once it stops
+    /// it keeps the way it last went.
+    fn point_ahead(&mut self, focuses: &mut [(String, Focus)]) {
+        let mut travel = BTreeMap::new();
+        for (id, f) in focuses.iter_mut() {
+            let mut t = match self.travel.get(id) {
+                Some(t) if (f.position - t.at).length() <= self.config.cell_size => *t,
+                _ => Travel {
+                    at: f.position,
+                    from: f.position,
+                    way: Vec2::ZERO,
+                },
+            };
+            t.at = f.position;
+            let moved = f.position - t.from;
+            let length = moved.length();
+            if length >= TRAVEL_STEP {
+                t.from = f.position;
+                t.way = moved / length;
+            }
+            if t.way != Vec2::ZERO {
+                f.forward = t.way;
+            }
+            travel.insert(id.clone(), t);
+        }
+        self.travel = travel;
+    }
+
     /// The current load radius (smaller than `radius` under memory pressure).
     pub fn radius(&self) -> f32 {
         self.radius
@@ -422,6 +479,7 @@ impl Streamer {
             terrain: Default::default(),
             collision: self.collision.clone(),
             origin: self.origin,
+            travel: self.travel.clone(),
         }
     }
 
@@ -495,7 +553,8 @@ impl Streamer {
 }
 
 /// The focus points: entities with [`StreamFocus`], in id order; with none,
-/// the active camera.
+/// the active camera. Each one's `forward` is its −Z: [`step`] turns it the
+/// way the focus is going once it has moved.
 pub fn focuses(world: &mut World) -> Vec<Focus> {
     named_focuses(world).into_iter().map(|(_, f)| f).collect()
 }
@@ -539,6 +598,7 @@ fn world_affine(world: &World, e: Entity) -> Affine3A {
     m
 }
 
+/// The focus at `e`, looking along its −Z.
 fn focus_of(world: &World, e: Entity) -> Focus {
     let m = world_affine(world, e);
     let p = Vec3::from(m.translation);
@@ -596,7 +656,7 @@ impl Streamer {
     }
 
     /// The cells the focuses want now: within the load radius, or within
-    /// `radius_ahead` and ±60° of a focus's forward.
+    /// `radius_ahead` and ±60° of a focus's forward (the way it is going).
     fn desired(
         &self,
         focuses: &[Focus],
@@ -682,8 +742,10 @@ fn asset_bytes(asset: &DerivedAsset) -> u64 {
 /// Advances `world`'s streaming by one fixed tick (ADR-0042), with the
 /// [`Streamer`] resource (inserted with `config` if missing):
 ///
-/// 1. the focuses give the desired cells; new ones are requested for tick
-///    `tick + delay_ticks`, requests no longer desired are cancelled, and
+/// 1. the focuses give the desired cells (within `radius`, and within
+///    `radius_ahead` ahead of the way each focus is going); new ones are
+///    requested for tick `tick + delay_ticks`, requests no longer desired
+///    are cancelled, and
 ///    loaded cells farther than `radius_ahead + unload_margin` from every
 ///    focus are unloaded (their authored [`Streamed`] roots stashed);
 /// 2. requests whose tick has come are generated and applied in key order,
@@ -692,8 +754,9 @@ fn asset_bytes(asset: &DerivedAsset) -> u64 {
 ///    outside `radius` unload first, then the radius shrinks (`RE4306`);
 /// 4. [`StreamEvents`] holds the tick's unloaded and loaded cells.
 ///
-/// Everything depends only on the world and `tick`, so a replay loads the
-/// same cells at the same ticks on any machine.
+/// Everything depends only on the world, the way its focuses came and
+/// `tick`, so a replay loads the same cells at the same ticks on any
+/// machine.
 pub fn step(world: &mut World, tick: u64, config: &StreamConfig) -> StepReport {
     let mut streamer = match world.ecs.remove_resource::<Streamer>() {
         Some(s) => s,
@@ -748,9 +811,11 @@ impl Streamer {
                 || authored_cells.contains(&cell_key(c[0], c[1]))
         };
 
-        // 0. The floating origin follows the focuses.
-        let named = named_focuses(world);
+        // 0. The floating origin follows the focuses, and each focus looks
+        // ahead the way it is going.
+        let mut named = named_focuses(world);
         self.follow(&named, &mut report.diagnostics);
+        self.point_ahead(&mut named);
         let focuses: Vec<Focus> = named.into_iter().map(|(_, f)| f).collect();
 
         // 1. Requests.

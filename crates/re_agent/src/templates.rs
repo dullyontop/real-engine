@@ -1230,18 +1230,36 @@ pub fn apply_recipe(
 
 /// Runs a template's checks on a project just made from it (`real new
 /// --check` and the tests). `values` are the template's (from
-/// [`Template::values`]); `run` dispatches as for [`apply_recipe`]. Diff
-/// checks are not run: a new project has no checkpoint before it.
+/// [`Template::values`]); `specs` are the project's commands, and `run`
+/// dispatches as for [`apply_recipe`]. Diff checks are not run: a new project
+/// has no checkpoint before it.
 ///
 /// # Errors
 ///
-/// `RE8024` for the first check that fails.
+/// `RE8019` before anything runs when a check names a command that is not a
+/// read-tier command here (checks only read), and `RE8024` for the first
+/// check that fails.
 pub fn check_template(
     template: &Template,
     values: &Map<String, Json>,
+    specs: &[CommandSpec],
     run: &mut dyn FnMut(&str, Json, bool) -> CommandOutcome,
 ) -> Result<Vec<CheckReport>, Diagnostic> {
     let name = &template.manifest.name;
+    let tier_of = |command: &str| specs.iter().find(|s| s.name == command).map(|s| s.tier);
+    for check in &template.manifest.checks {
+        if let Ok(CheckKind::Command { command, .. }) = check.kind()
+            && tier_of(&command) != Some(Tier::Read)
+        {
+            return Err(Diagnostic::error(
+                codes::INVALID_TEMPLATE,
+                format!(
+                    "template `{name}` checks with `{command}`, which is not a read-tier command here"
+                ),
+            )
+            .with_hint("a check only reads: use a read-tier command such as `query` or `entity.get`"));
+        }
+    }
     let (mut verify, mut diff) = (None, None);
     let mut reports = Vec::new();
     for check in &template.manifest.checks {
@@ -1565,6 +1583,36 @@ mod tests {
             },
             data,
         }
+    }
+
+    #[test]
+    fn a_template_check_may_only_read() {
+        let manifest = |command: &str| {
+            format!(
+                "name = \"t\"\nsummary = \"s\"\n\n[[checks]]\ncommand = \"{command}\"\npointer = \"/ok\"\nequals = true\n"
+            )
+        };
+        let specs = [spec("query", Tier::Read), spec("entity.spawn", Tier::Edit)];
+        // An edit-tier check is refused before anything runs.
+        let edit = parse_template("t", &manifest("entity.spawn"), BTreeMap::new()).unwrap();
+        let mut run = |_: &str, _: Json, _: bool| -> CommandOutcome { panic!("nothing runs") };
+        let err = check_template(&edit, &Map::new(), &specs, &mut run).unwrap_err();
+        assert_eq!(err.code, codes::INVALID_TEMPLATE, "{err:?}");
+        assert!(err.message.contains("entity.spawn"), "{}", err.message);
+        // So is a command the project does not have.
+        let unknown = parse_template("t", &manifest("no.such"), BTreeMap::new()).unwrap();
+        let err = check_template(&unknown, &Map::new(), &specs, &mut run).unwrap_err();
+        assert_eq!(err.code, codes::INVALID_TEMPLATE, "{err:?}");
+        // A read-tier check runs.
+        let read = parse_template("t", &manifest("query"), BTreeMap::new()).unwrap();
+        let mut ran = Vec::new();
+        let mut run = |name: &str, _: Json, dry_run: bool| {
+            ran.push((name.to_string(), dry_run));
+            outcome(true, Json::Null)
+        };
+        let reports = check_template(&read, &Map::new(), &specs, &mut run).unwrap();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(ran, [("query".to_string(), false)]);
     }
 
     #[test]
