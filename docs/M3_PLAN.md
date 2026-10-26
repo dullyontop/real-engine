@@ -30,7 +30,7 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 | Scope of M3 | **Every item of ROADMAP "M3 and later"**, grouped into WP18–WP27, with `examples/valley` as the goal. The render thread is built only if PerfReport shows render submission is the bottleneck (WP20). | **Decided** (owner: "finish the whole thing") |
 | Platforms for packaged games | **Windows x86_64, macOS (arm64 and x86_64), Linux x86_64, and the browser** (wasm32 with WebGPU, WebGL2 as fallback; WP29). Consoles are not in M3. | **Decided** (owner, 2026-10-15: "Both") |
 | Second platform for the D2 exit check | **Windows x86_64**, the most common target that differs from Linux in compiler and maths library. | Plan |
-| Real networking for Roblox-style projects | **In M3 (WP30):** a dedicated or listen server and clients over UDP, desktop only (ADR-0050). | **Decided** (owner, 2026-10-15: "Both") |
+| Real networking for Roblox-style projects | **In M3 (WP30):** a dedicated or listen server and clients over UDP, and players in a browser over a WebSocket (ADR-0050 and its amendment for PR "web"). | **Decided** (owner, 2026-10-15: "Both") |
 | Luau type checker (DECISIONS, open question 2) | **(a) unchanged**: luau-lsp as an external tool. `real build` does not need it. | Owner |
 | License (DECISIONS, open question 1) | Whatever the owner settles. Packaged games (WP19) list the third-party notices the build contains either way. | Owner |
 | Scripts in packaged games | **Luau bytecode**, compiled at build time with mlua's `Compiler` at the engine's Luau version. Source is not shipped unless the project asks. | Plan (ADR-0037) |
@@ -479,7 +479,7 @@ real build --project examples/island --out out/island-web --target web
 **Progress (2026-10-24).** "portable" (#89), "toolchain" (#99), "runtime" (#119) and "build" (#132) have merged, with these changes to the plan:
 - The panic code is `RE0622` (not `RE0623`), and `RE0621` is the canvas failing; `RE0623`–`RE0625` stay free (ADR-0049's amendment).
 - `cargo xtask web-test` and WebGL2 moved from "runtime" to "build". The static server stays in Node (`tools/web-test/serve.mjs`), not xtask.
-- `RE0975` waits for WP30's server role, since nothing triggers it yet. The notices file in the web folder came with WP19 PR "bundles" (#161).
+- `RE0975` stays undefined: a web build has no command line, so nothing asks it to serve, and the runtime refuses a server or host role with `RE8911` (ADR-0050's amendment for WP30 PR "web", #165). The notices file in the web folder came with WP19 PR "bundles" (#161).
 - Saved data on the web is persisted since WP27's "saved data" (#131).
 - The `web` job's checks run as `cargo xtask web-test` in `build-web`, which is required, rather than as a job of their own.
 - Release CI publishing the prebuilt web runtime: `.github/workflows/release.yml` builds it on a `v*` tag and attaches `real-web-runtime-<version>.tar.gz` (the runtime files) to the release, for `real build --target web --runtime DIR`. Since WP19 PR "bundles" (#161), the desktop runtimes are published beside it, as `real-runtime-<version>-<triple>` for Linux x86_64, Windows x86_64 and macOS arm64, and every runtime folder is written by `real build --runtime-only`.
@@ -532,6 +532,8 @@ real verify --project examples/plaza --json
 - `cargo xtask check-graph` passes: the runtime-only build reaches `re_net` and no tokio.
 
 **Definition of done:** PRs "transport", "wire", "sessions" and "web" merged; the `net-plaza` job is required and green on all three platforms; ADR-0050 is Accepted with the private-sample measurements recorded.
+
+**Progress (2026-10-26).** Merged: "transport" (#90), "wire" (#117), "sessions" (#138) and "web" (#165: players in a browser join a server over a WebSocket, and a built game serves and joins). The `net-plaza` job is the `net` stage of `real verify`, which `verify-plaza`, `build-windows` and `build-macos` require (#166). It plays each of the plaza's replays with the client over UDP and again over a WebSocket, and `build-web` plays them from headless Chromium against a native server.
 
 ---
 

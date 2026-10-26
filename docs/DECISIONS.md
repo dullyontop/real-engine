@@ -1144,7 +1144,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Amendment (WP19 PR "archive", #121; 2026-10-21).** Departures found while building it:
 - The cargo profile is `[profile.packaged]`, not `package`, because cargo reserves `package` as a profile name. `real build` runs `cargo build --profile packaged --locked -p re_cli --no-default-features --features game --target <triple>`.
 - `data/seed` is in the default packed content, beside the directories listed above, because a game's saved data starts from it (ADR-0048).
-- Headless packaged runs do not save data, so `real verify --package` can repeat them. Windowed runs save it.
+- Headless packaged runs do not save data, so `real verify --package` can repeat them. Windowed runs save it, and so does a dedicated server since WP30 PR "web" (below).
 - The archive format lives in `crates/re_app/src/package/` (`archive.rs`, `config.rs`, `dirs.rs`), not one `package.rs`.
 - Notices, icons and the Windows and macOS bundles stay in PR "bundles"; until then those platforms get the plain folder, and the build report says so.
 
@@ -1165,6 +1165,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - **CI.** `build-package` (Ubuntu 22.04), `build-package-windows` and `build-package-macos` build the island, the plaza and the valley, run `real verify --package` on each and the packaged island in a window, and check the platform: glibc and hot reload on Linux, DLL imports on Windows, `plutil -lint` and `codesign --verify --deep --strict` on macOS. Each then builds the plaza again with `--runtime` from a `--runtime-only` folder, as a developer with a release's runtime would; on Linux its notices must match the direct build's. The three jobs join ADR-0023's merge rule. The island has an identifier and a 1024 px icon, so the bundles are checked with one.
 
 **Amendment (WP20 PR "hot reload", #169).** `shaders/` is a default packed directory, beside the ones above, for `*.wgsl` files (ADR-0038). A packaged game reads the `.wgsl` files directly in it once, at boot, and never watches them; `real build` checks them in its compile stage and stops on one that does not compile (`RE6030`, `RE6031`). The renderer now names FXC as its DX12 shader compiler (ADR-0038's amendment), which settles the call the Windows notes above leave to WP20.
+
+**Amendment (WP30 PR "web", #165).** The game's executable also takes `real run`'s online flags: `--server`, `--host`, `--connect`, `--name`, `--port`, `--bind` and `--max-players` (ADR-0050's amendment for PR "web"). A dedicated server runs headless and paced, and it saves data so that its players keep their progress; `real verify --package` and the other headless runs still save nothing. `real run --package DIR|FILE` runs a built game's archive with the `real` binary; DIR may hold `game.rpak`, be a macOS build's app, or hold one such app.
 
 **Evidence.** `research/m3/wp19/measurements.md`: the compression table (four codecs, three models and the content text), the importer and cache-hit timings, Luau bytecode size, determinism and load time, the index timings, the runtime binary's size, `ldd` and glibc symbols, the license-file scan of the runtime crates, and the API facts checked in mlua 0.12.2, mlua-sys 0.13.0, luau0-src 0.22.0+luau740, wgpu-types 30.0.1 and zstd 0.14.2.
 
@@ -2629,7 +2631,7 @@ ADR-0010 (the frame loop is ours) and ADR-0036 (D2 determinism, which asked the 
 
 ## ADR-0050: Online play: our own reliable UDP in `re_net`, client-owned characters, and a lockstep check over loopback
 
-**Status:** Accepted (maintainer, 2026-10-15; drafted by WP30). The code waits for M2's definition of done (M3_PLAN, "How M3 starts"). Evidence: a two-process spike of the transport below over loopback with seeded loss and delay, a probe of quinn's dependency graph, and a measurement of the plaza's replication traffic, all on 2026-10-15 in the reference container (`research/m3/wp30/measurements.md`, `research/m3/wp30/spike/`). quinn 0.11.12 and quinn-proto 0.11.19 were checked on crates.io the same day.
+**Status:** Accepted (maintainer, 2026-10-15; drafted by WP30). Built in WP30 PRs "transport" (#90), "wire" (#117), "sessions" (#138) and "web" (#165), with the changes in the amendments at the end. Evidence: a two-process spike of the transport below over loopback with seeded loss and delay, a probe of quinn's dependency graph, and a measurement of the plaza's replication traffic, all on 2026-10-15 in the reference container (`research/m3/wp30/measurements.md`, `research/m3/wp30/spike/`). quinn 0.11.12 and quinn-proto 0.11.19 were checked on crates.io the same day.
 
 **Context.** The owner chose to add online multiplayer to M3, so a Roblox-style game must be playable by people on different machines. This reverses the M3 plan's default "Real networking for Roblox-style projects: not in M3" and WP27's non-goal "real networking".
 
