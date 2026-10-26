@@ -1648,11 +1648,12 @@ effects = [{ bus = "sfx", effect = 0, cutoff_hz = 600.0 }]   # sets only the fie
   - With a device, the graph runs at the device's rate. Kira re-initialises the effects on a rate change.
 - **Luau API** (in `re_script`, reviewed by WP24; `NoServices` refuses it with `RE3015`):
   - `audio.play(clip, position?, volume?, bus?)`, which gains `bus`;
+  - `audio.set_rate(e, rate)`, which writes `e`'s `AudioSource.rate` as `e:set` does, so `NoServices` does not refuse it;
   - `audio.set_bus_volume(bus, db, seconds?)`;
   - `audio.set_effect(bus, index, { param = value, … }, seconds?)`;
   - `audio.snapshot(name, seconds?)`;
   - `audio.levels(bus) -> { peak_db, rms_db }`.
-  - The `AudioSource` component in `re_scene` gains `bus: String`, empty by default, which means `default_bus`. The maintainer reviews this.
+  - The `AudioSource` component in `re_scene` gains `bus: String`, empty by default, which means `default_bus`, and `rate: f32`, 1 by default (the playback speed, at most 16). The maintainer reviews this.
 - **Compat.** Roblox-style `SoundGroup` and `SoundEffect` (WP27) map onto these buses and effects later, through the same commands.
 
 **Measured** (4 vCPU Xeon @ 2.80 GHz, release, 48 kHz, 512-frame render calls, CPU time per second of audio, best of 5).
