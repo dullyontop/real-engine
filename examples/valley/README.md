@@ -76,13 +76,13 @@ the wind down and muffles it, and lowers the echo.
 - `scripts/game/camera.luau`: the orbit camera, on the hero or the car.
 - `scripts/game/game.luau`: the HUD line.
 - `tests/replays/`: `walk` (walk, strafe, turn the camera, jump), `drive`
-  (walk to the car, get in, drive along the valley, brake and reverse) and
-  `cross` (turn round and walk 70 s west along the valley, from the cell
-  border at x = 0 across the one at x = -256 while cells load ahead).
-  `real verify` runs each twice with the same `state_hash` and checks goldens
-  for Vulkan (lavapipe) and GL. CI's `d2` job records every replay's
-  `state_hash` checkpoints with `cargo xtask d2` on Linux, Windows and macOS,
-  and `d2 compare` checks they match.
+  (walk to the car, get in, drive along the valley, brake, reverse, pull the
+  hand brake and get out) and `cross` (turn round and walk 70 s west along
+  the valley, from the cell border at x = 0 across the one at x = -256 while
+  cells load ahead). `real verify` runs each twice with the same
+  `state_hash` and checks goldens for Vulkan (lavapipe) and GL. CI's `d2` job
+  records every replay's `state_hash` checkpoints with `cargo xtask d2` on
+  Linux, Windows and macOS, and `d2 compare` checks they match.
 
 Everything here is made by the engine's generators or by the scripts in
 `tools/`; there are no third-party assets.
