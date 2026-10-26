@@ -9,13 +9,19 @@
 //! compared with desktop's (equal once Jolt and glam are deterministic across
 //! platforms, ADR-0036). [`Session::run_replay_gpu`] plays it with a GPU
 //! device, drawing frames offscreen, and reports the GPU's errors too.
+//!
+//! A Roblox-style game joins a server ([`Session::open_for_play`] with an
+//! address): a browser is always a network client, over a WebSocket (ADR-0050's
+//! amendment for PR "web"). [`NetRun`] plays a replay as a lockstep client,
+//! a step at a time between turns of the page's event loop, which is how CI
+//! checks a browser against a desktop server.
 
 #![warn(missing_docs)]
 
 use std::sync::Arc;
 
 use re_app::package::{ARCHIVE_NAME, Archive};
-use re_app::{App, AppConfig, Graphics};
+use re_app::{App, AppConfig, Graphics, NetOptions, NetRole};
 use re_core::files::{
     FileLayer, Form, LayerKind, MemLayer, ProjectFiles, ProjectPath, WritableDirs,
 };
@@ -95,17 +101,62 @@ impl Session {
     /// Opens the project for play, with the saved files added so far and every
     /// later change of saved data and crash reports sent to `sink`. A compat
     /// game keeps its data as `real run` does ([`App::persist_data`]), in the
-    /// saved files.
+    /// saved files. With `connect`, a Roblox-style game joins the server there
+    /// (`ws://host:port/`, or `host:port`) as `name`, and keeps no data: the
+    /// server's is the game's.
     ///
     /// # Errors
     ///
-    /// The diagnostic when the project does not open.
-    pub fn open_for_play(&self, sink: re_app::web::Sink) -> Result<App, re_core::Diagnostic> {
+    /// The diagnostic when the project does not open, or does not go online
+    /// (`RE8909` not a Roblox-style project, `RE8910` an address the browser
+    /// refuses).
+    pub fn open_for_play(
+        &self,
+        sink: re_app::web::Sink,
+        connect: Option<&str>,
+        name: Option<&str>,
+    ) -> Result<App, re_core::Diagnostic> {
         let files = self.project_files(re_app::web::browser_dirs(self.saved.clone(), sink));
         let config = AppConfig::load_from(&files)?;
         let mut app = App::open_files(files, config)?;
-        app.persist_data();
+        match connect {
+            Some(address) => {
+                let mut options = NetOptions::new(NetRole::Client(address.to_owned()));
+                options.name = name.map(str::to_owned);
+                app.set_net(options)?;
+            }
+            None => app.persist_data(),
+        }
         Ok(app)
+    }
+
+    /// Opens the project to play the replay at `replay` as a lockstep client
+    /// of the server at `connect` (ADR-0050 §7), as `real run --headless
+    /// --lockstep --replay R --connect A` does on desktop.
+    ///
+    /// # Errors
+    ///
+    /// As [`Session::run_replay`], and the diagnostic, rendered, when the game
+    /// does not go online.
+    pub fn net_run(
+        &self,
+        replay: &str,
+        connect: &str,
+        name: Option<&str>,
+    ) -> Result<NetRun, String> {
+        let (mut app, doc) = self.open(replay)?;
+        let frames = doc.frames;
+        app.play_replay(doc).map_err(|d| d.to_string())?;
+        let mut options = NetOptions::new(NetRole::Client(connect.to_owned()));
+        options.name = name.map(str::to_owned);
+        options.lockstep = Some(1);
+        app.set_net(options).map_err(|d| d.to_string())?;
+        Ok(NetRun {
+            dt: app.step(),
+            app,
+            frames,
+            ran: 0,
+        })
     }
 
     /// The project's name from `real.toml`, which names its saved data in the
@@ -240,6 +291,57 @@ impl Session {
     }
 }
 
+/// A replay played as a network client ([`Session::net_run`]), a step at a
+/// time: a browser cannot wait inside a frame for its server's messages, which
+/// arrive between turns of the page's event loop.
+pub struct NetRun {
+    app: App,
+    dt: std::time::Duration,
+    frames: u64,
+    ran: u64,
+}
+
+impl std::fmt::Debug for NetRun {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NetRun")
+            .field("frames", &self.frames)
+            .field("ran", &self.ran)
+            .finish_non_exhaustive()
+    }
+}
+
+impl NetRun {
+    /// Runs frames until one waits for the server, or the run is over: all its
+    /// frames ran, or the session ended. True once it is over.
+    pub fn step(&mut self) -> bool {
+        while !self.over() {
+            if !self.app.try_frame(self.dt) {
+                return false;
+            }
+            self.ran += 1;
+        }
+        true
+    }
+
+    fn over(&self) -> bool {
+        self.ran >= self.frames || self.app.stopped()
+    }
+
+    /// Leaves the game and returns the run as JSON: `frames` run, the
+    /// `state_hash` a desktop client's run report gives, and the error
+    /// diagnostics.
+    pub fn finish(&mut self) -> String {
+        self.app.close_net();
+        let diagnostics = self.app.take_diagnostics();
+        serde_json::json!({
+            "frames": self.ran,
+            "state_hash": self.app.state_hash().to_hex().to_string(),
+            "errors": errors(&diagnostics),
+        })
+        .to_string()
+    }
+}
+
 /// The errors among `diagnostics`, rendered.
 fn errors(diagnostics: &[re_core::Diagnostic]) -> Vec<String> {
     diagnostics
@@ -330,15 +432,30 @@ mod wasm {
             self.0.add_saved(key, bytes);
         }
 
-        /// Opens the project and plays it in a canvas appended to the page. Returns
-        /// once the page's event loop has taken over; later failures go to
-        /// `realEngine.report("error", ...)`.
-        pub fn play(&self) -> Result<(), JsError> {
+        /// Opens the project and plays it in a canvas appended to the page, joining
+        /// the server at `connect` as `name` when given
+        /// ([`super::Session::open_for_play`]). Returns once the page's event loop
+        /// has taken over; later failures go to `realEngine.report("error", ...)`.
+        pub fn play(&self, connect: Option<String>, name: Option<String>) -> Result<(), JsError> {
             let app = self
                 .0
-                .open_for_play(persist)
+                .open_for_play(persist, connect.as_deref(), name.as_deref())
                 .map_err(|d| JsError::new(&d.to_string()))?;
             re_app::web::play(app, report).map_err(|d| JsError::new(&d.to_string()))
+        }
+
+        /// [`super::Session::net_run`].
+        #[wasm_bindgen(js_name = netRun)]
+        pub fn net_run(
+            &self,
+            replay: &str,
+            connect: &str,
+            name: Option<String>,
+        ) -> Result<NetRun, JsError> {
+            self.0
+                .net_run(replay, connect, name.as_deref())
+                .map(NetRun)
+                .map_err(|e| JsError::new(&e))
         }
 
         /// [`super::Session::project_name`].
@@ -374,6 +491,24 @@ mod wasm {
     impl Default for Session {
         fn default() -> Session {
             Session::new()
+        }
+    }
+
+    /// [`super::NetRun`] for JavaScript: call `step()` until it returns true,
+    /// yielding to the page's event loop in between, then `finish()`.
+    #[wasm_bindgen]
+    pub struct NetRun(super::NetRun);
+
+    #[wasm_bindgen]
+    impl NetRun {
+        /// [`super::NetRun::step`].
+        pub fn step(&mut self) -> bool {
+            self.0.step()
+        }
+
+        /// [`super::NetRun::finish`].
+        pub fn finish(&mut self) -> String {
+            self.0.finish()
         }
     }
 }

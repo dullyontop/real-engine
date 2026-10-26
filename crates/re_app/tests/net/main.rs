@@ -34,7 +34,7 @@ fn serve(addr: mpsc::Sender<SocketAddr>, stop: Arc<AtomicBool>) -> Vec<String> {
     let mut options = NetOptions::new(NetRole::Server);
     options.bind = Some("127.0.0.1".into());
     options.port = Some(0);
-    addr.send(app.set_net(options).unwrap()).unwrap();
+    addr.send(app.set_net(options).unwrap().addr).unwrap();
     let dt = app.step();
     while !stop.load(Ordering::Relaxed) && !app.stopped() {
         app.frame(dt);
@@ -140,7 +140,7 @@ fn a_host_plays_with_a_player_who_connects() {
     let mut options = NetOptions::new(NetRole::Host);
     options.bind = Some("127.0.0.1".into());
     options.port = Some(0);
-    let addr = host.set_net(options).unwrap();
+    let addr = host.set_net(options).unwrap().addr;
     let dt = host.step();
     // The host's game starts (and its local player joins) on its first
     // frame, before anyone connects.

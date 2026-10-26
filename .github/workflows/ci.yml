@@ -183,7 +183,7 @@ jobs:
           ' out/verify.json
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
           jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic)"' out/verify.json
-          jq -r '.stages[] | select(.name == "net") | .data.runs[] | "networked \(.replay): \(.frames) frames, same=\(.same)"' out/verify.json
+          jq -r '.stages[] | select(.name == "net") | .data.runs[] | "networked \(.replay) over \(.transport): \(.frames) frames, same=\(.same)"' out/verify.json
           jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
       - name: Windowed run under Xvfb (must print RUN OK)
         run: |

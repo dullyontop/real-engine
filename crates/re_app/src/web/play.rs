@@ -5,7 +5,9 @@
 //! `spawn_app` returns at once and the page's event loop drives the frames, and
 //! the GPU device arrives later from a future: until it does, the app waits in a
 //! pending state and simulates nothing. The audio device opens on the first key
-//! or click, because browsers start audio only after a user gesture.
+//! or click, because browsers start audio only after a user gesture. A network
+//! client's frame never waits for its server ([`App::try_frame`]): until the
+//! server's message comes, the page draws the last frame again.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -111,7 +113,10 @@ impl Runner {
         });
         self.last = Some(now);
         self.gamepads.poll(self.app.raw_input_mut());
-        self.app.frame(dt);
+        self.app.try_frame(dt);
+        if self.app.stopped() {
+            return Err(self.stopped_reason());
+        }
         let frame = match s.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
             | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
@@ -148,6 +153,23 @@ impl Runner {
         }
         self.report_diagnostics();
         Ok(())
+    }
+
+    /// Why the game stopped (a network client was kicked or lost its
+    /// server): its last error, after the other diagnostics go to the page.
+    fn stopped_reason(&mut self) -> Diagnostic {
+        let mut diagnostics = self.app.take_diagnostics();
+        let reason = diagnostics
+            .iter()
+            .rposition(Diagnostic::is_error)
+            .map(|i| diagnostics.remove(i));
+        for d in diagnostics {
+            let kind = if d.is_error() { "problem" } else { "warning" };
+            (self.report)(kind, &d.to_string());
+        }
+        reason.unwrap_or_else(|| {
+            Diagnostic::error(re_net::codes::CLOSED, "the game's network session ended")
+        })
     }
 
     /// Sends the game's and the GPU's diagnostics so far to the page.

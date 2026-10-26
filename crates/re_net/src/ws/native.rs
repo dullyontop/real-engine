@@ -127,13 +127,17 @@ fn read_link(ws: &mut WebSocket<TcpStream>) -> Read {
     }
 }
 
-/// Writes one datagram. A full write buffer loses it; another failure ends
-/// the link.
+/// Writes one datagram, at once ([`config`]'s eager writes). A full write
+/// buffer loses it; another failure ends the link.
 fn write_link(ws: &mut WebSocket<TcpStream>, datagram: &[u8]) -> Result<(), io::Error> {
     match ws.write(Message::binary(datagram.to_vec())) {
         Ok(()) => Ok(()),
         // Queued: a later write or flush sends it.
-        Err(tungstenite::Error::Io(e)) if e.kind() == ErrorKind::WouldBlock => Ok(()),
+        Err(tungstenite::Error::Io(e))
+            if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) =>
+        {
+            Ok(())
+        }
         Err(tungstenite::Error::WriteBufferFull(_)) => Err(io::Error::new(
             ErrorKind::WouldBlock,
             "the link has 1 MiB waiting to be written",
