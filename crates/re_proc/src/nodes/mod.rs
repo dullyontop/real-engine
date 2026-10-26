@@ -99,7 +99,8 @@ pub enum Streaming {
     Region,
     /// Works cell by cell; its keys are prefixed by the cell. A mesh it
     /// outputs in a window is local to the window's corner (`min x, 0,
-    /// min z`), where the entity drawing it is placed.
+    /// min z`), where the entity drawing it is placed. It can read its
+    /// fields beyond the window ([`NodeCtx::upstream`]).
     Cell,
     /// Its output does not depend on the window (shapes, road paths): a
     /// streamed evaluation runs it without one, keyed without one, so every
@@ -825,8 +826,9 @@ pub struct NodeCtx<'a> {
     pub pool: &'a TaskPool,
     /// Lines the node logged ([`NodeCtx::log`]), for its report.
     pub logs: std::sync::Mutex<Vec<String>>,
-    /// For a [`Streaming::Region`] node in a streamed evaluation: the field
-    /// on an input port evaluated over another window (its region tiles),
+    /// For a [`Streaming::Region`] or [`Streaming::Cell`] node in a streamed
+    /// evaluation: the field on an input port evaluated over another window
+    /// (a region node's tiles, a cell node's window grown by an apron),
     /// through the same evaluator and caches.
     pub upstream: Option<&'a Upstream<'a>>,
     /// For a [`Streaming::Global`] node in a streamed evaluation: the field

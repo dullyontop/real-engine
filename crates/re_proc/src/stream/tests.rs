@@ -836,6 +836,38 @@ fn assert_no_overlap(w: &World) {
 }
 
 #[test]
+fn stream_terrain_chunks_may_feed_a_merge() {
+    // Not streamed, the merge gathers the chunks node's mesh and the water.
+    // Streamed, world streaming draws the terrain and each cell's merge
+    // gathers the rest.
+    let doc = graph(
+        &[
+            (
+                "h",
+                "terrain.heightfield",
+                json!({ "cell": 4.0, "height": 40.0, "scale": 0.01 }),
+            ),
+            ("ground", "terrain.chunks", json!({ "max_level": 2 })),
+            ("water", "terrain.water_plane", json!({ "level": 3.0 })),
+            ("out", "fragment.merge", json!({})),
+        ],
+        &[
+            ("h", "field", "ground", "field"),
+            ("ground", "fragment", "out", "a"),
+            ("water", "fragment", "out", "b"),
+        ],
+    );
+    let mut st = streamed(doc, 32.0, 32.0, json!([]));
+    let r = run(&mut st.world, 0..5);
+    assert!(r.iter().all(|r| r.diagnostics.is_empty()), "{r:?}");
+    let w = &st.world;
+    assert!(w.entity("terrain/c/0_0/water/water").is_ok());
+    let e = w.entity("terrain").unwrap();
+    let s = source::describe(w, e, &config(), &mut source::DescribeCache::new()).unwrap();
+    assert!(s.terrain.is_some());
+}
+
+#[test]
 fn stream_terrain_view_is_off_by_default() {
     let mut st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
     run(&mut st.world, 0..10);

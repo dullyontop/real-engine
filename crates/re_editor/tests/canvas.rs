@@ -40,7 +40,7 @@ fn graph() -> Json {
             { "id": "h", "kind": "terrain.heightfield", "version": 1, "params": { "size": 9, "cell": 4.0, "height": 2.0 } },
             { "id": "mask", "kind": "terrain.island_mask", "version": 1, "params": { "size": 9 } },
             { "id": "land", "kind": "field.combine", "version": 1, "params": { "op": "mul" } },
-            { "id": "ground", "kind": "terrain.mesh", "version": 2, "params": {} },
+            { "id": "ground", "kind": "terrain.mesh", "version": 3, "params": {} },
             { "id": "flat", "kind": "terrain.heightfield", "version": 1, "params": { "size": 9, "cell": 4.0, "height": 0.0 } }
         ],
         "edges": [
