@@ -1,14 +1,16 @@
 # CI for Real Engine (ADR-0023, docs/M1_PLAN.md WP0).
 #
-# Required for merge: fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke
-# and verify-plaza (all on Ubuntu; verify-plaza by ADR-0023's M2 amendment), and
-# build-windows and build-macos (the whole suite and `real verify` on the island
-# and the plaza, ADR-0023's M3 amendment, WP18 PR "blocking", and on the valley,
-# WP28), and build-web (ADR-0023's M3 amendment, WP29 PR "portable"),
-# verify-valley (WP28), d2 (the state_hash of every island, plaza and valley
-# replay agrees on the three platforms; ADR-0036, WP18 PR "d2"), and
-# build-package, build-package-windows and build-package-macos (packaged games;
-# ADR-0037, WP19 PR "bundles").
+# Required for merge, the 17 checks of ADR-0023 and its amendments:
+# - on Ubuntu: fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke,
+#   verify-plaza (M2) and verify-valley (WP28);
+# - build-windows and build-macos: the whole suite, and `real verify` on the
+#   island, the plaza and the valley (WP18 PR "blocking"; the valley since
+#   WP28's #175);
+# - build-web (WP29 PR "portable");
+# - d2: the state_hash of every island, plaza and valley replay agrees on the
+#   three platforms (ADR-0036, WP18 PR "d2");
+# - build-package, build-package-windows and build-package-macos: packaged
+#   games (ADR-0037, WP19 PR "bundles").
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
@@ -215,20 +217,23 @@ jobs:
           mkdir -p out
           target/release/real verify --project examples/valley --json > out/verify.json
       - name: Check the verify report (M3_PLAN WP28)
-        # Every stage ran and passed, the walk, drive and cross-cell replays each
-        # ran twice with the same state_hash, and at least six goldens match.
+        # Every stage ran and passed, the walk, drive, cross-cell, getout and
+        # overlook replays each ran twice with the same state_hash, and at least
+        # eight goldens match.
         run: |
           jq -e '
             .ok == true
             and ([.stages[].name] | contains(["schema", "compile", "scan", "boot", "replays", "goldens", "perf"]))
             and all(.stages[]; .ok and ((.data | type) != "object" or (.data | has("skipped") | not)))
             and ([.stages[] | select(.name == "replays") | .data.runs[]] as $r
-                 | ($r | length) >= 3 and all($r[]; .deterministic)
+                 | ($r | length) >= 5 and all($r[]; .deterministic)
                    and any($r[]; .file | endswith("walk.replay.json"))
                    and any($r[]; .file | endswith("drive.replay.json"))
-                   and any($r[]; .file | endswith("cross.replay.json")))
+                   and any($r[]; .file | endswith("cross.replay.json"))
+                   and any($r[]; .file | endswith("getout.replay.json"))
+                   and any($r[]; .file | endswith("overlook.replay.json")))
             and ([.stages[] | select(.name == "goldens") | .data.checks[]] as $g
-                 | ($g | length) >= 6 and all($g[]; .matches))
+                 | ($g | length) >= 8 and all($g[]; .matches))
             and (.perf | type == "object")
           ' out/verify.json
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
@@ -239,7 +244,7 @@ jobs:
           RE_BACKENDS: gl
         run: |
           target/release/real verify --project examples/valley --json > out/verify-gl.json
-          jq -e '.ok == true and ([.stages[] | select(.name == "goldens") | .data.checks[]] | length >= 6 and all(.[]; .matches))' out/verify-gl.json
+          jq -e '.ok == true and ([.stages[] | select(.name == "goldens") | .data.checks[]] | length >= 8 and all(.[]; .matches))' out/verify-gl.json
       - name: Windowed run under Xvfb (must print RUN OK)
         run: |
           xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/valley --frames 300 --exit-after | tee out/run.log

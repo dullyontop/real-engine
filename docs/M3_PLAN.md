@@ -1,10 +1,10 @@
-# M3 plan (draft)
+# M3 plan
 
-**Status:** phase 1. M2's definition of done held on 2026-10-20, so WP code may start once its ADR is accepted, in the order in "How M3 starts" below. The owner's decisions in "Defaults this plan picks" may change the WP list.
+**Status:** done (2026-10-26). Every item of the [definition of done](#definition-of-done-for-m3) holds, and each WP's progress line says what it merged. Phase 1 began when M2's definition of done held on 2026-10-20; "How M3 starts" below is the order the WPs followed.
 
 M3 turns Real Engine from an engine that runs games from a project directory into one that ships them. When it is done, a developer can build a large procedural world that streams in as the player moves, put skinned characters and vehicles in it, light it with post-processing and cascaded shadows, debug its scripts, edit its graphs on a node canvas, and package it as a standalone game for Windows, macOS and Linux. Every platform blocks merges in CI, and runs repeat bit for bit across machines (D2). A new public example, `examples/valley`, exercises all of it, and `real verify` checks it in CI like the island and the plaza.
 
-The items come from [ROADMAP.md, "M3 and later"](ROADMAP.md#m3-and-later) and its AI track, plus the M2 follow-ups the M2 plan deferred (local persistence, `SurfaceGui` and `ViewportFrame`, compat hot reload, the `.rbxl`/`.rbxlx` reader). Each item still needs an ADR before its WP starts, as the roadmap says; this plan names them.
+The items come from the roadmap's "M3 and later" list and its AI track, plus the M2 follow-ups the M2 plan deferred (local persistence, `SurfaceGui` and `ViewportFrame`, compat hot reload, the `.rbxl`/`.rbxlx` reader); [ROADMAP.md, M3](ROADMAP.md#m3-shipping-games-browser-builds-and-online-play-done) says what became of each. Each item still needs an ADR before its WP starts, as the roadmap says; this plan names them.
 
 This plan splits M3 into thirteen work packages: WP18 to WP30. WP29 (browser builds) and WP30 (online play) were added after the owner chose both on 2026-10-15; WP29's section is accepted with ADR-0049 and WP30's with ADR-0050. Numbering continues from M2, so a WP number always means one thing.
 
@@ -40,7 +40,7 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 
 The M1 and M2 ownership rules carry over, with these changes:
 - The maintainer keeps every path it owns at the end of M2: the root files, `.github/`, `tools/`, `README.md`, `docs/`, the WP0 crates, `re_assets`, `re_geom`, `re_proc`, `re_editor`, and `re_compat`'s shared files (`Cargo.toml`, `src/lib.rs`, `src/codes.rs`, `src/class/`, `src/data.rs`, `src/scene.rs`).
-- The maintainer also runs the **entity-core track** (ROADMAP "Entity-core extensions"): a `#[derive]` component macro, undo coalescing for drags, a typed fast path for bulk spawns and scene loads, comments in scene files, and (for WP25's canvas, ADR-0044) a `set_doc` operation with open documents in the World and an optional `layout` map in `GraphDoc`. These touch only maintainer crates and frozen WP0 contracts, so they are maintainer PRs reviewed by the WPs that consume the changed contract.
+- The maintainer also runs the **entity-core track** (ROADMAP "Entity-core extensions"): a `#[derive]` component macro, undo coalescing for drags, a typed fast path for bulk spawns and scene loads, comments in scene files, and (for WP25's canvas, ADR-0044) a `set_doc` operation with open documents in the World and an optional `layout` map in `GraphDoc`. These touch only maintainer crates and frozen WP0 contracts, so they are maintainer PRs reviewed by the WPs that consume the changed contract. As built: the derive macro (`re_reflect_derive`, #149), coalescing transactions (#133), entity notes as the comments of scene files (#147), and `set_doc` with open documents and `GraphDoc.layout` (#113); the typed fast path was measured and deferred (ADR-0016's amendment).
 - Crates pass to the M3 WP that changes them most:
   - `.github/workflows/` and `tools/xtask/src/d2.rs` to WP18, for its PRs only; the maintainer reviews each change, and the files return to the maintainer when WP18 is done;
   - `re_cli/src/build/` (new) and the packaging parts of `re_app` to WP19;
@@ -108,7 +108,7 @@ Changes to `re_types` stay maintainer-reviewed frozen-contract changes, as in M2
 
 **Build, PR "blocking":**
 - The raw Luau interrupt verified on MSVC and on macOS (the CPU budget stops a runaway script on both).
-- `build-windows` and `build-macos` run the whole test suite, the GPU tests on a software adapter where the runner has one (WARP on Windows; macOS reports the GPU tests it cannot run), and `real verify` on the island and the plaza.
+- `build-windows` and `build-macos` run the whole test suite, the GPU tests on a software adapter where the runner has one (WARP on Windows; macOS reports the GPU tests it cannot run), and `real verify` on the island and the plaza (on the valley too since WP28's #175).
 - Both jobs become required (ADR-0023 amendment).
 
 **Build, PR "d2":**
@@ -250,7 +250,7 @@ cargo test --locked -p re_audio
 
 **Definition of done:** the three PRs merged.
 
-**Progress (2026-10-26).** Done: "vehicles" (#94), "audio" (#115) and "ragdolls" (#134), with review follow-ups in #143 (snapshots restore ragdoll modes and targets, and `state_hash` covers ragdolls). After them, #158 lets ragdolls follow the floating origin (ADR-0040's amendment), and #167 adds `AudioSource.rate` and `audio.set_rate`, played at most 16 times as fast (ADR-0041). WP22 is complete.
+**Progress (2026-10-26).** Done: "vehicles" (#94), "audio" (#115) and "ragdolls" (#134), with review follow-ups in #143 (snapshots restore ragdoll modes and targets, and `state_hash` covers ragdolls). After them, #158 lets ragdolls follow the floating origin (ADR-0040's amendment), and #167 adds `AudioSource.rate` and `audio.set_rate`, played at most 16 times as fast (ADR-0041). For the valley, #173 renders the mixer in headless runs, so one-shots end and free their voices (ADR-0041's headless fallback); #178 keeps a character standing still on a slope where it stands (ADR-0008); and #181 makes every vehicle differential open, so a car shifts up only once none of its driven wheels slips (ADR-0040's amendment). WP22 is complete.
 
 ---
 
@@ -427,6 +427,8 @@ real build --project examples/valley --out out/valley-build
 ```
 
 **Definition of done:** merged, with `verify-valley` required and green.
+
+**Progress (2026-10-26).** Done: the first PR (#116: the valley walked and driven, with `verify-valley`), then #130 (the valley streams, with a replay that walks across a cell border; `verify-valley` is required), #135 (post-processing; `build-package` packs and verifies the valley, and `d2` compares its replays on three platforms), #163 (erosion, an animation graph for the walker, mixer buses and sounds, and the sun's cascades), #175 (a road along the valley floor, a replay that gets out of the car while it drives on, the DX12 and Metal goldens, and the valley verified by `build-windows` and `build-macos` too) and #182 (the ground drawn in levels of detail with `terrain.chunks` out to a 6 km horizon, and a replay that looks at it from a hilltop). WP28 is complete.
 
 ---
 

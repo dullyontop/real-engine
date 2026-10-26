@@ -13,7 +13,7 @@ We order work by three questions, in this order:
 The result:
 - **M1 builds the core loop end to end**: render, physics, scripting, procedural generation, commands and verify. It uses an engine-native API. Every later feature plugs into these seams, and every one of them was proven by a spike, the entity core included.
 - **M2 is compatibility.** It matters a great deal to the owner, but it depends on a working scripting runtime, object model, physics and frame order. It is also the largest chunk of work. The owner chose "Demo first" (DECISIONS, open question 3): M1 ships the demo on the engine's own API, and M2's goal is the sample scenes running through the Roblox-style layer; whether a mechanical migration step is acceptable on the way was left open, and M2 ended up running the samples from their unmodified source. Measuring the gap on real scripts (the M1 validation suite) comes before building the layer.
-- **M3+ adds scale, polish and the rest of a complete game workflow.** That means shipping games, richer rendering, cross-machine determinism, streaming, the node canvas and gizmos. None of these block the others, and each needs M1's measurements (PerfReport, D1 harness) to be done well.
+- **M3 adds scale, polish and the rest of a complete game workflow.** That means shipping games, richer rendering, cross-machine determinism, streaming, the node canvas and gizmos. None of these block the others, and each needs M1's measurements (PerfReport, D1 harness) to be done well.
 - **AI integration grows in every milestone** (see "AI track" below), always on top of the same command registry, and always optional.
 
 ## M0: Spikes (done)
@@ -94,34 +94,48 @@ AI support stays optional and provider-neutral (ARCHITECTURE §6). It grows with
 |---|---|---|
 | M1 | The command registry as MCP tools (25, including `scene.apply` for atomic multi-operation edits), dry runs, `real verify --json`, `real explain`, `engine.d.luau`, checkpoints, the policy file, generated `AGENTS.md` and per-client configs | `re_command`, `re_agent`, `re_mcp` |
 | M2 | Luau-defined tools (`tools` context, capped at `edit`); MCP resources for the docs, the explain pages and `engine.d.luau` (for clients that support resources; everything stays reachable through tools); a verify-diff loop that reports which verify results a change altered; structured output schemas on every tool | the registry, ADR-0026 |
-| M3+ | Natural-language starting points for beginners: project templates and generator recipes that an agent fills in through ordinary commands; an evaluation harness that runs scripted agent tasks against sample projects and scores them with `real verify`; the HTTP MCP transport. All three are done in M3 (WP26: templates and recipes #104, `real agent eval` #124, `real mcp --http` #92) | the registry, `real verify`, templates |
+| M3 | Natural-language starting points for beginners: project templates and generator recipes that an agent fills in through ordinary commands; an evaluation harness that runs scripted agent tasks against sample projects and scores them with `real verify`; the HTTP MCP transport (WP26: templates and recipes #104, `real agent eval` #124, `real mcp --http` #92) | the registry, `real verify`, templates |
 
 The engine never calls a model itself. Every capability an agent uses is also usable by a human through the CLI or the editor.
 
-## M3 and later
+## M3: Shipping games, browser builds and online play (done)
 
-These are grouped into work packages in the draft [M3_PLAN.md](M3_PLAN.md). Each one needs an ADR before it starts.
+The work packages (WP18–WP30), contracts and definition of done are in [M3_PLAN.md](M3_PLAN.md).
 
-| Item | Why later | Seam already in place |
-|---|---|---|
-| Export and packaging (a game build without tooling, assets packed, per-platform bundles) | M1 needs the engine to run from a project directory first | `re_cli --no-default-features` links no tooling (ADR-0027); `.real/cache` processed assets |
-| Render thread | M1 PerfReport must show that render submission is the bottleneck first | `RenderSnapshot: Send` (ADR-0007) |
-| Post-processing (tone mapping, bloom), cascaded shadows, GPU-driven rendering | The M1 forward pass must be measured first | `Renderer::render` takes a snapshot; passes are internal to `re_render` |
-| Texture compression (BC/ASTC) and shader hot reload | Not needed for the M1 demo | `re_assets` processed cache; the WGSL `#include` preprocessor |
-| Skinned animation and blend trees | Not needed for the M1 demo | `re_types::ClipData`, `re_anim` sampler |
-| Audio effects graph (reverb, filters, buses) | M1 needs playback only | `AudioCmd`; kira's effect support |
-| D2 determinism (identical across machines and operating systems) | Expensive: oxijolt `cross-platform-deterministic` plus a float audit | D1 harness, `state_hash`, sorted commands (ADR-0018) |
-| World streaming and large terrains | Needs static cells and measurements from M2 | `StableKey`, per-node cache, fragments |
-| Procedural workflow extensions: bake to authored entities, structural overrides beyond deletion, generator versioning, asynchronous generation, Luau generators | The source-plus-overrides model must settle first | `GenNode` is plain data; `Generators` registry (ADR-0017) |
-| Entity-core extensions: a `#[derive]` component macro, undo coalescing for drags, a typed fast path for bulk spawns and scene loads, comments in scene files | Not needed for M1; each is an open question of the core spike | `component!`, `Transaction` labels, `SceneDoc` (ADR-0016, ADR-0032) |
-| Terrain erosion, GPU or streamed procedural evaluation | The CPU node set and its cache must settle first | `NodeRegistry`, per-node keys, `Field` outputs |
-| Node canvas for ProcGraph | The IR and commands must settle first | `GraphDoc` and the `graph.*` commands |
-| Luau nodes inside ProcGraph | Needs the scripting performance numbers on node-sized work | `NodeRegistry`; the `GraphDoc` boundary between `re_script` and `re_proc` |
-| Gizmos and docking in the editor | UI polish | Every editor action is already a command |
-| Polygon booleans and roads | `i_overlay` was too new to adopt when we checked | Node registry |
-| Vehicles and ragdolls | Not needed for the M1 demo. oxijolt 1.1.0 has `vehicle` and `ragdoll` modules (seen in its source; not exercised by the spike) | `re_physics` hides oxijolt; `PhysicsCmd` |
-| Script debugger | `set_hook` does not exist in Luau builds; a design on the interrupt callback and `inspect_stack` needs a spike | `re_script` contexts, the raw interrupt |
-| In-process type checking (vendored Luau Analysis) | Owner decision (DECISIONS, open question 2) | `re_script_check::types`, which already returns `Diagnostic`s |
-| Windows and macOS blocking merges in CI | Unverified today, including the raw Luau interrupt on MSVC | Windows and macOS jobs already build the workspace and test the pure-Rust crates on every PR (ADR-0023) |
+**What became of the items this section listed before M3 was planned** (each has its ADR):
 
-**M3 exit criteria** are defined when M3 is planned. The minimum: Windows and macOS block merges in CI, and the D2 harness passes across Linux x86_64 and one other platform.
+| Item | At the end of M3 |
+|---|---|
+| Export and packaging | Built (WP19, ADR-0037): `real build` packs `game.rpak` with a runtime-only player into a Linux folder, a Windows folder or a macOS app, and the release workflow builds the prebuilt runtimes for a tagged release. |
+| Render thread | Measured and not built (ADR-0038's amendment for #160): render submission is not the bottleneck. |
+| Post-processing, cascaded shadows, GPU-driven rendering | The HDR post chain and cascaded sun shadows are built (WP20, ADR-0038). GPU-driven rendering is not; it stays later work. |
+| Texture compression (BC/ASTC) and shader hot reload | BC textures are encoded at import (#164, ADR-0047); ASTC is not used, since the targets are desktops. Shader hot reload is built (#169, ADR-0038). |
+| Skinned animation and blend trees | Built as glTF skins and animation graphs (WP21, ADR-0039). |
+| Audio effects graph | Built (WP22, ADR-0041). |
+| D2 determinism | Built (WP18, ADR-0036): replays end with the same `state_hash` on Linux, Windows and macOS. |
+| World streaming and large terrains | Built (WP23, ADR-0042), with level-of-detail terrain, regional erosion and a floating origin. |
+| Procedural workflow extensions | Built (WP24, ADR-0043): bake, structural overrides, generator versions and Luau generators. Streamed cells generate asynchronously (ADR-0042). |
+| Entity-core extensions | `#[derive(Reflect)]` (#149), coalesced drags (#133) and entity notes in scene files (#147) are built; the typed fast path for bulk spawns was measured and deferred (ADR-0016's amendment). |
+| Terrain erosion, GPU or streamed procedural evaluation | Erosion and streamed evaluation are built (ADR-0042). GPU evaluation is not; it stays later work. |
+| Node canvas for ProcGraph | Built (WP25, ADR-0044). |
+| Luau nodes inside ProcGraph | Built (WP24, ADR-0043). |
+| Gizmos and docking in the editor | Built (WP25, ADR-0044). |
+| Polygon booleans and roads | Built on i_overlay (WP24, ADR-0043). |
+| Vehicles and ragdolls | Built (WP22, ADR-0040). |
+| Script debugger | Built (WP25, ADR-0045). |
+| In-process type checking (vendored Luau Analysis) | Not built: `real check --types` runs luau-lsp on all three platforms (DECISIONS, open question 2). |
+| Windows and macOS blocking merges in CI | Built (WP18, ADR-0023's amendment). |
+
+M3 also added browser builds (WP29, ADR-0049), online play for Roblox-style projects (WP30, ADR-0050), the compat follow-ups M2 deferred (WP27, ADR-0048), the M3 AI track (WP26, ADR-0046) and `examples/valley` (WP28).
+
+**Left for later.** No milestone after M3 is planned yet. Besides GPU-driven rendering and GPU procedural evaluation (above), the ADRs leave these for later work: the typed fast path for bulk spawns (ADR-0016's amendment); type checking inside the engine in place of luau-lsp (DECISIONS, open question 2); a vehicle tyre curve with friction at zero slip, so that a car under throttle no longer stays in first gear until about its rpm limit (ADR-0040's amendment for #181); and a size limit for `re_proc`'s disk cache, which keeps every field and mesh it writes: a fresh `real verify` of the valley leaves about 770 MB in `.real/cache/proc`, a packaged game keeps the cache in the player's cache folder, and a browser build keeps it in memory (ADR-0049 §6).
+
+**Exit (met, 2026-10-26).** M3_PLAN's [definition of done](M3_PLAN.md#definition-of-done-for-m3) replaced the minimum drafted here, and every item of it holds:
+- The required jobs (ADR-0023), `build-windows`, `build-macos`, `d2`, `verify-plaza` and `verify-valley` among them, block merges and pass on Linux, Windows and macOS.
+- The D2 harness gives the same `state_hash` for the island, plaza and valley replays on Linux x86_64, Windows x86_64 and macOS arm64.
+- `real verify` passes every stage, goldens included, on the valley, the island and the plaza, on Linux, Windows and macOS.
+- `real build` packages the valley for each platform, and the packaged game replays with the project's `state_hash`.
+- Every ADR the plan lists is Accepted, and ADR-0038 records with measurements why there is no render thread.
+- The M1, M2 and WP26 MCP end-to-end tests pass over stdio and HTTP.
+- The island and the plaza build for the web and play their replays in headless Chromium with WebGPU, and the plaza's `net` stage passes on all three platforms.
+- The docs were checked against the code at the end of M3 (the "maintainer audit" amendments in DECISIONS.md), and `coverage.json` matches the code.

@@ -625,7 +625,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0023: CI: Linux with lavapipe blocks merges; Windows and macOS are reported only
 
-**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16). Amended in M3: `build-web` is required (WP29 PR "portable", #89), `build-windows` and `build-macos` are required (WP18 PR "blocking"), `verify-valley` is required (WP28, #130), `d2` is required, with goldens required on every platform (WP18 PR "d2", #100), and the three `build-package` jobs are required (WP19 PR "bundles", #161). The required checks are now 17; see the last amendment.
+**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16). Amended in M3: `build-web` is required (WP29 PR "portable", #89), `build-windows` and `build-macos` are required (WP18 PR "blocking"), `verify-valley` is required (WP28, #130), `d2` is required, with goldens required on every platform (WP18 PR "d2", #100), and the three `build-package` jobs are required (WP19 PR "bundles", #161); `build-windows` and `build-macos` verify the valley too (WP28, #175). The required checks are now 17; see the amendment for #161.
 
 **Context.** Development containers are Linux with lavapipe, llvmpipe and Xvfb, and no audio device. Nothing has been verified on Windows or macOS.
 
@@ -662,6 +662,10 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Amendment (M3, WP19 PR "bundles", #161).** `build-package` (Ubuntu 22.04), `build-package-windows` and `build-package-macos` are required: each builds the island, the plaza and the valley with `real build`, checks that the packaged games play as their projects do, and checks the platform's bundle (ADR-0037's amendment for that PR). The merge rule is now 17 checks: the 14 above and these three.
 
 **Amendment (M3, maintainer; 2026-10-25).** Only Windows renders the dx12 set and only macOS the metal set, so the `goldens` workflow (`.github/workflows/goldens.yml`) re-blesses them for a branch. Started by hand (`gh workflow run goldens --ref <branch> -f project=examples/<name>`), it runs `real verify --update-goldens` on the project on `windows-latest` (dx12) and `macos-latest` (metal), the runners of `build-windows` and `build-macos`, and commits the changed images to that branch, where the PR shows them for review. It refuses the default branch and is not a check. A commit pushed with the workflow's token starts no CI run, so CI runs again on the branch's next push.
+
+**Amendment (M3, WP28, #175).** `build-windows` and `build-macos` run `real verify` on the valley too, after the island and the plaza, and every stage must pass, goldens included, against the valley's dx12 and metal sets, which the `goldens` workflow rendered and committed in that PR. With `verify-valley` on Ubuntu, every example's replays and goldens are now checked on all three platforms. The valley's replays joined `cargo xtask d2` in WP28's #135, the later PR the amendment for #100 expected.
+
+**Amendment (M3, maintainer; 2026-10-26).** `verify-valley`'s check of the report names all five of the valley's replays, walk, drive, cross, getout (#175) and overlook (WP28's #182), each run twice with the same `state_hash`, and asks for at least eight matching goldens on Vulkan and on GL, where the amendment for #130 named three replays and six goldens.
 
 ## ADR-0024: Validation suite contract for external script corpora
 
@@ -1291,7 +1295,7 @@ Measured (lavapipe and llvmpipe GL, wgpu 30.0.1; measurements §1–§3):
 
 **Amendment (WP20, #160, and WP28's valley; 2026-10-25).** The render-thread measurement as built:
 - `render_submit` leaves out the time inside `Queue::submit`, which PerfReport reports beside it as `queue_submit`. Software rasterisers and some GL drivers wait there until the GPU has finished the previous frame, so that time is the GPU's, not work a render thread would take over. The renderer times itself (`Renderer::take_draw_time`), and `re_app` records both once per drawn frame, in a window and for captures.
-- On lavapipe at 1280×720, with culling: the plaza spends 0.58 ms in `render_submit` (14.5% of the frame's CPU time), the 250,000-part bigmap 29.9 ms (5.6%), and the valley's drive replay 3.06 ms (22.8%, measured by WP28). None reaches 4 ms and 25%, so the decision stands: no render thread.
+- On lavapipe at 1280×720, with culling: the plaza spends 0.58 ms in `render_submit` (14.5% of the frame's CPU time), the 250,000-part bigmap 29.9 ms (5.6%), and the valley's drive replay 3.41 ms (20.5%, measured by WP28 with the valley's road and `terrain.chunks`, #182; 3.06 ms and 22.8% before them). None reaches 4 ms and 25%, so the decision stands: no render thread.
 
 **Amendment (WP20 PR "hot reload", #169).** Shader hot reload as built:
 - **What a reload rebuilds.** `shader::ROOTS` lists the 14 root files. `Renderer::reload_shaders()` preprocesses each root and skips it when the result is what its pipelines were built from; it rebuilds the others by family (the scene pipelines, highlight, shadow, mask, post, UI and probe, and the skinned ones), for the formats drawn into so far plus a linear and a gamma target, so the device checks every entry point before a frame needs it. It returns `ShaderReload { rebuilt, problems }`.
