@@ -126,6 +126,7 @@ pub fn rules() -> Vec<Rule> {
                 "re_input",
                 "re_assets",
                 "re_anim",
+                "re_net",
                 "mlua",
                 "tokio",
             ]),
@@ -150,6 +151,7 @@ pub fn rules() -> Vec<Rule> {
                 "re_input",
                 "re_assets",
                 "re_anim",
+                "re_net",
                 "full_moon",
             ]),
             why: "re_script reaches subsystems only through HostServices, and never full_moon",
@@ -201,6 +203,16 @@ pub fn rules() -> Vec<Rule> {
             krate: "re_mcp",
             check: Check::Reaches(&["re_app"]),
             why: "re_mcp must not depend on re_app",
+        },
+        Rule {
+            krate: "re_import",
+            check: Check::Reaches(&["re_app"]),
+            why: "re_import must not depend on re_app",
+        },
+        Rule {
+            krate: "re_net",
+            check: Check::WorkspaceOnly(&["re_core"]),
+            why: "re_net depends on no engine crate but re_core (ADR-0050)",
         },
     ];
     for &subsystem in SUBSYSTEMS {
@@ -488,6 +500,25 @@ mod tests {
         );
         assert!(text.contains("re_scene: depends on mlua"), "{text}");
         assert!(text.contains("re_types: depends on re_core"), "{text}");
+    }
+
+    #[test]
+    fn re_net_reaches_only_re_core_and_the_model_never_reaches_it() {
+        let g = graph(
+            &["re_net", "re_types", "re_core", "re_command", "re_script"],
+            &[
+                ("re_net", "re_core"),
+                ("re_net", "re_types"),
+                ("re_command", "re_net"),
+                ("re_script", "re_net"),
+            ],
+        );
+        let (violations, _) = check(&g, &rules());
+        let text = violations.join("\n");
+        assert_eq!(violations.len(), 3, "{text}");
+        assert!(text.contains("re_net: depends on re_types ("), "{text}");
+        assert!(text.contains("re_command: depends on re_net ("), "{text}");
+        assert!(text.contains("re_script: depends on re_net ("), "{text}");
     }
 
     #[test]

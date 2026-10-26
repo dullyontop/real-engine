@@ -1,6 +1,6 @@
 # Roadmap
 
-There are four stages. Each milestone has exit criteria that can be checked by a command, not by opinion. The detailed M1 work breakdown is in [M1_PLAN.md](M1_PLAN.md).
+There are four stages. Each milestone has exit criteria that can be checked by a command, not by opinion. The work breakdowns are in [M1_PLAN.md](M1_PLAN.md), [M2_PLAN.md](M2_PLAN.md) and [M3_PLAN.md](M3_PLAN.md).
 
 ## Ordering rationale
 
@@ -12,7 +12,7 @@ We order work by three questions, in this order:
 
 The result:
 - **M1 builds the core loop end to end**: render, physics, scripting, procedural generation, commands and verify. It uses an engine-native API. Every later feature plugs into these seams, and every one of them was proven by a spike, the entity core included.
-- **M2 is compatibility.** It matters a great deal to the owner, but it depends on a working scripting runtime, object model, physics and frame order. It is also the largest chunk of work. The owner chose "Demo first" (DECISIONS, open question 3): M1 ships the demo on the engine's own API, and M2's goal is the sample scenes running through the Roblox-style layer; whether a mechanical migration step is acceptable on the way is still open, and sets M2's size. Measuring the gap on real scripts (the M1 validation suite) comes before building the layer.
+- **M2 is compatibility.** It matters a great deal to the owner, but it depends on a working scripting runtime, object model, physics and frame order. It is also the largest chunk of work. The owner chose "Demo first" (DECISIONS, open question 3): M1 ships the demo on the engine's own API, and M2's goal is the sample scenes running through the Roblox-style layer; whether a mechanical migration step is acceptable on the way was left open, and M2 ended up running the samples from their unmodified source. Measuring the gap on real scripts (the M1 validation suite) comes before building the layer.
 - **M3+ adds scale, polish and the rest of a complete game workflow.** That means shipping games, richer rendering, cross-machine determinism, streaming, the node canvas and gizmos. None of these block the others, and each needs M1's measurements (PerfReport, D1 harness) to be done well.
 - **AI integration grows in every milestone** (see "AI track" below), always on top of the same command registry, and always optional.
 
@@ -53,7 +53,7 @@ All M0 spikes are done.
 - `docs/research/scripting.md` and `docs/research/core.md` (the published spike reports) are in the repository.
 - Linux CI passes on every required job. Windows and macOS jobs (build, plus tests of the pure-Rust crates) are reported; for WP0's scope they pass.
 
-## M2: Roblox-style compatibility
+## M2: Roblox-style compatibility (done)
 
 The work packages (WP9–WP17), contracts and definition of done are in [M2_PLAN.md](M2_PLAN.md).
 
@@ -79,12 +79,12 @@ The work packages (WP9–WP17), contracts and definition of done are in [M2_PLAN
 
 **Ordering inside M2.** The static gap report from M1's suite ranks API members by how often real scripts use them. They are implemented in that order, so coverage of real code rises fastest.
 
-**Exit criteria.**
-- Validation tier 4 (boot) passes: each external sample project loads through the importer and runs 600 headless frames with no uncaught script error, and with every unsupported member reported as `RE9001` or `RE9002`, not as a crash or a hang.
-- The static gap report shows no `missing` member with more than a threshold number of uses. The owner sets the threshold when M2 starts.
-- Frame-order tests confirm the phase mapping of render-step, stepped and heartbeat events.
-- A large synthetic static map loads, and its PerfReport stays inside budgets. The owner sets the map size and the budgets at the start of M2.
-- The sample projects run through the Roblox-style layer (the owner's "Demo first" decision). Whether they must run *unchanged* or may go through `real migrate` first is still open; the exit criteria are rewritten once that is decided.
+**Exit (met, 2026-10-20).** M2_PLAN's [definition of done](M2_PLAN.md#definition-of-done-for-m2) replaced the criteria drafted here, and every item of it holds:
+- Validation tier 4 (boot) passed: each external sample project loads through the importer and runs 600 headless frames with no uncaught script error, with every unsupported member reported as `RE9001` or `RE9002`, not as a crash or a hang.
+- The static gap report over the samples' live code shows no `missing` member, against `coverage.json`.
+- The frame-order test confirms the phase mapping of render-step, stepped and heartbeat events.
+- A 250,000-part synthetic static map meets the budgets M2_PLAN set, and ADR-0031 records the numbers.
+- The sample projects run through the Roblox-style layer from their unmodified source and pass their scripted playthroughs, so no `real migrate` step was needed, and none is built.
 
 ## AI track
 
