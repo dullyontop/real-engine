@@ -279,7 +279,7 @@ cargo run --release --locked -p re_proc --example stream_walk -- --json > out/st
 
 **Definition of done:** the three PRs merged.
 
-**Progress (2026-10-24).** Done: "cells" (#108, with the `re_scene` hooks in #106), "async" (#128) and "terrain" (#139), plus "stream-app" (#118: streaming in the runtime and the `stream` library) and "floating origin" (#148: physics, streaming and the render snapshot follow the focus past 5 km; ADR-0042's amendment).
+**Progress (2026-10-26).** Done: "cells" (#108, with the `re_scene` hooks in #106), "async" (#128) and "terrain" (#139), plus "stream-app" (#118: streaming in the runtime and the `stream` library) and "floating origin" (#148: physics, streaming and the render snapshot follow the focus past 5 km; ADR-0042's amendment). After them, "terrain view" (#162) makes a frame that takes a screenshot under `Lateness::Wait` complete the terrain view first, so golden images of a streamed world do not depend on how fast the workers were (ADR-0042's amendment). WP23 is complete.
 
 ---
 
