@@ -13,6 +13,7 @@ use re_app::package::{ARCHIVE_NAME, RuntimeVersions};
 use re_core::Diagnostic;
 
 use super::BuildReport;
+use super::notices::{self, NOTICES_FILE, NoticesReport};
 use crate::codes;
 
 /// The Rust target of the web runtime.
@@ -29,7 +30,17 @@ pub const RUNTIME_FILES: &[&str] = &[
     "real.js",
     "real_bg.wasm",
     RUNTIME_INFO,
+    NOTICES_FILE,
 ];
+
+/// A web runtime folder ready to copy.
+#[derive(Debug)]
+pub struct WebRuntime {
+    /// The folder.
+    pub dir: PathBuf,
+    /// What its notices hold, when they were listed now.
+    pub notices: Option<NoticesReport>,
+}
 
 /// The archive size above which a web build warns (`RE0974`).
 pub const LARGE_ARCHIVE: u64 = 256 << 20;
@@ -95,41 +106,51 @@ pub fn runtime(
     out: &Path,
     runtime: Option<&Path>,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<PathBuf, Diagnostic> {
+) -> Result<WebRuntime, Diagnostic> {
     match runtime {
         Some(dir) => {
             out_apart(out, dir, "--runtime")?;
             check_runtime(dir)?;
-            Ok(dir.to_owned())
+            Ok(WebRuntime {
+                dir: dir.to_owned(),
+                notices: None,
+            })
         }
         None => build_runtime(out, diagnostics),
     }
 }
 
 /// Copies the web runtime from `runtime` into `out`, where the archive
-/// already is, with the page titled after the game. Diagnostics go to
-/// `report`; returns false when the build failed.
-pub fn lay_out(out: &Path, runtime: &Path, config: &AppConfig, report: &mut BuildReport) -> bool {
+/// already is, with the page titled after the game and the game's own
+/// notices after the runtime's. Warnings go to `report`.
+///
+/// # Errors
+///
+/// `RE0955` when a file cannot be written.
+pub fn lay_out(
+    out: &Path,
+    runtime: &Path,
+    config: &AppConfig,
+    game_notices: &str,
+    report: &mut BuildReport,
+) -> Result<(), Diagnostic> {
     let failed = |what: &str, e: std::io::Error| {
         Diagnostic::error(codes::BUNDLE_FAILED, format!("cannot write {what}: {e}"))
     };
     for name in RUNTIME_FILES {
         let from = runtime.join(name);
-        let copied = if *name == "index.html" {
-            let title = config
-                .package
-                .as_ref()
-                .and_then(|p| p.display_name.clone())
-                .unwrap_or_else(|| config.project.name.clone());
-            std::fs::read_to_string(&from)
-                .and_then(|page| std::fs::write(out.join(name), titled(&page, &title)))
-        } else {
-            std::fs::copy(&from, out.join(name)).map(|_| ())
+        let copied = match *name {
+            "index.html" => std::fs::read_to_string(&from).and_then(|page| {
+                let title = super::bundle::display_name(config);
+                std::fs::write(out.join(name), titled(&page, &title))
+            }),
+            NOTICES_FILE => std::fs::read_to_string(&from).and_then(|text| {
+                let text = format!("{}{game_notices}", notices::runtime_part(&text));
+                std::fs::write(out.join(name), text)
+            }),
+            _ => std::fs::copy(&from, out.join(name)).map(|_| ()),
         };
-        if let Err(e) = copied {
-            report.pack.diagnostics.push(failed(name, e));
-            return false;
-        }
+        copied.map_err(|e| failed(name, e))?;
         report.files.push((*name).to_owned());
     }
     let size = std::fs::metadata(out.join(ARCHIVE_NAME)).map_or(0, |m| m.len());
@@ -145,11 +166,7 @@ pub fn lay_out(out: &Path, runtime: &Path, config: &AppConfig, report: &mut Buil
             .with_hint("leave out what the game does not need with `[package] exclude`"),
         );
     }
-    report.notes.push(
-        "the web build has no THIRD-PARTY-NOTICES.txt yet; the notices arrive with WP19 PR \"bundles\""
-            .to_owned(),
-    );
-    true
+    Ok(())
 }
 
 /// `page` with its `<title>` replaced by `title`, escaped.
@@ -363,8 +380,9 @@ fn check_toolchain(ws: &Path) -> Result<PathBuf, Diagnostic> {
 }
 
 /// Builds the web runtime with cargo in the engine workspace, into
-/// `target/web-runtime/`. A missing `wasm-opt` is a warning in `diagnostics`.
-fn build_runtime(out: &Path, diagnostics: &mut Vec<Diagnostic>) -> Result<PathBuf, Diagnostic> {
+/// `target/web-runtime/`, with its notices. A missing `wasm-opt` is a warning
+/// in `diagnostics`.
+fn build_runtime(out: &Path, diagnostics: &mut Vec<Diagnostic>) -> Result<WebRuntime, Diagnostic> {
     let failed = |msg: String| Diagnostic::error(codes::WEB_RUNTIME_FAILED, msg);
     let Some(ws) = super::engine_workspace() else {
         return Err(failed(
@@ -450,7 +468,13 @@ fn build_runtime(out: &Path, diagnostics: &mut Vec<Diagnostic>) -> Result<PathBu
     let info = serde_json::to_string_pretty(&runtime_info()).unwrap_or_default();
     std::fs::write(stage.join(RUNTIME_INFO), info + "\n")
         .map_err(|e| failed(format!("cannot write {RUNTIME_INFO}: {e}")))?;
-    Ok(stage)
+    let (text, report) = notices::runtime_notices(&ws, notices::Runtime::Web, TARGET)?;
+    std::fs::write(stage.join(NOTICES_FILE), text)
+        .map_err(|e| failed(format!("cannot write {NOTICES_FILE}: {e}")))?;
+    Ok(WebRuntime {
+        dir: stage,
+        notices: Some(report),
+    })
 }
 
 #[cfg(test)]

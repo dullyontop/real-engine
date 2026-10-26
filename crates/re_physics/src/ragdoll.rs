@@ -10,8 +10,10 @@
 //! skeleton.
 //!
 //! Poses cross the boundary in the skeleton's model space, placed in the world by a
-//! frame that travels with `AddRagdoll` and `SetRagdollTarget`. `re_physics` adds
-//! what Jolt leaves to the caller:
+//! frame that travels with `AddRagdoll` and `SetRagdollTarget`. Jolt gets them
+//! relative to the frame, with the frame's position relative to the simulation
+//! origin (ADR-0042), so a ragdoll is as precise far out as near zero. `re_physics`
+//! adds what Jolt leaves to the caller:
 //!
 //! * animated ragdolls are driven to their target every step, and teleported when
 //!   the target is too far for one step;
@@ -22,7 +24,9 @@
 //! * parts answer queries and character collisions as the ragdoll's entity, with its
 //!   groups; they report no contact events and no body poses;
 //! * an entity may have a character and a ragdoll (a character that can fall over):
-//!   the character never meets its own ragdoll's parts.
+//!   the character never meets its own ragdoll's parts;
+//! * a ragdoll whose target a move of the origin leaves out of reach stays where it
+//!   is, undriven, until a move or a new target brings the target back in reach.
 
 use std::collections::BTreeMap;
 
@@ -34,7 +38,7 @@ use oxijolt::{
     SixDofConstraintSettings, Skeleton, SkeletonJoint as JSkeletonJoint, SkeletonMapper,
     SkeletonPose, SpringSettings, SwingTwistConstraintSettings, SwingType, TranslationLocks,
 };
-use re_core::Diagnostic;
+use re_core::{Diagnostic, Severity};
 use re_types::EntityId;
 use re_types::physics::{
     GroupMask, JointPose, RagdollConstraint, RagdollDesc, RagdollMode, RagdollPartDesc,
@@ -44,7 +48,7 @@ use re_types::physics::{
 use crate::codes;
 use crate::convert::{gq, grv, gv, jq, jv, rv, unit_rotation};
 use crate::shapes;
-use crate::world::{Physics, at, in_world, object_layer, outside_world, unknown};
+use crate::world::{Physics, at, in_world, object_layer, unknown};
 
 /// The ragdoll of one entity.
 pub(crate) struct RagdollEntry {
@@ -68,6 +72,8 @@ pub(crate) struct RagdollEntry {
     frame: (Vec3, Quat),
     /// The target pose, one model-space transform per animation joint.
     target: Vec<JointPose>,
+    /// The frame is out of reach of the moved origin, and that was reported.
+    far: bool,
 }
 
 /// The motion of one ragdoll's parts, in a [`MotionState`](crate::MotionState).
@@ -75,7 +81,7 @@ pub(crate) struct RagdollEntry {
 pub(crate) struct RagdollMotion {
     pub(crate) id: EntityId,
     pub(crate) mode: RagdollMode,
-    /// Per part: position, rotation, linear and angular velocity, awake.
+    /// Per part: world position, rotation, linear and angular velocity, awake.
     pub(crate) parts: Vec<(Vec3, Quat, Vec3, Vec3, bool)>,
 }
 
@@ -89,22 +95,36 @@ pub(crate) fn ragdoll_invalid(id: EntityId, why: impl std::fmt::Display) -> Diag
         )
 }
 
-/// `frame` followed by `local`.
-fn place((pos, rot): (Vec3, Quat), local: &JointPose) -> JointPose {
-    JointPose::new(pos, rot).mul(local)
+/// `local` turned by a frame's rotation `rot`: placed by the frame, relative to the
+/// frame's position.
+fn turned(rot: Quat, local: &JointPose) -> JointPose {
+    JointPose::new(Vec3::ZERO, rot).mul(local)
 }
 
-/// A Jolt pose with its root offset at `origin`, from world transforms.
-fn skeleton_pose(origin: Vec3, world: impl Iterator<Item = JointPose>) -> SkeletonPose {
+/// A Jolt pose with its root offset at `root`, from transforms relative to it.
+fn skeleton_pose(root: Vec3, relative: impl Iterator<Item = JointPose>) -> SkeletonPose {
     SkeletonPose {
-        root_offset: rv(origin),
-        joints: world
-            .map(|w| JointTransform {
-                translation: jv(w.pos - origin),
-                rotation: jq(w.rot),
+        root_offset: rv(root),
+        joints: relative
+            .map(|r| JointTransform {
+                translation: jv(r.pos),
+                rotation: jq(r.rot),
             })
             .collect(),
     }
+}
+
+/// The first joint of `pose` (the root first) beyond Jolt's limits, in Jolt's frame.
+fn beyond(pose: &SkeletonPose) -> Option<Vec3> {
+    let root = grv(pose.root_offset);
+    std::iter::once(root)
+        .chain(pose.joints.iter().map(|t| root + gv(t.translation)))
+        .find(|&p| !in_world(p))
+}
+
+/// Whether every joint of `pose` is within Jolt's limits.
+fn reachable(pose: &SkeletonPose) -> bool {
+    beyond(pose).is_none()
 }
 
 /// The joint between a part at `at` (its neutral world pose) and its parent part, with
@@ -280,12 +300,12 @@ impl RagdollEntry {
         )
     }
 
-    /// The target as a Jolt pose of the parts.
-    fn target_pose(&self) -> SkeletonPose {
-        let frame = self.frame;
+    /// The target as a Jolt pose of the parts, for a simulation origin at `origin`.
+    fn target_pose(&self, origin: Vec3) -> SkeletonPose {
+        let (pos, rot) = self.frame;
         skeleton_pose(
-            frame.0,
-            self.joints.iter().map(|&j| place(frame, &self.target[j])),
+            pos - origin,
+            self.joints.iter().map(|&j| turned(rot, &self.target[j])),
         )
     }
 
@@ -321,17 +341,6 @@ impl Physics {
             )
             .at(at(id))
             .with_hint("an entity has a ragdoll instead of a body; remove the body first"));
-        }
-        // Ragdoll poses go to Jolt in world coordinates: not yet relative to a
-        // moved simulation origin (ADR-0042).
-        if self.parts.origin != Vec3::ZERO {
-            return Err(ragdoll_invalid(
-                id,
-                format!(
-                    "ragdolls are not simulated yet while the simulation origin is moved (to {})",
-                    self.parts.origin
-                ),
-            ));
         }
         self.check_layer(id, desc.layer)?;
         let skeleton = &desc.skeleton;
@@ -403,8 +412,8 @@ impl Physics {
                 ),
             ));
         }
-        if !in_world(pos) {
-            return Err(outside_world(id, "ragdoll", pos));
+        if !self.in_reach(pos) {
+            return Err(self.far_ragdoll(id, "ragdoll", pos));
         }
         let rot = unit_rotation(rot).ok_or_else(|| ragdoll_invalid(id, "the rotation is zero"))?;
         let target = match pose {
@@ -471,7 +480,13 @@ impl Physics {
         let settings = build_settings(&sorted, &joints, &part_shapes, &ragdoll_skeleton, 1.0)
             .map_err(|e| ragdoll_invalid(id, e))?;
         let frame = (pos, rot);
-        let start = skeleton_pose(pos, joints.iter().map(|&j| place(frame, &target[j])));
+        let start = skeleton_pose(
+            pos - self.parts.origin,
+            joints.iter().map(|&j| turned(rot, &target[j])),
+        );
+        if let Some(part) = beyond(&start) {
+            return Err(self.far_ragdoll(id, "ragdoll part", part + self.parts.origin));
+        }
         let rid = self
             .world
             .create_ragdoll(&settings, Some(&start), Activation::Activate)
@@ -494,6 +509,7 @@ impl Physics {
             motor_scale: 1.0,
             frame,
             target,
+            far: false,
         };
         self.register_parts(id, &mut entry);
         self.ragdolls.insert(id, entry);
@@ -501,6 +517,21 @@ impl Physics {
             .settle
             .insert(id, (SettleDetector::default(), false));
         Ok(())
+    }
+
+    /// `RE5006` for a ragdoll added with its `what` at `pos`, out of reach: an error
+    /// at the world origin, a warning while the origin is moved (content left
+    /// behind, ADR-0042).
+    fn far_ragdoll(&self, id: EntityId, what: &str, pos: Vec3) -> Diagnostic {
+        let mut d = self.out_of_reach(id, what, pos);
+        if self.parts.origin != Vec3::ZERO && pos.is_finite() {
+            d.severity = Severity::Warning;
+            d.message = format!(
+                "{}; the ragdoll is not added: add it again once the origin comes within reach",
+                d.message
+            );
+        }
+        d
     }
 
     /// Checks a pose for `desc`'s skeleton and returns it with normalised rotations.
@@ -681,13 +712,29 @@ impl Physics {
             .get(&id)
             .ok_or_else(|| unknown(id, "ragdoll"))?;
         let target = self.check_pose(id, &entry.desc, pose)?;
-        if !in_world(pos) {
-            return Err(outside_world(id, "target", pos));
+        let reported = entry.far;
+        let far = !self.in_reach(pos);
+        if far && (self.parts.origin == Vec3::ZERO || !pos.is_finite()) {
+            return Err(self.out_of_reach(id, "target", pos));
         }
         let rot = unit_rotation(rot).ok_or_else(|| ragdoll_invalid(id, "the rotation is zero"))?;
+        // A moved origin left it behind (ADR-0042): it keeps the target and follows it
+        // once in reach, reported once until then.
+        if far && !reported {
+            let d = self.out_of_reach(id, "target", pos);
+            self.push_diagnostic(Diagnostic {
+                severity: Severity::Warning,
+                message: format!(
+                    "{}; the ragdoll stays where it is and follows its target once in reach",
+                    d.message
+                ),
+                ..d
+            });
+        }
         let entry = self.ragdolls.get_mut(&id).expect("checked above");
         entry.frame = (pos, rot);
         entry.target = target;
+        entry.far = far;
         Ok(())
     }
 
@@ -732,28 +779,39 @@ impl Physics {
     }
 
     /// Drives animated ragdolls to their targets and aims powered ragdolls' motors.
+    /// A target out of reach of the origin drives nothing until it is back in reach:
+    /// animated parts stay where they are, and powered motors keep their last aim.
     pub(crate) fn drive_ragdolls(&mut self, dt: f32) {
+        let origin = self.parts.origin;
         let mut failed = Vec::new();
         for (&id, r) in &self.ragdolls {
-            let driven = match r.mode {
-                RagdollMode::Animated => {
-                    let pose = r.target_pose();
-                    let Ok(mut m) = self.world.ragdoll_mut(r.id) else {
-                        continue;
-                    };
-                    // A target too far for one step (a teleport) is jumped to.
-                    m.drive_to_pose_using_kinematics(&pose, dt).or_else(|_| {
-                        m.set_pose(&pose)?;
-                        m.set_linear_and_angular_velocity(jv(Vec3::ZERO), jv(Vec3::ZERO))
-                    })
+            let motors = match r.mode {
+                RagdollMode::Animated => false,
+                RagdollMode::Powered { strength } if strength > 0.0 => true,
+                _ => continue,
+            };
+            let pose = r.target_pose(origin);
+            if !reachable(&pose) {
+                // Animated parts stop where they are: a kinematic body keeps the
+                // velocity of its last drive.
+                if !motors && let Ok(mut m) = self.world.ragdoll_mut(r.id) {
+                    let _ = m.set_linear_and_angular_velocity(jv(Vec3::ZERO), jv(Vec3::ZERO));
                 }
-                RagdollMode::Powered { strength } if strength > 0.0 => {
-                    let pose = r.target_pose();
-                    self.world
-                        .ragdoll_mut(r.id)
-                        .and_then(|mut m| m.drive_to_pose_using_motors(&pose))
-                }
-                _ => Ok(()),
+                continue;
+            }
+            let driven = if motors {
+                self.world
+                    .ragdoll_mut(r.id)
+                    .and_then(|mut m| m.drive_to_pose_using_motors(&pose))
+            } else {
+                let Ok(mut m) = self.world.ragdoll_mut(r.id) else {
+                    continue;
+                };
+                // A target too far for one step (a teleport) is jumped to.
+                m.drive_to_pose_using_kinematics(&pose, dt).or_else(|_| {
+                    m.set_pose(&pose)?;
+                    m.set_linear_and_angular_velocity(jv(Vec3::ZERO), jv(Vec3::ZERO))
+                })
             };
             if let Err(e) = driven {
                 failed.push(ragdoll_invalid(id, e));
@@ -777,18 +835,28 @@ impl Physics {
     pub fn ragdoll_parts(&self, id: EntityId) -> Option<Vec<(String, JointPose)>> {
         let r = self.ragdolls.get(&id)?;
         Some(
-            r.bodies
+            r.desc
+                .parts
                 .iter()
-                .zip(&r.desc.parts)
-                .filter_map(|(&b, p)| {
-                    let b = self.world.body(b).ok()?;
-                    Some((
+                .zip(self.jolt_parts(r))
+                .map(|(p, at)| {
+                    (
                         p.joint.clone(),
-                        JointPose::new(grv(b.position()), gq(b.rotation())),
-                    ))
+                        JointPose::new(at.pos + self.parts.origin, at.rot),
+                    )
                 })
                 .collect(),
         )
+    }
+
+    /// Each part's pose in Jolt's frame (relative to the simulation origin), in part
+    /// order.
+    fn jolt_parts(&self, r: &RagdollEntry) -> Vec<JointPose> {
+        r.bodies
+            .iter()
+            .filter_map(|&b| self.world.body(b).ok())
+            .map(|b| JointPose::new(grv(b.position()), gq(b.rotation())))
+            .collect()
     }
 
     /// The state of an entity's ragdoll after the last step, or `None` if it has none.
@@ -800,10 +868,18 @@ impl Physics {
     /// the target's local pose.
     pub fn ragdoll(&self, id: EntityId) -> Option<RagdollState> {
         let r = self.ragdolls.get(&id)?;
-        let parts = self.ragdoll_parts(id)?;
         let (fpos, frot) = r.frame;
-        let to_model = JointPose::new(fpos, frot).inverse();
-        let ragdoll = skeleton_pose(fpos, parts.iter().map(|(_, p)| *p));
+        // The parts relative to the frame's position, from Jolt's frame: as precise far
+        // from the world origin as near it, and within Jolt's limits for the mapper
+        // wherever the ragdoll is.
+        let jolt = self.jolt_parts(r);
+        let at = fpos - self.parts.origin;
+        let parts: Vec<JointPose> = jolt
+            .iter()
+            .map(|p| JointPose::new(p.pos - at, p.rot))
+            .collect();
+        let to_model = JointPose::new(Vec3::ZERO, frot).inverse();
+        let ragdoll = skeleton_pose(Vec3::ZERO, parts.iter().copied());
         let target = &r.target;
         let skeleton = &r.desc.skeleton.joints;
         let local: Vec<JointTransform> = skeleton
@@ -824,13 +900,13 @@ impl Physics {
             .collect();
         let pose = match r.mapper.map(&ragdoll, &local) {
             Ok(mapped) => {
-                let origin = grv(mapped.root_offset);
+                let root = grv(mapped.root_offset);
                 mapped
                     .joints
                     .iter()
                     .map(|t| {
                         to_model.mul(&JointPose::new(
-                            origin + gv(t.translation),
+                            root + gv(t.translation),
                             gq(t.rotation).normalize(),
                         ))
                     })
@@ -841,7 +917,7 @@ impl Physics {
                 let mut out: Vec<JointPose> = Vec::with_capacity(skeleton.len());
                 for (j, joint) in skeleton.iter().enumerate() {
                     let p = match r.joints.binary_search(&j) {
-                        Ok(i) => to_model.mul(&parts[i].1),
+                        Ok(i) => to_model.mul(&parts[i]),
                         Err(_) => match joint.parent {
                             None => target[j],
                             Some(p) => out[usize::from(p)]
@@ -853,12 +929,12 @@ impl Physics {
                 out
             }
         };
-        let root = parts.first().map_or(JointPose::IDENTITY, |(_, p)| *p);
+        let root = jolt.first().map_or(JointPose::IDENTITY, |p| *p);
         Some(RagdollState {
             mode: r.mode,
             pos: fpos,
             rot: frot,
-            root_pos: root.pos,
+            root_pos: root.pos + self.parts.origin,
             root_rot: root.rot,
             calm: self.state.settle.get(&id).is_some_and(|s| s.1),
             pose,
@@ -888,7 +964,7 @@ impl Physics {
                     .filter_map(|&b| self.world.body(b).ok())
                     .map(|b| {
                         (
-                            grv(b.position()),
+                            self.world_point(b.position()),
                             gq(b.rotation()),
                             gv(b.linear_velocity()),
                             gv(b.angular_velocity()),
@@ -952,11 +1028,14 @@ impl Physics {
         let Some(r) = self.ragdolls.get(&m.id) else {
             return;
         };
+        // The motion holds world positions.
+        let origin = self.parts.origin;
         for (&b, &(pos, rot, linear, angular, awake)) in r.bodies.iter().zip(&m.parts) {
             let Ok(mut body) = self.world.body_mut(b) else {
                 continue;
             };
-            let _ = body.set_position_and_rotation(rv(pos), jq(rot), Activation::DontActivate);
+            let _ =
+                body.set_position_and_rotation(rv(pos - origin), jq(rot), Activation::DontActivate);
             if awake {
                 let _ = body.set_linear_velocity(jv(linear));
                 let _ = body.set_angular_velocity(jv(angular));
@@ -976,6 +1055,7 @@ pub(crate) struct RagdollSaved {
     motor_scale: f32,
     frame: (Vec3, Quat),
     target: Vec<JointPose>,
+    far: bool,
 }
 
 impl Physics {
@@ -990,6 +1070,7 @@ impl Physics {
                         motor_scale: r.motor_scale,
                         frame: r.frame,
                         target: r.target.clone(),
+                        far: r.far,
                     },
                 )
             })
@@ -1009,7 +1090,8 @@ impl Physics {
         (!same).then(|| "ragdolls were added, removed or rebuilt since it was saved".into())
     }
 
-    /// Puts back each ragdoll's mode, motor scale, frame and target; check first with
+    /// Puts back each ragdoll's mode, motor scale, frame and target, and whether its
+    /// target out of reach was reported; check first with
     /// [`ragdolls_unrestorable`](Self::ragdolls_unrestorable).
     pub(crate) fn restore_ragdolls(&mut self, saved: &BTreeMap<EntityId, RagdollSaved>) {
         for (id, s) in saved {
@@ -1018,6 +1100,7 @@ impl Physics {
                 r.motor_scale = s.motor_scale;
                 r.frame = s.frame;
                 r.target.clone_from(&s.target);
+                r.far = s.far;
             }
         }
     }
@@ -1053,7 +1136,7 @@ impl Physics {
                     continue;
                 };
                 out.push(1);
-                floats(&mut out, &grv(b.position()).to_array());
+                floats(&mut out, &self.world_point(b.position()).to_array());
                 floats(&mut out, &gq(b.rotation()).to_array());
                 floats(&mut out, &gv(b.linear_velocity()).to_array());
                 floats(&mut out, &gv(b.angular_velocity()).to_array());

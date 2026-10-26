@@ -4,9 +4,11 @@
 use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
 use std::num::NonZeroU64;
+use std::time::Duration;
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use re_core::Diagnostic;
+use re_core::time::Instant;
 use re_types::mesh::{Aabb, MeshData, SkinWeights};
 use re_types::render::{
     AlphaMode, DrawFlags, MaterialDesc, MaterialHandle, MeshHandle, QuadDepth, RenderSnapshot,
@@ -120,6 +122,20 @@ pub struct FrameReport {
     /// Problems that did not stop the frame: stale handles (once per handle) and
     /// ignored lights.
     pub warnings: Vec<Diagnostic>,
+}
+
+/// The time the renderer spent drawing on the calling thread, from
+/// [`Renderer::take_draw_time`] (ADR-0038).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DrawTime {
+    /// Preparing, encoding and finishing the command buffers of
+    /// [`Renderer::render`], [`Renderer::render_with`] and
+    /// [`Renderer::paint_ui`]: the work a render thread would take over.
+    pub encode: Duration,
+    /// Inside `Queue::submit`. Software rasterisers and some GL drivers wait
+    /// there until the GPU is done with the previous frame, so on them this is
+    /// mostly waiting.
+    pub submit: Duration,
 }
 
 /// Live resources and the last frame, from [`Renderer::stats`].
@@ -398,6 +414,7 @@ pub struct Renderer {
     materials: Slots<GpuMaterial>,
     ui: UiPainter,
     last_frame: FrameStats,
+    draw_time: DrawTime,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -1039,6 +1056,7 @@ impl Renderer {
             mask_targets: None,
             highlight_buffer,
             ui: UiPainter::new(&device),
+            draw_time: DrawTime::default(),
             adapter: gpu.adapter.clone(),
             device,
             queue,
@@ -1978,6 +1996,22 @@ impl Renderer {
         snapshot: &RenderSnapshot,
         extras: &SceneExtras,
     ) -> Result<FrameReport, Diagnostic> {
+        let start = Instant::now();
+        let submitted = self.draw_time.submit;
+        let report = self.draw_frame(device, queue, target, snapshot, extras);
+        let waited = self.draw_time.submit - submitted;
+        self.draw_time.encode += start.elapsed().saturating_sub(waited);
+        report
+    }
+
+    fn draw_frame(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        snapshot: &RenderSnapshot,
+        extras: &SceneExtras,
+    ) -> Result<FrameReport, Diagnostic> {
         let texture = target.texture();
         let (width, height, format) = (texture.width(), texture.height(), texture.format());
         self.check_target(texture)?;
@@ -2841,7 +2875,10 @@ impl Renderer {
                 pass.draw(0..6, 0..1);
             }
         }
-        queue.submit([encoder.finish()]);
+        let commands = encoder.finish();
+        let submitting = Instant::now();
+        queue.submit([commands]);
+        self.draw_time.submit += submitting.elapsed();
         self.last_frame = report.stats;
         Ok(report)
     }
@@ -3162,7 +3199,18 @@ impl Renderer {
         target: &wgpu::TextureView,
         ui: &UiFrame,
     ) -> Result<(), Diagnostic> {
-        self.ui.paint(device, queue, target, ui)
+        let start = Instant::now();
+        let painted = self.ui.paint(device, queue, target, ui);
+        let waited = *painted.as_ref().unwrap_or(&Duration::ZERO);
+        self.draw_time.submit += waited;
+        self.draw_time.encode += start.elapsed().saturating_sub(waited);
+        painted.map(|_| ())
+    }
+
+    /// The time spent drawing since the last call (then zero): PerfReport's
+    /// `render_submit` and `queue_submit` (ADR-0038).
+    pub fn take_draw_time(&mut self) -> DrawTime {
+        std::mem::take(&mut self.draw_time)
     }
 
     /// Makes a texture view usable in egui (for example a scene [`Capture`](crate::Capture)

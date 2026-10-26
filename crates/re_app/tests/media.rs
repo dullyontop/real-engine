@@ -73,6 +73,40 @@ fn a_screenshot_draws_the_scene_and_the_hud() {
 }
 
 #[test]
+fn drawn_frames_report_their_submission_time() {
+    let dir = project(SCENE);
+    let mut app = open(dir.path());
+    app.ensure_graphics().unwrap();
+    // Headless frames draw nothing: no submission samples.
+    let report = app.run_headless(Some(3), None).unwrap();
+    assert_eq!(report.perf.render_submit.samples, 0);
+    // Each drawn frame is one sample: here, two drawn into a capture
+    // (as a window's are) and a screenshot.
+    let capture = re_render::Capture::new(&app.graphics().unwrap().gpu().device, 160, 120).unwrap();
+    for _ in 0..2 {
+        app.frame(std::time::Duration::from_secs_f64(1.0 / 60.0));
+        app.draw_into(capture.view(), [160, 120], 1.0).unwrap();
+    }
+    app.screenshot(None).unwrap();
+    let perf = app.perf_report();
+    assert_eq!(perf.render_submit.samples, 3, "{perf:?}");
+    assert_eq!(perf.queue_submit.samples, 3, "{perf:?}");
+    assert!(
+        perf.render_submit.mean_ms > 0.0 && perf.render_submit.max_ms >= perf.render_submit.mean_ms
+    );
+    assert!(perf.queue_submit.mean_ms > 0.0);
+    // Old reports without the fields still read.
+    let mut json = serde_json::to_value(&perf).unwrap();
+    json.as_object_mut().unwrap().remove("render_submit");
+    json.as_object_mut().unwrap().remove("queue_submit");
+    let old: re_app::PerfReport = serde_json::from_value(json).unwrap();
+    assert_eq!(old.render_submit, re_app::TimeStats::default());
+    assert_eq!(old.queue_submit, re_app::TimeStats::default());
+    app.reset_perf();
+    assert_eq!(app.perf_report().render_submit.samples, 0);
+}
+
+#[test]
 fn an_unknown_mesh_is_reported_once() {
     let dir = project(&SCENE.replace("builtin:cube", "builtin:teapot"));
     let mut app = open(dir.path());
