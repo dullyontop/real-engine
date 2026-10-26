@@ -2,10 +2,11 @@
 //! path does not already say it, so `cargo test -p re_proc stream` runs them.
 
 use std::collections::BTreeMap;
+use std::f32::consts::FRAC_1_SQRT_2;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use re_command::EditState;
 use re_reflect::Value;
 use re_scene::World;
@@ -294,6 +295,64 @@ fn stream_walks_are_deterministic() {
     assert_eq!(a, b);
     assert_eq!(ha, hb);
     assert!(a.iter().any(|l| !l.1.is_empty()), "the walk unloads cells");
+}
+
+/// A focus that looks along −Z and goes along +Z, as a car drives along its
+/// +Z: the cells further ahead load the way it goes, not the way it looks.
+#[test]
+fn stream_cells_load_ahead_of_the_way_a_focus_goes() {
+    // From (32, -96), in c/0_-2: c/0_-4 is 96 m along −Z, c/0_0 96 m along
+    // +Z and c/2_-2 96 m along +X, all beyond `radius` and within
+    // `radius_ahead`.
+    let has = |cells: &[String], k: &str| cells.iter().any(|c| c == k);
+    let mut still = streamed(world_graph(), 32.0, -96.0, json!([]));
+    run(&mut still.world, 0..12);
+    let cells = loaded(&still.world);
+    assert!(has(&cells, "c/0_-4") && !has(&cells, "c/0_0"), "{cells:?}");
+
+    // The same focus driving 2 m along +Z, then standing.
+    let mut st = streamed(world_graph(), 32.0, -98.0, json!([]));
+    let w = &mut st.world;
+    for t in 0..12u64 {
+        move_to(w, 32.0, (-98.0 + t as f32 * 0.5).min(-96.0));
+        let r = step(w, t, &config());
+        assert!(r.diagnostics.is_empty(), "{:#?}", r.diagnostics);
+    }
+    let cells = loaded(w);
+    assert!(has(&cells, "c/0_0") && !has(&cells, "c/0_-4"), "{cells:?}");
+
+    // Turned to look along +X and creeping 0.9 m that way, less than a
+    // metre, it keeps the way it last went: c/2_-2 is not wanted.
+    let along_x = Quat::from_xyzw(0.0, -FRAC_1_SQRT_2, 0.0, FRAC_1_SQRT_2);
+    w.set("player", "Transform", "rotation", Value::Quat(along_x))
+        .unwrap();
+    for t in 12..24u64 {
+        move_to(w, 32.0 + (t - 11).min(3) as f32 * 0.3, -96.0);
+        step(w, t, &config());
+    }
+    let cells = loaded(w);
+    assert!(has(&cells, "c/0_0") && !has(&cells, "c/2_-2"), "{cells:?}");
+    let s = w.ecs.resource::<Streamer>();
+    assert_eq!(s.pending_at("c/2_-2"), None);
+
+    // A fork goes on the same way as the world it came from.
+    let mut fork = w.fork();
+    fork.ecs
+        .insert_resource(w.ecs.resource::<GraphStore>().clone());
+    let streamer = w.ecs.resource::<Streamer>().forked(w, &fork);
+    fork.ecs.insert_resource(streamer);
+    run(w, 24..36);
+    run(&mut fork, 24..36);
+    assert_eq!(loaded(&fork), loaded(w));
+    assert!(!has(&loaded(&fork), "c/2_-2"));
+
+    // A jump of more than a cell in one step, as a teleport, starts again:
+    // from (32, 32) it looks ahead along its −Z, now +X (c/2_0), not the
+    // way it jumped (c/0_2).
+    move_to(w, 32.0, 32.0);
+    run(w, 36..48);
+    let cells = loaded(w);
+    assert!(has(&cells, "c/2_0") && !has(&cells, "c/0_2"), "{cells:?}");
 }
 
 #[test]
