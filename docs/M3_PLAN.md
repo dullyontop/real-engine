@@ -125,6 +125,8 @@ cargo xtask d2 --project examples/plaza --json
 - The CI `d2` job shows identical hashes on Linux x86_64 and Windows x86_64 for both projects, and reports macOS.
 - The physics benchmarks with `cross-platform-deterministic` are within the ADR's stated cost.
 
+**Progress (2026-10-24).** Done: "blocking" (#87) and "d2" (#100: ADR-0036 and its amendment, with glam's `scalar-math` and `libm` features on every target). `build-windows`, `build-macos` and `d2` are required (ADR-0023). The `d2` job requires macOS arm64 as well as Linux x86_64 and Windows x86_64, since its hashes matched from the first run, and it has compared the valley's replays since WP28's #135. So the definition of done below holds, and so does M3's item 2.
+
 **Definition of done:** both PRs merged; Windows and macOS block merges; the `d2` job is required.
 
 ---
@@ -337,6 +339,8 @@ cargo test --locked -p re_script debug
 - Editor tests drive the canvas and gizmos through their commands and check the transactions.
 - Debugger tests stop at a breakpoint, step over and into, and read locals in a fixture.
 
+**Progress (2026-10-24).** Done: "gizmos and docking" (#91), "debugger" (#103, wired into `real run --debug` and `real editor --debug` in #109) and "canvas" (#123, over graph files opened as documents in the entity core, #113). After them, a gizmo drag moves the entity live and is one undo step (#140, on #133's coalescing transactions), and game scripts pause at breakpoints in play (#157). ADR-0044's amendment records the editor as built, and WP27 attached compat scripts to the debugger (#146 and #154, ADR-0045's amendments). WP25 is complete.
+
 **Definition of done:** the canvas and gizmo PRs merged, and the debugger merged or declined by ADR-0045 with the spike's numbers.
 
 ---
@@ -363,6 +367,8 @@ cargo test --locked -p re_mcp
 ```
 - Every template creates a project that passes `real verify`.
 - The M1 and M2 MCP end-to-end tests pass over both stdio and HTTP.
+
+**Progress (2026-10-21).** Done: "http" (#92), "templates" (#104) and "eval" (#124: `real agent eval`), as ADR-0046's amendment records. #120 and #166 drain the body of a refused HTTP request, so a Windows client gets the refusal instead of a reset. The MCP end-to-end tests (`crates/re_mcp/tests/wire.rs`) run each protocol test once over stdio and once over HTTP. WP26 is complete.
 
 **Definition of done:** the three PRs merged.
 
@@ -475,6 +481,7 @@ real build --project examples/island --out out/island-web --target web
 - `cargo xtask web-test` and WebGL2 moved from "runtime" to "build". The static server stays in Node (`tools/web-test/serve.mjs`), not xtask.
 - `RE0975` waits for WP30's server role, since nothing triggers it yet. The notices file in the web folder came with WP19 PR "bundles" (#161).
 - Saved data on the web is persisted since WP27's "saved data" (#131).
+- The `web` job's checks run as `cargo xtask web-test` in `build-web`, which is required, rather than as a job of their own.
 - Release CI publishing the prebuilt web runtime: `.github/workflows/release.yml` builds it on a `v*` tag and attaches `real-web-runtime-<version>.tar.gz` (the runtime files) to the release, for `real build --target web --runtime DIR`. Since WP19 PR "bundles" (#161), the desktop runtimes are published beside it, as `real-runtime-<version>-<triple>` for Linux x86_64, Windows x86_64 and macOS arm64, and every runtime folder is written by `real build --runtime-only`.
 
 **Definition of done:** PRs "portable", "toolchain", "runtime" and "build" merged; `build-web` and `web` CI jobs required and green; ADR-0049 Accepted with the full runtime's size and the private-sample results recorded under `research/m3/wp29/`.
