@@ -37,7 +37,8 @@ local EXITS = {
 }
 -- How far (m) the hero may move sideways in its first step at a spot. Any
 -- more, or any rise, is its CharacterController pushing the capsule clear of
--- something; on its own, the capsule just starts to fall.
+-- something; on its own, the capsule just starts to fall, or stays put where
+-- it touches ground it can stand on.
 local SETTLED = 0.002
 -- How far up the ground's normal points on a 45° slope, the steepest the
 -- hero walks (the CharacterController's max_slope_deg).
@@ -207,14 +208,15 @@ end
 -- CharacterController. That controller's first step pushes the capsule
 -- clear of anything it overlaps, by as much as it overlaps (a trunk, a
 -- rock's edge), so a hero that moved sideways or up in it has no room
--- there, and the next spot is tried. One that only started to fall gets
--- out there, unless the car, driven on meanwhile, could reach it now. With
--- no spot left, the hero stays in, and the HUD says so.
+-- there, and the next spot is tried. One that only started to fall, or did
+-- not move (a still character on ground it can stand on feels no gravity),
+-- gets out there, unless the car, driven on meanwhile, could reach it now.
+-- With no spot left, the hero stays in, and the HUD says so.
 local function leave(l: Leaving)
 	if l.tried > 0 then
 		local spot = l.spots[l.tried]
 		local moved = physics.character(hero).position - spot.at
-		local fits = moved.x * moved.x + moved.z * moved.z < SETTLED * SETTLED and moved.y < 0
+		local fits = moved.x * moved.x + moved.z * moved.z < SETTLED * SETTLED and moved.y <= 0
 		local pos: vector = car:get("Transform", "translation")
 		local rot: Quat = car:get("Transform", "rotation")
 		if fits and not in_the_way(pos, rot, spot.offset) then
