@@ -309,7 +309,7 @@ cargo test --locked -p re_geom
 
 **Definition of done:** the five PRs merged.
 
-**Progress (2026-10-24).** Done: "versioning" (#93), "bake" (#105), "luau" (#125), "overrides" (#136) and "booleans and roads" (#142).
+**Progress (2026-10-26).** Done: "versioning" (#93), "bake" (#105), "luau" (#125), "overrides" (#136) and "booleans and roads" (#142). After them, "streamed roads" (#159) lets roads and shapes stream, so the valley (WP28) can have roads on its streamed terrain (ADR-0042's and ADR-0043's amendments).
 
 ---
 
