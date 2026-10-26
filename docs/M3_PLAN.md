@@ -248,7 +248,7 @@ cargo test --locked -p re_audio
 
 **Definition of done:** the three PRs merged.
 
-**Progress (2026-10-24).** Done: "vehicles" (#94), "audio" (#115) and "ragdolls" (#134), with review follow-ups in #143 (snapshots restore ragdoll modes and targets, and `state_hash` covers ragdolls).
+**Progress (2026-10-26).** Done: "vehicles" (#94), "audio" (#115) and "ragdolls" (#134), with review follow-ups in #143 (snapshots restore ragdoll modes and targets, and `state_hash` covers ragdolls). After them, #158 lets ragdolls follow the floating origin (ADR-0040's amendment), and #167 adds `AudioSource.rate` and `audio.set_rate`, played at most 16 times as fast (ADR-0041). WP22 is complete.
 
 ---
 
