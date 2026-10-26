@@ -127,9 +127,10 @@ pub struct NetBound {
 /// a project directory or a packaged game's archive. Each file counts with
 /// its path, how it is stored (source, bytecode or processed) and its bytes,
 /// so a browser and a desktop server that play one archive agree. Left out:
-/// what the engine provides itself, the folder beside a packaged game, and
-/// files under `.real/` (data, caches), `tests/` (replays, goldens) and
-/// `.git/`.
+/// what the engine provides itself, the folder beside a packaged game,
+/// `tests/` (replays, goldens), and whatever is at the top under a name that
+/// starts with `.` (`.real/` with its data and caches, `.git/`, an editor's
+/// settings).
 pub fn game_hash(files: &ProjectFiles) -> u64 {
     let mut h = blake3::Hasher::new();
     h.update(b"real-engine/game-hash/2");
@@ -137,11 +138,7 @@ pub fn game_hash(files: &ProjectFiles) -> u64 {
         .iter()
         .flat_map(|s| files.list("", s))
         .map(|p| p.as_str().to_string())
-        .filter(|p| {
-            ![".real/", "tests/", ".git/"]
-                .iter()
-                .any(|d| p.starts_with(d))
-        })
+        .filter(|p| !p.starts_with('.') && !p.starts_with("tests/"))
         .collect();
     paths.sort();
     paths.dedup();
@@ -412,6 +409,23 @@ mod tests {
             base
         );
         assert_eq!(hash(vec![layer(LayerKind::Archive, game), tests]), base);
+        // A project folder's data, history and editor settings.
+        let project = |extra: &[(&str, &[u8], Form)]| {
+            let source: Vec<_> = game
+                .iter()
+                .map(|(p, b, _)| (*p, *b, Form::Source))
+                .chain(extra.iter().cloned())
+                .collect();
+            hash(vec![layer(LayerKind::Project, &source)])
+        };
+        assert_eq!(
+            project(&[
+                (".real/data/save.json", b"{}", Form::Source),
+                (".git/config.toml", b"x", Form::Source),
+                (".vscode/settings.json", b"{}", Form::Source),
+            ]),
+            project(&[])
+        );
         // A script's bytecode counts, and so does how a file is stored.
         let changed: &[(&str, &[u8], Form)] = &[
             ("real.toml", b"[project]", Form::Source),

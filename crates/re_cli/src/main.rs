@@ -239,8 +239,9 @@ enum Command {
 
 #[derive(clap::Args, Debug)]
 struct RunArgs {
-    /// Run the game `real build` wrote in DIR (or its `game.rpak`) instead
-    /// of the project, as the game's own executable does.
+    /// Run the game `real build` wrote in DIR, or its `game.rpak`, instead
+    /// of the project, as the game's own executable does. DIR may hold a
+    /// macOS build's app.
     #[arg(long, value_name = "DIR|FILE", conflicts_with = "debug")]
     package: Option<PathBuf>,
     /// With --package: keep the game's cache, saved data and crash reports in
@@ -479,13 +480,39 @@ fn open_built(
     headless: bool,
 ) -> Result<(App, std::sync::Arc<re_app::package::Archive>), Diagnostic> {
     let archive = if path.is_dir() {
-        path.join(re_app::package::ARCHIVE_NAME)
+        built_archive(path)
     } else {
         path.to_path_buf()
     };
     let opened = re_app::package::open_package(&archive, data_dir)?;
     let app = game::open_app(&opened, headless)?;
     Ok((app, opened.archive))
+}
+
+/// The archive of the game `real build` wrote in `dir`: its `game.rpak`, or
+/// for a macOS build, the one in `NAME.app/Contents/Resources/` when `dir`
+/// holds a single app. With neither it is `dir/game.rpak`, which reports as
+/// missing (`RE0604`).
+fn built_archive(dir: &Path) -> PathBuf {
+    let beside = dir.join(re_app::package::ARCHIVE_NAME);
+    if beside.is_file() {
+        return beside;
+    }
+    let mut apps = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let app = entry.ok()?.path();
+            let archive = app
+                .join("Contents")
+                .join("Resources")
+                .join(re_app::package::ARCHIVE_NAME);
+            (app.extension().is_some_and(|e| e == "app") && archive.is_file()).then_some(archive)
+        });
+    match (apps.next(), apps.next()) {
+        (Some(archive), None) => archive,
+        _ => beside,
+    }
 }
 
 /// What a live run (no replay) does beyond playing.
@@ -970,4 +997,29 @@ fn tooling_exit(result: anyhow::Result<ExitCode>) -> ExitCode {
         eprintln!("error: {e:#}");
         ExitCode::from(1)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `real run --package DIR` finds a macOS build's archive in its app.
+    #[test]
+    fn a_build_folder_names_its_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path();
+        let beside = out.join(re_app::package::ARCHIVE_NAME);
+        assert_eq!(built_archive(out), beside);
+        let app = out.join("Island Demo.app/Contents/Resources");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(app.join(re_app::package::ARCHIVE_NAME), "").unwrap();
+        assert_eq!(built_archive(out), app.join(re_app::package::ARCHIVE_NAME));
+        // With two apps the build is unclear, so the missing archive reports.
+        let other = out.join("Other.app/Contents/Resources");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join(re_app::package::ARCHIVE_NAME), "").unwrap();
+        assert_eq!(built_archive(out), beside);
+        std::fs::write(&beside, "").unwrap();
+        assert_eq!(built_archive(out), beside);
+    }
 }
