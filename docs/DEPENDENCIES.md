@@ -1,6 +1,6 @@
 # Dependencies
 
-This file lists every third-party crate Real Engine plans to use in M1: its exact version, license, MSRV, what it is for, how we checked it, and which feature flags we turn on.
+This file lists every third-party crate Real Engine uses: its exact version, license, MSRV, what it is for, how we checked it, and which feature flags we turn on. It started as the plan for M1; the crates, tools and assets added since have their own sections, each with the milestone and PR that brought them in.
 
 ## Policy
 
@@ -11,7 +11,7 @@ This file lists every third-party crate Real Engine plans to use in M1: its exac
    - MPL-2.0: `full_moon` and `full_moon_derive` (tooling only) and `triple_buffer` (an unconditional dependency of kira). **`triple_buffer` is the only MPL-2.0 crate that ships in the runtime.** kira is built without its `wav` feature, so the symphonia crates are not in the build; `re_audio` decodes WAV itself.
    - OFL-1.1 and Ubuntu-font-1.0: `epaint_default_fonts` (egui's bundled fonts). The compat UI's own font files are OFL-1.1 too; they are bundled assets, not crates (see below and ADR-0035).
    MPL-2.0 is file-level copyleft. We use these crates unmodified, so it puts no obligation on our own code. This list comes from a license scan of a lockfile with every crate and feature below.
-5. **Duplicate versions are tracked.** `deny.toml` limits `[graph] targets` to the three desktop triples (`x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`) and sets `[bans] multiple-versions = "warn"`, so cargo-deny reports duplicates but the gate is `cargo xtask dupes`. That command runs `cargo tree -d --workspace -e normal --target <triple>` for each of the three triples (it needs no cross toolchain; it only reads the lockfile) and compares the result with the allow-list in `deny.toml` (`[bans] skip`) as **(name, version) pairs**. The same version appearing twice (a host build and a target build with different features) is not a duplicate. A new duplicate fails CI until someone adds it to the list below with a reason.
+5. **Duplicate versions are tracked.** `deny.toml` limits `[graph] targets` to the three desktop triples (`x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`) and sets `[bans] multiple-versions = "warn"`, so cargo-deny reports duplicates but the gate is `cargo xtask dupes`. That command runs `cargo tree -d --workspace -e normal --all-features --target <triple>` for each of the three triples (`--all-features` matches `[graph] all-features` in `deny.toml`) (it needs no cross toolchain; it only reads the lockfile) and compares the result with the allow-list in `deny.toml` (`[bans] skip`) as **(name, version) pairs**. The same version appearing twice (a host build and a target build with different features) is not a duplicate. A new duplicate fails CI until someone adds it to the list below with a reason.
 
 ## Status meanings
 
@@ -26,7 +26,7 @@ All versions below were checked against the crates.io index on 2026-10-14. On th
 |---|---|
 | Toolchain file | `rust-toolchain.toml`: `channel = "stable"`, components `rustfmt`, `clippy` |
 | Workspace `rust-version` | `1.95` |
-| What sets the MSRV | `egui` / `egui-wgpu` / `egui-winit` 0.36.2 and `bevy_ecs` 0.20.0 need 1.95. The next highest are `puffin` 0.20.0 (1.92, optional), then `ordered-float` 5.5.0 (1.90, transitive), `uuid` 1.28.0 and `smol_str` 0.3.6 (1.89), and `oxijolt`, `mlua`, `rmcp` and `image` (1.88). |
+| What sets the MSRV | `egui` / `egui-wgpu` / `egui-winit` 0.36.2, `egui_dock` 0.21.1 and `bevy_ecs` 0.20.0 need 1.95. The next highest are `egui-snarl` 0.12.0 and `puffin` 0.20.0 (1.92; puffin is optional), then `ordered-float` 5.5.0 (1.90, transitive), `uuid` 1.28.0 and `smol_str` 0.3.6 (1.89), and `oxijolt`, `mlua`, `rmcp` and `image` (1.88). |
 | Edition | 2024 |
 | Toolchains seen working | rustc 1.97.0 and 1.99.0 in the development containers. The render prototype declared `rust-version = "1.95"`; the core spike declares none. |
 | Dev profile | `debug = "line-tables-only"`. The render spike measured this as a large saving in link time and disk use. |
@@ -40,13 +40,13 @@ The `msrv` CI job builds with exactly 1.95.0 (`rustup toolchain install 1.95.0 -
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
 | wgpu | 30.0.1 | MIT OR Apache-2.0 | 1.87 | GPU abstraction. Vulkan, Metal, DX12 and GL backends. | default | render prototype, then `re_render`'s tests on lavapipe and llvmpipe | Verified |
-| winit | 0.30.13 | Apache-2.0 | 1.70 | Window and event loop. A normal dependency of `re_input` (key and mouse types); only a dev-dependency of `re_render`, for its `windowed_smoke` example (`re_render` itself takes any window handle). `re_app` will own the event loop. | default | render prototype `windowed`, then `re_render`'s `windowed_smoke` under Xvfb | Verified |
+| winit | 0.30.13 | Apache-2.0 | 1.70 | Window and event loop. A normal dependency of `re_input` (key and mouse types), and of `re_app` and `re_editor`, which run the game's and the editor's event loops; only a dev-dependency of `re_render`, for its `windowed_smoke` example (`re_render` itself takes any window handle). | default | render prototype `windowed`, then `re_render`'s `windowed_smoke` under Xvfb | Verified |
 | web-time | 1.1.0 | MIT OR Apache-2.0 | 1.60 | The wall clock (`Instant`, `SystemTime`) re-exported by `re_core::time`: `std::time` on desktop, the browser's clock on wasm32, where `std::time::Instant::now` panics (ADR-0049 §5). Already in the lockfile through winit and egui. | default | WP29 spike and PR "portable" (#89, the `build-web` job) | Verified |
-| wasm-bindgen | 0.2.129 | MIT OR Apache-2.0 | 1.81 | The JavaScript bindings of the browser build (`re_web`, `tools/web-test`; wasm32 only). Already in the lockfile through wgpu and winit; `wasm-bindgen-cli` must be the same version. | default | WP29 PRs "toolchain" (#99) and "runtime" (`build-web`: Node and headless Chromium runs) | Verified |
+| wasm-bindgen | 0.2.129 | MIT OR Apache-2.0 | 1.81 | The JavaScript bindings of the browser build (`re_web`, `re_net`'s browser WebSocket and `tools/web-test`; wasm32 only). Already in the lockfile through wgpu and winit; `wasm-bindgen-cli` must be the same version. | default | WP29 PRs "toolchain" (#99) and "runtime" (`build-web`: Node and headless Chromium runs) | Verified |
 | wasm-bindgen-futures | 0.4.79 | MIT OR Apache-2.0 | 1.81 | Awaits the browser's promises: the WebGPU adapter and device (`re_app/src/web/play.rs`) and `re_web`'s async exports. wasm32 only; already in the lockfile through wgpu. | default | WP29 PR "runtime" (`build-web`) | Verified |
 | egui | 0.36.2 | MIT OR Apache-2.0 | 1.95 | Immediate-mode UI for the HUD, debug overlay and editor-lite | default (its `default_fonts` pulls `epaint_default_fonts`: OFL-1.1 and Ubuntu-font-1.0, an ADR-0019 exception) | render prototype `gui_offscreen` | Verified |
 | egui-wgpu | 0.36.2 | MIT OR Apache-2.0 | 1.95 | egui renderer on our wgpu device | default | render prototype | Verified |
-| egui-winit | 0.36.2 | MIT OR Apache-2.0 | 1.95 | egui input from winit. Only a dev-dependency of `re_render` so far (its `windowed_smoke` example); `re_app` and `re_editor` will use it. | default (its `clipboard` feature pulls `arboard`, and on Windows `clipboard-win` and `error-code`, BSL-1.0) | render prototype, then `re_render`'s `windowed_smoke` | Verified |
+| egui-winit | 0.36.2 | MIT OR Apache-2.0 | 1.95 | egui input from winit. A normal dependency of `re_editor`, which turns the window's events into egui input; a dev-dependency of `re_render` (its `windowed_smoke` example). | default (its `clipboard` feature pulls `arboard`, and on Windows `clipboard-win` and `error-code`, BSL-1.0) | render prototype, then `re_render`'s `windowed_smoke` | Verified |
 | glam | 0.34.1 | MIT OR Apache-2.0 | 1.85 | Math (Vec3, Quat, Mat4, Affine3A) | `bytemuck`, `libm`, `mint-05`, `scalar-math`, `serde`. `libm` and `scalar-math` since WP18 PR "d2" (ADR-0036, ADR-0049 §11): glam's own trigonometry goes through libm, and its maths is the same scalar code on every target, so x86_64, arm64 and wasm agree bit for bit | render prototype (`bytemuck`), platform spike (`mint-05`), scripting spike (default); WP0 builds the combined feature set and round-trips every `re_types` contract type through serde (`crates/re_types/tests/roundtrip.rs`) | Verified |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT | none | POD casts for GPU buffers | `derive` | render prototype | Verified |
 | pollster | 1.0.1 | Apache-2.0 OR MIT | 1.69 | Blocks on wgpu futures (adapter, device, map_async) | default | render prototype | Verified |
@@ -70,7 +70,7 @@ Notes:
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
 | mlua | 0.12.2 | MIT | 1.88 | Embeds Luau (vendored Luau 0.740 through mlua-sys 0.13.0 and luau0-src 0.22.0+luau740; no Analysis module) | `luau` only. Not `vendored` (it does nothing for Luau) and not `send`. `luau-jit` only through `re_script`'s opt-in `jit` feature. A temporary patched copy in `third_party/mlua`, removed when upstream releases carry ADR-0049 §2. | scripting spike: 14 feature tests in the default, `send` and `jit` builds, benchmarks, and a corpus compile | Verified |
-| full_moon | 3.0.0 | MPL-2.0 | none | Luau parser for the static API-gap scan (validation tier 2). Tooling only (`re_script_check`). | `luau` | design-phase probe in this container: `parse_fallible(code, LuaVersion::luau())` parsed an external Roblox-style corpus with no failures | Verified; MPL exception (ADR-0019) |
+| full_moon | 3.0.0 | MPL-2.0 | none | Luau parser for the static API-gap scan (validation tier 2, `re_script_check`) and for reading a Studio loader script in `project.import` (`re_import`, ADR-0048). Tooling only. | `luau` | design-phase probe in this container: `parse_fallible(code, LuaVersion::luau())` parsed an external Roblox-style corpus with no failures | Verified; MPL exception (ADR-0019) |
 
 ### Place-file import (M3, tooling only)
 
@@ -101,8 +101,8 @@ ADR-0047. Checked against crates.io on 2026-10-15; `cargo deny check` passes wit
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| block_compression | 0.10.1 | MIT | 1.80 | BC7/BC5 encoder at import (`re_assets`, feature `texture-encode`, turned on by `tooling`; tooling only, forbidden in the runtime build by `check-graph`); dev-dependency of `re_render` for decoder cross-checks | `default-features = false`, `bc15`, `bc7` | WP20 phase-0 bench (encode, decode, GPU round trip on lavapipe and llvmpipe GL) | Verified (probe); lands with WP20 PR "textures" |
-| bcdec_rs | 0.2.0 | MIT | ≤ 1.95 | BC decoder for adapters without `TEXTURE_COMPRESSION_BC` (runtime, `re_render`) | defaults (no dependencies) | WP20 bench (bit-identical to the GPU round trip on both backends) | Verified (probe); lands with WP20 PR "textures" |
+| block_compression | 0.10.1 | MIT | 1.80 | BC7/BC5 encoder at import (`re_assets`, feature `texture-encode`, turned on by `tooling`; tooling only, forbidden in the runtime build by `check-graph`); dev-dependency of `re_render` for decoder cross-checks | `default-features = false`, `bc15`, `bc7` | WP20 phase-0 bench (encode, decode, GPU round trip on lavapipe and llvmpipe GL) | Landed (WP20 PR "textures", #164) |
+| bcdec_rs | 0.2.0 | MIT | ≤ 1.95 | BC decoder for adapters without `TEXTURE_COMPRESSION_BC` (runtime, `re_render`) | defaults (no dependencies) | WP20 bench (bit-identical to the GPU round trip on both backends) | Landed (WP20 PR "textures", #164) |
 
 ### Package archive (M3, runtime)
 
@@ -140,14 +140,14 @@ Used only by `re_mcp`, a tooling crate, so the runtime-only binary does not link
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
-| hyper | 1.12.0 | MIT | ≤ 1.85 | HTTP/1.1 server under rmcp's `StreamableHttpService` for `real mcp --http` | `default-features = false`, `http1`, `server` | WP26 prototype in this container (401, 403, both protocol revisions, policy refusals) | Verified (probe); lands with WP26 PR "http" |
-| hyper-util | 0.1.21 | MIT | ≤ 1.85 | `TowerToHyperService` and the tokio glue | `default-features = false`, `tokio`, `server`, `http1`, `service` | WP26 prototype | Verified (probe); lands with WP26 PR "http" |
+| hyper | 1.12.0 | MIT | ≤ 1.85 | HTTP/1.1 server under rmcp's `StreamableHttpService` for `real mcp --http` | `default-features = false`, `http1`, `server` | WP26 prototype in this container (401, 403, both protocol revisions, policy refusals) | Landed (WP26 PR "http", #92) |
+| hyper-util | 0.1.21 | MIT | ≤ 1.85 | `TowerToHyperService` and the tokio glue | `default-features = false`, `tokio`, `server`, `http1`, `service` | WP26 prototype | Landed (WP26 PR "http", #92) |
 
 ### External tools (not linked, not from crates.io)
 
 | Tool | Version | License | Role | Verified by | Status |
 |---|---|---|---|---|---|
-| luau-lsp | 1.70.1 | MIT | The default type checker for `real check --types` (`luau-lsp analyze`), and the language server for editors and agents. Its Luau submodule is the commit of Luau 0.740. | scripting spike: `analyze` with `--definitions` and `--flag:LuauSolverV2=true`; LSP over stdio. Linux release zip only. | Verified (Linux) |
+| luau-lsp | 1.70.1 | MIT | The default type checker for `real check --types` (`luau-lsp analyze`), and the language server for editors and agents. Its Luau submodule is the commit of Luau 0.740. | scripting spike: `analyze` with `--definitions` and `--flag:LuauSolverV2=true`; LSP over stdio. CI installs the Linux, Windows and macOS release zips, each pinned by its sha256, and `re_cli`'s island tests type-check the island with it on all three. | Verified (Linux, Windows, macOS) |
 | luau-analyze | 0.740, plus a 27-line `--definitions` patch | MIT | Alternative checker (`[scripts] checker`). Built from the Luau 0.740 tag. | scripting spike: built from source in 220 s, checked the spike's typed fixtures | Verified (Linux); needs a rebase per Luau upgrade |
 | cargo-deny | 0.20.2 | MIT OR Apache-2.0 | The `deny` CI job (`cargo install cargo-deny --version 0.20.2 --locked`) | WP0: `cargo deny check` on this tree passes (advisories, bans, licenses, sources ok; `unmatched-skip` and `unused-wrapper` warnings only for crates not yet in the tree) | Verified |
 | wasi-sdk | 34 | Apache-2.0 WITH LLVM-exception | Clang, wasi-libc and the exception-enabled libc++ that build Luau and Jolt for `wasm32-unknown-unknown` (`tools/ci/wasi-sdk.sh`, sha256-pinned) | WP29 PR "toolchain" (#99) | Verified (Linux) |
@@ -184,10 +184,10 @@ The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each fa
 | uuid | 1.28.0 | Apache-2.0 OR MIT | 1.89 | Asset ids (`.meta.json`). Entity ids are short strings made by `re_scene::IdGen`, not uuids. | `v4`, `serde`, `js` (randomness from the browser on wasm32, ADR-0049) | WP5: `re_assets` sidecar ids (`.meta.json`, its import tests) | Verified |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | 1.85 | Ordered maps in documents, commands and the registry (deterministic file output) | `serde` | core spike | Verified |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 | 1.77 | Library error types | default | WP0, WP4, WP5: `re_reflect`, `re_scene`, `re_command`, `re_geom`, `re_proc`, `re_assets` | Verified |
-| proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | 1.56 | Token streams for `re_reflect_derive` (compile time only) | default | `re_reflect_derive` tests (`re_reflect/tests/derive.rs`); already in the lockfile through bevy_ecs_macros | Verified |
-| quote | 1.0.47 | MIT OR Apache-2.0 | 1.56 | Code generation for `re_reflect_derive` (compile time only) | default | as above | Verified |
-| syn | 2.0.119 | MIT OR Apache-2.0 | 1.61 | Parsing the derive input of `re_reflect_derive` (compile time only) | default | as above | Verified |
-| anyhow | 1.0.104 | MIT OR Apache-2.0 | 1.68 | Binaries only (`real`, tools) | default | WP0: `tools/xtask` (`cargo xtask check` and its unit tests) | Verified |
+| proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | 1.71 | Token streams for `re_reflect_derive` (compile time only) | default | `re_reflect_derive` tests (`re_reflect/tests/derive.rs`); already in the lockfile through bevy_ecs_macros | Verified |
+| quote | 1.0.47 | MIT OR Apache-2.0 | 1.71 | Code generation for `re_reflect_derive` (compile time only) | default | as above | Verified |
+| syn | 2.0.119 | MIT OR Apache-2.0 | 1.71 | Parsing the derive input of `re_reflect_derive` (compile time only) | default | as above | Verified |
+| anyhow | 1.0.104 | MIT OR Apache-2.0 | 1.68 | Error handling in `re_cli` (`real`), `re_mcp`, `re_editor` and `tools/xtask` | default | WP0: `tools/xtask` (`cargo xtask check` and its unit tests) | Verified |
 
 ### Assets, input, audio, platform
 
@@ -203,14 +203,15 @@ The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each fa
 | tracing-subscriber | 0.3.23 | MIT | 1.65 | Log output (human and JSON) | `env-filter`, `fmt`, `ansi`, `json` | platform spike; WP0 `re_core::init_logging` (`crates/re_core/tests/log.rs`: filters, JSON lines) | Verified |
 | puffin | 0.20.0 | MIT OR Apache-2.0 | 1.92 | In-process profiler behind `profile_scope!` | optional, feature `profile-puffin` | platform spike; WP0 `re_core` (`cargo test -p re_core --all-features`; CI clippy builds all features) | Verified |
 | tracy-client | 0.19.0 | MIT OR Apache-2.0 | 1.70 | Tracy profiler behind `profile_scope!` | optional, `default-features = false`, `enable`, `ondemand` | platform spike; WP0 `re_core` (`cargo test -p re_core --all-features`; CI clippy builds all features) | Verified |
+| windows-sys | 0.61.2 | MIT OR Apache-2.0 | 1.71 | Windows only: `re_cli`'s packaged game, a GUI-subsystem program, attaches to its parent's console (`AttachConsole`) so that it prints when started from a terminal. Already in the lockfile through the Windows stack. | `Win32_System_Console` | `build-package-windows` runs the packaged island with `--version` and `--frames 120 --json` | Landed (WP19 PR "archive", #121) |
 
 ### Tools, CLI, agent
 
 | Crate | Version | License | MSRV | Role | Features | Verified by | Status |
 |---|---|---|---|---|---|---|---|
 | clap | 4.6.7 | MIT OR Apache-2.0 | 1.85 | `real` CLI | `derive` | WP6: `re_cli` (`crates/re_cli/tests/cli.rs`, including usage errors exiting 2) | Verified |
-| rmcp | 3.5.1 | Apache-2.0 | 1.88 | MCP server (stdio) | `server`, `transport-io`, `macros` | AI spike: 12 stdio tests over two protocol revisions; driven end to end by Claude Code | Verified |
-| tokio | 1.53.3 | MIT | 1.71 | Async runtime for `re_mcp` **only** | `macros`, `rt-multi-thread`, `io-std` | AI spike | Verified |
+| rmcp | 3.5.1 | Apache-2.0 | 1.88 | MCP server: stdio, and streamable HTTP for `real mcp --http` | `server`, `transport-io`, `macros`, and `transport-streamable-http-server` since WP26 PR "http" (#92) | AI spike: 12 stdio tests over two protocol revisions; driven end to end by Claude Code; `re_mcp`'s wire tests, which run over both transports | Verified |
+| tokio | 1.53.3 | MIT | 1.71 | Async runtime for `re_mcp` **only** | `macros`, `rt-multi-thread`, `io-std`; `re_mcp` adds `sync` and `net` | AI spike | Verified |
 
 ## Dev-dependencies
 
@@ -245,9 +246,11 @@ These come from `cargo tree -d -e normal --target <triple>` for the three deskto
 
 Not duplicates: on the Linux host, `serde_core` 1.0.229, `serde_json` 1.0.154, `toml_datetime` 1.1.2, `toml_parser` 1.1.5 and `winnow` 1.0.4 each appear twice at the **same** version (host and target builds with different features); `serde` 1.0.229 and `memchr` 2.8.3 do the same on other targets. `cargo xtask dupes` ignores same-version pairs. Duplicates on targets outside the three desktop triples (`--target all` also shows `jni-sys`, `r-efi`, `redox_syscall`, `heapless`/`hash32`, `objc2-ui-kit` and more for Android, UEFI, Redox and iOS) are out of scope until those platforms are, which is why `[graph] targets` is limited.
 
-Never accepted: a second `wgpu`, `winit`, `egui` or `mlua` version, or a second glam inside our own crates. `deny.toml` bans those names from appearing twice.
+Never accepted: a second `wgpu`, `winit`, `egui`, `mlua` or `bevy_ecs` version, or a second glam inside our own crates. `deny.toml` bans those names from appearing twice.
 
-## Considered and not used in M1
+## Considered and not used
+
+Most of these were weighed for M1; a row says so when a later milestone took the crate.
 
 | Crate | Reason |
 |---|---|
@@ -260,11 +263,10 @@ Never accepted: a second `wgpu`, `winit`, `egui` or `mlua` version, or a second 
 | egui_dock 0.21.1 | egui panels are enough for editor-lite. Taken in M3 (ADR-0044). |
 | transform-gizmo-egui 0.11.0 | Gizmos are cut from M1. It also needs Rust 1.96 and pulls glam 0.32; M3 writes its own gizmos (ADR-0044). |
 | i_overlay 9.1.0 | Deferred. Published on 2026-10-14, the day we checked, and not needed until polygon boolean nodes (M3). Taken in M3 (ADR-0043 §5). |
-| meshopt 0.6.2, spade, manifold3d, egui-snarl, zstd, libm | Not needed in M1. egui-snarl (ADR-0044) and zstd (ADR-0037) are taken in M3. |
+| meshopt 0.6.2, spade, manifold3d, egui-snarl, zstd, libm | Not needed in M1. egui-snarl (ADR-0044), zstd (ADR-0037) and libm (ADR-0036, WP18 PR "d2", #100) are taken in M3. |
 | hecs 0.11.2, sparsey 0.13.4, shipyard 0.11.5, flecs_ecs 0.2.2 | Entity storage alternatives measured by the core spike; rejected in ADR-0005 (no hierarchy, hooks or per-component change ticks in hecs and sparsey; no hierarchy in shipyard; flecs is C and segfaulted from safe Rust) |
 | bevy_reflect 0.20.0 (bevy_ecs's default `bevy_reflect` feature) | Reflecting glam types needs bevy_reflect's optional `glam` feature, which ties it to glam 0.33.x (0.33.12 resolved; bevy_ecs's `bevy_reflect` feature does not turn it on by itself); no f64 → f32 coercion, `ReflectComponent::apply` panics on a type mismatch; rejected in ADR-0032 |
 | ron 0.12.2 | Scene format runner-up; its `deserialize_any` path is quadratic (ADR-0016). Used only in the core spike. |
-| syn 3.0.9, quote 1.0.47, proc-macro2 1.0.107 as direct dependencies | Only needed for a `#[derive]` component macro, which is later work; M1 uses the `component!` macro (ADR-0032) |
 | rapier3d, rhai, rlua | See DECISIONS for the comparisons |
 
 ## System packages
@@ -293,8 +295,10 @@ apt-get install -y \
 
 ### macOS
 
-Xcode command line tools and `cmake` (Homebrew). wgpu uses Metal. **CI (`macos-latest`) builds the workspace and runs the tests of the pure-Rust crates (`re_core`, `re_noise`, `re_types`, `re_reflect`, `re_scene`, `re_command`); the result is reported but does not block a merge. Not yet verified.**
+Xcode command line tools and `cmake` (Homebrew). wgpu uses Metal. CI (`macos-latest`, Apple silicon) runs the whole test suite, the GPU crates on Metal, then `real verify` on the island and the plaza, goldens included. The job is required (ADR-0023's amendment for WP18 PR "blocking", #87). `build-package-macos` builds and checks the app bundle, and `d2-run` produces the macOS replay hashes that the `d2` job compares with Linux and Windows (ADR-0036).
 
 ### Windows
 
-Visual Studio 2022 Build Tools with the C++ workload and `cmake`. wgpu uses DX12 or Vulkan. **CI (`windows-latest`) builds the workspace and runs the same pure-Rust tests as macOS; the result is reported but does not block a merge. Not yet verified.** luau-lsp publishes Windows and macOS release zips; they have not been tried. The raw Luau interrupt (ADR-0011) must be checked on MSVC before Windows blocks merges.
+Visual Studio 2022 Build Tools with the C++ workload and `cmake`. wgpu uses DX12 or Vulkan. CI (`windows-latest`) runs the whole test suite, the GPU crates on DX12 (WARP), then `real verify` on the island and the plaza, goldens included. The job is required (#87). `build-package-windows` builds and runs the packaged games, and `d2-run` produces the Windows replay hashes for `d2`.
+
+Both jobs install luau-lsp's own release zip for their platform (see External tools). The raw Luau interrupt (ADR-0011) works on MSVC and on macOS: `re_script`'s `cpu_budget_stops_runaway_loops_and_the_context_stays_usable` passes in both jobs.

@@ -11,7 +11,7 @@ This document describes how Real Engine is built:
 
 The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx. Versions are in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**Status:** M1 and M2 done, M3 in progress. Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`) the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. M2 is complete: `re_compat` (the Roblox-style layer), `re_import` and the compat boot in `re_app`, with `examples/plaza` verified in CI. M3 work merged so far includes D2 determinism across Linux, Windows and macOS, packaged games (`real build`, `game.rpak`), browser builds (`re_web`), the HDR post chain and cascaded shadows, skins and animation graphs, vehicles, ragdolls and audio buses, world streaming, generator versions, bake, Luau node kinds, polygon booleans and roads, the editor's node canvas, docking and gizmos, the script debugger, the AI track's templates, recipes, eval harness and HTTP transport, the compat follow-ups (saved data, script reload, place files, surfaces, skinned `MeshPart`s and post effects, and debugging compat scripts), the `re_net` transport and replication over postcard frames, and `examples/valley`. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
+**Status:** M1 and M2 done, M3 in progress. Implemented: the contract layer (`re_core`, `re_noise`, `re_types`), the entity model (`re_reflect` with its derive macro `re_reflect_derive`, `re_scene`, `re_command`), the subsystem crates `re_render`, `re_physics`, `re_assets`, `re_input`, `re_audio` and `re_anim`, procedural generation (`re_geom`, `re_proc`), scripting (`re_script`, `re_script_check`), AI integration (`re_agent`, `re_mcp`), the editor (`re_editor`), and the runtime and CLI (`re_app`, `re_cli`) with the `examples/island` demo, which `real verify` checks in CI. M1 is complete: every work package has merged and every item of its definition of done is checked in CI. M2 is complete: `re_compat` (the Roblox-style layer), `re_import` and the compat boot in `re_app`, with `examples/plaza` verified in CI. M3 work merged so far includes D2 determinism across Linux, Windows and macOS, packaged games (`real build`, `game.rpak`), browser builds (`re_web`), the HDR post chain and cascaded shadows, skins and animation graphs, vehicles, ragdolls and audio buses, world streaming, generator versions, bake, Luau node kinds, polygon booleans and roads, the editor's node canvas, docking and gizmos, the script debugger, the AI track's templates, recipes, eval harness and HTTP transport, the compat follow-ups (saved data, script reload, place files, surfaces, skinned `MeshPart`s and post effects, and debugging compat scripts), the `re_net` transport and replication over postcard frames, and `examples/valley`. Every subsystem choice is backed by a design-phase spike; the entity core (§4) follows the core spike, which M1 WP0 ported.
 
 ## 1. Goals that shape the design
 
@@ -22,7 +22,7 @@ The reasoning behind each choice is in [DECISIONS.md](DECISIONS.md), as ADR-xxxx
 
 ## 2. Crate graph
 
-All crates live in `crates/`. An arrow means "depends on".
+All crates live in `crates/`. An arrow means "depends on". Every direct dependency in a crate's `Cargo.toml` (dev-dependencies aside) lies on a path of arrows, but not every one is drawn as its own arrow: most crates use `re_core` directly, for example.
 
 - The **contract layer** is `re_core` and `re_types` (plus `re_noise`, which has no dependencies at all). These crates are plain data, traits and small utilities, with no heavy dependencies.
 - **Subsystem crates** (`re_render`, `re_physics`, `re_audio`, `re_input`, `re_assets`, `re_anim`, and `re_net` since M3) depend only on the contract layer and on third-party crates. `re_net` depends on `re_core` and, for players in a browser, on a WebSocket crate (tungstenite natively, web-sys in the browser); `re_compat` runs its sessions over it. They never depend on each other, on `re_geom` or on `re_scene`.
@@ -39,6 +39,7 @@ graph TD
 
   subgraph "Model (bevy_ecs inside)"
     reflect[re_reflect] --> core
+    reflect --> derive[re_reflect_derive]
     scene[re_scene] --> reflect
     scene --> types
     command[re_command] --> scene
@@ -46,6 +47,7 @@ graph TD
 
   subgraph "Pure content (no GPU, Jolt or mlua)"
     geom[re_geom] --> types
+    geom --> core
     proc[re_proc] --> geom
     proc --> noise
     proc --> scene
@@ -59,6 +61,12 @@ graph TD
     input[re_input] --> types
     assets[re_assets] --> types
     anim[re_anim] --> types
+    render --> core
+    physics --> core
+    audio --> core
+    input --> core
+    assets --> core
+    anim --> core
     net[re_net] --> core
   end
 
@@ -79,6 +87,7 @@ graph TD
     app --> script
     app --> proc
     app --> command
+    app --> net
     cli[re_cli / real] --> app
     web[re_web] --> app
     web --> render
@@ -91,6 +100,8 @@ graph TD
     compat --> anim
     compat --> physics
     compat --> noise
+    compat --> net
+    app --> compat
     cli --> compat
   end
 
@@ -101,6 +112,7 @@ graph TD
     cli -.-> import
     agent[re_agent] --> command
     agent --> script
+    agent --> compat
     mcp[re_mcp] --> agent
     editor[re_editor] --> app
     editor --> agent
@@ -111,7 +123,7 @@ graph TD
   end
 ```
 
-Dashed edges exist only when `re_cli` is built with the default-on `tooling` feature. A runtime-only build (`--no-default-features`) links none of the tooling crates, so it links no tokio, rmcp or full_moon (ADR-0019, ADR-0027). The rule is simple: a subcommand that needs a tooling crate exists only in the tooling build. That covers `check`, `import` (M2), `mcp`, `agent`, `editor` and `do` (`real do` uses `re_agent`'s single-writer lock and editor-socket client), so a runtime-only `real` runs, verifies, describes and explains a project but does not edit it.
+Dashed edges exist only when `re_cli` is built with the default-on `tooling` feature. A runtime-only build (`--no-default-features`) links none of the tooling crates, so it links no tokio, rmcp or full_moon (ADR-0019, ADR-0027). The rule is simple: a subcommand that needs a tooling crate exists only in the tooling build. That covers `check`, `import` (M2), `mcp`, `agent`, `editor` and `do` (`real do` uses `re_agent`'s single-writer lock and editor-socket client), so a runtime-only `real` runs, verifies, describes and explains a project but does not edit its scenes; it does rewrite graph files, with `real migrate-graph` (M3). `build` and `verify --package` (M3) are tooling-only too (ADR-0037).
 
 ### Crate responsibilities
 
@@ -121,6 +133,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_noise` | Deterministic RNG and noise (ported from the platform spike) | `Pcg32`, `SplitMix64`, `perlin*`, `simplex*`, `fbm*`, `ridged*`, `warped_fbm*`, `cellular*`, `hash2/3` | everything (zero dependencies) |
 | `re_types` | Plain-data contracts between the app and subsystems, and the script host trait (no dependency on `re_core`) | `EntityId`, `RenderSnapshot`, `DrawItem`, `Camera`, `Light`, `MeshHandle`, `MaterialHandle`, `TextureRef`, `MaterialDesc`, `MeshData`, `Aabb`, `ClipData`, `PhysicsCmd`, `BodyDesc`, `ShapeDesc`, `BodyPose`, `ContactEvent`, `CharacterDesc`, `AudioCmd`, `ActionFrame`, `RawInputFrame`, `InputEvent`, `MouseLock`, `GraphDoc`, `ReplayDoc`, `RawReplayInput`, `host::HostServices` | `re_scene`, any subsystem |
 | `re_reflect` | The component registry over bevy_ecs: field types, values and coercion, by-name access, script-defined components, the untyped document tree used at text boundaries, registry description and scene JSON Schema (ADR-0032) | `Registry`, `ComponentKey`, `ComponentSchema`, `FieldSchema`, `FieldType`, `ComponentOrigin`, `Value`, `Color`, `Reflect`, `component!`, `field_enum!`, `Doc`, `f32_from_parsed_f64` | subsystems, mlua |
+| `re_reflect_derive` | `#[derive(Reflect)]`, the derive form of `component!`, re-exported as `re_reflect::Reflect` (a proc-macro crate, ADR-0032) | `Reflect` (derive), with `#[reflect(skip)]` and `#[reflect(crate = "...")]` | — |
 | `re_scene` | The World facade over bevy_ecs (ADR-0005): stable ids, hierarchy, transforms and propagation, the built-in components, scene and prefab files, procedural sources, fragments, overrides, suppression, state hash | `World`, `Entity`, `StableId`, `IdIndex`, `IdGen`, `Transform`, `GlobalTransform`, `Name`, the built-ins of §4, `SceneDoc`, `SaveOptions`, `PrefabFile`, `Procedural`, `GraphSource`, `Generated`, `Overrides`, `GenNode`, `SceneFragment`, `GenContext`, `Generators`, `state_hash` | subsystems, mlua |
 | `re_command` | Edit operations and transactions with exact undo, the log, the command registry, dry runs, the policy hook and the engine request channel (ADR-0003) | `Op`, `Transaction`, `Origin`, `History`, `LogEntry`, `CommandRegistry`, `CommandSpec`, `Tier`, `CommandOutcome`, `PolicyCheck` trait, `remote::{EngineHandle, EngineReceiver}` | subsystems, mlua, tokio |
 | `re_geom` | Geometry operations over `MeshData`, polygon booleans (`polygon`) and roads (`road`) | `Heightfield`, `primitives::*`, `merge`, `transform`, `compute_normals`, `Shapes`, `road::{spline, road_mesh, footprint}` | wgpu, oxijolt, mlua |
@@ -188,7 +201,8 @@ There is no render thread in M1. The seam for one is that `RenderSnapshot` is `S
 ### One frame
 
 ```
-Input          poll winit/gilrs or the replay → RawInput → ActionMap → ActionFrame
+Input          poll winit/gilrs or the replay → RawInput → ActionMap → ActionFrame;
+               asset, shader and script hot reload
 PreRender      script contexts: per-frame callbacks (variable dt)
 fixed steps    FixedClock.advance(frame_dt) → 0..=5 steps of 1/60 s
   PreAnimation   re_anim samples clips and tweens → Transform writes; animation graphs step,
@@ -205,9 +219,11 @@ fixed steps    FixedClock.advance(frame_dt) → 0..=5 steps of 1/60 s
                  ragdoll poses blended into their skins; bone attachments placed
 Sync           propagate GlobalTransform; interpolate between steps;
                sync::render::build → RenderSnapshot; sync::audio → Vec<AudioCmd>
-Render         Renderer::render(device, queue, view, &snapshot); egui overlay through paint_ui
-EndFrame       flush the command journal; release unreferenced GPU resources; PerfReport sample;
-               asset and script hot reload; answer queued engine requests; events cleared
+Render         Renderer::render(device, queue, view, &snapshot); egui overlay through paint_ui;
+               Audio::apply(&audio_cmds)
+EndFrame       apply scripts' host requests (HUD text, mouse behaviour, regeneration, screenshots,
+               restart); regenerate changed sources and release the derived assets they dropped;
+               PerfReport sample
 ```
 
 The phase order matches the order Roblox-style scripts expect: render-step work happens before simulation, "stepped" before physics, and "heartbeat" after physics (ADR-0009). This makes the M2 mapping direct.
@@ -244,6 +260,8 @@ pub struct RenderSnapshot {
     pub camera: Camera, pub lights: Vec<Light>,
     pub items: Vec<DrawItem>, pub debug_lines: Vec<DebugLine>,
     pub clear: [f32; 4],                     // no egui types here: UI is painted separately
+    pub post: PostSettings,                  // exposure, tone mapping and the post chain (M3, ADR-0038)
+    pub shadows: SunShadows,                 // the sun's shadow cascades (M3, ADR-0038)
     pub quads: Vec<WorldQuad>,               // textured quads in the world, such as GUIs on surfaces (M3)
     pub skinned: Vec<SkinnedDrawItem>,       // skinned objects (M3, ADR-0039)
     pub joint_palette: Vec<Mat4>,            // their joint matrices, one run per skinned item
@@ -267,10 +285,10 @@ pub struct BodyPose { pub id: EntityId, pub pos: Vec3, pub rot: Quat }   // acti
 - `re_types` depends only on `glam`, `serde` and `serde_json` (plus `schemars` behind its optional `schemars` feature, for the schemas of the graph and replay file formats).
 - `RenderSnapshot` positions (draw items, skinned items, terrain chunks, the camera and the lights) are relative to `App::render_origin()`: world streaming's floating origin (ADR-0042), which is zero without streaming. `re_app` subtracts it when it builds the snapshot, so precision near the camera does not depend on where the camera is in the world; the editor's gizmo adds it back.
 - The pose pull is one batched call to oxijolt's `active_body_poses_into`, which returns position and rotation for **active** bodies; `Physics::poses_into` adds the bodies that fell asleep during the step (with their final pose) and every character. A sleeping body is not returned again until it wakes; its `Transform` keeps the exact value it had when it fell asleep. Velocities are read per body (`Physics::velocity`) only for the entities that need them, such as characters and scripted bodies.
-- egui output is not part of the snapshot. `re_app` runs egui, tessellates the shapes with `egui::Context::tessellate` (`UiFrame::from_output` does it), and passes a `UiFrame { primitives, textures_delta, size_px, pixels_per_point }` to `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`. egui types therefore appear only in `re_render`, `re_app` and `re_editor`. `re_render` paints egui into an `Rgba8Unorm` overlay and composites it with a manual-gamma blit on every backend, so the UI looks the same on Vulkan and GL (ADR-0010).
-- **Lighting convention.** A directional light's (sun's) intensity is in lux: at exposure 1, an illuminance of 1 lux makes a white diffuse surface white. A point light's intensity is in lumens (it shines `lumens / 4π` candela) with a windowed falloff that reaches zero at its `range`. Emissive colour is multiplied by the exposure too. Exposure and the ambient light (a sky and a ground colour, a hemisphere) are renderer settings (`re_render::RendererSettings`), not snapshot data: `RenderSnapshot` has no ambient field.
+- egui output is not part of the snapshot. `re_app` runs egui, tessellates the shapes with `egui::Context::tessellate` (`UiFrame::from_output` does it), and passes a `UiFrame { primitives, textures_delta, size_px, pixels_per_point }` to `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`. egui types therefore appear only in `re_render`, `re_app`, `re_editor` and `re_compat` (whose 2D UI returns egui shapes, §4). `re_render` paints egui into an `Rgba8Unorm` overlay and composites it with a manual-gamma blit on every backend, so the UI looks the same on Vulkan and GL (ADR-0010).
+- **Lighting convention.** A directional light's (sun's) intensity is in lux: at exposure 1, an illuminance of 1 lux makes a white diffuse surface white. A point light's intensity is in lumens (it shines `lumens / 4π` candela) with a windowed falloff that reaches zero at its `range`. Emissive colour is multiplied by the exposure too. Exposure is snapshot data (`RenderSnapshot::post`, with the post chain). The ambient light (a sky and a ground colour, a hemisphere) is a renderer setting (`re_render::RendererSettings`, beside the shadow map size and MSAA), not snapshot data: `RenderSnapshot` has no ambient field.
 
-Meshes, textures and materials are uploaded through `Renderer::upload_mesh(&MeshData) -> Result<MeshHandle, Diagnostic>` and its siblings (`upload_texture`, `create_material`), when an asset loads or a ProcGraph produces a `Derived` mesh, not every frame. They are released through `release_mesh` and its siblings, which return `Result<(), Diagnostic>`. Handles carry a generation, so a stale handle is detected. `re_app` releases a `Derived` mesh at the end of the frame in which a regeneration diff leaves it unreferenced, so regenerating many times does not grow GPU memory.
+Meshes, textures and materials are uploaded through `Renderer::upload_mesh(&MeshData) -> Result<MeshHandle, Diagnostic>` and its siblings (`upload_texture`, `create_material`), when an asset loads or a ProcGraph produces a `Derived` mesh, not every frame. They are released through `release_mesh` and its siblings, which return `Result<(), Diagnostic>`. Handles carry a generation, so a stale handle is detected. `re_app` forgets a `Derived` mesh at the end of the frame in which a regeneration diff leaves it unreferenced, and frees its GPU copy at the next upload (`App::upload_assets`), so regenerating many times does not grow GPU memory.
 
 ## 4. Object model
 
@@ -355,7 +373,7 @@ The layer is Luau plus Rust on top of the native model. The core spike checked h
 | Several attachments, welds or constraints per part | Child entities, as in Roblox; entity-typed fields (a weld's other part) are already repaired across despawn and undo |
 | `ModuleScript.Source` | Script assets referenced by path, never inline in the scene |
 | `RemoteEvent`, `RemoteFunction`, `BindableEvent` | In-process queues between the `server` and `client` VMs (`net::NetLink`), delivered by each side's pump. M2 runs both worlds in one process. Values are deep-copied, with floats copied bit-exact; a value that cannot be copied is `RE9300`. |
-| Services that need an online backend (data storage, teleport, marketplace) | They exist and return a clear `RE9002` "not available offline" error. Nothing hangs. |
+| Services that need an online backend (teleport, marketplace) | They exist and return a clear `RE9002` "not available offline" error. Nothing hangs. Data storage works locally since M3 (saved data, below). |
 | Deprecated members that real scripts still use | Implemented where cheap, each with an `RE9101` deprecation note |
 | Large static maps | Static cells (ADR-0031) |
 
@@ -385,14 +403,14 @@ The runtime as built so far (WP10, WP11, WP12, WP13, WP14, WP15, WP16 "boot"):
 - Boot and play (WP16 "boot"): `real verify` boots a compat project for 600 frames and fails on an uncaught script error or a thread still waiting in `WaitForChild` (`RE0526`); its data lists `uncaught`, `stuck_yields`, `unsupported` (`RE9001` and `RE9002` with counts) and `output`. `play.run` takes `steps` after its first frames: `frames`, `add_player`, `say`, `invoke` (a `BindableFunction` test hook) and `dump_tree`; a failed step is `RE0527`. `scene.dump_tree` lives in `re_compat::dump`, so the runtime and `re_agent` share it. `real check --types` writes `.real/types/roblox.d.luau` from the class, enum and datatype tables. Compat scripts reload during play since M3 (above).
 - Tweens and sound (WP15): `TweenService:Create` animates properties along an easing curve and refuses a property that cannot be tweened (`RE9352`). `Sound` keeps each sound's clock in the layer, so `TimePosition`, `IsPlaying`, `Ended` and `DidLoop` behave the same with and without an audio device. Each frame the layer queues `re_types::AudioCmd`s, and the frame driver takes them with `sound::take_commands` and hands them to `re_audio`, so `re_compat` does not depend on `re_audio`. `SoundId` resolves through `[compat] assets`; an unknown id is silent and warns once with `RE9350`.
 - 2D UI (WP15): `gui::step` runs once a frame inside the host's egui pass with the containers to draw (the local player's `PlayerGui`), the viewport, the camera and the frame's input. It lays out each enabled `ScreenGui` and `BillboardGui`, writes the read-only results (`AbsolutePosition`, `AbsoluteSize`, `TextBounds`) only when they change, fires the input events, and returns egui shapes that `re_render`'s UI pass paints over the 3D view. Text uses the bundled substitute fonts (ADR-0035), so metrics can differ slightly from the original platform. An own-property write of ±infinity (`math.huge`) is stored as ±`f32::MAX`; NaN is still refused.
-- 3D view (WP15 "render"): `re_compat::render::build` turns a world into a `RenderFrame` each frame: the camera and lights, one draw item per part or merged static cell (one mesh per material), the environment (ambient, fog, sky, colour grading from `Lighting`, `Atmosphere`, `Sky` and `ColorCorrectionEffect`), the effects and the GPU resources to upload or release. In a window, `re_app::compat_view` builds it from the client VM each frame, runs one egui pass of the local player's `PlayerGui` (`re_compat::gui`) with the HUD, and keeps CPU copies of the uploaded meshes, materials and textures until they are released, so the window, `screenshot` and replay screenshots all draw the same frame. The host also loads `MeshPart` models for the view (`re_app::compat::load_model`: a `.glb`, or a `.gltf` with embedded buffers, read through `ProjectFiles`), and `compat_view` uploads skinned meshes and their joint palettes. `re_render` draws it, with `SceneExtras` for fog, sky, grading, spot lights, sprites, ribbons and highlights. Particles are simulated on the CPU; beams are Bézier strips between attachments and trails keep the path their attachments swept. `[compat] effect_budget` caps particles plus segments per frame (`RE9351` on overflow). `Camera` gives the projection members (`WorldToScreenPoint`, `ScreenPointToRay`, ...) and `Ray` is a datatype.
+- 3D view (WP15 "render"): `re_compat::render::build` turns a world into a `RenderFrame` each frame: the camera and lights, one draw item per part or merged static cell (one mesh per material), the environment (ambient, fog, sky, colour grading from `Lighting`, `Atmosphere`, `Sky` and `ColorCorrectionEffect`), the effects and the GPU resources to upload or release. In a window, `re_app::compat_view` builds it from the client VM each frame, runs one egui pass of the local player's `PlayerGui` (`re_compat::gui`) with the HUD, and keeps CPU copies of the uploaded meshes, materials and textures until they are released, so the window, `screenshot` and replay screenshots all draw the same frame. The host also loads `MeshPart` models for the view (`re_app::compat::load_model`: a `.glb`, or a `.gltf` with embedded buffers, read through `ProjectFiles`), and `compat_view` uploads skinned meshes and their joint palettes. `re_render` draws it, with `SceneExtras` for the ambient light, fog, sky, spot lights, sprites, ribbons and highlights (colour grading and the other post effects go in `RenderSnapshot::post`, §8). Particles are simulated on the CPU; beams are Bézier strips between attachments and trails keep the path their attachments swept. `[compat] effect_budget` caps particles plus segments per frame (`RE9351` on overflow). `Camera` gives the projection members (`WorldToScreenPoint`, `ScreenPointToRay`, ...) and `Ray` is a datatype.
 - Datatypes: `Vector3` is Luau's native vector with a frozen type metatable, so its methods stay fast calls. `CFrame` stores an f32 position and rotation matrix and looks along −Z. The other datatypes are Rust userdata. `Enum` tables are built from `enums/*.json`, with one object per item per VM, so `==`, `rawequal` and table keys work. `Random` is our own seeded generator, so its numbers differ from Roblox's (marked `partial`).
 
 Coverage is a data file, `crates/re_compat/coverage.json`, listing each class and member with its status (`implemented`, `partial`, `stub-error` or `missing`). The static scan (§7) compares real scripts against this file. M2 also ships a compatibility definitions file, so the type checker knows the Roblox-style globals.
 
 ### Online play (M3, WP30, ADR-0050)
 
-A compat project can be played by several people on different machines. The server world is authoritative, and each player's client owns its character (`NetworkOwner`), as on the vendor's platform. The traffic is not encrypted, so play on a LAN or with people you trust. Native `game` scripts have no networking API in M3. A built game (§8) takes the same online flags, through `real run --package DIR` or the game's own executable, and a page of a web build joins a server as a client (below).
+A compat project can be played by several people on different machines. The server world is authoritative, and each player's client owns its character (`NetworkOwner`), as on the vendor's platform. The traffic is not encrypted, so play on a LAN or with people you trust. Native `game` scripts have no networking API in M3. A built game (§8) takes the same online flags through `real run --package DIR`, and all of them but `--lockstep` through the game's own executable; a page of a web build joins a server as a client (below).
 - **Roles.** A run is one of these:
   - **in-process**, the default and editor play: the server world and the local player's client world in one process, replicated every frame through the same wire frames, encoded and decoded as bytes;
   - **dedicated server** (`real run --server`): the server world only, headless, with no GPU or audio device, stepping in real time until it is stopped or `--frames` ends;
@@ -476,7 +494,7 @@ Two port types carry them: `shapes` (polygons with holes in the source's XZ plan
 | `road.footprint` (any number of paths, plus a margin) | Shapes |
 | `terrain.conform` (a field flattened under paths, blending back beside them) | Field |
 
-`NodeRegistry::m1()` registers these with the others (28 kinds). Shapes and paths are stored in the disk cache like fields and meshes, and Luau nodes can take and return them (`re_script::generator`): shapes as a list of `{ outer, holes }` polygons of `{x, z}` points, a path as `{ closed, samples }` with `x`, `y`, `z`, `width`, `bank` and `distance` per sample. Bad shapes and paths are `RE4504`, coordinates beyond about ±1,000 km `RE4503`, and a failed triangulation `RE4505`.
+`NodeRegistry::m1()` registers these with the others, the two streaming kinds of the M3 additions below included (28 kinds). Shapes and paths are stored in the disk cache like fields and meshes, and Luau nodes can take and return them (`re_script::generator`): shapes as a list of `{ outer, holes }` polygons of `{x, z}` points, a path as `{ closed, samples }` with `x`, `y`, `z`, `width`, `bank` and `distance` per sample. Bad shapes and paths are `RE4504`, coordinates beyond about ±1,000 km `RE4503`, and a failed triangulation `RE4505`.
 
 In a streamed world (ADR-0042) these nodes stream like the others. `path.spline`, `road.footprint`, `shape.polygon`, `shape.boolean` and `shape.offset` are **global**: keyed without the window, they give every cell and terrain chunk of a source one result, which the caches share once a window has made it, so every window sees the same roads; `path.spline` drapes its control points on its field sampled on the source's grid. `terrain.conform` and `field.from_shapes` are pointwise, and `road.mesh`, `shape.mesh` and `points.mask` work per cell. A cell's road mesh holds the triangles of one joined road network whose centre lies in the cell; a cell's shape mesh is one triangulation of the shapes cut exactly at the cell's sides, so neighbouring cells meet with no gap or overlap. Both meshes are relative to the cell's corner, where their entity sits. The joined network and the triangulation are made once and kept in the evaluator's memory cache (`NodeCtx::shared`; ADR-0043's "streamed roads" amendment).
 
@@ -499,7 +517,7 @@ A graph is placed in a scene by a **procedural source** entity (ADR-0017): an or
 2. The output `SceneFragment` is a list of `GenNode { key, name, parent_key, components }`. The **StableKey** is `<node_id>/<local_key>`, where `local_key` is chosen by the node (point index, cell, …). The entity's id is `<source id>/<StableKey>`, for example `island/scatter/17`.
 3. The fragment is applied as a diff: added, removed and changed entities, and the `Derived` meshes that are no longer referenced (`RegenReport::released_assets`). The runtime calls `GraphStore::release` for the released assets of its own `World::regenerate_changed`; `graph.regenerate` already does so. Releasing a terrain mesh also releases its heightfield collider, and a cloned `GraphStore` (as in `World::fork`) has its own copy of the derived map. Derived meshes and shapes that nothing references any more are swept every step.
 4. `graph.regenerate` (`{ source, seed }`) sets the source's seed and applies the diff inside one transaction. Entities whose key is unchanged keep their `Entity`, so script handles stay valid. Physics bodies are updated through `PhysicsCmd`.
-5. User overrides are re-applied. They are stored on the source by StableKey, and are either a field value or a **deletion**. Editing a generated entity through any command records an override in the same transaction, so undo removes both. A key with a deletion override is not spawned again. Overrides whose target disappeared are kept as orphans, and produce warning `RE4010`.
+5. User overrides are re-applied. They are stored on the source by StableKey, and are a field value, a **deletion**, or (M3, ADR-0043 §3) a structural override: a move to another parent within the source, a replacement, or an inserted authored entity. Editing a generated entity through any command records an override in the same transaction, so undo removes both. A key with a deletion override is not spawned again. Overrides whose target disappeared are kept as orphans, and produce warning `RE4010`.
 6. During play, a generated entity destroyed by a game script (a collected item, for example) is **suppressed** by its key for the rest of the session, so it stays gone after a regeneration. Suppression is never saved.
 7. Characters are re-grounded: each character whose first terrain hit below it is a new heightfield is placed on the new ground by a downward raycast at its x and z. The ray passes through non-terrain colliders. A character with no terrain below it after the change gets warning `RE0524`, and a missing or failing graph or builder gives `RE0523`. In a verify replay, a regeneration that loses a character, leaves one off the ground after 60 frames or brings back a collected item fails with `RE0525` (ADR-0022, stage 5).
 
@@ -510,7 +528,7 @@ This works during play. The M1 demo regenerates the island with a new seed while
 - **Versions** (ADR-0043): every node records its kind's version, old parameter shapes migrate in memory, and `real migrate-graph [--project DIR] [--dry-run] [--json]` rewrites graph files to the current versions, all or nothing. `graph.migration_report` (read) says what a migration would change.
 - **Bake** (ADR-0043): `proc.bake { source, keys?, keep_source? }` turns a source's output into authored entities with a `Baked` provenance record, in one undoable transaction. Baked ids are `<source>.<key with / as .>` (`~N` on a clash), and derived meshes and heightfields become `.glb` and `.heightfield` files under `assets/baked/<encoded source id>/`.
 - **Luau node kinds** (ADR-0043 §4): scripts under `scripts/generators/` declare `project.*` node kinds, run in the sandboxed `generator` context with the `[proc]` budget; `proc.create_source { kind, params }` places one as a source.
-- **Streaming** (ADR-0042): `re_proc::stream` evaluates a streamed source per cell (`c/<x>_<z>`) around the focus points, on the task pool from the tick a cell is requested, and applies it `delay_ticks` later within the per-tick budgets. `re_scene::stream` holds the per-cell apply, unload and stash hooks (`World::apply_cell`, `unload_cell`) and the `StreamCell` type. `play.run` copies remap the streamer's source handles by id (`Streamer::forked`). A `terrain.chunks` source's level-of-detail view lives in `TerrainView`, outside `state_hash`, and is swapped in as its chunks are ready; under `Lateness::Wait`, a frame that takes a screenshot first completes it (`Streamer::complete_view`), so a golden image does not depend on worker timing.
+- **Streaming** (ADR-0042): `re_proc::stream` evaluates a streamed source per cell (`c/<x>_<z>`) around the focus points, on the task pool from the tick a cell is requested, and applies it `delay_ticks` later within the per-tick budgets. `re_scene::stream` holds the per-cell apply, unload and stash hooks (`World::apply_cell`, `unload_cell`) and the `StreamCell` type. `play.run` copies remap the streamer's source handles by id (`Streamer::forked`). Streaming adds two node kinds: `terrain.erode` (hydraulic erosion of a field, output Field; streamed, it erodes region tiles and blends them, so cells meet without seams) and `terrain.chunks` (a streamed world's terrain, output Fragment: the field drawn as level-of-detail chunks, with heightfield colliders near each focus; one mesh when not streamed). A `terrain.chunks` source's level-of-detail view lives in `TerrainView`, outside `state_hash`, and is swapped in as its chunks are ready; under `Lateness::Wait`, a frame that takes a screenshot first completes it (`Streamer::complete_view`), so a golden image does not depend on worker timing.
 
 ## 6. AI integration
 
@@ -526,7 +544,7 @@ This works during play. The M1 demo regenerates the island with a new seed while
 |---|---|---|
 | `real describe [--json]` | What commands, components, nodes and scripts exist | The command registry plus reflection |
 | `real describe --luau-defs` / `engine.d.luau` | The exact native Luau API, for type checkers, editors and agents (prints `engine.d.luau`; not combinable with `--json`) | The binding registry in `re_script` |
-| `real check [--types] [--checker PATH] [--corpus] [--scripts-dir DIR…] [--json]` | Compile and scan scripts; `--types` runs the external type checker (without luau-lsp it reports `RE3090` and exits 1); `--corpus` runs the corpus suite over the `--scripts-dir` directories (exit 2 without any); `--scripts-dir` works without a project | `re_script`, `re_script_check` |
+| `real check [--types] [--checker PATH] [--corpus] [--scripts-dir DIR…] [--json]` | Compile and scan scripts; `--types` runs the external type checker (without luau-lsp it reports `RE3090` and exits 1); `--corpus` runs the corpus suite over the `--scripts-dir` directories, or without any over the directories listed in `REAL_SCENE_SCRIPTS` (exit 2 when neither names one); `--scripts-dir` works without a project | `re_script`, `re_script_check` |
 | `real do <command> [--args '{json}'] [--dry-run] [--json]` (tooling build) | One edit from a shell. It sends the command to the editor if one is running; otherwise it takes the headless lock for the command's duration and saves the scene unless `--dry-run`. `--json` prints the `CommandOutcome` plus `via` (`"local"`, `"editor"`, or `null` when the project was never reached). Exit 0 on success, 1 when the command fails, the project is unreachable or the scene save fails (`RE0518`), 2 when `--args` is not a JSON object | The registry |
 | `real run [--headless] [--frames N] [--replay FILE] [--screenshot FILE] [--exit-after] [--json] [--checkpoints K] [--debug [PORT]]`, and online `--server`, `--host` or `--connect HOST[:PORT]` with `--name NAME`, `--port P`, `--bind ADDR`, `--max-players N` and `--lockstep [N]` | Play the project in a window or headless; serve, host or join a compat game over UDP (§4, ADR-0050; the traffic is not encrypted, so play on trusted networks) | `re_app` (`App`, `App::set_net`) |
 | `real verify --json` | Is the project healthy? | ADR-0022 |
@@ -562,7 +580,7 @@ client → real mcp (tokio, background thread) → re_command::remote::EngineHan
 
 ### MCP tool set (M1: 25 tools)
 
-Each M1 command is one MCP tool. There is no generic `command.run` tool in M1, because it would hide the target command's tier from the client's annotations (ADR-0026).
+Each M1 command is one MCP tool, named after the command with `_` for `.` (`entity.get` is the tool `entity_get`), because several clients accept only `[A-Za-z0-9_-]` in tool names; the tables below give the command names. There is no generic `command.run` tool in M1, because it would hide the target command's tier from the client's annotations (ADR-0026).
 
 | Tier | Tools | Registered by |
 |---|---|---|
@@ -635,7 +653,7 @@ Recipes are data: a recipe runs only registered commands, up to the `edit` tier,
 | RE9800–9899 | `re_import` |
 | RE9900–9999 | reserved |
 
-Inside `re_app`'s range, `RE0600`–`RE0619` are package reading (ADR-0037) and `RE0620`–`RE0649` the web runtime (ADR-0049): `RE0620`–`RE0622` are in use and `RE0623`–`RE0649` stay reserved for WP29. Inside `re_cli`'s, `RE0950`–`RE0969` are `real build` and `RE0970`–`RE0989` its web target.
+Inside `re_app`'s range, `RE0600`–`RE0619` are package reading (ADR-0037) and `RE0620`–`RE0649` the web runtime (ADR-0049): `RE0620`–`RE0622` are in use and `RE0623`–`RE0649` are unused. Inside `re_cli`'s, `RE0950`–`RE0969` are `real build` and `RE0970`–`RE0989` its web target.
 
 - **Explain pages.** Each crate has `explain/RE####.md` and exports `pub const DIAGNOSTICS: &[DiagInfo]`, built with `include_str!`. `re_cli` collects all of them. A test fails on a missing page, a duplicate code, or a code outside the crate's range, and `cargo xtask explain` fails on a page that no `include_str!` in the crate's sources references (so every code used in source is in `DIAGNOSTICS`).
 - **Output.** Human output looks like rustc's: `error[RE3004]: ... --> scripts/game/player.luau:12:5`, followed by a hint. `--json` gives the same data as JSON lines.
@@ -668,7 +686,7 @@ my-game/
   tests/replays/*.replay.json
   tests/goldens/<backend>/*.png
   .real/agent-policy.toml    committed
-  .real/cache/  .real/agent/  .real/sessions/  .real/crash/  .real/types/   ignored
+  .real/cache/  .real/agent/sessions/  .real/crash/  .real/types/   ignored
   .real/data/  .real/out/  .real/editor/layout.json  .real/mcp-http.json      ignored (saved data, captures, the editor's dock layout, the HTTP MCP state)
   .real/editor.lock  .real/editor.owner  .real/editor.sock                 ignored; the editor or a headless writer holds an OS lock on editor.lock and writes its pid and kind to editor.owner; the socket exists only while the editor runs
   AGENTS.md  CLAUDE.md       generated by `real agent init`
@@ -686,9 +704,13 @@ entry_scene = "scenes/main.scene.json"
 [sim]
 fixed_hz = 60
 max_steps_per_frame = 5
+gravity = [0.0, -9.81, 0.0]   # m/s²
 
 [render]
 backends = ["vulkan", "gl"]   # wgpu backend preference
+width = 1280                  # frame size in pixels: the window's initial size, and the headless frame size
+height = 720
+clear = [0.45, 0.62, 0.85, 1.0]   # linear RGBA clear colour
 
 [render.post]                 # exposure and the post chain (M3, ADR-0038); every step is off by default
 exposure = 1.0                # multiplies lights, ambient and emissive
@@ -784,6 +806,9 @@ studio = true
 [compat.animations]            # animation id to a built-in clip or a KeyframeSequence in the place
 "rbxassetid://456" = "builtin:r15_walk"
 "789" = "game.ReplicatedStorage.Wave"
+
+[compat.gui]                   # SurfaceGui textures (M3, ADR-0048)
+surface_redraws_per_frame = 8  # changed surfaces painted again per frame; the rest keep last frame's texture
 ```
 
 A compat project can also set `[compat.data]` (M3, ADR-0048):
@@ -813,7 +838,7 @@ max_owned_speed = 1000         # studs a second an owned part may move (RE9452)
 remote_rate = 600              # remote messages a player may send a second (RE9453)
 ```
 
-The `[render.post]` and `[render.shadows]` values are checked at load: a value out of range is `RE0501`, naming the key and the range, and is not clamped. In a compat project the place's own exposure and grading (its `Lighting` and post effects) win over the TOML, while bloom, sun rays and the shadow settings still apply. Without `[audio]`, the mixer has the buses `music`, `sfx` and `ui` and no effects. A project without `[audio]` sounds as before.
+The `[render.post]` and `[render.shadows]` values are checked at load: a value out of range is `RE0501`, naming the key and the range, and is not clamped. In a compat project the exposure always comes from the place (`Lighting.ExposureCompensation`), each kind of post effect the place has (colour correction, bloom, blur, sun rays) replaces the TOML's setting of that kind, and tone mapping and the shadow settings come from the TOML. Without `[audio]`, the mixer has the buses `music`, `sfx` and `ui` and no effects. A project without `[audio]` sounds as before.
 
 Asset paths are relative to the project and may not contain `..`. An id that is not in the table, or whose file is missing, is `RE9350` when it is used. An animation value is `builtin:` followed by `r6_` or `r15_` and one of `idle`, `walk`, `run`, `jump`, `fall`, `climb` and `sit`, or a dotted path into the place. A key that is not an asset id, a bad value, or one id listed twice is `RE9202` at load.
 
