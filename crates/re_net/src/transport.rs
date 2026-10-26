@@ -7,8 +7,12 @@
 //! * [`Conditioned`]: wraps either and drops, duplicates and delays datagrams
 //!   from a seed, so loss and reordering are reproducible.
 //!
-//! The trait has no `Send` bound and no blocking call, so a browser
-//! implementation over a WebSocket fits it (ADR-0049 §10).
+//! * [`ServerTransport`] and [`WsTransport`] (in [`crate::ws`]): a server's
+//!   UDP socket with a WebSocket listener beside it, and a client's WebSocket,
+//!   for players in a browser (ADR-0049 §10).
+//!
+//! The trait has no `Send` bound and no blocking call, so the browser's
+//! WebSocket fits it.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -37,6 +41,53 @@ pub trait Transport {
     /// The current time, given once per poll and flush; transports that hold
     /// datagrams back ([`Conditioned`]) release them by it.
     fn advance(&mut self, _now: Duration) {}
+
+    /// Peers whose link went away since the last call, with why: a closed
+    /// WebSocket. An endpoint closes their connections at once instead of
+    /// waiting for the timeout. UDP has no such links and reports none.
+    fn take_lost(&mut self) -> Vec<(SocketAddr, Diagnostic)> {
+        Vec::new()
+    }
+
+    /// The endpoint closed its connection to `peer` (after sending its
+    /// Disconnect): a transport with a link per peer closes that link.
+    fn release(&mut self, _peer: SocketAddr) {}
+
+    /// `peer` for people: its address, and how it is reached when that is
+    /// not plain UDP.
+    fn describe_peer(&self, peer: SocketAddr) -> String {
+        peer.to_string()
+    }
+}
+
+impl<T: Transport + ?Sized> Transport for Box<T> {
+    fn send_to(&mut self, to: SocketAddr, datagram: &[u8]) -> io::Result<()> {
+        (**self).send_to(to, datagram)
+    }
+
+    fn recv_from(&mut self, buf: &mut [u8]) -> io::Result<Option<(usize, SocketAddr)>> {
+        (**self).recv_from(buf)
+    }
+
+    fn local_addr(&self) -> SocketAddr {
+        (**self).local_addr()
+    }
+
+    fn advance(&mut self, now: Duration) {
+        (**self).advance(now);
+    }
+
+    fn take_lost(&mut self) -> Vec<(SocketAddr, Diagnostic)> {
+        (**self).take_lost()
+    }
+
+    fn release(&mut self, peer: SocketAddr) {
+        (**self).release(peer);
+    }
+
+    fn describe_peer(&self, peer: SocketAddr) -> String {
+        (**self).describe_peer(peer)
+    }
 }
 
 /// A non-blocking UDP socket.
@@ -298,7 +349,8 @@ impl<T: Transport> Conditioned<T> {
         (self.rng.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    fn release(&mut self) {
+    /// Sends the held datagrams whose time came.
+    fn release_due(&mut self) {
         if self.held.is_empty() {
             return;
         }
@@ -355,7 +407,19 @@ impl<T: Transport> Transport for Conditioned<T> {
     fn advance(&mut self, now: Duration) {
         self.now = now;
         self.inner.advance(now);
-        self.release();
+        self.release_due();
+    }
+
+    fn take_lost(&mut self) -> Vec<(SocketAddr, Diagnostic)> {
+        self.inner.take_lost()
+    }
+
+    fn release(&mut self, peer: SocketAddr) {
+        self.inner.release(peer);
+    }
+
+    fn describe_peer(&self, peer: SocketAddr) -> String {
+        self.inner.describe_peer(peer)
     }
 }
 

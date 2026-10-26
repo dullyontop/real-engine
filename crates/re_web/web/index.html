@@ -23,6 +23,10 @@ const overlay = document.getElementById('overlay');
 const message = document.getElementById('message');
 const fill = document.getElementById('fill');
 const fail = (text) => { overlay.classList.remove('done'); overlay.style.cursor = 'default'; message.textContent = text; };
+// ?connect=ws://host:port/&name=Ann joins a Roblox-style game's server as Ann.
+const params = new URLSearchParams(location.search);
+const connect = params.get('connect') || null;
+const name = params.get('name') || null;
 const missing = missingFeatures();
 if (missing.length) {
   fail('This browser cannot run the game. It needs:\n' + missing.join('\n'));
@@ -31,11 +35,13 @@ if (missing.length) {
     const { session } = await boot({
       onProgress: (done, total) => { fill.style.width = `${(100 * done) / Math.max(total, 1)}%`; },
     });
-    message.textContent = 'Click to start';
+    message.textContent = connect ? `Click to join ${connect}` : 'Click to start';
     overlay.addEventListener('click', async () => {
       overlay.classList.add('done');
       try {
         await play(session, {
+          connect,
+          name,
           onReport: (kind, text) => {
             if (kind === 'warning') return console.warn(text);
             if (kind === 'problem') return console.error(text);

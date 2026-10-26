@@ -111,10 +111,18 @@ web-time = "=1.1.0"
 # JavaScript bindings of the browser build (ADR-0049).
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "=0.4.79"
+# The browser's WebSocket for online play (ADR-0049 §10, ADR-0050's amendment for
+# PR "web"): re_net only. Both were in the lockfile already through wgpu and winit.
+web-sys = { version = "=0.3.106", features = ["WebSocket", "BinaryType", "MessageEvent", "CloseEvent"] }
+js-sys = "=0.3.106"
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "ansi", "json"] }
 puffin = "=0.20.0"
 tracy-client = { version = "=0.19.0", default-features = false, features = ["enable", "ondemand"] }
+
+# Networking (ADR-0050's amendment for PR "web"): the WebSocket listener beside a
+# server's UDP socket and the native WebSocket client; re_net only, no TLS.
+tungstenite = { version = "=0.30.0", default-features = false, features = ["handshake"] }
 
 # Tools, CLI, agent.
 clap = { version = "=4.6.7", features = ["derive"] }

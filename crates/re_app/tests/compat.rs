@@ -94,6 +94,32 @@ fn compat_runs_are_deterministic() {
     assert_eq!(hash(), hash());
 }
 
+/// Scripts that place parts with `math.random` and move them by `os.clock`
+/// still end every run with the same state: both follow the run (its seed
+/// and its game time), not the VM's address and the process clock.
+#[test]
+fn compat_runs_with_math_random_and_os_clock_repeat() {
+    let server = r#"
+local start = os.clock()
+for i = 1, 4 do
+    local p = Instance.new("Part")
+    p.Anchored = true
+    p.Position = Vector3.new(math.random(-50, 50), 10, math.random() * 100)
+    p.Parent = workspace
+    task.wait(0.1)
+    p.Position += Vector3.new(0, os.clock() - start, 0)
+end
+"#;
+    let dir = project(server, "print(math.random())");
+    let run = || {
+        let mut app = App::open(dir.path(), config(dir.path())).unwrap();
+        let r = app.run_headless(Some(40), None).unwrap();
+        assert!(r.ok(), "{:?}", r.diagnostics);
+        (r.state_hash, r.output)
+    };
+    assert_eq!(run(), run());
+}
+
 fn quick() -> VerifyOptions {
     VerifyOptions {
         compat_boot_frames: 60,

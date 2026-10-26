@@ -13,8 +13,11 @@
 //!   string or the JSON text of the value) on the step results; `output`
 //!   lists lines the output must contain. Uncaught errors fail it as in
 //!   `app.boot`.
+//! * `app.repeat`: runs a fresh copy `runs` times (default 2, at least 2)
+//!   for `frames` frames (default 600), as the replays stage of `real verify`
+//!   does, and fails unless every run ends with the same state hash.
 //!
-//! Both read `players` (default 1) as `real.toml` `[compat] players`, and
+//! All three read `players` (default 1) as `real.toml` `[compat] players`, and
 //! `stand_ins`, a map from a name to a kit Luau file: each becomes a server
 //! `Script` of that name in `Workspace`, which starts before the scripts of
 //! `ServerScriptService` (to build what the sample lacks, say).
@@ -29,6 +32,7 @@ pub fn step(name: &str) -> Option<super::Step> {
     Some(match name {
         "app.boot" => boot,
         "app.play" => play,
+        "app.repeat" => repeat,
         _ => return None,
     })
 }
@@ -239,4 +243,26 @@ fn play(ctx: &mut Ctx, args: &J) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn repeat(ctx: &mut Ctx, args: &J) -> Result<(), String> {
+    let config = config(ctx, args)?;
+    let frames = args["frames"].as_u64().unwrap_or(600);
+    let runs = args["runs"].as_u64().unwrap_or(2).max(2);
+    let mut hashes = Vec::new();
+    for _ in 0..runs {
+        let mut app = App::open(&ctx.project(), config.clone()).map_err(|d| d.render_human())?;
+        let report = app
+            .run_headless(Some(frames), None)
+            .map_err(|d| d.render_human())?;
+        hashes.push(report.state_hash);
+    }
+    if hashes.iter().all(|h| *h == hashes[0]) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{runs} runs of {frames} frames ended with different state hashes: {}",
+            hashes.join(", ")
+        ))
+    }
 }

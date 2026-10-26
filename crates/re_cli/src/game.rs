@@ -9,7 +9,7 @@ use re_app::package::{self, Package, RuntimeVersions};
 use re_app::{App, AppConfig};
 use re_core::Diagnostic;
 
-use crate::{Live, PlayOptions, fail, play};
+use crate::{Live, NetArgs, PlayOptions, fail, go_online, play};
 
 /// The notices `real build` writes beside the game.
 pub const NOTICES_FILE: &str = "THIRD_PARTY_NOTICES.txt";
@@ -47,6 +47,8 @@ struct GameArgs {
     /// the target, as JSON (`real build --runtime` checks a runtime with it).
     #[arg(long)]
     runtime_info: bool,
+    #[command(flatten)]
+    net: NetArgs,
 }
 
 /// What `--runtime-info` prints.
@@ -124,19 +126,26 @@ pub fn main() -> ExitCode {
 }
 
 fn run(opened: Package, args: GameArgs) -> ExitCode {
-    let app = match open_app(&opened, args.headless) {
+    // A dedicated server has no window, and runs in real time until stopped.
+    let server = args.net.server;
+    let mut app = match open_app(&opened, args.headless || server) {
         Ok(app) => app,
         Err(d) => return fail(d),
     };
+    if let Some(options) = args.net.options(None)
+        && let Err(d) = go_online(&mut app, options)
+    {
+        return fail(d);
+    }
     let options = PlayOptions {
-        headless: args.headless,
-        frames: args.frames,
+        headless: args.headless || server,
+        frames: args.frames.or(server.then_some(u64::MAX)),
         replay: args.replay,
         screenshot: args.screenshot,
         exit_after: false,
         json: args.json,
         live: Live::Packaged,
-        paced: false,
+        paced: server,
         checkpoints: None,
     };
     let archive = opened.archive.clone();

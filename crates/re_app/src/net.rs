@@ -1,8 +1,14 @@
 //! Online play for compat projects (ADR-0050 §6): `real run --server`,
-//! `--host` and `--connect` over UDP, through `re_compat::net::session`.
+//! `--host` and `--connect`, through `re_compat::net::session`. A server
+//! takes players over UDP and, unless `[net] websocket = false`, over a
+//! WebSocket on TCP at the same port, which is how a browser plays (ADR-0050's
+//! amendment for PR "web"). A client connects over UDP to `host:port`, or over
+//! a WebSocket to a `ws://` address; a browser always uses a WebSocket.
 //!
 //! [`App::set_net`](crate::App::set_net) binds the socket before the first
-//! frame; the session starts with the compat game ([`NetPlay`]). In a frame:
+//! frame. A client's session connects from then on (a page polls it before the
+//! first frame, [`App::try_frame`](crate::App::try_frame)); a server's starts
+//! with the compat game ([`NetPlay`]). In a frame:
 //!
 //! ```text
 //! server: receive  pump(server)  server phases  [in-process replicate]  replicate (sends)
@@ -14,8 +20,8 @@ use std::time::Duration;
 
 use re_compat::net::session::{ClientNet, PROTOCOL, ServerNet};
 use re_core::Diagnostic;
-use re_core::files::ProjectFiles;
-use re_net::{Config, Endpoint, UdpTransport};
+use re_core::files::{Form, LayerKind, ProjectFiles};
+use re_net::{Config, Endpoint, Transport, UdpTransport, WsTransport};
 use serde::{Deserialize, Serialize};
 
 /// `[net]` in `real.toml`: ports, players, rates and the timeout of online
@@ -34,6 +40,9 @@ pub struct NetConfig {
     /// A connection that hears nothing for this long closes; a lockstep run
     /// waits this long for a frame.
     pub timeout_ms: u64,
+    /// Whether a server also takes players over a WebSocket (browsers), on
+    /// TCP at its port.
+    pub websocket: bool,
 }
 
 /// The default port (ADR-0050 §6).
@@ -47,6 +56,7 @@ impl Default for NetConfig {
             server_rate: 256 * 1024,
             client_rate: 64 * 1024,
             timeout_ms: 10_000,
+            websocket: true,
         }
     }
 }
@@ -65,8 +75,8 @@ pub enum NetRole {
     Server,
     /// A listen server: both contexts in this process, and remote players.
     Host,
-    /// A client of the server at this address (`host:port`, or `host` with
-    /// the configured port).
+    /// A client of the server at this address: `host:port` (or `host`, on
+    /// the configured port) over UDP, or `ws://host:port/` over a WebSocket.
     Client(String),
 }
 
@@ -103,133 +113,351 @@ impl NetOptions {
     }
 }
 
-/// The hash a client and its server must share (`RE8905`): the project's
-/// `real.toml`, scenes and scripts, as the run reads them (ADR-0050 §5).
-/// Files under `.real/` (data, caches) are left out.
+/// What [`App::set_net`](crate::App::set_net) bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NetBound {
+    /// The address of the UDP socket, or a WebSocket client's own.
+    pub addr: SocketAddr,
+    /// Where a server takes WebSocket players (TCP), when it does.
+    pub websocket: Option<SocketAddr>,
+}
+
+/// The hash a client and its server must share (`RE8905`): the game's
+/// `real.toml`, scenes and scripts as the run reads them (ADR-0050 §5), from
+/// a project directory or a packaged game's archive. Each file counts with
+/// its path, how it is stored (source, bytecode or processed) and its bytes,
+/// so a browser and a desktop server that play one archive agree. Left out:
+/// what the engine provides itself; in a packaged game, every file from
+/// outside its archive (the folder beside it, the files a page adds);
+/// `tests/` (replays, goldens); and whatever is at the top under a name that
+/// starts with `.` (`.real/` with its data and caches, `.git/`, an editor's
+/// settings).
 pub fn game_hash(files: &ProjectFiles) -> u64 {
+    let packaged = files
+        .layers()
+        .iter()
+        .any(|l| l.kind() == LayerKind::Archive);
     let mut h = blake3::Hasher::new();
-    h.update(b"real-engine/game-hash/1");
+    h.update(b"real-engine/game-hash/2");
     let mut paths: Vec<String> = [".toml", ".json", ".luau", ".lua"]
         .iter()
         .flat_map(|s| files.list("", s))
         .map(|p| p.as_str().to_string())
-        .filter(|p| !p.starts_with(".real/"))
+        .filter(|p| !p.starts_with('.') && !p.starts_with("tests/"))
         .collect();
     paths.sort();
     paths.dedup();
     for p in paths {
-        let Ok(bytes) = files.read_source(&p) else {
+        let Ok(data) = files.read(&p) else {
             continue;
+        };
+        let counted = match data.layer {
+            LayerKind::Archive => true,
+            LayerKind::Engine | LayerKind::Folder => false,
+            _ => !packaged,
+        };
+        if !counted {
+            continue;
+        }
+        let form: u8 = match data.form {
+            Form::Source => 0,
+            Form::Bytecode { .. } => 1,
+            Form::Processed { .. } => 2,
+            _ => 3,
         };
         h.update(&(p.len() as u64).to_le_bytes());
         h.update(p.as_bytes());
-        h.update(&(bytes.len() as u64).to_le_bytes());
-        h.update(&bytes);
+        h.update(&[form]);
+        h.update(&(data.bytes.len() as u64).to_le_bytes());
+        h.update(&data.bytes);
     }
     let out = h.finalize();
     u64::from_le_bytes(out.as_bytes()[..8].try_into().expect("8 bytes"))
 }
 
+/// A run's transport: a client's UDP socket or WebSocket, or a server's UDP
+/// socket and WebSocket listener.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type Link = Box<dyn Transport + Send>;
+/// A run's transport: a browser's WebSocket.
+#[cfg(target_arch = "wasm32")]
+pub(crate) type Link = Box<dyn Transport>;
+
 /// A run's network side.
 pub(crate) enum NetPlay {
-    /// Bound, waiting for the game to start.
+    /// A server's socket, bound, waiting for the game to start.
     Bound {
-        end: Box<Endpoint<UdpTransport>>,
+        end: Box<Endpoint<Link>>,
+        options: NetOptions,
+    },
+    /// A client's session, connecting until the game starts and joins.
+    Connecting {
+        net: Box<ClientNet<Link>>,
         options: NetOptions,
     },
     /// Serving (dedicated or host).
-    Server(Box<ServerNet<UdpTransport>>),
+    Server(Box<ServerNet<Link>>),
     /// Playing on a server.
-    Client(Box<ClientNet<UdpTransport>>),
+    Client(Box<ClientNet<Link>>),
     /// Over: failed, kicked or the server went away.
     Closed,
 }
 
 impl NetPlay {
-    /// Binds the socket for `options` (a server's listening socket, or a
-    /// client's to its server); the game hash names the project.
+    /// Binds the socket for `options` (a server's listening socket and
+    /// WebSocket listener, or a client's connection to its server); the game
+    /// hash names the project.
     ///
     /// # Errors
     ///
     /// `RE8900` the socket does not bind, `RE8901` the address does not
-    /// resolve.
+    /// resolve, `RE8910` a WebSocket does not open, and `RE8911` a browser
+    /// asked to serve.
     pub(crate) fn bind(
         options: NetOptions,
         config: &NetConfig,
         files: &ProjectFiles,
-    ) -> Result<NetPlay, Diagnostic> {
+    ) -> Result<(NetPlay, NetBound), Diagnostic> {
         let game = game_hash(files);
         let timeout = Duration::from_millis(config.timeout_ms.max(1));
-        let end = match &options.role {
+        let port = options.port.unwrap_or(config.port);
+        match &options.role {
             NetRole::Server | NetRole::Host => {
-                let port = options.port.unwrap_or(config.port);
+                let max_players = options.max_players.unwrap_or(config.max_players);
                 let ip = options.bind.as_deref().unwrap_or("0.0.0.0");
-                let addr = re_net::resolve(ip, port)?;
-                let addr = SocketAddr::new(addr.ip(), port);
+                let (transport, websocket) =
+                    serve(ip, port, config.websocket, max_players, timeout)?;
                 let mut cfg = Config::server(PROTOCOL, game);
                 cfg.send_rate = f64::from(config.server_rate.max(1));
-                cfg.max_connections = options.max_players.unwrap_or(config.max_players) as usize;
+                cfg.max_connections = max_players as usize;
                 cfg.timeout = timeout;
-                Endpoint::server(UdpTransport::bind(addr)?, cfg)
+                let end = Endpoint::server(transport, cfg);
+                let bound = NetBound {
+                    addr: end.local_addr(),
+                    websocket,
+                };
+                let play = NetPlay::Bound {
+                    end: Box::new(end),
+                    options,
+                };
+                Ok((play, bound))
             }
             NetRole::Client(server) => {
-                let addr = re_net::resolve(server, options.port.unwrap_or(config.port))?;
+                let (transport, addr) = connect(server, port, timeout)?;
                 let mut cfg = Config::client(PROTOCOL, game);
                 cfg.send_rate = f64::from(config.client_rate.max(1));
                 cfg.timeout = timeout;
-                Endpoint::client(UdpTransport::for_server(addr)?, addr, cfg)
+                let end = Endpoint::client(transport, addr, cfg);
+                let bound = NetBound {
+                    addr: end.local_addr(),
+                    websocket: None,
+                };
+                let net = ClientNet::new(end, options.name.clone(), options.lockstep.is_some());
+                let play = NetPlay::Connecting {
+                    net: Box::new(net),
+                    options,
+                };
+                Ok((play, bound))
             }
-        };
-        Ok(NetPlay::Bound {
-            end: Box::new(end),
-            options,
-        })
-    }
-
-    /// The address the socket is bound to.
-    pub(crate) fn local_addr(&self) -> Option<SocketAddr> {
-        match self {
-            NetPlay::Bound { end, .. } => Some(end.local_addr()),
-            NetPlay::Server(s) => Some(s.endpoint().local_addr()),
-            NetPlay::Client(c) => Some(c.endpoint().local_addr()),
-            NetPlay::Closed => None,
         }
     }
 
     /// The compat role this run plays.
     pub(crate) fn role(&self) -> crate::compat::Role {
         match self {
-            NetPlay::Bound { options, .. } => match options.role {
-                NetRole::Server => crate::compat::Role::Server,
-                NetRole::Host => crate::compat::Role::InProcess,
-                NetRole::Client(_) => crate::compat::Role::Client,
-            },
+            NetPlay::Bound { options, .. } | NetPlay::Connecting { options, .. } => {
+                match options.role {
+                    NetRole::Server => crate::compat::Role::Server,
+                    NetRole::Host => crate::compat::Role::InProcess,
+                    NetRole::Client(_) => crate::compat::Role::Client,
+                }
+            }
             NetPlay::Server(_) => crate::compat::Role::Server,
             NetPlay::Client(_) => crate::compat::Role::Client,
             NetPlay::Closed => crate::compat::Role::InProcess,
         }
     }
 
-    /// Each open connection's counts.
-    pub(crate) fn stats(&self) -> Vec<(SocketAddr, re_net::ConnStats)> {
-        let end = match self {
-            NetPlay::Bound { end, .. } => end,
-            NetPlay::Server(s) => s.endpoint(),
-            NetPlay::Client(c) => c.endpoint(),
-            NetPlay::Closed => return Vec::new(),
-        };
-        end.peers()
-            .into_iter()
-            .filter_map(|p| Some((end.addr_of(p)?, end.stats(p)?)))
-            .collect()
+    /// True unless a client must wait for its server: before the game
+    /// starts, for the welcome; in lockstep, for the server's frame
+    /// ([`ClientNet::ready`]).
+    pub(crate) fn ready(&mut self) -> bool {
+        match self {
+            NetPlay::Connecting { net, .. } | NetPlay::Client(net) => net.ready(),
+            NetPlay::Bound { .. } | NetPlay::Server(_) | NetPlay::Closed => true,
+        }
+    }
+
+    /// Each open connection's counts, by peer: its address, with
+    /// `(WebSocket)` after a WebSocket player's, or the server's URL.
+    pub(crate) fn stats(&self) -> Vec<(String, re_net::ConnStats)> {
+        fn of<T: Transport>(end: &Endpoint<T>) -> Vec<(String, re_net::ConnStats)> {
+            end.peers()
+                .into_iter()
+                .filter_map(|p| Some((end.describe(p)?, end.stats(p)?)))
+                .collect()
+        }
+        match self {
+            NetPlay::Bound { end, .. } => of(end),
+            NetPlay::Connecting { net, .. } | NetPlay::Client(net) => of(net.endpoint()),
+            NetPlay::Server(s) => of(s.endpoint()),
+            NetPlay::Closed => Vec::new(),
+        }
     }
 
     /// Leaves or stops serving.
     pub(crate) fn close(&mut self) {
         match self {
             NetPlay::Server(s) => s.close(),
-            NetPlay::Client(c) => c.close(),
-            _ => {}
+            NetPlay::Connecting { net, .. } | NetPlay::Client(net) => net.close(),
+            NetPlay::Bound { .. } | NetPlay::Closed => {}
         }
+    }
+}
+
+/// A server's transport on `ip:port`: UDP, and a WebSocket listener on TCP at
+/// the same port when `websocket` (for twice the players, so a page that
+/// reloads can join while its old link times out).
+#[cfg(not(target_arch = "wasm32"))]
+fn serve(
+    ip: &str,
+    port: u16,
+    websocket: bool,
+    max_players: u32,
+    timeout: Duration,
+) -> Result<(Link, Option<SocketAddr>), Diagnostic> {
+    let addr = re_net::resolve(ip, port)?;
+    let addr = SocketAddr::new(addr.ip(), port);
+    if !websocket {
+        return Ok((Box::new(re_net::ServerTransport::udp(addr)?), None));
+    }
+    let links = 2 * max_players as usize + 16;
+    let mut transport = re_net::ServerTransport::with_websocket(addr, links)?;
+    transport.set_link_timeout(timeout);
+    let at = transport.websocket_addr();
+    Ok((Box::new(transport), at))
+}
+
+/// A browser cannot listen for players (ADR-0049 §10).
+#[cfg(target_arch = "wasm32")]
+fn serve(
+    _ip: &str,
+    _port: u16,
+    _websocket: bool,
+    _max_players: u32,
+    _timeout: Duration,
+) -> Result<(Link, Option<SocketAddr>), Diagnostic> {
+    Err(Diagnostic::error(
+        re_net::codes::CANNOT_SERVE,
+        "a game in a browser cannot serve: it can only join a server",
+    )
+    .with_hint(
+        "run the server on a desktop: `real run --server` in the project, or `real run --package DIR --server` for a built game",
+    ))
+}
+
+/// A client's transport to `server` and the address its endpoint reaches the
+/// server at: a WebSocket for a `ws://` address (and always in a browser),
+/// else UDP to `host:port` (`port` when it has none).
+fn connect(server: &str, port: u16, timeout: Duration) -> Result<(Link, SocketAddr), Diagnostic> {
+    if cfg!(target_arch = "wasm32") || re_net::ws::is_websocket_url(server) {
+        let ws = WsTransport::connect(&re_net::ws::websocket_url(server, port), timeout)?;
+        let addr = ws.server_addr();
+        return Ok((Box::new(ws), addr));
+    }
+    let addr = re_net::resolve(server, port)?;
+    Ok((Box::new(UdpTransport::for_server(addr)?), addr))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use re_core::files::{MemLayer, ProjectPath, WritableDirs};
+
+    use super::*;
+
+    fn layer(kind: LayerKind, files: &[(&str, &[u8], Form)]) -> Arc<MemLayer> {
+        let mut l = MemLayer::new(kind);
+        for (path, bytes, form) in files {
+            l.insert(
+                ProjectPath::new(path).unwrap(),
+                bytes.to_vec(),
+                form.clone(),
+            );
+        }
+        Arc::new(l)
+    }
+
+    fn hash(layers: Vec<Arc<MemLayer>>) -> u64 {
+        let layers = layers
+            .into_iter()
+            .map(|l| l as Arc<dyn re_core::files::FileLayer>)
+            .collect();
+        game_hash(&ProjectFiles::new(layers, WritableDirs::memory(), None))
+    }
+
+    #[test]
+    fn the_game_hash_counts_what_the_game_runs_and_nothing_else() {
+        let bytecode = Form::Bytecode {
+            compiler: "test".into(),
+        };
+        let game: &[(&str, &[u8], Form)] = &[
+            ("real.toml", b"[project]", Form::Source),
+            ("scenes/main.scene.json", b"{}", Form::Source),
+            ("scripts/a.luau", b"\x1bbytecode", bytecode.clone()),
+        ];
+        let base = hash(vec![layer(LayerKind::Archive, game)]);
+        // One archive, in a browser or beside a desktop game's folder.
+        let folder = layer(
+            LayerKind::Folder,
+            &[("scripts/mod.luau", b"x", Form::Source)],
+        );
+        let engine = layer(LayerKind::Engine, &[("engine.toml", b"x", Form::Source)]);
+        let tests = layer(
+            LayerKind::Archive,
+            &[("tests/replays/walk.json", b"{}", Form::Source)],
+        );
+        assert_eq!(
+            hash(vec![engine, layer(LayerKind::Archive, game), folder]),
+            base
+        );
+        assert_eq!(hash(vec![layer(LayerKind::Archive, game), tests]), base);
+        // A page's added files beside the archive, as the folder beside it.
+        let page = layer(
+            LayerKind::Project,
+            &[("settings/page.json", b"{}", Form::Source)],
+        );
+        assert_eq!(hash(vec![layer(LayerKind::Archive, game), page]), base);
+        // A project folder's data, history and editor settings.
+        let project = |extra: &[(&str, &[u8], Form)]| {
+            let source: Vec<_> = game
+                .iter()
+                .map(|(p, b, _)| (*p, *b, Form::Source))
+                .chain(extra.iter().cloned())
+                .collect();
+            hash(vec![layer(LayerKind::Project, &source)])
+        };
+        assert_eq!(
+            project(&[
+                (".real/data/save.json", b"{}", Form::Source),
+                (".git/config.toml", b"x", Form::Source),
+                (".vscode/settings.json", b"{}", Form::Source),
+            ]),
+            project(&[])
+        );
+        // A script's bytecode counts, and so does how a file is stored.
+        let changed: &[(&str, &[u8], Form)] = &[
+            ("real.toml", b"[project]", Form::Source),
+            ("scenes/main.scene.json", b"{}", Form::Source),
+            ("scripts/a.luau", b"\x1bbytecode2", bytecode),
+        ];
+        assert_ne!(hash(vec![layer(LayerKind::Archive, changed)]), base);
+        let as_source: &[(&str, &[u8], Form)] = &[
+            ("real.toml", b"[project]", Form::Source),
+            ("scenes/main.scene.json", b"{}", Form::Source),
+            ("scripts/a.luau", b"\x1bbytecode", Form::Source),
+        ];
+        assert_ne!(hash(vec![layer(LayerKind::Archive, as_source)]), base);
     }
 }

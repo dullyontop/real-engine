@@ -17,6 +17,9 @@
 //!   that can coalesce what they send.
 //! * The [`Transport`] seam: [`UdpTransport`], the in-process [`MemoryNet`],
 //!   and [`Conditioned`] for seeded loss, duplication, delay and reordering.
+//! * WebSocket transports ([`ws`]) for players in a browser: a server's
+//!   [`ServerTransport`] takes them on TCP at its UDP port, and a client's
+//!   [`WsTransport`] is the page's `WebSocket` (or tungstenite's, natively).
 //!
 //! The crate knows nothing about scenes or scripts: `re_compat` puts its wire
 //! messages on it. Traffic is not encrypted (ADR-0050 §1).
@@ -60,6 +63,7 @@ mod conn;
 mod endpoint;
 mod packet;
 mod transport;
+pub mod ws;
 
 pub use conn::{Channel, ConnStats};
 pub use endpoint::{Config, Endpoint, Event, PeerId};
@@ -68,6 +72,9 @@ pub use transport::{
     Conditioned, ConditionerStats, LinkConditions, MemoryNet, MemoryTransport, Transport,
     UdpTransport, resolve,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use ws::ServerTransport;
+pub use ws::WsTransport;
 
 use re_core::DiagInfo;
 
@@ -122,6 +129,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::NOT_ONLINE,
         title: "This run cannot go online",
         page: include_str!("../explain/RE8909.md"),
+    },
+    DiagInfo {
+        code: codes::WEBSOCKET,
+        title: "WebSocket connection failed",
+        page: include_str!("../explain/RE8910.md"),
+    },
+    DiagInfo {
+        code: codes::CANNOT_SERVE,
+        title: "This platform cannot serve",
+        page: include_str!("../explain/RE8911.md"),
     },
 ];
 

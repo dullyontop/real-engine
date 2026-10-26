@@ -69,10 +69,25 @@ pub fn pick_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
 
 /// An instance that is not connected to a display server, for offscreen work.
 pub fn headless_instance(backends: wgpu::Backends) -> wgpu::Instance {
-    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    wgpu::Instance::new(instance_options(
+        wgpu::InstanceDescriptor::new_without_display_handle(),
+        backends,
+    ))
+}
+
+/// `desc` with what every instance sets: `backends`, the debug flags the build
+/// and the environment ask for, and FXC as the DX12 shader compiler. FXC is
+/// part of Windows, so shaders compile the same way on every machine; wgpu's
+/// default (`Auto`) would load a `dxcompiler.dll` from the DLL search path
+/// when there is one (ADR-0038).
+fn instance_options(
+    mut desc: wgpu::InstanceDescriptor,
+    backends: wgpu::Backends,
+) -> wgpu::InstanceDescriptor {
     desc.backends = backends;
     desc.flags = wgpu::InstanceFlags::from_build_config().with_env();
-    wgpu::Instance::new(desc)
+    desc.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::Fxc;
+    desc
 }
 
 /// The GPU errors reported through the uncaptured-error handler.
@@ -213,10 +228,10 @@ impl Gpu {
             + Sync
             + 'static,
     {
-        let mut desc = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone()));
-        desc.backends = backends;
-        desc.flags = wgpu::InstanceFlags::from_build_config().with_env();
-        let instance = wgpu::Instance::new(desc);
+        let instance = wgpu::Instance::new(instance_options(
+            wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone())),
+            backends,
+        ));
         let surface = instance.create_surface(window).map_err(|e| {
             Diagnostic::error(
                 codes::SURFACE_FAILED,
@@ -367,5 +382,23 @@ impl Gpu {
             alpha_mode,
             view_formats: Vec::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_instance_compiles_dx12_shaders_with_fxc() {
+        let desc = instance_options(
+            wgpu::InstanceDescriptor::new_without_display_handle(),
+            wgpu::Backends::all(),
+        );
+        assert_eq!(desc.backends, wgpu::Backends::all());
+        assert!(matches!(
+            desc.backend_options.dx12.shader_compiler,
+            wgpu::Dx12Compiler::Fxc
+        ));
     }
 }

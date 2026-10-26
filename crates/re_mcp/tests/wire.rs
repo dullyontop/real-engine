@@ -735,6 +735,57 @@ fn http_refuses_a_large_body_without_a_reset() {
     }
 }
 
+/// So does rmcp's refusal of a foreign `Host` or a browser `Origin`, which
+/// never reads the body itself. A refusal that has read the body keeps the
+/// connection open, so a second request on it is answered; one that has not
+/// closes it with the body unread.
+#[test]
+fn http_refuses_a_foreign_host_s_large_body_without_a_reset() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let c = Client::start(Transport::Http, Policy::read_only());
+    let (url, token) = endpoint(&c);
+    let addr = url.trim_start_matches("http://").split('/').next().unwrap();
+    let padded = json!({ "padding": "x".repeat(48 * 1024) }).to_string();
+    for foreign in [
+        "Host: evil.example:80".to_string(),
+        format!("Host: {addr}\r\nOrigin: http://evil.example"),
+    ] {
+        let stream = std::net::TcpStream::connect(addr).unwrap();
+        stream.set_read_timeout(Some(TIMEOUT)).unwrap();
+        let mut writer = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(stream);
+        for (body, close) in [(padded.as_str(), ""), ("{}", "Connection: close\r\n")] {
+            write!(
+                writer,
+                "POST /mcp HTTP/1.1\r\n{foreign}\r\nAuthorization: Bearer {token}\r\n\
+                 Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n\
+                 {close}Content-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            // The body comes after rmcp has refused the head.
+            std::thread::sleep(Duration::from_millis(50));
+            writer.write_all(body.as_bytes()).unwrap();
+            let mut status = String::new();
+            reader.read_line(&mut status).unwrap();
+            assert!(status.starts_with("HTTP/1.1 403"), "{foreign}: {status:?}");
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let line = line.trim_end().to_ascii_lowercase();
+                if line.is_empty() {
+                    break;
+                }
+                if let Some(value) = line.strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap();
+                }
+            }
+            reader.read_exact(&mut vec![0; length]).unwrap();
+        }
+    }
+}
+
 #[test]
 fn http_refuses_foreign_hosts_browser_origins_and_other_paths() {
     let c = Client::start(Transport::Http, Policy::read_only());

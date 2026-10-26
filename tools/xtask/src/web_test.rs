@@ -2,10 +2,13 @@
 //! `build-web` job runs them. It builds `real`, builds the island and the plaza with
 //! `real build --target web` into `target/web-games/` (failing when `real_bg.wasm` gzips
 //! above the 8 MB budget), and in headless Chromium with WebGPU plays each one's
-//! replays from its game.rpak and starts the island's game page, with
-//! `tools/web-test`'s scripts. It also starts the page on WebGL2 and reports the
-//! result without failing. Each replay's `state_hash` must equal the native run's,
-//! or with `--reported` is only printed (until WP18 PR "d2").
+//! replays from its game.rpak, plays the plaza's again as a network client of a
+//! native server (`real run --package` on the plaza's build, ADR-0050's amendment
+//! for PR "web") and starts the island's game page, with `tools/web-test`'s
+//! scripts. It also starts the page on WebGL2 and reports the result without
+//! failing. Each replay's `state_hash` (the server's, for the network client) must
+//! equal the native run's, or with `--reported` is only printed (until WP18 PR
+//! "d2").
 //!
 //! It needs what `real build --target web` needs (Rust's wasm32 target, wasi-sdk with
 //! `WASI_SDK_PATH` set, the wasm-bindgen CLI, and binaryen for the budget), and
@@ -18,6 +21,9 @@ use anyhow::{Context, Result, bail};
 
 /// The web runtime's budget: `real_bg.wasm` gzipped (ADR-0049).
 const BUDGET: u64 = 8_000_000;
+
+/// The Roblox-style project whose replays a browser also plays online.
+const ONLINE: &str = "plaza";
 
 /// The projects and the replays each plays.
 const PROJECTS: [(&str, &[&str]); 2] = [
@@ -133,6 +139,22 @@ pub fn run(root: &Path, reported: bool) -> Result<()> {
             cmd.arg("--reported");
         }
         run_cmd(root, cmd.arg(out.join(name)).arg(&project).args(replays))?;
+        if name == ONLINE {
+            let mut cmd = Command::new("node");
+            cmd.arg("tools/web-test/net.mjs")
+                .arg("--expect")
+                .arg(&expected);
+            if reported {
+                cmd.arg("--reported");
+            }
+            run_cmd(
+                root,
+                cmd.arg(&real)
+                    .arg(out.join(name))
+                    .arg(&project)
+                    .args(replays),
+            )?;
+        }
     }
     run_cmd(
         root,
