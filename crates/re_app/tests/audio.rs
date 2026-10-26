@@ -97,8 +97,7 @@ fn the_project_graph_is_built_and_a_source_plays_on_its_bus() {
         )),
         "{cmds:?}"
     );
-    // The script reads the levels before the frame's audio renders, so the
-    // bus is silent.
+    // Scripts read silence on the headless backend (see below).
     assert_eq!(
         report.output,
         [
@@ -121,6 +120,15 @@ fn the_project_graph_is_built_and_a_source_plays_on_its_bus() {
         steps.peak_db > -7.0 && steps.rms_db > -12.0,
         "{:?}",
         app.bus_levels()
+    );
+    // The script still reads silence: what it writes from `on_frame` is in the
+    // state hash, and a rendered mix depends on the platform's maths.
+    let report = app.run_headless(Some(1), None).unwrap();
+    assert_eq!(
+        report.output.first().map(String::as_str),
+        Some("[game] levels -60 -60"),
+        "{:?}",
+        report.output
     );
 }
 

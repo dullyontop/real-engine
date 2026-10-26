@@ -1667,7 +1667,8 @@ effects = [{ bus = "sfx", effect = 0, cutoff_hz = 600.0 }]   # sets only the fie
   - kira has no metering API. This is our code, not a dependency.
 - **Headless fallback.**
   - `CaptureBackend` already runs kira's real renderer at a fixed 48 kHz, so the same graph, effects and meters apply with and without a device.
-  - Nothing renders it by itself, so each frame `re_app` renders the frame's time on it (`Audio::advance`, at most 250 ms a frame): sounds play on and end, their voices are freed and the meters read what plays, as on a device.
+  - Nothing renders it by itself, so each frame `re_app` renders the frame's time on it (`Audio::advance`): sounds play on and end, their voices are freed and `App::bus_levels` reads what plays, as on a device. A dedicated server (`real run --server`) renders nothing, since no one hears it.
+  - Scripts still read silence from `audio.levels` there. What a script writes from `on_frame` is in the state hash, and kira's effects use the platform's maths, so a replay that read the rendered mix could hash differently on another platform.
   - The sample rate is pinned in tests, because reverb, delay and filters depend on it.
   - With a device, the graph runs at the device's rate. Kira re-initialises the effects on a rate change.
 - **Luau API** (in `re_script`, reviewed by WP24; `NoServices` refuses it with `RE3015`):

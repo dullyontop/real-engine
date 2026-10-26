@@ -7,8 +7,9 @@ use re_audio::{Audio, AudioCmd, CaptureSettings, rms, sine};
 use re_types::EntityId;
 
 const RATE: u32 = 48_000;
-/// A frame of the engine's 60 Hz clock.
-const FRAME: Duration = Duration::from_nanos(16_666_667);
+/// A step of the engine's 60 Hz clock, which rounds it down to whole
+/// nanoseconds.
+const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 fn audio() -> Audio {
     let a = Audio::headless_with(CaptureSettings { sample_rate: RATE });
@@ -380,13 +381,18 @@ fn advance_renders_the_time_it_is_given() {
     }
     assert_eq!(a.playing(), 0, "over by 0.333 s");
 
-    // A stalled frame renders 250 ms and skips the rest.
-    a.insert_clip("long", sine(440.0, 0.4, RATE, 0.5));
-    assert!(a.apply(&[one_shot("long", 1.0)]).is_empty());
-    a.advance(Duration::from_secs(10));
-    assert_eq!(a.playing(), 1, "playing after a stall");
+    // One long step renders all of it, a piece at a time: 2 s plays a 1.9 s
+    // clip to its end and a 2.1 s one not yet.
+    a.insert_clip("long", sine(440.0, 1.9, RATE, 0.5));
+    a.insert_clip("longer", sine(440.0, 2.1, RATE, 0.5));
+    assert!(
+        a.apply(&[one_shot("long", 1.0), one_shot("longer", 1.0)])
+            .is_empty()
+    );
+    a.advance(Duration::from_secs(2));
+    assert_eq!(a.playing(), 1, "the 2.1 s clip plays at 2 s");
     a.advance(Duration::from_millis(200));
-    assert_eq!(a.playing(), 0, "over by 0.45 s");
+    assert_eq!(a.playing(), 0, "over by 2.2 s");
 }
 
 #[test]
