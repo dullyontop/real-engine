@@ -12,3 +12,14 @@ publish.workspace = true
 # no threads: the frame loop polls it (ADR-0050 §1).
 [dependencies]
 re_core.workspace = true
+
+# The WebSocket listener beside a server's UDP socket, and the native
+# WebSocket client (ADR-0050's amendment for PR "web").
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tungstenite.workspace = true
+
+# The browser's WebSocket (ADR-0049 §10).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+web-sys.workspace = true
+js-sys.workspace = true

@@ -74,6 +74,18 @@ pub const IMAGE_SIZE_MISMATCH: Code = Code::new("RE6023");
 /// A WGSL `#include` names an unknown file or forms a cycle.
 pub const SHADER_INCLUDE: Code = Code::new("RE6030");
 
+/// A shader set at run time does not compile (naga's parse or validation error,
+/// at the file and line). Its pipelines keep their last good version.
+pub const SHADER_COMPILE: Code = Code::new("RE6031");
+
+/// The device refused a shader or a pipeline built from it after naga accepted
+/// it. Its pipelines keep their last good version.
+pub const SHADER_REJECTED: Code = Code::new("RE6032");
+
+/// A project's `shaders/` replaces one of the engine's own shader files, which
+/// can change in any release.
+pub const SHADER_REPLACED: Code = Code::new("RE6033");
+
 /// The adapter cannot read storage buffers in vertex shaders, so skinned items
 /// are drawn in their bind pose.
 pub const SKINNING_UNSUPPORTED: Code = Code::new("RE6040");

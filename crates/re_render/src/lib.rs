@@ -14,7 +14,8 @@
 //!   [`PostSettings`](re_types::render::PostSettings) (sun rays, bloom, blur,
 //!   colour grading, tone mapping; ADR-0038), and paints egui ([`UiFrame`]).
 //!   [`Renderer::render_with`] adds [`SceneExtras`]: fog, a sky, spot lights,
-//!   sprites, ribbons and highlights.
+//!   sprites, ribbons and highlights. [`Renderer::set_shader_source`] and
+//!   [`Renderer::reload_shaders`] swap shader files at run time ([`shader`]).
 //! * [`Capture`] and [`Image`]: offscreen targets, readback and PNG files.
 //! * [`imgdiff`]: golden-image comparison with a per-channel tolerance and an
 //!   outlier budget.
@@ -58,7 +59,7 @@ pub use frame::MAX_POINT_LIGHTS;
 pub use gpu::{Gpu, GpuErrors, backends_from_env, parse_backends};
 pub use renderer::{
     DrawTime, FrameReport, FrameStats, RenderStats, Renderer, RendererSettings, ResourceStats,
-    ShadowProbe,
+    ShaderReload, ShadowProbe,
 };
 pub use ui::UiFrame;
 
@@ -100,6 +101,9 @@ diagnostics! {
     IMAGE_READ_FAILED, "Image file could not be read", "../explain/RE6022.md";
     IMAGE_SIZE_MISMATCH, "Compared images differ in size", "../explain/RE6023.md";
     SHADER_INCLUDE, "Shader include error", "../explain/RE6030.md";
+    SHADER_COMPILE, "Shader does not compile", "../explain/RE6031.md";
+    SHADER_REJECTED, "Shader rejected by the GPU", "../explain/RE6032.md";
+    SHADER_REPLACED, "Project replaces an engine shader", "../explain/RE6033.md";
     SKINNING_UNSUPPORTED, "GPU skinning unsupported", "../explain/RE6040.md";
     BAD_SKINNED_ITEM, "Undrawable skinned item", "../explain/RE6041.md";
 }

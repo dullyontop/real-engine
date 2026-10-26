@@ -26,6 +26,10 @@ use crate::slots::Slots;
 use crate::ui::{UiFrame, UiPainter};
 use crate::{capture, codes, shader};
 
+mod reload;
+
+pub use reload::ShaderReload;
+
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
 /// The width of a highlight's outline, in pixels.
@@ -41,6 +45,27 @@ pub(crate) fn stores_gamma(format: wgpu::TextureFormat) -> bool {
             | wgpu::TextureFormat::Bgra8Unorm
             | wgpu::TextureFormat::Rgb10a2Unorm
     )
+}
+
+/// A linear and a gamma target format: pipelines rebuilt from a reloaded shader
+/// are made for both as well as for the formats drawn into so far, so the
+/// device checks every entry point before a frame needs one (ADR-0038).
+const CHECK_FORMATS: [wgpu::TextureFormat; 2] = [
+    wgpu::TextureFormat::Rgba8UnormSrgb,
+    wgpu::TextureFormat::Rgba8Unorm,
+];
+
+/// The formats `used` so far and [`CHECK_FORMATS`], each once.
+pub(crate) fn with_checks<'a>(
+    used: impl Iterator<Item = &'a wgpu::TextureFormat>,
+) -> Vec<wgpu::TextureFormat> {
+    let mut formats: Vec<wgpu::TextureFormat> = used.copied().collect();
+    for format in CHECK_FORMATS {
+        if !formats.contains(&format) {
+            formats.push(format);
+        }
+    }
+    formats
 }
 
 /// Renderer options that are not part of a [`RenderSnapshot`] (exposure and the
@@ -268,6 +293,10 @@ struct Skinning {
     /// The skinned variants of [`Renderer::mask_pipelines`].
     mask_pipelines: [wgpu::RenderPipeline; 2],
     palette: GrowBuffer,
+    /// cascade, palette: kept to rebuild `shadow_pipeline`.
+    shadow_layout: wgpu::PipelineLayout,
+    /// frame, palette: kept to rebuild `mask_pipelines`.
+    mask_layout: wgpu::PipelineLayout,
 }
 
 /// The bit of [`Batch::variant`] that marks a skinned batch.
@@ -421,6 +450,10 @@ pub struct Renderer {
     ui: UiPainter,
     last_frame: FrameStats,
     draw_time: DrawTime,
+    /// The shader files, with any set at run time (ADR-0038).
+    sources: shader::ShaderSources,
+    /// Each root shader file, preprocessed, as its pipelines were last built.
+    built: HashMap<&'static str, String>,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -462,6 +495,159 @@ fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &ATTRIBUTES,
     }
+}
+
+/// The highlight mask's pipelines: the depth-only pass (0) and the numbering
+/// pass (1), from `mask.wgsl` or `mask_skinned.wgsl`.
+fn mask_pipelines(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+    skinned: bool,
+) -> [wgpu::RenderPipeline; 2] {
+    let buffers = [
+        Some(position_only_layout()),
+        Some(instance_layout()),
+        Some(skin_layout()),
+    ];
+    let buffers = if skinned { &buffers[..] } else { &buffers[..2] };
+    [None, Some(wgpu::CompareFunction::LessEqual)]
+        .into_iter()
+        .enumerate()
+        .map(|(i, compare)| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("re_render highlight mask"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module,
+                    entry_point: Some(if skinned {
+                        "vs_mask_skinned"
+                    } else {
+                        "vs_mask"
+                    }),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers,
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(compare.unwrap_or(wgpu::CompareFunction::Less)),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module,
+                    entry_point: Some("fs_mask"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: MASK_FORMAT,
+                        blend: None,
+                        // The depth-only pass (index 0) writes no number.
+                        write_mask: if i == 0 {
+                            wgpu::ColorWrites::empty()
+                        } else {
+                            wgpu::ColorWrites::ALL
+                        },
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("two mask pipelines"))
+}
+
+/// The shadow pass's pipeline, from `shadow.wgsl` or `shadow_skinned.wgsl`.
+fn shadow_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+    skinned: bool,
+) -> wgpu::RenderPipeline {
+    let buffers = [
+        Some(position_only_layout()),
+        Some(instance_layout()),
+        Some(skin_layout()),
+    ];
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("re_render shadow"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some(if skinned {
+                "vs_shadow_skinned"
+            } else {
+                "vs_shadow"
+            }),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: if skinned { &buffers[..] } else { &buffers[..2] },
+        },
+        primitive: wgpu::PrimitiveState {
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: SHADOW_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: wgpu::StencilState::default(),
+            // No clamp: GL lacks DownlevelFlags::DEPTH_BIAS_CLAMP.
+            bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 2.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: None,
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// The shadow probe's target format.
+const PROBE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The shadow probe's pipeline, from `probe.wgsl`: one point per probed position.
+fn probe_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32];
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("re_render shadow probe"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs_probe"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: 7 * 4,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &ATTRIBUTES,
+            })],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::PointList,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_probe"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(PROBE_FORMAT.into())],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 /// The skin stream: joint indices at location 12, weights at 13.
@@ -891,111 +1077,12 @@ impl Renderer {
         let lines_shader = shader::module(&device, "lines.wgsl");
         let shadow_shader = shader::module(&device, "shadow.wgsl");
         let mask_shader = shader::module(&device, "mask.wgsl");
-        let mask_pipelines =
-            |layout: &wgpu::PipelineLayout, mask_shader: &wgpu::ShaderModule, skinned: bool| {
-                let buffers = [
-                    Some(position_only_layout()),
-                    Some(instance_layout()),
-                    Some(skin_layout()),
-                ];
-                let buffers = if skinned { &buffers[..] } else { &buffers[..2] };
-                [None, Some(wgpu::CompareFunction::LessEqual)]
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, compare)| {
-                        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                            label: Some("re_render highlight mask"),
-                            layout: Some(layout),
-                            vertex: wgpu::VertexState {
-                                module: mask_shader,
-                                entry_point: Some(if skinned {
-                                    "vs_mask_skinned"
-                                } else {
-                                    "vs_mask"
-                                }),
-                                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                                buffers,
-                            },
-                            primitive: wgpu::PrimitiveState::default(),
-                            depth_stencil: Some(wgpu::DepthStencilState {
-                                format: DEPTH_FORMAT,
-                                depth_write_enabled: Some(true),
-                                depth_compare: Some(compare.unwrap_or(wgpu::CompareFunction::Less)),
-                                stencil: wgpu::StencilState::default(),
-                                bias: wgpu::DepthBiasState::default(),
-                            }),
-                            multisample: wgpu::MultisampleState::default(),
-                            fragment: Some(wgpu::FragmentState {
-                                module: mask_shader,
-                                entry_point: Some("fs_mask"),
-                                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                                targets: &[Some(wgpu::ColorTargetState {
-                                    format: MASK_FORMAT,
-                                    blend: None,
-                                    // The depth-only pass (index 0) writes no number.
-                                    write_mask: if i == 0 {
-                                        wgpu::ColorWrites::empty()
-                                    } else {
-                                        wgpu::ColorWrites::ALL
-                                    },
-                                })],
-                            }),
-                            multiview_mask: None,
-                            cache: None,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-                    .try_into()
-                    .unwrap_or_else(|_| unreachable!("two mask pipelines"))
-            };
         let highlight_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("re_render highlights"),
             size: size_of::<HighlightUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let shadow_pipeline =
-            |layout: &wgpu::PipelineLayout, shadow_shader: &wgpu::ShaderModule, skinned: bool| {
-                let buffers = [
-                    Some(position_only_layout()),
-                    Some(instance_layout()),
-                    Some(skin_layout()),
-                ];
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("re_render shadow"),
-                    layout: Some(layout),
-                    vertex: wgpu::VertexState {
-                        module: shadow_shader,
-                        entry_point: Some(if skinned {
-                            "vs_shadow_skinned"
-                        } else {
-                            "vs_shadow"
-                        }),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: if skinned { &buffers[..] } else { &buffers[..2] },
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: SHADOW_FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                        stencil: wgpu::StencilState::default(),
-                        // No clamp: GL lacks DownlevelFlags::DEPTH_BIAS_CLAMP.
-                        bias: wgpu::DepthBiasState {
-                            constant: 2,
-                            slope_scale: 2.0,
-                            clamp: 0.0,
-                        },
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: None,
-                    multiview_mask: None,
-                    cache: None,
-                })
-            };
         let skinning = supports_skinning(&gpu.adapter, &device).then(|| {
             let palette_layout =
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1032,11 +1119,13 @@ impl Renderer {
             });
             Skinning {
                 shadow_pipeline: shadow_pipeline(
+                    &device,
                     &shadow_layout,
                     &shader::module(&device, "shadow_skinned.wgsl"),
                     true,
                 ),
                 mask_pipelines: mask_pipelines(
+                    &device,
                     &mask_layout,
                     &shader::module(&device, "mask_skinned.wgsl"),
                     true,
@@ -1049,10 +1138,12 @@ impl Renderer {
                 ),
                 palette_layout,
                 forward_layout,
+                shadow_layout,
+                mask_layout,
             }
         });
-        let mask_pipelines = mask_pipelines(&layouts.mask, &mask_shader, false);
-        let shadow_pipeline = shadow_pipeline(&layouts.shadow, &shadow_shader, false);
+        let mask_pipelines = mask_pipelines(&device, &layouts.mask, &mask_shader, false);
+        let shadow_pipeline = shadow_pipeline(&device, &layouts.shadow, &shadow_shader, false);
         let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("re_render frame"),
             size: size_of::<FrameUniform>() as u64,
@@ -1170,6 +1261,8 @@ impl Renderer {
             textures: Slots::default(),
             materials: Slots::default(),
             last_frame: FrameStats::default(),
+            sources: shader::ShaderSources::default(),
+            built: reload::built_in_roots(),
         };
         let samples = renderer.sample_count();
         renderer.pipelines_for(samples);
@@ -1526,41 +1619,43 @@ impl Renderer {
 
     fn highlight_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
         if !self.highlight_pipelines.contains_key(&format) {
-            let gamma = stores_gamma(format);
-            let pipeline = self
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("re_render highlight"),
-                    layout: Some(&self.layouts.highlight_pipeline),
-                    vertex: wgpu::VertexState {
-                        module: &self.highlight_shader,
-                        entry_point: Some("vs_fullscreen"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &self.highlight_shader,
-                        entry_point: Some(if gamma {
-                            "fs_highlight_gamma"
-                        } else {
-                            "fs_highlight_linear"
-                        }),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                });
+            let pipeline = self.create_highlight_pipeline(format);
             self.highlight_pipelines.insert(format, pipeline);
         }
         &self.highlight_pipelines[&format]
+    }
+
+    fn create_highlight_pipeline(&self, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+        self.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("re_render highlight"),
+                layout: Some(&self.layouts.highlight_pipeline),
+                vertex: wgpu::VertexState {
+                    module: &self.highlight_shader,
+                    entry_point: Some("vs_fullscreen"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.highlight_shader,
+                    entry_point: Some(if stores_gamma(format) {
+                        "fs_highlight_gamma"
+                    } else {
+                        "fs_highlight_linear"
+                    }),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
     }
 
     fn mask_targets(&mut self, width: u32, height: u32) -> &MaskTargets {
@@ -3202,7 +3297,6 @@ impl Renderer {
         points: &[Vec3],
         normal: Vec3,
     ) -> Result<Vec<ShadowProbe>, Diagnostic> {
-        const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
         let width = points.len() as u32;
         if points.is_empty() || width > device.limits().max_texture_dimension_2d {
             return Err(Diagnostic::error(
@@ -3215,37 +3309,11 @@ impl Renderer {
             ));
         }
         let pipeline = self.probe.get_or_insert_with(|| {
-            let module = shader::module(device, "probe.wgsl");
-            const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-                wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32];
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("re_render shadow probe"),
-                layout: Some(&self.layouts.frame_only),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_probe"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: 7 * 4,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &ATTRIBUTES,
-                    })],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::PointList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_probe"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(FORMAT.into())],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("probe.wgsl"),
+                source: wgpu::ShaderSource::Wgsl(self.built["probe.wgsl"].as_str().into()),
+            });
+            probe_pipeline(device, &self.layouts.frame_only, &module)
         });
         let vertices: Vec<f32> = points
             .iter()
@@ -3272,7 +3340,7 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: FORMAT,
+            format: PROBE_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });

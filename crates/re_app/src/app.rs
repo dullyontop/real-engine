@@ -56,6 +56,15 @@ pub struct ScreenshotRequest {
     pub path: Option<String>,
 }
 
+/// A frame [`App::try_frame`] began: when, which, and what its second half
+/// needs.
+struct HalfFrame {
+    start: Instant,
+    f: u64,
+    frame_time: Duration,
+    steps: u32,
+}
+
 /// What [`App::run_headless`] returns.
 #[derive(Clone, Debug, Serialize)]
 pub struct RunReport {
@@ -134,6 +143,10 @@ pub struct App {
     snapshot: RenderSnapshot,
     hud: Vec<HudLine>,
     watcher: Option<AssetWatcher>,
+    /// The project's and the engine directory's shader files (ADR-0038).
+    shaders: crate::shaders::ShaderFiles,
+    /// Watches the engine shader directory ([`App::watch_engine_shaders`]).
+    shader_watcher: Option<AssetWatcher>,
     changed_scripts: Vec<String>,
 
     anim_sync: AnimSync,
@@ -169,6 +182,8 @@ pub struct App {
     net: Option<crate::net::NetPlay>,
     /// The run should end: a network client was kicked or lost its server.
     stopped: bool,
+    /// A frame [`App::try_frame`] began and has not finished.
+    half: Option<HalfFrame>,
     /// The size (physical pixels) and scale of the last window draw.
     view_size: [u32; 2],
     view_ppp: f32,
@@ -270,6 +285,9 @@ impl App {
         re_proc::register_commands(&mut commands);
         let mut app = App::with_world(files, config, world, action_map, Arc::new(commands))?;
         app.diagnostics.extend(problems);
+        let (shaders, problems) = crate::shaders::ShaderFiles::load(&app.files);
+        app.shaders = shaders;
+        app.diagnostics.extend(problems);
         app.edit_frame();
         Ok(app)
     }
@@ -325,6 +343,8 @@ impl App {
             snapshot: RenderSnapshot::default(),
             hud: Vec::new(),
             watcher: None,
+            shaders: Default::default(),
+            shader_watcher: None,
             changed_scripts: Vec::new(),
             anim_sync: AnimSync::new(),
             skin_sync: SkinSync::new(),
@@ -343,6 +363,7 @@ impl App {
             compat_view: crate::compat_view::CompatView::new(&config.render),
             net: None,
             stopped: false,
+            half: None,
             view_size: [config.render.width, config.render.height],
             view_ppp: 1.0,
             script_output: Vec::new(),
@@ -411,6 +432,7 @@ impl App {
             Arc::clone(&self.commands),
         )?;
         copy.alpha = self.alpha;
+        copy.shaders = self.shaders.clone();
         if !restarted {
             copy.stream_tick = self.stream_tick;
         }
@@ -668,10 +690,24 @@ impl App {
         self.graphics.as_mut()
     }
 
-    /// Gives the app a GPU side (the windowed runner's, for its surface).
+    /// Gives the app a GPU side (the windowed runner's, for its surface), and
+    /// its renderer the shader files of the project ([`crate::shaders`]).
     pub fn set_graphics(&mut self, graphics: Graphics) {
         self.render_assets = RenderAssets::default();
         self.graphics = Some(graphics);
+        self.install_shaders();
+    }
+
+    /// Gives the renderer, when there is one, the current shader files, and
+    /// returns the problems of the shaders they change (also in the app's
+    /// diagnostics).
+    fn install_shaders(&mut self) -> Vec<Diagnostic> {
+        let Some(gfx) = &mut self.graphics else {
+            return Vec::new();
+        };
+        let problems = self.shaders.install(gfx.renderer_mut());
+        self.diagnostics.extend(problems.iter().cloned());
+        problems
     }
 
     /// Takes the GPU side away (meshes are uploaded again by the next owner).
@@ -793,8 +829,11 @@ impl App {
     }
 
     /// Watches the project's files: changed meshes, materials and textures are
-    /// re-imported and uploaded again between frames, and changed scripts are
-    /// collected for [`App::take_changed_scripts`].
+    /// re-imported and uploaded again between frames, changed shader files are
+    /// rebuilt ([`crate::shaders`]), and changed scripts are collected for
+    /// [`App::take_changed_scripts`]. When `RE_ENGINE_SHADERS` names a
+    /// directory, its shader files are read and watched too
+    /// ([`App::watch_engine_shaders`]).
     ///
     /// # Errors
     ///
@@ -805,6 +844,26 @@ impl App {
             return Ok(());
         };
         self.watcher = Some(AssetWatcher::new(dir, AssetWatcher::DEFAULT_DEBOUNCE)?);
+        if let Some(engine) = std::env::var_os(crate::shaders::ENGINE_SHADERS_VAR) {
+            self.watch_engine_shaders(Path::new(&engine))?;
+        }
+        Ok(())
+    }
+
+    /// Reads the engine's shader files from `dir` (usually
+    /// `crates/re_render/src/shaders` in an engine checkout) in place of the
+    /// built-in ones, beneath the project's `shaders/`, and rebuilds them when
+    /// they change (ADR-0038). Their problems are the app's diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// `RE7030` when `dir` cannot be watched; nothing is read then.
+    pub fn watch_engine_shaders(&mut self, dir: &Path) -> Result<(), Diagnostic> {
+        let watcher = AssetWatcher::new(dir, AssetWatcher::DEFAULT_DEBOUNCE)?;
+        let problems = self.shaders.read_engine_dir(dir);
+        self.diagnostics.extend(problems);
+        self.shader_watcher = Some(watcher);
+        self.install_shaders();
         Ok(())
     }
 
@@ -1208,8 +1267,49 @@ impl App {
     /// Runs one frame of play (ADR-0009): Input, PreRender, the fixed steps
     /// (PreAnimation, PreSimulation, Physics, PostSimulation), Sync, Render and
     /// EndFrame. `frame_time` is the wall time since the last frame (a headless
-    /// run passes one step).
+    /// run passes one step). A network client waits in it for its server
+    /// (ADR-0050 §7); [`App::try_frame`] does not.
     pub fn frame(&mut self, frame_time: Duration) {
+        if let Some(half) = self.half.take() {
+            // A frame `try_frame` began finishes first.
+            self.finish_frame(half);
+        }
+        let half = self.begin_frame(frame_time);
+        self.finish_frame(half);
+    }
+
+    /// [`App::frame`] for a page, whose frames cannot wait: runs the frame
+    /// unless a network client would wait for its server. Before its first
+    /// frame it waits for the server's welcome; in lockstep, the client half
+    /// of each frame waits for the server's frame. Returns false while it
+    /// waits, having run nothing or only the frame's first half (`frame_time`
+    /// is then the frame's); call it again from the page's event loop, which
+    /// delivers the server's messages in between.
+    pub fn try_frame(&mut self, frame_time: Duration) -> bool {
+        if self.half.is_none() {
+            if !self.net_ready() {
+                return false;
+            }
+            self.half = Some(self.begin_frame(frame_time));
+        }
+        if !self.net_ready() {
+            return false;
+        }
+        let half = self.half.take().expect("begun above");
+        self.finish_frame(half);
+        true
+    }
+
+    /// True unless a network client must wait for its server: for the
+    /// welcome before the game starts, or in lockstep for the server's frame.
+    /// Polls the connection; never waits.
+    pub fn net_ready(&mut self) -> bool {
+        self.net.as_mut().is_none_or(crate::net::NetPlay::ready)
+    }
+
+    /// A frame up to its fixed steps: Input, PreRender (where a compat game
+    /// starts, and a network client joins) and the fixed steps.
+    fn begin_frame(&mut self, frame_time: Duration) -> HalfFrame {
         let frame_start = Instant::now();
         let f = self.frame;
         if self.debugger.is_some()
@@ -1303,8 +1403,26 @@ impl App {
         for _ in 0..steps.count {
             self.fixed_step();
         }
+        HalfFrame {
+            start: frame_start,
+            f,
+            frame_time,
+            steps: steps.count,
+        }
+    }
+
+    /// The rest of a frame [`App::begin_frame`] began: a compat game's client
+    /// half (which a lockstep network client waits in), Sync, Render and
+    /// EndFrame.
+    fn finish_frame(&mut self, half: HalfFrame) {
+        let HalfFrame {
+            start: frame_start,
+            f,
+            frame_time,
+            steps,
+        } = half;
         if self.compat.is_some() {
-            self.compat_client_frame(frame_time.as_secs_f64(), steps.count);
+            self.compat_client_frame(frame_time.as_secs_f64(), steps);
         }
 
         // Sync.
@@ -1928,19 +2046,28 @@ impl App {
     }
 
     fn poll_files(&mut self) {
-        let Some(watcher) = &self.watcher else {
-            return;
-        };
-        let changes = watcher.poll();
-        if !changes.is_empty() {
-            self.apply_file_changes(&changes);
+        if let Some(watcher) = &self.watcher {
+            let changes = watcher.poll();
+            if !changes.is_empty() {
+                self.apply_file_changes(&changes);
+            }
+        }
+        if let Some(watcher) = &self.shader_watcher {
+            let changes = watcher.poll();
+            if !changes.is_empty() {
+                let problems = self.shaders.engine_changed(&changes);
+                self.diagnostics.extend(problems);
+                self.install_shaders();
+            }
         }
     }
 
     /// Applies file changes (from a watcher, or made by a command): re-imports
     /// what changed, uploads it again and forgets collider shapes built from
-    /// it. Returns the problems re-imports reported (the last good version of
-    /// each stays loaded); they are also in the app's diagnostics.
+    /// it, and rebuilds the shaders of changed shader files
+    /// ([`crate::shaders`]). Returns the problems re-imports and rebuilds
+    /// reported (the last good version of each stays loaded); they are also in
+    /// the app's diagnostics.
     pub fn apply_file_changes(&mut self, changes: &[re_assets::AssetChange]) -> Vec<Diagnostic> {
         let (report, stale) = self.media.apply_changes(changes);
         let mut problems = report.problems.clone();
@@ -1970,6 +2097,19 @@ impl App {
                 re_assets::AssetChange::Renamed { from, to } => vec![from.clone(), to.clone()],
             })
             .collect();
+        let shaders: Vec<&str> = paths
+            .iter()
+            .filter_map(|p| crate::shaders::project_name(p))
+            .collect();
+        if !shaders.is_empty() {
+            for name in shaders {
+                if let Some(d) = self.shaders.read_project(&self.files, name) {
+                    self.diagnostics.push(d.clone());
+                    problems.push(d);
+                }
+            }
+            problems.extend(self.install_shaders());
+        }
         if paths.iter().any(|p| procedural::is_generator_script(p)) {
             let declared = procedural::declare_generators(
                 &mut self.world,
@@ -2274,8 +2414,13 @@ impl App {
     ///   starts its scripts and sends its frame 0.
     fn start_online(&mut self, cfg: &re_compat::CompatConfig) {
         use crate::net::{NetPlay, NetRole};
-        let Some(NetPlay::Bound { end, options }) = self.net.take() else {
-            return;
+        let (end, options) = match self.net.take() {
+            Some(NetPlay::Bound { end, options }) => (end, options),
+            Some(NetPlay::Connecting { net, .. }) => return self.join_online(net),
+            other => {
+                self.net = other;
+                return;
+            }
         };
         let lockstep = options.lockstep;
         match options.role {
@@ -2329,25 +2474,31 @@ impl App {
                     }
                 }
             }
-            NetRole::Client(_) => {
-                let mut client =
-                    re_compat::net::session::ClientNet::new(*end, options.name, lockstep.is_some());
-                let joined = match self.compat.as_mut() {
-                    Some(c) => client.join(&mut c.client),
-                    None => return,
-                };
-                if let Err(d) = joined {
-                    self.net_failed(d);
-                    return;
-                }
-                self.net = Some(NetPlay::Client(Box::new(client)));
-                self.compat_call(ContextKind::Client, |vm, h| {
-                    crate::compat::start_scripts(vm, h)
-                });
-                // Frame 0: what the client's scripts did as they started.
-                self.net_send_client();
-            }
+            NetRole::Client(_) => unreachable!("a client's session connects from set_net"),
         }
+    }
+
+    /// Joins a network client's game (ADR-0050 §5): waits for the server's
+    /// welcome (which binds the client world), then starts the client's
+    /// scripts and sends its frame 0.
+    fn join_online(
+        &mut self,
+        mut client: Box<re_compat::net::session::ClientNet<crate::net::Link>>,
+    ) {
+        let joined = match self.compat.as_mut() {
+            Some(c) => client.join(&mut c.client),
+            None => return,
+        };
+        self.net = Some(crate::net::NetPlay::Client(client));
+        if let Err(d) = joined {
+            self.net_failed(d);
+            return;
+        }
+        self.compat_call(ContextKind::Client, |vm, h| {
+            crate::compat::start_scripts(vm, h)
+        });
+        // Frame 0: what the client's scripts did as they started.
+        self.net_send_client();
     }
 
     /// Ends the network session after `d` (reported) and stops the run.
@@ -2403,13 +2554,7 @@ impl App {
         let Some(c) = self.compat.as_mut() else {
             return;
         };
-        let result = net.receive(&mut c.client);
-        let closed = match (result, net.state()) {
-            (Err(d), _) => Some(d),
-            (Ok(()), re_compat::net::session::ClientState::Closed(d)) => Some(d.clone()),
-            _ => None,
-        };
-        if let Some(d) = closed {
+        if let Err(d) = net.receive(&mut c.client) {
             self.net_failed(d);
         }
     }
@@ -2437,7 +2582,7 @@ impl App {
     pub fn set_net(
         &mut self,
         options: crate::net::NetOptions,
-    ) -> Result<std::net::SocketAddr, Diagnostic> {
+    ) -> Result<crate::net::NetBound, Diagnostic> {
         if self.compat_config.is_none() {
             return Err(Diagnostic::error(
                 re_net::codes::NOT_ONLINE,
@@ -2451,10 +2596,9 @@ impl App {
                 "the game already started; go online before its first frame",
             ));
         }
-        let net = crate::net::NetPlay::bind(options, &self.config.net, &self.files)?;
-        let addr = net.local_addr().expect("a bound socket has an address");
+        let (net, bound) = crate::net::NetPlay::bind(options, &self.config.net, &self.files)?;
         self.net = Some(net);
-        Ok(addr)
+        Ok(bound)
     }
 
     /// A compat game's client world (the local player's, which is drawn),
@@ -2472,8 +2616,9 @@ impl App {
         self.stopped
     }
 
-    /// Each open network connection's counts (peer address, traffic).
-    pub fn net_stats(&self) -> Vec<(std::net::SocketAddr, re_net::ConnStats)> {
+    /// Each open network connection's counts, by peer: its address, with
+    /// `(WebSocket)` after a WebSocket player's, or the server's URL.
+    pub fn net_stats(&self) -> Vec<(String, re_net::ConnStats)> {
         self.net.as_ref().map(|n| n.stats()).unwrap_or_default()
     }
 

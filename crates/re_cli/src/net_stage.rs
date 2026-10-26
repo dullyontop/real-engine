@@ -1,10 +1,13 @@
 //! `real verify`'s `net` stage (ADR-0050 §7): each replay of a compat
 //! project played by a dedicated server and one client, as child processes
 //! of this `real` over loopback in lockstep, must end with the server world
-//! the in-process run ends with. Only a compat project has the stage.
+//! the in-process run ends with, and with no error on either side. Each
+//! replay is played twice: the client joins over UDP, then over a WebSocket
+//! (ADR-0050's amendment for PR "web"). Only a compat project has the stage.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::time::Duration;
 
 use re_app::verify::{VerifyContext, VerifyStage, content_files};
 use re_app::{App, AppConfig, StageReport};
@@ -34,47 +37,120 @@ impl VerifyStage for NetStage {
         let mut diags = Vec::new();
         let mut runs = Vec::new();
         for file in &replays {
-            match check(&exe, ctx.project, ctx.config, file) {
-                Ok(run) => {
-                    if run["same"] != json!(true) {
-                        diags.push(
-                            Diagnostic::error(
-                                NET_DIFFERS,
-                                format!(
-                                    "{file}: the networked server ended with state hash {} and the in-process run with {}",
-                                    run["server_hash"], run["state_hash"]
-                                ),
-                            )
-                            .at(Location::file(file.clone())),
-                        );
-                    }
-                    runs.push(run);
+            let local = match in_process(ctx.project, ctx.config, file) {
+                Ok(l) => l,
+                Err(d) => {
+                    diags.push(d.at(Location::file(file.clone())));
+                    continue;
                 }
-                Err(d) => diags.push(d.at(Location::file(file.clone()))),
+            };
+            for transport in [Transport::Udp, Transport::WebSocket] {
+                match check(&exe, ctx.project, file, &local, transport) {
+                    Ok(run) => {
+                        if run["same"] != json!(true) {
+                            diags.push(
+                                Diagnostic::error(
+                                    NET_DIFFERS,
+                                    format!(
+                                        "{file}: the networked server (a client over {}) ended with state hash {} and the in-process run with {}",
+                                        transport.name(),
+                                        run["server_hash"],
+                                        run["state_hash"]
+                                    ),
+                                )
+                                .at(Location::file(file.clone())),
+                            );
+                        }
+                        diags.extend(reported(&run, file, transport));
+                        runs.push(run);
+                    }
+                    Err(d) => diags.push(d.at(Location::file(file.clone()))),
+                }
             }
         }
         StageReport::new("net", diags, json!({ "runs": runs }))
     }
 }
 
-fn differs(msg: impl Into<String>) -> Diagnostic {
-    Diagnostic::error(NET_DIFFERS, msg)
+/// The errors the networked server and client of `run` reported, each with a
+/// note saying which.
+fn reported(run: &Json, file: &str, transport: Transport) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for (who, key) in [("server", "server_errors"), ("client", "client_errors")] {
+        for d in run[key].as_array().into_iter().flatten() {
+            if let Ok(d) = serde_json::from_value::<Diagnostic>(d.clone()) {
+                out.push(d.with_related(Diagnostic::note(
+                    NET_DIFFERS,
+                    format!(
+                        "reported by the networked {who} (a client over {}) playing {file}",
+                        transport.name()
+                    ),
+                )));
+            }
+        }
+    }
+    out
 }
 
-/// One replay: in process, then networked.
-fn check(exe: &Path, project: &Path, config: &AppConfig, file: &str) -> Result<Json, Diagnostic> {
-    let path = project.join(file);
-    let doc = re_input::load_replay(&path)?;
+/// How the client reaches its server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Transport {
+    Udp,
+    WebSocket,
+}
+
+impl Transport {
+    fn name(self) -> &'static str {
+        match self {
+            Transport::Udp => "udp",
+            Transport::WebSocket => "websocket",
+        }
+    }
+
+    /// The client's `--connect` address for a server on loopback at `port`.
+    fn address(self, port: u16) -> String {
+        match self {
+            Transport::Udp => format!("127.0.0.1:{port}"),
+            Transport::WebSocket => format!("ws://127.0.0.1:{port}/"),
+        }
+    }
+}
+
+/// A replay played in process: its frames and its `state_hash`.
+struct InProcess {
+    frames: u64,
+    state_hash: String,
+}
+
+fn in_process(project: &Path, config: &AppConfig, file: &str) -> Result<InProcess, Diagnostic> {
+    let doc = re_input::load_replay(&project.join(file))?;
     let frames = doc.frames;
     let config = AppConfig {
         headless: true,
         persist_edits: false,
         ..config.clone()
     };
-    let local = App::open(project, config)?
+    let state_hash = App::open(project, config)?
         .run_headless(None, Some(doc))?
         .state_hash;
+    Ok(InProcess { frames, state_hash })
+}
 
+fn differs(msg: impl Into<String>) -> Diagnostic {
+    Diagnostic::error(NET_DIFFERS, msg)
+}
+
+/// One replay networked, with the client over `transport`, against the
+/// in-process run `local`.
+fn check(
+    exe: &Path,
+    project: &Path,
+    file: &str,
+    local: &InProcess,
+    transport: Transport,
+) -> Result<Json, Diagnostic> {
+    let path = project.join(file);
+    let frames = local.frames;
     let port = free_port()?;
     // The server writes to files, not pipes: nobody reads a pipe while the
     // client runs, and a full one would stop the server mid-frame.
@@ -100,12 +176,13 @@ fn check(exe: &Path, project: &Path, config: &AppConfig, file: &str) -> Result<J
         .stdin(Stdio::null())
         .spawn()
         .map_err(|e| differs(format!("cannot start the server ({}): {e}", exe.display())))?;
+    wait_until_serving(&mut server, &err_path);
     let client = Command::new(exe)
         .arg("--project")
         .arg(project)
         .args(["run", "--headless", "--lockstep", "--json", "--replay"])
         .arg(&path)
-        .args(["--connect", &format!("127.0.0.1:{port}")])
+        .args(["--connect", &transport.address(port)])
         .output();
     let client = match client {
         Ok(c) => c,
@@ -147,19 +224,41 @@ fn check(exe: &Path, project: &Path, config: &AppConfig, file: &str) -> Result<J
     };
     Ok(json!({
         "replay": file,
+        "transport": transport.name(),
         "frames": s["frames"],
-        "state_hash": local,
+        "state_hash": local.state_hash,
         "server_hash": remote,
-        "same": local == remote && s["frames"] == json!(frames),
+        "same": local.state_hash == remote && s["frames"] == json!(frames),
         "server_errors": errors(&s),
         "client_errors": errors(&c),
     }))
 }
 
-/// A UDP port on loopback that nothing uses now.
+/// Waits until the `server` writing its stderr to `err_path` says it is
+/// serving, or it exits, for at most a minute: a WebSocket client's connect
+/// fails at once when nothing listens yet (a UDP client's handshake waits).
+fn wait_until_serving(server: &mut Child, err_path: &Path) {
+    let start = re_core::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(60) {
+        let said = std::fs::read_to_string(err_path).unwrap_or_default();
+        if said.contains("serving on ") || !matches!(server.try_wait(), Ok(None)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// A port on loopback that nothing uses now, for UDP and for TCP (the
+/// server's WebSocket listener).
 fn free_port() -> Result<u16, Diagnostic> {
-    std::net::UdpSocket::bind("127.0.0.1:0")
-        .and_then(|s| s.local_addr())
-        .map(|a| a.port())
-        .map_err(|e| differs(format!("no free port on loopback: {e}")))
+    let mut failed = None;
+    for _ in 0..16 {
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").and_then(|s| s.local_addr());
+        match udp.and_then(|a| std::net::TcpListener::bind(a).map(|_| a.port())) {
+            Ok(port) => return Ok(port),
+            Err(e) => failed = Some(e),
+        }
+    }
+    let e = failed.expect("tried at least once");
+    Err(differs(format!("no free port on loopback: {e}")))
 }

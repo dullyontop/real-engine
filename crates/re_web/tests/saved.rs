@@ -72,7 +72,7 @@ fn add_dir(session: &mut Session, root: &Path, dir: &Path) {
 }
 
 fn play(session: &Session) -> Vec<String> {
-    let mut app = session.open_for_play(persist).unwrap();
+    let mut app = session.open_for_play(persist, None, None).unwrap();
     let report = app.run_headless(Some(30), None).unwrap();
     assert!(report.ok(), "{:?}", report.diagnostics);
     report.output
