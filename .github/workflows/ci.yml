@@ -3,11 +3,12 @@
 # Required for merge: fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke
 # and verify-plaza (all on Ubuntu; verify-plaza by ADR-0023's M2 amendment), and
 # build-windows and build-macos (the whole suite and `real verify` on the island
-# and the plaza; ADR-0023's M3 amendment, WP18 PR "blocking"), and build-web
-# (ADR-0023's M3 amendment, WP29 PR "portable"), verify-valley (WP28), d2 (the
-# state_hash of every island, plaza and valley replay agrees on the three
-# platforms; ADR-0036, WP18 PR "d2"), and build-package, build-package-windows
-# and build-package-macos (packaged games; ADR-0037, WP19 PR "bundles").
+# and the plaza, ADR-0023's M3 amendment, WP18 PR "blocking", and on the valley,
+# WP28), and build-web (ADR-0023's M3 amendment, WP29 PR "portable"),
+# verify-valley (WP28), d2 (the state_hash of every island, plaza and valley
+# replay agrees on the three platforms; ADR-0036, WP18 PR "d2"), and
+# build-package, build-package-windows and build-package-macos (packaged games;
+# ADR-0037, WP19 PR "bundles").
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
@@ -439,7 +440,7 @@ jobs:
         env:
           RE_BACKENDS: dx12
         run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -p re_web -- --test-threads=1
-      - name: real verify on the island and the plaza
+      - name: real verify on the island, the plaza and the valley
         if: success() || failure()
         shell: bash
         env:
@@ -448,7 +449,7 @@ jobs:
           mkdir -p out
           cargo build --locked --release -p re_cli
           status=0
-          for project in island plaza; do
+          for project in island plaza valley; do
             echo "== $project"
             report="out/verify-$project.json"
             target/release/real verify --project "examples/$project" --json > "$report" || true
@@ -481,6 +482,7 @@ jobs:
             out/verify-*.json
             examples/island/.real/out/goldens/
             examples/plaza/.real/out/goldens/
+            examples/valley/.real/out/goldens/
           if-no-files-found: ignore
 
   build-macos:
@@ -503,7 +505,7 @@ jobs:
         env:
           RE_BACKENDS: metal
         run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -p re_web -- --test-threads=1
-      - name: real verify on the island and the plaza
+      - name: real verify on the island, the plaza and the valley
         if: success() || failure()
         env:
           RE_BACKENDS: metal
@@ -511,7 +513,7 @@ jobs:
           mkdir -p out
           cargo build --locked --release -p re_cli
           status=0
-          for project in island plaza; do
+          for project in island plaza valley; do
             echo "== $project"
             report="out/verify-$project.json"
             target/release/real verify --project "examples/$project" --json > "$report" || true
@@ -544,6 +546,7 @@ jobs:
             out/verify-*.json
             examples/island/.real/out/goldens/
             examples/plaza/.real/out/goldens/
+            examples/valley/.real/out/goldens/
           if-no-files-found: ignore
 
   # ADR-0049 (WP29): the browser build. Type-checks and lints the runtime for
