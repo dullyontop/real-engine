@@ -79,7 +79,9 @@ function startServer(replay) {
   const url = new Promise((resolve, reject) => {
     child.stderr.on('data', (d) => {
       err += d;
-      const m = /browsers join over a WebSocket at (ws:\/\/\S+)/.exec(err);
+      // A whole line only: the server writes it in pieces, and a read can end
+      // mid-address.
+      const m = /browsers join over a WebSocket at (ws:\/\/\S+)\r?\n/.exec(err);
       if (m) resolve(m[1]);
     });
     child.on('error', reject);

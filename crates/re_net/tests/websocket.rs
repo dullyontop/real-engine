@@ -265,7 +265,11 @@ fn a_server_disconnect_reaches_the_websocket_client_with_its_reason() {
 fn a_websocket_client_leaving_says_so() {
     let mut net = Net::new(8);
     let ws = net.add_ws();
-    net.until(300, "the client connecting", |n| n.connected(0).len() == 1);
+    // Both sides: a client whose Accept has not arrived has no connection to
+    // leave yet (the server opens its side first).
+    net.until(300, "the client connecting", |n| {
+        n.connected(0).len() == 1 && n.connected(ws).len() == 1
+    });
     let now = net.now;
     net.client(ws).disconnect_all(now, "the player left");
     net.client(ws).flush(now);
