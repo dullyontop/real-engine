@@ -276,9 +276,11 @@ pub(crate) fn compat_error(e: CompatError) -> mlua::Error {
     lua_error(e.code(), e)
 }
 
-/// Compiles a script chunk with environment `env`, with the engine's compiler
-/// (`re_script::compiler`, so compat and native bytecode cannot drift apart) and
-/// `mode` taken from the file's form, never sniffed from the bytes.
+/// Compiles a script chunk with environment `env`, with the compiler native
+/// scripts of the same run use (`re_script::compiler_for`, so compat and native
+/// bytecode cannot drift apart: debug level 2 in a development run, for the
+/// debugger's locals) and `mode` taken from the file's form, never sniffed from
+/// the bytes.
 ///
 /// While it loads, instance handles refuse to be indexed: Luau resolves
 /// `global.a.b` chains when it loads a chunk in a safe environment and keeps
@@ -299,7 +301,7 @@ pub(crate) fn load_chunk(
         lua.load(source)
             .set_name(format!("={name}"))
             .set_mode(mode)
-            .set_compiler(re_script::compiler())
+            .set_compiler(re_script::compiler_for(&st.files))
             .set_environment(env)
             .into_function()
     });

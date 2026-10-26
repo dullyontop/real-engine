@@ -163,7 +163,7 @@ pub(crate) fn create(
     loaded: Loaded,
 ) -> Result<Lua> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
-    lua.set_compiler(crate::compile::compiler());
+    lua.set_compiler(crate::compile::compiler_for(files));
     install_engine(&lua, kind, budget)?;
     let require = lua.create_require_function(ProjectRequirer::new(files.clone(), kind, loaded))?;
     lua.globals().raw_set("require", require)?;
@@ -182,13 +182,14 @@ pub(crate) fn create(
 /// no `require`. `install` adds the layer's globals before the sandbox freezes
 /// them.
 pub(crate) fn create_compat(
+    files: &re_core::files::ProjectFiles,
     kind: ContextKind,
     budget: Duration,
     memory_limit: usize,
     install: &dyn Fn(&Lua) -> Result<()>,
 ) -> Result<Lua> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
-    lua.set_compiler(crate::compile::compiler());
+    lua.set_compiler(crate::compile::compiler_for(files));
     crate::portable_math::install(&lua)?;
     let globals = lua.globals();
     for name in ["loadstring", "getfenv", "setfenv"] {

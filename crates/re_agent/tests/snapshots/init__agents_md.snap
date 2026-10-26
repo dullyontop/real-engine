@@ -112,11 +112,14 @@ libraries the engine implements (`implemented`, `partial` with the gap,
 members. `scene.dump_tree` returns the instance tree with each entity's class,
 attributes and tags.
 
-`project.import` brings a Rojo-style project or a Studio loader script that is
-inside the project into it. It only reports what would change until you pass
-`write: true`; the write is one undoable step. It removes instances an earlier
-import made that the input no longer declares, which needs `destructive`;
-pass `keep_stale: true` to keep them.
+`project.import` brings a Rojo-style project, a Studio loader script, or a
+place or model file (`.rbxl`, `.rbxlx`, `.rbxm`, `.rbxmx`; a model's `parent`
+says where its instances go) that is inside the project into it. It only
+reports what would change until you pass `write: true`. A write takes a
+checkpoint and returns it: `undo` reverts the scene, and `checkpoint.restore`
+with that checkpoint reverts the scene and the files. It removes instances an
+earlier import made that the input no longer declares, which needs
+`destructive`; pass `keep_stale: true` to keep them.
 
 `play.run` takes `steps`, run in order after its first `frames`, and returns
 one result per step:
