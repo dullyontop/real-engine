@@ -24,12 +24,17 @@ notify.workspace = true
 notify-debouncer-full.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+libm.workspace = true
 schemars = { workspace = true, optional = true }
+block_compression = { workspace = true, optional = true }
 
 [features]
 # Derives `schemars::JsonSchema` for `MaterialFile`, so that `real schema` (WP6)
 # generates `material.schema.json` from it.
 schemars = ["dep:schemars"]
+# Encodes imported textures as BC7 and BC5 (ADR-0047). `re_cli`'s `tooling`
+# feature turns it on; the runtime-only build imports textures as RGBA8.
+texture-encode = ["dep:block_compression"]
 
 [dev-dependencies]
 tempfile.workspace = true

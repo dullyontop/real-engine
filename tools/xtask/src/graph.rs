@@ -42,6 +42,8 @@ const RUNTIME_FORBIDDEN: &[&str] = &[
     "tokio",
     "rmcp",
     "full_moon",
+    // The texture encoder runs at import, in tooling builds only (ADR-0047).
+    "block_compression",
 ];
 
 /// The crates.io index, as `cargo metadata` names it.

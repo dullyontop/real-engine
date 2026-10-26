@@ -114,6 +114,9 @@ pub fn run(args: BuildArgs, project: &Path) -> ExitCode {
         for s in &report.pack.created_sidecars {
             println!("created {s} (commit it with the asset)");
         }
+        for t in &report.pack.uncompressed_textures {
+            println!("uncompressed texture {}: {}", t.texture, t.reason);
+        }
         for note in &report.notes {
             println!("note: {note}");
         }
@@ -218,6 +221,7 @@ fn build_game(
     let (writer, pack_report) = pack::pack(project, &config);
     report.pack.package = pack_report.package.clone();
     report.pack.assets = pack_report.assets;
+    report.pack.uncompressed_textures = pack_report.uncompressed_textures;
     report.pack.created_sidecars = pack_report.created_sidecars;
     report.pack.dropped = pack_report.dropped;
     report.pack.diagnostics.extend(pack_report.diagnostics);

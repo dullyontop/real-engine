@@ -7,8 +7,8 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use re_assets::{
-    AssetChange, AssetServer, AssetWatcher, GLTF_IMPORTER_VERSION, LoadedAsset, ProcessedCache,
-    cache_key,
+    AssetChange, AssetServer, AssetWatcher, AssetsConfig, GLTF_IMPORTER_VERSION, LoadedAsset,
+    ProcessedCache, cache_key,
 };
 use re_core::time::Instant;
 use re_types::render::{TextureFormat, TextureRef};
@@ -62,8 +62,9 @@ fn second_import_is_a_cache_hit_and_a_new_importer_version_misses() {
     // no entry: a miss.
     let source = std::fs::read(root.join("assets/models/lid.glb")).unwrap();
     let cache = ProcessedCache::new(root.join(".real/cache/assets"));
-    let current = cache_key("gltf", GLTF_IMPORTER_VERSION, b"{}", &[&source]);
-    let next = cache_key("gltf", GLTF_IMPORTER_VERSION + 1, b"{}", &[&source]);
+    let settings = AssetsConfig::default().cache_settings(b"{}");
+    let current = cache_key("gltf", GLTF_IMPORTER_VERSION, &settings, &[&source]);
+    let next = cache_key("gltf", GLTF_IMPORTER_VERSION + 1, &settings, &[&source]);
     assert!(cache.contains(&current));
     assert!(!cache.contains(&next));
     assert!(cache.get::<Vec<u8>>(&next).is_none());

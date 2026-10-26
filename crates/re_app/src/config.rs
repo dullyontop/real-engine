@@ -56,6 +56,10 @@ pub struct AppConfig {
     /// (ADR-0042), read by `re_proc::stream`.
     #[serde(default)]
     pub stream: re_proc::stream::StreamConfig,
+    /// `[assets]`: how imported textures are stored, block-compressed or
+    /// RGBA8 (ADR-0047), read by `re_assets`.
+    #[serde(default)]
+    pub assets: re_assets::AssetsConfig,
     /// `[compat]`: present in a project in the Roblox-style compat layout
     /// (docs/M2_PLAN.md, WP9). Kept as written; `re_compat::CompatConfig`
     /// reads and checks it.
@@ -90,6 +94,7 @@ impl Default for AppConfig {
             audio: AudioGraphDesc::default(),
             verify: VerifyConfig::default(),
             stream: re_proc::stream::StreamConfig::default(),
+            assets: re_assets::AssetsConfig::default(),
             compat: None,
             net: crate::net::NetConfig::default(),
             package: None,
@@ -865,6 +870,32 @@ effects = [{ bus = "sfx", effect = 0, cutoff_hz = 600.0 }]
                 "{}",
                 err.message
             );
+            let Some(Location::File { line: at, .. }) = err.location else {
+                panic!("no file location: {err:?}");
+            };
+            assert_eq!(at, Some(line), "{text}");
+        }
+    }
+
+    #[test]
+    fn assets_choose_how_textures_are_stored() {
+        let c = AppConfig::parse("[project]\nname = \"p\"\n").unwrap();
+        assert_eq!(c.assets, re_assets::AssetsConfig::default());
+        let c = AppConfig::parse(
+            "[project]\nname = \"p\"\n\n[assets]\ntexture_compression = \"none\"\ntexture_quality = \"high\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            c.assets.texture_compression,
+            re_assets::TextureCompression::None
+        );
+        assert_eq!(c.assets.texture_quality, re_assets::TextureQuality::High);
+        for (text, line) in [
+            ("[assets]\ntexture_compression = \"bc1\"\n", 5),
+            ("[assets]\ntexture_qualty = \"high\"\n", 5),
+        ] {
+            let err = AppConfig::parse(&format!("[project]\nname = \"p\"\n\n{text}")).unwrap_err();
+            assert_eq!(err.code, codes::CONFIG_INVALID, "{text}");
             let Some(Location::File { line: at, .. }) = err.location else {
                 panic!("no file location: {err:?}");
             };

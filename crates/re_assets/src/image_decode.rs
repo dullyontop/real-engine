@@ -35,5 +35,6 @@ pub fn decode_image(
         height: img.height(),
         format,
         pixels: img.into_raw(),
+        levels: Vec::new(),
     })
 }

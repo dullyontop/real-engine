@@ -1648,11 +1648,12 @@ effects = [{ bus = "sfx", effect = 0, cutoff_hz = 600.0 }]   # sets only the fie
   - With a device, the graph runs at the device's rate. Kira re-initialises the effects on a rate change.
 - **Luau API** (in `re_script`, reviewed by WP24; `NoServices` refuses it with `RE3015`):
   - `audio.play(clip, position?, volume?, bus?)`, which gains `bus`;
+  - `audio.set_rate(e, rate)`, which writes `e`'s `AudioSource.rate` as `e:set` does, so `NoServices` does not refuse it;
   - `audio.set_bus_volume(bus, db, seconds?)`;
   - `audio.set_effect(bus, index, { param = value, … }, seconds?)`;
   - `audio.snapshot(name, seconds?)`;
   - `audio.levels(bus) -> { peak_db, rms_db }`.
-  - The `AudioSource` component in `re_scene` gains `bus: String`, empty by default, which means `default_bus`. The maintainer reviews this.
+  - The `AudioSource` component in `re_scene` gains `bus: String`, empty by default, which means `default_bus`, and `rate: f32`, 1 by default (the playback speed, at most 16). The maintainer reviews this.
 - **Compat.** Roblox-style `SoundGroup` and `SoundEffect` (WP27) map onto these buses and effects later, through the same commands.
 
 **Measured** (4 vCPU Xeon @ 2.80 GHz, release, 48 kHz, 512-frame render calls, CPU time per second of audio, best of 5).
@@ -2322,6 +2323,12 @@ What was checked (measurements §4):
 - **ADR-0037 (packaging):** the texture importer marks itself too slow to repeat at load, so `assets = "auto"` always stores its output processed; the encoder never runs in a packaged game's load path. The runtime-only binary links only `bcdec_rs`. Agreed with WP19's thread; ADR-0037's decision needs no change. Measured on the five 2048² textures of Khronos' DamagedHelmet, the model ADR-0037 measured (measurements §5): source JPEGs 3.21 MB; RGBA8 with mips 111.8 MB, 23.1 MB under zstd 19 (7.2×); **BC7 `very_fast` with mips 27.96 MB, 12.48 MB under zstd 19 (3.9×)**, since zstd takes only 10–25% off BC7 blocks. So BC7 still exceeds `auto`'s 2× rule against the source, and the "slow importer, always processed" mark is what keeps it encoded; converting at first launch instead would cost about 17–18 s per 100 MB of texels at `very_fast` (the helmet's 3.2 MB of JPEG decode to 112 MB). Proposed addition to ADR-0037's Consequences, next to the 5× figure: "With ADR-0047's BC7 textures, the helmet's processed textures are 12.5 MB under zstd (3.9× the source JPEGs, against 7.2× for RGBA8); textures are always stored processed, because encoding them at first launch would cost about 18 s per 100 MB of texels."
 - A cold cache now pays the encoder on first import (about 6 s per 2048² texture on 4 cores), including CI's `verify-demo` and `verify-plaza`; their projects' textures are small, and a later CI cache of `.real/cache` is the remedy if that changes.
 - New `DEPENDENCIES.md` rows (the "Rendering" table): `block_compression` 0.10.1, MIT, MSRV 1.80, "BC7/BC5 encoder at import (`re_assets`, feature `texture-encode`; tooling only); dev-dependency of `re_render` for decoder cross-checks", features `bc15`, `bc7` (default features off), verified by the WP20 phase-0 bench (encode, decode, GPU round trip on lavapipe and llvmpipe GL, cargo-deny), Provisional until PR "textures" merges; `block_compression` is listed as tooling-only; and `bcdec_rs` 0.2.0, MIT, BC decoder for the no-BC fallback (runtime, `re_render`).
+
+**Amendment (WP20 PR "textures", #164).** As built, where it departs from or adds to the Decision above:
+- **Normal maps** are recognised by a new sidecar setting, `"normal_map": true`, which makes a texture BC5 when textures are compressed. A normal map holds linear data, so its sidecar cannot also set `"color_space": "srgb"` (`RE7020`). Material files set it, with `"color_space": "linear"`, for their `normal_texture` when they create its sidecar. A glTF image used only as a normal map becomes BC5; one that a material also uses as base colour or metallic-roughness stays BC7. Sidecars are only created, never rewritten, so a normal map whose sidecar already exists keeps its settings and stays BC7 until `"normal_map": true` is added to it by hand.
+- **`ProcessedAsset::repeat_at_load`** is per asset, false only when its textures were compressed. `[package] assets = "auto"` reads it rather than `TEXTURE_REPEAT_AT_LOAD` alone (which stays `false`), so an import with no compressed texture (with `texture_compression = "none"`, or an image whose size is not a multiple of 4) keeps `auto`'s size rule.
+- **`real build`'s report** lists `uncompressed_textures`: each texture the packaged game draws as RGBA8 (a texture file, or a glTF file and its image's name), with the reason: stored as source, a `real` built without the encoder, `texture_compression = "none"`, or a size that is not a multiple of 4.
+- **Versions.** `TEXTURE_IMPORTER_VERSION` is 2 and `GLTF_IMPORTER_VERSION` 4. The preset `texture_quality` picks is in the cache key's settings bytes but not in the importer version that a packaged game checks (`RE0602`), since the game reads either preset's blocks the same way.
 
 ## ADR-0048: Compat follow-ups: local data services, surfaces and viewports, script reload, skins and effects, and our own place-file reader
 

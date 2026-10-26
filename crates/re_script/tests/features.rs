@@ -1031,6 +1031,33 @@ fn audio_mixer_functions_send_mixer_commands() {
 }
 
 #[test]
+fn audio_set_rate_sets_the_sources_rate() {
+    let mut rig = Rig::new();
+    let out = rig
+        .exec(
+            r#"
+            local e = world.spawn({ components = { AudioSource = { clip = "assets/sfx/engine.wav" } } })
+            local before = e:get("AudioSource", "rate")
+            audio.set_rate(e, 1.25)
+            return { before, e:get("AudioSource", "rate") }
+            "#,
+        )
+        .unwrap();
+    assert_eq!(out, json!([1, 1.25]));
+    for rate in ["0", "-1", "0/0", "math.huge"] {
+        let d = rig.exec_err(&format!(
+            "audio.set_rate(world.spawn({{ components = {{ AudioSource = {{}} }} }}), {rate})"
+        ));
+        assert_eq!(d.code, codes::BAD_ARGUMENT, "{rate}");
+        assert!(d.message.contains("above 0"), "{}", d.message);
+    }
+    let d = rig.exec_err("audio.set_rate(world.spawn(), 2)");
+    assert!(d.message.contains("no AudioSource"), "{}", d.message);
+    let d = rig.exec_err("audio.set_rate('engine', 2)");
+    assert_eq!(d.code, codes::BAD_ARGUMENT);
+}
+
+#[test]
 fn audio_levels_are_frame_only() {
     let mut rig = Rig::new();
     rig.exec(
