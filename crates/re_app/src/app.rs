@@ -739,6 +739,7 @@ impl App {
             gfx.capture(size, &self.snapshot, &self.hud)?
         };
         let gfx = self.graphics.as_mut().expect("ensured");
+        self.perf.draw(gfx.take_draw_time());
         self.diagnostics.extend(gfx.take_errors());
         if let Some(path) = path {
             gfx::save_png(&image, &self.output_path(path)?)?;
@@ -764,18 +765,21 @@ impl App {
                 "the app has no GPU side to draw with",
             )
         })?;
-        if self.compat.is_some() {
+        let drawn = if self.compat.is_some() {
             self.view_size = size_px;
             self.view_ppp = pixels_per_point;
-            return gfx.draw_compat(
+            gfx.draw_compat(
                 target,
                 size_px,
                 pixels_per_point,
                 &mut self.compat_view,
                 &self.hud,
-            );
-        }
-        gfx.draw(target, size_px, pixels_per_point, &self.snapshot, &self.hud)
+            )
+        } else {
+            gfx.draw(target, size_px, pixels_per_point, &self.snapshot, &self.hud)
+        };
+        self.perf.draw(gfx.take_draw_time());
+        drawn
     }
 
     /// The HUD lines of the last frame.
@@ -1894,6 +1898,9 @@ impl App {
             let gfx = self.graphics.as_mut().expect("checked");
             gfx.capture(size, &self.snapshot, &self.hud)
         };
+        if let Some(gfx) = self.graphics.as_mut() {
+            self.perf.draw(gfx.take_draw_time());
+        }
         let image = match captured {
             Ok(i) => i,
             Err(d) => {

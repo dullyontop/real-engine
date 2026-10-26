@@ -65,6 +65,20 @@ pub struct PerfReport {
     pub phases: BTreeMap<String, TimeStats>,
     /// One physics step (`Physics::step` alone).
     pub physics_step: TimeStats,
+    /// Drawing one frame on the CPU (ADR-0038): the renderer preparing,
+    /// encoding and finishing the command buffers of the 3D view, a compat
+    /// game's surfaces and viewports, and the UI, which is what a render
+    /// thread would take over. Waits for the GPU are not in it: presentation,
+    /// readback, and `Queue::submit` (`queue_submit`). Taken when frames are
+    /// drawn (in a window, and for captures), after the frame the phases
+    /// measure.
+    #[serde(default)]
+    pub render_submit: TimeStats,
+    /// The frame's time inside `Queue::submit`. Software rasterisers and some
+    /// GL drivers wait there until the GPU is done with the previous frame, so
+    /// there it mostly measures the GPU.
+    #[serde(default)]
+    pub queue_submit: TimeStats,
     /// Counts at the end of the run.
     pub counts: PerfCounts,
     /// The renderer's resource statistics, when a renderer ran.
@@ -79,6 +93,8 @@ pub struct PerfRecorder {
     current: BTreeMap<Phase, f64>,
     phases: BTreeMap<Phase, Vec<f64>>,
     physics_step: Vec<f64>,
+    render_submit: Vec<f64>,
+    queue_submit: Vec<f64>,
 }
 
 fn ms(d: Duration) -> f64 {
@@ -99,6 +115,12 @@ impl PerfRecorder {
     /// Records one `Physics::step`.
     pub fn physics_step(&mut self, d: Duration) {
         self.physics_step.push(ms(d));
+    }
+
+    /// Records the renderer's time for drawing one frame.
+    pub fn draw(&mut self, t: re_render::DrawTime) {
+        self.render_submit.push(ms(t.encode));
+        self.queue_submit.push(ms(t.submit));
     }
 
     /// Ends a frame that took `d` in total.
@@ -131,6 +153,8 @@ impl PerfRecorder {
                 .map(|(p, v)| (p.as_str().to_string(), TimeStats::of(v)))
                 .collect(),
             physics_step: TimeStats::of(&self.physics_step),
+            render_submit: TimeStats::of(&self.render_submit),
+            queue_submit: TimeStats::of(&self.queue_submit),
             counts,
             renderer,
         }

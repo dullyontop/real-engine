@@ -409,6 +409,12 @@ impl Graphics {
         capture.read(&self.gpu.device, &self.gpu.queue)
     }
 
+    /// The renderer's drawing time since the last call: PerfReport's
+    /// `render_submit` and `queue_submit` (ADR-0038).
+    pub fn take_draw_time(&mut self) -> re_render::DrawTime {
+        self.renderer.take_draw_time()
+    }
+
     /// GPU errors reported since the last call.
     pub fn take_errors(&self) -> Vec<Diagnostic> {
         self.gpu.errors().take()
