@@ -7,10 +7,10 @@ replays from the package on Linux, Windows and macOS (`build-package`,
 `state_hash` on the three in `d2`.
 
 The valley is a streamed world (ADR-0042): 16 km square, generated cell by
-cell (256 m cells) around the hero as you go, with the `[stream]` defaults.
-You start on the valley floor next to a car parked on the valley road. The hero
-and the car wait until the ground under them has loaded, and are then set down
-on it.
+cell (256 m cells) around the hero as you go, with the `[stream]` defaults,
+and its ground drawn in levels of detail out to a 6 km horizon. You start on
+the valley floor next to a car parked on the valley road. The hero and the car
+wait until the ground under them has loaded, and are then set down on it.
 
 Walk with WASD (or the left stick), look with the mouse (or the right stick),
 jump with Space. Press E next to the car to get in: W and S are throttle and
@@ -22,6 +22,11 @@ real run --project examples/valley
 real verify --project examples/valley
 real build --project examples/valley --out dist/valley
 ```
+
+`real run` and `real verify` cache what the valley generates in its
+`.real/cache/` folder: about 770 MB after a `real verify`, and more the farther
+you roam in `real run`, since the cache has no size limit. Every file there is
+safe to delete.
 
 `real.toml` turns on mild post-processing (neutral tone mapping, a little
 bloom and slightly richer colour), sets the sun's shadow cascades (four, out
@@ -47,15 +52,21 @@ the wind down and muffles it, and lowers the echo.
   and `road.footprint` keeps trees and rocks off it (`points.mask` drops each
   one whose origin lies within 3 m of the asphalt). Trees grow on the lower
   slopes, leaving the floor open to drive along, and rocks lie on steeper
-  ground. Every node streams: the road's centreline and footprint are worked
-  out once for the whole valley, and each cell grades its own ground and lays
-  its own part of the asphalt.
+  ground. `terrain.chunks` draws the graded ground in levels of detail, 2 m
+  between samples close by and coarser with distance out to the 6 km horizon,
+  each chunk stitched to its coarser neighbours, and gives the ground within
+  256 m of the hero and the car heightfield colliders, chunk by chunk. Every
+  node streams: the road's centreline and footprint are worked out once for
+  the whole valley, the ground's chunks around the hero and the car as they
+  move, and each cell adds its own trees, rocks, water and part of the
+  asphalt.
 - `scenes/main.scene.json`: the valley source (`Streamed`, bounds 8000 m, inside
   the ±16 km precision limit, `RE4309`), the hero and the car (each a
   `StreamFocus`, so the ground under a parked car stays loaded while the hero
-  walks away), the camera, the sun and the wind. The car is kinematic until the
-  ground under it loads; then the player script makes it a dynamic `Vehicle`.
-  The car's engine sound is three looping layers, children of the car.
+  walks away), the camera (drawing out to 6 km, the ground's horizon), the sun
+  and the wind. The car is kinematic until the ground under it loads; then the
+  player script makes it a dynamic `Vehicle`. The car's engine sound is three
+  looping layers, children of the car.
 - `models/walker.glb`: the hero, a skinned figure (skin `Walker`, eleven
   joints) with the looping clips `idle`, `walk` and `fall`.
 - `anims/walker.animgraph.json`: the hero's animation graph (ADR-0039). Its
@@ -90,8 +101,11 @@ the wind down and muffles it, and lowers the echo.
   at 38 km/h with the throttle held: a log that the replay puts by the
   driver's door pushes the hero away from that spot, so the hero gets out by
   the other door while the car rolls on, and the hand brake then stops the
-  car) and `cross` (turn round and walk 70 s west along the valley, from the
-  cell border at x = 0 across the one at x = -256 while cells load ahead).
+  car), `cross` (turn round and walk 70 s west along the valley, from the
+  cell border at x = 0 across the one at x = -256 while cells load ahead)
+  and `overlook` (stand on a hilltop 214 m south and 60 m east of the
+  start, 81 m above it, and look east to the horizon, over ground that only
+  `terrain.chunks` draws beyond the loaded cells).
   `real verify` runs each twice with the same `state_hash` and checks
   goldens for Vulkan (lavapipe) and GL, and in CI's `build-windows` and
   `build-macos` for DX12 (WARP) and Metal. CI's `d2` job records every
@@ -100,9 +114,3 @@ the wind down and muffles it, and lowers the echo.
 
 Everything here is made by the engine's generators or by the scripts in
 `tools/`; there are no third-party assets.
-
-## Not yet
-
-- Distant terrain: the valley meshes only the loaded cells, with
-  `terrain.mesh`, and does not yet draw the terrain beyond them in levels of
-  detail with `terrain.chunks`.

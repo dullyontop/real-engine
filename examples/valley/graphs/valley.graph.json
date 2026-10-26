@@ -757,10 +757,9 @@
     },
     {
       "id": "ground",
-      "kind": "terrain.mesh",
-      "version": 2,
+      "kind": "terrain.chunks",
+      "version": 1,
       "params": {
-        "collider": true,
         "material": "materials/grass.material.json",
         "name": "Ground"
       }
