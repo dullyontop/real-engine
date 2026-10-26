@@ -23,6 +23,11 @@ real verify --project examples/valley
 real build --project examples/valley --out dist/valley
 ```
 
+`real run` and `real verify` cache what the valley generates in its
+`.real/cache/` folder: about 770 MB after a `real verify`, and more the farther
+you roam in `real run`, since the cache has no size limit. Every file there is
+safe to delete.
+
 `real.toml` turns on mild post-processing (neutral tone mapping, a little
 bloom and slightly richer colour), sets the sun's shadow cascades (four, out
 to 200 m), defines the mixer, names the packaged game (`com.example.valley`)
