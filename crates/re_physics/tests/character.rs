@@ -247,8 +247,8 @@ fn slides_down_a_steep_face_it_may_walk_on() {
 }
 
 /// A character standing on a box's edge stays there while the edge is ground it can
-/// stand on, a contact no steeper than its max slope (45°, so its centre up to
-/// 0.28 m past the edge), and falls off past that, as in Jolt's sample.
+/// stand on, a contact no steeper than its max slope (45°, so its centre up to about
+/// 0.27 m past the edge), and falls off past that, as in Jolt's sample.
 #[test]
 fn stands_on_a_ledge_until_the_edge_is_too_steep() {
     for (past, stands) in [(0.15, true), (0.25, true), (0.35, false)] {
