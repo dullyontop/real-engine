@@ -76,7 +76,14 @@ type Spot = { at: vector, offset: vector }
 type Leaving = { spots: { Spot }, tried: number }
 local leaving: Leaving? = nil
 
-body:add("Visible", { visible = true })
+-- The body is hidden while the hero drives, also when this script is
+-- reloaded meanwhile. A reload while the hero tries the spots to get out
+-- (`leave`) forgets them, so the hero stays in, without the controller of
+-- those tries.
+body:add("Visible", { visible = not rig.driving })
+if rig.driving and hero:has("CharacterController") then
+	hero:remove("CharacterController")
+end
 
 local function get_in()
 	rig.driving = true
@@ -196,7 +203,7 @@ local function get_out()
 end
 
 -- A step of getting out. The hero, still hidden, and still in the car for
--- the camera and the HUD, is set down at the next spot with its
+-- every other script, is set down at the next spot with its
 -- CharacterController. That controller's first step pushes the capsule
 -- clear of anything it overlaps, by as much as it overlaps (a trunk, a
 -- rock's edge), so a hero that moved sideways or up in it has no room
@@ -212,6 +219,9 @@ local function leave(l: Leaving)
 		local rot: Quat = car:get("Transform", "rotation")
 		if fits and not in_the_way(pos, rot, spot.offset) then
 			leaving = nil
+			-- Parked from this very step: the car's script, which steps
+			-- first, has already given it the driver's input for it.
+			physics.drive(car, { handbrake = 1 })
 			body:set("Visible", "visible", true)
 			rig.driving = false
 			rig.no_exit = -math.huge
