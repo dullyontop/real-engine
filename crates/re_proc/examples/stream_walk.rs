@@ -151,13 +151,17 @@ fn world_graph(terrain: bool) -> GraphDoc {
         nodes.push(("e", "terrain.erode", json!({})));
         edges.push(("h", "field", "e", "field"));
     }
+    let registry = NodeRegistry::m1();
     let doc = json!({
         "format": "real-engine/graph",
         "version": 1,
         "name": "walk",
         "seed": 23,
         "nodes": nodes.iter().map(|(id, kind, params)| json!({
-            "id": id, "kind": kind, "version": 1, "params": params,
+            "id": id, "kind": kind, "params": params,
+            // Each kind's current version, as a new graph has it (an older
+            // one would also warn, RE4019).
+            "version": registry.get(kind).map_or(1, |d| d.version),
         })).collect::<Vec<_>>(),
         "edges": edges.iter().map(|(f, fp, t, tp)| json!({
             "from": [f, fp], "to": [t, tp],
