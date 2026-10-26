@@ -117,7 +117,7 @@ pub(crate) fn alive(world: &World, e: Entity) -> Result<()> {
     }
 }
 
-fn reflect_err(e: re_reflect::ReflectError) -> mlua::Error {
+pub(crate) fn reflect_err(e: re_reflect::ReflectError) -> mlua::Error {
     super::error(e.code(), e)
 }
 

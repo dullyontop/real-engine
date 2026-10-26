@@ -786,6 +786,11 @@
           "type": "string",
           "default": "",
           "description": "The mixer bus it plays on (ADR-0041); empty for the project's\n`default_bus`."
+        },
+        "rate": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Playback speed, above 0: 1 is normal, and the pitch shifts with the\nspeed. A source plays at most 16 times as fast."
         }
       },
       "additionalProperties": false
