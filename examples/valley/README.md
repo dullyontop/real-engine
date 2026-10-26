@@ -91,9 +91,9 @@ Everything here is made by the engine's generators or by the scripts in
 
 - Roads: the road nodes stream now (ADR-0043's "streamed roads" amendment),
   but the valley has none yet.
-- Distant terrain: `terrain.chunks` would draw it in levels of detail, but its
-  far chunks swap in when the worker pool finishes them, so screenshots would
-  not repeat; the valley meshes only the loaded cells, with `terrain.mesh`.
+- Distant terrain: the valley meshes only the loaded cells, with
+  `terrain.mesh`, and does not yet draw the terrain beyond them in levels of
+  detail with `terrain.chunks`.
 - There are no DX12 or Metal goldens yet, so with those backends (the
   defaults on Windows and macOS) `real verify` fails its `goldens` stage with
   `RE0510`.
