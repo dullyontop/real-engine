@@ -59,6 +59,7 @@ const GOLDEN: &[(&str, u32, &str, &str)] = &[
     ("field.remap", 1, "shore", "971fbd42d14be810"),
     ("terrain.mesh", 1, "terrain", "fdab6a0896e440a4"),
     ("terrain.mesh", 2, "terrain", "8b3790f53e5b46b9"),
+    ("terrain.mesh", 3, "terrain", "d69d26afcf9a88b4"),
     ("terrain.water_plane", 1, "water", "e829d2cfac475f9d"),
     ("scatter.poisson", 1, "scatter", "2e786b66afc3f222"),
     ("points.pick", 1, "kind", "4b41e0ac92d466f8"),
@@ -108,6 +109,7 @@ fn every_supported_kind_version_has_a_golden_output() {
     for (doc, version, entries) in [
         (example_with_every_kind(), 1u32, GOLDEN),
         (example_with_every_kind(), 2, GOLDEN),
+        (example_with_every_kind(), 3, GOLDEN),
         (roads, 1, GOLDEN_ROADS),
     ] {
         let mut doc = doc;
@@ -485,7 +487,7 @@ fn migration_world(version: u32, overrides: Json) -> (tempfile::TempDir, re_comm
         GraphDoc::from_json(
             &json!({
                 "format": "real-engine/graph", "version": 1, "name": "x", "seed": 0,
-                "nodes": [{ "id": "ground", "kind": "terrain.mesh", "version": 2, "params": {} }],
+                "nodes": [{ "id": "ground", "kind": "terrain.mesh", "version": 3, "params": {} }],
                 "edges": [],
             })
             .to_string(),
@@ -786,4 +788,98 @@ fn terrain_mesh_2_is_local_to_its_window_corner() {
     );
     assert_eq!([o2.x, o2.z], [0.0, 0.0]);
     assert_eq!(o1.y, o2.y);
+}
+
+/// Streamed, `terrain.mesh@3` takes each vertex's normal over the triangles
+/// beyond its window too, so two cells shade their shared edge as one mesh
+/// over both would; `@2` leaves those triangles out, and the edge shows.
+#[test]
+fn terrain_mesh_3_shades_cell_edges_as_one_mesh_would() {
+    let registry = Arc::new(NodeRegistry::m1());
+    let evaluator = Evaluator::new(registry.clone());
+    let at = |version: u32, origin: [i64; 2], n: u32| {
+        let doc = json!({
+            "format": "real-engine/graph", "version": 1, "name": "t", "seed": 7,
+            "nodes": [
+                { "id": "h", "kind": "terrain.heightfield", "version": 1,
+                  "params": { "cell": 4.0, "height": 60.0, "scale": 0.01 } },
+                { "id": "ground", "kind": "terrain.mesh", "version": version,
+                  "params": { "collider": true } },
+            ],
+            "edges": [{ "from": ["h", "field"], "to": ["ground", "field"] }],
+        });
+        let g = ProcGraph::from_doc(&GraphDoc::from_json(&doc.to_string()).unwrap(), &registry)
+            .unwrap();
+        let o = EvalOptions {
+            domain: Some(Domain {
+                origin,
+                n,
+                spacing: 4.0,
+            }),
+            ..Default::default()
+        };
+        let e = evaluator.evaluate(&g, &o);
+        assert!(e.ok(), "{:#?}", e.report.diagnostics);
+        let Some(Output::Fragment(f)) = e.output("ground") else {
+            panic!("no fragment");
+        };
+        let mesh = f
+            .assets
+            .iter()
+            .find_map(|(_, a)| match a {
+                re_proc::DerivedAsset::Mesh(m) => Some(m.clone()),
+                _ => None,
+            })
+            .expect("a mesh");
+        let collider = f
+            .assets
+            .iter()
+            .find_map(|(_, a)| match a {
+                re_proc::DerivedAsset::Heightfield(h) => Some(h.clone()),
+                _ => None,
+            })
+            .expect("a collider heightfield");
+        (mesh, collider)
+    };
+    let normal = |m: &re_types::mesh::MeshData, side: usize, x: usize, z: usize| {
+        m.vertices[z * side + x].normal
+    };
+    // Two cells of 16 samples' steps, side by side, and one window over both.
+    let (a, b, n) = ([1792, -64], [1808, -64], 17);
+    let (a2, a2_collider) = at(2, a, 17);
+    let (b2, _) = at(2, b, 17);
+    assert!(
+        (0..n).any(|z| normal(&a2, n, n - 1, z) != normal(&b2, n, 0, z)),
+        "version 2 shades the shared edge twice"
+    );
+    let (a3, a3_collider) = at(3, a, 17);
+    let (b3, _) = at(3, b, 17);
+    let (both, _) = at(3, a, 33);
+    for z in 0..n {
+        for x in 0..n {
+            assert_eq!(
+                normal(&a3, n, x, z),
+                normal(&both, 33, x, z),
+                "a ({x}, {z})"
+            );
+            assert_eq!(
+                normal(&b3, n, x, z),
+                normal(&both, 33, x + 16, z),
+                "b ({x}, {z})"
+            );
+            if x > 0 && z > 0 && x < n - 1 && z < n - 1 {
+                assert_eq!(
+                    normal(&a3, n, x, z),
+                    normal(&a2, n, x, z),
+                    "inside ({x}, {z})"
+                );
+            }
+        }
+    }
+    // Everything but the edge normals is version 2's.
+    assert_eq!(a3.indices, a2.indices);
+    for (v3, v2) in a3.vertices.iter().zip(&a2.vertices) {
+        assert_eq!((v3.pos, v3.uv, v3.color), (v2.pos, v2.uv, v2.color));
+    }
+    assert_eq!(a3_collider, a2_collider);
 }

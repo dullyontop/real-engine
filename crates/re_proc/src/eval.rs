@@ -674,12 +674,14 @@ impl Evaluator {
         let global = opts
             .domain
             .map(|d| opts.global_spacing.unwrap_or(d.spacing));
-        // A region node reads its inputs over its tiles' windows: the graph
-        // an input comes from, evaluated again with the tile as the domain.
-        let region = job.def.streaming == Streaming::Region && opts.domain.is_some();
+        // A region node reads its inputs over its tiles' windows, and a cell
+        // node over its window with an apron: the graph an input comes from,
+        // evaluated again with that window as the domain.
+        let reads = opts.domain.is_some()
+            && matches!(job.def.streaming, Streaming::Region | Streaming::Cell);
         let read = |port: &str, domain: Domain| -> Result<Arc<Field>, String> {
-            if !region {
-                return Err("not a streamed region node".into());
+            if !reads {
+                return Err("not a streamed region or cell node".into());
             }
             let (sub, from) = input_graph(graph, job.index, port)
                 .ok_or_else(|| format!("input `{port}` is not connected"))?;
@@ -745,7 +747,7 @@ impl Evaluator {
             files: job.files.clone(),
             pool,
             logs: Default::default(),
-            upstream: region.then_some(&read as &crate::nodes::Upstream),
+            upstream: reads.then_some(&read as &crate::nodes::Upstream),
             sample: sampling.map(|_| &sample as &crate::nodes::Sampler),
             share: Some(&share as &crate::nodes::Share),
         };

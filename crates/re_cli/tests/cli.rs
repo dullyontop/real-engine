@@ -168,7 +168,7 @@ fn graph_eval_reports_each_node() {
         "format": "real-engine/graph", "version": 1, "name": "flat", "seed": 3,
         "nodes": [
             { "id": "h", "kind": "terrain.heightfield", "version": 1, "params": { "size": 9, "cell": 4.0 } },
-            { "id": "ground", "kind": "terrain.mesh", "version": 2, "params": { "collider": true } }
+            { "id": "ground", "kind": "terrain.mesh", "version": 3, "params": { "collider": true } }
         ],
         "edges": [ { "from": ["h", "field"], "to": ["ground", "field"] } ]
     });

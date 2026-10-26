@@ -373,7 +373,7 @@ fn golden_outputs_per_node() {
         ("mask", "terrain.island_mask", "1ca4423d876eceeb"),
         ("island", "field.combine", "edb4669e64c03a6d"),
         ("shore", "field.remap", "971fbd42d14be810"),
-        ("terrain", "terrain.mesh", "8b3790f53e5b46b9"),
+        ("terrain", "terrain.mesh", "d69d26afcf9a88b4"),
         ("water", "terrain.water_plane", "e829d2cfac475f9d"),
         ("scatter", "scatter.poisson", "2e786b66afc3f222"),
         ("kind", "points.pick", "4b41e0ac92d466f8"),
@@ -386,7 +386,7 @@ fn golden_outputs_per_node() {
         ("post_end", "mesh.transform", "dc1d505c90f1875c"),
         ("dock_mesh", "mesh.merge", "5b7e614dde008b92"),
         ("dock", "material.assign", "d80ce6803193eae7"),
-        ("out", "fragment.merge", "97c999ae05a5ba33"),
+        ("out", "fragment.merge", "5b9bc4d45dca1c14"),
     ];
     let g = compile(&example());
     let e = evaluator(3).evaluate(&g, &example_opts());

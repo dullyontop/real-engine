@@ -170,7 +170,7 @@ fn a_graph_file_works_like_a_builder() {
         "format": "real-engine/graph", "version": 1, "name": "flat", "seed": 1,
         "nodes": [
             { "id": "h", "kind": "terrain.heightfield", "version": 1, "params": { "size": 9, "cell": 4.0, "height": 0.0 } },
-            { "id": "ground", "kind": "terrain.mesh", "version": 2, "params": { "collider": true } }
+            { "id": "ground", "kind": "terrain.mesh", "version": 3, "params": { "collider": true } }
         ],
         "edges": [ { "from": ["h", "field"], "to": ["ground", "field"] } ]
     });
@@ -195,7 +195,7 @@ fn a_saved_and_closed_graph_document_keeps_generating_its_edit() {
         "format": "real-engine/graph", "version": 1, "name": "flat", "seed": 1,
         "nodes": [
             { "id": "h", "kind": "terrain.heightfield", "version": 1, "params": { "size": 9, "cell": 4.0, "height": 0.0 } },
-            { "id": "ground", "kind": "terrain.mesh", "version": 2, "params": { "collider": true } }
+            { "id": "ground", "kind": "terrain.mesh", "version": 3, "params": { "collider": true } }
         ],
         "edges": [ { "from": ["h", "field"], "to": ["ground", "field"] } ]
     });
