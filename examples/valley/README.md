@@ -49,12 +49,12 @@ the wind down and muffles it, and lowers the echo.
   lie on steeper ground. Every node streams: the road's centreline and
   footprint are worked out once for the whole valley, and each cell grades its
   own ground and lays its own part of the asphalt.
-- `scenes/main.scene.json`: the valley source (`Streamed`, bounds 8000 m,
-  inside the ±8 km precision limit), the hero and the car (each a `StreamFocus`,
-  so the ground under a parked car stays loaded while the hero walks away),
-  the camera, the sun and the wind. The car is kinematic until the ground under
-  it loads; then the player script makes it a dynamic `Vehicle`. The car's
-  engine sound is three looping layers, children of the car.
+- `scenes/main.scene.json`: the valley source (`Streamed`, bounds 8000 m, inside
+  the ±16 km precision limit, `RE4309`), the hero and the car (each a
+  `StreamFocus`, so the ground under a parked car stays loaded while the hero
+  walks away), the camera, the sun and the wind. The car is kinematic until the
+  ground under it loads; then the player script makes it a dynamic `Vehicle`.
+  The car's engine sound is three looping layers, children of the car.
 - `models/walker.glb`: the hero, a skinned figure (skin `Walker`, eleven
   joints) with the looping clips `idle`, `walk` and `fall`.
 - `anims/walker.animgraph.json`: the hero's animation graph (ADR-0039). Its
