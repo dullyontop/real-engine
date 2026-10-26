@@ -52,7 +52,7 @@ pub use api::{DEFINITIONS_PATH, definitions, write_definitions};
 pub use budget::untimed;
 pub use compile::{
     COMPILER_ID, bytecode_version, chunk_mode, compile_bytecode, compile_check, compiler,
-    luau_version,
+    compiler_for, luau_version,
 };
 pub use diag::{ErrorKind, ScriptError};
 pub use host::{CommandHost, NoServices, ScriptHost, StreamAccess, WorldHost};

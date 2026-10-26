@@ -119,6 +119,28 @@ fn a_stopped_script_thread_parks_while_the_context_keeps_running() {
 }
 
 #[test]
+fn a_stop_in_a_project_run_shows_its_locals() {
+    // A development run compiles its scripts at debug level 2 (ADR-0045), so a
+    // stop carries the names of the locals in scope.
+    let (_dir, mut rig) = rig(&[("scripts/loop.luau", LOOP)]);
+    assert!(rig.run("scripts/loop.luau").is_empty());
+    let debugger = Debugger::new();
+    rig.rt
+        .context(ContextKind::Game)
+        .attach_debugger(&debugger)
+        .unwrap();
+    debugger.set_breakpoints("scripts/loop.luau", &[4]);
+    frame(&mut rig);
+    let stop = debugger.stopped().expect("the loop stopped");
+    assert_eq!(stop.top().unwrap().line, Some(4));
+    let n = stop.local("n").expect("the local `n` is shown");
+    assert_eq!((n.value.as_str(), n.type_name.as_str()), ("2", "number"));
+    debugger.set_breakpoints("scripts/loop.luau", &[]);
+    assert!(debugger.resume(Resume::Continue));
+    frame(&mut rig);
+}
+
+#[test]
 fn modules_loaded_after_attaching_reach_breakpoints() {
     let (_dir, mut rig) = rig(&[("scripts/ticker.luau", TICKER), ("scripts/lib.luau", LIB)]);
     let debugger = Debugger::new();
