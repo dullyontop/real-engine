@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "seed": 1,
+  "frames": 120,
+  "input": [
+    { "frame": 10, "action": "look", "axis": [0.0, 0.004] },
+    { "frame": 60, "action": "look", "axis": [0.0, 0.0] }
+  ],
+  "commands": [
+    { "frame": 0, "name": "entity.set", "args": { "id": "hero", "component": "Transform", "field": "translation", "value": [60.0, 95.0, 232.0] } }
+  ],
+  "checks": [
+    { "frame": 119, "screenshot": "tests/goldens/{backend}/overlook_f119.png" }
+  ]
+}
