@@ -294,6 +294,7 @@ The entity core is bevy_ecs 0.20.0 used standalone, behind our own API (ADR-0005
 - **M3 built-ins** (so far):
   - `RigidBody.center_of_mass_offset` (a `vec3`, default zero);
   - `AudioSource.bus`: the mixer bus it plays on, empty for `[audio] default_bus` (ADR-0041);
+  - `AudioSource.rate`: the playback speed, default 1, above 0 and played at most 16 times as fast; the pitch shifts with it (ADR-0041);
   - `SkinnedMesh` (`asset` is `<model path>#<skin name>`): a skinned mesh posed by its skeleton; an `AnimPlayer` on the same entity plays clips onto its joints (ADR-0039);
   - `Animator` (`graph`, `playing`, `speed`): plays an animation graph (`*.animgraph.json`) on the `SkinnedMesh` of the same entity, in place of an `AnimPlayer`; parameters and states are runtime state that scripts reach through the `anim` library (ADR-0039). It is not the compat layer's `Animator` instance (§4, M2);
   - `BoneAttachment` (`joint`): on a child of a skinned entity, places the child at that joint of its parent's skin at the end of each fixed step, after physics and the ragdoll blend (ADR-0039);
@@ -324,7 +325,7 @@ task.wait(0.5)
 - A CPU budget per context is enforced by a raw Luau interrupt that keeps raising once tripped, so `pcall` cannot swallow it.
 - `tools` scripts may issue commands. `game` scripts may not issue destructive commands; they reach the engine through `HostServices`.
 - `engine.d.luau`, generated from the binding registry, describes the whole native API for the type checker, editors and agents (`real describe --luau-defs`).
-- M3 additions to the native libraries: `physics.drive` and `physics.vehicle` (vehicles); `physics.ragdoll(entity, mode, strength?)`, `physics.ragdoll_state(entity)` (root, mode, strength and `calm`; no pose) and `physics.ragdoll_impulse(entity, joint, impulse)`; `audio.play(clip, at?, volume?, bus?)`, `audio.set_bus_volume`, `audio.set_effect` (1-based effect index), `audio.snapshot` and `audio.levels` (frame-only: an error during a fixed step). The `anim` library drives the graph an entity's `Animator` plays: `anim.set(e, param, value)`, `anim.get(e, param)`, `anim.trigger(e, param)`, `anim.state(e, layer?)` and `anim.joint(e, joint)` (world-space position and rotation from the last step's pose); an unknown or mistyped parameter is `RE7609`. The `stream` library (game and tools contexts, ADR-0042) has `stream.on_loaded`, `stream.on_unloaded`, `stream.cells()` and `stream.is_loaded(key)`; `stream.load` and `stream.release` exist in the `tools` context only. A script that starts after cells loaded gets no `on_loaded` for them, so it reads `stream.cells()` at start.
+- M3 additions to the native libraries: `physics.drive` and `physics.vehicle` (vehicles); `physics.ragdoll(entity, mode, strength?)`, `physics.ragdoll_state(entity)` (root, mode, strength and `calm`; no pose) and `physics.ragdoll_impulse(entity, joint, impulse)`; `audio.play(clip, at?, volume?, bus?)`, `audio.set_rate(e, rate)` (writes `AudioSource.rate`), `audio.set_bus_volume`, `audio.set_effect` (1-based effect index), `audio.snapshot` and `audio.levels` (frame-only: an error during a fixed step). The `anim` library drives the graph an entity's `Animator` plays: `anim.set(e, param, value)`, `anim.get(e, param)`, `anim.trigger(e, param)`, `anim.state(e, layer?)` and `anim.joint(e, joint)` (world-space position and rotation from the last step's pose); an unknown or mistyped parameter is `RE7609`. The `stream` library (game and tools contexts, ADR-0042) has `stream.on_loaded`, `stream.on_unloaded`, `stream.cells()` and `stream.is_loaded(key)`; `stream.load` and `stream.release` exist in the `tools` context only. A script that starts after cells loaded gets no `on_loaded` for them, so it reads `stream.cells()` at start.
 - `math` is portable (ADR-0036): every VM replaces the transcendental functions with `libm` versions through `re_script::portable_math`, and the compiler disables the matching builtins. `x ^ y` still uses the platform's `pow` unless `y` is 2, 0.5 or 3; use `math.pow` in simulated code. `real verify`'s scan stage warns about any other `^` (`RE3083`).
 - **Debugger** (M3, WP25, ADR-0045): `re_script::debug` holds Luau breakpoints, stepping and pausing, and its DAP server (`re_script::debug::dap`) listens on 127.0.0.1 only. `real run --debug [PORT]` and `real editor --debug [PORT]` serve it (default port 4711); the editor also has a debugger panel. Compat Scripts and ModuleScripts register their chunks under their source paths too, and register again when hot reload restarts them, so breakpoints keep working.
 
@@ -461,7 +462,9 @@ Two port types carry them: `shapes` (polygons with holes in the source's XZ plan
 
 `NodeRegistry::m1()` registers these with the others (28 kinds). Shapes and paths are stored in the disk cache like fields and meshes, and Luau nodes can take and return them (`re_script::generator`): shapes as a list of `{ outer, holes }` polygons of `{x, z}` points, a path as `{ closed, samples }` with `x`, `y`, `z`, `width`, `bank` and `distance` per sample. Bad shapes and paths are `RE4504`, coordinates beyond about ±1,000 km `RE4503`, and a failed triangulation `RE4505`.
 
-Known limits: a road's footprint is the union of its ribbon's triangles, so a curve tighter than half the road's width still gives the area it covers, but `road.mesh` overlaps itself there; junctions are found between different paths only, so a path that crosses itself makes no junction; and finding them compares every segment of each pair of paths (after a bounding-box test), so the cost grows with the square of the segment count.
+In a streamed world (ADR-0042) these nodes stream like the others. `path.spline`, `road.footprint`, `shape.polygon`, `shape.boolean` and `shape.offset` are **global**: keyed without the window, they give every cell and terrain chunk of a source one result, which the caches share once a window has made it, so every window sees the same roads; `path.spline` drapes its control points on its field sampled on the source's grid. `terrain.conform` and `field.from_shapes` are pointwise, and `road.mesh`, `shape.mesh` and `points.mask` work per cell. A cell's road mesh holds the triangles of one joined road network whose centre lies in the cell; a cell's shape mesh is one triangulation of the shapes cut exactly at the cell's sides, so neighbouring cells meet with no gap or overlap. Both meshes are relative to the cell's corner, where their entity sits. The joined network and the triangulation are made once and kept in the evaluator's memory cache (`NodeCtx::shared`; ADR-0043's "streamed roads" amendment).
+
+Known limits: a road's footprint is the union of its ribbon's triangles, so a curve tighter than half the road's width still gives the area it covers, but `road.mesh` overlaps itself there; junctions are found between different paths only, so a path that crosses itself makes no junction; and streamed, each cell's `shape.mesh` looks through the boxes of every triangle of the shapes' triangulation, so a very large shape costs a scan in each cell.
 
 ### Evaluation
 
@@ -682,6 +685,10 @@ cascades = 4                  # 1 to 4
 distance = 150.0              # how far from the camera shadows reach
 split_lambda = 0.75           # logarithmic (1) to uniform (0) splits
 blend = 0.1                   # fraction of each cascade that fades into the next
+
+[assets]                      # how imported textures are stored (M3, ADR-0047)
+texture_compression = "bc"    # BC7, and BC5 for normal maps; or "none" (RGBA8)
+texture_quality = "fast"      # or "high": about 1 dB better, 3 to 4 times slower to import
 
 [scripts]
 contexts = ["game", "tools"]

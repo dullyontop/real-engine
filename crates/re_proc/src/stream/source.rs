@@ -218,6 +218,7 @@ fn prepare(
             ));
         }
     }
+    crate::nodes::check_streaming(&doc, registry).map_err(|e| not_streamable(&id, e))?;
     let spacing = graph_spacing(&doc).map_err(|e| not_streamable(&id, e))?;
     let (cells, terrain) = split_terrain(&doc, registry).map_err(|e| not_streamable(&id, e))?;
     let steps = config.cell_size / spacing;
@@ -344,9 +345,9 @@ fn split_terrain(
             .collect(),
         ..doc.clone()
     };
-    // The cells' graph: without the chunks node, then without every field
-    // or points node whose output nothing uses any more (a mesh or fragment
-    // left unused is output, so it stays).
+    // The cells' graph: without the chunks node, then without every field,
+    // points, shapes or path node whose output nothing uses any more (a mesh
+    // or fragment left unused is output, so it stays).
     let mut cells = doc.clone();
     cells.nodes.retain(|n| n.id != chunk.id);
     cells.edges.retain(|e| e.to.0 != chunk.id);
@@ -357,9 +358,12 @@ fn split_terrain(
             .iter()
             .filter(|n| {
                 !used.contains(n.id.as_str())
-                    && registry
-                        .get(&n.kind)
-                        .is_some_and(|d| matches!(d.output, PortType::Field | PortType::Points))
+                    && registry.get(&n.kind).is_some_and(|d| {
+                        matches!(
+                            d.output,
+                            PortType::Field | PortType::Points | PortType::Shapes | PortType::Path
+                        )
+                    })
             })
             .map(|n| n.id.clone())
             .collect();
@@ -489,6 +493,7 @@ impl CellJob {
                 domain: Some(source.domain(cell)),
                 serial: true,
                 cancel,
+                global_spacing: Some(source.spacing),
                 ..Default::default()
             },
         })

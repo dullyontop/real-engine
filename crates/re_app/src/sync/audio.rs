@@ -5,7 +5,9 @@
 //!   whether or not it loops), and stops when the entity or the component goes.
 //! - A source with a `bus` plays on it (`SetSourceBus` before `StartSource`). A
 //!   change of clip or bus stops the sound, and autoplay applies again.
-//! - A playing spatial source follows its entity; a volume change is sent as is.
+//! - A playing spatial source follows its entity; a volume change is sent as is,
+//!   and so is a rate (`SetSourceRate`, also right after `StartSource` when the
+//!   rate is not 1).
 //! - The listener is the active camera.
 //!
 //! One-shot sounds requested by scripts (`HostServices::play_sound`) are queued
@@ -22,6 +24,7 @@ use re_types::{AudioCmd, EntityId};
 struct Playing {
     volume: f32,
     position: Vec3,
+    rate: f32,
 }
 
 /// Which sources are playing, and where the listener is.
@@ -94,6 +97,15 @@ pub fn build(world: &mut World, sync: &mut AudioSync, cmds: &mut Vec<AudioCmd>) 
                     position,
                 });
             }
+            // Compared by bits, so an invalid (NaN) rate is sent, and refused,
+            // once rather than every frame.
+            if p.rate.to_bits() != src.rate.to_bits() {
+                p.rate = src.rate;
+                cmds.push(AudioCmd::SetSourceRate {
+                    entity: id,
+                    rate: src.rate,
+                });
+            }
             continue;
         }
         if src.autoplay && !src.clip.is_empty() && !sync.started.contains_key(&id) {
@@ -112,11 +124,19 @@ pub fn build(world: &mut World, sync: &mut AudioSync, cmds: &mut Vec<AudioCmd>) 
                 spatial: src.spatial,
                 position,
             });
+            // The rate applies to a playing sound, so it follows the start.
+            if src.rate.to_bits() != 1.0f32.to_bits() {
+                cmds.push(AudioCmd::SetSourceRate {
+                    entity: id,
+                    rate: src.rate,
+                });
+            }
             sync.playing.insert(
                 id,
                 Playing {
                     volume: src.volume,
                     position,
+                    rate: src.rate,
                 },
             );
         }

@@ -197,6 +197,7 @@ pub(crate) fn texture(material: &str) -> Option<TextureData> {
         height: n,
         format: TextureFormat::Rgba8Srgb,
         pixels,
+        levels: Vec::new(),
     })
 }
 

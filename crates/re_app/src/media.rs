@@ -95,6 +95,13 @@ impl Media {
         }
     }
 
+    /// These media, storing imported textures as `config` asks (`[assets]`,
+    /// ADR-0047).
+    pub fn with_assets_config(mut self, config: re_assets::AssetsConfig) -> Media {
+        self.server.set_config(config);
+        self
+    }
+
     /// The asset server.
     pub fn server(&mut self) -> &mut AssetServer {
         &mut self.server

@@ -45,13 +45,14 @@ fn fixture_loads_into_the_expected_desc() {
     let root = dir.path();
     let desc = load_material(&root.join("materials/rock.material.json")).unwrap();
 
-    // Loading created a sidecar for each texture; the normal map's is linear.
+    // Loading created a sidecar for each texture; the normal map's is linear
+    // and marked as a normal map (stored as BC5, ADR-0047).
     let albedo = meta(root, "assets/textures/rock.png");
     let normal = meta(root, "assets/textures/rock_n.png");
     assert_eq!(albedo.settings, serde_json::json!({}));
     assert_eq!(
         normal.settings,
-        serde_json::json!({ "color_space": "linear" })
+        serde_json::json!({ "color_space": "linear", "normal_map": true })
     );
 
     let expected = MaterialDesc {

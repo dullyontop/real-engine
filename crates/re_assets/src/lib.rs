@@ -24,9 +24,11 @@
 //! # Ok::<(), re_core::Diagnostic>(())
 //! ```
 //!
-//! Loading is synchronous in M1: streaming and texture compression are not part
-//! of it. Errors are [`re_core::Diagnostic`]s with codes RE7000–RE7199; each has
-//! an explain page listed in [`DIAGNOSTICS`].
+//! Loading is synchronous. With the `texture-encode` feature (tooling builds),
+//! imported textures are stored as BC7 and BC5 with their mip chains, as
+//! `[assets]` in `real.toml` asks ([`AssetsConfig`], ADR-0047). Errors are
+//! [`re_core::Diagnostic`]s with codes RE7000–RE7199; each has an explain page
+//! listed in [`DIAGNOSTICS`].
 //!
 //! [`MeshData`]: re_types::MeshData
 //! [`MaterialDesc`]: re_types::MaterialDesc
@@ -46,6 +48,7 @@ mod image_decode;
 mod material;
 mod meta;
 mod server;
+mod texture;
 mod watch;
 
 pub use self::gltf::{
@@ -62,9 +65,10 @@ pub use material::{
 };
 pub use meta::AssetMeta;
 pub use server::{
-    AssetInfo, AssetServer, GLTF_IMPORTER, Handle, LoadedAsset, ProcessedAsset, ReloadReport,
-    TEXTURE_IMPORTER, TEXTURE_IMPORTER_VERSION,
+    AssetInfo, AssetServer, GLTF_IMPORTER, Handle, LoadedAsset, ProcessedAsset, ProcessedTexture,
+    ReloadReport, TEXTURE_IMPORTER, TEXTURE_IMPORTER_VERSION, TEXTURE_REPEAT_AT_LOAD,
 };
+pub use texture::{AssetsConfig, TEXTURE_ENCODER, TextureCompression, TextureQuality};
 pub use watch::{AssetChange, AssetWatcher};
 
 use re_core::DiagInfo;

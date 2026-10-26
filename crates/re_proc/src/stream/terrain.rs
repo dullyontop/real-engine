@@ -315,6 +315,9 @@ impl TerrainState {
                             root: store.root().map(Into::into),
                             files: store.files().cloned(),
                             serial: true,
+                            // Roads drape and flatten at the cells' spacing
+                            // at every level of detail.
+                            global_spacing: Some(source.spacing),
                             ..Default::default()
                         },
                         grid,

@@ -17,7 +17,8 @@ mod scatter;
 mod shape;
 mod terrain;
 
-use std::collections::HashMap;
+use std::any::Any;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -29,7 +30,7 @@ use serde_json::{Value as Json, json};
 
 use crate::value::{Field, MeshValue, Output, Points, PortType, RoadPath, Shapes};
 
-pub use fragment::{mesh_item, sink_fragment};
+pub use fragment::{mesh_item, sink_fragment, sink_fragment_in};
 
 /// An input port of a node kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -96,8 +97,30 @@ pub enum Streaming {
     Pointwise,
     /// Works on region tiles with an apron of neighbouring samples.
     Region,
-    /// Works cell by cell; its keys are prefixed by the cell.
+    /// Works cell by cell; its keys are prefixed by the cell. A mesh it
+    /// outputs in a window is local to the window's corner (`min x, 0,
+    /// min z`), where the entity drawing it is placed.
     Cell,
+    /// Its output does not depend on the window (shapes, road paths): a
+    /// streamed evaluation runs it without one, keyed without one, so every
+    /// cell and chunk shares one result. Its inputs other than fields come
+    /// from global nodes; it does not get its fields over the window, but
+    /// samples them where it needs them ([`NodeCtx::sample`]). It outputs
+    /// shapes or a road path (ADR-0043 §5).
+    Global,
+}
+
+impl Streaming {
+    /// The class's name, as `describe` and `real graph describe` show it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Streaming::Whole => "whole",
+            Streaming::Pointwise => "pointwise",
+            Streaming::Region => "region",
+            Streaming::Cell => "cell",
+            Streaming::Global => "global",
+        }
+    }
 }
 
 /// The window of a world a node is evaluated over (ADR-0042): global sample
@@ -656,6 +679,105 @@ impl NodeRegistry {
     }
 }
 
+/// Checks how the nodes of a streamed graph fit together (ADR-0042,
+/// ADR-0043 §5), so every cell and chunk sees the same shapes and roads: a
+/// [`Streaming::Global`] node outputs shapes or a road path, takes fields
+/// only from pointwise or region nodes (it samples them) and its other
+/// inputs only from global nodes, everything upstream of it is global,
+/// pointwise or region, and shapes and road paths come only from global
+/// nodes. `Err` says which node breaks this (`RE4301`).
+pub fn check_streaming(
+    doc: &re_types::graph::GraphDoc,
+    registry: &NodeRegistry,
+) -> Result<(), String> {
+    let defs: HashMap<&str, (&str, &NodeDef)> = doc
+        .nodes
+        .iter()
+        .filter_map(|n| {
+            registry
+                .get(&n.kind)
+                .map(|d| (n.id.as_str(), (n.kind.as_str(), d)))
+        })
+        .collect();
+    for node in &doc.nodes {
+        if let Some((kind, d)) = defs.get(node.id.as_str())
+            && d.streaming == Streaming::Global
+            && !matches!(d.output, PortType::Shapes | PortType::Path)
+        {
+            return Err(format!(
+                "node `{}` ({kind}) is global but its output is `{}`; a global node outputs `shapes` or a `path`",
+                node.id,
+                d.output.port_name()
+            ));
+        }
+    }
+    for e in &doc.edges {
+        let (Some((from_kind, from)), Some((to_kind, to))) =
+            (defs.get(e.from.0.as_str()), defs.get(e.to.0.as_str()))
+        else {
+            continue;
+        };
+        if matches!(from.output, PortType::Shapes | PortType::Path)
+            && from.streaming != Streaming::Global
+        {
+            return Err(format!(
+                "node `{}` ({from_kind}) outputs `{}` but streams as `{}`, not `global`, so cells could see different ones",
+                e.from.0,
+                from.output.port_name(),
+                from.streaming.name()
+            ));
+        }
+        let sampled = from.output == PortType::Field
+            && matches!(from.streaming, Streaming::Pointwise | Streaming::Region);
+        if to.streaming == Streaming::Global && !sampled && from.streaming != Streaming::Global {
+            return Err(format!(
+                "node `{}` ({to_kind}) is global, but its input `{}` comes from node `{}` ({from_kind}), which streams as `{}`; a global node takes fields from pointwise or region nodes and its other inputs from global nodes",
+                e.to.0,
+                e.to.1,
+                e.from.0,
+                from.streaming.name()
+            ));
+        }
+    }
+    // What a global node sees must not depend on the window either.
+    let mut inputs: HashMap<&str, Vec<&str>> = HashMap::new();
+    for e in &doc.edges {
+        inputs
+            .entry(e.to.0.as_str())
+            .or_default()
+            .push(e.from.0.as_str());
+    }
+    for node in &doc.nodes {
+        let Some((kind, d)) = defs.get(node.id.as_str()) else {
+            continue;
+        };
+        if d.streaming != Streaming::Global {
+            continue;
+        }
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut todo: Vec<&str> = inputs.get(node.id.as_str()).cloned().unwrap_or_default();
+        while let Some(up) = todo.pop() {
+            if !seen.insert(up) {
+                continue;
+            }
+            if let Some((up_kind, u)) = defs.get(up)
+                && !matches!(
+                    u.streaming,
+                    Streaming::Global | Streaming::Pointwise | Streaming::Region
+                )
+            {
+                return Err(format!(
+                    "node `{}` ({kind}) is global, but node `{up}` ({up_kind}) upstream of it streams as `{}`; everything upstream of a global node streams as global, pointwise or region",
+                    node.id,
+                    u.streaming.name()
+                ));
+            }
+            todo.extend(inputs.get(up).into_iter().flatten().copied());
+        }
+    }
+    Ok(())
+}
+
 /// Rewrites every `"$ref": "#/$defs/<name>"` in `v` to `#/$defs/<prefix><name>`.
 fn rename_refs(v: &mut Json, prefix: &str) {
     match v {
@@ -685,7 +807,8 @@ pub struct NodeCtx<'a> {
     /// The version the node was written for. A kind keeps the output of
     /// every version it supports, branching on this when versions differ.
     pub version: u32,
-    /// The window being evaluated, for streamed evaluation (ADR-0042).
+    /// The window being evaluated, for streamed evaluation (ADR-0042);
+    /// `None` for a [`Streaming::Global`] node, which runs without one.
     pub domain: Option<Domain>,
     /// Rows and other splittable work run on the calling thread
     /// ([`EvalOptions::serial`](crate::EvalOptions::serial)).
@@ -706,11 +829,36 @@ pub struct NodeCtx<'a> {
     /// on an input port evaluated over another window (its region tiles),
     /// through the same evaluator and caches.
     pub upstream: Option<&'a Upstream<'a>>,
+    /// For a [`Streaming::Global`] node in a streamed evaluation: the field
+    /// on an input port sampled at points `[x, z]` (metres), on the triangles
+    /// of the streamed source's sample grid, the same for every cell and
+    /// chunk (`Ok(None)` when the port is not connected). Its fields are not
+    /// in [`NodeCtx::inputs`] then.
+    pub sample: Option<&'a Sampler<'a>>,
+    /// The evaluator's store of values made from inputs and shared between
+    /// evaluations ([`NodeCtx::shared`]); `None` makes them every time.
+    pub share: Option<&'a Share<'a>>,
 }
 
 /// Evaluates the field on input `port` over a window (see
 /// [`NodeCtx::upstream`]).
 pub type Upstream<'a> = dyn Fn(&str, Domain) -> Result<Arc<Field>, String> + Sync + 'a;
+
+/// Samples the field on input `port` at points `[x, z]` (see
+/// [`NodeCtx::sample`]).
+pub type Sampler<'a> = dyn Fn(&str, &[[f64; 2]]) -> Result<Option<Vec<f64>>, String> + Sync + 'a;
+
+/// A value made for [`NodeCtx::shared`], and about how many bytes it holds.
+pub type SharedValue = (Arc<dyn Any + Send + Sync>, u64);
+
+/// Gives the value shared under a key, made by the function the first time
+/// (see [`NodeCtx::shared`]).
+pub type Share<'a> = dyn Fn(
+        [u8; 32],
+        &mut dyn FnMut() -> Result<SharedValue, NodeError>,
+    ) -> Result<Arc<dyn Any + Send + Sync>, NodeError>
+    + Sync
+    + 'a;
 
 /// At most this many lines of a node's log reach its report.
 pub const MAX_LOG_LINES: usize = 100;
@@ -803,6 +951,37 @@ impl NodeCtx<'_> {
             .collect();
         paths.sort_by(|a, b| natural_cmp(a.0, b.0));
         paths.into_iter().map(|(_, p)| p).collect()
+    }
+
+    /// The value `make` makes, made once per `key` and kept in the
+    /// evaluator's memory cache with the outputs (counted against its budget
+    /// as the bytes `make` gives, least recently used out), so the cells and
+    /// chunks of a streamed source share one road network or triangulation.
+    /// A node asking while another makes it waits for that one, so `make`
+    /// must not evaluate graphs or wait on the pool. `key` hashes everything
+    /// the value depends on, with a tag naming what it is. A failure is
+    /// given to the nodes waiting, and not kept.
+    pub fn shared<T: Any + Send + Sync>(
+        &self,
+        key: [u8; 32],
+        make: impl FnOnce() -> Result<(T, u64), NodeError>,
+    ) -> Result<Arc<T>, NodeError> {
+        let Some(share) = self.share else {
+            return make().map(|(v, _)| Arc::new(v));
+        };
+        let mut make = Some(make);
+        let mut once = || -> Result<SharedValue, NodeError> {
+            let make = make
+                .take()
+                .ok_or_else(|| "a shared value was made twice".to_string())?;
+            let (v, bytes) = make()?;
+            Ok((Arc::new(v) as Arc<dyn Any + Send + Sync>, bytes))
+        };
+        share(key, &mut once)?.downcast::<T>().map_err(|_| {
+            "a value of another type is shared under the same key"
+                .to_string()
+                .into()
+        })
     }
 
     /// The required field on `port` (validation guarantees it).

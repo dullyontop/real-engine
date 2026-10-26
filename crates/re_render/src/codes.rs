@@ -46,8 +46,8 @@ pub const UNRESOLVED_TEXTURE: Code = Code::new("RE6013");
 /// positions or too many vertices).
 pub const BAD_MESH: Code = Code::new("RE6014");
 
-/// Texture data is malformed (zero or oversized dimensions, or a pixel buffer of
-/// the wrong length).
+/// Texture data is malformed (zero or oversized dimensions, a pixel buffer of
+/// the wrong length, or block-compressed data with the wrong mip levels).
 pub const BAD_TEXTURE: Code = Code::new("RE6015");
 
 /// A material has non-finite or out-of-range values.

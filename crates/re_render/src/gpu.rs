@@ -254,7 +254,9 @@ impl Gpu {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("re_render"),
-                required_features: wgpu::Features::empty(),
+                // Block-compressed textures upload as they are where the
+                // adapter has them, and are decoded otherwise (ADR-0047).
+                required_features: adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC,
                 required_limits: pick_limits(&adapter),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,

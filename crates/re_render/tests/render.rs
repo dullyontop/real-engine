@@ -240,6 +240,7 @@ fn golden_textured_mesh() {
         width: 64,
         height: 64,
         format: TextureFormat::Rgba8Srgb,
+        levels: Vec::new(),
         pixels: (0..64 * 64)
             .flat_map(|i| {
                 let (x, y) = (i % 64, i / 64);
@@ -256,6 +257,7 @@ fn golden_textured_mesh() {
         width: 32,
         height: 32,
         format: TextureFormat::Rgba8Unorm,
+        levels: Vec::new(),
         pixels: (0..32 * 32)
             .flat_map(|i| {
                 let (x, y) = ((i % 32) as f32 / 32.0, (i / 32) as f32 / 32.0);
@@ -323,6 +325,164 @@ fn golden_textured_mesh() {
     let image = render_image(&gpu, &mut renderer, &snapshot, 256, 192);
     assert!(image.stats(clear_srgb8()).distinct_colors > 300);
     check_golden(&gpu, "textured_mesh", &image);
+}
+
+/// `format` data for the image `pixel(u, v)` paints at every level of its
+/// chain, encoded with block_compression, and the RGBA8 its top level decodes
+/// to (`levels` empty: the renderer makes RGBA8 mips).
+fn block_texture(
+    format: TextureFormat,
+    size: u32,
+    pixel: impl Fn(f32, f32) -> [u8; 4],
+) -> (TextureData, TextureData) {
+    use block_compression::{BC7Settings, CompressionVariant};
+    let variant = if format == TextureFormat::Bc5Unorm {
+        CompressionVariant::BC5
+    } else {
+        CompressionVariant::BC7(BC7Settings::alpha_basic())
+    };
+    let mut levels = TextureData::mip_sizes(size, size)
+        .into_iter()
+        .map(|(w, h)| {
+            // A level under 4x4 is one block; its pixels past the level are
+            // never read.
+            let (bw, bh) = (w.div_ceil(4) * 4, h.div_ceil(4) * 4);
+            let rgba: Vec<u8> = (0..bw * bh)
+                .flat_map(|i| {
+                    let (x, y) = ((i % bw) as f32 + 0.5, (i / bw) as f32 + 0.5);
+                    pixel(x / w as f32, y / h as f32)
+                })
+                .collect();
+            let mut blocks = vec![0; variant.blocks_byte_size(bw, bh)];
+            block_compression::encode::compress_rgba8(variant, &rgba, &mut blocks, bw, bh, bw * 4);
+            blocks
+        });
+    let top = levels.next().unwrap();
+    let mut decoded = vec![0; (size * size * 4) as usize];
+    block_compression::decode::decompress_blocks_as_rgba8(variant, size, size, &top, &mut decoded);
+    if format == TextureFormat::Bc5Unorm {
+        for px in decoded.as_chunks_mut::<4>().0 {
+            px[2..].copy_from_slice(&[0, 255]);
+        }
+    }
+    let rgba = TextureData {
+        width: size,
+        height: size,
+        format: if format.is_srgb() {
+            TextureFormat::Rgba8Srgb
+        } else {
+            TextureFormat::Rgba8Unorm
+        },
+        pixels: decoded,
+        levels: Vec::new(),
+    };
+    let blocks = TextureData {
+        width: size,
+        height: size,
+        format,
+        pixels: top,
+        levels: levels.collect(),
+    };
+    (blocks, rgba)
+}
+
+/// BC7 colour and BC5 normal maps draw like the RGBA8 they decode to, through
+/// the GPU's BC formats where it has them (ADR-0047). The quad is close enough
+/// that only the top level is sampled.
+#[test]
+fn block_compressed_textures_draw_like_their_pixels() {
+    use re_render::imgdiff::{self, Tolerance};
+    let gpu = gpu();
+    let bc = gpu
+        .device
+        .features()
+        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+    println!("BC formats: {bc}");
+    let mut renderer = Renderer::new(&gpu, Capture::FORMAT);
+    let mut quad = re_types::mesh::MeshData::default();
+    push_quad(&mut quad, Vec3::ZERO, Vec3::X, Vec3::Y, [1.0; 4]);
+    let quad = renderer.upload_mesh(&quad).unwrap();
+    let color = block_texture(TextureFormat::Bc7Srgb, 64, |u, v| {
+        let checker = ((u * 8.0) as u32 + (v * 8.0) as u32).is_multiple_of(2);
+        [
+            (u * 255.0) as u8,
+            (v * 255.0) as u8,
+            if checker { 220 } else { 40 },
+            255,
+        ]
+    });
+    let normal = block_texture(TextureFormat::Bc5Unorm, 64, |u, v| {
+        let (dx, dy) = ((u * 4.0).fract() - 0.5, (v * 4.0).fract() - 0.5);
+        let n = Vec3::new(dx * 1.5, -dy * 1.5, 1.0).normalize();
+        let enc = |c: f32| ((c * 0.5 + 0.5) * 255.0).round() as u8;
+        [enc(n.x), enc(n.y), enc(n.z), 255]
+    });
+    let mut draw = |data: &TextureData| {
+        let before = renderer.stats().textures.bytes;
+        let texture = Some(TextureRef::Handle(renderer.upload_texture(data).unwrap()));
+        let bytes = renderer.stats().textures.bytes - before;
+        let desc =
+            if data.format == TextureFormat::Bc5Unorm || data.format == TextureFormat::Rgba8Unorm {
+                MaterialDesc {
+                    base_color: [0.7, 0.7, 0.7, 1.0],
+                    normal_texture: texture,
+                    roughness: 0.4,
+                    ..MaterialDesc::default()
+                }
+            } else {
+                MaterialDesc {
+                    base_color_texture: texture,
+                    roughness: 0.6,
+                    ..MaterialDesc::default()
+                }
+            };
+        let material = renderer.create_material(&desc).unwrap();
+        let snapshot = RenderSnapshot {
+            camera: camera(Vec3::new(0.0, 0.0, 1.5), Vec3::ZERO),
+            lights: vec![sun(Vec3::new(-0.6, -0.4, -1.0), 1.0, false)],
+            items: vec![item(1, quad, material, Mat4::IDENTITY, DrawFlags::NONE)],
+            debug_lines: Vec::new(),
+            clear: CLEAR,
+            ..Default::default()
+        };
+        (
+            render_image(&gpu, &mut renderer, &snapshot, 160, 120),
+            bytes,
+        )
+    };
+    for (blocks, rgba) in [color, normal] {
+        let (compressed, bytes) = draw(&blocks);
+        let (plain, _) = draw(&rgba);
+        let stored: u64 = std::iter::once(&blocks.pixels)
+            .chain(&blocks.levels)
+            .map(|level| level.len() as u64)
+            .sum();
+        let decoded: u64 = TextureData::mip_sizes(64, 64)
+            .iter()
+            .map(|(w, h)| u64::from(w * h * 4))
+            .sum();
+        assert_eq!(
+            bytes,
+            if bc { stored } else { decoded },
+            "{:?}",
+            blocks.format
+        );
+        assert!(
+            plain.stats(clear_srgb8()).distinct_colors > 100,
+            "{:?}",
+            blocks.format
+        );
+        let report = imgdiff::compare(&compressed, &plain, Tolerance::default())
+            .unwrap_or_else(|d| panic!("{}", d.render_human()));
+        println!("{:?}: {}", blocks.format, report.summary());
+        assert!(
+            report.matches(),
+            "{:?}: {}",
+            blocks.format,
+            report.summary()
+        );
+    }
+    assert_eq!(gpu.errors().count(), 0, "{:?}", gpu.errors().take());
 }
 
 /// An egui panel painted over a cleared frame, after one warm-up frame.
@@ -651,6 +811,7 @@ fn released_resources_leave_no_trace() {
             height: 2,
             format: TextureFormat::Rgba8Srgb,
             pixels: vec![255; 16],
+            levels: Vec::new(),
         })
         .unwrap();
     assert_eq!(renderer.stats().textures.count, 1);
@@ -707,6 +868,7 @@ fn bad_input_is_rejected_with_diagnostics() {
         height: 4,
         format: TextureFormat::Rgba8Srgb,
         pixels: vec![0; 12],
+        levels: Vec::new(),
     };
     assert_eq!(
         renderer.upload_texture(&short).unwrap_err().code,
@@ -717,11 +879,59 @@ fn bad_input_is_rejected_with_diagnostics() {
         height: 4,
         format: TextureFormat::Rgba8Srgb,
         pixels: Vec::new(),
+        levels: Vec::new(),
     };
     assert_eq!(
         renderer.upload_texture(&zero).unwrap_err().code,
         codes::BAD_TEXTURE
     );
+    // RGBA8 brings no levels; block-compressed data brings all of them, in
+    // whole blocks, at a size that is whole blocks (ADR-0047).
+    let block = vec![0; 16];
+    for (data, message) in [
+        (
+            TextureData {
+                pixels: vec![0; 64],
+                levels: vec![vec![0; 16]],
+                ..short.clone()
+            },
+            "a 4x4 RGBA8 texture carries no mip levels",
+        ),
+        (
+            TextureData {
+                width: 6,
+                height: 6,
+                format: TextureFormat::Bc7Srgb,
+                pixels: vec![0; 64],
+                levels: vec![block.clone(); 2],
+            },
+            "block-compressed sizes are multiples of 4",
+        ),
+        (
+            TextureData {
+                width: 8,
+                height: 4,
+                format: TextureFormat::Bc7Unorm,
+                pixels: vec![0; 32],
+                levels: vec![block.clone(); 2],
+            },
+            "needs 3 mip levels below the top one, not 2",
+        ),
+        (
+            TextureData {
+                width: 8,
+                height: 8,
+                format: TextureFormat::Bc5Unorm,
+                pixels: vec![0; 64],
+                levels: vec![vec![0; 32], block.clone(), block.clone()],
+            },
+            "level 1 (4x4) of a Bc5Unorm texture needs 16 bytes of blocks, not 32",
+        ),
+    ] {
+        let err = renderer.upload_texture(&data).unwrap_err();
+        assert_eq!(err.code, codes::BAD_TEXTURE, "{message}");
+        assert!(err.message.contains(message), "{}", err.message);
+    }
 
     let asset = MaterialDesc {
         base_color_texture: Some(TextureRef::Asset("textures/rock.png".into())),

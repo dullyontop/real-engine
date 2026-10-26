@@ -2,11 +2,12 @@
 
 use std::sync::Arc;
 
+use glam::Vec3;
 use re_reflect::Value;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, natural_cmp};
+use super::{Domain, NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, natural_cmp};
 use crate::value::{DerivedAsset, FragItem, Fragment, MeshValue, Output, PortType, derived_name};
 
 /// One entity drawing `mesh`: a default `Transform`, a `MeshRef` to the
@@ -43,14 +44,47 @@ pub fn mesh_item(
     )
 }
 
+/// [`mesh_item`] for a mesh output in a streamed window, if any: a mesh
+/// there is local to the window's corner (`min x, 0, min z`), so its entity
+/// sits at the corner, and an empty mesh (a cell no road crosses) makes no
+/// entity.
+fn window_mesh_item(
+    key: String,
+    name: String,
+    mesh: &MeshValue,
+    domain: Option<&Domain>,
+) -> Option<(FragItem, (String, DerivedAsset))> {
+    let Some(d) = domain else {
+        return Some(mesh_item(key, name, mesh));
+    };
+    if mesh.mesh.indices.is_empty() {
+        return None;
+    }
+    let (mut item, asset) = mesh_item(key, name, mesh);
+    let [x, z] = d.min();
+    item.components[0].1 = vec![("translation".into(), Value::Vec3(Vec3::new(x, 0.0, z)))];
+    Some((item, asset))
+}
+
 /// The fragment a node's output adds to the graph's output when nothing
 /// consumes it: a fragment as it is, a mesh as one entity `<node>/mesh`;
 /// fields, points, shapes and paths add nothing.
 pub fn sink_fragment(node_id: &str, output: &Output) -> Option<Arc<Fragment>> {
+    sink_fragment_in(node_id, output, None)
+}
+
+/// [`sink_fragment`] in a streamed window `domain` (ADR-0042): a mesh's
+/// entity sits at the window's corner, and an empty mesh adds nothing.
+pub fn sink_fragment_in(
+    node_id: &str,
+    output: &Output,
+    domain: Option<&Domain>,
+) -> Option<Arc<Fragment>> {
     match output {
         Output::Fragment(f) => Some(f.clone()),
         Output::Mesh(m) => {
-            let (item, asset) = mesh_item(format!("{node_id}/mesh"), node_id.to_string(), m);
+            let (item, asset) =
+                window_mesh_item(format!("{node_id}/mesh"), node_id.to_string(), m, domain)?;
             Some(Arc::new(Fragment {
                 items: vec![item],
                 assets: vec![asset],
@@ -88,7 +122,12 @@ fn merge(ctx: &NodeCtx, p: &FragmentMergeParams) -> Result<Output, String> {
     for (port, output) in inputs {
         let part = match output {
             Output::Mesh(m) => {
-                let (item, asset) = mesh_item(format!("{}/{port}", ctx.node_id), port.clone(), m);
+                let key = format!("{}/{port}", ctx.node_id);
+                let Some((item, asset)) =
+                    window_mesh_item(key, port.clone(), m, ctx.domain.as_ref())
+                else {
+                    continue;
+                };
                 Arc::new(Fragment {
                     items: vec![item],
                     assets: vec![asset],
@@ -121,7 +160,7 @@ pub(super) fn register(r: &mut NodeRegistry) {
             oldest: 1,
             migrations: &[],
             streaming: super::Streaming::Cell,
-            doc: "Gathers fragments and meshes (inputs on any port names, in natural name order) into one fragment, optionally under a group entity.",
+            doc: "Gathers fragments and meshes (inputs on any port names, in natural name order) into one fragment, optionally under a group entity. Streamed: per cell; a mesh's entity sits at the cell's corner, and an empty mesh makes none.",
             inputs: &[],
             variadic: Some(&[PortType::Fragment, PortType::Mesh]),
             output: PortType::Fragment,

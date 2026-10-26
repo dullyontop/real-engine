@@ -21,10 +21,13 @@ bytemuck.workspace = true
 pollster.workspace = true
 png.workspace = true
 tracing.workspace = true
+bcdec_rs.workspace = true
 
 [dev-dependencies]
 winit.workspace = true
 egui-winit.workspace = true
+# Encodes test textures and cross-checks the BC decoder (ADR-0047).
+block_compression.workspace = true
 
 [[example]]
 name = "re-imgdiff"
