@@ -86,8 +86,8 @@ Everything here is made by the engine's generators or by the scripts in
 
 ## Not yet
 
-- Roads: the road nodes (ADR-0043) shape whole paths, which a streamed graph
-  cannot use yet (`RE4301`).
+- Roads: the road nodes stream now (ADR-0043's "streamed roads" amendment),
+  but the valley has none yet.
 - Distant terrain: `terrain.chunks` would draw it in levels of detail, but its
   far chunks swap in when the worker pool finishes them, so screenshots would
   not repeat; the valley meshes only the loaded cells, with `terrain.mesh`.
