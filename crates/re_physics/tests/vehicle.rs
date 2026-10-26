@@ -131,9 +131,10 @@ fn throttle_drives_steering_turns_right_and_brakes_stop() {
 
 /// A car with all four wheels driven and more torque than grip, launched at full
 /// throttle, shifts into second at much the same tick whatever tiny difference it
-/// starts with: its differentials are open. With Jolt's limited-slip defaults the
-/// torque went to the front and the rear axle in turn, step by step, and starts 0.1 mm
-/// or one tick apart shifted at ticks from 66 to 238.
+/// starts with: its differentials are open, so it shifts once none of its wheels
+/// slips. With Jolt's limited-slip defaults all of the torque could go to one wheel,
+/// and the car shifted the first step that wheel gripped, even while the others spun:
+/// starts 0.1 mm or one tick apart shifted at ticks from 66 to 238.
 #[test]
 fn a_four_wheel_drive_launch_shifts_up_alike_after_tiny_differences() {
     let mut desc = car_desc(WheelTester::default());
@@ -512,15 +513,17 @@ fn drive_path(threads: usize) -> ((Vec3, Quat), Vec<u32>, f32) {
 
 /// The end pose of the path, recorded in the reference container (Linux x86_64) with
 /// Jolt's cross-platform-deterministic build (WP18's PR "d2"; the test prints the
-/// pose), with open differentials.
+/// pose), with open differentials. The car has more torque than grip in first gear,
+/// and a front wheel spins until it brakes, so it stays in first; with limited slip it
+/// shifted into second at tick 374 and ended 10 m from here.
 const REFERENCE_POS: Vec3 = Vec3::new(-48.888832, 4.9954643, 69.95685);
 const REFERENCE_ROT: Quat = Quat::from_xyzw(1.370076e-5, -0.65639836, 1.1676474e-5, 0.75441456);
 
 /// Position and rotation tolerance before D2 (ADR-0040). Measured on this path with
 /// the ray tester: the cross-platform-deterministic build moved the end 4 cm (with
-/// limited-slip differentials), and with open differentials a start 1 µm to the side
-/// moves it 0.7 mm, 1 mm to the side 1.4 cm and a start turned by 0.001° 1.8 cm, each
-/// under 0.001°.
+/// limited-slip differentials), and with open differentials a start 1 µm or 1 mm to
+/// either side, or turned by 0.001° either way, moves it at most 2.4 cm and under
+/// 0.001° (with limited slip, up to 7.5 cm and 0.13°).
 const TOLERANCE_M: f32 = 0.15;
 const TOLERANCE_DEG: f32 = 1.0;
 
