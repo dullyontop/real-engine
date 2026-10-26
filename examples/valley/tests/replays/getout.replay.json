@@ -20,7 +20,7 @@
         "id": "log",
         "name": "Log",
         "components": {
-          "Transform": { "translation": [17.6, 4.6, 15.4], "scale": [3.0, 0.6, 0.4] },
+          "Transform": { "translation": [19.2, 4.6, 15.4], "scale": [3.0, 0.6, 0.4] },
           "MeshRef": { "asset": "builtin:cube" },
           "MaterialRef": { "asset": "materials/bark.material.json" },
           "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] }

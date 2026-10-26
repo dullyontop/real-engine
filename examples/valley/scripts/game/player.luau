@@ -257,7 +257,7 @@ local function start(hero_ground: number, car_ground: number)
 	car:set("Transform", "translation", vector.create(c.x, car_ground + CAR_RIDE, c.z))
 	car:set("RigidBody", "kind", "Dynamic")
 	-- A vehicle needs a dynamic chassis, so the car becomes one only now.
-	car:add("Vehicle", { max_torque = 600, max_pitch_roll_deg = 60 })
+	car:add("Vehicle", { max_torque = 450, max_pitch_roll_deg = 60 })
 	-- Face away from the camera.
 	body:set("Transform", "rotation", quat.from_axis_angle(UP, rig.yaw + math.pi))
 end

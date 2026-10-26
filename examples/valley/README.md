@@ -42,13 +42,14 @@ the wind down and muffles it, and lowers the echo.
   leaves sediment on the floor. A road 7 m wide winds 3.5 km along the valley
   floor (`path.spline`, its control points draped on the eroded ground, each
   raised or lowered so that no climb is steeper than about 11%), straight for
-  320 m through the start. `terrain.conform` grades the ground to it (along
-  the centreline, by up to about 2.4 m), `road.mesh` lays its asphalt, and
-  `road.footprint` keeps trees and rocks 3 m clear of it (`points.mask`). Trees
-  grow on the lower slopes, leaving the floor open to drive along, and rocks
-  lie on steeper ground. Every node streams: the road's centreline and
-  footprint are worked out once for the whole valley, and each cell grades its
-  own ground and lays its own part of the asphalt.
+  about 265 m through the start. `terrain.conform` grades the ground to it
+  (along the centreline, by up to about 2.4 m), `road.mesh` lays its asphalt,
+  and `road.footprint` keeps trees and rocks off it (`points.mask` drops each
+  one whose origin lies within 3 m of the asphalt). Trees grow on the lower
+  slopes, leaving the floor open to drive along, and rocks lie on steeper
+  ground. Every node streams: the road's centreline and footprint are worked
+  out once for the whole valley, and each cell grades its own ground and lays
+  its own part of the asphalt.
 - `scenes/main.scene.json`: the valley source (`Streamed`, bounds 8000 m, inside
   the ±16 km precision limit, `RE4309`), the hero and the car (each a
   `StreamFocus`, so the ground under a parked car stays loaded while the hero
@@ -86,7 +87,7 @@ the wind down and muffles it, and lowers the echo.
 - `tests/replays/`: `walk` (walk, strafe, turn the camera, jump), `drive`
   (walk to the car, get in, drive along the road, swerve across it, brake,
   reverse, pull the hand brake and get out), `getout` (drive off and press E
-  at 32 km/h with the throttle held: a log that the replay puts by the
+  at 38 km/h with the throttle held: a log that the replay puts by the
   driver's door pushes the hero away from that spot, so the hero gets out by
   the other door while the car rolls on, and the hand brake then stops the
   car) and `cross` (turn round and walk 70 s west along the valley, from the

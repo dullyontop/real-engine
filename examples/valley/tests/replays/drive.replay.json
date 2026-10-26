@@ -70,7 +70,7 @@
       ]
     },
     {
-      "frame": 820,
+      "frame": 800,
       "action": "move",
       "axis": [
         0.0,
@@ -78,7 +78,7 @@
       ]
     },
     {
-      "frame": 820,
+      "frame": 800,
       "action": "brake",
       "down": true
     },
