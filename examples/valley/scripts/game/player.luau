@@ -219,8 +219,8 @@ local function leave(l: Leaving)
 		local rot: Quat = car:get("Transform", "rotation")
 		if fits and not in_the_way(pos, rot, spot.offset) then
 			leaving = nil
-			-- Parked from this very step: the car's script, which steps
-			-- first, has already given it the driver's input for it.
+			-- Parked from this very step: the car's script may have
+			-- stepped first and given it the driver's input for it.
 			physics.drive(car, { handbrake = 1 })
 			body:set("Visible", "visible", true)
 			rig.driving = false

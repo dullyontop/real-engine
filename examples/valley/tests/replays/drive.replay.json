@@ -41,7 +41,7 @@
       "frame": 400,
       "action": "move",
       "axis": [
-        0.3,
+        0.12,
         1.0
       ]
     },
@@ -49,7 +49,7 @@
       "frame": 440,
       "action": "move",
       "axis": [
-        -0.3,
+        -0.12,
         1.0
       ]
     },
@@ -70,7 +70,7 @@
       ]
     },
     {
-      "frame": 830,
+      "frame": 820,
       "action": "move",
       "axis": [
         0.0,
@@ -78,7 +78,7 @@
       ]
     },
     {
-      "frame": 830,
+      "frame": 820,
       "action": "brake",
       "down": true
     },

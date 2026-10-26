@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "seed": 1,
+  "frames": 540,
+  "input": [
+    { "frame": 60, "action": "move", "axis": [0.0, 1.0] },
+    { "frame": 130, "action": "move", "axis": [0.0, 0.0] },
+    { "frame": 140, "action": "use", "down": true },
+    { "frame": 142, "action": "use", "down": false },
+    { "frame": 160, "action": "move", "axis": [0.0, 1.0] },
+    { "frame": 300, "action": "use", "down": true },
+    { "frame": 302, "action": "use", "down": false },
+    { "frame": 302, "action": "move", "axis": [0.0, 0.0] }
+  ],
+  "commands": [
+    {
+      "frame": 0,
+      "name": "entity.spawn",
+      "args": {
+        "id": "log",
+        "name": "Log",
+        "components": {
+          "Transform": { "translation": [17.6, 4.6, 15.4], "scale": [3.0, 0.6, 0.4] },
+          "MeshRef": { "asset": "builtin:cube" },
+          "MaterialRef": { "asset": "materials/bark.material.json" },
+          "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] }
+        }
+      }
+    }
+  ],
+  "checks": [
+    { "frame": 539, "screenshot": "tests/goldens/{backend}/getout_f539.png" }
+  ]
+}

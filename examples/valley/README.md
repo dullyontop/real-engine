@@ -8,8 +8,9 @@ replays from the package on Linux, Windows and macOS (`build-package`,
 
 The valley is a streamed world (ADR-0042): 16 km square, generated cell by
 cell (256 m cells) around the hero as you go, with the `[stream]` defaults.
-You start on the valley floor next to a car. The hero and the car wait until
-the ground under them has loaded, and are then set down on it.
+You start on the valley floor next to a car parked on the valley road. The hero
+and the car wait until the ground under them has loaded, and are then set down
+on it.
 
 Walk with WASD (or the left stick), look with the mouse (or the right stick),
 jump with Space. Press E next to the car to get in: W and S are throttle and
@@ -38,9 +39,16 @@ the wind down and muffles it, and lowers the echo.
   plus inverted ridged noise, whose crest lines become the valley floors; a
   curve flattens the floor and steepens the slopes. Droplet erosion
   (`terrain.erode`, on a 4 m grid) then cuts gullies into the slopes and
-  leaves sediment on the floor. Trees grow on the lower slopes, leaving the
-  floor open to drive along, and rocks lie on steeper ground. Every node
-  streams.
+  leaves sediment on the floor. A road 7 m wide winds 3.5 km along the valley
+  floor (`path.spline`, its control points draped on the eroded ground, each
+  raised or lowered so that no climb is steeper than about 11%), straight for
+  320 m through the start. `terrain.conform` grades the ground to it (along
+  the centreline, by up to about 2.4 m), `road.mesh` lays its asphalt, and
+  `road.footprint` keeps trees and rocks 3 m clear of it (`points.mask`). Trees
+  grow on the lower slopes, leaving the floor open to drive along, and rocks
+  lie on steeper ground. Every node streams: the road's centreline and
+  footprint are worked out once for the whole valley, and each cell grades its
+  own ground and lays its own part of the asphalt.
 - `scenes/main.scene.json`: the valley source (`Streamed`, bounds 8000 m,
   inside the ±8 km precision limit), the hero and the car (each a `StreamFocus`,
   so the ground under a parked car stays loaded while the hero walks away),
@@ -76,24 +84,24 @@ the wind down and muffles it, and lowers the echo.
 - `scripts/game/camera.luau`: the orbit camera, on the hero or the car.
 - `scripts/game/game.luau`: the HUD line.
 - `tests/replays/`: `walk` (walk, strafe, turn the camera, jump), `drive`
-  (walk to the car, get in, drive along the valley, brake, reverse, pull the
-  hand brake and get out) and `cross` (turn round and walk 70 s west along
-  the valley, from the cell border at x = 0 across the one at x = -256 while
-  cells load ahead). `real verify` runs each twice with the same
-  `state_hash` and checks goldens for Vulkan (lavapipe) and GL. CI's `d2` job
-  records every replay's `state_hash` checkpoints with `cargo xtask d2` on
-  Linux, Windows and macOS, and `d2 compare` checks they match.
+  (walk to the car, get in, drive along the road, swerve across it, brake,
+  reverse, pull the hand brake and get out), `getout` (drive off and press E
+  at 32 km/h with the throttle held: a log that the replay puts by the
+  driver's door pushes the hero away from that spot, so the hero gets out by
+  the other door while the car rolls on, and the hand brake then stops the
+  car) and `cross` (turn round and walk 70 s west along the valley, from the
+  cell border at x = 0 across the one at x = -256 while cells load ahead).
+  `real verify` runs each twice with the same `state_hash` and checks
+  goldens for Vulkan (lavapipe) and GL, and in CI's `build-windows` and
+  `build-macos` for DX12 (WARP) and Metal. CI's `d2` job records every
+  replay's `state_hash` checkpoints with `cargo xtask d2` on Linux, Windows
+  and macOS, and `d2 compare` checks they match.
 
 Everything here is made by the engine's generators or by the scripts in
 `tools/`; there are no third-party assets.
 
 ## Not yet
 
-- Roads: the road nodes stream now (ADR-0043's "streamed roads" amendment),
-  but the valley has none yet.
 - Distant terrain: the valley meshes only the loaded cells, with
   `terrain.mesh`, and does not yet draw the terrain beyond them in levels of
   detail with `terrain.chunks`.
-- There are no DX12 or Metal goldens yet, so with those backends (the
-  defaults on Windows and macOS) `real verify` fails its `goldens` stage with
-  `RE0510`.
