@@ -183,7 +183,7 @@ jobs:
           ' out/verify.json
           jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
           jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic)"' out/verify.json
-          jq -r '.stages[] | select(.name == "net") | .data.runs[] | "networked \(.replay): \(.frames) frames, same=\(.same)"' out/verify.json
+          jq -r '.stages[] | select(.name == "net") | .data.runs[] | "networked \(.replay) over \(.transport): \(.frames) frames, same=\(.same)"' out/verify.json
           jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
       - name: Windowed run under Xvfb (must print RUN OK)
         run: |
@@ -467,7 +467,7 @@ jobs:
               # As in verify-plaza: at least two replays played by a server and a
               # client over loopback, each ending where the in-process run did
               # (ADR-0050 §7; M3_PLAN, definition of done item 7).
-              jq -r '.stages[] | select(.name == "net") | .data.runs[]? | "networked \(.replay): \(.frames) frames, same=\(.same)"' "$report"
+              jq -r '.stages[] | select(.name == "net") | .data.runs[]? | "networked \(.replay) over \(.transport): \(.frames) frames, same=\(.same)"' "$report"
               jq -e '[.stages[] | select(.name == "net") | .data.runs[]] as $n | ($n | length) >= 2 and all($n[]; .same)' "$report" > /dev/null \
                 || { echo "::error::plaza: the net stage needs at least two networked runs, all with same=true"; status=1; }
             fi
@@ -530,7 +530,7 @@ jobs:
               # As in verify-plaza: at least two replays played by a server and a
               # client over loopback, each ending where the in-process run did
               # (ADR-0050 §7; M3_PLAN, definition of done item 7).
-              jq -r '.stages[] | select(.name == "net") | .data.runs[]? | "networked \(.replay): \(.frames) frames, same=\(.same)"' "$report"
+              jq -r '.stages[] | select(.name == "net") | .data.runs[]? | "networked \(.replay) over \(.transport): \(.frames) frames, same=\(.same)"' "$report"
               jq -e '[.stages[] | select(.name == "net") | .data.runs[]] as $n | ($n | length) >= 2 and all($n[]; .same)' "$report" > /dev/null \
                 || { echo "::error::plaza: the net stage needs at least two networked runs, all with same=true"; status=1; }
             fi

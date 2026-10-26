@@ -46,7 +46,7 @@ pub use config::{AppConfig, CONFIG_FILE};
 pub use gfx::Graphics;
 pub use host::{Host, Pending};
 pub use media::Media;
-pub use net::{NetConfig, NetOptions, NetRole};
+pub use net::{NetBound, NetConfig, NetOptions, NetRole};
 pub use perf::{PerfReport, TimeStats};
 pub use verify::{StageReport, VerifyOptions, VerifyReport, VerifyStage};
 pub use window::{WindowOptions, WindowReport, run_windowed};

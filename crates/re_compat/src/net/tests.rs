@@ -440,7 +440,8 @@ mod sessions {
             if matches!(self.net.state(), ClientState::Closed(_)) {
                 return;
             }
-            self.net.receive(&mut self.world).unwrap();
+            // An end (a kick) still delivers the frame that carried it.
+            let _ = self.net.receive(&mut self.world);
             let mut s = NoServices::default();
             let mut h = WorldHost {
                 world: &mut self.world,

@@ -4,6 +4,7 @@
 //   import { boot, play } from './boot.js';
 //   const { session } = await boot({ onProgress });          // fetches game.rpak
 //   await play(session, { onReport });                       // after a click
+//   await play(session, { connect: 'ws://host:port/' });     // or joins a server
 //
 // `boot` checks what the browser supports, loads the engine (real.js and real_bg.wasm
 // next to this file), runs its static constructors once, and hands it the game: the
@@ -11,7 +12,8 @@
 // loose files, every one its manifest (files.json: a JSON array of project paths)
 // names. `play` loads the game's saved data from IndexedDB and starts it in a canvas
 // appended to the page; the engine stores each later change there through
-// `realEngine.persist`.
+// `realEngine.persist`. With `connect`, a Roblox-style game joins the server at that
+// address over a WebSocket instead (ADR-0050), and the server keeps its data.
 import init, * as engine from './real.js';
 import { setMemory } from './wasi.js';
 
@@ -134,8 +136,11 @@ function readAll(db) {
 /// by default the archive's [package] identifier, or the project's name);
 /// `onReport(kind, message)` receives "running" with the GPU adapter once the first
 /// frame is drawn, "warning" and "problem" with a diagnostic while it runs, and
-/// "error" with a message when the game stops.
-export async function play(session, { gameId = session.gameId() || 'game', onReport = () => {} } = {}) {
+/// "error" with a message when the game stops (a network client also stops when it
+/// is kicked or loses its server). `connect`, a server's `ws://host:port/` (or
+/// `wss://` behind a TLS proxy, from a page served over HTTPS), joins that server as
+/// player `name` (by default the server picks one).
+export async function play(session, { gameId = session.gameId() || 'game', onReport = () => {}, connect = null, name = null } = {}) {
   const db = await openDb(gameId);
   if (db) for (const [key, bytes] of await readAll(db)) session.addSaved(key, bytes);
   globalThis.realEngine = {
@@ -154,7 +159,7 @@ export async function play(session, { gameId = session.gameId() || 'game', onRep
     },
     report: onReport,
   };
-  session.play();
+  session.play(connect, name);
   // winit appends the canvas; give it the keyboard.
   setTimeout(() => document.querySelector('canvas')?.focus(), 0);
 }

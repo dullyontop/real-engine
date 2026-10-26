@@ -876,6 +876,8 @@ pub struct ClientNet<T: Transport> {
     applied: Option<u64>,
     /// A message arriving in parts.
     parts: Parts,
+    /// Since when [`ClientNet::ready`] has said no, and what moved then.
+    wait: Option<(Instant, (usize, usize, usize))>,
 }
 
 impl<T: Transport> ClientNet<T> {
@@ -897,6 +899,7 @@ impl<T: Transport> ClientNet<T> {
             tick: 0,
             applied: None,
             parts: Parts::default(),
+            wait: None,
         }
     }
 
@@ -974,6 +977,59 @@ impl<T: Transport> ClientNet<T> {
         }
     }
 
+    /// The server frame a lockstep client applies next.
+    fn want(&self) -> u64 {
+        self.applied.map_or(0, |t| t + 1)
+    }
+
+    /// Polls the connection; true once the next step would not wait: the
+    /// welcome came ([`ClientNet::join`]), the server's frame for this tick
+    /// came ([`ClientNet::receive`] in lockstep), or the session closed. A
+    /// browser, whose frames cannot wait, runs them once this says so.
+    ///
+    /// A wait with no traffic moving for the timeout closes the session
+    /// (`RE8906`), which ends it.
+    pub fn ready(&mut self) -> bool {
+        self.poll();
+        let ready = match self.state {
+            ClientState::Closed(_) => true,
+            ClientState::Joining => self.welcome.is_some(),
+            ClientState::Joined => {
+                let want = self.want();
+                !self.lockstep || self.frames.iter().any(|f| f.tick >= want)
+            }
+        };
+        if ready {
+            self.wait = None;
+            return true;
+        }
+        let mark = self.progress();
+        match self.wait {
+            Some((since, moved)) if moved == mark => {
+                if since.elapsed() <= self.timeout {
+                    return false;
+                }
+                let secs = self.timeout.as_secs_f64();
+                let message = match self.state {
+                    ClientState::Joining => {
+                        format!("the server did not welcome this player within {secs:.0} s")
+                    }
+                    _ => format!(
+                        "the server's frame {} did not arrive in lockstep",
+                        self.want()
+                    ),
+                };
+                self.wait = None;
+                self.closed(Diagnostic::error(re_net::codes::TIMED_OUT, message));
+                true
+            }
+            _ => {
+                self.wait = Some((Instant::now(), mark));
+                false
+            }
+        }
+    }
+
     /// Connects and joins, waiting in real time for the server's welcome,
     /// then binds `client` (the client world made from this client's copy
     /// of the scene, [`super::client_world`], with [`super::link_client`])
@@ -984,26 +1040,17 @@ impl<T: Transport> ClientNet<T> {
     /// The connection failed (`RE8902` to `RE8907`) or no welcome came
     /// within the timeout (`RE8906`).
     pub fn join(&mut self, client: &mut World) -> Result<(), Diagnostic> {
-        let mut start = Instant::now();
-        let mut mark = self.progress();
-        while !self.poll_join(client)? {
-            let now = self.progress();
-            if now != mark {
-                mark = now;
-                start = Instant::now();
-            }
-            if start.elapsed() > self.timeout {
-                return Err(Diagnostic::error(
-                    re_net::codes::TIMED_OUT,
-                    format!(
-                        "the server did not welcome this player within {:.0} s",
-                        self.timeout.as_secs_f64()
-                    ),
-                ));
-            }
+        while !self.ready() {
             sleep();
         }
-        Ok(())
+        if self.poll_join(client)? {
+            Ok(())
+        } else {
+            Err(Diagnostic::error(
+                re_net::codes::CLOSED,
+                "the session ended before the server's welcome",
+            ))
+        }
     }
 
     /// [`ClientNet::join`] without waiting: true once joined.
@@ -1042,35 +1089,28 @@ impl<T: Transport> ClientNet<T> {
     ///
     /// # Errors
     ///
-    /// `RE8906` when a lockstep server frame does not arrive in time.
+    /// Why the session ended (`RE8906` when a lockstep server frame does not
+    /// arrive in time), once the frames that came before its end are
+    /// applied. A lockstep client still runs the frame it waited for when
+    /// the server closes right after sending it, as a server does after its
+    /// last frame; its next frame reports the end.
     pub fn receive(&mut self, client: &mut World) -> Result<(), Diagnostic> {
-        self.poll();
         if self.lockstep && self.state == ClientState::Joined {
-            let want = self.applied.map_or(0, |t| t + 1);
-            let mut start = Instant::now();
-            let mut mark = self.progress();
-            while !self.frames.iter().any(|f| f.tick >= want) {
-                if let ClientState::Closed(d) = &self.state {
-                    return Err(d.clone());
-                }
-                if start.elapsed() > self.timeout {
-                    return Err(Diagnostic::error(
-                        re_net::codes::TIMED_OUT,
-                        format!("the server's frame {want} did not arrive in lockstep"),
-                    ));
-                }
+            while !self.ready() {
                 sleep();
-                self.poll();
-                let now = self.progress();
-                if now != mark {
-                    mark = now;
-                    start = Instant::now();
-                }
             }
+        } else {
+            self.poll();
+        }
+        let lockstep_want = self.want();
+        if self.lockstep
+            && let ClientState::Closed(d) = &self.state
+            && !self.frames.iter().any(|f| f.tick >= lockstep_want)
+        {
+            return Err(d.clone());
         }
         let mut rep = client.ecs.remove_resource::<Replica>().unwrap_or_default();
         let link = client.ecs.get_resource::<NetLink>().cloned();
-        let lockstep_want = self.applied.map_or(0, |t| t + 1);
         while let Some(f) = self.frames.front() {
             if self.lockstep && f.tick > lockstep_want {
                 break;
@@ -1099,7 +1139,10 @@ impl<T: Transport> ClientNet<T> {
             }
         }
         client.ecs.insert_resource(rep);
-        Ok(())
+        match &self.state {
+            ClientState::Closed(d) if !self.lockstep => Err(d.clone()),
+            _ => Ok(()),
+        }
     }
 
     /// The end of a client frame: sends the client's owned changes and its

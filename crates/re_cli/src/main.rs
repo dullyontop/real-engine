@@ -238,8 +238,16 @@ enum Command {
 }
 
 #[derive(clap::Args, Debug)]
-#[command(group(clap::ArgGroup::new("online").args(["server", "host", "connect"])))]
 struct RunArgs {
+    /// Run the game `real build` wrote in DIR, or its `game.rpak`, instead
+    /// of the project, as the game's own executable does. DIR may also be a
+    /// macOS build's app, or hold one.
+    #[arg(long, value_name = "DIR|FILE", conflicts_with = "debug")]
+    package: Option<PathBuf>,
+    /// With --package: keep the game's cache, saved data and crash reports in
+    /// DIR instead of the per-user folders.
+    #[arg(long, value_name = "DIR", requires = "package")]
+    data_dir: Option<PathBuf>,
     /// Run without a window.
     #[arg(long)]
     headless: bool,
@@ -266,15 +274,31 @@ struct RunArgs {
     /// Serve the script debugger over DAP on 127.0.0.1 (default port 4711).
     #[arg(long, value_name = "PORT", num_args = 0..=1, default_missing_value = "4711")]
     debug: Option<u16>,
-    /// Run a dedicated server for a Roblox-style project: headless, in real
-    /// time, until stopped or `--frames` (ADR-0050 §6). The traffic is not
-    /// encrypted.
+    #[command(flatten)]
+    net: NetArgs,
+    /// Lockstep, for checks (ADR-0050 §7): a server waits for N players
+    /// (default 1) and then for each player's frame; a client waits for each
+    /// server frame. As a replay does, it starts from `data/seed/` and keeps
+    /// no data.
+    #[arg(long, requires = "online", value_name = "N", num_args = 0..=1, default_missing_value = "1")]
+    lockstep: Option<u32>,
+}
+
+/// Online play for a Roblox-style game (ADR-0050 §6), in `real run` and in a
+/// packaged game's executable.
+#[derive(clap::Args, Debug)]
+#[command(group(clap::ArgGroup::new("online").args(["server", "host", "connect"])))]
+struct NetArgs {
+    /// Run a dedicated server: headless, in real time, until stopped or
+    /// `--frames`. Players join over UDP, and from a browser over a WebSocket
+    /// on the same port (TCP). The traffic is not encrypted.
     #[arg(long, conflicts_with_all = ["host", "connect"])]
     server: bool,
     /// Play and serve: the local player plus players who connect.
     #[arg(long, conflicts_with = "connect")]
     host: bool,
-    /// Join the server at HOST:PORT (or HOST, on the `[net]` port).
+    /// Join the server at HOST:PORT (or HOST, on the `[net]` port) over UDP,
+    /// or at ws://HOST:PORT/ over a WebSocket.
     #[arg(long, value_name = "HOST:PORT")]
     connect: Option<String>,
     /// The player's name on the server (default `Player<n>`).
@@ -289,16 +313,11 @@ struct RunArgs {
     /// The most players who may connect (default `[net] max_players`).
     #[arg(long, requires = "online", value_name = "N")]
     max_players: Option<u32>,
-    /// Lockstep, for checks (ADR-0050 §7): a server waits for N players
-    /// (default 1) and then for each player's frame; a client waits for each
-    /// server frame.
-    #[arg(long, requires = "online", value_name = "N", num_args = 0..=1, default_missing_value = "1")]
-    lockstep: Option<u32>,
 }
 
-impl RunArgs {
+impl NetArgs {
     /// The online options these flags ask for, if any.
-    fn net(&self) -> Option<re_app::NetOptions> {
+    fn options(&self, lockstep: Option<u32>) -> Option<re_app::NetOptions> {
         let role = if self.server {
             re_app::NetRole::Server
         } else if self.host {
@@ -312,9 +331,42 @@ impl RunArgs {
             bind: self.bind.clone(),
             max_players: self.max_players,
             name: self.name.clone(),
-            lockstep: self.lockstep,
+            lockstep,
         })
     }
+}
+
+/// Puts `app` online before its first frame, and says where a server listens.
+///
+/// # Errors
+///
+/// As [`App::set_net`].
+fn go_online(app: &mut App, options: re_app::NetOptions) -> Result<(), Diagnostic> {
+    let serving = !matches!(options.role, re_app::NetRole::Client(_));
+    let bound = app.set_net(options)?;
+    if serving {
+        let addr = bound.addr;
+        if addr.ip().is_unspecified() {
+            eprintln!(
+                "serving on port {} of every address of this machine",
+                addr.port()
+            );
+        } else {
+            eprintln!("serving on {addr}");
+        }
+        if let Some(ws) = bound.websocket {
+            if ws.ip().is_unspecified() {
+                eprintln!(
+                    "browsers join over a WebSocket at ws://ADDRESS:{}/ (TCP)",
+                    ws.port()
+                );
+            } else {
+                eprintln!("browsers join over a WebSocket at ws://{ws}/");
+            }
+        }
+        eprintln!("note: online play is not encrypted; play with people you trust or on a LAN");
+    }
+    Ok(())
 }
 
 pub(crate) fn print_diagnostics(diagnostics: &[Diagnostic]) {
@@ -353,7 +405,20 @@ fn extra_stages(config: &AppConfig) -> Vec<Box<dyn re_app::verify::VerifyStage>>
 }
 
 fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
-    let mut app = match open(project) {
+    let mut package = None;
+    let opened = match &args.package {
+        Some(path) => open_built(
+            path,
+            args.data_dir.as_deref(),
+            args.headless || args.net.server,
+        )
+        .map(|(app, archive)| {
+            package = Some(archive);
+            app
+        }),
+        None => open(project),
+    };
+    let mut app = match opened {
         Ok(a) => a,
         Err(d) => return fail(d),
     };
@@ -372,28 +437,12 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         }
         None => None,
     };
-    let net = args.net();
-    let server = args.server;
+    let server = args.net.server;
     let paced = server && args.lockstep.is_none();
-    if let Some(options) = net {
-        let serving = !matches!(options.role, re_app::NetRole::Client(_));
-        match app.set_net(options) {
-            Ok(addr) if serving => {
-                if addr.ip().is_unspecified() {
-                    eprintln!(
-                        "serving on port {} of every address of this machine",
-                        addr.port()
-                    );
-                } else {
-                    eprintln!("serving on {addr}");
-                }
-                eprintln!(
-                    "note: online play is not encrypted; play with people you trust or on a LAN"
-                );
-            }
-            Ok(_) => {}
-            Err(d) => return fail(d),
-        }
+    if let Some(options) = args.net.options(args.lockstep)
+        && let Err(d) = go_online(&mut app, options)
+    {
+        return fail(d);
     }
     let options = PlayOptions {
         // A dedicated server has no window.
@@ -406,11 +455,72 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
         json: args.json,
         // A replay must repeat its recording, so only a live run keeps data
         // and reloads changed files.
-        live: Live::Development,
+        live: if args.lockstep.is_some() {
+            Live::Check
+        } else if package.is_some() {
+            Live::Packaged
+        } else {
+            Live::Development
+        },
         paced,
         checkpoints: args.checkpoints,
     };
-    play(app, options, &mut Vec::new)
+    match package {
+        Some(archive) => play(app, options, &mut || archive.take_case_matches()),
+        None => play(app, options, &mut Vec::new),
+    }
+}
+
+/// Opens the game `real build` wrote at `path` (its folder, or its
+/// `game.rpak`) for `real run --package`.
+///
+/// # Errors
+///
+/// As [`re_app::package::open_package`] and [`game::open_app`].
+fn open_built(
+    path: &Path,
+    data_dir: Option<&Path>,
+    headless: bool,
+) -> Result<(App, std::sync::Arc<re_app::package::Archive>), Diagnostic> {
+    let archive = if path.is_dir() {
+        built_archive(path)
+    } else {
+        path.to_path_buf()
+    };
+    let opened = re_app::package::open_package(&archive, data_dir)?;
+    let app = game::open_app(&opened, headless)?;
+    Ok((app, opened.archive))
+}
+
+/// The archive of the game `real build` wrote in `dir`: its `game.rpak`, or
+/// for a macOS build, the app's in `Contents/Resources/`, when `dir` is that
+/// app or holds it alone. Otherwise it is `dir/game.rpak`, which reports as
+/// missing (`RE0604`).
+fn built_archive(dir: &Path) -> PathBuf {
+    let in_app = |app: &Path| {
+        app.join("Contents")
+            .join("Resources")
+            .join(re_app::package::ARCHIVE_NAME)
+    };
+    let beside = dir.join(re_app::package::ARCHIVE_NAME);
+    if beside.is_file() {
+        return beside;
+    }
+    if in_app(dir).is_file() {
+        return in_app(dir);
+    }
+    let mut apps = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let app = entry.ok()?.path();
+            let archive = in_app(&app);
+            (app.extension().is_some_and(|e| e == "app") && archive.is_file()).then_some(archive)
+        });
+    match (apps.next(), apps.next()) {
+        (Some(archive), None) => archive,
+        _ => beside,
+    }
 }
 
 /// What a live run (no replay) does beyond playing.
@@ -418,9 +528,28 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
 enum Live {
     /// `real run`: keep data and reload changed files.
     Development,
-    /// A packaged game: keep data only in a window; never reload (a packaged
-    /// game reads its archive, which does not change while it runs).
+    /// A packaged game: keep data in a window or as a dedicated server; never
+    /// reload (a packaged game reads its archive, which does not change while
+    /// it runs).
     Packaged,
+    /// A lockstep run (`--lockstep`), which is a check: as a replay does, it
+    /// starts from `data/seed/` on the fixed clock and reloads nothing, so it
+    /// repeats.
+    Check,
+}
+
+impl Live {
+    /// Whether a live run keeps its saved data (ADR-0048), `headless` and
+    /// `paced` as in [`PlayOptions`]. Headless packaged runs other than a
+    /// dedicated server are checks (`real verify --package`), which must
+    /// repeat.
+    fn keeps_data(self, headless: bool, paced: bool) -> bool {
+        match self {
+            Live::Development => true,
+            Live::Packaged => !headless || paced,
+            Live::Check => false,
+        }
+    }
 }
 
 /// How [`play`] runs an open app.
@@ -453,18 +582,12 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
     // A watcher that cannot start is reported; the run goes on without reload.
     let mut watch_problem = None;
     if replay.is_none() {
-        match options.live {
-            Live::Development => {
-                app.persist_data();
-                // A game build never links the watcher in (ADR-0037).
-                if !cfg!(feature = "game") {
-                    watch_problem = app.enable_hot_reload().err();
-                }
-            }
-            // Headless packaged runs are checks (`real verify --package`),
-            // which must repeat; a played game keeps its data.
-            Live::Packaged if !options.headless => app.persist_data(),
-            Live::Packaged => {}
+        if options.live.keeps_data(options.headless, options.paced) {
+            app.persist_data();
+        }
+        // A game build never links the watcher in (ADR-0037).
+        if options.live == Live::Development && !cfg!(feature = "game") {
+            watch_problem = app.enable_hot_reload().err();
         }
         // A live window never stalls a frame on a streamed cell; headless
         // runs wait for it, so they repeat (ADR-0042).
@@ -604,7 +727,7 @@ fn net_report(app: &App) -> Option<serde_json::Value> {
                 .iter()
                 .map(|(peer, s)| {
                     serde_json::json!({
-                        "peer": peer.to_string(),
+                        "peer": peer,
                         "bytes_sent": s.bytes_sent,
                         "bytes_received": s.bytes_received,
                         "packets_sent": s.packets_sent,
@@ -895,4 +1018,44 @@ fn tooling_exit(result: anyhow::Result<ExitCode>) -> ExitCode {
         eprintln!("error: {e:#}");
         ExitCode::from(1)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A built game keeps its data in a window and as a dedicated server
+    /// (`--server`, paced); `real verify --package` and lockstep runs repeat.
+    #[test]
+    fn servers_and_windows_keep_their_data_and_checks_do_not() {
+        assert!(Live::Packaged.keeps_data(true, true));
+        assert!(Live::Packaged.keeps_data(false, false));
+        assert!(!Live::Packaged.keeps_data(true, false));
+        assert!(!Live::Check.keeps_data(true, false));
+        assert!(Live::Development.keeps_data(true, false));
+    }
+
+    /// `real run --package DIR` finds a macOS build's archive in its app.
+    #[test]
+    fn a_build_folder_names_its_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path();
+        let beside = out.join(re_app::package::ARCHIVE_NAME);
+        assert_eq!(built_archive(out), beside);
+        let app = out.join("Island Demo.app/Contents/Resources");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(app.join(re_app::package::ARCHIVE_NAME), "").unwrap();
+        assert_eq!(built_archive(out), app.join(re_app::package::ARCHIVE_NAME));
+        assert_eq!(
+            built_archive(&out.join("Island Demo.app")),
+            app.join(re_app::package::ARCHIVE_NAME)
+        );
+        // With two apps the build is unclear, so the missing archive reports.
+        let other = out.join("Other.app/Contents/Resources");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join(re_app::package::ARCHIVE_NAME), "").unwrap();
+        assert_eq!(built_archive(out), beside);
+        std::fs::write(&beside, "").unwrap();
+        assert_eq!(built_archive(out), beside);
+    }
 }
