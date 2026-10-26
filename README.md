@@ -15,7 +15,7 @@ Real Engine is an open-source 3D game engine written in Rust. It is built around
 **M3 in progress.** Merged so far:
 - Replays end with the same `state_hash` on Linux, Windows and macOS, and a required CI check compares them (D2, ADR-0036).
 - `examples/valley` is a streamed world: you can walk it and drive a car through it, and cells load and unload around you (ADR-0042).
-- `real build` packs a game into `game.rpak` with a runtime-only player, laid out as a Linux folder, a Windows folder or a macOS app with the game's icon and the third-party notices, and `real verify --package` checks that it plays like the project (ADR-0037). Releases publish prebuilt runtimes, so a game builds without the engine's source.
+- `real build` packs a game into `game.rpak` with a runtime-only player, laid out as a Linux folder, a Windows folder or a macOS app with the game's icon and the third-party notices, and `real verify --package` checks that it plays like the project (ADR-0037). The release workflow publishes prebuilt runtimes for each version tag, so a game can be built without the engine's source; no version has been tagged yet.
 - `real build --target web` makes a folder any static server can host; the game runs in the browser with WebGPU or WebGL2, and saves last across page loads (ADR-0049).
 - The editor has dockable panels, a node canvas over graph files (every edit an undoable `graph.*` command), and translate, rotate and scale gizmos (W, E, R) that move entities live, one undo step per drag (ADR-0044). It also has a script debugger, served over DAP with `--debug`, that stops in native and compat scripts (ADR-0045).
 - The HDR post chain and cascaded shadows, configured in `[render.post]` and `[render.shadows]`; glTF skins and animation graphs (`*.animgraph.json`: blend spaces, layers, state machines and root motion, driven by the `anim` Luau library and the `animgraph.*` commands); vehicles and ragdolls on Jolt; audio buses, effects and snapshots.
@@ -27,12 +27,12 @@ Real Engine is an open-source 3D game engine written in Rust. It is built around
 The workspace holds:
 
 - The contract layer: `re_core`, `re_noise` and `re_types`.
-- The entity model: `re_reflect` (the component registry), `re_scene` (the World facade over bevy_ecs, scenes, prefabs and procedural sources) and `re_command` (edit operations, undo and redo, and the command registry).
+- The entity model: `re_reflect` (the component registry, with its derive macro in `re_reflect_derive`), `re_scene` (the World facade over bevy_ecs, scenes, prefabs and procedural sources) and `re_command` (edit operations, undo and redo, and the command registry).
 - The subsystems: `re_render` (wgpu), `re_physics` (Jolt), `re_assets`, `re_input`, `re_audio`, `re_anim` and `re_net` (UDP and WebSocket transports).
 - Procedural generation: `re_geom` and `re_proc` (the ProcGraph).
 - Scripting: `re_script` (Luau through mlua) and `re_script_check` (the validation suite).
 - The runtime and CLI: `re_app` and `re_cli` (the `real` binary), and `re_web` (the browser runtime).
-- Tooling: `re_agent`, `re_mcp` (the MCP server) and `re_editor` (the editor).
+- Tooling: `re_agent`, `re_mcp` (the MCP server), `re_editor` (the editor) and `re_import` (`real import`: Rojo-style projects, Studio loader scripts, and place and model files).
 - Compatibility (M2): `re_compat`, the Roblox-style layer.
 
 Try it with `cargo run --release -p re_cli -- run --project examples/island` (or `examples/plaza`, or `examples/valley`), or `real verify --project examples/island --json` for the headless checks.
@@ -41,7 +41,7 @@ The license is not final: see [DECISIONS.md, open questions](docs/DECISIONS.md#o
 
 ## Stack
 
-All crate versions are pinned exactly and checked against crates.io. See [DEPENDENCIES.md](docs/DEPENDENCIES.md) for licenses (including the MPL-2.0 and font-license exceptions), features, external tools, and which entries are still Provisional.
+All crate versions are pinned exactly and checked against crates.io. See [DEPENDENCIES.md](docs/DEPENDENCIES.md) for licenses (including the MPL-2.0 and font-license exceptions), features, external tools and bundled assets.
 
 | Area | Crates |
 |---|---|
@@ -78,9 +78,9 @@ You need the current stable Rust toolchain (`rust-toolchain.toml` selects it; th
 export CARGO_BUILD_JOBS=2
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --locked --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor
-cargo test --locked -p re_render -p re_app -p re_cli -p re_editor -- --test-threads=1   # GPU crates; needs lavapipe, see below
-cargo xtask check        # crate-graph rules, duplicate versions, explain pages, schema drift
+cargo test --workspace --locked --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor --exclude re_web
+cargo test --locked -p re_render -p re_app -p re_cli -p re_editor -p re_web -- --test-threads=1   # GPU crates; needs lavapipe, see below
+cargo xtask check        # crate-graph rules, duplicate versions, explain pages, schema drift, compat coverage, web clippy settings
 cargo run --locked --release -p re_cli -- verify --project examples/island --json   # the demo's headless gate
 cargo deny check         # needs cargo-deny 0.20.2: cargo install cargo-deny --version 0.20.2 --locked
 ```
@@ -120,6 +120,6 @@ CI runs the GPU crates' tests separately from the rest of the workspace, with `-
 ## Contributing
 
 - Read [ARCHITECTURE.md](docs/ARCHITECTURE.md), then pick a work package in [M3_PLAN.md](docs/M3_PLAN.md) (M1's and M2's packages, in [M1_PLAN.md](docs/M1_PLAN.md) and [M2_PLAN.md](docs/M2_PLAN.md), are all merged). Each package lists the paths it owns, so parallel work does not collide. Some packages port code from the maintainers' private research spikes, which are not in this repository; ask the maintainer for access.
-- Dependencies come from crates.io only. Adding one needs an entry in [DECISIONS.md](docs/DECISIONS.md) and a row in [DEPENDENCIES.md](docs/DEPENDENCIES.md).
+- Dependencies come from crates.io only, apart from the temporary patched copies of `mlua` and `oxijolt-sys` in `third_party/` that the owner approved (ADR-0049 §2). Adding one needs an entry in [DECISIONS.md](docs/DECISIONS.md) and a row in [DEPENDENCIES.md](docs/DEPENDENCIES.md).
 - Tests must pass headless: software Vulkan, no audio device, and a virtual display only for the windowed smoke test.
 - Do not commit third-party game projects or their scripts. The script validation suite reads them from paths you provide (`REAL_SCENE_SCRIPTS`, or one or more `--scripts-dir`), and skips when none is given.

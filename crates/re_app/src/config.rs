@@ -181,8 +181,9 @@ pub struct RenderConfig {
     /// Linear RGBA clear colour, used when the scene does not set one.
     #[serde(default = "default_clear")]
     pub clear: [f32; 4],
-    /// `[render.post]`: exposure and the post-processing chain (ADR-0038). A
-    /// compat place's own settings (its `Lighting` and post effects) win.
+    /// `[render.post]`: exposure and the post-processing chain (ADR-0038). In a
+    /// compat place, the exposure comes from its `Lighting`, and each kind of
+    /// post effect the place has replaces this setting of that kind.
     #[serde(default)]
     pub post: PostSettings,
     /// `[render.shadows]`: the sun's shadow cascades (ADR-0038).
