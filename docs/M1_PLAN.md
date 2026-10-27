@@ -91,7 +91,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 
 **Depends on:** nothing. It consumes no frozen interface; it defines the first ones.
 
-**Do not add a `LICENSE` file.** The license is an open owner question ([DECISIONS.md, open question 1](DECISIONS.md#open-questions-for-the-owner)). Crates declare `license = "MIT OR Apache-2.0"` (the render prototype's value) and `publish = false`, pending that decision.
+**Do not add a `LICENSE` file.** Real Engine is proprietary, as the owner settled on 2026-10-27 ([DECISIONS.md, open question 1](DECISIONS.md#open-questions-for-the-owner)): crates declare no license and set `publish = false`. Until that decision they declared `license = "MIT OR Apache-2.0"`, the render prototype's value.
 
 ### Reuse
 
@@ -139,7 +139,7 @@ All paths are in the private research folder `/mnt/project-files/real-engine/res
 
 1. **Workspace.**
    - `members = ["crates/*", "tools/*"]` (a glob, because `tools/derive_alias_check` only appears in PR "entity core"), `resolver = "3"`. `examples/island` is a project directory (data and Luau only), not a crate, so it is **not** a member.
-   - `[workspace.package]` sets edition 2024, `rust-version = "1.95"`, `license = "MIT OR Apache-2.0"` (pending the owner) and `publish = false`.
+   - `[workspace.package]` sets edition 2024, `rust-version = "1.95"` and `publish = false` (and, until the owner's license decision of 2026-10-27, `license = "MIT OR Apache-2.0"`).
    - `[workspace.dependencies]` holds every crate in DEPENDENCIES.md with `=` versions and the listed features, including `bevy_ecs = { version = "=0.20.0", default-features = false, features = ["std", "multi_threaded"] }` and `serde_json = { version = "=1.0.154", features = ["preserve_order", "float_roundtrip"] }`.
    - The dev profile uses `debug = "line-tables-only"`.
    - `.cargo/config.toml` defines `[alias] xtask = "run --locked -p xtask --"`.

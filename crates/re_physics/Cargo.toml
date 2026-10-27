@@ -4,7 +4,6 @@ description = "Real Engine physics: Jolt (through oxijolt) behind a command-buff
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # ADR-0008: re_physics is the only crate that names oxijolt, and no oxijolt type

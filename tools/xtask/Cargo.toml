@@ -4,7 +4,6 @@ description = "Repository checks for Real Engine: crate-graph rules, duplicate v
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # A plain binary: it reads `cargo metadata` / `cargo tree` output and links no engine crate.

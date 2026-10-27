@@ -4,7 +4,6 @@ description = "Real Engine renderer: wgpu forward renderer, GPU resources, headl
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # A subsystem crate (ADR-0006): it depends only on the contract layer and on

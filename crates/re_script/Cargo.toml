@@ -4,7 +4,6 @@ description = "Real Engine scripting: sandboxed Luau contexts (mlua) with the en
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # ADR-0011: Luau through mlua with `luau` only (not `send`, not `vendored`).

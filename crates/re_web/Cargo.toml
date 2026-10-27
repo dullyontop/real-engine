@@ -4,7 +4,6 @@ description = "Real Engine in the browser: the wasm32 entry points the boot scri
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 [lib]

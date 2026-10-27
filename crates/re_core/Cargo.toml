@@ -4,7 +4,6 @@ description = "Real Engine contract layer: diagnostics, fixed-step time, frame p
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 [features]

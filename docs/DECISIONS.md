@@ -525,7 +525,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0019: License exceptions: MPL-2.0 for named crates, font licenses for egui's fonts
 
-**Status:** Provisional. It needs the owner's agreement as part of the license question (Open question 1).
+**Status:** Accepted (maintainer, 2026-10-27), once the owner settled the license question (open question 1): Real Engine is proprietary. The exceptions stand for its compiled builds; the amendment at the end says what such a build owes them.
 
 **Context.** Our allow-list is permissive licenses. A scan of the full M1 lockfile (`cargo metadata` over every crate and feature in DEPENDENCIES.md) found these crates outside it. (The first scan also listed `symphonia`, `symphonia-core`, `symphonia-format-riff` and `symphonia-metadata`, MPL-2.0, pulled by kira's `wav` feature. That feature has been dropped: it enables symphonia's RIFF container without the PCM codec, so it could not decode WAV anyway. `re_audio` reads WAV itself, and the symphonia crates are no longer in the build.)
 
@@ -549,6 +549,11 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - A different audio crate. The platform spike verified kira, including its headless fallback.
 
 **Consequences.** MPL-2.0 is file-level copyleft: it requires us to publish any modifications to those crates' files, and we make none. OFL-1.1 requires the font license to travel with the fonts; the generated third-party notice includes it.
+
+**Amendment (the owner's license decision, 2026-10-27).** The owner settled open question 1: Real Engine is proprietary, with no open-source license, and the owner plans to distribute only compiled builds of the engine, under a proprietary license.
+- The workspace and its crates declare no `license`. They stay `publish = false`, so `cargo deny`'s `[licenses.private]` skips them, and `real build`'s third-party notices list only the files they bundle (the compat fonts), as before.
+- The exceptions above still hold. MPL-2.0 is file-level copyleft: `triple_buffer` in every build and `full_moon` in tooling builds, used unmodified, put no terms on the engine's own code. A compiled build given to others must tell its recipients how to get those crates' source (MPL-2.0 §3.2). `THIRD_PARTY_NOTICES.txt` names each crate, its version and its license text, but not yet where its source is, so that line is needed before builds are distributed.
+- The OFL-1.1 and Ubuntu-font-1.0 fonts may ship with proprietary software as long as their licenses travel with them, which the notices see to; OFL-1.1 forbids only selling the fonts by themselves (ADR-0035).
 
 ## ADR-0020: Agent safety model
 
@@ -2871,11 +2876,10 @@ WP30 has to put a real transport under that seam, so the same game runs as one s
 
 ## Open questions for the owner
 
-1. **License.**
-   - The repository has no `LICENSE` file. The crates declare `MIT OR Apache-2.0`, the render prototype's value.
-   - Recommendation: dual MIT / Apache-2.0, the usual choice for Rust, which matches most crates' defaults and the prototype. Add `LICENSE-MIT` and `LICENSE-APACHE` at the root.
+1. **License.** **Resolved (owner, 2026-10-27):** Real Engine is proprietary. The repository has no open-source license and no `LICENSE` file, and the crates declare no `license`; the owner plans to distribute only compiled builds of the engine, under a proprietary license. ADR-0019's exceptions are compatible with that, so kira and egui's fonts stay; its amendment says what a compiled build owes them. The background below is kept for the record.
+   - The repository had no `LICENSE` file. The crates declared `MIT OR Apache-2.0`, the render prototype's value.
+   - The recommendation, not taken: dual MIT / Apache-2.0, the usual choice for Rust, which matches most crates' defaults and the prototype, with `LICENSE-MIT` and `LICENSE-APACHE` at the root.
    - This also needs a decision on the exceptions in ADR-0019. MPL-2.0 code ships **in the runtime** through one crate, kira's unconditional dependency `triple_buffer` (used unmodified), not only in tooling (full_moon). kira's `wav` feature and its symphonia crates have been dropped (`re_audio` decodes WAV itself). egui's default fonts bring OFL-1.1 and Ubuntu-font-1.0, and the compat GUI bundles three OFL-1.1 font families as files (ADR-0035). Do you accept these, or should we replace kira or the default fonts?
-   - Until the owner decides, the workspace `license` field keeps that value, and the README says the license is not final.
 2. **Which Luau type checker do we ship?** The engine cannot type-check in process today, because mlua's vendored Luau has no Analysis module (ADR-0013). The options:
    - **(a) An external official checker** (the current default). luau-lsp 1.70.1 works unpatched and also serves editors; a patched luau-analyze 0.740 (27-line `--definitions` patch, a 220 s source build) is the alternative. Both are MIT tools, not code dependencies, so the crates.io-only rule does not apply, but users must install them (or we bundle the release binaries), and the patched analyzer needs a rebase on each Luau upgrade.
    - **(b) Vendor Luau's Analysis sources** (MIT) into a crate of our own and build them with `cc`. This gives in-process checking at mlua's exact Luau version, on every platform, with no external binary. It is a C++ build we would maintain.
