@@ -4,7 +4,6 @@ description = "Deterministic, portable, seedable RNG and gradient noise for Real
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # No dependencies at all: this crate must stay bit-identical on every platform

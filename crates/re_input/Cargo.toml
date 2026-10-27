@@ -4,7 +4,6 @@ description = "Real Engine input: raw device state from winit and gilrs, the act
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # Subsystem crate: depends only on the contract layer and third-party crates

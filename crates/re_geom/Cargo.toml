@@ -4,7 +4,6 @@ description = "Real Engine geometry: primitives, heightfields and mesh operation
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # Reaches no wgpu, oxijolt or mlua (ARCHITECTURE §2; `cargo xtask check-graph` enforces it).

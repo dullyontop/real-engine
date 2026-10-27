@@ -50,8 +50,8 @@ exceptions = [
 ]
 
 [licenses.private]
-# Our own crates are `publish = false` and carry no license file yet (the license
-# is an open owner question).
+# Our own crates are `publish = false` and proprietary: they declare no license
+# (DECISIONS, open question 1, settled by the owner on 2026-10-27).
 ignore = true
 
 [bans]

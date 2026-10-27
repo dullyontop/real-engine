@@ -9,7 +9,6 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
-license = "MIT OR Apache-2.0"
 publish = false
 
 # Every third-party crate the engine may use, at the exact version recorded in

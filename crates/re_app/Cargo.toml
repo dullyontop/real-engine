@@ -4,7 +4,6 @@ description = "Real Engine runtime: the frame loop, the sync glue between the Wo
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # Runtime crate (ADR-0027): no tokio, rmcp or full_moon (`cargo xtask check-graph`).

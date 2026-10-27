@@ -32,7 +32,7 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 | Second platform for the D2 exit check | **Windows x86_64**, the most common target that differs from Linux in compiler and maths library. | Plan |
 | Real networking for Roblox-style projects | **In M3 (WP30):** a dedicated or listen server and clients over UDP, and players in a browser over a WebSocket (ADR-0050 and its amendment for PR "web"). | **Decided** (owner, 2026-10-15: "Both") |
 | Luau type checker (DECISIONS, open question 2) | **(a) unchanged**: luau-lsp as an external tool. `real build` does not need it. | Owner |
-| License (DECISIONS, open question 1) | Whatever the owner settles. Packaged games (WP19) list the third-party notices the build contains either way. | Owner |
+| License (DECISIONS, open question 1) | Settled by the owner on 2026-10-27: Real Engine is proprietary, with no open-source license. Packaged games (WP19) list the third-party notices the build contains. | Owner |
 | Scripts in packaged games | **Luau bytecode**, compiled at build time with mlua's `Compiler` at the engine's Luau version. Source is not shipped unless the project asks. | Plan (ADR-0037) |
 | Example name | `examples/valley`. | Plan |
 

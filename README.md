@@ -1,6 +1,6 @@
 # Real Engine
 
-Real Engine is an open-source 3D game engine written in Rust. It is built around three ideas:
+Real Engine is a proprietary 3D game engine written in Rust. It is built around three ideas:
 
 - **Procedural first.** Worlds are described by node graphs (built from Luau or JSON), generated deterministically, and edited by hand on top. Hand edits survive regeneration.
 - **Luau scripting.** An engine-native API, and a compatibility layer for Roblox-style projects (M2).
@@ -37,7 +37,7 @@ The workspace holds:
 
 Try it with `cargo run --release -p re_cli -- run --project examples/island` (or `examples/plaza`, or `examples/valley`), or `real verify --project examples/island --json` for the headless checks.
 
-The license is not final: see [DECISIONS.md, open questions](docs/DECISIONS.md#open-questions-for-the-owner). The crates declare `MIT OR Apache-2.0` until the owner decides.
+Real Engine is proprietary, and all rights are reserved: the repository has no open-source license, and the crates declare none. Compiled builds of the engine may later be distributed under a proprietary license ([DECISIONS.md, open question 1](docs/DECISIONS.md#open-questions-for-the-owner)). Third-party crates and the bundled fonts keep their own licenses, listed in [DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
 ## Stack
 

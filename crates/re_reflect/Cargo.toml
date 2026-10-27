@@ -4,7 +4,6 @@ description = "Real Engine model layer: the component registry over bevy_ecs (fi
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # Frozen contract at WP0 PR "entity core" (docs/M1_PLAN.md, "Cross-WP contracts").

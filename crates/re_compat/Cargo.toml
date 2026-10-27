@@ -4,7 +4,6 @@ description = "Real Engine Roblox-style compatibility layer: the class layer, th
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # A runtime crate (ADR-0027). The dependency set is the one docs/M2_PLAN.md

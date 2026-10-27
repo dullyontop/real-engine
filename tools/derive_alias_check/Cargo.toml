@@ -4,7 +4,6 @@ description = "Proves that bevy's Component and Resource derives, and `re_reflec
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 publish.workspace = true
 
 # Deliberately no bevy_ecs dependency: that is what this crate checks.
