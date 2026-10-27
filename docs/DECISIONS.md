@@ -630,7 +630,7 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 ## ADR-0023: CI: Linux with lavapipe blocks merges; Windows and macOS are reported only
 
-**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16). Amended in M3: `build-web` is required (WP29 PR "portable", #89), `build-windows` and `build-macos` are required (WP18 PR "blocking"), `verify-valley` is required (WP28, #130), `d2` is required, with goldens required on every platform (WP18 PR "d2", #100), and the three `build-package` jobs are required (WP19 PR "bundles", #161); `build-windows` and `build-macos` verify the valley too (WP28, #175). The required checks are now 17; see the amendment for #161.
+**Status:** Accepted. Amended in M2: `verify-plaza` is required (M2_PLAN WP16). Amended in M3: `build-web` is required (WP29 PR "portable", #89), `build-windows` and `build-macos` are required (WP18 PR "blocking"), `verify-valley` is required (WP28, #130), `d2` is required, with goldens required on every platform (WP18 PR "d2", #100), and the three `build-package` jobs are required (WP19 PR "bundles", #161); `build-windows` and `build-macos` verify the valley too (WP28, #175). The required checks became 17 (the amendment for #161). Since 2026-10-27, when the owner chose a private repository, `ci.yml`'s 12 Ubuntu checks run on every PR and are the merge rule, and the Windows, macOS and D2 checks run by hand in `platforms.yml` (the amendment of that date).
 
 **Context.** Development containers are Linux with lavapipe, llvmpipe and Xvfb, and no audio device. Nothing has been verified on Windows or macOS.
 
@@ -671,6 +671,12 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Amendment (M3, WP28, #175).** `build-windows` and `build-macos` run `real verify` on the valley too, after the island and the plaza, and every stage must pass, goldens included, against the valley's dx12 and metal sets, which the `goldens` workflow rendered and committed in that PR. With `verify-valley` on Ubuntu, every example's replays and goldens are now checked on all three platforms. The valley's replays joined `cargo xtask d2` in WP28's #135, the later PR the amendment for #100 expected.
 
 **Amendment (M3, maintainer; 2026-10-26).** `verify-valley`'s check of the report names all five of the valley's replays, walk, drive, cross, getout (#175) and overlook (WP28's #182), each run twice with the same `state_hash`, and asks for at least eight matching goldens on Vulkan and on GL, where the amendment for #130 named three replays and six goldens.
+
+**Amendment (maintainer, 2026-10-27: the owner's choice of a private repository).** Real Engine is proprietary (open question 1), and the owner chose to make the repository private. GitHub Actions is free only for public repositories. A private one's minutes past the account's monthly allowance are billed (2,000 minutes on GitHub Free), and one run of the 20 check runs took about 320 runner minutes, about $6 at GitHub's prices, most of it on macOS. CI runs on every PR and again on main, so the owner chose to run the Linux checks on every run and the rest by hand:
+- `ci.yml` keeps its 12 Ubuntu jobs, and they are the merge rule: `fmt`, `clippy`, `test`, `msrv`, `deny`, `xtask`, `verify-demo`, `xvfb-smoke`, `verify-plaza`, `verify-valley`, `build-web` and `build-package`. A run takes about 150 runner minutes.
+- `build-windows`, `build-macos`, `build-package-windows`, `build-package-macos`, `d2-run` and `d2` move unchanged to `.github/workflows/platforms.yml`, which runs only when started by hand (`gh workflow run platforms --ref <branch>`). It runs on main before a version tag, and on a PR's branch when the PR changes code for one platform (`cfg(windows)` or `cfg(target_os = "macos")`, the bundles, DX12 or Metal, a C++ build under `third_party/`) or an example's dx12 or metal goldens. Its checks then join that PR's merge rule.
+- A change that breaks a Windows or macOS build, or the platforms' agreement (D2), therefore shows up when Platforms next runs, at the latest before a release, rather than on its own PR.
+- Uploaded artifacts are kept 14 days (`retention-days`), since a private repository's artifacts count against the account's storage (500 MB on GitHub Free).
 
 ## ADR-0024: Validation suite contract for external script corpora
 
