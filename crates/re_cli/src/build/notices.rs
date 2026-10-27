@@ -102,6 +102,9 @@ const DEPTH: usize = 3;
 /// The heading of the game's own notices; a runtime's part ends before it.
 const GAME_HEADING: &str = "THE GAME'S OWN NOTICES";
 
+/// Where `cargo metadata` says a crate from crates.io comes from.
+const CRATES_IO: &str = "registry+https://github.com/rust-lang/crates.io-index";
+
 /// A game runtime whose crates the notices list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Runtime {
@@ -162,6 +165,10 @@ struct Package {
     license_file: Option<String>,
     authors: Vec<String>,
     root: PathBuf,
+    /// Where the crate comes from, as `cargo metadata` says: [`CRATES_IO`]
+    /// for crates.io, none for a path (the engine's own crates and the
+    /// patched copies in `third_party/`).
+    source: Option<String>,
     /// A crate of the engine's workspace.
     ours: bool,
 }
@@ -288,6 +295,7 @@ fn packages(ws: &Path, runtime: Runtime, triple: &str) -> Result<Vec<Package>, D
                 .filter_map(|a| a.as_str().map(str::to_owned))
                 .collect(),
             root: manifest.parent().map(Path::to_path_buf).unwrap_or_default(),
+            source: text(p, "source"),
             ours: p["id"].as_str().is_some_and(|id| ours.contains(id)),
         };
         found.insert(key, package);
@@ -379,6 +387,22 @@ fn gather(intro: &str, packages: &[Package]) -> Result<(String, NoticesReport), 
             ))
             .with_hint("ADR-0019: replace the crate, or add an exception for it to deny.toml and to the notices' list"));
         };
+        // MPL-2.0 asks that whoever receives a build be told where the source
+        // of the files it covers is (its section 3.2, ADR-0019's amendment of
+        // 2026-10-27). An unmodified crate from crates.io has its source there.
+        let mut source = None;
+        if chosen.iter().any(|l| l == "MPL-2.0") {
+            if p.source.as_deref() != Some(CRATES_IO) {
+                return Err(failed(format!(
+                    "{id} is used under MPL-2.0, and it does not come from crates.io, so the notices cannot say where its source is"
+                ))
+                .with_hint("ADR-0019: a build says where each MPL-2.0 crate's source is; publish the copy's source and give its address in the notices"));
+            }
+            source = Some(format!(
+                "    Source: https://crates.io/crates/{}/{}",
+                p.name, p.version
+            ));
+        }
         if !files.iter().any(|f| !f.contains('/')) {
             // No license file at the root: the standard text of each license
             // the crate is used under, with its authors as the copyright line.
@@ -423,15 +447,17 @@ fn gather(intro: &str, packages: &[Package]) -> Result<(String, NoticesReport), 
                 }
             }
         }
+        let mut lines = vec![id, format!("    License: {expression}")];
+        lines.extend(source);
         crates.push(Listed {
-            lines: vec![id, format!("    License: {expression}")],
+            lines,
             texts: found,
         });
     }
 
     let mut out = String::from("THIRD-PARTY NOTICES\n\n");
     out.push_str(&wrap(&format!(
-        "{intro} Each entry gives a crate's version and its license (an SPDX expression, where \"/\" means OR), then its license texts by number; the texts follow the list, and a text several crates share is printed once."
+        "{intro} Each entry gives a crate's version and its license (an SPDX expression, where \"/\" means OR), then its license texts by number; the texts follow the list, and a text several crates share is printed once. An entry for a crate used under the Mozilla Public License 2.0 also gives where its source code is, as that license asks."
     )));
     out.push('\n');
     section(&mut out, "CRATES", &crates);
@@ -1080,6 +1106,7 @@ mod tests {
             license_file: None,
             authors: vec!["Ada <ada@example.com>".to_owned()],
             root,
+            source: Some(CRATES_IO.to_owned()),
             ours: false,
         }
     }
@@ -1150,6 +1177,38 @@ mod tests {
         for p in [no_text, refused] {
             let err = gather("Intro.", &[p]).unwrap_err();
             assert_eq!(err.code, codes::NOTICES_FAILED);
+        }
+    }
+
+    #[test]
+    fn an_mpl_crate_s_entry_gives_where_its_source_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let buffer = package(d, "triple_buffer", "MPL-2.0", &[("LICENSE", "mpl text")]);
+        let alpha = package(d, "alpha", "MIT", &[("LICENSE", "mit text")]);
+        let (text, _) = gather("Intro.", &[alpha, buffer.clone()]).unwrap();
+        assert!(
+            text.contains("triple_buffer 1.0.0\n    License: MPL-2.0\n    Source: https://crates.io/crates/triple_buffer/1.0.0\n    [2] LICENSE\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("alpha 1.0.0\n    License: MIT\n    [1] LICENSE\n"),
+            "{text}"
+        );
+        assert_eq!(text.matches("Source:").count(), 1, "{text}");
+
+        // A patched copy (a path) or a git checkout has no address to give.
+        for source in [
+            None,
+            Some("git+https://example.com/triple-buffer".to_owned()),
+        ] {
+            let copy = Package {
+                source,
+                ..buffer.clone()
+            };
+            let err = gather("Intro.", &[copy]).unwrap_err();
+            assert_eq!(err.code, codes::NOTICES_FAILED);
+            assert!(err.message.contains("MPL-2.0"), "{}", err.message);
         }
     }
 
@@ -1425,6 +1484,18 @@ mod tests {
         assert!(text.contains("assets/fonts/OFL-Montserrat.txt"));
         assert!(!text.contains("src/build/licenses/"), "re_cli's templates");
         assert!(text.contains("JoltPhysics/LICENSE"));
+        // triple_buffer (kira's), under MPL-2.0, with where its source is.
+        let buffer = text
+            .split("\ntriple_buffer ")
+            .nth(1)
+            .expect("triple_buffer is listed");
+        let mut lines = buffer.lines();
+        let version = lines.next().unwrap();
+        assert_eq!(lines.next(), Some("    License: MPL-2.0"));
+        assert_eq!(
+            lines.next(),
+            Some(format!("    Source: https://crates.io/crates/triple_buffer/{version}").as_str())
+        );
         assert!(report.standard_texts.iter().any(|c| c.starts_with("egui ")));
         assert!(report.crates.unwrap() > 200);
         // egui's fonts: the licenses named after two of them, and Noto Emoji's
