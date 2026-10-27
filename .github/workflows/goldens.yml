@@ -5,7 +5,7 @@
 # `real verify --update-goldens` on the runners build-windows and build-macos
 # use, and commits the changed images to that branch, where they are reviewed
 # in the PR like any golden. It is not a check: build-windows and build-macos
-# then compare against the committed sets.
+# (platforms.yml) then compare against the committed sets.
 #
 #   gh workflow run goldens --ref <branch> -f project=examples/valley
 

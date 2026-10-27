@@ -1,10 +1,11 @@
 # Valley
 
 The M3 example (`docs/M3_PLAN.md`, WP28): a procedural valley to walk and
-drive through. CI checks it with `verify-valley`, packs it and plays its
-replays from the package on Linux, Windows and macOS (`build-package`,
-`build-package-windows` and `build-package-macos`), and compares its replays'
-`state_hash` on the three in `d2`.
+drive through. CI checks it with `verify-valley`, and packs it and plays its
+replays from the package (`build-package`). The Platforms workflow, started by
+hand, does the same on Windows and macOS (`build-package-windows` and
+`build-package-macos`) and compares its replays' `state_hash` on the three
+platforms in `d2`.
 
 The valley is a streamed world (ADR-0042): 16 km square, generated cell by
 cell (256 m cells) around the hero as you go, with the `[stream]` defaults,
@@ -107,10 +108,10 @@ the wind down and muffles it, and lowers the echo.
   start, 81 m above it, and look east to the horizon, over ground that only
   `terrain.chunks` draws beyond the loaded cells).
   `real verify` runs each twice with the same `state_hash` and checks
-  goldens for Vulkan (lavapipe) and GL, and in CI's `build-windows` and
-  `build-macos` for DX12 (WARP) and Metal. CI's `d2` job records every
-  replay's `state_hash` checkpoints with `cargo xtask d2` on Linux, Windows
-  and macOS, and `d2 compare` checks they match.
+  goldens for Vulkan (lavapipe) and GL, and in the Platforms workflow's
+  `build-windows` and `build-macos` for DX12 (WARP) and Metal. Its `d2` job
+  records every replay's `state_hash` checkpoints with `cargo xtask d2` on
+  Linux, Windows and macOS, and `d2 compare` checks they match.
 
 Everything here is made by the engine's generators or by the scripts in
 `tools/`; there are no third-party assets.

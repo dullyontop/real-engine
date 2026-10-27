@@ -1,0 +1,311 @@
+# The Windows and macOS checks and D2 for Real Engine (ADR-0023's amendment of
+# 2026-10-27). The owner chose a private repository, whose Actions minutes
+# GitHub bills past the account's monthly allowance, and these jobs were most
+# of a full CI run's cost: a macOS minute costs about ten times a Linux one.
+# CI (ci.yml) runs the Linux checks on every PR and on main. This workflow
+# runs the rest, only when started by hand:
+# - on main before a version tag (release.yml);
+# - on a PR's branch, when the PR changes code for one platform (cfg(windows)
+#   or cfg(target_os = "macos"), the bundles, DX12 or Metal, a C++ build under
+#   third_party/) or an example's dx12 or metal goldens. Its checks then join
+#   that PR's merge rule.
+#
+#   gh workflow run platforms --ref <branch>
+#
+# Its check runs attach to the branch's head commit, so the PR shows them.
+# build-windows and build-macos run the whole suite and `real verify` on the
+# island, the plaza and the valley (WP18 PR "blocking"; the valley since WP28's
+# #175). build-package-windows and build-package-macos build and check the
+# packaged games (ADR-0037, WP19 PR "bundles"). d2-run and d2 check that every
+# replay's state_hash agrees on the three platforms (ADR-0036, WP18 PR "d2").
+# Action majors as in ci.yml.
+
+name: Platforms
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: platforms-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 2
+
+jobs:
+  build-package-windows:
+    # ADR-0037 (WP19 PR "bundles"): the Windows game folder. The runtime links
+    # the C runtime statically (+crt-static, Jolt's CMake build included), so
+    # the game imports no Visual C++ runtime DLL; it plays in a window on DX12
+    # (WARP, the runner has no GPU).
+    runs-on: windows-latest
+    env:
+      RE_BACKENDS: dx12
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p re_cli
+      - name: real build the island, the plaza and the valley
+        shell: bash
+        run: |
+          mkdir -p out
+          for project in island plaza valley; do
+            target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
+            jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes; notices for \(.notices.crates) crates"' "out/build-$project.json"
+          done
+      - name: real verify --package
+        shell: bash
+        run: |
+          for project in island plaza valley; do
+            target/release/real verify --project "examples/$project" --package "dist/$project"
+          done
+      - name: The game imports no C runtime DLL
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          $deps = & $dumpbin /nologo /dependents dist\island\island.exe
+          $deps
+          if ($deps -match '(?i)vcruntime|msvcp|ucrtbase|api-ms-win-crt') { throw "the game imports the C runtime" }
+          dist\island\island.exe --version
+      - name: The packaged game in a window on DX12 (WARP)
+        shell: bash
+        run: |
+          dist/island/island.exe --frames 120 --json 2> out/run.log > out/run.json
+          jq -e '.frames == 120 and ([.diagnostics[] | select(.severity == "error")] | length == 0)' out/run.json
+      - name: A runtime folder builds the plaza with --runtime
+        shell: bash
+        run: |
+          target/release/real build --runtime-only --out dist/runtime
+          target/release/real build --project examples/plaza --runtime dist/runtime/real.exe --out dist/plaza-prebuilt
+          target/release/real verify --project examples/plaza --package dist/plaza-prebuilt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: build-package-windows
+          path: out/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  build-package-macos:
+    # ADR-0037 (WP19 PR "bundles"): the macOS app, sealed ad hoc by
+    # `real build`, with its Info.plist, icon and notices in the bundle.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release -p re_cli
+      - name: real build the island, the plaza and the valley
+        run: |
+          mkdir -p out
+          for project in island plaza valley; do
+            target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
+            jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes; notices for \(.notices.crates) crates"' "out/build-$project.json"
+          done
+      - name: real verify --package
+        run: |
+          for project in island plaza valley; do
+            target/release/real verify --project "examples/$project" --package "dist/$project"
+          done
+      - name: The app is sealed, and its Info.plist is valid
+        run: |
+          plutil -lint dist/island/Island.app/Contents/Info.plist
+          codesign --verify --deep --strict --verbose=2 dist/island/Island.app
+          ls -l dist/island/Island.app/Contents/Resources
+          dist/island/Island.app/Contents/MacOS/island --version
+          dist/island/Island.app/Contents/MacOS/island --notices | head -4
+      - name: A runtime folder builds the plaza with --runtime
+        run: |
+          target/release/real build --runtime-only --out dist/runtime
+          target/release/real build --project examples/plaza --runtime dist/runtime/real --out dist/plaza-prebuilt
+          target/release/real verify --project examples/plaza --package dist/plaza-prebuilt
+          codesign --verify --deep --strict dist/plaza-prebuilt/plaza.app
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: build-package-macos
+          path: out/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Install luau-lsp 1.70.1
+        shell: bash
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/luau-lsp.zip" https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-win64.zip
+          echo "64225b9738102a30de6ee09fb28e5a3827edc402ecf2a6364af570312468159f  $RUNNER_TEMP/luau-lsp.zip" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin" && unzip -o "$RUNNER_TEMP/luau-lsp.zip" -d "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Test (non-GPU crates)
+        shell: bash
+        run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor --exclude re_web
+      - name: Test (GPU crates, DX12 on WARP)
+        if: success() || failure()
+        shell: bash
+        env:
+          RE_BACKENDS: dx12
+        run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -p re_web -- --test-threads=1
+      - name: real verify on the island, the plaza and the valley
+        if: success() || failure()
+        shell: bash
+        env:
+          RE_BACKENDS: dx12
+        run: |
+          mkdir -p out
+          cargo build --locked --release -p re_cli
+          status=0
+          for project in island plaza valley; do
+            echo "== $project"
+            report="out/verify-$project.json"
+            target/release/real verify --project "examples/$project" --json > "$report" || true
+            if ! jq -e '.stages' "$report" > /dev/null; then
+              echo "::error::$project: real verify wrote no report"
+              status=1
+              continue
+            fi
+            jq -r '.stages[] | "\(.name): ok=\(.ok)"' "$report"
+            jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' "$report"
+            jq -c '.stages[] | select(.name == "goldens") | .data' "$report"
+            # Every stage must pass, goldens included: each backend has its own set
+            # (vulkan and gl blessed on Linux, dx12 on Windows, metal on macOS).
+            jq -e '.ok == true' "$report" > /dev/null || status=1
+            if [ "$project" = plaza ]; then
+              # As in verify-plaza: at least two replays played by a server and a
+              # client over loopback, each ending where the in-process run did
+              # (ADR-0050 §7; M3_PLAN, definition of done item 7).
+              jq -r '.stages[] | select(.name == "net") | .data.runs[]? | "networked \(.replay) over \(.transport): \(.frames) frames, same=\(.same)"' "$report"
+              jq -e '[.stages[] | select(.name == "net") | .data.runs[]] as $n | ($n | length) >= 2 and all($n[]; .same)' "$report" > /dev/null \
+                || { echo "::error::plaza: the net stage needs at least two networked runs, all with same=true"; status=1; }
+            fi
+          done
+          exit $status
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: verify-windows
+          path: |
+            out/verify-*.json
+            examples/island/.real/out/goldens/
+            examples/plaza/.real/out/goldens/
+            examples/valley/.real/out/goldens/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Install luau-lsp 1.70.1
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/luau-lsp.zip" https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-macos.zip
+          echo "7d3936e8dec6dc77547abd061d2e950da392562a5f94858b880f23dba50d84cd  $RUNNER_TEMP/luau-lsp.zip" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/bin" && unzip -o "$RUNNER_TEMP/luau-lsp.zip" -d "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP/bin/luau-lsp"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Test (non-GPU crates)
+        run: cargo test --workspace --locked --no-fail-fast --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor --exclude re_web
+      - name: Test (GPU crates, Metal)
+        if: success() || failure()
+        env:
+          RE_BACKENDS: metal
+        run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -p re_web -- --test-threads=1
+      - name: real verify on the island, the plaza and the valley
+        if: success() || failure()
+        env:
+          RE_BACKENDS: metal
+        run: |
+          mkdir -p out
+          cargo build --locked --release -p re_cli
+          status=0
+          for project in island plaza valley; do
+            echo "== $project"
+            report="out/verify-$project.json"
+            target/release/real verify --project "examples/$project" --json > "$report" || true
+            if ! jq -e '.stages' "$report" > /dev/null; then
+              echo "::error::$project: real verify wrote no report"
+              status=1
+              continue
+            fi
+            jq -r '.stages[] | "\(.name): ok=\(.ok)"' "$report"
+            jq -r '.stages[] | select(.ok | not) | .name as $n | .diagnostics[]? | "\($n): \(.code) \(.message)"' "$report"
+            jq -c '.stages[] | select(.name == "goldens") | .data' "$report"
+            # Every stage must pass, goldens included: each backend has its own set
+            # (vulkan and gl blessed on Linux, dx12 on Windows, metal on macOS).
+            jq -e '.ok == true' "$report" > /dev/null || status=1
+            if [ "$project" = plaza ]; then
+              # As in verify-plaza: at least two replays played by a server and a
+              # client over loopback, each ending where the in-process run did
+              # (ADR-0050 §7; M3_PLAN, definition of done item 7).
+              jq -r '.stages[] | select(.name == "net") | .data.runs[]? | "networked \(.replay) over \(.transport): \(.frames) frames, same=\(.same)"' "$report"
+              jq -e '[.stages[] | select(.name == "net") | .data.runs[]] as $n | ($n | length) >= 2 and all($n[]; .same)' "$report" > /dev/null \
+                || { echo "::error::plaza: the net stage needs at least two networked runs, all with same=true"; status=1; }
+            fi
+          done
+          exit $status
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: verify-macos
+          path: |
+            out/verify-*.json
+            examples/island/.real/out/goldens/
+            examples/plaza/.real/out/goldens/
+            examples/valley/.real/out/goldens/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # D2 (ADR-0036): every replay of the island, the plaza and the valley, run on
+  # each platform, writes its state_hash every 60 frames; `d2` compares them.
+  d2-run:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-setup
+      - if: runner.os != 'Linux'
+        run: rustup toolchain install stable --profile minimal
+      - if: runner.os != 'Linux'
+        uses: Swatinem/rust-cache@v2
+      - name: State hashes of every replay
+        shell: bash
+        run: |
+          mkdir -p out
+          cargo xtask d2 --project examples/island --project examples/plaza --project examples/valley --json --out out/d2.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: d2-${{ runner.os }}
+          path: out/d2.json
+          retention-days: 14
+
+  # Linux x86_64, Windows x86_64 and macOS arm64 must agree checkpoint for
+  # checkpoint (ADR-0036; macOS matched from this PR's first run on).
+  d2:
+    needs: d2-run
+    if: success() || failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: d2-*
+          path: out
+      - name: Compare the platforms
+        run: cargo xtask d2 compare out/*/d2.json --require linux-x86_64,windows-x86_64,macos-aarch64
