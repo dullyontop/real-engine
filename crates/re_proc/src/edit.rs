@@ -4,7 +4,8 @@
 //! a document in the World (when it is not open yet) and changes it with one
 //! transaction of `set_doc` operations, so the editor's canvas, `real do` and
 //! agents share them, and each edit is one undo step. The file itself is
-//! written by the project save (`scene.save`).
+//! written with the scene (`App::save_scene`, which `real do`, `real mcp`
+//! and the editor run after every edit).
 //!
 //! The checks here are the ones an edit can break: node kinds and
 //! parameters, node ids (letters, digits, `_` and `-`, since a generated
