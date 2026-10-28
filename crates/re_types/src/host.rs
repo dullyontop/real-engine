@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use glam::{Quat, Vec3};
+use glam::{Affine3A, Quat, Vec3};
 use serde::Serialize;
 
 use crate::anim::AnimValue;
@@ -38,6 +38,16 @@ impl HostError {
             code,
             message: message.into(),
         }
+    }
+
+    /// What a provided method's default body answers: this host does not offer
+    /// `what` (a script function, such as `"time.set_scale"`). The code is
+    /// `RE3015`, which `re_script` reports for any service its host lacks.
+    pub fn unavailable(what: &str) -> HostError {
+        HostError::new(
+            "RE3015",
+            format!("{what} is not available here: this host does not offer it"),
+        )
     }
 }
 
@@ -83,13 +93,17 @@ pub trait HostServices {
     /// Sets the linear (m/s) and angular (rad/s) velocity of the dynamic body on
     /// `entity` at the next physics phase, in place of what it had. An entity
     /// that has no body yet is accepted: one spawned this frame gets its body in
-    /// that phase, before the velocity is set.
+    /// that phase, before the velocity is set. The default answers
+    /// [`HostError::unavailable`].
     fn set_body_velocity(
         &mut self,
         entity: EntityId,
         linear: Vec3,
         angular: Vec3,
-    ) -> HostResult<()>;
+    ) -> HostResult<()> {
+        let _ = (entity, linear, angular);
+        Err(HostError::unavailable("physics.set_velocity"))
+    }
 
     /// Sets the driver input of the vehicle on `entity` from the next step
     /// until the next call (ADR-0040).
@@ -142,11 +156,29 @@ pub trait HostServices {
     /// fixed steps the runtime counts: 1 is normal, 0.5 half speed, and 0 runs
     /// no fixed steps (frame callbacks still run); 0 to 10. The step itself
     /// never changes, only how many run per frame. A restart sets it back to 1.
-    fn set_time_scale(&mut self, scale: f64) -> HostResult<()>;
+    /// The default answers [`HostError::unavailable`].
+    fn set_time_scale(&mut self, scale: f64) -> HostResult<()> {
+        let _ = scale;
+        Err(HostError::unavailable("time.set_scale"))
+    }
 
     /// The time scale in effect (1 unless [`set_time_scale`](Self::set_time_scale)
-    /// changed it).
-    fn time_scale(&self) -> f64;
+    /// changed it). The default is 1.
+    fn time_scale(&self) -> f64 {
+        1.0
+    }
+
+    /// Where `entity` is drawn this frame, in world space, when that differs
+    /// from where the world has it: a moving physics body interpolated between
+    /// its last two steps by the frame's alpha, and everything under it moved
+    /// with the same correction (ADR-0057 §7). `None` means the entity is drawn
+    /// where the world has it, and is the default. The poses are computed at the
+    /// start of `LateFrame`, so from then until the next frame's `LateFrame`
+    /// this answers for the frame on screen.
+    fn drawn_pose(&self, entity: EntityId) -> Option<Affine3A> {
+        let _ = entity;
+        None
+    }
 
     /// This frame's raw device state and events, for layers that read keys
     /// rather than actions. `None` when the host has no raw input (the

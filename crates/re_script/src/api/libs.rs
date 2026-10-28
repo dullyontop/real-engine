@@ -6,7 +6,7 @@ use mlua::{Function, IntoLua, Lua, MultiValue, Result, Table, Value};
 use re_command::Origin;
 use re_core::Code;
 use re_reflect::Value as ReflectValue;
-use re_scene::{Entity, entity_from_id, entity_id};
+use re_scene::{Entity, HudText, entity_from_id, entity_id};
 use re_types::audio::{AudioCmd, EffectParam};
 use re_types::glam::Vec3;
 use re_types::host::HostError;
@@ -614,7 +614,7 @@ fn audio_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         |lua, bus: String| {
             if scheduler::with(lua, |s| s.in_step)? {
                 return Err(super::error(
-                    codes::SERVICE_UNAVAILABLE,
+                    codes::FRAME_ONLY,
                     "audio.levels is not available during a fixed step: it reads live audio, which a replay cannot reproduce; call it from time.on_frame",
                 ));
             }
@@ -632,13 +632,21 @@ fn ui_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         lua,
         "set_text",
         "(e: Entity, text: string) -> ()",
-        "Sets the text of an entity's HudText component.",
+        "Sets the text of an entity's HudText component. It shows in this frame.",
         |lua, (e, text): (Value, String)| {
             let e = entity_arg(&e, "ui.set_text")?;
             with_host(lua, |h| {
-                h.services()
-                    .set_hud_text(entity_id(e), &text)
-                    .map_err(host_err)
+                let w = h.world();
+                alive(w, e)?;
+                let mut hud = w.ecs.get_mut::<HudText>(e).ok_or_else(|| {
+                    reflect_err(re_reflect::ReflectError::MissingComponent {
+                        component: "HudText".into(),
+                    })
+                })?;
+                if hud.text != text {
+                    hud.text = text;
+                }
+                Ok(())
             })
         },
     )
@@ -702,6 +710,13 @@ fn time_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         "(f: (dt: number) -> ()) -> Connection",
         "Calls `f` on every fixed step, after physics and contacts, with the step time.",
         |lua, f: Function| scheduler::connect(lua, Signal::PostStep, f),
+    )?;
+    lib.func(
+        lua,
+        "on_late_frame",
+        "(f: (dt: number) -> ()) -> Connection",
+        "Calls `f` once per frame after the last fixed step, with the frame time, once the frame's drawn poses are known (`Entity:drawn_transform`). Move cameras and anything else that follows what is drawn here. A physics body moved here is drawn moved after the next step, and an entity under one from the next frame.",
+        |lua, f: Function| scheduler::connect(lua, Signal::LateFrame, f),
     )?;
     Ok(())
 }

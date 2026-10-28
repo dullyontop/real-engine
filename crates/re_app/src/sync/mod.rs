@@ -6,6 +6,7 @@
 pub mod anim;
 pub mod anim_skin;
 pub mod audio;
+pub mod drawn;
 pub mod physics;
 pub mod ragdoll;
 pub mod render;

@@ -9,15 +9,18 @@
 
 use std::ffi::c_void;
 
+use glam::Affine3A;
 use mlua::{
     AnyUserData, LightUserData, Lua, MetaMethod, Result, Table, UserData, UserDataFields,
     UserDataMethods, Value,
 };
-use re_scene::{Entity, World, hierarchy};
+use re_scene::{Entity, Transform, World, entity_id, hierarchy};
 
+use super::math::{LQuat, V3};
 use super::value::{field_from_lua, field_to_lua, fields_from_table};
 use crate::codes;
 use crate::host::with_host;
+use crate::scheduler;
 
 /// Registry key of the weak-valued handle table.
 pub(crate) const HANDLE_CACHE: &str = "re_script.entity_handles";
@@ -49,6 +52,8 @@ declare extern type Entity with
     function children(self): { Entity }
     -- The parent, or nil for a root.
     function parent(self): Entity?
+    -- Where the entity is drawn: translation, rotation and scale in the world. A moving physics body, and everything under it, is drawn between its last two steps; anything else where the world has it. In time.on_late_frame it is this frame's pose, in time.on_frame the last frame's (what is on screen). Frame-only: an error in a fixed step (RE3026).
+    function drawn_transform(self): (vector, Quat, vector)
     -- Despawns the entity and its subtree. A generated entity stays gone after a regeneration.
     function destroy(self): ()
     function __eq(self, other: Entity): boolean
@@ -119,6 +124,23 @@ pub(crate) fn alive(world: &World, e: Entity) -> Result<()> {
 
 pub(crate) fn reflect_err(e: re_reflect::ReflectError) -> mlua::Error {
     super::error(e.code(), e)
+}
+
+/// The entity's pose in the world, composed now from its `Transform` and its
+/// ancestors' (not `GlobalTransform`, which is current only after Sync), so a
+/// write earlier in the same callback counts. As in propagation, the chain
+/// ends at the first ancestor without a `Transform`.
+pub(crate) fn world_pose(w: &World, e: Entity) -> Affine3A {
+    let mut pose = Affine3A::IDENTITY;
+    let mut at = Some(e);
+    while let Some(x) = at {
+        let Some(t) = w.ecs.get::<Transform>(x) else {
+            break;
+        };
+        pose = t.affine() * pose;
+        at = hierarchy::parent(&w.ecs, x);
+    }
+    pose
 }
 
 impl UserData for EntityRef {
@@ -225,6 +247,23 @@ impl UserData for EntityRef {
                 Ok(hierarchy::parent(&w.ecs, this.0))
             })?;
             parent.map(|p| handle(lua, p)).transpose()
+        });
+        methods.add_method("drawn_transform", |lua, this, ()| {
+            if scheduler::with(lua, |s| s.in_step)? {
+                return Err(super::error(
+                    codes::FRAME_ONLY,
+                    "Entity:drawn_transform is not available during a fixed step: where an entity is drawn depends on frame timing; read it from time.on_late_frame or time.on_frame",
+                ));
+            }
+            let pose = with_host(lua, |h| {
+                alive(h.world(), this.0)?;
+                match h.services().drawn_pose(entity_id(this.0)) {
+                    Some(pose) => Ok(pose),
+                    None => Ok(world_pose(h.world(), this.0)),
+                }
+            })?;
+            let (scale, rotation, translation) = pose.to_scale_rotation_translation();
+            Ok((V3(translation), LQuat(rotation), V3(scale)))
         });
         methods.add_method("destroy", |lua, this, ()| {
             with_host(lua, |h| {

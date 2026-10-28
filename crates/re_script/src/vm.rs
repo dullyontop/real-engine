@@ -18,6 +18,7 @@
 //! one script sets is `nil` in another; the table is marked `safeenv`, so builtin
 //! fastcalls and import caching stay on.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use mlua::{Function, Lua, LuaOptions, Result, StdLib, Table, Value};
@@ -31,7 +32,8 @@ use crate::{api, scheduler};
 /// Registry key of the frozen globals table that environments `__index`.
 pub(crate) const GLOBALS_KEY: &str = "re_script.globals";
 
-/// The most output lines a context keeps before dropping the oldest.
+/// The most output lines a context keeps between two drains before dropping
+/// the oldest.
 pub const MAX_OUTPUT_LINES: usize = 10_000;
 
 /// A named script context: one VM with its own globals, modules and scheduler.
@@ -97,27 +99,64 @@ pub struct OutputLine {
     pub text: String,
 }
 
-/// The output buffer of one VM (app data).
+/// The output buffer of one VM (app data): a ring of at most
+/// [`MAX_OUTPUT_LINES`], which the runtime's driver drains every frame.
 pub(crate) struct Output {
     kind: ContextKind,
-    pub(crate) lines: Vec<OutputLine>,
+    lines: VecDeque<OutputLine>,
+    /// Lines dropped since the last drain.
+    dropped: u64,
 }
 
-/// Appends a line to the context's output and the log.
+impl Output {
+    pub(crate) fn new(kind: ContextKind) -> Output {
+        Output {
+            kind,
+            lines: VecDeque::new(),
+            dropped: 0,
+        }
+    }
+
+    /// Takes the buffered lines, oldest first. When the ring overflowed since
+    /// the last drain, a warning saying how many lines were dropped comes
+    /// first, and is logged once here.
+    pub(crate) fn drain(&mut self) -> Vec<OutputLine> {
+        let mut out = Vec::with_capacity(self.lines.len() + 1);
+        if self.dropped > 0 {
+            let text = format!(
+                "{} earlier lines were dropped: more than {MAX_OUTPUT_LINES} were printed between two drains",
+                self.dropped
+            );
+            tracing::warn!(target: "script", "[{}] {text}", self.kind.name());
+            out.push(OutputLine {
+                context: self.kind,
+                warn: true,
+                text,
+            });
+            self.dropped = 0;
+        }
+        out.extend(self.lines.drain(..));
+        out
+    }
+}
+
+/// Appends a line to the context's output, and logs it once, now, as
+/// `[context] text` under the `script` target (the one `real` shows).
 pub(crate) fn push_output(lua: &Lua, warn: bool, text: String) {
     let Some(mut out) = lua.app_data_mut::<Output>() else {
         return;
     };
     if warn {
-        tracing::warn!(target: "re_script", context = out.kind.name(), "{text}");
+        tracing::warn!(target: "script", "[{}] {text}", out.kind.name());
     } else {
-        tracing::info!(target: "re_script", context = out.kind.name(), "{text}");
+        tracing::info!(target: "script", "[{}] {text}", out.kind.name());
     }
     if out.lines.len() >= MAX_OUTPUT_LINES {
-        out.lines.remove(0);
+        out.lines.pop_front();
+        out.dropped += 1;
     }
     let kind = out.kind;
-    out.lines.push(OutputLine {
+    out.lines.push_back(OutputLine {
         context: kind,
         warn,
         text,
@@ -142,10 +181,7 @@ pub(crate) fn install_engine(
     crate::portable_math::install(lua)?;
 
     lua.set_app_data(HostSlot::default());
-    lua.set_app_data(Output {
-        kind,
-        lines: Vec::new(),
-    });
+    lua.set_app_data(Output::new(kind));
     scheduler::init(lua, budget)?;
     api::entity::init(lua)?;
 
@@ -247,10 +283,7 @@ pub(crate) fn create_compat(
     let debug: Table = globals.get("debug")?;
     lua.set_named_registry_value(TRACEBACK_FN, debug.get::<Function>("traceback")?)?;
     lua.set_app_data(HostSlot::default());
-    lua.set_app_data(Output {
-        kind,
-        lines: Vec::new(),
-    });
+    lua.set_app_data(Output::new(kind));
     scheduler::init(&lua, budget)?;
     scheduler::enable_adoption(&lua)?;
     api::entity::init(&lua)?;

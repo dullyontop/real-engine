@@ -53,5 +53,9 @@ pub const SERVICE_UNAVAILABLE: Code = Code::new("RE3015");
 /// [`SERVICE_UNAVAILABLE`] as the `&'static str` a `HostError` carries.
 pub const SERVICE_UNAVAILABLE_STR: &str = "RE3015";
 
+/// A read that depends on frame timing or live output
+/// (`Entity:drawn_transform`, `audio.levels`) was made during a fixed step.
+pub const FRAME_ONLY: Code = Code::new("RE3026");
+
 /// A script read a member the engine API does not have.
 pub const UNSUPPORTED_MEMBER: Code = Code::new("RE9001");

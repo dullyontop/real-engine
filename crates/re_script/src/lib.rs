@@ -148,6 +148,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE3015.md"),
     },
     DiagInfo {
+        code: codes::FRAME_ONLY,
+        title: "Frame-only read in a fixed step",
+        page: include_str!("../explain/RE3026.md"),
+    },
+    DiagInfo {
         code: debug::NOT_PAUSED,
         title: "Breakpoint reached where the script cannot pause",
         page: include_str!("../explain/RE3070.md"),

@@ -154,14 +154,15 @@ impl App {
     pub fn edit_frame(&mut self) {
         self.regenerate_changed();
         self.world.propagate();
+        self.drawn
+            .compute(&self.world, &self.physics_sync, self.alpha);
         if self.graphics.is_some() {
             // An editor's view: the World as it is, with its assets on the GPU.
             self.upload_assets();
             let inputs = RenderInputs {
                 assets: &self.render_assets,
-                physics: &self.physics_sync,
+                drawn: &self.drawn,
                 skins: &self.skin_sync,
-                alpha: self.alpha,
                 clear: self.config.render.clear,
                 post: self.config.render.post,
                 shadows: self.config.render.shadows,

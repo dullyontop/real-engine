@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! Input → PreRender → (PreAnimation → PreSimulation → Physics → PostSimulation) × 0..=5
-//!       → Sync → Render → EndFrame
+//!       → LateFrame → Sync → Render → EndFrame
 //! ```
 //!
 //! Systems register against phases, not against each other. The order matches the
@@ -28,6 +28,10 @@ pub enum Phase {
     Physics,
     /// Fixed step: contact callbacks, then scripts' post-physics update.
     PostSimulation,
+    /// Once per frame after the last fixed step: the poses drawn this frame
+    /// (interpolated by the frame's alpha), then scripts' late-frame work, such
+    /// as cameras that follow what is drawn (ADR-0057 §7).
+    LateFrame,
     /// Write poses back, propagate transforms, build the render snapshot and audio commands.
     Sync,
     /// Draw the snapshot and the UI overlay.
@@ -38,13 +42,14 @@ pub enum Phase {
 
 impl Phase {
     /// Every phase, in execution order.
-    pub const ALL: [Phase; 9] = [
+    pub const ALL: [Phase; 10] = [
         Phase::Input,
         Phase::PreRender,
         Phase::PreAnimation,
         Phase::PreSimulation,
         Phase::Physics,
         Phase::PostSimulation,
+        Phase::LateFrame,
         Phase::Sync,
         Phase::Render,
         Phase::EndFrame,
@@ -75,6 +80,7 @@ impl Phase {
             Phase::PreSimulation => "PreSimulation",
             Phase::Physics => "Physics",
             Phase::PostSimulation => "PostSimulation",
+            Phase::LateFrame => "LateFrame",
             Phase::Sync => "Sync",
             Phase::Render => "Render",
             Phase::EndFrame => "EndFrame",

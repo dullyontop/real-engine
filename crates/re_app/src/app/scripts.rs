@@ -1,13 +1,55 @@
 //! A native game's script runtime, its debugger (ADR-0045), and the errors
 //! and output its scripts report.
 
+use std::collections::VecDeque;
+
 use re_core::{Diagnostic, Phase};
 
-use re_script::{ContextKind, RuntimeConfig, ScriptError, ScriptRuntime};
+use re_script::vm::MAX_OUTPUT_LINES;
+use re_script::{ContextKind, OutputLine, RuntimeConfig, ScriptError, ScriptRuntime};
 
 use crate::host::{Host, PlayHost};
 
 use super::App;
+
+/// What every context printed, for run reports and a driver's console: the
+/// newest [`MAX_OUTPUT_LINES`] lines as `[context] text`, and a count of the
+/// older ones dropped (ADR-0057 §11, B5). Each line was logged when it was
+/// printed.
+#[derive(Debug, Default)]
+pub(super) struct ScriptOutput {
+    lines: VecDeque<String>,
+    dropped: u64,
+}
+
+impl ScriptOutput {
+    /// Adds the lines a context's drain returned.
+    pub(super) fn extend(&mut self, lines: Vec<OutputLine>) {
+        for line in lines {
+            if self.lines.len() >= MAX_OUTPUT_LINES {
+                self.lines.pop_front();
+                self.dropped += 1;
+            }
+            self.lines
+                .push_back(format!("[{}] {}", line.context.name(), line.text));
+        }
+    }
+
+    /// Takes the kept lines, oldest first, after a line that counts those
+    /// dropped since the last take, if any.
+    pub(super) fn take(&mut self) -> Vec<String> {
+        let mut out = Vec::with_capacity(self.lines.len() + 1);
+        if self.dropped > 0 {
+            out.push(format!(
+                "[app] {} earlier lines were dropped: a run keeps the last {MAX_OUTPUT_LINES}",
+                self.dropped
+            ));
+            self.dropped = 0;
+        }
+        out.extend(self.lines.drain(..));
+        out
+    }
+}
 
 impl App {
     /// The script runtime, created on first use (so editing never starts a VM).
@@ -145,6 +187,7 @@ impl App {
                 pending: &mut self.pending,
                 skins: &mut self.skin_sync,
                 time_scale: &mut self.time_scale,
+                drawn: &self.drawn,
             },
         };
         let out = f(scripts, &mut host);
@@ -195,15 +238,16 @@ impl App {
         let Some(scripts) = &mut self.scripts else {
             return;
         };
-        for line in scripts.take_output() {
-            let text = format!("[{}] {}", line.context.name(), line.text);
-            if line.warn {
-                tracing::warn!(target: "script", "{text}");
-            } else {
-                tracing::info!(target: "script", "{text}");
-            }
-            self.script_output.push(text);
-        }
+        self.script_output.extend(scripts.take_output());
+    }
+
+    /// Takes what the scripts printed since the last take, oldest first, as
+    /// `[context] text`: at most [`MAX_OUTPUT_LINES`] lines, after one that
+    /// counts the older lines dropped, if any. For a driver's console; a
+    /// headless run's [`RunReport::output`](super::RunReport::output) takes
+    /// the same lines.
+    pub fn take_script_output(&mut self) -> Vec<String> {
+        self.script_output.take()
     }
 
     /// Reloads a changed script (hot reload): modules are patched or replaced,

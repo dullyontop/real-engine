@@ -57,6 +57,7 @@ use crate::procedural;
 use crate::sync::anim::AnimSync;
 use crate::sync::anim_skin::SkinSync;
 use crate::sync::audio::AudioSync;
+use crate::sync::drawn::DrawnPoses;
 use crate::sync::physics::{PhysicsSync, ShapeLibrary};
 use crate::sync::ragdoll::RagdollSync;
 use crate::sync::render::RenderAssets;
@@ -64,6 +65,7 @@ use crate::verify::VerifyStage;
 
 use self::frame::HalfFrame;
 pub(crate) use self::open::content_world;
+use self::scripts::ScriptOutput;
 
 /// A screenshot a run was asked to take: by a replay check (`golden` set) or by
 /// a script (`path` set).
@@ -93,7 +95,9 @@ pub struct RunReport {
     pub perf: PerfReport,
     /// Screenshots asked for during the run.
     pub screenshots: Vec<ScreenshotRequest>,
-    /// What scripts printed (`print` and `warn`), one line each.
+    /// What scripts printed (`print` and `warn`), one line each as
+    /// `[context] text`: the last 10,000, after a line that counts the older
+    /// ones dropped, if any.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub output: Vec<String>,
     /// For a compat project: uncaught script errors, stuck yields and
@@ -151,6 +155,9 @@ pub struct App {
 
     physics: Physics,
     physics_sync: PhysicsSync,
+    /// Where moving bodies and what they carry are drawn, from the last
+    /// LateFrame (ADR-0057 §7).
+    drawn: DrawnPoses,
     shapes: ShapeLibrary,
     physics_cmds: Vec<PhysicsCmd>,
     poses: Vec<BodyPose>,
@@ -207,7 +214,7 @@ pub struct App {
     /// The size (physical pixels) and scale of the last window draw.
     view_size: [u32; 2],
     view_ppp: f32,
-    script_output: Vec<String>,
+    script_output: ScriptOutput,
     /// Script errors already reported (a failing `on_step` fails every step).
     script_errors: std::collections::HashSet<String>,
 
@@ -375,6 +382,12 @@ impl App {
         &self.physics_sync
     }
 
+    /// Where moving bodies and what they carry are drawn, as the last
+    /// LateFrame computed it (ADR-0057 §7).
+    pub fn drawn_poses(&self) -> &DrawnPoses {
+        &self.drawn
+    }
+
     /// The meshes and heightfields collider sources can name.
     pub fn shapes_mut(&mut self) -> &mut ShapeLibrary {
         &mut self.shapes
@@ -538,6 +551,7 @@ impl App {
             pending: &mut self.pending,
             skins: &mut self.skin_sync,
             time_scale: &mut self.time_scale,
+            drawn: &self.drawn,
         }
     }
 

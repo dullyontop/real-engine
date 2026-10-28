@@ -14,6 +14,7 @@ fn phases_follow_adr_0009() {
             "PreSimulation",
             "Physics",
             "PostSimulation",
+            "LateFrame",
             "Sync",
             "Render",
             "EndFrame"
