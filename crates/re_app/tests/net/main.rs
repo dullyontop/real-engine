@@ -145,18 +145,36 @@ fn a_host_plays_with_a_player_who_connects() {
     // The host's game starts (and its local player joins) on its first
     // frame, before anyone connects.
     host.frame(dt);
-    let ann = thread::spawn(move || {
-        let mut app = join(addr, "Ann");
-        let report = app.run_headless(Some(120), None).unwrap();
-        let seen = players(app.compat_client().unwrap());
-        app.close_net();
-        (report, seen)
-    });
+    let host_saw_ann = Arc::new(AtomicBool::new(false));
+    let ann = {
+        let host_saw_ann = host_saw_ann.clone();
+        thread::spawn(move || {
+            let mut app = join(addr, "Ann");
+            let mut report = app.run_headless(Some(120), None).unwrap();
+            // Her frames run unpaced, and on a fast machine 120 of them can
+            // end before either game shows both players: she plays on until
+            // she and the host see them.
+            let dt = app.step();
+            let mut seen = players(app.compat_client().unwrap());
+            for _ in 0..3000 {
+                if seen.len() == 2 && host_saw_ann.load(Ordering::Relaxed) {
+                    break;
+                }
+                app.frame(dt);
+                seen = players(app.compat_client().unwrap());
+                thread::sleep(std::time::Duration::from_millis(1));
+            }
+            report.diagnostics.extend(app.take_diagnostics());
+            app.close_net();
+            (report, seen)
+        })
+    };
     let mut seen = Vec::new();
     for _ in 0..3000 {
         host.frame(dt);
         if seen.len() < 2 {
             seen = players(host.compat_client().unwrap());
+            host_saw_ann.store(seen.len() == 2, Ordering::Relaxed);
         }
         if ann.is_finished() {
             break;
