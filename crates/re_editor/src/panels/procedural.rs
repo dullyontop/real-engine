@@ -120,6 +120,7 @@ pub(super) fn graph(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut
 /// they take there (WP43), after the gizmo. Returns true when they took the
 /// pointer this frame, so the viewport does not also act on it. Nothing yet.
 pub(super) fn viewport_overlay(
+    _ed: &mut Editor,
     _ui: &mut egui::Ui,
     _app: &App,
     _view: &crate::camera::View,

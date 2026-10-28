@@ -67,7 +67,7 @@ pub(super) fn viewport(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &
         navigating,
         actions,
     );
-    let taken = procedural::viewport_overlay(ui, app, &view, actions);
+    let taken = procedural::viewport_overlay(ed, ui, app, &view, actions);
 
     // Icons and the axis indicator, lit under the pointer unless the camera
     // or the gizmo has it.
