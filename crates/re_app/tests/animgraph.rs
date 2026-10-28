@@ -18,7 +18,10 @@ use serde_json::json;
 
 /// The figure's joints: name, parent, offset from the parent, and the box
 /// drawn for it (centre and half size, in the joint's space).
-#[expect(clippy::type_complexity, reason = "a table of plain tuples, read once")]
+#[expect(
+    clippy::type_complexity,
+    reason = "the figure's joint table, written out row by row"
+)]
 const JOINTS: [(&str, Option<usize>, [f32; 3], Option<([f32; 3], [f32; 3])>); 20] = [
     ("root", None, [0.0, 0.0, 0.0], None),
     (
