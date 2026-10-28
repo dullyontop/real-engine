@@ -9,7 +9,8 @@
 //!   `entity_spawn`), because several clients only accept
 //!   `[A-Za-z0-9_-]` in tool names.
 //! * Schema hygiene: the input schema's root is an object with no
-//!   `anyOf`/`oneOf`/`allOf`; `format` and `$schema` keywords are removed;
+//!   `anyOf`/`oneOf`/`allOf`; `format`, `$schema` and `x-real-path`
+//!   keywords are removed;
 //!   descriptions start with the command's summary and stay under 4096
 //!   characters; all four annotation hints are set from the tier.
 //! * Every tool has an `outputSchema`: the outcome envelope

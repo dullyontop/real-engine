@@ -1,0 +1,29 @@
+visit #14 screen (root) at (0.0, 0.0) size (400.0, 300.0) rotation 0.0
+visit #4 column at (0.0, 0.0) size (180.0, 200.0) rotation 0.0 content (100.0, 110.0)
+visit #0 third at (40.0, 170.0) size (100.0, 30.0) rotation 0.0
+visit #1 first at (60.0, 90.0) size (60.0, 20.0) rotation 0.0
+visit #2 second at (50.0, 120.0) size (80.0, 40.0) rotation 0.0
+visit #3 hidden at (0.0, 0.0) size (90.0, 90.0) rotation 0.0
+visit #8 row by name at (190.0, 0.0) size (200.0, 60.0) rotation 0.0 content (115.2, 30.0)
+visit #5 b at (328.8, 15.0) size (30.0, 30.0) rotation 0.0
+visit #6 c at (366.8, 17.0) size (19.2, 26.0) rotation 0.0
+visit #7 a at (270.8, 25.0) size (50.0, 10.0) rotation 0.0
+visit #13 outer at (190.0, 100.0) size (200.0, 20.0) rotation 0.0 content (72.0, 20.0)
+visit #12 tail at (232.0, 100.0) size (30.0, 20.0) rotation 0.0
+visit #11 nested at (190.0, 100.0) size (42.0, 20.0) rotation 0.0 content (42.0, 20.0)
+visit #9 cell at (190.0, 100.0) size (20.0, 20.0) rotation 0.0
+visit #10 cell at (212.0, 100.0) size (20.0, 20.0) rotation 0.0
+root 0: 13 drawn
+item #4 column at (0.0, 0.0) size (180.0, 200.0) scale 1.0 order (0, 1) input
+item #0 third at (40.0, 170.0) size (100.0, 30.0) scale 1.0 order (0, 2) input
+item #1 first at (60.0, 90.0) size (60.0, 20.0) scale 1.0 order (0, 3) input
+item #2 second at (50.0, 120.0) size (80.0, 40.0) scale 1.0 order (0, 4) input
+item #8 row by name at (190.0, 0.0) size (200.0, 60.0) scale 1.0 order (0, 6) input padding [4.0, 4.0, 4.0, 4.0]
+item #5 b at (328.8, 15.0) size (30.0, 30.0) scale 1.0 order (0, 7) input
+item #6 c at (366.8, 17.0) size (19.2, 26.0) scale 1.0 order (0, 8) input
+item #7 a at (270.8, 25.0) size (50.0, 10.0) scale 1.0 order (0, 9) input
+item #13 outer at (190.0, 100.0) size (200.0, 20.0) scale 1.0 order (0, 10) input
+item #12 tail at (232.0, 100.0) size (30.0, 20.0) scale 1.0 order (0, 11) input
+item #11 nested at (190.0, 100.0) size (42.0, 20.0) scale 1.0 order (0, 12) input
+item #9 cell at (190.0, 100.0) size (20.0, 20.0) scale 1.0 order (0, 13) input
+item #10 cell at (212.0, 100.0) size (20.0, 20.0) scale 1.0 order (0, 14) input

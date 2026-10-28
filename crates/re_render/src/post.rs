@@ -20,14 +20,16 @@ use crate::shader;
 /// The scene's colour format on every backend.
 pub(crate) const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-/// What the scene's depth targets are cleared to: the far plane. Every pass
-/// over the scene's depth clears with it.
-pub(crate) const DEPTH_CLEAR: f32 = 1.0;
+/// What the scene's depth targets are cleared to: infinitely far. The scene
+/// draws with reversed Z (ADR-0038's amendment for WP32), so depth is 1 at the
+/// camera's near plane and falls towards 0 with distance. Every pass over the
+/// scene's depth clears with it.
+pub(crate) const DEPTH_CLEAR: f32 = 0.0;
 /// The depth test of the scene's pipelines: a fragment nearer than what is
-/// there passes.
-pub(crate) const DEPTH_COMPARE: wgpu::CompareFunction = wgpu::CompareFunction::Less;
+/// there passes, which with reversed Z is a greater depth.
+pub(crate) const DEPTH_COMPARE: wgpu::CompareFunction = wgpu::CompareFunction::Greater;
 /// [`DEPTH_COMPARE`] that also passes a fragment at the same depth.
-pub(crate) const DEPTH_COMPARE_EQUAL: wgpu::CompareFunction = wgpu::CompareFunction::LessEqual;
+pub(crate) const DEPTH_COMPARE_EQUAL: wgpu::CompareFunction = wgpu::CompareFunction::GreaterEqual;
 /// Bloom never uses more levels than this.
 const MAX_BLOOM_LEVELS: usize = 8;
 /// Passes in one chain at most: sun rays, 2 x 8 bloom, 2 blur and the final one.

@@ -6,10 +6,11 @@ expression: "read(project, \".real/agent-policy.toml\")"
 # max_tier: "read", "edit" or "destructive" (destructive is never generated).
 max_tier = "edit"
 
-# Where file-writing commands (script.write, file.delete, asset.import) may write.
-# `**` matches any number of directories. `.real/` and `.git/` are always refused.
+# Where commands may write files (script.write, graph edits, asset.import, an
+# agent's screenshot outside .real/out/...). `**` matches any number of
+# directories. `.real/` and `.git/` are always refused, and `deny` ignores case.
 [scopes]
-allow = ["scripts/**", "scenes/**", "graphs/**", "prefabs/**", "materials/**", "assets/**"]
+allow = ["scripts/**", "scenes/**", "graphs/**", "anims/**", "prefabs/**", "materials/**", "assets/**"]
 deny = []
 
 [budgets]

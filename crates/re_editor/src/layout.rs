@@ -21,6 +21,7 @@ use crate::camera::EditorCamera;
 use crate::codes;
 use crate::gizmo::GizmoSettings;
 use crate::overlay::ViewSettings;
+use crate::selection::Selection;
 
 /// A dockable panel. Each appears once in the layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -79,24 +80,6 @@ pub type Collapsed = BTreeMap<String, BTreeSet<String>>;
 /// not parse. Entries this editor does not know are kept.
 pub type PanelStates = BTreeMap<String, Json>;
 
-/// The selection as saved: restored when the project is opened again, minus
-/// the entities that no longer exist.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Selection {
-    /// The selected entities' ids, in the order they were selected.
-    pub ids: Vec<String>,
-    /// The active entity, the one selected last (one of `ids`).
-    pub active: Option<String>,
-}
-
-impl Selection {
-    /// Nothing selected.
-    pub fn is_empty(&self) -> bool {
-        self.ids.is_empty() && self.active.is_none()
-    }
-}
-
 /// A project's saved editor layout.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Layout {
@@ -122,7 +105,8 @@ pub struct Layout {
     /// game's camera.
     #[serde(default)]
     pub view: ViewSettings,
-    /// The selection.
+    /// The selection, restored when the project is opened again, minus the
+    /// entities that no longer exist.
     #[serde(default, skip_serializing_if = "Selection::is_empty")]
     pub selection: Selection,
     /// Each panel's own view state.
@@ -323,10 +307,7 @@ mod tests {
                 grid: false,
                 ..ViewSettings::default()
             },
-            selection: Selection {
-                ids: vec!["a".to_string(), "b".to_string()],
-                active: Some("b".to_string()),
-            },
+            selection: Selection::from_ids(["a".to_string(), "b".to_string()], Some("a".into())),
             panels: PanelStates::from([(
                 "Assets".to_string(),
                 serde_json::json!({ "folder": "models" }),
