@@ -62,7 +62,9 @@ fn sample(keys: &[(f32, [f32; 3])], t: f32) -> [f32; 3] {
 /// The outline of a rounded rectangle, clockwise, with straight edges split
 /// so per-vertex colours follow a gradient.
 fn outline(min: Vec2, size: Vec2, r: f32) -> Vec<Vec2> {
-    let r = r.clamp(0.0, size.x.min(size.y) * 0.5);
+    // A negative size is normal (an offset larger than the parent, or a tween
+    // that overshoots zero), and `clamp` panics when its bounds cross.
+    let r = r.clamp(0.0, (size.x.min(size.y) * 0.5).max(0.0));
     let max = min + size;
     let mut pts = Vec::new();
     let edge = |a: Vec2, b: Vec2, pts: &mut Vec<Vec2>| {
@@ -384,6 +386,9 @@ impl<'a> Painter<'a> {
     /// A background coloured by a `UIGradient`: a fan of triangles from the
     /// centre whose vertices sample the colour and transparency sequences.
     fn gradient(&mut self, it: &Item, g: Entity, bg: Rgba, corner: f32) {
+        if !(it.size.x > 0.0 && it.size.y > 0.0 && it.size.is_finite()) {
+            return;
+        }
         let gp = self.props(g);
         let colors = gp.sequence("Color");
         let alphas = gp.sequence("Transparency");
