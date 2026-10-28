@@ -815,6 +815,11 @@ fn builders_declare_params_and_outputs_as_version_two() {
             "unknown option",
         ),
         (
+            "nonstring",
+            "g:param('a', { type = 'number', doc = { 'x' } })",
+            "doc must be a string, got table",
+        ),
+        (
             "part",
             "local p = g:param('a', { type = 'number' })\ng:node('terrain.heightfield', { size = { p } })",
             "not part of one",

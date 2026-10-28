@@ -215,7 +215,7 @@ fn param_decl(lua: &Lua, name: &str, options: Table) -> Result<ParamDoc> {
         let (key, v) = pair?;
         match key.as_str() {
             "type" => {
-                let s = v.to_string()?;
+                let s = text(v, &format!("{what}: type"))?;
                 ty = Some(
                     serde_json::from_value::<ParamType>(serde_json::Value::String(s.clone()))
                         .map_err(|_| {
@@ -230,7 +230,7 @@ fn param_decl(lua: &Lua, name: &str, options: Table) -> Result<ParamDoc> {
             "max" => decl.max = Some(number(v, "max")?),
             "values" => decl.values = strings(v, "values")?,
             "extensions" => decl.extensions = strings(v, "extensions")?,
-            "doc" => decl.doc = v.to_string()?,
+            "doc" => decl.doc = text(v, &format!("{what}: doc"))?,
             other => {
                 return Err(bad(format!(
                     "{what}: unknown option {other:?} (type, default, min, max, values, extensions, doc)"
@@ -248,6 +248,18 @@ fn param_decl(lua: &Lua, name: &str, options: Table) -> Result<ParamDoc> {
 
 fn bad(msg: impl std::fmt::Display) -> mlua::Error {
     super::error(codes::GRAPH_BUILDER, msg)
+}
+
+/// A builder option that must be a string, such as a param's `type` or
+/// `doc` (`what` names it in the error).
+fn text(v: Value, what: &str) -> Result<String> {
+    match v {
+        Value::String(s) => Ok(s.to_str()?.to_string()),
+        other => Err(bad(format!(
+            "{what} must be a string, got {}",
+            other.type_name()
+        ))),
+    }
 }
 
 /// Reads a node or port handle that belongs to `graph`.
@@ -377,7 +389,7 @@ impl UserData for GraphBuilder {
                     for pair in options.pairs::<String, Value>() {
                         let (key, v) = pair?;
                         match key.as_str() {
-                            "doc" => doc_text = v.to_string()?,
+                            "doc" => doc_text = text(v, &format!("output {name:?}: doc"))?,
                             other => {
                                 return Err(bad(format!(
                                     "output {name:?}: unknown option {other:?} (doc)"

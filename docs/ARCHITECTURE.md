@@ -448,6 +448,12 @@ pub struct Edge { pub from: (NodeId, PortName), pub to: (NodeId, PortName) }
 
 The serialized form (`GraphDoc` in `re_types`) is the `*.graph.json` file.
 
+**Format version 2** (M4, ADR-0061). A graph file is written at the lowest format version that holds it. Version 1 is the format of M1 to M3, and the edit that adds a graph's first param, declared port or param reference raises the file to version 2. A version 1 file means exactly what it meant, and `doc_hash` hashes a document that uses nothing of version 2 as version 1, so a file rewritten as version 2 regenerates nothing. Version 2 adds:
+- **Graph params** (`params`): typed values (ten types, with ranges, defaults and docs) that a node param binds by having `{"$param": name}` as its whole value. Binding happens on the document before a node is migrated, checked or keyed, so a bound node has exactly the key it would have with the value written in, and each bound node is checked against every value its param offers (`RE4203`). `graph.set_default` binds a node param with `{"$param": name}` and unbinds it with a literal.
+- **Declared inputs and outputs** (`inputs`, `outputs`, each `{ name, type, required?, doc? }`), wired with `["$in", name]` and `["$out", name]` edges, which `graph.connect` accepts (`RE4205`, `RE4206`). When a graph declares outputs, the nodes feeding its fragment and mesh outputs make its output, in declaration order (`ProcGraph::output_nodes`), instead of its sinks; a streamed cell drops the nodes that reach no declared output.
+
+Builders declare params with `g:param(name, { type, default, min, max, values, extensions, doc })`, which returns a handle a node param can take, and outputs with `g:output(name, from)`. `graph.params { source | graph }` lists a graph's params, with a source's values; `graph.declare_param` and `graph.remove_param { unbind? }` change them through the graph-editing machinery (one undo step; a save writes the file). A graph edit is refused only when it adds a problem.
+
 There are two ways to author a graph:
 1. Write the JSON in `graphs/` (a `GraphDoc` file).
 2. Write a Luau builder script in the `tools` context (`scripts/tools/island_graph.luau`) that **records** a graph. Builders live under `scripts/` like every other script, so they can `require` shared modules:
@@ -465,7 +471,7 @@ return g
 
 Grid spacing belongs to the fields: `cell` and `size` are parameters of `terrain.heightfield` and `terrain.island_mask`, and `terrain.mesh` takes the spacing of the field it is given. Give a mask the same `size` and `cell` as the heightfield it multiplies, or `field.combine` resamples it by UV. A builder records each input as an edge `{ from = [id, "out"], to = [id, port] }`; every node has one output port, named after its type (`field`, `mesh`, `points`, `fragment`), and `out` is an alias for it (`re_proc::OUT_ALIAS`).
 
-Either way, `graph.set_param` does not rewrite the file or the script: it stores a per-node parameter override on the procedural source (`GraphSource.params`) through an ordinary undoable `set_field`, which works for both kinds of graph and is saved with the scene.
+Either way, `graph.set_param` does not rewrite the file or the script: it stores a per-node parameter override on the procedural source (`GraphSource.params`) through an ordinary undoable `set_field`, which works for both kinds of graph and is saved with the scene. Without `node`, `graph.set_param { source, param, value }` sets one of the graph's params for that source instead, stored under `"$graph"` in `GraphSource.params` (`RE4201`, `RE4202`; `null` clears it). A stored value the graph no longer accepts is skipped with a warning, as a stale override is, and an override of a bound node param replaces the binding for that source (warning `RE4212`).
 
 The builder runs once in the `tools` context and returns a `GraphDoc` (`re_types`), so `re_script` does not depend on `re_proc`. `re_proc` turns it into a `ProcGraph`, and the graph is evaluated in Rust. In M1, Luau never runs inside node evaluation.
 
@@ -538,7 +544,7 @@ This works during play. The M1 demo regenerates the island with a new seed while
 
 ### M3 additions
 
-- **Versions** (ADR-0043): every node records its kind's version, old parameter shapes migrate in memory, and `real migrate-graph [--project DIR] [--dry-run] [--json]` rewrites graph files to the current versions, all or nothing. `graph.migration_report` (read) says what a migration would change.
+- **Versions** (ADR-0043): every node records its kind's version, old parameter shapes migrate in memory, and `real migrate-graph [--project DIR] [--dry-run] [--json]` rewrites graph files to the current versions, all or nothing. `graph.migration_report` (read) says what a migration would change. Since M4 (ADR-0061 §10) `real migrate-graph` also writes version 1 files as version 2 (only `version` changes), `--format-only` upgrades the format alone, and the report gives `format: {from, to}` per file. A bound node param migrates with its graph param's default in its place and keeps its reference when the migration leaves that value as it was; otherwise the migration is refused (`RE4020`), naming the binding.
 - **Bake** (ADR-0043): `proc.bake { source, keys?, keep_source? }` turns a source's output into authored entities with a `Baked` provenance record, in one undoable transaction. Baked ids are `<source>.<key with / as .>` (`~N` on a clash), and derived meshes and heightfields become `.glb` and `.heightfield` files under `assets/baked/<encoded source id>/`.
 - **Luau node kinds** (ADR-0043 §4): scripts under `scripts/generators/` declare `project.*` node kinds, run in the sandboxed `generator` context with the `[proc]` budget; `proc.create_source { kind, params }` places one as a source. Their implementation hash, part of every key of a node that uses one, covers the scripts compiled with the packaged options, so a packaged game, which holds that bytecode, keys its nodes and names their meshes (`derived:<key>`) as its project does.
 - **Streaming** (ADR-0042): `re_proc::stream` evaluates a streamed source per cell (`c/<x>_<z>`) around the focus points, on the task pool from the tick a cell is requested, and applies it `delay_ticks` later within the per-tick budgets. `re_scene::stream` holds the per-cell apply, unload and stash hooks (`World::apply_cell`, `unload_cell`) and the `StreamCell` type. `play.run` copies remap the streamer's source handles by id (`Streamer::forked`). Streaming adds two node kinds: `terrain.erode` (hydraulic erosion of a field, output Field; streamed, it erodes region tiles and blends them, so cells meet without seams) and `terrain.chunks` (a streamed world's terrain, output Fragment: the field drawn as level-of-detail chunks, with heightfield colliders near each focus; one mesh when not streamed). A `terrain.chunks` source's level-of-detail view lives in `TerrainView`, outside `state_hash`, and is swapped in as its chunks are ready; under `Lateness::Wait`, a frame that takes a screenshot first completes it (`Streamer::complete_view`), so a golden image does not depend on worker timing.
@@ -611,14 +617,14 @@ Annotations are derived from the tier and set explicitly on every tool (ADR-0025
 
 ### M3 tools
 
-With every M3 command so far, `real mcp` lists 53 tools.
+With every M3 command so far, `real mcp` lists 53 tools; M4's `graph.params`, `graph.declare_param` and `graph.remove_param` make 56.
 
 | Tier | Tools | Registered by |
 |---|---|---|
-| Read | `graph.migration_report` (ADR-0043) | `re_proc` |
+| Read | `graph.migration_report` (ADR-0043), `graph.params` (M4, ADR-0061) | `re_proc` |
 | Read | `template.list`, `recipe.list` (ADR-0046) | `re_cli` (`register_recipes`, over `re_agent::templates`) |
 | Edit | `proc.bake`, and the structural overrides `proc.move`, `proc.replace`, `proc.insert` and `proc.clear_structure` (ADR-0043) | `re_proc` |
-| Edit | `graph.add_node`, `graph.remove_node`, `graph.connect`, `graph.disconnect`, `graph.move_nodes`, `graph.set_default` (ADR-0044; idempotent except `graph.add_node`, which picks a fresh id when none is given; arguments as in `re_proc::{AddNodeArgs, RemoveNodeArgs, ConnectArgs, MoveNodesArgs, SetDefaultArgs}`) | `re_proc` |
+| Edit | `graph.add_node`, `graph.remove_node`, `graph.connect`, `graph.disconnect`, `graph.move_nodes`, `graph.set_default` (ADR-0044; idempotent except `graph.add_node`, which picks a fresh id when none is given; arguments as in `re_proc::{AddNodeArgs, RemoveNodeArgs, ConnectArgs, MoveNodesArgs, SetDefaultArgs}`), and `graph.declare_param`, `graph.remove_param` (M4, ADR-0061) | `re_proc` |
 | Edit | `recipe.apply` (ADR-0046; all or nothing: a failed step or check restores the checkpoint taken first) | `re_cli` (`register_recipes`) |
 | Read | `animgraph.validate` (ADR-0039; with `skin`, it also binds the graph to that skin) | `re_app` |
 | Edit | `animgraph.create`, `animgraph.edit` (a batch of `upsert` and `remove` changes to params, nodes, layers, masks, states and transitions, validated together, one undo step), `anim.set_param` (a running graph's parameter; runtime state, not undoable) (ADR-0039) | `re_app` |
@@ -899,7 +905,7 @@ Input bindings name winit `KeyCode` variants (`key:KeyW`), mouse buttons (`mouse
 }
 ```
 
-A `GraphSource` names either a `builder` script or a `graph` file (`graphs/*.graph.json`). Its `params` field (omitted above because it is empty) holds the per-node parameter overrides written by `graph.set_param`.
+A `GraphSource` names either a `builder` script or a `graph` file (`graphs/*.graph.json`). Its `params` field (omitted above because it is empty) holds the per-node parameter overrides written by `graph.set_param`, and under `"$graph"` the source's values of the graph's params (ADR-0061).
 
 Rules (verified by the core spike's round-trip tests, ADR-0016):
 - entities are written in a stable order: roots sorted by id, then depth-first in `Children` order. A `parent` always appears before its children;
