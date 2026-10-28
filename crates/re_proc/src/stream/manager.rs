@@ -212,6 +212,9 @@ pub struct Streamer {
     /// The way each focus is going, by focus id (simulation state: it picks
     /// the cells wanted ahead).
     travel: BTreeMap<String, Travel>,
+    /// The point streamed around in place of the world's focuses, while set
+    /// (not simulation state).
+    view_focus: Option<Focus>,
 }
 
 impl Streamer {
@@ -235,6 +238,7 @@ impl Streamer {
             collision: Default::default(),
             origin: Vec3::ZERO,
             travel: BTreeMap::new(),
+            view_focus: None,
         })
     }
 
@@ -266,6 +270,38 @@ impl Streamer {
     /// True while the terrain view is kept up to date.
     pub fn view(&self) -> bool {
         self.view
+    }
+
+    /// Streams around `focus` in place of the world's focuses while it is
+    /// set: an editor's camera, which is not an entity (ADR-0044's
+    /// amendment for WP42). `None` streams around the [`StreamFocus`]
+    /// entities, or the active camera, again.
+    ///
+    /// While it is set, the view focus alone picks the cells wanted, kept
+    /// and unloaded, the order they are generated in, and the terrain chunks
+    /// the view draws and [`complete_view`](Self::complete_view) completes.
+    /// Its `forward` is used as given (normalised): cells load further ahead
+    /// where the view looks, not where it travels. What streaming keeps for
+    /// the simulation is left as it is, since nothing simulates while a view
+    /// focus is set: the floating origin, the way each focus is going, and
+    /// terrain collision, which move again with the world's focuses once it
+    /// is cleared.
+    ///
+    /// The view focus is not simulation state: it is kept on this manager
+    /// only, never in the World, its `state_hash` or a save, and
+    /// [`forked`](Self::forked) does not copy it, so a fork made to play
+    /// streams around the game's focuses. Runs, replays and `real verify`
+    /// never set it.
+    pub fn set_view_focus(&mut self, focus: Option<Focus>) {
+        self.view_focus = focus.map(|f| Focus {
+            position: f.position,
+            forward: f.forward.normalize_or_zero(),
+        });
+    }
+
+    /// The view focus, if one is set ([`set_view_focus`](Self::set_view_focus)).
+    pub fn view_focus(&self) -> Option<Focus> {
+        self.view_focus
     }
 
     fn pool(&self) -> &TaskPool {
@@ -300,9 +336,13 @@ impl Streamer {
     pub fn complete_view(&mut self, world: &mut World) -> Vec<Diagnostic> {
         self.view = true;
         let (sources, _) = self.describe_sources(world);
-        let at: Vec<Vec3> = named_focuses(world)
-            .into_iter()
-            .map(|(_, f)| Vec3::new(f.position.x, 0.0, f.position.y))
+        let points = match self.view_focus {
+            Some(f) => vec![f],
+            None => focuses(world),
+        };
+        let at: Vec<Vec3> = points
+            .iter()
+            .map(|f| Vec3::new(f.position.x, 0.0, f.position.y))
             .collect();
         let pool = self.pool.clone();
         let pool = pool.as_deref().unwrap_or_else(|| TaskPool::global());
@@ -480,6 +520,7 @@ impl Streamer {
             collision: self.collision.clone(),
             origin: self.origin,
             travel: self.travel.clone(),
+            view_focus: None,
         }
     }
 
@@ -554,7 +595,8 @@ impl Streamer {
 
 /// The focus points: entities with [`StreamFocus`], in id order; with none,
 /// the active camera. Each one's `forward` is its −Z: [`step`] turns it the
-/// way the focus is going once it has moved.
+/// way the focus is going once it has moved. A manager's view focus
+/// ([`Streamer::set_view_focus`]) is not among them.
 pub fn focuses(world: &mut World) -> Vec<Focus> {
     named_focuses(world).into_iter().map(|(_, f)| f).collect()
 }
@@ -812,11 +854,17 @@ impl Streamer {
         };
 
         // 0. The floating origin follows the focuses, and each focus looks
-        // ahead the way it is going.
-        let mut named = named_focuses(world);
-        self.follow(&named, &mut report.diagnostics);
-        self.point_ahead(&mut named);
-        let focuses: Vec<Focus> = named.into_iter().map(|(_, f)| f).collect();
+        // ahead the way it is going; a view focus replaces them and moves
+        // neither.
+        let focuses: Vec<Focus> = match self.view_focus {
+            Some(view) => vec![view],
+            None => {
+                let mut named = named_focuses(world);
+                self.follow(&named, &mut report.diagnostics);
+                self.point_ahead(&mut named);
+                named.into_iter().map(|(_, f)| f).collect()
+            }
+        };
 
         // 1. Requests.
         let desired = self.desired(&focuses, &has_content);
@@ -1025,8 +1073,9 @@ impl Streamer {
             }
             done += self.load(world, &sources, &k, c, outputs, &mut report, &mut events);
         }
-        // Terrain collision chunks near the focuses.
-        {
+        // Terrain collision chunks near the focuses, simulation state that a
+        // view focus leaves as it is.
+        if self.view_focus.is_none() {
             let at: Vec<Vec2> = focuses.iter().map(|f| f.position).collect();
             let pool = self.pool.clone();
             let pool = pool.as_deref().unwrap_or_else(|| TaskPool::global());
