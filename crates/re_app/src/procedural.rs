@@ -92,9 +92,23 @@ fn graph_of(
     if !graph.is_empty() {
         let path =
             crate::commands::project_path(graph, "the graph file", codes::GRAPH_SOURCE_FAILED)?;
-        let text = project
-            .read_str(&path)
-            .map_err(|e| failed(id, &path, format!("cannot read the graph {path}: {e}")))?;
+        let text = match project.read_str(&path) {
+            Ok(text) => text,
+            // A graph file made in this session and not saved yet
+            // (`proc.convert_builder`): its open document is the graph.
+            Err(_) if world.doc(&path).is_some_and(|d| !d.is_absent()) => {
+                let value = world.doc(&path).expect("checked above").value.clone();
+                return serde_json::from_value(value)
+                    .map_err(|e| failed(id, &path, format!("{path} is not a valid graph: {e}")));
+            }
+            Err(e) => {
+                return Err(failed(
+                    id,
+                    &path,
+                    format!("cannot read the graph {path}: {e}"),
+                ));
+            }
+        };
         return GraphDoc::from_json(&text)
             .map_err(|e| failed(id, &path, format!("{path} is not a valid graph: {e}")));
     }

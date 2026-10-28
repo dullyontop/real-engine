@@ -1,6 +1,10 @@
 //! The `graph.*` commands (ARCHITECTURE §6): `proc.create_source`,
 //! `graph.set_param` and `graph.regenerate` (edit), `graph.generate`, `graph.report` and
-//! `graph.migration_report` (read).
+//! `graph.migration_report` (read). The editor's own are in [`editor`].
+
+mod editor;
+
+pub use editor::ConvertBuilderArgs;
 
 use std::path::Path;
 
@@ -852,4 +856,5 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
         true,
         migration_report::<C>,
     );
+    editor::register(registry);
 }

@@ -66,8 +66,8 @@ pub mod value;
 
 pub use canon::version_stamp;
 pub use commands::{
-    DEFAULT_GENERATE_ENTITIES, DEFAULT_GENERATE_MS, GenerateArgs, MigrationReportArgs,
-    RegenerateArgs, ReportArgs, SetParamArgs, register_commands,
+    ConvertBuilderArgs, DEFAULT_GENERATE_ENTITIES, DEFAULT_GENERATE_MS, GenerateArgs,
+    MigrationReportArgs, RegenerateArgs, ReportArgs, SetParamArgs, register_commands,
 };
 pub use edit::{AddNodeArgs, ConnectArgs, MoveNodesArgs, RemoveNodeArgs, SetDefaultArgs};
 pub use eval::{
@@ -212,6 +212,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::OPEN_GRAPH_DIFFERS,
         title: "Open graph differs from its file",
         page: include_str!("../explain/RE4022.md"),
+    },
+    DiagInfo {
+        code: codes::NOT_A_BUILDER_SOURCE,
+        title: "Not a builder source",
+        page: include_str!("../explain/RE4090.md"),
+    },
+    DiagInfo {
+        code: codes::GRAPH_FILE_TAKEN,
+        title: "Graph file exists or is open",
+        page: include_str!("../explain/RE4091.md"),
     },
     DiagInfo {
         code: codes::LUAU_DECLARATION,

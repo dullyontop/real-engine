@@ -86,6 +86,14 @@ pub const OPEN_GRAPH_DIFFERS: Code = Code::new("RE4022");
 /// that does not turn into entities.
 pub const STRUCTURE_REFUSED: Code = Code::new("RE4023");
 
+/// `proc.convert_builder` was given a source whose graph no builder script
+/// makes: it reads a graph file, or has no `GraphSource.builder`.
+pub const NOT_A_BUILDER_SOURCE: Code = Code::new("RE4090");
+
+/// The graph file `proc.convert_builder` would make exists, or is open in
+/// the World with content.
+pub const GRAPH_FILE_TAKEN: Code = Code::new("RE4091");
+
 /// A Luau node script under `scripts/generators/` does not declare a valid
 /// node kind: it fails to compile or run, does not return `proc.node{...}`,
 /// or its kind is malformed or taken (ADR-0043 §4).

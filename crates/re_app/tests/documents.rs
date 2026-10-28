@@ -1,6 +1,8 @@
 //! The document commands (ADR-0064): materials and `real.toml` made and
 //! edited by commands, each one undo step, each refusing what it cannot
-//! make, and each file written back byte for byte when its edits are undone.
+//! make, and each file written back byte for byte when its edits are undone;
+//! and a graph file made from a builder source's graph
+//! (`proc.convert_builder`), which generates before it is saved.
 
 use std::path::Path;
 
@@ -20,6 +22,26 @@ const SCENE: &str = r#"{
     { "id": "camera", "components": {
         "Camera": { "active": true },
         "Transform": { "translation": [0.0, 1.0, 5.0] } } }
+  ]
+}
+"#;
+
+/// A builder script: a small terrain.
+const FLAT: &str = r#"local g = proc.graph("flat")
+local h = g:node("terrain.heightfield", { size = 9, cell = 4.0, height = 2.0 }, nil, "h")
+g:node("terrain.mesh", {}, { field = h }, "ground")
+return g
+"#;
+
+/// A scene whose procedural source's graph a builder script makes.
+const BUILT: &str = r#"{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    { "id": "island", "name": "Island", "components": {
+        "GraphSource": { "builder": "scripts/tools/flat.luau" },
+        "Procedural": { "generator": "graph", "seed": 1 },
+        "Transform": {} } }
   ]
 }
 "#;
@@ -289,4 +311,59 @@ fn config_set_keeps_real_toml_as_written_and_undo_gives_it_back() {
     }
     app.save_scene().unwrap();
     assert_eq!(read(dir.path(), "real.toml").unwrap(), CONFIG);
+}
+
+/// The hash of the fragment the island's graph made at its last generation.
+fn fragment(app: &App) -> String {
+    app.world()
+        .ecs
+        .resource::<re_proc::GraphStore>()
+        .report("island")
+        .and_then(|r| r.fragment_hash)
+        .expect("a fragment hash")
+}
+
+#[test]
+fn a_builder_source_converted_to_a_graph_file_generates_the_same_before_the_save() {
+    let dir = project();
+    let p = dir.path();
+    std::fs::create_dir_all(p.join("scripts/tools")).unwrap();
+    std::fs::write(p.join("scripts/tools/flat.luau"), FLAT).unwrap();
+    std::fs::write(p.join("scenes/main.scene.json"), BUILT).unwrap();
+    let mut app = open(p);
+    let built = fragment(&app);
+    app.take_diagnostics();
+
+    let data = ok(run(
+        &mut app,
+        "proc.convert_builder",
+        json!({ "source": "island" }),
+    ));
+    assert_eq!(data["graph"], "graphs/island.graph.json");
+    assert_eq!(applied(&app), 1);
+    // The graph file is not written yet: the source reads its document.
+    assert!(read(p, "graphs/island.graph.json").is_none());
+    assert_eq!(app.take_diagnostics(), []);
+    ok(run(
+        &mut app,
+        "graph.regenerate",
+        json!({ "source": "island" }),
+    ));
+    assert_eq!(fragment(&app), built);
+
+    // Undo gives the source its builder again.
+    undo(&mut app);
+    assert_eq!(app.take_diagnostics(), []);
+    assert!(
+        app.world()
+            .doc("graphs/island.graph.json")
+            .unwrap()
+            .is_absent()
+    );
+    ok(run(
+        &mut app,
+        "graph.regenerate",
+        json!({ "source": "island" }),
+    ));
+    assert_eq!(fragment(&app), built);
 }
