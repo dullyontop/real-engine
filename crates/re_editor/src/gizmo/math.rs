@@ -31,6 +31,17 @@ pub enum Orientation {
     Local,
 }
 
+/// Where the gizmo stands when several entities are selected; rotation and
+/// scale act about it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GizmoPivot {
+    /// The active entity's origin.
+    #[default]
+    Active,
+    /// The centre of the selection's bounds.
+    Centre,
+}
+
 /// The gizmo's settings: editor UI state, saved with the layout.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -39,6 +50,8 @@ pub struct GizmoSettings {
     pub mode: GizmoMode,
     /// World or local axes.
     pub orientation: Orientation,
+    /// Where the gizmo stands for a selection of several entities.
+    pub pivot: GizmoPivot,
     /// Snap drags to the steps below.
     pub snap: bool,
     /// Translation step in metres.
@@ -54,6 +67,7 @@ impl Default for GizmoSettings {
         GizmoSettings {
             mode: GizmoMode::Translate,
             orientation: Orientation::World,
+            pivot: GizmoPivot::Active,
             snap: false,
             translate_step: 0.5,
             angle_step_deg: 15.0,
@@ -503,6 +517,31 @@ pub fn apply_local(
     }
 }
 
+/// [`apply_local`] for one of several entities moved together: the entity,
+/// at world position `at`, also moves about `pivot` as the gizmo there does.
+/// A rotation turns its position about the pivot; a scale along the gizmo's
+/// `axes` (unit, at right angles) moves its position away from the pivot
+/// along them, while its own scale is multiplied along its own axes, so no
+/// shear appears. An entity at the pivot changes as [`apply_local`] has it.
+pub fn apply_about(
+    local: (Vec3, Quat, Vec3),
+    parent: &Affine3A,
+    at: Vec3,
+    delta: &Delta,
+    pivot: Vec3,
+    axes: [Vec3; 3],
+) -> (Vec3, Quat, Vec3) {
+    let (s, r, t) = apply_local(local, parent, delta);
+    let offset = at - pivot;
+    let moved = match *delta {
+        // `apply_local` already moved it.
+        Delta::Translate(_) => offset,
+        Delta::Rotate(q) => q * offset,
+        Delta::Scale(f) => (0..3).map(|i| axes[i] * (offset.dot(axes[i]) * f[i])).sum(),
+    };
+    (s, r, t + parent.inverse().transform_vector3(moved - offset))
+}
+
 /// Whether two unit quaternions are the same rotation, within about 0.001°.
 /// (`Quat::angle_between` uses an approximate `acos` that reads up to 0.05°
 /// for two equal rotations.)
@@ -794,6 +833,49 @@ mod tests {
             "{world}"
         );
         assert!(Delta::Translate(Vec3::ZERO).is_identity());
+    }
+
+    #[test]
+    fn several_entities_turn_and_scale_about_the_pivot() {
+        let axes = [Vec3::X, Vec3::Y, Vec3::Z];
+        let pivot = Vec3::new(1.0, 0.0, 0.0);
+        let root = Affine3A::IDENTITY;
+        let local = (Vec3::ONE, Quat::IDENTITY, Vec3::new(3.0, 0.0, 0.0));
+        let q = Quat::from_rotation_y(90f32.to_radians());
+        // 2 m along X from the pivot, turned a quarter about Y: 2 m along -Z
+        // from it, and turned itself.
+        let (s, r, t) = apply_about(local, &root, local.2, &Delta::Rotate(q), pivot, axes);
+        assert!(close(t, Vec3::new(1.0, 0.0, -2.0)), "{t}");
+        assert!(same_rotation(r, q) && s == Vec3::ONE, "{r} {s}");
+        // Scaled by 2 along X and 3 along Y: twice as far along X (it is
+        // level with the pivot in Y), and its own scale multiplied.
+        let f = Vec3::new(2.0, 3.0, 1.0);
+        let (s, _, t) = apply_about(local, &root, local.2, &Delta::Scale(f), pivot, axes);
+        assert!(close(t, Vec3::new(5.0, 0.0, 0.0)) && s == f, "{t} {s}");
+        // A move is the same for each entity, and an entity at the pivot
+        // changes as it would alone.
+        let at_pivot = (Vec3::ONE, Quat::IDENTITY, pivot);
+        for d in [Delta::Translate(Vec3::Y), Delta::Rotate(q), Delta::Scale(f)] {
+            if let Delta::Translate(_) = d {
+                let alone = apply_local(local, &root, &d);
+                assert_eq!(apply_about(local, &root, local.2, &d, pivot, axes), alone);
+            }
+            let alone = apply_local(at_pivot, &root, &d);
+            assert_eq!(apply_about(at_pivot, &root, pivot, &d, pivot, axes), alone);
+        }
+        // Under a parent moved by (0, 5, 0) and scaled by 2, a child ends
+        // where a turn about the pivot puts it in the world.
+        let parent = Affine3A::from_scale_rotation_translation(
+            Vec3::splat(2.0),
+            Quat::IDENTITY,
+            Vec3::new(0.0, 5.0, 0.0),
+        );
+        let child = (Vec3::ONE, Quat::IDENTITY, Vec3::new(1.0, 0.0, 0.0));
+        let at = parent.transform_point3(child.2);
+        let pivot = Vec3::new(0.0, 5.0, 0.0);
+        let (_, _, t) = apply_about(child, &parent, at, &Delta::Rotate(q), pivot, axes);
+        let world = parent.transform_point3(t);
+        assert!(close(world, pivot + q * (at - pivot)), "{world}");
     }
 
     #[test]
