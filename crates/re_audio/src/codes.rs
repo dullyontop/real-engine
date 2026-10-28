@@ -38,6 +38,14 @@ pub const INVALID_GRAPH: Code = Code::new("RE7407");
 /// (a warning, given once per name).
 pub const UNKNOWN_BUS: Code = Code::new("RE7408");
 
+/// An audio file is not one the engine plays: not WAV or Ogg Vorbis, more than
+/// two channels, or several chained or multiplexed streams in one Ogg file.
+pub const UNSUPPORTED_AUDIO: Code = Code::new("RE7409");
+
+/// A streamed sound failed while it played (a read or decode error, or a
+/// decoder that panicked); only that stream stops.
+pub const STREAM_FAILED: Code = Code::new("RE7410");
+
 /// A sound control command (`SoundControl`, `SourceControl`) has a fade that
 /// is negative, not finite or longer than an hour, or a seek time that is
 /// negative or not finite.

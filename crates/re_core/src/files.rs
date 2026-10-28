@@ -324,6 +324,67 @@ pub struct FileData {
     pub layer: LayerKind,
 }
 
+/// Anything a [`FileReader`] can hold.
+pub trait ReadSeek: io::Read + io::Seek + Send {}
+
+impl<T: io::Read + io::Seek + Send> ReadSeek for T {}
+
+/// A file opened to be read in pieces ([`ProjectFiles::open`], ADR-0066 §5),
+/// with how it was stored.
+pub struct FileReader {
+    inner: Box<dyn ReadSeek>,
+    form: Form,
+    layer: LayerKind,
+}
+
+impl FileReader {
+    /// A reader over `inner`, whose bytes are stored as `form` in a layer of
+    /// kind `layer`.
+    pub fn new(inner: impl ReadSeek + 'static, form: Form, layer: LayerKind) -> FileReader {
+        FileReader {
+            inner: Box::new(inner),
+            form,
+            layer,
+        }
+    }
+
+    /// A reader over bytes already read whole.
+    pub fn from_data(data: FileData) -> FileReader {
+        FileReader::new(io::Cursor::new(data.bytes), data.form, data.layer)
+    }
+
+    /// How the bytes were stored.
+    pub fn form(&self) -> &Form {
+        &self.form
+    }
+
+    /// The kind of layer they come from.
+    pub fn layer(&self) -> LayerKind {
+        self.layer
+    }
+}
+
+impl io::Read for FileReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl io::Seek for FileReader {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+impl fmt::Debug for FileReader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FileReader")
+            .field("form", &self.form)
+            .field("layer", &self.layer)
+            .finish_non_exhaustive()
+    }
+}
+
 /// What a path names in a layer.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EntryKind {
@@ -461,6 +522,17 @@ pub trait FileLayer: Send + Sync + fmt::Debug {
     /// [`FileError::Io`], [`FileError::Corrupt`] or [`FileError::Outside`].
     fn read(&self, path: &ProjectPath) -> Result<Option<FileData>, FileError>;
 
+    /// The file at `path`, opened to be read in pieces (ADR-0066 §5), with the
+    /// same answers as [`read`](FileLayer::read). The provided body reads the
+    /// whole file; a layer that can serve byte ranges overrides it.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](FileLayer::read).
+    fn open(self: Arc<Self>, path: &ProjectPath) -> Result<Option<FileReader>, FileError> {
+        Ok(self.read(path)?.map(FileReader::from_data))
+    }
+
     /// What `path` names in this layer, if anything.
     fn entry(&self, path: &ProjectPath) -> Option<EntryKind>;
 
@@ -554,6 +626,28 @@ impl DirLayer {
         }
     }
 
+    fn io_error(&self, path: &ProjectPath, error: io::Error) -> FileError {
+        FileError::Io {
+            path: path.clone(),
+            layer: self.describe(),
+            error,
+        }
+    }
+
+    /// The canonical path of the file at `path`, checked as the module docs
+    /// say: `None` when there is no file there.
+    fn locate(&self, path: &ProjectPath) -> Result<Option<PathBuf>, FileError> {
+        match self
+            .resolve(path.as_str())
+            .map_err(|e| self.io_error(path, e))?
+        {
+            Resolved::Inside(p) if p.is_dir() => Ok(None),
+            Resolved::Inside(p) => Ok(Some(p)),
+            Resolved::Missing => Ok(None),
+            Resolved::Outside => Err(FileError::Outside { path: path.clone() }),
+        }
+    }
+
     fn walk(&self, dir: &Path, rel: &str, suffix: &str, out: &mut Vec<ProjectPath>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
@@ -593,19 +687,9 @@ impl FileLayer for DirLayer {
     }
 
     fn read(&self, path: &ProjectPath) -> Result<Option<FileData>, FileError> {
-        let io_error = |error| FileError::Io {
-            path: path.clone(),
-            layer: self.describe(),
-            error,
-        };
-        let os = match self.resolve(path.as_str()).map_err(io_error)? {
-            Resolved::Inside(p) => p,
-            Resolved::Missing => return Ok(None),
-            Resolved::Outside => return Err(FileError::Outside { path: path.clone() }),
-        };
-        if os.is_dir() {
+        let Some(os) = self.locate(path)? else {
             return Ok(None);
-        }
+        };
         match std::fs::read(&os) {
             Ok(bytes) => Ok(Some(FileData {
                 bytes: bytes.into(),
@@ -613,7 +697,18 @@ impl FileLayer for DirLayer {
                 layer: self.kind,
             })),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(io_error(error)),
+            Err(error) => Err(self.io_error(path, error)),
+        }
+    }
+
+    fn open(self: Arc<Self>, path: &ProjectPath) -> Result<Option<FileReader>, FileError> {
+        let Some(os) = self.locate(path)? else {
+            return Ok(None);
+        };
+        match std::fs::File::open(&os) {
+            Ok(file) => Ok(Some(FileReader::new(file, Form::Source, self.kind))),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(self.io_error(path, error)),
         }
     }
 
@@ -1157,6 +1252,35 @@ impl ProjectFiles {
         }
     }
 
+    /// The file at `path`, from the first layer that has it, opened to be read
+    /// in pieces (ADR-0066 §5): a file of the project or the game folder is
+    /// opened as a file, and an entry the archive stores uncompressed is read
+    /// by byte range once a pass over it has checked its hash. Like
+    /// [`read_source`](Self::read_source), it serves [`Form::Source`] only.
+    ///
+    /// # Errors
+    ///
+    /// As [`read_source`](Self::read_source).
+    pub fn open(&self, path: &str) -> Result<FileReader, FileError> {
+        let path = Self::path(path)?;
+        for layer in &self.inner.layers {
+            if let Some(reader) = Arc::clone(layer).open(&path)? {
+                return match reader.form() {
+                    Form::Source => Ok(reader),
+                    found => Err(FileError::WrongForm {
+                        path,
+                        found: found.clone(),
+                        wanted: "the source file",
+                    }),
+                };
+            }
+        }
+        Err(FileError::NotFound {
+            path,
+            tried: self.inner.layers.iter().map(|l| l.describe()).collect(),
+        })
+    }
+
     /// The file as UTF-8 text ([`Form::Source`] only).
     ///
     /// # Errors
@@ -1350,6 +1474,32 @@ mod tests {
             files.read_str("bad.txt"),
             Err(FileError::NotUtf8 { .. })
         ));
+        assert!(matches!(
+            files.open("main.luau"),
+            Err(FileError::WrongForm { .. })
+        ));
+    }
+
+    #[test]
+    fn opened_files_read_in_pieces() {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut mem = MemLayer::new(LayerKind::Memory);
+        mem.insert(p("a.bin"), &b"0123456789"[..], Form::Source);
+        let files = ProjectFiles::for_tests(mem);
+        let mut r = files.open("a.bin").unwrap();
+        assert_eq!(r.layer(), LayerKind::Memory);
+        let mut buf = [0u8; 3];
+        r.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"012");
+        assert_eq!(r.seek(SeekFrom::End(-2)).unwrap(), 8);
+        let mut rest = Vec::new();
+        r.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, b"89");
+        assert!(files.open("b.bin").unwrap_err().is_not_found());
+        assert!(matches!(
+            files.open("../b.bin"),
+            Err(FileError::InvalidPath { .. })
+        ));
     }
 
     #[test]
@@ -1363,8 +1513,13 @@ mod tests {
         let files = ProjectFiles::project(&root);
         assert_eq!(files.read_str("real.toml").unwrap(), "x");
         assert_eq!(files.read("real.toml").unwrap().layer, LayerKind::Project);
+        let mut opened = String::new();
+        std::io::Read::read_to_string(&mut files.open("scripts/a.luau").unwrap(), &mut opened)
+            .unwrap();
+        assert_eq!(opened, "a");
         assert!(files.is_dir("scripts/sub"));
         assert!(files.read("scripts").unwrap_err().is_not_found());
+        assert!(files.open("scripts").unwrap_err().is_not_found());
         assert_eq!(
             files.list("scripts", ".luau"),
             vec![p("scripts/a.luau"), p("scripts/sub/b.luau")]
@@ -1377,6 +1532,7 @@ mod tests {
             std::os::unix::fs::symlink(outside.join("secret"), root.join("link")).unwrap();
             std::os::unix::fs::symlink(root.join("real.toml"), root.join("inside")).unwrap();
             assert!(matches!(files.read("link"), Err(FileError::Outside { .. })));
+            assert!(matches!(files.open("link"), Err(FileError::Outside { .. })));
             assert_eq!(files.read_str("inside").unwrap(), "x");
             assert!(!files.list("", "").contains(&p("link")));
             // Linked directories are not followed, so links cannot loop.

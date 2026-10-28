@@ -53,7 +53,10 @@ fn typical() -> AudioGraphDesc {
 
 /// CPU milliseconds per second of audio rendered.
 fn run(desc: &AudioGraphDesc, sounds: usize, seconds: usize) -> f64 {
-    let mut audio = Audio::headless_with(CaptureSettings { sample_rate: RATE });
+    let mut audio = Audio::headless_with(CaptureSettings {
+        sample_rate: RATE,
+        ..Default::default()
+    });
     assert!(audio.set_graph(desc).is_empty());
     audio.insert_clip("tone", sine(440.0, 1.0, RATE, 0.1));
     let buses: Vec<String> = desc.buses.keys().cloned().collect();

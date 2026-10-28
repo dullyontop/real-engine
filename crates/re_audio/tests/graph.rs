@@ -26,7 +26,10 @@ const FRAMES: usize = 9_600;
 const TOLERANCE: f32 = 1e-4;
 
 fn audio() -> Audio {
-    Audio::headless_with(CaptureSettings { sample_rate: RATE })
+    Audio::headless_with(CaptureSettings {
+        sample_rate: RATE,
+        ..Default::default()
+    })
 }
 
 fn graph(json: &str) -> AudioGraphDesc {

@@ -18,10 +18,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use re_core::files::{
-    EntryKind, FileData, FileError, FileLayer, Form, LayerKind, ProjectDir, ProjectPath,
+    EntryKind, FileData, FileError, FileLayer, FileReader, Form, LayerKind, ProjectDir, ProjectPath,
 };
 use re_core::{Diagnostic, Location};
 use serde::{Deserialize, Serialize};
@@ -620,6 +620,32 @@ impl Archive {
         Ok(bytes)
     }
 
+    /// Checks the hash of entry `i`, stored uncompressed, reading it in 64 KiB
+    /// pieces rather than holding it whole.
+    fn check_raw(&self, i: usize) -> Result<(), String> {
+        let e = &self.index.entries[i];
+        if e.stored_size != e.size {
+            return Err("its stored size differs from its size".to_owned());
+        }
+        let mut hasher = blake3::Hasher::new();
+        let mut piece = vec![0u8; 64 << 10];
+        let mut at = 0;
+        while at < e.size {
+            let n = piece
+                .len()
+                .min(usize::try_from(e.size - at).unwrap_or(usize::MAX));
+            self.source
+                .read_at(&mut piece[..n], e.offset + at)
+                .map_err(|x| format!("cannot read it: {x}"))?;
+            hasher.update(&piece[..n]);
+            at += n as u64;
+        }
+        if hasher.finalize().as_bytes() != &e.hash {
+            return Err("its contents do not match the archive's hash".to_owned());
+        }
+        Ok(())
+    }
+
     /// Reads every entry and checks its hash (`real verify --package`).
     ///
     /// # Errors
@@ -715,6 +741,32 @@ impl FileLayer for Archive {
         }))
     }
 
+    /// An entry stored uncompressed (ADR-0066 §5) is read by byte range, once a
+    /// pass over it has checked its hash; bytes read later are not checked
+    /// again. A compressed entry is read whole.
+    fn open(self: Arc<Self>, path: &ProjectPath) -> Result<Option<FileReader>, FileError> {
+        let Some(i) = self.find(path.as_str()) else {
+            return Ok(None);
+        };
+        let e = &self.index.entries[i];
+        if e.compression != Compression::None {
+            return Ok(self.read(path)?.map(FileReader::from_data));
+        }
+        self.check_raw(i).map_err(|detail| FileError::Corrupt {
+            path: path.clone(),
+            layer: self.describe_name(),
+            detail,
+        })?;
+        let (start, len, form) = (e.offset, e.size, e.form.to_form());
+        let reader = EntryReader {
+            archive: self,
+            start,
+            len,
+            pos: 0,
+        };
+        Ok(Some(FileReader::new(reader, form, LayerKind::Archive)))
+    }
+
     fn entry(&self, path: &ProjectPath) -> Option<EntryKind> {
         let p = path.as_str();
         if self
@@ -764,6 +816,47 @@ impl FileLayer for Archive {
 
     fn describe(&self) -> String {
         self.describe_name()
+    }
+}
+
+/// An entry stored uncompressed, read by byte range ([`Archive::open`]).
+struct EntryReader {
+    archive: Arc<Archive>,
+    /// Where the entry starts in the archive, and its length.
+    start: u64,
+    len: u64,
+    /// The position in the entry.
+    pos: u64,
+}
+
+impl io::Read for EntryReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let left = self.len.saturating_sub(self.pos);
+        let n = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+        if n > 0 {
+            self.archive
+                .source
+                .read_at(&mut buf[..n], self.start + self.pos)?;
+            self.pos += n as u64;
+        }
+        Ok(n)
+    }
+}
+
+impl io::Seek for EntryReader {
+    fn seek(&mut self, to: io::SeekFrom) -> io::Result<u64> {
+        let pos = match to {
+            io::SeekFrom::Start(n) => Some(n),
+            io::SeekFrom::End(d) => self.len.checked_add_signed(d),
+            io::SeekFrom::Current(d) => self.pos.checked_add_signed(d),
+        };
+        self.pos = pos.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a seek before the start of the entry",
+            )
+        })?;
+        Ok(self.pos)
     }
 }
 
@@ -954,6 +1047,69 @@ mod tests {
         let problems = a.check_all().unwrap_err();
         assert_eq!(problems.len(), 1);
         assert_eq!(problems[0].code, codes::PACKAGE_ENTRY_CORRUPT);
+    }
+
+    /// Bytes zstd cannot shrink, so their entry is stored uncompressed.
+    fn noise(n: usize) -> Vec<u8> {
+        let mut x = 0x2545_f491u32;
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_uncompressed_entry_opens_for_ranged_reads() {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut w = sample();
+        let music = noise(200_000);
+        w.add(p("assets/music.ogg"), music.clone(), StoredForm::Source)
+            .unwrap();
+        let (_dir, path) = written(&w, ARCHIVE_NAME);
+        let bytes = std::fs::read(&path).unwrap();
+        let from_file = Archive::open(&path).unwrap();
+        let in_memory = Archive::from_bytes(ARCHIVE_NAME, bytes.clone()).unwrap();
+        for a in [Arc::new(from_file), Arc::new(in_memory)] {
+            let mut r = Arc::clone(&a)
+                .open(&p("assets/music.ogg"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(r.form(), &Form::Source);
+            let mut head = [0u8; 100];
+            r.read_exact(&mut head).unwrap();
+            assert_eq!(head[..], music[..100]);
+            assert_eq!(r.seek(SeekFrom::End(-1000)).unwrap(), 199_000);
+            let mut tail = Vec::new();
+            r.read_to_end(&mut tail).unwrap();
+            assert_eq!(tail, music[199_000..]);
+            assert!(r.seek(SeekFrom::Current(-300_000)).is_err());
+            // A compressed entry opens too, read whole.
+            let mut rock = Vec::new();
+            let mut opened = Arc::clone(&a).open(&p("assets/Rock.glb")).unwrap().unwrap();
+            opened.read_to_end(&mut rock).unwrap();
+            assert_eq!(rock, [7u8; 4096]);
+            assert!(Arc::clone(&a).open(&p("missing.ogg")).unwrap().is_none());
+        }
+        // A damaged entry fails the hash pass when it is opened.
+        let a = Archive::from_bytes(ARCHIVE_NAME, bytes.clone()).unwrap();
+        let e = a
+            .index()
+            .entries
+            .iter()
+            .find(|e| e.path == "assets/music.ogg")
+            .unwrap();
+        assert_eq!(e.compression, Compression::None);
+        let mut damaged = bytes;
+        damaged[e.offset as usize + 150_000] ^= 0xff;
+        let a = Arc::new(Archive::from_bytes(ARCHIVE_NAME, damaged).unwrap());
+        assert!(matches!(
+            a.open(&p("assets/music.ogg")),
+            Err(FileError::Corrupt { .. })
+        ));
     }
 
     #[test]

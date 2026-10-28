@@ -594,6 +594,23 @@ fn saving_writes_open_documents_and_status_reports_them() {
 }
 
 #[test]
+fn a_changed_sound_file_plays_new_from_its_next_start() {
+    // Hot reload forgets the mixer's copy of a changed sound file, so its
+    // next start reads the new one (ADR-0066 §6).
+    let dir = project();
+    let mut app = open(dir.path());
+    let path = "assets/music.wav";
+    let seconds = |app: &mut App| app.audio_mut().clip_seconds(path).unwrap();
+    assert!((seconds(&mut app) - 0.1).abs() < 1e-9);
+    assert!(app.audio_mut().has_clip(path));
+    std::fs::write(dir.path().join(path), wav(1600)).unwrap();
+    let problems = app.apply_file_changes(&[re_assets::AssetChange::Modified(path.into())]);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(!app.audio_mut().has_clip(path));
+    assert!((seconds(&mut app) - 0.2).abs() < 1e-9);
+}
+
+#[test]
 fn serve_answers_requests_from_another_thread() {
     let dir = project();
     let config = AppConfig {

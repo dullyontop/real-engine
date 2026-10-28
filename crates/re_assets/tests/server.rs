@@ -267,6 +267,50 @@ fn reload_after_changes_keeps_last_good_on_failure() {
     ]);
     assert_eq!(r.scripts, ["scripts/game/player.luau"]);
     assert!(r.reloaded.is_empty() && r.problems.is_empty());
+    assert!(r.audio.is_empty());
+}
+
+#[test]
+fn audio_files_are_reported_and_described() {
+    let dir = project();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("assets/sfx")).unwrap();
+    // `re_audio/tests/ogg.rs` says how this file was made.
+    let ogg = include_bytes!("../../re_audio/tests/data/stereo1.ogg");
+    std::fs::write(root.join("assets/sfx/door.ogg"), ogg).unwrap();
+    let mut s = AssetServer::new(root);
+    let info = s.audio_info("assets/sfx/door.ogg").unwrap();
+    assert_eq!(
+        (info.channels, info.sample_rate, info.frames),
+        (2, 44_100, 44_100)
+    );
+    let code = |path: &str| s.audio_info(path).unwrap_err().code.to_string();
+    assert_eq!(code("assets/sfx/none.ogg"), "RE7001");
+    assert_eq!(code("materials/rock.material.json"), "RE7070");
+
+    // Changed audio files are named, whether loaded or not, and a rename
+    // names both paths.
+    let r = s.apply_changes(&[
+        AssetChange::Modified("assets/sfx/door.ogg".into()),
+        AssetChange::Created("assets/sfx/Step.WAV".into()),
+        AssetChange::Modified("assets/sfx/door.ogg".into()),
+        AssetChange::Renamed {
+            from: "assets/sfx/a.ogg".into(),
+            to: "assets/sfx/b.ogg".into(),
+        },
+        AssetChange::Removed("assets/sfx/c.wav".into()),
+        AssetChange::Modified("assets/textures/rock.png".into()),
+    ]);
+    assert_eq!(
+        r.audio,
+        [
+            "assets/sfx/door.ogg",
+            "assets/sfx/Step.WAV",
+            "assets/sfx/a.ogg",
+            "assets/sfx/b.ogg",
+            "assets/sfx/c.wav"
+        ]
+    );
 }
 
 #[test]

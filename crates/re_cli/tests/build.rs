@@ -164,6 +164,47 @@ fn a_script_that_does_not_compile_stops_the_build() {
     assert!(!out.join(ARCHIVE_NAME).exists());
 }
 
+#[test]
+fn an_audio_file_the_engine_cannot_play_stops_the_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("island");
+    std::fs::create_dir_all(&project).unwrap();
+    copy_project(&example("island"), &project);
+    // `re_audio/tests/ogg.rs` says how these files were made.
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../re_audio/tests/data");
+    let sfx = project.join("assets/sfx");
+    std::fs::create_dir_all(&sfx).unwrap();
+    // Damaged past its headers: only decoding it finds that.
+    let mut broken = std::fs::read(data.join("sparse180.ogg")).unwrap();
+    for b in &mut broken[25_000..25_100] {
+        *b ^= 0x5a;
+    }
+    std::fs::write(sfx.join("broken.ogg"), broken).unwrap();
+    std::fs::copy(data.join("three.ogg"), sfx.join("choir.ogg")).unwrap();
+    std::fs::copy(data.join("stereo1.ogg"), sfx.join("door.ogg")).unwrap();
+    let out = dir.path().join("out");
+    let o = real(&[
+        "build",
+        "--project",
+        project.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+        "--archive-only",
+    ]);
+    assert!(!o.status.success());
+    let t = text(&o);
+    assert!(
+        t.contains("RE7402") && t.contains("assets/sfx/broken.ogg"),
+        "{t}"
+    );
+    assert!(
+        t.contains("RE7070") && t.contains("assets/sfx/choir.ogg"),
+        "{t}"
+    );
+    assert!(!t.contains("door.ogg") && t.contains("RE0951"), "{t}");
+    assert!(!out.join(ARCHIVE_NAME).exists());
+}
+
 /// A scene that names a project file the archive would leave out stops the
 /// build, and including the file fixes it.
 #[test]

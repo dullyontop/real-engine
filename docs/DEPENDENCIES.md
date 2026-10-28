@@ -143,6 +143,17 @@ Used only by `re_mcp`, a tooling crate, so the runtime-only binary does not link
 | hyper | 1.12.0 | MIT | ≤ 1.85 | HTTP/1.1 server under rmcp's `StreamableHttpService` for `real mcp --http` | `default-features = false`, `http1`, `server` | WP26 prototype in this container (401, 403, both protocol revisions, policy refusals) | Landed (WP26 PR "http", #92) |
 | hyper-util | 0.1.21 | MIT | ≤ 1.85 | `TowerToHyperService` and the tokio glue | `default-features = false`, `tokio`, `server`, `http1`, `service` | WP26 prototype | Landed (WP26 PR "http", #92) |
 
+### Compressed and streamed audio (M4, runtime)
+
+Used only by `re_audio` (ADR-0066): Ogg Vorbis clips, decoded by lewton's packet decoder over ogg 0.9's pages, and streamed through an rtrb ring. lewton is built without its own `ogg` feature, which would pull ogg 0.8.0 as a second version. Checked against crates.io on 2026-10-28, and `cargo deny check advisories licenses` passed for them in WP45's spike (`research/m4/wp45/`); none is a new duplicate (`cargo xtask dupes`). With them the lockfile gains 3 crates: lewton, ogg and tinyvec (lewton's). byteorder 1.5.0 (Unlicense OR MIT) and rtrb were already in it, rtrb through kira.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| lewton | 0.10.2 | MIT OR Apache-2.0 | none | Vorbis packet decoding (`read_audio_packet_generic`), native and in the browser | `default-features = false` (no `ogg` feature) | WP45 spike (same samples as symphonia; 445–535× real time native, 308–360× in V8); `re_audio`'s `vorbis` unit tests (exact seeks against a whole decode at 53 frames) and `tests/ogg.rs` | Landed (WP45 PR "ogg") |
+| ogg | 0.9.2 | BSD-3-Clause | 1.61 | Ogg pages and packets, page seeks by granule position | default | as lewton | Landed (WP45 PR "ogg") |
+| tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | none | lewton's small vectors (transitive) | lewton's | as lewton | Landed (WP45 PR "ogg"); transitive |
+| rtrb | 0.4.0 | MIT OR Apache-2.0 | 1.38 | The ring of frames between a stream's pump and its sound: one producer, one consumer, no allocation on the audio thread. Already in the lockfile through kira; a direct dependency of `re_audio` since this PR. | default | `re_audio`'s `tests/ogg.rs` and `tests/stream_memory.rs` | Landed (WP45 PR "ogg") |
+
 ### External tools (not linked, not from crates.io)
 
 | Tool | Version | License | Role | Verified by | Status |
@@ -197,7 +208,7 @@ The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each fa
 | image | 0.25.10 | MIT OR Apache-2.0 | 1.88 | Texture decode; `real build`'s `.icns` sizes | `default-features = false`, `png`, `jpeg` | platform spike | Verified |
 | notify | 8.2.0 | CC0-1.0 | 1.77 | File watching for hot reload | default | platform spike `watch` tests | Verified |
 | notify-debouncer-full | 0.7.0 | MIT OR Apache-2.0 | 1.85 | Debounced file events | default | platform spike | Verified |
-| kira | 0.12.5 | MIT OR Apache-2.0 | none | Audio playback and mixing | `default-features = false`, `cpal`. Not `wav`: it enables symphonia's RIFF container without the PCM codec, so it cannot decode WAV anyway; `re_audio` has its own WAV reader | platform spike (`CaptureBackend`, headless fallback); WP5 (`re_audio` tests) | Verified. Pulls MPL-2.0 `triple_buffer` (always); see policy 4 and ADR-0019 |
+| kira | 0.12.5 | MIT OR Apache-2.0 | none | Audio playback and mixing | `default-features = false`, `cpal`. Not `wav`: it enables symphonia's RIFF container without the PCM codec, so it cannot decode WAV anyway; `re_audio` has its own WAV reader, and decodes Ogg Vorbis with lewton (ADR-0066) | platform spike (`CaptureBackend`, headless fallback); WP5 (`re_audio` tests) | Verified. Pulls MPL-2.0 `triple_buffer` (always); see policy 4 and ADR-0019 |
 | gilrs | 0.11.2 | Apache-2.0 OR MIT | 1.84 | Gamepads | **default features required** | platform spike | Verified |
 | tracing | 0.1.44 | MIT | 1.65 | Logging and diagnostics events | default | platform spike | Verified |
 | tracing-subscriber | 0.3.23 | MIT | 1.65 | Log output (human and JSON) | `env-filter`, `fmt`, `ansi`, `json` | platform spike; WP0 `re_core::init_logging` (`crates/re_core/tests/log.rs`: filters, JSON lines) | Verified |

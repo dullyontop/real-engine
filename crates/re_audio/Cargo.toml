@@ -12,7 +12,10 @@ publish.workspace = true
 re_core.workspace = true
 re_types.workspace = true
 kira.workspace = true
+lewton.workspace = true
 libm.workspace = true
+ogg.workspace = true
+rtrb.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

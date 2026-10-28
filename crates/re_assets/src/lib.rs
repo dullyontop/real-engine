@@ -11,6 +11,8 @@
 //!   version, settings and source bytes (postcard, written atomically).
 //! * [`AssetServer`]: loads assets by project path behind generational
 //!   [`Handle`]s and re-imports them when [`AssetWatcher`] reports changes.
+//! * [`audio_info`]: an audio file's format, channels, rate and length from its
+//!   headers, refusing what the engine does not play (`re_audio` plays them).
 //!
 //! ```no_run
 //! use re_assets::{AssetServer, AssetWatcher};
@@ -39,6 +41,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod audio;
 mod cache;
 pub mod codes;
 mod fsutil;
@@ -55,6 +58,7 @@ pub use self::gltf::{
     GLTF_IMPORTER_VERSION, ImportedGltf, ImportedMaterial, ImportedMesh, ImportedNode,
     ImportedTexture, image_id, import_gltf,
 };
+pub use audio::{AudioFormat, AudioInfo, audio_info, is_audio};
 pub use cache::{
     CACHE_FORMAT_VERSION, CacheOutcome, ProcessedCache, cache_key, decode_entry, encode_entry,
 };
@@ -102,6 +106,7 @@ catalogue! {
     SKIN_TOO_MANY_INFLUENCES, "More than four joint influences", "../explain/RE7061.md";
     SKIN_DUPLICATE_JOINT_NAME, "Joint names are not unique", "../explain/RE7062.md";
     SKIN_UNWEIGHTED_MESH, "Skinned mesh without weights", "../explain/RE7063.md";
+    UNSUPPORTED_AUDIO, "Unsupported audio file", "../explain/RE7070.md";
 }
 
 #[cfg(test)]
