@@ -82,8 +82,14 @@ impl ErodeParams {
     }
 }
 
+/// Droplets eroded between two checks of the evaluation's stop (a few
+/// milliseconds of work).
+const DROPLET_BATCH: usize = 4096;
+
 /// Erodes `heights` (`n × n`, metres, `spacing` apart) with `cells²·droplets`
-/// droplets from `rng`.
+/// droplets from `rng`, in order. With `ctx`, it checks between batches of
+/// droplets whether the evaluation stopped; the batches run the droplets in
+/// the same order as one call, so the result is the same.
 fn erode_grid(
     heights: &[f32],
     n: usize,
@@ -91,15 +97,22 @@ fn erode_grid(
     cells: usize,
     p: &ErodeParams,
     mut rng: Pcg32,
-) -> Vec<f32> {
+    ctx: Option<&NodeCtx>,
+) -> Result<Vec<f32>, String> {
     let mut h: Vec<f32> = heights.iter().map(|v| v / spacing).collect();
     let count = (p.droplets * (cells * cells) as f32) as usize;
     let last = (n - 2) as f32;
     let starts: Vec<(f32, f32)> = (0..count)
         .map(|_| (rng.next_f32() * last, rng.next_f32() * last))
         .collect();
-    erode(&mut h, n, &p.erosion(), starts);
-    h.iter().map(|v| v * spacing).collect()
+    let params = p.erosion();
+    for batch in starts.chunks(DROPLET_BATCH) {
+        if let Some(ctx) = ctx {
+            ctx.check()?;
+        }
+        erode(&mut h, n, &params, batch.iter().copied());
+    }
+    Ok(h.iter().map(|v| v * spacing).collect())
 }
 
 type TileKey = [u8; 32];
@@ -152,6 +165,8 @@ fn tile(ctx: &NodeCtx, p: &ErodeParams, tx: i64, tz: i64) -> Result<Arc<Vec<f32>
     {
         return Ok(t.clone());
     }
+    // A tile erodes whole once started: the stop is checked before it.
+    ctx.check()?;
     let rng = Pcg32::from_seed(ctx.seed).fork2(tx as i32, tz as i32);
     let eroded = Arc::new(erode_grid(
         &input.0.samples,
@@ -160,7 +175,8 @@ fn tile(ctx: &NodeCtx, p: &ErodeParams, tx: i64, tz: i64) -> Result<Arc<Vec<f32>
         (TILE_CELLS + 2 * APRON) as usize,
         p,
         rng,
-    ));
+        None,
+    )?);
     let mut c = tiles().lock().unwrap_or_else(|e| e.into_inner());
     if c.tiles.insert(key, eroded.clone()).is_none() {
         c.order.push_back(key);
@@ -215,7 +231,8 @@ fn terrain_erode(ctx: &NodeCtx, p: &ErodeParams) -> Result<Output, String> {
             n - 1,
             p,
             Pcg32::from_seed(ctx.seed),
-        );
+            Some(ctx),
+        )?;
         return Ok(Output::Field(Arc::new(f.like(eroded)?)));
     };
     let n = d.n as usize;

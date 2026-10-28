@@ -79,7 +79,7 @@ pub use commands::{
 pub use edit::{AddNodeArgs, ConnectArgs, MoveNodesArgs, RemoveNodeArgs, SetDefaultArgs};
 pub use eval::{
     CacheState, DEFAULT_MEMORY_BUDGET, EvalOptions, EvalReport, Evaluation, Evaluator, NodeReport,
-    OutputInfo, fragment_hash_hex, to_scene_fragment,
+    OutputInfo, SubEvaluation, SubInput, fragment_hash_hex, to_scene_fragment,
 };
 pub use generator::{
     GENERATOR, GENERATOR_VERSION, ParamOverrides, apply_overrides, overrides_text, parse_overrides,
@@ -88,8 +88,8 @@ pub use generator::{
 pub use graph::{Edge, GraphId, Node, NodeId, OUT_ALIAS, PortName, ProcGraph};
 pub use nodes::{
     CheckFn, CustomKind, CustomPort, Domain, EvalFn, InputCheckFn, InputValue, MAX_LOG_LINE,
-    MAX_LOG_LINES, MigrateFn, Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec,
-    Params, PortDef, Streaming,
+    MAX_LOG_LINES, MigrateFn, Migration, Nested, NodeCtx, NodeDef, NodeError, NodeRegistry,
+    NodeSpec, Params, PortDef, Streaming,
 };
 pub use store::{Budget, CurrentGraph, GraphStore, register_doc_validators, validate_graph_json};
 pub use value::{

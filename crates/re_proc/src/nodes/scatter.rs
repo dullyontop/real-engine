@@ -150,13 +150,15 @@ impl Params for PoissonParams {
 
 /// Bridson's Poisson-disc sampling over `[-half, half]²`, single-threaded
 /// and driven by one PCG32 stream, so the result depends only on the seed
-/// and the parameters.
+/// and the parameters. Every 4,096 rounds it asks `stopped` whether to
+/// give up, returning the points so far.
 fn poisson_disc(
     rng: &mut Pcg32,
     half: f32,
     radius: f32,
     attempts: u32,
     max: u32,
+    stopped: impl Fn() -> bool,
 ) -> Vec<(f32, f32)> {
     let cell = radius / std::f32::consts::SQRT_2;
     let side = 2.0 * half;
@@ -175,7 +177,12 @@ fn poisson_disc(
     points.push(first);
     active.push(0);
     let r2 = radius * radius;
+    let mut rounds = 0u32;
     while !active.is_empty() && (points.len() as u32) < max {
+        rounds = rounds.wrapping_add(1);
+        if rounds.is_multiple_of(4096) && stopped() {
+            break;
+        }
         let slot = rng.range_u32(0, active.len() as u32) as usize;
         let (px, pz) = points[active[slot] as usize];
         let mut placed = false;
@@ -239,7 +246,10 @@ fn poisson(ctx: &NodeCtx, p: &PoissonParams) -> Result<Output, String> {
         None => ([0.0, 0.0], None),
     };
     let mut rng = Pcg32::from_seed(ctx.window_seed());
-    let xz = poisson_disc(&mut rng, half, p.radius, p.attempts, p.max_points);
+    let xz = poisson_disc(&mut rng, half, p.radius, p.attempts, p.max_points, || {
+        ctx.stopped()
+    });
+    ctx.check()?;
     let points = xz
         .into_iter()
         .map(|(x, z)| (x + centre[0], z + centre[1]))
@@ -314,6 +324,7 @@ fn grid_jitter(ctx: &NodeCtx, p: &GridParams) -> Result<Output, String> {
     let base = Pcg32::from_seed(ctx.seed);
     let mut points = Vec::new();
     for iz in 0..cols {
+        ctx.check()?;
         for ix in 0..cols {
             let mut rng = base.fork2(ix as i32, iz as i32);
             let jx = (rng.next_f32() - 0.5) * p.jitter * p.spacing;
@@ -428,7 +439,7 @@ mod tests {
     #[test]
     fn poisson_respects_radius() {
         let mut rng = Pcg32::from_seed(7);
-        let pts = poisson_disc(&mut rng, 20.0, 3.0, 30, 10_000);
+        let pts = poisson_disc(&mut rng, 20.0, 3.0, 30, 10_000, || false);
         assert!(pts.len() > 50, "{}", pts.len());
         for (i, a) in pts.iter().enumerate() {
             assert!(a.0.abs() <= 20.0 && a.1.abs() <= 20.0);

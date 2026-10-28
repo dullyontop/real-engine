@@ -16,6 +16,7 @@ re_geom.workspace = true
 re_reflect.workspace = true
 re_scene.workspace = true
 re_command.workspace = true
+rayon.workspace = true
 glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true

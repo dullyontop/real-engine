@@ -248,7 +248,10 @@ fn instance(ctx: &NodeCtx, p: &InstanceParams) -> Result<Output, NodeError> {
     let input = ctx.need_points("points")?;
     let mut loaded: IndexMap<String, Arc<PrefabUse>> = IndexMap::new();
     let mut items = Vec::with_capacity(input.points.len());
-    for pt in &input.points {
+    for (i, pt) in input.points.iter().enumerate() {
+        if i % 4096 == 4095 {
+            ctx.check()?;
+        }
         let path = match p.prefabs.get(&pt.tag) {
             Some(path) => path.as_str(),
             None if !p.prefab.is_empty() => p.prefab.as_str(),

@@ -52,6 +52,54 @@ fn a_valid_graph_compiles_in_levels() {
     assert_eq!(back.edges, g.edges);
 }
 
+/// Levels and input lists take one pass over the nodes and edges, so a
+/// chain of 20,000 nodes (the most a graph may expand to) is quick.
+#[test]
+fn levels_and_input_lists_of_a_long_chain() {
+    let n = 20_000;
+    let mut nodes = indexmap::IndexMap::new();
+    let mut edges = Vec::new();
+    for i in 0..n {
+        nodes.insert(
+            format!("r{i}"),
+            re_proc::Node {
+                kind: "field.remap".into(),
+                version: 1,
+                params: json!({}),
+            },
+        );
+        if i > 0 {
+            edges.push(re_proc::Edge {
+                from: (format!("r{}", i - 1), "field".into()),
+                to: (format!("r{i}"), "field".into()),
+            });
+        }
+    }
+    let g = ProcGraph {
+        id: "chain".into(),
+        seed: 0,
+        nodes,
+        edges,
+        layout: BTreeMap::new(),
+    };
+    let levels = g.levels().unwrap();
+    assert_eq!(levels.len(), n);
+    assert!(levels.iter().enumerate().all(|(i, l)| l == &[i]));
+    let inputs = g.input_lists();
+    assert!(inputs[0].is_empty());
+    assert_eq!(inputs[n - 1], [("field", n - 2)]);
+    for i in [0, 1, n / 2, n - 1] {
+        assert_eq!(g.inputs_of(i), inputs[i], "node {i}");
+    }
+    // Closing the chain into a loop leaves no node a level.
+    let mut looped = g.clone();
+    looped.edges.push(re_proc::Edge {
+        from: (format!("r{}", n - 1), "field".into()),
+        to: ("r0".into(), "field".into()),
+    });
+    assert_eq!(looped.levels().unwrap_err().len(), n);
+}
+
 #[test]
 fn out_names_any_nodes_output_port() {
     let with_names = island(1);

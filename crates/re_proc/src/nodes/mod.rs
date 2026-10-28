@@ -29,7 +29,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value as Json, json};
 
+use crate::eval::NodeStop;
+use crate::graph::ProcGraph;
 use crate::value::{Field, MeshValue, Output, Points, PortType, RoadPath, Shapes};
+use crate::{SubEvaluation, SubInput};
 
 pub use fragment::{mesh_item, sink_fragment, sink_fragment_in};
 
@@ -976,6 +979,11 @@ pub struct NodeCtx<'a> {
     /// The evaluator's store of values made from inputs and shared between
     /// evaluations ([`NodeCtx::shared`]); `None` makes them every time.
     pub share: Option<&'a Share<'a>>,
+    /// Evaluates a graph inside this node's evaluation
+    /// ([`NodeCtx::evaluate`]).
+    pub nested: Option<&'a Nested<'a>>,
+    /// The evaluation's deadline and cancel flag ([`NodeCtx::check`]).
+    pub(crate) stop: Option<&'a NodeStop<'a>>,
 }
 
 /// Evaluates the field on input `port` over a window (see
@@ -985,6 +993,10 @@ pub type Upstream<'a> = dyn Fn(&str, Domain) -> Result<Arc<Field>, String> + Syn
 /// Samples the field on input `port` at points `[x, z]` (see
 /// [`NodeCtx::sample`]).
 pub type Sampler<'a> = dyn Fn(&str, &[[f64; 2]]) -> Result<Option<Vec<f64>>, String> + Sync + 'a;
+
+/// Evaluates a graph with a seed and the values on its `["$in", name]`
+/// edges (see [`NodeCtx::evaluate`]).
+pub type Nested<'a> = dyn Fn(&ProcGraph, u64, &[SubInput]) -> SubEvaluation + Sync + 'a;
 
 /// A value made for [`NodeCtx::shared`], and about how many bytes it holds.
 pub type SharedValue = (Arc<dyn Any + Send + Sync>, u64);
@@ -1163,7 +1175,9 @@ impl NodeCtx<'_> {
 
     /// Fills `out` (rows of `row_len` values) in parallel on the pool:
     /// `row(z, values)` fills row `z`. Each row is computed on its own, so
-    /// the result does not depend on the thread count.
+    /// the result does not depend on the thread count. Once the evaluation
+    /// stops ([`NodeCtx::stopped`]) the rows not started are left as they
+    /// are, and the node's output is dropped.
     pub fn par_rows(
         &self,
         out: &mut [f32],
@@ -1171,22 +1185,85 @@ impl NodeCtx<'_> {
         row: impl Fn(usize, &mut [f32]) + Sync,
     ) {
         let row = &row;
+        let row_len = row_len.max(1);
+        let rows_per_job = (4096 / row_len).max(1);
+        let stop = self.stop;
+        let job = move |j: usize, chunk: &mut [f32]| {
+            if stop.is_some_and(NodeStop::check) {
+                return;
+            }
+            for (i, values) in chunk.chunks_mut(row_len).enumerate() {
+                row(j * rows_per_job + i, values);
+            }
+        };
         if self.serial {
-            for (z, values) in out.chunks_mut(row_len.max(1)).enumerate() {
-                row(z, values);
+            for (j, chunk) in out.chunks_mut(row_len * rows_per_job).enumerate() {
+                job(j, chunk);
             }
             return;
         }
-        let rows_per_job = (4096 / row_len.max(1)).max(1);
+        let job = &job;
         self.pool.scope(|s| {
             for (j, chunk) in out.chunks_mut(row_len * rows_per_job).enumerate() {
-                s.spawn(move |_| {
-                    for (i, values) in chunk.chunks_mut(row_len).enumerate() {
-                        row(j * rows_per_job + i, values);
-                    }
-                });
+                s.spawn(move |_| job(j, chunk));
             }
         });
+    }
+
+    /// True once the evaluation is past its deadline or cancelled. A long
+    /// node checks between pieces of work (a few milliseconds apart) and
+    /// returns early: whatever it returns after seeing this is dropped,
+    /// never cached, and the node is reported as skipped.
+    pub fn stopped(&self) -> bool {
+        self.stop.is_some_and(NodeStop::check)
+    }
+
+    /// `Err` once the evaluation is past its deadline or cancelled
+    /// ([`NodeCtx::stopped`]), for `?` between pieces of work.
+    pub fn check(&self) -> Result<(), String> {
+        if self.stopped() {
+            Err("the evaluation stopped".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Evaluates `graph` (a graph kind bound to its parameters) inside this
+    /// node's evaluation, with `seed` and `inputs` on its `["$in", name]`
+    /// edges: through the same memory and disk caches and budget, never
+    /// evicting what this evaluation uses, without a window, and stopping
+    /// when this evaluation stops. Its nodes run on the pool while this one
+    /// waits, so it is safe on a worker. `graph` is not validated here: a
+    /// graph kind is validated when it is declared.
+    pub fn evaluate(&self, graph: &ProcGraph, seed: u64, inputs: &[SubInput]) -> SubEvaluation {
+        match self.nested {
+            Some(nested) => nested(graph, seed, inputs),
+            None => {
+                // Only the evaluator makes a context, and it always can.
+                let report = crate::EvalReport {
+                    graph: graph.id.clone(),
+                    seed,
+                    diagnostics: vec![Diagnostic::error(
+                        crate::codes::INVALID_GRAPH,
+                        format!(
+                            "node `{}` cannot evaluate graph `{}` here",
+                            self.node_id, graph.id
+                        ),
+                    )],
+                    ..Default::default()
+                };
+                let n = graph.nodes.len();
+                SubEvaluation {
+                    report,
+                    ids: graph.nodes.keys().cloned().collect(),
+                    sinks: vec![false; n],
+                    outputs: vec![None; n],
+                    keys: vec![None; n],
+                    cache_keys: vec![None; n],
+                    stopped: false,
+                }
+            }
+        }
     }
 }
 

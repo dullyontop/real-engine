@@ -1,7 +1,14 @@
-//! The [`Evaluator`]: evaluates a [`ProcGraph`] in topological order, in
-//! parallel on the [`TaskPool`], with per-node blake3 keys, a memory cache
-//! and an optional postcard disk cache, and reports what it did in an
-//! [`EvalReport`] (ARCHITECTURE §5, "Evaluation").
+//! The [`Evaluator`]: evaluates a [`ProcGraph`] in parallel on the
+//! [`TaskPool`], with per-node blake3 keys, a memory cache and an optional
+//! postcard disk cache, and reports what it did in an [`EvalReport`]
+//! (ARCHITECTURE §5, "Evaluation").
+//!
+//! **Scheduling.** A node starts as soon as every node it reads is done, so a
+//! slow node holds up only the nodes downstream of it. The evaluation's
+//! deadline and cancel flag are checked before each node starts, and long
+//! nodes check them as they go ([`NodeCtx::check`](crate::NodeCtx::check)),
+//! so a deadline or a cancel also stops a node while it runs. What a stopped
+//! node returns is dropped, never cached.
 //!
 //! **Determinism.** A node's output depends only on its key's inputs: its
 //! kind and the version it was written for (ADR-0043), its id, its
@@ -9,9 +16,8 @@
 //! [`Domain`] if it has one, its inputs' keys, its seed
 //! (`Pcg32::from_seed(graph seed).fork(hash64(node id))`, for kinds that use
 //! one) and the contents of the files it names. Nodes never share mutable
-//! state and the order of their results is fixed, so the output is the same
-//! on 1 or N threads, and adding a node changes no other node's random
-//! numbers.
+//! state, so the output is the same on 1 or N threads and in whatever order
+//! the nodes run, and adding a node changes no other node's random numbers.
 //!
 //! **Global nodes.** In a streamed evaluation a [`Streaming::Global`] node
 //! is keyed and run without the window: its key hashes the global keys of
@@ -28,7 +34,7 @@
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -177,7 +183,8 @@ pub struct EvalOptions {
     /// The project's files: file parameters are read through them when set
     /// (ADR-0037).
     pub files: Option<ProjectFiles>,
-    /// Stop before starting a level of nodes after this instant (`RE4016`).
+    /// Start no node after this instant, and stop the nodes that check while
+    /// they run (`RE4016`).
     pub deadline: Option<Instant>,
     /// The window to evaluate, for streamed evaluation (ADR-0042). Part of
     /// every node's key when set.
@@ -186,8 +193,8 @@ pub struct EvalOptions {
     /// fan-out on the pool: a streaming job is serial (ADR-0042). The output
     /// is the same either way.
     pub serial: bool,
-    /// Stops before the next level of nodes once this flag is set (`RE4310`);
-    /// a streaming job's request was cancelled.
+    /// Once this flag is set, start no node, and stop the nodes that check
+    /// while they run (`RE4310`); a streaming job's request was cancelled.
     pub cancel: Option<Arc<AtomicBool>>,
     /// In a streamed evaluation, the spacing (metres) at which
     /// [`Streaming::Global`] nodes sample their fields, part of their keys:
@@ -225,6 +232,10 @@ struct MemCache {
     /// evicted until they finish.
     active: BTreeSet<u64>,
 }
+
+/// The reserved node name in the edges that carry a graph's inputs:
+/// `["$in", name]` (ADR-0061).
+const IN: &str = "$in";
 
 /// The default memory-cache budget: 256 MiB.
 pub const DEFAULT_MEMORY_BUDGET: u64 = 256 << 20;
@@ -269,12 +280,196 @@ struct Job<'a> {
     files: HashMap<String, Result<Arc<Vec<u8>>, String>>,
 }
 
+/// What running a node gave.
+enum Outcome {
+    Output(Output),
+    Failed(Diagnostic),
+    /// The node saw its evaluation stop: whatever it returned is dropped.
+    Stopped,
+}
+
 struct JobResult {
-    output: Result<Output, Diagnostic>,
+    outcome: Outcome,
     from_disk: bool,
     ms: f64,
     warnings: Vec<Diagnostic>,
     logs: Vec<String>,
+}
+
+/// Why an evaluation stopped early.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reason {
+    /// Its deadline passed (`RE4016`).
+    Deadline = 1,
+    /// Its cancel flag was set (`RE4310`).
+    Cancelled = 2,
+}
+
+/// An evaluation's deadline and cancel flag ([`EvalOptions`]), checked
+/// before each node starts and inside nodes that check
+/// ([`NodeCtx::check`](crate::NodeCtx::check)). The parts its nodes read and
+/// the graphs they evaluate share it, so they stop with it.
+pub(crate) struct Stop {
+    deadline: Option<Instant>,
+    cancel: Option<Arc<AtomicBool>>,
+    /// The [`Reason`] once a check saw one, 0 before: a stopped evaluation
+    /// stays stopped.
+    reason: AtomicU8,
+}
+
+impl Stop {
+    fn new(opts: &EvalOptions) -> Stop {
+        Stop {
+            deadline: opts.deadline,
+            cancel: opts.cancel.clone(),
+            reason: AtomicU8::new(0),
+        }
+    }
+
+    /// Why the evaluation stops, if it does now.
+    pub(crate) fn check(&self) -> Option<Reason> {
+        if let Some(r) = self.reason() {
+            return Some(r);
+        }
+        let r = if self.deadline.is_some_and(|d| Instant::now() >= d) {
+            Reason::Deadline
+        } else if self
+            .cancel
+            .as_ref()
+            .is_some_and(|c| c.load(Ordering::Relaxed))
+        {
+            Reason::Cancelled
+        } else {
+            return None;
+        };
+        // The first reason seen wins.
+        let _ = self
+            .reason
+            .compare_exchange(0, r as u8, Ordering::Relaxed, Ordering::Relaxed);
+        self.reason()
+    }
+
+    /// The reason a check saw, without checking again.
+    pub(crate) fn reason(&self) -> Option<Reason> {
+        match self.reason.load(Ordering::Relaxed) {
+            1 => Some(Reason::Deadline),
+            2 => Some(Reason::Cancelled),
+            _ => None,
+        }
+    }
+}
+
+/// A running node's view of its evaluation's [`Stop`]: it remembers whether
+/// the node saw the evaluation stop, in which case what the node returns is
+/// dropped.
+pub(crate) struct NodeStop<'a> {
+    stop: &'a Stop,
+    seen: AtomicBool,
+}
+
+impl<'a> NodeStop<'a> {
+    fn new(stop: &'a Stop) -> NodeStop<'a> {
+        NodeStop {
+            stop,
+            seen: AtomicBool::new(false),
+        }
+    }
+
+    /// True once the evaluation stops, which the node has then seen.
+    pub(crate) fn check(&self) -> bool {
+        let stopped = self.stop.check().is_some();
+        if stopped {
+            self.seen.store(true, Ordering::Relaxed);
+        }
+        stopped
+    }
+
+    /// A part the node read, or a graph it evaluated, came back incomplete:
+    /// the node saw the stop if the evaluation stopped.
+    pub(crate) fn incomplete(&self) {
+        if self.stop.reason().is_some() {
+            self.seen.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn seen(&self) -> bool {
+        self.seen.load(Ordering::Relaxed)
+    }
+}
+
+/// A value given to a graph that a node evaluates
+/// ([`NodeCtx::evaluate`](crate::NodeCtx::evaluate)): what the graph's edges
+/// from `["$in", name]` carry, with the keys that the keys of the nodes it
+/// feeds hash.
+#[derive(Clone, Debug)]
+pub struct SubInput {
+    /// The input's name, as in the edges `["$in", name]`.
+    pub name: String,
+    /// The value.
+    pub output: Output,
+    /// Its key, as a node's output has one ([`NodeCtx::key`](crate::NodeCtx::key)).
+    pub key: [u8; 32],
+    /// Its cache key, which spellings of the same parameters share.
+    pub cache_key: [u8; 32],
+}
+
+/// What [`NodeCtx::evaluate`](crate::NodeCtx::evaluate) gives: the report of
+/// the graph's evaluation, and each node's output and keys.
+#[derive(Clone, Debug)]
+pub struct SubEvaluation {
+    /// What happened: a row per node, with its key, where its output came
+    /// from, its diagnostics and its logs.
+    pub report: EvalReport,
+    /// The graph's node ids, in document order; the lists below follow it.
+    pub ids: Vec<String>,
+    /// Per node: true if no edge to another node leaves it.
+    pub sinks: Vec<bool>,
+    /// Per node: its output, if it ran.
+    pub outputs: Vec<Option<Output>>,
+    /// Per node: its key, once known.
+    pub keys: Vec<Option<[u8; 32]>>,
+    /// Per node: its cache key, once known.
+    pub cache_keys: Vec<Option<[u8; 32]>>,
+    /// True when the evaluation stopped (its deadline passed, or it was
+    /// cancelled) before every node ran.
+    pub stopped: bool,
+}
+
+impl SubEvaluation {
+    /// True if nothing failed.
+    pub fn ok(&self) -> bool {
+        self.report.ok()
+    }
+
+    fn position(&self, id: &str) -> Option<usize> {
+        self.ids.iter().position(|n| n == id)
+    }
+
+    /// Node `id`'s output, if it ran.
+    pub fn output(&self, id: &str) -> Option<&Output> {
+        self.outputs[self.position(id)?].as_ref()
+    }
+
+    /// Node `id`'s key, once known.
+    pub fn key(&self, id: &str) -> Option<[u8; 32]> {
+        self.keys[self.position(id)?]
+    }
+
+    /// Node `id`'s cache key, once known.
+    pub fn cache_key(&self, id: &str) -> Option<[u8; 32]> {
+        self.cache_keys[self.position(id)?]
+    }
+}
+
+/// What [`Evaluator::run`] gives: the report, and per node of the plan's
+/// graph its output and keys.
+struct RunResult {
+    report: EvalReport,
+    outputs: Vec<Option<Output>>,
+    keys: Vec<Option<[u8; 32]>>,
+    caches: Vec<Option<[u8; 32]>>,
+    /// The evaluation stopped before every node ran.
+    stopped: bool,
 }
 
 /// An evaluation running on an [`Evaluator`] ([`Evaluator::begin`]); it
@@ -397,297 +592,85 @@ impl Evaluator {
                 domain: opts.domain,
             };
         }
-        let plan = Plan::new(graph, &self.registry);
+        let plan = Plan::new(graph, &self.registry, &[]);
         let running = self.begin();
-        let (mut report, outputs) = self.run(&plan, opts, running.tick);
+        let run = self.run(&plan, opts, running.tick, &Stop::new(opts));
         drop(running);
+        let mut report = run.report;
         report.stamp = stamp;
         report.ms = ms_since(start);
         Evaluation {
             report,
             ids,
-            sinks: plan.sinks.clone(),
-            outputs,
+            sinks: plan.sinks[..graph.nodes.len()].to_vec(),
+            outputs: run.outputs,
             domain: opts.domain,
         }
     }
 
-    /// Evaluates `plan`'s nodes, marking what they use in the memory cache
-    /// with `tick`: the evaluation's own, or, for a part a node reads, the
-    /// tick of the evaluation that node belongs to.
-    fn run(&self, plan: &Plan, opts: &EvalOptions, tick: u64) -> (EvalReport, Vec<Option<Output>>) {
+    /// Evaluates `graph` inside the evaluation of `tick` (a node's
+    /// [`NodeCtx::evaluate`](crate::NodeCtx::evaluate)): with `seed`,
+    /// `inputs` on its `["$in", name]` edges, no window, and the evaluation's
+    /// files, deadline and cancel flag. It is not validated here: a graph
+    /// kind is validated when it is declared.
+    fn evaluate_in(
+        &self,
+        graph: &ProcGraph,
+        seed: u64,
+        inputs: &[SubInput],
+        opts: &EvalOptions,
+        tick: u64,
+        stop: &Stop,
+    ) -> SubEvaluation {
         let start = Instant::now();
-        let graph = plan.graph;
-        let seed = opts.seed.unwrap_or(graph.seed);
-        let pool = self.pool();
-        let n = graph.nodes.len();
-        let mut report = EvalReport {
-            graph: graph.id.clone(),
-            seed,
-            threads: pool.threads(),
-            nodes: plan
-                .members
-                .iter()
-                .map(|&i| {
-                    let (id, node) = graph.nodes.get_index(i).expect("members are valid");
-                    skipped(id, &node.kind)
-                })
-                .collect(),
-            ..Default::default()
+        let opts = EvalOptions {
+            seed: Some(seed),
+            domain: None,
+            global_spacing: None,
+            ..opts.clone()
         };
-        let mut outputs: Vec<Option<Output>> = vec![None; n];
-        // Each node's key and cache key (see `lookup_key`).
-        let mut keys: Vec<Option<[u8; 32]>> = vec![None; n];
-        let mut caches: Vec<Option<[u8; 32]>> = vec![None; n];
-        // In a streamed evaluation: the spacing global nodes sample at, each
-        // node's global keys (its keys without the window, when its output
-        // is the same for every window), and the nodes the output needs.
-        let global = opts
-            .domain
-            .map(|d| opts.global_spacing.unwrap_or(d.spacing));
-        let mut gkeys: Vec<Option<[u8; 32]>> = vec![None; n];
-        let mut gcaches: Vec<Option<[u8; 32]>> = vec![None; n];
-        let needed = match global {
-            Some(_) => plan.needed(),
-            None => vec![true; n],
-        };
-        let base = Pcg32::from_seed(seed);
-
-        'levels: for level in &plan.levels {
-            if let Some(deadline) = opts.deadline
-                && Instant::now() >= deadline
-            {
-                let first = &graph
-                    .nodes
-                    .get_index(level[0])
-                    .map(|(k, _)| k.clone())
-                    .unwrap_or_default();
-                report.diagnostics.push(
-                    Diagnostic::error(
-                        codes::BUDGET_EXCEEDED,
-                        format!(
-                            "evaluation of `{}` stopped after {:.0} ms, over its time budget, before node `{first}`",
-                            graph.id,
-                            ms_since(start)
-                        ),
-                    )
-                    .with_hint("raise `max_ms`, or make the graph cheaper (smaller fields, larger scatter radius)"),
-                );
-                break 'levels;
-            }
-            if opts
-                .cancel
-                .as_ref()
-                .is_some_and(|c| c.load(Ordering::Relaxed))
-            {
-                report.diagnostics.push(Diagnostic::error(
-                    codes::CANCELLED,
-                    format!("evaluation of `{}` was cancelled", graph.id),
-                ));
-                break 'levels;
-            }
-            let mut jobs: Vec<Job> = Vec::new();
-            for &index in level {
-                let Some(node) = &plan.nodes[index] else {
-                    continue;
-                };
-                let def = node.def;
-                // A global node in a streamed evaluation samples its fields.
-                let as_global = global.is_some() && def.streaming == Streaming::Global;
-                let sampled =
-                    |from: usize| as_global && plan.output_type(from) == Some(PortType::Field);
-                // An input failed or was skipped, or the output does not need it.
-                let runs = needed[index]
-                    && node
-                        .inputs
-                        .iter()
-                        .all(|&(_, from)| outputs[from].is_some() || sampled(from));
-                let global_key = global.filter(|_| {
-                    matches!(
-                        def.streaming,
-                        Streaming::Global | Streaming::Pointwise | Streaming::Region
-                    ) && node.inputs.iter().all(|&(_, from)| gkeys[from].is_some())
-                });
-                if !runs && global_key.is_none() {
-                    continue;
-                }
-                let node_seed = base.fork(node.salt).next_u64();
-                let files = load_files(def, &node.params, opts);
-                let key_inputs = KeyInputs {
-                    id: node.id,
-                    def,
-                    version: node.version,
-                    params: &node.params,
-                    inputs: &node.inputs,
-                    keys: &keys,
-                    seed: node_seed,
-                    files: &files,
-                    domain: opts.domain,
-                    global: None,
-                    cache: false,
-                };
-                let cache_inputs = KeyInputs {
-                    params: &node.canonical,
-                    keys: &caches,
-                    cache: true,
-                    ..key_inputs
-                };
-                if let Some(spacing) = global_key {
-                    gkeys[index] = Some(node_key(&KeyInputs {
-                        keys: &gkeys,
-                        domain: None,
-                        global: Some(spacing),
-                        ..key_inputs
-                    }));
-                    gcaches[index] = Some(node_key(&KeyInputs {
-                        keys: &gcaches,
-                        domain: None,
-                        global: Some(spacing),
-                        ..cache_inputs
-                    }));
-                }
-                if !runs {
-                    continue;
-                }
-                let slot = plan.slot[index];
-                let (key, cache) = if as_global {
-                    let (Some(key), Some(cache)) = (gkeys[index], gcaches[index]) else {
-                        let nr = &mut report.nodes[slot];
-                        nr.cache = CacheState::Failed;
-                        nr.diagnostics.push(Diagnostic::error(
-                            codes::NOT_STREAMABLE,
-                            format!(
-                                "node `{}` ({}) is global, but not all its inputs are global, pointwise or region nodes",
-                                node.id, def.kind
-                            ),
-                        ));
-                        continue;
-                    };
-                    (key, cache)
-                } else {
-                    (node_key(&key_inputs), node_key(&cache_inputs))
-                };
-                keys[index] = Some(key);
-                caches[index] = Some(cache);
-                let cache = lookup_key(def, key, cache);
-                let nr = &mut report.nodes[slot];
-                nr.key = blake3::Hash::from_bytes(key).to_hex().to_string();
-                let gather = || -> Vec<(String, Output)> {
-                    node.inputs
-                        .iter()
-                        .filter(|(_, from)| !sampled(*from))
-                        .map(|&(port, from)| {
-                            (
-                                port.to_string(),
-                                outputs[from].clone().expect("checked above"),
-                            )
-                        })
-                        .collect()
-                };
-                // Input checks run whether or not the output is cached, so a
-                // warning does not come and go with the cache.
-                if def.checks_inputs() {
-                    let values: Vec<InputValue> = node
-                        .inputs
-                        .iter()
-                        .filter_map(|&(port, from)| {
-                            Some(InputValue {
-                                port,
-                                value: outputs[from].as_ref()?,
-                                from_kind: plan.nodes[from].as_ref()?.def.kind,
-                            })
-                        })
-                        .collect();
-                    nr.diagnostics.extend(
-                        def.check_inputs(&values)
-                            .into_iter()
-                            .map(|d| in_node(d, node.id, def.kind)),
-                    );
-                }
-                let hit = {
-                    let mut m = self.lock_memory();
-                    m.map.get_mut(&cache).map(|e| {
-                        e.used = e.used.max(tick);
-                        e.output.clone()
-                    })
-                };
-                if let Some(output) = hit {
-                    nr.cache = CacheState::Memory;
-                    nr.output = Some(info(&output));
-                    report.memory_hits += 1;
-                    outputs[index] = Some(output);
-                    continue;
-                }
-                jobs.push(Job {
-                    index,
-                    def,
-                    params: &node.params,
-                    key,
-                    cache,
-                    seed: node_seed,
-                    inputs: gather(),
-                    files,
-                });
-            }
-            let results: Vec<Mutex<Option<JobResult>>> =
-                jobs.iter().map(|_| Mutex::new(None)).collect();
-            if jobs.len() == 1 || opts.serial {
-                for (job, slot) in jobs.iter().zip(&results) {
-                    *slot.lock().unwrap_or_else(|e| e.into_inner()) =
-                        Some(self.run_job(plan, job, pool, opts, tick));
-                }
-            } else if !jobs.is_empty() {
-                pool.scope(|s| {
-                    for (job, slot) in jobs.iter().zip(&results) {
-                        s.spawn(move |_| {
-                            let r = self.run_job(plan, job, pool, opts, tick);
-                            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
-                        });
-                    }
-                });
-            }
-            let mut m = self.lock_memory();
-            for (job, slot) in jobs.iter().zip(results) {
-                let Some(r) = slot.into_inner().unwrap_or_else(|e| e.into_inner()) else {
-                    continue;
-                };
-                let nr = &mut report.nodes[plan.slot[job.index]];
-                nr.ms = r.ms;
-                nr.diagnostics.extend(r.warnings);
-                nr.logs = r.logs;
-                match r.output {
-                    Ok(output) => {
-                        nr.output = Some(info(&output));
-                        if r.from_disk {
-                            nr.cache = CacheState::Disk;
-                            report.disk_hits += 1;
-                        } else {
-                            nr.cache = CacheState::Miss;
-                            report.misses += 1;
-                        }
-                        let bytes = output.size().1;
-                        if let Some(old) = m.map.insert(
-                            job.cache,
-                            MemEntry {
-                                output: output.clone(),
-                                bytes,
-                                used: tick,
-                            },
-                        ) {
-                            m.bytes -= old.bytes;
-                        }
-                        m.bytes += bytes;
-                        outputs[job.index] = Some(output);
-                    }
-                    Err(d) => {
-                        nr.cache = CacheState::Failed;
-                        nr.diagnostics.insert(0, d);
-                    }
-                }
-            }
-        }
+        let plan = Plan::new(graph, &self.registry, inputs);
+        let run = self.run(&plan, &opts, tick, stop);
+        let mut report = run.report;
         report.ms = ms_since(start);
-        (report, outputs)
+        SubEvaluation {
+            report,
+            ids: graph.nodes.keys().cloned().collect(),
+            sinks: plan.sinks[..graph.nodes.len()].to_vec(),
+            outputs: run.outputs,
+            keys: run.keys,
+            cache_keys: run.caches,
+            stopped: run.stopped,
+        }
+    }
+
+    /// Evaluates `plan`'s nodes, marking what they use in the memory cache
+    /// with `tick`: the evaluation's own, or, for a part a node reads or a
+    /// graph it evaluates, the tick of the evaluation that node belongs to.
+    /// Each node starts once every node it reads is done: on the pool, or in
+    /// topological order on this thread when the evaluation is serial or the
+    /// pool has one worker. A worker that waits here for the nodes it started
+    /// runs other pool jobs meanwhile, so nested evaluations cannot deadlock.
+    fn run(&self, plan: &Plan, opts: &EvalOptions, tick: u64, stop: &Stop) -> RunResult {
+        let pool = self.pool();
+        let run = Run::new(self, plan, opts, tick, stop, pool);
+        if opts.serial || pool.threads() <= 1 {
+            for &index in plan.levels.iter().flatten() {
+                if !run.node(index) {
+                    break;
+                }
+            }
+        } else {
+            let run = &run;
+            pool.scope(|s| {
+                for &index in &plan.members {
+                    if run.waiting[index].load(Ordering::Relaxed) == 0 {
+                        s.spawn(move |s| run.visit(s, index));
+                    }
+                }
+            });
+        }
+        run.finish()
     }
 
     fn run_job(
@@ -697,6 +680,7 @@ impl Evaluator {
         pool: &TaskPool,
         opts: &EvalOptions,
         tick: u64,
+        stop: &Stop,
     ) -> JobResult {
         let start = Instant::now();
         let node = plan.nodes[job.index]
@@ -710,7 +694,7 @@ impl Evaluator {
             match disk.load(&job.cache) {
                 Ok(Some(output)) if output.port_type() == job.def.output => {
                     return JobResult {
-                        output: Ok(output),
+                        outcome: Outcome::Output(output),
                         from_disk: true,
                         ms: ms_since(start),
                         warnings,
@@ -721,6 +705,7 @@ impl Evaluator {
                 Err(e) => warnings.push(cache_warning(id, e)),
             }
         }
+        let node_stop = NodeStop::new(stop);
         let global = opts
             .domain
             .map(|d| opts.global_spacing.unwrap_or(d.spacing));
@@ -741,7 +726,11 @@ impl Evaluator {
                 global_spacing: global,
                 ..opts.clone()
             };
-            self.read_field(plan, from, port, &opts, tick)
+            let field = self.read_field(plan, from, port, &opts, tick, stop);
+            if field.is_err() {
+                node_stop.incomplete();
+            }
+            field
         };
         // A global node samples its fields on the source's grid: the part of
         // the plan the field comes from, evaluated over small windows around
@@ -760,12 +749,23 @@ impl Evaluator {
                     global_spacing: Some(spacing),
                     ..opts.clone()
                 };
-                self.read_field(plan, from, port, &opts, tick)
+                let field = self.read_field(plan, from, port, &opts, tick, stop);
+                if field.is_err() {
+                    node_stop.incomplete();
+                }
+                field
             })
             .map(Some)
         };
         let share = |key: [u8; 32], make: &mut dyn FnMut() -> Result<SharedValue, NodeError>| {
             self.shared(key, make)
+        };
+        let nested = |graph: &ProcGraph, seed: u64, inputs: &[SubInput]| {
+            let sub = self.evaluate_in(graph, seed, inputs, opts, tick, stop);
+            if sub.stopped {
+                node_stop.incomplete();
+            }
+            sub
         };
         let ctx = NodeCtx {
             node_id: id,
@@ -785,32 +785,50 @@ impl Evaluator {
             upstream: reads.then_some(&read as &crate::nodes::Upstream),
             sample: sampling.map(|_| &sample as &crate::nodes::Sampler),
             share: Some(&share as &crate::nodes::Share),
+            nested: Some(&nested as &crate::nodes::Nested),
+            stop: Some(&node_stop),
         };
-        let output = job.def.eval(&ctx, job.params).map_err(|e| {
-            Diagnostic::error(
+        let output = job.def.eval(&ctx, job.params);
+        let logs = ctx.logs.into_inner().unwrap_or_else(|e| e.into_inner());
+        if node_stop.seen() {
+            // What it returned may be partial: it is neither used nor cached.
+            return JobResult {
+                outcome: Outcome::Stopped,
+                from_disk: false,
+                ms: ms_since(start),
+                warnings,
+                logs,
+            };
+        }
+        let outcome = match output {
+            Ok(o) => {
+                if let Some(disk) = &self.disk
+                    && DiskCache::stores(&o)
+                    && let Err(e) = disk.store(&job.cache, &o)
+                {
+                    warnings.push(cache_warning(id, e));
+                }
+                Outcome::Output(o)
+            }
+            Err(e) => Outcome::Failed(Diagnostic::error(
                 e.code,
                 format!("node `{id}` ({}): {}", job.def.kind, e.message),
-            )
-        });
-        if let (Ok(o), Some(disk)) = (&output, &self.disk)
-            && DiskCache::stores(o)
-            && let Err(e) = disk.store(&job.cache, o)
-        {
-            warnings.push(cache_warning(id, e));
-        }
+            )),
+        };
         JobResult {
-            output,
+            outcome,
             from_disk: false,
             ms: ms_since(start),
             warnings,
-            logs: ctx.logs.into_inner().unwrap_or_else(|e| e.into_inner()),
+            logs,
         }
     }
 
     /// Node `from`'s field, from the part of `plan` it comes from evaluated
     /// with `opts` (a window): what a region or cell node reads and a global
     /// node samples on input `port`. The part runs with the reading node's
-    /// `tick`, so it never evicts what that evaluation uses.
+    /// `tick`, so it never evicts what that evaluation uses, and stops with
+    /// it.
     fn read_field(
         &self,
         plan: &Plan,
@@ -818,12 +836,14 @@ impl Evaluator {
         port: &str,
         opts: &EvalOptions,
         tick: u64,
+        stop: &Stop,
     ) -> Result<Arc<Field>, String> {
         let part = plan.part(from);
-        let (report, outputs) = self.run(&part, opts, tick);
-        match &outputs[from] {
+        let run = self.run(&part, opts, tick, stop);
+        match &run.outputs[from] {
             Some(Output::Field(f)) => Ok(f.clone()),
-            _ => Err(report
+            _ => Err(run
+                .report
                 .first_error()
                 .map(|d| d.message.clone())
                 .unwrap_or_else(|| format!("input `{port}` has no field"))),
@@ -940,6 +960,401 @@ impl Evaluator {
             .unwrap_or_else(|e| e.into_inner())
             .map
             .len()
+    }
+}
+
+/// One [`Evaluator::run`] in progress. Each node is visited once, when every
+/// node it reads is done, and writes its output and keys once, before the
+/// nodes that read it start.
+struct Run<'r, 'a> {
+    evaluator: &'r Evaluator,
+    plan: &'r Plan<'a>,
+    opts: &'r EvalOptions,
+    tick: u64,
+    stop: &'r Stop,
+    pool: &'r TaskPool,
+    start: Instant,
+    base: Pcg32,
+    /// In a streamed evaluation: the spacing global nodes sample their fields at.
+    global: Option<f32>,
+    /// Per node: false when the output does not need it ([`Plan::needed`]).
+    needed: Vec<bool>,
+    /// Per node: its output, its key and cache key (see [`lookup_key`]),
+    /// and in a streamed evaluation its global keys (its keys without the
+    /// window, when its output is the same for every window).
+    outputs: Vec<OnceLock<Output>>,
+    keys: Vec<OnceLock<[u8; 32]>>,
+    caches: Vec<OnceLock<[u8; 32]>>,
+    gkeys: Vec<OnceLock<[u8; 32]>>,
+    gcaches: Vec<OnceLock<[u8; 32]>>,
+    /// Per node: the nodes that read it, and how many of the nodes it reads
+    /// are not done.
+    readers: Vec<Vec<usize>>,
+    waiting: Vec<AtomicUsize>,
+    report: Mutex<EvalReport>,
+    /// The first node the stop held back (`false`) or stopped while it ran
+    /// (`true`), and when (milliseconds into the run).
+    stopped: Mutex<Option<(usize, bool, f64)>>,
+}
+
+/// `len` empty slots.
+fn unset<T>(len: usize) -> Vec<OnceLock<T>> {
+    (0..len).map(|_| OnceLock::new()).collect()
+}
+
+/// The values of the first `n` slots.
+fn taken<T>(slots: Vec<OnceLock<T>>, n: usize) -> Vec<Option<T>> {
+    slots
+        .into_iter()
+        .take(n)
+        .map(OnceLock::into_inner)
+        .collect()
+}
+
+impl<'r, 'a> Run<'r, 'a> {
+    fn new(
+        evaluator: &'r Evaluator,
+        plan: &'r Plan<'a>,
+        opts: &'r EvalOptions,
+        tick: u64,
+        stop: &'r Stop,
+        pool: &'r TaskPool,
+    ) -> Run<'r, 'a> {
+        let graph = plan.graph;
+        let seed = opts.seed.unwrap_or(graph.seed);
+        let n = graph.nodes.len();
+        let len = plan.nodes.len();
+        let report = EvalReport {
+            graph: graph.id.clone(),
+            seed,
+            threads: pool.threads(),
+            nodes: plan
+                .members
+                .iter()
+                .map(|&i| {
+                    let (id, node) = graph.nodes.get_index(i).expect("members are valid");
+                    skipped(id, &node.kind)
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let global = opts
+            .domain
+            .map(|d| opts.global_spacing.unwrap_or(d.spacing));
+        let needed = match global {
+            Some(_) => plan.needed(),
+            None => vec![true; len],
+        };
+        let (outputs, keys, caches) = (unset(len), unset(len), unset(len));
+        // The values bound to `$in` edges are done from the start.
+        for (j, b) in plan.bound.iter().enumerate() {
+            let _ = outputs[n + j].set(b.output.clone());
+            let _ = keys[n + j].set(b.key);
+            let _ = caches[n + j].set(b.cache_key);
+        }
+        let mut readers: Vec<Vec<usize>> = vec![Vec::new(); len];
+        let mut waiting = vec![0usize; len];
+        for &i in &plan.members {
+            for &(_, from) in plan.nodes[i].iter().flat_map(|node| &node.inputs) {
+                if from < n {
+                    readers[from].push(i);
+                    waiting[i] += 1;
+                }
+            }
+        }
+        Run {
+            evaluator,
+            plan,
+            opts,
+            tick,
+            stop,
+            pool,
+            start: Instant::now(),
+            base: Pcg32::from_seed(seed),
+            global,
+            needed,
+            outputs,
+            keys,
+            caches,
+            gkeys: unset(len),
+            gcaches: unset(len),
+            readers,
+            waiting: waiting.into_iter().map(AtomicUsize::new).collect(),
+            report: Mutex::new(report),
+            stopped: Mutex::new(None),
+        }
+    }
+
+    /// Visits node `index` on the pool, then starts each node reading it
+    /// whose inputs are now all done.
+    fn visit<'s>(&'s self, s: &rayon::Scope<'s>, index: usize) {
+        if !self.node(index) {
+            return;
+        }
+        for &reader in &self.readers[index] {
+            if self.waiting[reader].fetch_sub(1, Ordering::AcqRel) == 1 {
+                s.spawn(move |s| self.visit(s, reader));
+            }
+        }
+    }
+
+    fn report(&self) -> std::sync::MutexGuard<'_, EvalReport> {
+        self.report.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Node `index`, whose inputs are done: its keys, then its output from
+    /// the memory cache or by running it, and its report row. False when the
+    /// evaluation stopped before or while it ran, so the nodes reading it do
+    /// not start.
+    fn node(&self, index: usize) -> bool {
+        if self.stop.check().is_some() {
+            self.stopped_at(index, false);
+            return false;
+        }
+        let plan = self.plan;
+        let Some(node) = &plan.nodes[index] else {
+            return true;
+        };
+        let def = node.def;
+        // A global node in a streamed evaluation samples its fields.
+        let as_global = self.global.is_some() && def.streaming == Streaming::Global;
+        let sampled = |from: usize| as_global && plan.output_type(from) == Some(PortType::Field);
+        // An input failed or was skipped, or the output does not need it.
+        let runs = self.needed[index]
+            && node
+                .inputs
+                .iter()
+                .all(|&(_, from)| self.outputs[from].get().is_some() || sampled(from));
+        let global_key = self.global.filter(|_| {
+            matches!(
+                def.streaming,
+                Streaming::Global | Streaming::Pointwise | Streaming::Region
+            ) && node
+                .inputs
+                .iter()
+                .all(|&(_, from)| self.gkeys[from].get().is_some())
+        });
+        if !runs && global_key.is_none() {
+            return true;
+        }
+        let node_seed = self.base.fork(node.salt).next_u64();
+        let files = load_files(def, &node.params, self.opts);
+        let key_inputs = KeyInputs {
+            id: node.id,
+            def,
+            version: node.version,
+            params: &node.params,
+            inputs: &node.inputs,
+            keys: &self.keys,
+            seed: node_seed,
+            files: &files,
+            domain: self.opts.domain,
+            global: None,
+            cache: false,
+        };
+        let cache_inputs = KeyInputs {
+            params: &node.canonical,
+            keys: &self.caches,
+            cache: true,
+            ..key_inputs
+        };
+        if let Some(spacing) = global_key {
+            let _ = self.gkeys[index].set(node_key(&KeyInputs {
+                keys: &self.gkeys,
+                domain: None,
+                global: Some(spacing),
+                ..key_inputs
+            }));
+            let _ = self.gcaches[index].set(node_key(&KeyInputs {
+                keys: &self.gcaches,
+                domain: None,
+                global: Some(spacing),
+                ..cache_inputs
+            }));
+        }
+        if !runs {
+            return true;
+        }
+        let slot = plan.slot[index];
+        let (key, cache) = if as_global {
+            let (Some(&key), Some(&cache)) = (self.gkeys[index].get(), self.gcaches[index].get())
+            else {
+                let mut report = self.report();
+                let nr = &mut report.nodes[slot];
+                nr.cache = CacheState::Failed;
+                nr.diagnostics.push(Diagnostic::error(
+                    codes::NOT_STREAMABLE,
+                    format!(
+                        "node `{}` ({}) is global, but not all its inputs are global, pointwise or region nodes",
+                        node.id, def.kind
+                    ),
+                ));
+                return true;
+            };
+            (key, cache)
+        } else {
+            (node_key(&key_inputs), node_key(&cache_inputs))
+        };
+        let _ = self.keys[index].set(key);
+        let _ = self.caches[index].set(cache);
+        let cache = lookup_key(def, key, cache);
+        let hex = blake3::Hash::from_bytes(key).to_hex().to_string();
+        // Input checks run whether or not the output is cached, so a
+        // warning does not come and go with the cache.
+        let mut diagnostics = Vec::new();
+        if def.checks_inputs() {
+            let values: Vec<InputValue> = node
+                .inputs
+                .iter()
+                .filter_map(|&(port, from)| {
+                    Some(InputValue {
+                        port,
+                        value: self.outputs[from].get()?,
+                        from_kind: plan.kind_of(from)?,
+                    })
+                })
+                .collect();
+            diagnostics.extend(
+                def.check_inputs(&values)
+                    .into_iter()
+                    .map(|d| in_node(d, node.id, def.kind)),
+            );
+        }
+        let hit = {
+            let mut m = self.evaluator.lock_memory();
+            m.map.get_mut(&cache).map(|e| {
+                e.used = e.used.max(self.tick);
+                e.output.clone()
+            })
+        };
+        if let Some(output) = hit {
+            let mut report = self.report();
+            report.memory_hits += 1;
+            let nr = &mut report.nodes[slot];
+            nr.key = hex;
+            nr.diagnostics = diagnostics;
+            nr.cache = CacheState::Memory;
+            nr.output = Some(info(&output));
+            drop(report);
+            let _ = self.outputs[index].set(output);
+            return true;
+        }
+        let job = Job {
+            index,
+            def,
+            params: &node.params,
+            key,
+            cache,
+            seed: node_seed,
+            inputs: node
+                .inputs
+                .iter()
+                .filter(|(_, from)| !sampled(*from))
+                .map(|&(port, from)| {
+                    let output = self.outputs[from].get().expect("checked above");
+                    (port.to_string(), output.clone())
+                })
+                .collect(),
+            files,
+        };
+        let r = self
+            .evaluator
+            .run_job(plan, &job, self.pool, self.opts, self.tick, self.stop);
+        if let Outcome::Output(output) = &r.outcome {
+            let bytes = output.size().1;
+            let mut m = self.evaluator.lock_memory();
+            let entry = MemEntry {
+                output: output.clone(),
+                bytes,
+                used: self.tick,
+            };
+            if let Some(old) = m.map.insert(cache, entry) {
+                m.bytes -= old.bytes;
+            }
+            m.bytes += bytes;
+        }
+        let mut report = self.report();
+        match &r.outcome {
+            Outcome::Output(_) if r.from_disk => report.disk_hits += 1,
+            Outcome::Output(_) => report.misses += 1,
+            Outcome::Failed(_) | Outcome::Stopped => {}
+        }
+        let nr = &mut report.nodes[slot];
+        nr.key = hex;
+        nr.ms = r.ms;
+        match r.outcome {
+            Outcome::Output(output) => {
+                nr.cache = if r.from_disk {
+                    CacheState::Disk
+                } else {
+                    CacheState::Miss
+                };
+                nr.output = Some(info(&output));
+                nr.diagnostics = diagnostics;
+                nr.diagnostics.extend(r.warnings);
+                nr.logs = r.logs;
+                drop(report);
+                let _ = self.outputs[index].set(output);
+                true
+            }
+            Outcome::Failed(d) => {
+                nr.cache = CacheState::Failed;
+                nr.diagnostics = diagnostics;
+                nr.diagnostics.insert(0, d);
+                nr.diagnostics.extend(r.warnings);
+                nr.logs = r.logs;
+                true
+            }
+            Outcome::Stopped => {
+                // Skipped, with what it returned, its warnings and its logs.
+                drop(report);
+                self.stopped_at(index, true);
+                false
+            }
+        }
+    }
+
+    /// Records the first node the stop held back or stopped.
+    fn stopped_at(&self, index: usize, running: bool) {
+        let mut s = self.stopped.lock().unwrap_or_else(|e| e.into_inner());
+        if s.is_none() {
+            *s = Some((index, running, ms_since(self.start)));
+        }
+    }
+
+    /// The report (with `RE4016` or `RE4310` if the stop held back or stopped
+    /// a node) and each node's output and keys.
+    fn finish(self) -> RunResult {
+        let graph = self.plan.graph;
+        let n = graph.nodes.len();
+        let mut report = self.report.into_inner().unwrap_or_else(|e| e.into_inner());
+        let stopped = self.stopped.into_inner().unwrap_or_else(|e| e.into_inner());
+        if let Some((index, running, ms)) = stopped {
+            let id = graph.nodes.get_index(index).map_or("", |(k, _)| k.as_str());
+            report.diagnostics.push(match self.stop.reason() {
+                Some(Reason::Cancelled) => Diagnostic::error(
+                    codes::CANCELLED,
+                    format!("evaluation of `{}` was cancelled", graph.id),
+                ),
+                _ => Diagnostic::error(
+                    codes::BUDGET_EXCEEDED,
+                    format!(
+                        "evaluation of `{}` stopped after {ms:.0} ms, over its time budget, {} node `{id}`",
+                        graph.id,
+                        if running { "in" } else { "before" }
+                    ),
+                )
+                .with_hint("raise `max_ms`, or make the graph cheaper (smaller fields, larger scatter radius)"),
+            });
+        }
+        report.ms = ms_since(self.start);
+        RunResult {
+            report,
+            outputs: taken(self.outputs, n),
+            keys: taken(self.keys, n),
+            caches: taken(self.caches, n),
+            stopped: stopped.is_some(),
+        }
     }
 }
 
@@ -1064,7 +1479,8 @@ struct KeyInputs<'a> {
     /// Its parameters, migrated to the kind's current shape.
     params: &'a Json,
     inputs: &'a [(&'a str, usize)],
-    keys: &'a [Option<[u8; 32]>],
+    /// Per node: its key (or cache key, or global key), once known.
+    keys: &'a [OnceLock<[u8; 32]>],
     seed: u64,
     files: &'a HashMap<String, Result<Arc<Vec<u8>>, String>>,
     domain: Option<Domain>,
@@ -1117,7 +1533,7 @@ fn node_key(k: &KeyInputs) -> [u8; 32] {
     h.update(&(inputs.len() as u64).to_le_bytes());
     for (port, from) in inputs {
         s(&mut h, port);
-        h.update(&keys[*from].unwrap_or([0; 32]));
+        h.update(&keys[*from].get().copied().unwrap_or([0; 32]));
     }
     if def.uses_seed {
         h.update(&[1]);
@@ -1381,15 +1797,19 @@ pub fn fragment_hash_hex(fragment: &SceneFragment) -> String {
 /// they read.
 struct Plan<'a> {
     graph: &'a ProcGraph,
-    /// Per node of `graph` (`None` only for a node validation refuses).
+    /// Per node of `graph` (`None` only for a node validation refuses),
+    /// then a `None` per value in `bound`.
     nodes: Arc<Vec<Option<PlanNode<'a>>>>,
+    /// The values bound to the graph's `["$in", name]` edges (a graph a node
+    /// evaluates): index `graph.nodes.len() + j` of `nodes` is `bound[j]`.
+    bound: Arc<Vec<SubInput>>,
     /// The nodes evaluated, in document order.
     members: Vec<usize>,
     /// Per node of `graph`: its position in `members` (and the report).
     slot: Vec<usize>,
     /// `members` in topological levels.
     levels: Vec<Vec<usize>>,
-    /// Per node of `graph`: true if its output is the plan's output.
+    /// Per index of `nodes`: true if its output is the plan's output.
     sinks: Vec<bool>,
     /// The parts prepared so far, by the node each one outputs.
     parts: Mutex<HashMap<usize, Arc<Plan<'a>>>>,
@@ -1404,8 +1824,8 @@ struct PlanNode<'a> {
     params: Json,
     /// [`NodeDef::canonical_params`] of `params`.
     canonical: Json,
-    /// Its inputs `(port, node)`, in natural port order (edge order within
-    /// a port).
+    /// Its inputs `(port, index in the plan's nodes)`, in natural port order
+    /// (edge order within a port).
     inputs: Vec<(&'a str, usize)>,
     /// `hash64(id)`, which forks its seed.
     salt: u64,
@@ -1422,19 +1842,29 @@ impl PlanNode<'_> {
 }
 
 impl<'a> Plan<'a> {
-    /// The plan of `graph`, which validates against `registry`.
-    fn new(graph: &'a ProcGraph, registry: &'a NodeRegistry) -> Plan<'a> {
+    /// The plan of `graph`, which validates against `registry`, with
+    /// `bound` on its `["$in", name]` edges.
+    fn new(graph: &'a ProcGraph, registry: &'a NodeRegistry, bound: &[SubInput]) -> Plan<'a> {
         let n = graph.nodes.len();
         let mut inputs: Vec<Vec<(&str, usize)>> = vec![Vec::new(); n];
         let mut sinks = vec![true; n];
+        sinks.resize(n + bound.len(), false);
         for e in &graph.edges {
-            if let (Some(from), Some(to)) = (
-                graph.nodes.get_index_of(&e.from.0),
-                graph.nodes.get_index_of(&e.to.0),
-            ) {
-                inputs[to].push((e.to.1.as_str(), from));
-                sinks[from] = false;
-            }
+            let Some(to) = graph.nodes.get_index_of(&e.to.0) else {
+                continue;
+            };
+            let from = match graph.nodes.get_index_of(&e.from.0) {
+                Some(from) => from,
+                // The value bound to the graph's input of that name; an
+                // input with none is not connected.
+                None if e.from.0 == IN => match bound.iter().position(|b| b.name == e.from.1) {
+                    Some(j) => n + j,
+                    None => continue,
+                },
+                None => continue,
+            };
+            inputs[to].push((e.to.1.as_str(), from));
+            sinks[from] = false;
         }
         let nodes = graph
             .nodes
@@ -1455,10 +1885,12 @@ impl<'a> Plan<'a> {
                     salt: hash64(id),
                 })
             })
+            .chain(bound.iter().map(|_| None))
             .collect();
         Plan {
             graph,
             nodes: Arc::new(nodes),
+            bound: Arc::new(bound.to_vec()),
             members: (0..n).collect(),
             slot: (0..n).collect(),
             levels: graph.levels().unwrap_or_default(),
@@ -1475,7 +1907,7 @@ impl<'a> Plan<'a> {
             .entry(root)
             .or_insert_with(|| {
                 let n = self.graph.nodes.len();
-                let mut keep = vec![false; n];
+                let mut keep = vec![false; self.nodes.len()];
                 keep[root] = true;
                 let mut todo = vec![root];
                 while let Some(i) = todo.pop() {
@@ -1491,11 +1923,12 @@ impl<'a> Plan<'a> {
                 for (s, &i) in members.iter().enumerate() {
                     slot[i] = s;
                 }
-                let mut sinks = vec![false; n];
+                let mut sinks = vec![false; self.nodes.len()];
                 sinks[root] = true;
                 Arc::new(Plan {
                     graph: self.graph,
                     nodes: self.nodes.clone(),
+                    bound: self.bound.clone(),
                     members,
                     slot,
                     levels: self
@@ -1511,9 +1944,25 @@ impl<'a> Plan<'a> {
             .clone()
     }
 
-    /// The output type of node `index`'s kind.
+    /// The bound value at index `index` of `nodes`, if it is one.
+    fn bound_at(&self, index: usize) -> Option<&SubInput> {
+        self.bound.get(index.checked_sub(self.graph.nodes.len())?)
+    }
+
+    /// The output type of node `index`'s kind, or of the value bound there.
     fn output_type(&self, index: usize) -> Option<PortType> {
-        self.nodes[index].as_ref().map(|node| node.def.output)
+        match &self.nodes[index] {
+            Some(node) => Some(node.def.output),
+            None => self.bound_at(index).map(|b| b.output.port_type()),
+        }
+    }
+
+    /// Node `index`'s kind, or [`IN`] for a bound value.
+    fn kind_of(&self, index: usize) -> Option<&'a str> {
+        match &self.nodes[index] {
+            Some(node) => Some(node.def.kind),
+            None => self.bound_at(index).map(|_| IN),
+        }
     }
 
     /// The nodes a streamed evaluation runs: all but those whose output
