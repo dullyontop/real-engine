@@ -100,7 +100,7 @@ impl HeadlessEditor {
         let editor = &mut self.editor;
         let mut output = self.ctx.run_ui(input, |ui| editor.ui(ui, app, policy));
         let ui = UiFrame::from_output(&self.ctx, &mut output, size);
-        self.view.render(app)?;
+        self.view.render(app, &self.editor)?;
         let gpu = app.graphics().ok_or_else(view::no_graphics)?.gpu();
         let (device, queue) = (&gpu.device, &gpu.queue);
         view::clear(device, queue, self.capture.view());

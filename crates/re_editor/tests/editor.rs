@@ -116,12 +116,14 @@ fn panels_render_headless() {
         );
     }
 
-    // The game view shows the scene's clear colour where no panel covers it.
+    // The game view shows the scene's clear colour where no panel covers it:
+    // above the horizon (the camera looks level), clear of the grid on the
+    // ground and of the axis indicator in the top-right corner.
     let view = rects.get(Panel::Viewport).unwrap();
     let palette = rects.get(Panel::Palette).unwrap();
     let probe = [
-        view.left_bottom() + egui::vec2(8.0, -8.0),
-        view.right_bottom() + egui::vec2(-8.0, -8.0),
+        view.left_top() + egui::vec2(8.0, 8.0),
+        view.center_top() + egui::vec2(0.0, 8.0),
     ]
     .into_iter()
     .find(|p| !palette.contains(*p))

@@ -26,7 +26,8 @@
 # PR "bundles"). d2-run and d2 check that every replay's state_hash agrees on
 # the three platforms (ADR-0036, WP18 PR "d2"). The cargo caches are saved
 # only on main, as linux-setup's are, so PR runs restore main's (ADR-0023's
-# amendment of 2026-10-28). Action majors as in ci.yml.
+# amendment of 2026-10-28). Every job builds with the Rust release
+# rust-toolchain.toml pins, as in ci.yml. Action majors as in ci.yml.
 
 name: Platforms
 
@@ -60,7 +61,9 @@ jobs:
       RE_BACKENDS: dx12
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal
+      - name: Install the pinned toolchain
+        shell: bash
+        run: bash tools/ci/rust-toolchain.sh
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -114,7 +117,9 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal
+      - name: Install the pinned toolchain
+        shell: bash
+        run: bash tools/ci/rust-toolchain.sh
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -157,7 +162,9 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal
+      - name: Install the pinned toolchain
+        shell: bash
+        run: bash tools/ci/rust-toolchain.sh
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -229,7 +236,9 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal
+      - name: Install the pinned toolchain
+        shell: bash
+        run: bash tools/ci/rust-toolchain.sh
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -308,7 +317,9 @@ jobs:
       - if: runner.os == 'Linux'
         uses: ./.github/actions/linux-setup
       - if: runner.os != 'Linux'
-        run: rustup toolchain install stable --profile minimal
+        name: Install the pinned toolchain
+        shell: bash
+        run: bash tools/ci/rust-toolchain.sh
       - if: runner.os != 'Linux'
         uses: Swatinem/rust-cache@v2
         with:
@@ -333,7 +344,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal
+      - run: rustup toolchain install
       - uses: actions/download-artifact@v8
         with:
           pattern: d2-*

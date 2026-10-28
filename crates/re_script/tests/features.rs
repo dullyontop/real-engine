@@ -1077,6 +1077,7 @@ fn audio_mixer_functions_send_mixer_commands() {
                 position: None,
                 volume: 0.5,
                 bus: "footsteps".into(),
+                id: None,
             },
             AudioCmd::SetBusVolume {
                 bus: "music".into(),
