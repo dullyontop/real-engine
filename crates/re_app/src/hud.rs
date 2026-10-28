@@ -1,4 +1,7 @@
-//! The heads-up display: `HudText` components drawn with egui over the frame.
+//! The heads-up display: `HudText` components drawn with egui over the frame,
+//! each line in its own colour. A line breaks only at its `\n`s: egui would
+//! wrap it to the width its panel had the frame before, so text that grows
+//! (a speed going from 9 to 10) would wrap and stay wrapped.
 
 use re_render::egui;
 use re_scene::{HudAnchor, HudText, World, entity_id};
@@ -12,6 +15,8 @@ pub struct HudLine {
     pub text: String,
     /// Font size in logical pixels.
     pub size: f32,
+    /// Linear RGBA colour.
+    pub color: [f32; 4],
 }
 
 /// The world's HUD lines, in entity order (so lines sharing an anchor stack in
@@ -29,6 +34,13 @@ pub fn collect(world: &mut World) -> Vec<HudLine> {
                     anchor: h.anchor,
                     text: h.text.clone(),
                     size: h.size.clamp(4.0, 200.0),
+                    color: [h.color.r, h.color.g, h.color.b, h.color.a].map(|c| {
+                        if c.is_finite() {
+                            c.clamp(0.0, 1.0)
+                        } else {
+                            1.0
+                        }
+                    }),
                 },
             )
         })
@@ -78,12 +90,12 @@ pub fn draw(ctx: &egui::Context, lines: &[HudLine]) {
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::symmetric(10, 6))
                     .show(ui, |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                         for line in here {
-                            ui.label(
-                                egui::RichText::new(&line.text)
-                                    .size(line.size)
-                                    .color(egui::Color32::WHITE),
-                            );
+                            let [r, g, b, a] = line.color;
+                            ui.label(egui::RichText::new(&line.text).size(line.size).color(
+                                egui::Color32::from(egui::Rgba::from_rgba_unmultiplied(r, g, b, a)),
+                            ));
                         }
                     });
             });
@@ -123,4 +135,49 @@ pub fn run(
     delta.append(std::mem::take(&mut second.textures_delta));
     second.textures_delta = delta;
     second
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(anchor: HudAnchor, text: &str) -> HudLine {
+        HudLine {
+            anchor,
+            text: text.into(),
+            size: 22.0,
+            color: [1.0; 4],
+        }
+    }
+
+    /// The rows of each text drawn, in drawing order.
+    fn rows(mut output: egui::FullOutput) -> Vec<(String, usize)> {
+        // The font atlas uploads go nowhere here.
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) => Some((t.galley.text().to_string(), t.galley.rows.len())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lines_that_grow_do_not_wrap() {
+        let ctx = egui::Context::default();
+        for anchor in ANCHORS {
+            for text in [
+                "9 km/h  D1",
+                "10 km/h  D1",
+                "+268  Delivered to 7 Market Avenue (handled with care)",
+            ] {
+                let out = run(&ctx, &[line(anchor, text)], [1280, 720], 1.0, 0.0);
+                assert_eq!(rows(out), [(text.to_string(), 1)], "{anchor:?}");
+            }
+            let out = run(&ctx, &[line(anchor, "two\nlines")], [1280, 720], 1.0, 0.0);
+            assert_eq!(rows(out), [("two\nlines".to_string(), 2)], "{anchor:?}");
+        }
+    }
 }

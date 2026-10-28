@@ -14,7 +14,9 @@
 //! runs in the project directory, so the project's `.luaurc` (shared with the
 //! runtime's `require`) applies. The gnu output (`file:l.c-l.c: Kind: message`)
 //! becomes `RE3081` errors and `RE3082` warnings. No checker gives `RE3090`;
-//! a crash or an internal error (exit code 2) gives `RE3091`.
+//! a crash or an internal error (exit code 2) gives `RE3091`. Generator
+//! scripts (`scripts/generators/`) are checked in a run of their own against
+//! `generator.d.luau`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -39,6 +41,9 @@ pub struct TypesOptions {
     /// A `roblox.d.luau` ([`crate::roblox`]) to load as well, for a compat
     /// project.
     pub compat_definitions: Option<PathBuf>,
+    /// A `generator.d.luau` to check generator scripts against instead of the
+    /// one generated from `re_script`.
+    pub generator_definitions: Option<PathBuf>,
 }
 
 /// The checker [`run`] would use, as an absolute path: a bare program name is
@@ -81,6 +86,10 @@ fn not_found(options: &TypesOptions) -> Diagnostic {
 /// current directory) against the
 /// engine definitions and returns the checker's findings. Locations are relative
 /// to `project` where possible. Never panics on checker output.
+///
+/// Generator scripts ([`is_generator_script`]) run in their own VM with their
+/// own API, so they are checked apart, against `generator.d.luau`
+/// ([`TypesOptions::generator_definitions`]).
 pub fn run(project: &Path, files: &[PathBuf], options: &TypesOptions) -> Vec<Diagnostic> {
     if files.is_empty() {
         return Vec::new();
@@ -88,27 +97,6 @@ pub fn run(project: &Path, files: &[PathBuf], options: &TypesOptions) -> Vec<Dia
     let Some(checker) = find_checker(options) else {
         return vec![not_found(options)];
     };
-    let generated;
-    let defs = match &options.definitions {
-        Some(d) => d.clone(),
-        None => match TempDefs::write() {
-            Ok(t) => {
-                generated = t;
-                generated.0.clone()
-            }
-            Err(e) => {
-                return vec![Diagnostic::error(
-                    codes::CHECKER_FAILED,
-                    format!("cannot write engine.d.luau for the type checker: {e}"),
-                )];
-            }
-        },
-    };
-    let defs = std::path::absolute(&defs).unwrap_or(defs);
-    let compat = options
-        .compat_definitions
-        .as_ref()
-        .map(|c| std::path::absolute(c).unwrap_or_else(|_| c.clone()));
     let project_abs = std::path::absolute(project).unwrap_or_else(|_| project.to_path_buf());
     let rel: Vec<PathBuf> = files
         .iter()
@@ -127,39 +115,115 @@ pub fn run(project: &Path, files: &[PathBuf], options: &TypesOptions) -> Vec<Dia
                 .unwrap_or(abs)
         })
         .collect();
+    let (generators, scripts): (Vec<PathBuf>, Vec<PathBuf>) = rel
+        .into_iter()
+        .partition(|f| is_generator_script(&project_abs.join(f)));
 
+    let mut out = Vec::new();
+    let groups = [
+        (
+            scripts,
+            "engine",
+            &options.definitions,
+            re_script::definitions as fn() -> String,
+        ),
+        (
+            generators,
+            "generator",
+            &options.generator_definitions,
+            re_script::generator::definitions,
+        ),
+    ];
+    for (files, name, given, generate) in groups {
+        if files.is_empty() {
+            continue;
+        }
+        let generated;
+        let defs = match given {
+            Some(d) => d.clone(),
+            None => match TempDefs::write(name, &generate()) {
+                Ok(t) => {
+                    generated = t;
+                    generated.0.clone()
+                }
+                Err(e) => {
+                    return vec![Diagnostic::error(
+                        codes::CHECKER_FAILED,
+                        format!("cannot write {name}.d.luau for the type checker: {e}"),
+                    )];
+                }
+            },
+        };
+        let mut defs = vec![(name, std::path::absolute(&defs).unwrap_or(defs))];
+        // A compat project's scripts also see the Roblox-style API; its
+        // generators do not.
+        if name == "engine"
+            && let Some(c) = &options.compat_definitions
+        {
+            defs.push((
+                "roblox",
+                std::path::absolute(c).unwrap_or_else(|_| c.clone()),
+            ));
+        }
+        match check(&checker, &project_abs, &files, &defs, options) {
+            Ok(found) => out.extend(found),
+            Err(fatal) => return vec![fatal],
+        }
+    }
+    // The checker does not promise an order; sort by place so reports are stable.
+    out.sort_by_key(sort_key);
+    out
+}
+
+/// True for a script of the generator context: one in a `scripts/generators/`
+/// folder (ADR-0043 §4), which runs in its own VM with its own API.
+pub fn is_generator_script(path: &Path) -> bool {
+    let parts: Vec<_> = path.components().map(|c| c.as_os_str()).collect();
+    parts
+        .windows(2)
+        .any(|w| w[0] == "scripts" && w[1] == "generators")
+}
+
+/// Runs `checker` over `files` (relative to `project`) with the definitions
+/// files `defs`, each named as luau-lsp's `@name`. `Err` when the checker
+/// cannot run at all.
+fn check(
+    checker: &Path,
+    project: &Path,
+    files: &[PathBuf],
+    defs: &[(&str, PathBuf)],
+    options: &TypesOptions,
+) -> Result<Vec<Diagnostic>, Diagnostic> {
     let analyze = checker
         .file_name()
         .is_some_and(|n| n.to_string_lossy().contains("luau-analyze"));
     let mut out = Vec::new();
     // Long argument lists are split so that no command line gets too long.
-    for chunk in rel.chunks(200) {
-        let mut cmd = Command::new(&checker);
+    for chunk in files.chunks(200) {
+        let mut cmd = Command::new(checker);
         if analyze {
-            cmd.arg("--formatter=gnu")
-                .arg(format!("--definitions={}", defs.display()));
-            if let Some(c) = &compat {
-                cmd.arg(format!("--definitions={}", c.display()));
+            cmd.arg("--formatter=gnu");
+            for (_, path) in defs {
+                cmd.arg(format!("--definitions={}", path.display()));
             }
         } else {
             cmd.arg("analyze")
                 .arg("--platform=standard")
-                .arg("--flag:LuauSolverV2=true")
-                .arg(format!("--definitions=@engine={}", defs.display()));
-            if let Some(c) = &compat {
-                cmd.arg(format!("--definitions=@roblox={}", c.display()));
+                .arg("--flag:LuauSolverV2=true");
+            for (name, path) in defs {
+                cmd.arg(format!("--definitions=@{name}={}", path.display()));
             }
             cmd.arg("--formatter=gnu");
         }
-        cmd.args(chunk).current_dir(&project_abs);
+        cmd.args(chunk).current_dir(project);
         let output = match cmd.output() {
             Ok(o) => o,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![not_found(options)],
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(not_found(options)),
             Err(e) => {
-                return vec![Diagnostic::error(
+                return Err(Diagnostic::error(
                     codes::CHECKER_FAILED,
                     format!("cannot run {}: {e}", checker.display()),
-                )];
+                ));
             }
         };
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -173,9 +237,12 @@ pub fn run(project: &Path, files: &[PathBuf], options: &TypesOptions) -> Vec<Dia
             _ => true,
         };
         if failed {
-            // The temporary definitions path differs per run; name it stably.
-            let tail: String = format!("{stdout}{stderr}")
-                .replace(&defs.display().to_string(), "engine.d.luau")
+            // Temporary definitions paths differ per run; name them stably.
+            let mut text = format!("{stdout}{stderr}");
+            for (name, path) in defs {
+                text = text.replace(&path.display().to_string(), &format!("{name}.d.luau"));
+            }
+            let tail: String = text
                 .lines()
                 .filter(|l| !l.trim().is_empty())
                 .take(20)
@@ -195,9 +262,7 @@ pub fn run(project: &Path, files: &[PathBuf], options: &TypesOptions) -> Vec<Dia
         }
         out.extend(found);
     }
-    // The checker does not promise an order; sort by place so reports are stable.
-    out.sort_by_key(sort_key);
-    out
+    Ok(out)
 }
 
 fn sort_key(d: &Diagnostic) -> (String, u32, u32, String) {
@@ -276,14 +341,14 @@ fn parse_line(line: &str) -> Option<Diagnostic> {
 struct TempDefs(PathBuf);
 
 impl TempDefs {
-    fn write() -> std::io::Result<TempDefs> {
+    fn write(name: &str, text: &str) -> std::io::Result<TempDefs> {
         static N: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
-            "re_script_check-{}-{}.d.luau",
+            "re_script_check-{}-{}-{name}.d.luau",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::write(&path, re_script::definitions())?;
+        std::fs::write(&path, text)?;
         Ok(TempDefs(path))
     }
 }
@@ -297,6 +362,19 @@ impl Drop for TempDefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generator_scripts_are_the_ones_under_scripts_generators() {
+        for (path, generator) in [
+            ("scripts/generators/rocks.luau", true),
+            ("/home/me/town/scripts/generators/lib/plan.luau", true),
+            ("scripts/game/generators.luau", false),
+            ("scripts/game/generators/a.luau", false),
+            ("generators/rocks.luau", false),
+        ] {
+            assert_eq!(is_generator_script(Path::new(path)), generator, "{path}");
+        }
+    }
 
     #[test]
     fn gnu_lines_become_diagnostics() {
@@ -349,8 +427,7 @@ mod tests {
         let rel = prog.strip_prefix(&cwd).unwrap().to_path_buf();
         let options = TypesOptions {
             checker: Some(rel),
-            definitions: None,
-            compat_definitions: None,
+            ..TypesOptions::default()
         };
         assert_eq!(find_checker(&options), Some(prog));
     }
@@ -359,8 +436,7 @@ mod tests {
     fn a_missing_checker_is_re3090() {
         let options = TypesOptions {
             checker: Some(PathBuf::from("/nonexistent/luau-lsp")),
-            definitions: None,
-            compat_definitions: None,
+            ..TypesOptions::default()
         };
         let d = run(Path::new("."), &[PathBuf::from("a.luau")], &options);
         assert_eq!(d.len(), 1);

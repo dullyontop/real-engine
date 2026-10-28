@@ -13,6 +13,7 @@ struct RecordingHost {
     actions: ActionFrame,
     log: Vec<String>,
     restart: bool,
+    time_scale: Option<f64>,
 }
 
 impl HostServices for RecordingHost {
@@ -55,6 +56,17 @@ impl HostServices for RecordingHost {
 
     fn body_velocity(&self, _entity: EntityId) -> HostResult<(Vec3, Vec3)> {
         Ok((Vec3::X, Vec3::ZERO))
+    }
+
+    fn set_body_velocity(
+        &mut self,
+        entity: EntityId,
+        linear: Vec3,
+        angular: Vec3,
+    ) -> HostResult<()> {
+        self.log
+            .push(format!("velocity {entity} {linear} {angular}"));
+        Ok(())
     }
 
     fn vehicle_drive(&mut self, entity: EntityId, input: VehicleInput) -> HostResult<()> {
@@ -122,6 +134,15 @@ impl HostServices for RecordingHost {
         self.restart = true;
     }
 
+    fn set_time_scale(&mut self, scale: f64) -> HostResult<()> {
+        self.time_scale = Some(scale);
+        Ok(())
+    }
+
+    fn time_scale(&self) -> f64 {
+        self.time_scale.unwrap_or(1.0)
+    }
+
     fn anim_set(&mut self, entity: EntityId, param: &str, value: AnimValue) -> HostResult<()> {
         self.log
             .push(format!("anim.set {entity} {param} {value:?}"));
@@ -157,6 +178,8 @@ fn script_frame(host: &mut dyn HostServices) -> Result<(), HostError> {
     host.apply_impulse(EntityId(6), Vec3::Y)?;
     let (linear, _angular) = host.body_velocity(EntityId(6))?;
     assert_eq!(linear, Vec3::X);
+    host.set_body_velocity(EntityId(6), Vec3::Z, Vec3::ZERO)?;
+    host.set_time_scale(0.5)?;
     host.play_sound("assets/sfx/pickup.wav", Some(hit.point), 1.0)?;
     host.set_hud_text(EntityId(7), "3 / 10")?;
     host.request_screenshot("out/shot.png")?;
@@ -171,6 +194,8 @@ fn a_script_drives_the_host_through_the_trait_object() {
     let err = script_frame(&mut host).expect_err("entity 6 is not a character");
     assert_eq!(err.code, "RE0510");
     assert!(host.restart);
-    assert_eq!(host.log.len(), 6);
-    assert_eq!(host.log[5], "regenerate island 99");
+    assert_eq!(host.time_scale(), 0.5);
+    assert_eq!(host.log.len(), 7);
+    assert_eq!(host.log[2], "velocity #6 [0, 0, 1] [0, 0, 0]");
+    assert_eq!(host.log[6], "regenerate island 99");
 }

@@ -9,6 +9,8 @@
 //!   project-confined `require` ([`crate::modules`]);
 //! * replaces Luau's transcendental maths with portable versions and compiles
 //!   every chunk with those builtins disabled ([`crate::portable_math`], ADR-0036);
+//! * starts `math.random` from the run's seed and puts `os.clock` on the
+//!   virtual clock ([`repeatable`]), so a run repeats;
 //! * has a memory limit and the raw CPU-budget interrupt (`budget`).
 //!
 //! Every script and module runs in its own environment table whose metatable
@@ -154,17 +156,64 @@ pub(crate) fn install_engine(
     Ok(decls)
 }
 
-/// Creates the VM of one context.
+/// What `os.clock()` reads when a native context starts, in seconds: a day,
+/// as in the compatibility layer, so a cooldown stamped at 0 has already
+/// passed, as it has for the process clock of a machine that has been up a
+/// while.
+pub const CLOCK_START: f64 = 86_400.0;
+
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
+}
+
+/// The 32 bits `math.randomseed` takes for context `kind` of a run with
+/// `seed`: the tools context starts from `seed + 1`, so the two contexts'
+/// sequences differ.
+pub(crate) fn math_random_seed(kind: ContextKind, seed: i64) -> i32 {
+    let seed = match kind {
+        ContextKind::Tools => seed.wrapping_add(1),
+        _ => seed,
+    };
+    splitmix64(seed as u64) as u32 as i32
+}
+
+/// Makes a native context repeat run to run (ADR-0036): Luau seeds
+/// `math.random` from the process and `os.clock` reads the process clock, so
+/// a script that used either would leave a different `state_hash` each run
+/// and fail a replay. `math.random` starts from [`math_random_seed`] instead
+/// (a script's `math.randomseed` still reseeds it), and `os.clock()` is
+/// [`CLOCK_START`] plus the simulation time: it moves once per fixed step and
+/// stands still within one. `os.time` and `os.date` still read the wall clock.
+/// Call before `sandbox(true)` freezes the library tables.
+pub(crate) fn repeatable(lua: &Lua, kind: ContextKind, seed: i64) -> Result<()> {
+    let globals = lua.globals();
+    let math: Table = globals.get("math")?;
+    math.get::<Function>("randomseed")?
+        .call::<()>(math_random_seed(kind, seed))?;
+    let os: Table = globals.get("os")?;
+    os.raw_set(
+        "clock",
+        lua.create_function(|lua, ()| Ok(CLOCK_START + scheduler::now(lua)?))?,
+    )?;
+    Ok(())
+}
+
+/// Creates the VM of one context; `seed` is the run's seed ([`repeatable`]).
 pub(crate) fn create(
     files: &re_core::files::ProjectFiles,
     kind: ContextKind,
     budget: Duration,
     memory_limit: usize,
     loaded: Loaded,
+    seed: i64,
 ) -> Result<Lua> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
     lua.set_compiler(crate::compile::compiler_for(files));
     install_engine(&lua, kind, budget)?;
+    repeatable(&lua, kind, seed)?;
     let require = lua.create_require_function(ProjectRequirer::new(files.clone(), kind, loaded))?;
     lua.globals().raw_set("require", require)?;
     // Freezes the globals and every library table, and turns safeenv on.

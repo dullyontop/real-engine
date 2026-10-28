@@ -41,6 +41,9 @@ impl HostServices for Services {
     fn body_velocity(&self, e: EntityId) -> HostResult<(Vec3, Vec3)> {
         self.base.body_velocity(e)
     }
+    fn set_body_velocity(&mut self, e: EntityId, l: Vec3, a: Vec3) -> HostResult<()> {
+        self.base.set_body_velocity(e, l, a)
+    }
     fn vehicle_drive(&mut self, e: EntityId, i: VehicleInput) -> HostResult<()> {
         self.base.vehicle_drive(e, i)
     }
@@ -78,6 +81,12 @@ impl HostServices for Services {
         self.base.regenerate(s, seed)
     }
     fn request_restart(&mut self) {}
+    fn set_time_scale(&mut self, scale: f64) -> HostResult<()> {
+        self.base.set_time_scale(scale)
+    }
+    fn time_scale(&self) -> f64 {
+        self.base.time_scale()
+    }
     fn anim_set(&mut self, e: EntityId, p: &str, v: re_types::anim::AnimValue) -> HostResult<()> {
         self.base.anim_set(e, p, v)
     }

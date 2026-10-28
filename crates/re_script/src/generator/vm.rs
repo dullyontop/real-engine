@@ -169,12 +169,9 @@ pub(crate) fn create(scripts: Arc<Scripts>, memory_mb: usize, log: Log) -> mlua:
     }
     portable_math(&lua)?;
     g.raw_set("proc", proc_lib(&lua)?)?;
-    let mut quat = Lib::new(&lua, "quat", "Rotations.")?;
-    crate::api::math::quat_lib(&lua, &mut quat)?;
-    g.raw_set("quat", quat.finish(&lua)?.0)?;
-    let mut color = Lib::new(&lua, "color", "Linear colours.")?;
-    crate::api::math::color_lib(&lua, &mut color)?;
-    g.raw_set("color", color.finish(&lua)?.0)?;
+    for (name, table, _) in math_libs(&lua)? {
+        g.raw_set(name, table)?;
+    }
     let tostring: Function = g.raw_get("tostring")?;
     g.raw_set(
         "print",
@@ -210,6 +207,18 @@ pub(crate) fn create(scripts: Arc<Scripts>, memory_mb: usize, log: Log) -> mlua:
         })?;
     }
     Ok(lua)
+}
+
+/// The `quat` and `color` libraries of the generator context, with their
+/// declarations for `generator.d.luau`.
+pub(crate) fn math_libs(lua: &Lua) -> mlua::Result<[(&'static str, Table, String); 2]> {
+    let mut quat = Lib::new(lua, "quat", "Rotations.")?;
+    crate::api::math::quat_lib(lua, &mut quat)?;
+    let (quat, quat_decl) = quat.finish(lua)?;
+    let mut color = Lib::new(lua, "color", "Linear colours.")?;
+    crate::api::math::color_lib(lua, &mut color)?;
+    let (color, color_decl) = color.finish(lua)?;
+    Ok([("quat", quat, quat_decl), ("color", color, color_decl)])
 }
 
 /// The error value Luau gives a caught out-of-memory error.

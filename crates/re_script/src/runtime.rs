@@ -49,6 +49,10 @@ pub struct RuntimeConfig {
     /// The memory each context's VM may allocate, in bytes (`memory_limit_mb`);
     /// 0 means unlimited.
     pub memory_limit: usize,
+    /// The run's seed: `math.random` starts from it in the game context and
+    /// from `seed + 1` in the tools context (`[scripts] seed`, or a replay's
+    /// `seed`).
+    pub seed: i64,
 }
 
 impl RuntimeConfig {
@@ -73,6 +77,7 @@ impl RuntimeConfig {
             files,
             cpu_budget: Duration::from_millis(Self::DEFAULT_CPU_BUDGET_MS),
             memory_limit: Self::DEFAULT_MEMORY_LIMIT_MB * 1024 * 1024,
+            seed: 0,
         }
     }
 
@@ -80,6 +85,12 @@ impl RuntimeConfig {
     pub fn with_limits(mut self, cpu_budget_ms: u64, memory_limit_mb: usize) -> RuntimeConfig {
         self.cpu_budget = Duration::from_millis(cpu_budget_ms);
         self.memory_limit = memory_limit_mb * 1024 * 1024;
+        self
+    }
+
+    /// The run's seed ([`RuntimeConfig::seed`]).
+    pub fn with_seed(mut self, seed: i64) -> RuntimeConfig {
+        self.seed = seed;
         self
     }
 }
@@ -100,6 +111,7 @@ impl Context {
             config.cpu_budget,
             config.memory_limit,
             loaded.clone(),
+            config.seed,
         )
         .map_err(|e| ScriptError::from_mlua(kind.name(), &e))?;
         Ok(Context { kind, lua, loaded })
@@ -326,6 +338,26 @@ impl ScriptRuntime {
                 kind.name()
             ),
         }
+    }
+
+    /// Starts `math.random` again from `seed` in both contexts (the tools
+    /// context from `seed + 1`), now and after every [`reset`](Self::reset):
+    /// a replay played on a running game starts from its own seed.
+    ///
+    /// # Errors
+    ///
+    /// When a context's `math.randomseed` cannot be called.
+    pub fn reseed(&mut self, seed: i64) -> Result<(), ScriptError> {
+        self.config.seed = seed;
+        for ctx in [&self.game, &self.tools] {
+            let lua = &ctx.lua;
+            lua.globals()
+                .get::<mlua::Table>("math")
+                .and_then(|math| math.get::<mlua::Function>("randomseed"))
+                .and_then(|f| f.call::<()>(vm::math_random_seed(ctx.kind, seed)))
+                .map_err(|e| ScriptError::from_mlua(ctx.kind.name(), &e))?;
+        }
+        Ok(())
     }
 
     /// Throws both VMs away and starts fresh ones (for `world.restart()`, after

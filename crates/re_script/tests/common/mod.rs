@@ -28,6 +28,10 @@ pub struct Services {
     /// Mixer commands (`audio_mix`).
     pub mix: Vec<AudioCmd>,
     pub impulses: Vec<(EntityId, Vec3)>,
+    /// `set_body_velocity` calls: entity, linear and angular velocity.
+    pub velocities: Vec<(EntityId, Vec3, Vec3)>,
+    /// What `set_time_scale` set last (`None`: never called).
+    pub time_scale: Option<f64>,
     /// Ragdoll mode changes and impulses, as text.
     pub ragdolls: Vec<String>,
     pub restarts: usize,
@@ -66,6 +70,10 @@ impl HostServices for Services {
     }
     fn body_velocity(&self, e: EntityId) -> HostResult<(Vec3, Vec3)> {
         self.none.body_velocity(e)
+    }
+    fn set_body_velocity(&mut self, e: EntityId, linear: Vec3, angular: Vec3) -> HostResult<()> {
+        self.velocities.push((e, linear, angular));
+        Ok(())
     }
     fn vehicle_drive(&mut self, e: EntityId, i: VehicleInput) -> HostResult<()> {
         self.none.vehicle_drive(e, i)
@@ -128,6 +136,13 @@ impl HostServices for Services {
     }
     fn request_restart(&mut self) {
         self.restarts += 1;
+    }
+    fn set_time_scale(&mut self, scale: f64) -> HostResult<()> {
+        self.time_scale = Some(scale);
+        Ok(())
+    }
+    fn time_scale(&self) -> f64 {
+        self.time_scale.unwrap_or(1.0)
     }
     fn anim_set(&mut self, e: EntityId, p: &str, v: re_types::anim::AnimValue) -> HostResult<()> {
         self.none.anim_set(e, p, v)

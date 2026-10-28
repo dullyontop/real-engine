@@ -101,6 +101,31 @@ impl ProjectRequirer {
         self.rel = rel;
         Ok(())
     }
+
+    /// Reads and compiles the module at `key` (a path under `scripts/`).
+    fn load(&self, lua: &Lua, key: String) -> Result<Function> {
+        let data = self.files.read(&key).map_err(|e| match e {
+            re_core::files::FileError::Outside { .. } => crate::api::error(
+                codes::REQUIRE,
+                format!("require of {key:?} is refused: modules must be inside scripts/"),
+            ),
+            e => crate::api::error(codes::SCRIPT_READ, format!("cannot read {key}: {e}")),
+        })?;
+        let mode = crate::compile::chunk_mode(&data.form).map_err(|m| {
+            crate::api::error(codes::SCRIPT_READ, format!("cannot load {key}: {m}"))
+        })?;
+        self.loaded.borrow_mut().insert(key.clone());
+        let env = crate::vm::new_env(lua, &key, self.kind, None)?;
+        let chunk = lua
+            .load(data.bytes.to_vec())
+            .set_name(format!("@{key}"))
+            .set_mode(mode)
+            .set_compiler(crate::compile::compiler_for(&self.files))
+            .set_environment(env)
+            .into_function()?;
+        crate::scheduler::register_module_chunk(lua, &key, &chunk)?;
+        Ok(chunk)
+    }
 }
 
 /// A chunk name such as `@scripts/game/main.luau` as a relative path; anything
@@ -199,27 +224,9 @@ impl Require for ProjectRequirer {
                 format!("require of {key:?} is refused: modules must be inside scripts/"),
             ));
         }
-        let data = self.files.read(&key).map_err(|e| match e {
-            re_core::files::FileError::Outside { .. } => crate::api::error(
-                codes::REQUIRE,
-                format!("require of {key:?} is refused: modules must be inside scripts/"),
-            ),
-            e => crate::api::error(codes::SCRIPT_READ, format!("cannot read {key}: {e}")),
-        })?;
-        let mode = crate::compile::chunk_mode(&data.form).map_err(|m| {
-            crate::api::error(codes::SCRIPT_READ, format!("cannot load {key}: {m}"))
-        })?;
-        self.loaded.borrow_mut().insert(key.clone());
-        let env = crate::vm::new_env(lua, &key, self.kind, None)?;
-        let chunk = lua
-            .load(data.bytes.to_vec())
-            .set_name(format!("@{key}"))
-            .set_mode(mode)
-            .set_compiler(crate::compile::compiler_for(&self.files))
-            .set_environment(env)
-            .into_function()?;
-        crate::scheduler::register_module_chunk(lua, &key, &chunk)?;
-        Ok(chunk)
+        // Reading and compiling the module is the engine's work, not the
+        // script's: it does not count against the script's time budget.
+        crate::budget::untimed(|| self.load(lua, key))
     }
 }
 

@@ -4,8 +4,12 @@
 //! a script callback runs (the World itself goes to the script runtime
 //! separately). Calls that change something are queued and take effect at a
 //! fixed point of the frame:
-//! - impulses, character moves and vehicle input are physics commands for the next physics
-//!   phase (the current fixed step's, when called from a fixed-step callback);
+//! - impulses, velocities, character moves and vehicle input are physics commands for the
+//!   next physics phase (the current fixed step's, when called from a fixed-step callback);
+//!   an impulse or velocity for an entity spawned this frame waits in the queue for the
+//!   body that phase creates;
+//! - the time scale applies to the fixed steps the next frame counts (this frame's, when
+//!   called from a frame callback);
 //! - sounds go to the frame's audio commands;
 //! - HUD text, screenshots, regeneration and restart are applied in EndFrame.
 
@@ -63,7 +67,12 @@ pub struct Host<'a> {
     /// Skeleton poses and animation graphs (`anim.*` read and set them at
     /// once).
     pub skins: &'a mut SkinSync,
+    /// How fast simulation time runs against frame time (`time.set_scale`).
+    pub time_scale: &'a mut f64,
 }
+
+/// The largest time scale `time.set_scale` takes.
+pub const MAX_TIME_SCALE: f64 = 10.0;
 
 fn no_such(msg: String) -> HostError {
     HostError::new(HOST_NO_SUCH_THING_STR, msg)
@@ -116,6 +125,21 @@ impl Host<'_> {
         }
     }
 
+    /// Refuses an entity whose body is not dynamic. One without a body yet is
+    /// let through: an entity spawned this frame gets its body at the next
+    /// physics phase, which applies its commands after creating it (the
+    /// script library checks that it describes a dynamic body), and a command
+    /// for an entity that still has none then is reported there.
+    fn require_dynamic(&self, entity: EntityId, what: &str) -> HostResult<()> {
+        match self.links.kind(entity) {
+            Some(LinkKind::Body(BodyKind::Dynamic)) | None => Ok(()),
+            Some(_) => Err(invalid(format!(
+                "entity {} is not a dynamic body; {what} dynamic bodies only",
+                entity.0
+            ))),
+        }
+    }
+
     fn require_character(&self, entity: EntityId) -> HostResult<()> {
         match self.links.kind(entity) {
             Some(LinkKind::Character) => Ok(()),
@@ -142,23 +166,12 @@ impl HostServices for Host<'_> {
 
     fn apply_impulse(&mut self, entity: EntityId, impulse: Vec3) -> HostResult<()> {
         finite(impulse, "impulse")?;
-        match self.links.kind(entity) {
-            Some(LinkKind::Body(BodyKind::Dynamic)) => {
-                self.physics_cmds.push(PhysicsCmd::ApplyImpulse {
-                    id: entity,
-                    impulse,
-                });
-                Ok(())
-            }
-            Some(_) => Err(invalid(format!(
-                "entity {} is not a dynamic body; impulses move dynamic bodies only",
-                entity.0
-            ))),
-            None => Err(no_such(format!(
-                "entity {} has no physics body (add a Collider and a dynamic RigidBody)",
-                entity.0
-            ))),
-        }
+        self.require_dynamic(entity, "impulses move")?;
+        self.physics_cmds.push(PhysicsCmd::ApplyImpulse {
+            id: entity,
+            impulse,
+        });
+        Ok(())
     }
 
     fn character_move(
@@ -188,6 +201,23 @@ impl HostServices for Host<'_> {
         self.physics
             .velocity(entity)
             .ok_or_else(|| no_such(format!("entity {} has no physics body", entity.0)))
+    }
+
+    fn set_body_velocity(
+        &mut self,
+        entity: EntityId,
+        linear: Vec3,
+        angular: Vec3,
+    ) -> HostResult<()> {
+        finite(linear, "linear velocity")?;
+        finite(angular, "angular velocity")?;
+        self.require_dynamic(entity, "set_velocity moves")?;
+        self.physics_cmds.push(PhysicsCmd::SetVelocity {
+            id: entity,
+            linear,
+            angular,
+        });
+        Ok(())
     }
 
     fn vehicle_drive(&mut self, entity: EntityId, input: VehicleInput) -> HostResult<()> {
@@ -418,6 +448,20 @@ impl HostServices for Host<'_> {
 
     fn request_restart(&mut self) {
         self.pending.restart = true;
+    }
+
+    fn set_time_scale(&mut self, scale: f64) -> HostResult<()> {
+        if !(scale.is_finite() && (0.0..=MAX_TIME_SCALE).contains(&scale)) {
+            return Err(invalid(format!(
+                "time scale {scale} is not a number from 0 to {MAX_TIME_SCALE}"
+            )));
+        }
+        *self.time_scale = scale;
+        Ok(())
+    }
+
+    fn time_scale(&self) -> f64 {
+        *self.time_scale
     }
 
     fn anim_set(&mut self, entity: EntityId, param: &str, value: AnimValue) -> HostResult<()> {

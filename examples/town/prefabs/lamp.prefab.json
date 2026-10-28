@@ -1,0 +1,35 @@
+{
+  "format": "real-engine/prefab",
+  "version": 1,
+  "entities": [
+    {
+      "id": "lamp",
+      "name": "Lamp",
+      "components": {
+        "Collider": { "shape": "Box", "half_extents": [0.1, 2.1, 0.1] },
+        "RigidBody": { "kind": "Dynamic", "mass": 40.0, "friction": 0.8, "angular_damping": 0.3 },
+        "Transform": { "translation": [0.0, 2.1, 0.0] }
+      }
+    },
+    {
+      "id": "post",
+      "name": "Post",
+      "parent": "lamp",
+      "components": {
+        "MaterialRef": { "asset": "materials/iron.material.json" },
+        "MeshRef": { "asset": "builtin:cube" },
+        "Transform": { "scale": [0.14, 4.2, 0.14] }
+      }
+    },
+    {
+      "id": "head",
+      "name": "Light",
+      "parent": "lamp",
+      "components": {
+        "MaterialRef": { "asset": "materials/lamp.material.json" },
+        "MeshRef": { "asset": "builtin:sphere" },
+        "Transform": { "translation": [0.0, 2.2, 0.0], "scale": [0.45, 0.45, 0.45] }
+      }
+    }
+  ]
+}
