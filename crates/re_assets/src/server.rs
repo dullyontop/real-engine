@@ -905,8 +905,6 @@ impl AssetServer {
         Ok((data, id))
     }
 
-    /// The file at `rel` in whatever form it is stored, as
-    /// [`codes::READ_FAILED`] on error.
     /// The format, channels, rate and length of the audio file at `path`
     /// (`.wav` or `.ogg`), from its headers (ADR-0066 §6).
     ///
@@ -919,6 +917,8 @@ impl AssetServer {
         crate::audio_info(path, &data.bytes)
     }
 
+    /// The file at `rel` in whatever form it is stored, as
+    /// [`codes::READ_FAILED`] on error.
     fn read_asset(&self, rel: &str) -> Result<FileData, Diagnostic> {
         self.files.read(rel).map_err(|e| {
             Diagnostic::error(codes::READ_FAILED, format!("cannot read `{rel}`: {e}"))

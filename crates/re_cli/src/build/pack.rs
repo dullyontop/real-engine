@@ -275,7 +275,6 @@ pub fn icon_image(files: &ProjectFiles, icon: &str) -> Result<TextureData, Diagn
     })
 }
 
-/// The project paths to pack, sorted.
 /// The audio files a build packs (`.wav`, `.ogg`).
 pub fn audio_paths(files: &ProjectFiles, pc: &PackageConfig) -> Vec<String> {
     collect(files, pc)
@@ -324,6 +323,7 @@ pub fn check_audio(files: &ProjectFiles, paths: &[String], decode: bool) -> Vec<
     found.into_iter().map(|(_, d)| d).collect()
 }
 
+/// The project paths to pack, sorted.
 fn collect(files: &ProjectFiles, pc: &PackageConfig) -> BTreeSet<String> {
     let mut paths = BTreeSet::new();
     for f in DEFAULT_FILES {
