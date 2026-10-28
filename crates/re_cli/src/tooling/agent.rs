@@ -67,7 +67,8 @@ pub enum AgentCommand {
     /// checks. The engine calls no model: without `--agent` the tasks'
     /// reference calls are the driver.
     Eval {
-        /// The suite: a directory of task files (`crates/re_agent/evals/NAME`).
+        /// The suite: a directory of task files (`crates/re_agent/evals/NAME`),
+        /// relative to the current directory.
         suite: PathBuf,
         /// An agent from `eval.toml` to run instead of the reference calls.
         #[arg(long)]
@@ -75,9 +76,10 @@ pub enum AgentCommand {
         /// Runs of each task (agents are not deterministic).
         #[arg(long, default_value_t = 1)]
         runs: u32,
-        /// Where the runs and the summary go.
-        #[arg(long, default_value = "out/eval")]
-        out: PathBuf,
+        /// Where the runs and the summary go (default: `out/eval` in the
+        /// project). A relative path is relative to the current directory.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
         /// How MCP is served.
         #[arg(long, value_enum, default_value = "http")]
         transport: EvalTransport,
@@ -125,7 +127,10 @@ pub fn run(args: AgentArgs, project: &Path) -> anyhow::Result<ExitCode> {
             runs,
             out,
             transport,
-        } => cmd_eval(&suite, agent, runs, &out, transport),
+        } => {
+            let out = out.unwrap_or_else(|| project.join("out/eval"));
+            cmd_eval(&suite, agent, runs, &out, transport)
+        }
         AgentCommand::Rollback {
             session,
             checkpoint,
@@ -133,13 +138,13 @@ pub fn run(args: AgentArgs, project: &Path) -> anyhow::Result<ExitCode> {
     })
 }
 
-/// The URL of `real mcp --http ADDR`: a loopback address with a fixed port,
-/// since client configs name it (`RE8502`).
+/// The URL of `real mcp --http ADDR`: a loopback address (`RE8502`) with a
+/// fixed port, since client configs name it (`RE8506`).
 fn http_url(addr: &str) -> Result<String, Diagnostic> {
     let addr = re_mcp::http::parse_addr(addr)?;
     if addr.port() == 0 {
         return Err(Diagnostic::error(
-            re_mcp::codes::NOT_LOOPBACK,
+            re_mcp::codes::PORT_NOT_FIXED,
             "client configs need a fixed port, not 0",
         )
         .with_hint(
@@ -838,13 +843,11 @@ fn drive_reference(
             )?;
             let failed = reply.get("error").is_some() || reply["result"]["isError"] == true;
             if failed {
-                let detail = reply["result"]["content"][0]["text"]
-                    .as_str()
-                    .map_or_else(|| reply.to_string(), str::to_string);
                 anyhow::bail!(
-                    "reference call {} (`{}`) failed: {detail}",
+                    "reference call {} (`{}`) failed: {}",
                     i + 1,
-                    call.command
+                    call.command,
+                    failure(&reply)
                 );
             }
         }
@@ -861,6 +864,26 @@ fn drive_reference(
         (Session::Http(_), None) => {}
     }
     Ok(())
+}
+
+/// Why a tool call failed: the engine's first error as `CODE message` (the
+/// error JSON of an `isError` result), or the JSON-RPC error of a protocol
+/// failure, or else the reply's text.
+fn failure(reply: &Json) -> String {
+    if let Some(error) = reply.get("error") {
+        let message = error["message"].as_str().unwrap_or_default();
+        return format!("JSON-RPC error {}: {message}", error["code"]);
+    }
+    let Some(text) = reply["result"]["content"][0]["text"].as_str() else {
+        return reply.to_string();
+    };
+    match serde_json::from_str::<Json>(text) {
+        Ok(body) if body["code"].is_string() => {
+            let message = body["message"].as_str().unwrap_or_default();
+            format!("{} {message}", body["code"].as_str().unwrap_or_default())
+        }
+        _ => text.to_string(),
+    }
 }
 
 /// Runs the configured agent in the project, with the MCP endpoint and a
@@ -935,4 +958,46 @@ fn drive_command(
         stop_http(child);
     }
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_configs_need_a_loopback_address_with_a_fixed_port() {
+        assert_eq!(
+            http_url("127.0.0.1:8765").unwrap(),
+            format!("http://127.0.0.1:8765{}", re_mcp::http::ENDPOINT)
+        );
+        assert_eq!(
+            http_url("127.0.0.1:0").unwrap_err().code,
+            re_mcp::codes::PORT_NOT_FIXED
+        );
+        assert_eq!(
+            http_url("0.0.0.0:8765").unwrap_err().code,
+            re_mcp::codes::NOT_LOOPBACK
+        );
+    }
+
+    #[test]
+    fn a_failed_call_is_reported_with_its_code() {
+        let code = re_reflect::codes::UNKNOWN_FIELD;
+        let error = json!({ "code": code, "message": "`Transform` has no field `postion`" });
+        let reply = json!({ "result": {
+            "isError": true,
+            "content": [{ "type": "text", "text": error.to_string() }]
+        }});
+        assert_eq!(
+            failure(&reply),
+            format!("{code} `Transform` has no field `postion`")
+        );
+        let reply = json!({ "error": { "code": -32602, "message": "unknown tool `scene_save`" } });
+        assert_eq!(
+            failure(&reply),
+            "JSON-RPC error -32602: unknown tool `scene_save`"
+        );
+        let reply = json!({ "result": { "isError": true, "content": [{ "text": "plain" }] } });
+        assert_eq!(failure(&reply), "plain");
+    }
 }

@@ -2,7 +2,8 @@
 -- The landscape's ProcGraph (ADR-0015): a noise heightfield shaped into an
 -- island, its terrain mesh and collider, and the sea. `graph.set_param`
 -- changes a node's parameter (the `terrain-shape` recipe does), and
--- `real graph eval` shows what each node makes.
+-- `real do graph.report --args '{"source": "terrain"}'` shows what each node
+-- made.
 local g = proc.graph("terrain", { seed = 1 })
 
 local height = g:node("terrain.heightfield", {

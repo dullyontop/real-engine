@@ -34,12 +34,15 @@ args = { recipe = "falling-box" }
 - `{ example = "NAME" }` is found as `examples/NAME` in a folder above the
   suite.
 - `{ path = "dir" }` is relative to the suite.
-- Checks are the template checks. `no_regressions` and `diff_stage`
-  compare with `real verify` on the project before the run.
+- Checks are the template checks (`templates/README.md`). Check numbers as
+  numbers: `near` with `tolerance`, or `at_least` and `at_most`, rather
+  than `contains` on text. `no_regressions` and `diff_stage` compare with
+  `real verify` on the project before the run.
 
 ## What a run does
 
-For each task and run:
+Results go under `--out DIR`, by default `out/eval` in the project (the
+current directory, unless `--project` names another). For each task and run:
 
 1. The harness copies the project into
    `--out/<suite>/<task>/run-<n>/project` and writes the agent policy that

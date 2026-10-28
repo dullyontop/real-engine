@@ -135,6 +135,12 @@ pub struct Check {
     /// The number there is at most this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at_most: Option<f64>,
+    /// The number there is within `tolerance` of this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near: Option<f64>,
+    /// With `near`: how far the number may be from it (at least 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<f64>,
     /// The string there contains this, or the array there contains this
     /// value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -177,14 +183,84 @@ pub enum CheckKind {
 /// What a command check expects at its pointer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expect {
-    /// Equal to the value.
+    /// Equal to the value (numbers compare as numbers).
     Equals(Json),
-    /// A number at least this.
-    AtLeast(f64),
-    /// A number at most this.
-    AtMost(f64),
+    /// A number in a closed range; either end may be open.
+    Range {
+        /// The smallest number allowed.
+        at_least: Option<f64>,
+        /// The largest number allowed.
+        at_most: Option<f64>,
+    },
+    /// A number within `tolerance` of `value`.
+    Near {
+        /// The number expected.
+        value: f64,
+        /// How far the number may be from it.
+        tolerance: f64,
+    },
     /// A string containing it, or an array with the value.
     Contains(Json),
+}
+
+impl Expect {
+    /// Whether `found` meets the expectation, or why not.
+    fn holds(&self, found: &Json) -> Result<(), String> {
+        let number = || {
+            found
+                .as_f64()
+                .ok_or_else(|| format!("is {}, not a number", json_type(found)))
+        };
+        let met = match self {
+            Expect::Equals(v) => numbers_equal(found, v) || found == v,
+            Expect::Range { at_least, at_most } => {
+                let f = number()?;
+                at_least.is_none_or(|lo| f >= lo) && at_most.is_none_or(|hi| f <= hi)
+            }
+            Expect::Near { value, tolerance } => (number()? - value).abs() <= *tolerance,
+            Expect::Contains(v) => match (found, v) {
+                (Json::String(s), Json::String(part)) => s.contains(part.as_str()),
+                (Json::Array(a), v) => a.contains(v),
+                _ => false,
+            },
+        };
+        if met {
+            Ok(())
+        } else {
+            Err(format!("is {found}"))
+        }
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            Expect::Equals(v) => format!("equals {v}"),
+            Expect::Range {
+                at_least: Some(lo),
+                at_most: Some(hi),
+            } => format!("is from {lo} to {hi}"),
+            Expect::Range {
+                at_least: Some(lo), ..
+            } => format!("is at least {lo}"),
+            Expect::Range {
+                at_most: Some(hi), ..
+            } => format!("is at most {hi}"),
+            Expect::Range { .. } => "is a number".to_string(),
+            Expect::Near { value, tolerance } => format!("is {value} ± {tolerance}"),
+            Expect::Contains(v) => format!("contains {v}"),
+        }
+    }
+}
+
+/// The JSON type of `v`, as a check's failure names it.
+fn json_type(v: &Json) -> &'static str {
+    match v {
+        Json::Null => "null",
+        Json::Bool(_) => "a boolean",
+        Json::Number(_) => "a number",
+        Json::String(_) => "a string",
+        Json::Array(_) => "an array",
+        Json::Object(_) => "an object",
+    }
 }
 
 impl Check {
@@ -213,18 +289,53 @@ impl Check {
             if let Some(v) = &self.equals {
                 expects.push(Expect::Equals(v.clone()));
             }
-            if let Some(v) = self.at_least {
-                expects.push(Expect::AtLeast(v));
+            if self.at_least.is_some() || self.at_most.is_some() {
+                for bound in [self.at_least, self.at_most].into_iter().flatten() {
+                    if !bound.is_finite() {
+                        return Err(format!(
+                            "the check on `{command}` has a bound that is not a finite number"
+                        ));
+                    }
+                }
+                if let (Some(lo), Some(hi)) = (self.at_least, self.at_most)
+                    && lo > hi
+                {
+                    return Err(format!(
+                        "the check on `{command}` has `at_least` {lo} above `at_most` {hi}"
+                    ));
+                }
+                expects.push(Expect::Range {
+                    at_least: self.at_least,
+                    at_most: self.at_most,
+                });
             }
-            if let Some(v) = self.at_most {
-                expects.push(Expect::AtMost(v));
+            match (self.near, self.tolerance) {
+                (Some(value), Some(tolerance)) => {
+                    if !value.is_finite() || !tolerance.is_finite() || tolerance < 0.0 {
+                        return Err(format!(
+                            "the check on `{command}` needs a finite `near` and a finite `tolerance` of at least 0"
+                        ));
+                    }
+                    expects.push(Expect::Near { value, tolerance });
+                }
+                (Some(_), None) => {
+                    return Err(format!(
+                        "the check on `{command}` gives `near` without `tolerance`"
+                    ));
+                }
+                (None, Some(_)) => {
+                    return Err(format!(
+                        "the check on `{command}` gives `tolerance` without `near`"
+                    ));
+                }
+                (None, None) => {}
             }
             if let Some(v) = &self.contains {
                 expects.push(Expect::Contains(v.clone()));
             }
             if expects.len() != 1 {
                 return Err(format!(
-                    "the check on `{command}` needs exactly one of `equals`, `at_least`, `at_most`, `contains`"
+                    "the check on `{command}` needs exactly one of `equals`, `at_least` and `at_most` (one or both), `near` with `tolerance`, or `contains`"
                 ));
             }
             kinds.push(CheckKind::Command {
@@ -237,6 +348,8 @@ impl Check {
             || self.equals.is_some()
             || self.at_least.is_some()
             || self.at_most.is_some()
+            || self.near.is_some()
+            || self.tolerance.is_some()
             || self.contains.is_some()
             || self.args.is_some()
         {
@@ -276,15 +389,7 @@ impl Check {
                 pointer,
                 expect,
                 ..
-            }) => {
-                let what = match expect {
-                    Expect::Equals(v) => format!("equals {v}"),
-                    Expect::AtLeast(v) => format!("is at least {v}"),
-                    Expect::AtMost(v) => format!("is at most {v}"),
-                    Expect::Contains(v) => format!("contains {v}"),
-                };
-                format!("`{command}` {pointer} {what}")
-            }
+            }) => format!("`{command}` {pointer} {}", expect.describe()),
             Ok(CheckKind::DiffStage(s, true)) => format!("verify stage `{s}` changed"),
             Ok(CheckKind::DiffStage(s, false)) => format!("verify stage `{s}` did not change"),
             Ok(CheckKind::NoRegressions) => "no verify stage regressed".into(),
@@ -1396,20 +1501,9 @@ fn evaluate(
             let found = whole
                 .pointer(pointer)
                 .ok_or_else(|| format!("the result has nothing at {pointer}"))?;
-            let holds = match expect {
-                Expect::Equals(v) => numbers_equal(found, v) || found == v,
-                Expect::AtLeast(v) => found.as_f64().is_some_and(|f| f >= *v),
-                Expect::AtMost(v) => found.as_f64().is_some_and(|f| f <= *v),
-                Expect::Contains(v) => match (found, v) {
-                    (Json::String(s), Json::String(part)) => s.contains(part.as_str()),
-                    (Json::Array(a), v) => a.contains(v),
-                    _ => false,
-                },
-            };
-            if holds {
-                Ok(Some(format!("{pointer} is {found}")))
-            } else {
-                Err(format!("{pointer} is {found}"))
+            match expect.holds(found) {
+                Ok(()) => Ok(Some(format!("{pointer} is {found}"))),
+                Err(why) => Err(format!("{pointer} {why}")),
             }
         }
         CheckKind::DiffStage(_, _) | CheckKind::NoRegressions => {
@@ -1782,10 +1876,77 @@ mod tests {
             "pointer = \"/data\"",
             "changed = true",
             "no_regressions = false",
+            "command = \"query\"\npointer = \"/data\"\nnear = 1",
+            "command = \"query\"\npointer = \"/data\"\ntolerance = 1",
+            "command = \"query\"\npointer = \"/data\"\nnear = 1\ntolerance = -1",
+            "command = \"query\"\npointer = \"/data\"\nnear = 1\ntolerance = 0.5\nat_most = 2",
+            "command = \"query\"\npointer = \"/data\"\nat_least = 3\nat_most = 2",
+            "command = \"query\"\npointer = \"/data\"\nequals = 1\nat_least = 0",
+            "near = 1\ntolerance = 1",
         ] {
             let c: Check = toml::from_str(bad).unwrap();
             assert!(c.kind().is_err(), "{bad:?}");
         }
+    }
+
+    fn expectation(toml_text: &str) -> Expect {
+        let check: Check = toml::from_str(&format!(
+            "command = \"query\"\npointer = \"/data\"\n{toml_text}"
+        ))
+        .unwrap();
+        match check.kind() {
+            Ok(CheckKind::Command { expect, .. }) => expect,
+            other => panic!("{toml_text}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn numbers_are_checked_as_numbers() {
+        let near = expectation("near = 32.0\ntolerance = 0.5");
+        assert!(near.holds(&json!(32)).is_ok());
+        assert!(near.holds(&json!(31.6)).is_ok());
+        assert!(near.holds(&json!(32.5)).is_ok());
+        // The substring check this replaces passed 132 and failed 31.9.
+        assert!(near.holds(&json!(132)).is_err());
+        assert!(near.holds(&json!(31.4)).is_err());
+        let not_number = near.holds(&json!("32")).unwrap_err();
+        assert!(
+            not_number.contains("a string, not a number"),
+            "{not_number}"
+        );
+
+        let exact = expectation("near = 2.0\ntolerance = 0");
+        assert!(exact.holds(&json!(2)).is_ok());
+        assert!(exact.holds(&json!(2.0001)).is_err());
+
+        let range = expectation("at_least = 1\nat_most = 3");
+        assert_eq!(range.describe(), "is from 1 to 3");
+        for (v, ok) in [
+            (json!(1), true),
+            (json!(2.5), true),
+            (json!(3), true),
+            (json!(0.99), false),
+            (json!(3.01), false),
+        ] {
+            assert_eq!(range.holds(&v).is_ok(), ok, "{v}");
+        }
+        assert!(
+            range
+                .holds(&json!(null))
+                .unwrap_err()
+                .contains("null, not a number")
+        );
+        assert_eq!(expectation("at_least = 1").describe(), "is at least 1");
+        assert_eq!(expectation("at_most = 1").describe(), "is at most 1");
+        assert!(expectation("at_most = 1").holds(&json!(-5)).is_ok());
+        assert_eq!(
+            expectation("near = 1\ntolerance = 0.5").describe(),
+            "is 1 ± 0.5"
+        );
+
+        let equals = expectation("equals = 1");
+        assert!(equals.holds(&json!(1.0)).is_ok());
+        assert!(equals.holds(&json!(true)).is_err());
     }
 
     #[test]

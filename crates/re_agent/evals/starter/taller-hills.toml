@@ -2,11 +2,13 @@ prompt = "Make the hills of this landscape about twice as tall."
 project = { template = "terrain", params = { seed = 3 } }
 budget = { tool_calls = 20, seconds = 300 }
 
+# The template's hills are 16 m high; "about twice" is 32 m, give or take 2.
 [[checks]]
-command = "entity.get"
-args = { id = "terrain", components = ["GraphSource"] }
-pointer = "/data/components/GraphSource/params"
-contains = "32"
+command = "graph.generate"
+args = { source = "terrain" }
+pointer = "/data/params/height/height"
+near = 32.0
+tolerance = 2.0
 
 [[checks]]
 command = "query"
