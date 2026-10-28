@@ -2,7 +2,10 @@
 //! taken from the selection, each finished edit is one `material.edit` (one
 //! undo step, and undoing them all gives the file back byte for byte), a
 //! texture is sent only once its file is chosen, "New material" is
-//! `material.create`, and a file the material loader refuses is read-only.
+//! `material.create`, a file the material loader refuses is read-only, and
+//! the preview sphere is drawn again only when what it shows changes: the
+//! material, the value under the pointer during a drag, or a drag on the
+//! sphere itself.
 //!
 //! These tests need a GPU adapter (lavapipe in CI); run them with
 //! `--test-threads=1`.
@@ -11,7 +14,7 @@ use std::cell::RefCell;
 use std::path::Path;
 
 use re_app::{App, AppConfig};
-use re_command::{AllowAll, CommandSpec, PolicyCheck};
+use re_command::{AllowAll, CommandSpec, Origin, PolicyCheck};
 use re_core::Diagnostic;
 use re_editor::layout::PanelId;
 use re_editor::{HeadlessEditor, MaterialSpot, Panel};
@@ -410,4 +413,134 @@ fn a_file_the_loader_refuses_is_read_only() {
     );
     assert_eq!(log_len(&app), 0);
     assert!(app.world().doc(bad).is_none(), "nothing opened it");
+}
+
+/// Runs `name` as an agent or the CLI would, outside the panel.
+fn run(app: &mut App, name: &str, args: Json) {
+    let out = app.dispatch(name, args, false, &AllowAll, Origin::User);
+    assert!(out.ok, "{name}: {:#?}", out.diagnostics);
+}
+
+/// The preview's centre pixel.
+fn centre(ed: &HeadlessEditor, app: &App) -> [u8; 4] {
+    let image = ed
+        .view
+        .material_preview()
+        .read(app)
+        .unwrap()
+        .expect("the preview is drawn");
+    assert_eq!((image.width, image.height), (256, 256));
+    image.pixel(128, 128)
+}
+
+fn draws(ed: &HeadlessEditor) -> u64 {
+    ed.view.material_preview().draws()
+}
+
+#[test]
+fn the_preview_is_drawn_again_only_when_what_it_shows_changes() {
+    let dir = project();
+    let missing = "materials/missing.material.json";
+    std::fs::write(
+        dir.path().join(missing),
+        r#"{ "base_color_texture": "textures/gone.png" }"#,
+    )
+    .unwrap();
+    let mut app = open(dir.path());
+    let mut ed = editor(&mut app);
+    ed.editor.show_material(RED);
+    for _ in 0..3 {
+        idle(&mut ed, &mut app);
+    }
+    assert_eq!(draws(&ed), 1, "{:?}", ed.view.material_preview().error());
+    let [r, g, b, _] = centre(&ed, &app);
+    assert!(r > 2 * g.max(8) && r > 2 * b.max(8), "red: {r} {g} {b}");
+    for _ in 0..3 {
+        idle(&mut ed, &mut app);
+    }
+    assert_eq!(draws(&ed), 1, "nothing changed");
+
+    // An edit from outside the panel shows at once.
+    run(
+        &mut app,
+        "material.edit",
+        json!({ "path": RED, "set": { "base_color": [0.0, 1.0, 0.0, 1.0] } }),
+    );
+    idle(&mut ed, &mut app);
+    assert_eq!(draws(&ed), 2);
+    let [r, g, b, _] = centre(&ed, &app);
+    assert!(g > 2 * r.max(8) && g > 2 * b.max(8), "green: {r} {g} {b}");
+
+    // During a drag the preview shows the value under the pointer, and
+    // nothing is sent until the release.
+    let rail = ed
+        .editor
+        .material_spot(MaterialSpot::Key("metallic", ""))
+        .expect("the metallic slider");
+    let from = rail.left_center() + egui::vec2(10.0, 0.0);
+    let calls = Calls::default();
+    frame_with(
+        &mut ed,
+        &mut app,
+        &calls,
+        vec![egui::Event::PointerMoved(from), button(from, true)],
+    );
+    for dx in [20.0, 40.0, 60.0] {
+        let at = from + egui::vec2(dx, 0.0);
+        frame_with(
+            &mut ed,
+            &mut app,
+            &calls,
+            vec![egui::Event::PointerMoved(at)],
+        );
+    }
+    assert!(calls.0.borrow().is_empty());
+    assert!(draws(&ed) > 2, "the drag is previewed");
+    let during = draws(&ed);
+    frame_with(
+        &mut ed,
+        &mut app,
+        &calls,
+        vec![button(from + egui::vec2(60.0, 0.0), false)],
+    );
+    for _ in 0..2 {
+        frame_with(&mut ed, &mut app, &calls, vec![]);
+    }
+    assert_eq!(calls.0.borrow().len(), 1, "one edit at the release");
+    assert_eq!(draws(&ed), during, "the edit is the value already drawn");
+
+    // A drag on the sphere turns it and sends nothing.
+    let sphere = spot(&ed, MaterialSpot::Preview);
+    let calls = Calls::default();
+    frame_with(
+        &mut ed,
+        &mut app,
+        &calls,
+        vec![egui::Event::PointerMoved(sphere), button(sphere, true)],
+    );
+    for dx in [10.0, 20.0, 30.0] {
+        let at = sphere + egui::vec2(dx, 0.0);
+        frame_with(
+            &mut ed,
+            &mut app,
+            &calls,
+            vec![egui::Event::PointerMoved(at)],
+        );
+    }
+    frame_with(
+        &mut ed,
+        &mut app,
+        &calls,
+        vec![button(sphere + egui::vec2(30.0, 0.0), false)],
+    );
+    assert!(draws(&ed) > during, "turned");
+    assert!(calls.0.into_inner().is_empty());
+
+    // A material that names a missing texture says so instead.
+    ed.editor.show_material(missing);
+    for _ in 0..2 {
+        idle(&mut ed, &mut app);
+    }
+    let error = ed.view.material_preview().error().unwrap_or_default();
+    assert!(error.contains("textures/gone.png"), "{error}");
 }

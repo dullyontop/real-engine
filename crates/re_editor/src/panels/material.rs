@@ -37,6 +37,12 @@ const READ_AGE: f64 = 1.0;
 /// Where "New material" puts the file.
 const FOLDER: &str = "materials";
 
+/// The preview's width and height in points.
+const PREVIEW_POINTS: f32 = 128.0;
+
+/// How far a drag of one point turns the preview sphere, in radians.
+const TURN_PER_POINT: f32 = 0.01;
+
 /// A place in the Material panel, in egui points, as drawn in the last
 /// frame: for tests and tools that drive the panel with the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +60,8 @@ pub enum MaterialSpot<'a> {
     /// checkbox, `"…"` an asset picker's list button and `"=<value>"` an item
     /// of a list.
     Key(&'a str, &'a str),
+    /// The preview sphere: a drag turns it.
+    Preview,
 }
 
 impl MaterialSpot<'_> {
@@ -63,6 +71,7 @@ impl MaterialSpot<'_> {
             MaterialSpot::Button(b) => format!("material\u{1f}button\u{1f}{b}"),
             MaterialSpot::NewName => "material\u{1f}new".to_string(),
             MaterialSpot::Key(k, part) => format!("material\u{1f}key\u{1f}{k}\u{1f}{part}"),
+            MaterialSpot::Preview => "material\u{1f}preview".to_string(),
         }
     }
 }
@@ -90,6 +99,16 @@ pub(crate) struct MaterialPanel {
     /// True when the panel's tab is to come to the front once the dock is
     /// back in the editor (it is taken out while the panels are drawn).
     front: bool,
+    /// The preview's egui texture, once the game view has drawn it
+    /// ([`MaterialPreview`](crate::MaterialPreview)).
+    texture: Option<egui::TextureId>,
+    /// Why the preview could not draw the material.
+    preview_error: Option<String>,
+    /// How far drags have turned the preview sphere, in radians.
+    turn: f32,
+    /// The value under the pointer while a widget is dragged, this frame:
+    /// `(key, value)`. Only the preview shows it.
+    live: Option<(String, Json)>,
 }
 
 impl Editor {
@@ -115,6 +134,40 @@ impl Editor {
         self.material.path.as_deref()
     }
 
+    /// Hands the panel the preview's texture and its last error (the game
+    /// view's [`MaterialPreview`](crate::MaterialPreview) does, each frame).
+    pub(crate) fn set_material_preview(
+        &mut self,
+        texture: Option<egui::TextureId>,
+        error: Option<String>,
+    ) {
+        self.material.texture = texture;
+        self.material.preview_error = error;
+    }
+
+    /// What the preview draws: the shown material's path, its content (the
+    /// open document's, else the file's as the panel last read it) with the
+    /// value under the pointer, and the sphere's turn. `None` when there is
+    /// no content to draw.
+    pub(crate) fn material_preview_value(&self, app: &App) -> Option<(String, Json, f32)> {
+        let path = self.material.path.clone()?;
+        let mut content = match app.world().doc(&path) {
+            Some(open) => open.value.as_object()?.clone(),
+            None => match &self.material.read {
+                Some((p, _, Ok(content))) if *p == path => content.clone(),
+                _ => return None,
+            },
+        };
+        if let Some((key, value)) = &self.material.live {
+            if value.is_null() {
+                content.remove(key);
+            } else {
+                content.insert(key.clone(), value.clone());
+            }
+        }
+        Some((path, Json::Object(content), self.material.turn))
+    }
+
     /// Brings the Material panel's tab to the front if
     /// [`Editor::show_material`] asked for it while the dock was out.
     pub(crate) fn material_to_front(&mut self) {
@@ -133,6 +186,7 @@ fn record(pending: &mut Pending, spot: MaterialSpot<'_>, rect: egui::Rect) {
 }
 
 pub(super) fn material(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Action>) {
+    ed.material.live = None;
     let files = app.files().clone();
     let assets = move |kind: &str| schema::project_assets(&files, kind);
     chooser(ed, ui, app, &assets, actions);
@@ -173,6 +227,9 @@ pub(super) fn material(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &
         );
     } else if open.is_some_and(|d| d.dirty) {
         ui.label(RichText::new("Unsaved: saving the project writes the file.").weak());
+    }
+    if refused.is_none() {
+        preview(ed, ui);
     }
     let root = ed
         .material
@@ -237,8 +294,28 @@ pub(super) fn material(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &
             }
             Edit::Arm => ed.material.armed = Some((path.clone(), key)),
             Edit::Disarm => ed.material.armed = None,
+            Edit::Live(value) => ed.material.live = Some((key, value)),
             Edit::Report(d) => actions.push(Action::Report(d)),
         }
+    }
+}
+
+/// The preview sphere, which a drag turns, and why it cannot be drawn.
+fn preview(ed: &mut Editor, ui: &mut egui::Ui) {
+    let size = egui::Vec2::splat(PREVIEW_POINTS);
+    let r = match ed.material.texture {
+        Some(id) => ui.add(egui::Image::new((id, size)).sense(egui::Sense::drag())),
+        // Until the game view has drawn it, the place it will take.
+        None => ui.allocate_exact_size(size, egui::Sense::drag()).1,
+    }
+    .on_hover_text("Drag to turn the sphere");
+    record(&mut ed.pending, MaterialSpot::Preview, r.rect);
+    if r.dragged() {
+        ed.material.turn =
+            (ed.material.turn + r.drag_delta().x * TURN_PER_POINT) % std::f32::consts::TAU;
+    }
+    if let Some(why) = &ed.material.preview_error {
+        ui.label(RichText::new(why).small().color(Color32::RED));
     }
 }
 
@@ -372,6 +449,9 @@ enum Edit {
     Arm,
     /// The texture switched on was switched off again.
     Disarm,
+    /// The value under the pointer while a widget is dragged, for the
+    /// preview.
+    Live(Json),
     /// Text that is not a value of the key.
     Report(Diagnostic),
 }
@@ -465,6 +545,7 @@ impl Row<'_> {
                 "path": self.path,
                 "set": { self.key: v },
             }))),
+            Change::Live(v) => Some(Edit::Live(v)),
             Change::Invalid(why) => Some(Edit::Report(schema::invalid_text(
                 &why,
                 &format!("`{}` of {}", self.key, self.path),

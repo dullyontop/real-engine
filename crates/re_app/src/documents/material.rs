@@ -13,7 +13,8 @@
 //! sidecar is written by the asset server when it loads it, not here.
 
 use re_command::{Call, CommandRegistry, Op, Tier, codes as command_codes};
-use re_core::{Diagnostic, Location};
+use re_core::{Diagnostic, Location, ProjectFiles};
+use re_types::{MaterialDesc, TextureRef};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Map, Value as Json, json};
@@ -28,6 +29,53 @@ pub const SUFFIX: &str = ".material.json";
 /// holds it: the editor's Material panel builds its form from it.
 pub fn schema() -> Json {
     serde_json::to_value(schemars::schema_for!(re_assets::MaterialFile)).unwrap_or(Json::Null)
+}
+
+/// A material as the editor's Material panel previews it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Preview {
+    /// What the renderer draws, with each texture as the asset id of its
+    /// file ([`TextureRef::Asset`]).
+    pub desc: MaterialDesc,
+    /// `(slot, id, path)` for each texture: slot 0 is the base colour, 1 the
+    /// metallic-roughness map and 2 the normal map; `path` is the texture's
+    /// project path, from which the asset server loads it.
+    pub textures: Vec<(usize, String, String)>,
+}
+
+/// The material `value` describes (an open document's content, or the
+/// content with a value under the pointer while a widget is dragged), made
+/// as the asset server makes the material file at `path`
+/// ([`re_assets::material_desc`]): a texture's sidecar is written when it is
+/// missing, as when the game view first draws the material, so the preview
+/// shows what the view will.
+///
+/// # Errors
+///
+/// `RE2008` when `value` is not a valid material, and the loader's errors
+/// (`RE7011`, `RE7012`).
+pub fn preview(files: &ProjectFiles, path: &str, value: &Json) -> Result<Preview, Diagnostic> {
+    let file = re_assets::check_material(value).map_err(|e| super::invalid(path, &e))?;
+    let text = serde_json::to_string_pretty(value).unwrap_or_default();
+    let desc = re_assets::material_desc(files, path, &text, &file)?;
+    let paths = [
+        &file.base_color_texture,
+        &file.metallic_roughness_texture,
+        &file.normal_texture,
+    ];
+    let textures = desc
+        .textures()
+        .into_iter()
+        .zip(paths)
+        .enumerate()
+        .filter_map(|(slot, (texture, path))| match (texture, path) {
+            (Some(TextureRef::Asset(id)), Some(path)) => {
+                Some((slot, id.clone(), re_assets::normalize_path(path).ok()?))
+            }
+            _ => None,
+        })
+        .collect();
+    Ok(Preview { desc, textures })
 }
 
 /// Arguments of `material.create`.

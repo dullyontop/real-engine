@@ -62,7 +62,7 @@ pub use id::{AssetId, normalize_path};
 pub use image_decode::decode_image;
 pub use material::{
     AlphaModeName, MaterialFile, check_material, load_material, load_material_from,
-    load_material_in,
+    load_material_in, material_desc,
 };
 pub use meta::AssetMeta;
 pub use server::{

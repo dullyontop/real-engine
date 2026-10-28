@@ -6,11 +6,12 @@ use re_core::Diagnostic;
 use re_render::{Capture, Renderer, SceneExtras, wgpu};
 
 use crate::Editor;
+use crate::preview::MaterialPreview;
 
 /// The game view's texture format. egui treats texture colour as
 /// gamma-encoded; the renderer gamma-encodes into `Rgba8Unorm` on every backend
 /// (see `Renderer::register_ui_texture`).
-const VIEW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+pub(crate) const VIEW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// The scene as the editor shows it: the World in edit mode (nothing
 /// simulates), drawn from the editor camera (or through the game's camera,
@@ -29,15 +30,24 @@ const VIEW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// [`GameView::sync`] resizes the texture to the size the viewport had in the
 /// last pass and gives its egui id to the [`Editor`]; after the egui pass,
 /// [`GameView::render`] draws the scene into it, before the UI is painted.
+///
+/// It also keeps the Material panel's preview sphere ([`MaterialPreview`]),
+/// which the same two renderers draw and show.
 #[derive(Debug, Default)]
 pub struct GameView {
     target: Option<(Capture, egui::TextureId)>,
+    preview: MaterialPreview,
 }
 
 impl GameView {
     /// A game view with no texture yet.
     pub fn new() -> GameView {
-        GameView { target: None }
+        GameView::default()
+    }
+
+    /// The Material panel's preview sphere.
+    pub fn material_preview(&self) -> &MaterialPreview {
+        &self.preview
     }
 
     /// The texture's size in pixels.
@@ -64,7 +74,7 @@ impl GameView {
         let want = [want[0].clamp(1, limit), want[1].clamp(1, limit)];
         if self.size() != Some(want) {
             let capture = Capture::with_format(device, want[0], want[1], VIEW_FORMAT)?;
-            let renderer = ui;
+            let renderer = &mut *ui;
             let id = match self.target.take() {
                 Some((_, id)) => {
                     renderer.update_ui_texture(id, capture.view());
@@ -79,7 +89,7 @@ impl GameView {
                 .as_ref()
                 .map(|(c, id)| (*id, [c.width(), c.height()])),
         );
-        Ok(())
+        self.preview.sync(app, ui, editor)
     }
 
     /// Draws the World into the texture as `editor` shows it:
@@ -101,6 +111,8 @@ impl GameView {
             return Ok(());
         };
         app.edit_frame();
+        // First, so that the renderer's last frame is the game view's.
+        self.preview.render(app, editor);
         let mut snapshot = app.snapshot().clone();
         let mut extras = SceneExtras::default();
         let render = &app.config().render;
@@ -120,11 +132,12 @@ impl GameView {
         Ok(())
     }
 
-    /// Forgets the texture (before the UI renderer is dropped).
+    /// Forgets the textures (before the UI renderer is dropped).
     pub fn release(&mut self, ui: &mut Renderer) {
         if let Some((_, id)) = self.target.take() {
             ui.free_ui_texture(id);
         }
+        self.preview.release(ui);
     }
 }
 

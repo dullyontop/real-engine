@@ -149,12 +149,31 @@ pub fn load_material_from(files: &ProjectFiles, path: &str) -> Result<MaterialDe
             .at(Location::file_at(&rel, e.line() as u32, e.column() as u32))
             .with_hint("material keys are base_color, base_color_texture, metallic, roughness, metallic_roughness_texture, normal_texture, emissive, emissive_strength, alpha_mode, alpha_cutoff, double_sided and unlit")
     })?;
-    let located = |key: &str| match fsutil::find_line(&text, &format!("\"{key}\"")) {
-        Some((line, col)) => Location::file_at(&rel, line, col),
-        None => Location::file(&rel),
+    material_desc(files, &rel, &text, &file)
+}
+
+/// The material `file` describes, made as [`load_material_from`] makes it
+/// from a file: its ranges checked, and each texture resolved through `files`
+/// to the id in its sidecar (written when missing). `rel` is the material's
+/// project path and `text` the JSON it was read from, for the diagnostics'
+/// lines. The editor's material preview passes an open document's content.
+///
+/// # Errors
+///
+/// [`codes::MATERIAL_VALUE_OUT_OF_RANGE`] and
+/// [`codes::MATERIAL_TEXTURE_MISSING`], as for [`load_material_in`].
+pub fn material_desc(
+    files: &ProjectFiles,
+    rel: &str,
+    text: &str,
+    file: &MaterialFile,
+) -> Result<MaterialDesc, Diagnostic> {
+    let located = |key: &str| match fsutil::find_line(text, &format!("\"{key}\"")) {
+        Some((line, col)) => Location::file_at(rel, line, col),
+        None => Location::file(rel),
     };
 
-    check_ranges(&file).map_err(|(key, why)| {
+    check_ranges(file).map_err(|(key, why)| {
         Diagnostic::error(
             codes::MATERIAL_VALUE_OUT_OF_RANGE,
             format!("material `{key}` {why}"),
