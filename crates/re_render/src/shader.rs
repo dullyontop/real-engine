@@ -49,6 +49,10 @@ pub const SOURCES: &[(&str, &str)] = &[
         "mask_skinned.wgsl",
         include_str!("shaders/mask_skinned.wgsl"),
     ),
+    ("instances.wgsl", include_str!("shaders/instances.wgsl")),
+    ("forward_set.wgsl", include_str!("shaders/forward_set.wgsl")),
+    ("shadow_set.wgsl", include_str!("shaders/shadow_set.wgsl")),
+    ("mask_set.wgsl", include_str!("shaders/mask_set.wgsl")),
 ];
 
 /// The files of [`SOURCES`] the renderer makes shader modules from; the others
@@ -56,6 +60,7 @@ pub const SOURCES: &[(&str, &str)] = &[
 pub const ROOTS: &[&str] = &[
     "forward.wgsl",
     "forward_skinned.wgsl",
+    "forward_set.wgsl",
     "lines.wgsl",
     "effects.wgsl",
     "sky.wgsl",
@@ -63,8 +68,10 @@ pub const ROOTS: &[&str] = &[
     "highlight.wgsl",
     "shadow.wgsl",
     "shadow_skinned.wgsl",
+    "shadow_set.wgsl",
     "mask.wgsl",
     "mask_skinned.wgsl",
+    "mask_set.wgsl",
     "post.wgsl",
     "ui_blit.wgsl",
     "probe.wgsl",
@@ -531,7 +538,7 @@ mod tests {
         for (name, _) in SOURCES {
             let source = preprocess(name, SOURCES).unwrap();
             if !ROOTS.contains(name) {
-                continue; // declarations only (fx.wgsl and skin.wgsl need the including file's `frame` or `palette`)
+                continue; // declarations only (fx.wgsl, skin.wgsl and instances.wgsl need the including file's `frame`, `palette` or `set_part`)
             }
             let module = naga_parse(&source).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert!(module > 0, "{name} has no entry points");

@@ -1,5 +1,6 @@
 //! The scene pass into the HDR target: the sky, the batches with the
-//! depth-tested world quads among the blended ones, the sprites and ribbons,
+//! depth-tested world quads among the blended ones, the instance sets' runs
+//! after the opaque and after the blended batches, the sprites and ribbons,
 //! and the debug lines. Also [`Renderer::draw_batches`], which every pass that
 //! draws the frame's meshes records its batches with.
 
@@ -10,6 +11,7 @@ use super::prepare::{Batch, PreparedFrame, Slot};
 use super::{FrameReport, Renderer, SKINNED};
 use crate::extras::EffectVertex;
 use crate::frame::{InstanceRaw, LineVertex};
+use crate::instances;
 use crate::post::DEPTH_CLEAR;
 
 /// What [`Renderer::draw_batches`] drew.
@@ -145,7 +147,28 @@ impl Renderer {
                 report.stats.draw_calls += drawn.draw_calls;
                 report.stats.triangles += drawn.triangles;
             };
+        // The instance sets' runs (ADR-0052): materials at group 1 as the
+        // items', each (set, part) entry at group 2.
+        let draw_sets =
+            |pass: &mut wgpu::RenderPass<'_>, runs: &[instances::Run], report: &mut FrameReport| {
+                let drawn = self.sets.draw(
+                    pass,
+                    &frame.sets,
+                    runs,
+                    &self.meshes,
+                    Some((1, &self.materials)),
+                    2,
+                    &|variant| &pipelines.sets[variant],
+                );
+                report.stats.draw_calls += drawn.draw_calls;
+                report.stats.triangles += drawn.triangles;
+            };
         draw_run(&mut pass, 0..frame.opaque_batches, report);
+        draw_sets(
+            &mut pass,
+            &frame.sets.runs[..frame.sets.opaque_runs],
+            report,
+        );
         // Here the opaque scene is drawn and nothing blended yet.
         let mut first = frame.opaque_batches;
         for &(before, n) in &frame.tested_quads {
@@ -162,6 +185,11 @@ impl Renderer {
             pass.draw(0..6, 0..1);
         }
         draw_run(&mut pass, first..frame.batches.len(), report);
+        draw_sets(
+            &mut pass,
+            &frame.sets.runs[frame.sets.opaque_runs..],
+            report,
+        );
         let quads = frame.effect_quads;
         if quads > 0 {
             pass.set_pipeline(&pipelines.effects);

@@ -11,7 +11,7 @@
 //! handles. A handle carries a generation, so a handle to a released and reused
 //! slot is detected as stale.
 
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::EntityId;
@@ -48,6 +48,10 @@ pub struct RenderSnapshot {
     /// mesh's model space.
     #[serde(default)]
     pub joint_palette: Vec<Mat4>,
+    /// Instance sets to draw (ADR-0052): placements uploaded once with
+    /// `Renderer::upload_instance_set`, each drawn with its set's parts.
+    #[serde(default)]
+    pub instance_sets: Vec<InstanceSet>,
 }
 
 // The snapshot must stay `Send` (ADR-0007): it is the seam for a render thread.
@@ -467,6 +471,140 @@ handle!(
     /// An uploaded texture.
     TextureHandle
 );
+handle!(
+    /// An instance set's placements, uploaded once (`Renderer::upload_instance_set`).
+    InstanceSetHandle
+);
+
+/// Where one copy of an instance set's parts stands (ADR-0052). 32 bytes, the
+/// layout the GPU reads.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Placement {
+    /// The copy's root, in metres from the set's origin.
+    pub position: [f32; 3],
+    /// Its uniform scale.
+    pub scale: f32,
+    /// Its rotation, a unit quaternion (x, y, z, w) as snorm16: round(v × 32767).
+    pub rotation: [i16; 4],
+    /// Linear RGB multiplied into its base colour, as unorm8 (255 is 1); the
+    /// fourth byte is reserved (255).
+    pub tint: [u8; 4],
+    /// The scatter point it stands on, stable within its node: the copy is
+    /// `<node>/<id>`.
+    pub id: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<Placement>() == 32);
+
+impl Placement {
+    /// A placement of point `id` at `position`, turned by `rotation`
+    /// (normalised, then rounded to snorm16) and scaled by `scale`, untinted.
+    pub fn new(position: Vec3, rotation: Quat, scale: f32, id: u32) -> Placement {
+        let q = rotation.normalize();
+        let snorm = |v: f32| (v.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+        Placement {
+            position: position.to_array(),
+            scale,
+            rotation: [snorm(q.x), snorm(q.y), snorm(q.z), snorm(q.w)],
+            tint: [255; 4],
+            id,
+        }
+    }
+
+    /// This placement tinted by linear `rgb`, each channel from 0 to 1.
+    #[must_use]
+    pub fn with_tint(self, rgb: [f32; 3]) -> Placement {
+        let unorm = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        Placement {
+            tint: [unorm(rgb[0]), unorm(rgb[1]), unorm(rgb[2]), 255],
+            ..self
+        }
+    }
+
+    /// The rotation as the GPU reads it: each snorm16 value over 32767 (at
+    /// least -1), normalised.
+    pub fn quat(&self) -> Quat {
+        let [x, y, z, w] = self.rotation.map(|v| (f32::from(v) / 32767.0).max(-1.0));
+        Quat::from_xyzw(x, y, z, w).normalize()
+    }
+
+    /// From the copy's space to the set's: the scale, the rotation, then the
+    /// position.
+    pub fn transform(&self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(
+            Vec3::splat(self.scale),
+            self.quat(),
+            Vec3::from_array(self.position),
+        )
+    }
+}
+
+/// Neighbouring placements of an instance set, culled, drawn and given
+/// colliders together (ADR-0052). A set's clusters cover its placements in
+/// order: the first cluster holds the first `count` placements, the next one
+/// the `count` after them, and so on.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InstanceCluster {
+    /// How many placements.
+    pub count: u32,
+    /// The box around their roots, from the set's origin.
+    pub bounds: crate::mesh::Aabb,
+    /// Their largest scale, by magnitude.
+    pub max_scale: f32,
+}
+
+impl InstanceCluster {
+    /// The cluster that holds `placements`; `None` when there are none.
+    pub fn of(placements: &[Placement]) -> Option<InstanceCluster> {
+        let bounds = crate::mesh::Aabb::from_points(
+            placements.iter().map(|p| Vec3::from_array(p.position)),
+        )?;
+        Some(InstanceCluster {
+            count: u32::try_from(placements.len()).unwrap_or(u32::MAX),
+            bounds,
+            max_scale: placements.iter().map(|p| p.scale.abs()).fold(0.0, f32::max),
+        })
+    }
+}
+
+/// An instance set drawn this frame (ADR-0052): its parts at every placement
+/// of an uploaded set.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InstanceSet {
+    /// The entity it comes from, its procedural source (picking, debugging,
+    /// flags).
+    pub entity: EntityId,
+    /// The uploaded placements.
+    pub set: InstanceSetHandle,
+    /// From the set's space to the render origin's (ADR-0042's amendment): a
+    /// streamed cell's set is a translation to the cell's corner.
+    pub transform: Mat4,
+    /// The meshes drawn at every placement.
+    pub parts: Vec<InstancePart>,
+    /// `CAST_SHADOWS` and `RECEIVE_SHADOWS` from the source's `Shadows`,
+    /// combined with each part's (both must allow it), and `SELECTED`.
+    pub flags: DrawFlags,
+}
+
+/// One mesh drawn at every placement of an instance set (ADR-0052).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InstancePart {
+    /// The uploaded mesh.
+    pub mesh: MeshHandle,
+    /// The uploaded material.
+    pub material: MaterialHandle,
+    /// From a placement's root to the part: its prefab entity's transform
+    /// under the prefab's root.
+    pub transform: Mat4,
+    /// The prefab entity's own `Shadows`.
+    pub flags: DrawFlags,
+    /// Drawn for clusters whose nearest point lies at least this far from the
+    /// camera, in metres.
+    pub min_distance: f32,
+    /// And nearer than this (0: no limit but the camera's `far`).
+    pub max_distance: f32,
+}
 
 /// How a material's alpha is used.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

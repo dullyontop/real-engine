@@ -4170,6 +4170,7 @@ dependencies = [
  "pollster",
  "re_core",
  "re_types",
+ "serde_json",
  "tracing",
  "wgpu",
  "winit",

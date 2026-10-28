@@ -17,8 +17,8 @@ use re_core::Diagnostic;
 use re_core::time::Instant;
 use re_types::mesh::{Aabb, MeshData, SkinWeights};
 use re_types::render::{
-    AlphaMode, MaterialDesc, MaterialHandle, MeshHandle, RenderSnapshot, TextureData,
-    TextureFormat, TextureHandle, TextureRef,
+    AlphaMode, InstanceCluster, InstanceSetHandle, MaterialDesc, MaterialHandle, MeshHandle,
+    Placement, RenderSnapshot, TextureData, TextureFormat, TextureHandle, TextureRef,
 };
 
 use crate::extras::{EffectVertex, MAX_HIGHLIGHTS, SceneExtras};
@@ -27,7 +27,7 @@ use crate::gpu::Gpu;
 use crate::post::{DEPTH_COMPARE, DEPTH_COMPARE_EQUAL, DEPTH_FORMAT, HDR_FORMAT, PostChain};
 use crate::slots::Slots;
 use crate::ui::{UiFrame, UiPainter};
-use crate::{capture, codes, shader};
+use crate::{capture, codes, instances, shader};
 
 mod post;
 mod prepare;
@@ -35,7 +35,9 @@ mod reload;
 mod scene;
 mod shadow;
 
+pub(crate) use prepare::Slot;
 pub use reload::ShaderReload;
+pub(crate) use scene::Drawn;
 
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
@@ -145,6 +147,17 @@ pub struct FrameStats {
     pub post_passes: u32,
     /// Skinned draw items drawn (also counted in `items_drawn`).
     pub skinned_items: u32,
+    /// Instance sets with a cluster drawn in the scene pass (ADR-0052).
+    pub instance_sets: u32,
+    /// Copies of instance set parts drawn in the scene pass (their draws are
+    /// in `draw_calls` and `triangles`, not in `items_drawn`).
+    pub set_instances: u32,
+    /// Instance set clusters drawn in the scene pass, counted once for each
+    /// part drawn there.
+    pub set_clusters: u32,
+    /// Instance set clusters left out of the scene pass by the view or by a
+    /// part's distance range, counted once for each part.
+    pub set_clusters_culled: u32,
 }
 
 /// The result of [`Renderer::render`]: what was drawn and the warnings.
@@ -180,15 +193,17 @@ pub struct RenderStats {
     pub textures: ResourceStats,
     /// Created materials.
     pub materials: ResourceStats,
+    /// Uploaded instance sets (ADR-0052).
+    pub instance_sets: ResourceStats,
     /// The last rendered frame.
     pub last_frame: FrameStats,
 }
 
-struct GpuMesh {
-    vertices: wgpu::Buffer,
-    indices: wgpu::Buffer,
-    index_count: u32,
-    aabb: Option<Aabb>,
+pub(crate) struct GpuMesh {
+    pub(crate) vertices: wgpu::Buffer,
+    pub(crate) indices: wgpu::Buffer,
+    pub(crate) index_count: u32,
+    pub(crate) aabb: Option<Aabb>,
     bytes: u64,
     /// The skin stream of a mesh from [`Renderer::upload_skinned_mesh`].
     skin: Option<GpuSkin>,
@@ -206,15 +221,15 @@ struct GpuTexture {
     bytes: u64,
 }
 
-struct GpuMaterial {
-    bind_group: wgpu::BindGroup,
-    blend: bool,
+pub(crate) struct GpuMaterial {
+    pub(crate) bind_group: wgpu::BindGroup,
+    pub(crate) blend: bool,
     double_sided: bool,
 }
 
 impl GpuMaterial {
-    /// Index into [`ScenePipelines::forward`].
-    fn variant(&self) -> usize {
+    /// Index into [`ScenePipelines::forward`] and [`ScenePipelines::sets`].
+    pub(crate) fn variant(&self) -> usize {
         usize::from(self.double_sided) | (usize::from(self.blend) << 1)
     }
 }
@@ -224,6 +239,8 @@ struct ScenePipelines {
     /// Indexed by `double_sided | blend << 1`, then the same four skinned
     /// (`| SKINNED`) when the renderer can skin.
     forward: Vec<wgpu::RenderPipeline>,
+    /// The same four for instance sets (ADR-0052).
+    sets: Vec<wgpu::RenderPipeline>,
     lines: wgpu::RenderPipeline,
     effects: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
@@ -271,11 +288,11 @@ struct CascadeUniform {
     light_view_proj: [[f32; 4]; 4],
 }
 
-struct Layouts {
-    frame: wgpu::BindGroupLayout,
-    shadow_frame: wgpu::BindGroupLayout,
-    cascade: wgpu::BindGroupLayout,
-    material: wgpu::BindGroupLayout,
+pub(crate) struct Layouts {
+    pub(crate) frame: wgpu::BindGroupLayout,
+    pub(crate) shadow_frame: wgpu::BindGroupLayout,
+    pub(crate) cascade: wgpu::BindGroupLayout,
+    pub(crate) material: wgpu::BindGroupLayout,
     highlight: wgpu::BindGroupLayout,
     quad: wgpu::BindGroupLayout,
     forward: wgpu::PipelineLayout,
@@ -315,14 +332,18 @@ const SKINNED: usize = 4;
 /// `flags.w`, which holds every integer up to 2^24 exactly.
 const MAX_PALETTE: usize = 1 << 24;
 
-struct GrowBuffer {
-    buffer: wgpu::Buffer,
+pub(crate) struct GrowBuffer {
+    pub(crate) buffer: wgpu::Buffer,
     label: &'static str,
     usage: wgpu::BufferUsages,
 }
 
 impl GrowBuffer {
-    fn new(device: &wgpu::Device, label: &'static str, usage: wgpu::BufferUsages) -> GrowBuffer {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        label: &'static str,
+        usage: wgpu::BufferUsages,
+    ) -> GrowBuffer {
         GrowBuffer {
             buffer: Self::create(device, label, usage, 64 * 1024),
             label,
@@ -345,7 +366,7 @@ impl GrowBuffer {
     }
 
     /// Writes `data` at offset 0, growing the buffer to a power of two first if needed.
-    fn write(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) {
+    pub(crate) fn write(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) {
         let needed = data.len() as u64;
         if needed > self.buffer.size() {
             self.buffer = Self::create(device, self.label, self.usage, needed.next_power_of_two());
@@ -438,6 +459,8 @@ pub struct Renderer {
     meshes: Slots<GpuMesh>,
     textures: Slots<GpuTexture>,
     materials: Slots<GpuMaterial>,
+    /// The uploaded instance sets and their pipelines (ADR-0052).
+    sets: instances::Sets,
     ui: UiPainter,
     last_frame: FrameStats,
     draw_time: DrawTime,
@@ -453,6 +476,40 @@ impl std::fmt::Debug for Renderer {
             .field("settings", &self.settings)
             .field("stats", &self.stats())
             .finish_non_exhaustive()
+    }
+}
+
+/// What a pipeline's vertex stage draws: draw items, skinned draw items or
+/// instance sets (ADR-0052).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Geometry {
+    Items,
+    Skinned,
+    Sets,
+}
+
+impl Geometry {
+    /// The entry point of `pass`'s vertex stage for this geometry:
+    /// `vs_shadow`, `vs_shadow_skinned` or `vs_shadow_set` for `shadow`.
+    fn vertex_entry(self, pass: &str) -> String {
+        match self {
+            Geometry::Items => format!("vs_{pass}"),
+            Geometry::Skinned => format!("vs_{pass}_skinned"),
+            Geometry::Sets => format!("vs_{pass}_set"),
+        }
+    }
+
+    /// The vertex buffers: `mesh` (slot 0), then each instance (slot 1) and a
+    /// skinned mesh's skin (slot 2), or a set's placements (slot 1).
+    fn buffers(
+        self,
+        mesh: wgpu::VertexBufferLayout<'static>,
+    ) -> Vec<Option<wgpu::VertexBufferLayout<'static>>> {
+        match self {
+            Geometry::Items => vec![Some(mesh), Some(instance_layout())],
+            Geometry::Skinned => vec![Some(mesh), Some(instance_layout()), Some(skin_layout())],
+            Geometry::Sets => vec![Some(mesh), Some(instances::placement_layout())],
+        }
     }
 }
 
@@ -489,19 +546,15 @@ fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
 }
 
 /// The highlight mask's pipelines: the depth-only pass (0) and the numbering
-/// pass (1), from `mask.wgsl` or `mask_skinned.wgsl`.
-fn mask_pipelines(
+/// pass (1), from `mask.wgsl`, `mask_skinned.wgsl` or `mask_set.wgsl`.
+pub(crate) fn mask_pipelines(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     module: &wgpu::ShaderModule,
-    skinned: bool,
+    geometry: Geometry,
 ) -> [wgpu::RenderPipeline; 2] {
-    let buffers = [
-        Some(position_only_layout()),
-        Some(instance_layout()),
-        Some(skin_layout()),
-    ];
-    let buffers = if skinned { &buffers[..] } else { &buffers[..2] };
+    let buffers = geometry.buffers(position_only_layout());
+    let entry = geometry.vertex_entry("mask");
     [DEPTH_COMPARE, DEPTH_COMPARE_EQUAL]
         .into_iter()
         .enumerate()
@@ -511,13 +564,9 @@ fn mask_pipelines(
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module,
-                    entry_point: Some(if skinned {
-                        "vs_mask_skinned"
-                    } else {
-                        "vs_mask"
-                    }),
+                    entry_point: Some(&entry),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers,
+                    buffers: &buffers,
                 },
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: Some(wgpu::DepthStencilState {
@@ -552,30 +601,24 @@ fn mask_pipelines(
         .unwrap_or_else(|_| unreachable!("two mask pipelines"))
 }
 
-/// The shadow pass's pipeline, from `shadow.wgsl` or `shadow_skinned.wgsl`.
-fn shadow_pipeline(
+/// The shadow pass's pipeline, from `shadow.wgsl`, `shadow_skinned.wgsl` or
+/// `shadow_set.wgsl`.
+pub(crate) fn shadow_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     module: &wgpu::ShaderModule,
-    skinned: bool,
+    geometry: Geometry,
 ) -> wgpu::RenderPipeline {
-    let buffers = [
-        Some(position_only_layout()),
-        Some(instance_layout()),
-        Some(skin_layout()),
-    ];
+    let buffers = geometry.buffers(position_only_layout());
+    let entry = geometry.vertex_entry("shadow");
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("re_render shadow"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module,
-            entry_point: Some(if skinned {
-                "vs_shadow_skinned"
-            } else {
-                "vs_shadow"
-            }),
+            entry_point: Some(&entry),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: if skinned { &buffers[..] } else { &buffers[..2] },
+            buffers: &buffers,
         },
         primitive: wgpu::PrimitiveState {
             cull_mode: None,
@@ -1113,13 +1156,13 @@ impl Renderer {
                     &device,
                     &shadow_layout,
                     &shader::module(&device, "shadow_skinned.wgsl"),
-                    true,
+                    Geometry::Skinned,
                 ),
                 mask_pipelines: mask_pipelines(
                     &device,
                     &mask_layout,
                     &shader::module(&device, "mask_skinned.wgsl"),
-                    true,
+                    Geometry::Skinned,
                 ),
                 forward_shader: shader::module(&device, "forward_skinned.wgsl"),
                 palette: GrowBuffer::new(
@@ -1134,8 +1177,10 @@ impl Renderer {
                 palette_group: None,
             }
         });
-        let mask_pipelines = mask_pipelines(&device, &layouts.mask, &mask_shader, false);
-        let shadow_pipeline = shadow_pipeline(&device, &layouts.shadow, &shadow_shader, false);
+        let mask_pipelines = mask_pipelines(&device, &layouts.mask, &mask_shader, Geometry::Items);
+        let shadow_pipeline =
+            shadow_pipeline(&device, &layouts.shadow, &shadow_shader, Geometry::Items);
+        let sets = instances::Sets::new(&device, &layouts);
         let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("re_render frame"),
             size: size_of::<FrameUniform>() as u64,
@@ -1221,6 +1266,7 @@ impl Renderer {
             quad_uniforms: GrowBuffer::new(&device, "re_render quads", wgpu::BufferUsages::UNIFORM),
             frame: prepare::PreparedFrame::default(),
             bind_groups: prepare::BindGroups::default(),
+            sets,
             cascade_uniforms: GrowBuffer::new(
                 &device,
                 "re_render cascades",
@@ -1386,35 +1432,24 @@ impl Renderer {
             count: samples,
             ..Default::default()
         };
-        let forward = |variant: usize| {
+        let forward = |variant: usize, geometry: Geometry| {
             let (double_sided, blend) = (variant & 1 != 0, variant & 2 != 0);
-            let skinning = self.skinning.as_ref().filter(|_| variant & SKINNED != 0);
-            let (layout, module) = match skinning {
-                Some(s) => (&s.forward_layout, &s.forward_shader),
-                None => (&self.layouts.forward, &self.forward_shader),
+            let (layout, module) = match (geometry, &self.skinning) {
+                (Geometry::Skinned, Some(s)) => (&s.forward_layout, &s.forward_shader),
+                (Geometry::Sets, _) => (&self.sets.forward_layout, &self.sets.forward_shader),
+                _ => (&self.layouts.forward, &self.forward_shader),
             };
-            let buffers = [
-                Some(mesh_vertex_layout()),
-                Some(instance_layout()),
-                Some(skin_layout()),
-            ];
+            let buffers = geometry.buffers(mesh_vertex_layout());
+            let entry = geometry.vertex_entry("forward");
             self.device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("re_render forward"),
                     layout: Some(layout),
                     vertex: wgpu::VertexState {
                         module,
-                        entry_point: Some(if skinning.is_some() {
-                            "vs_forward_skinned"
-                        } else {
-                            "vs_forward"
-                        }),
+                        entry_point: Some(&entry),
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        buffers: if skinning.is_some() {
-                            &buffers[..]
-                        } else {
-                            &buffers[..2]
-                        },
+                        buffers: &buffers,
                     },
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleList,
@@ -1563,8 +1598,16 @@ impl Renderer {
             } else {
                 SKINNED
             })
-                .map(forward)
+                .map(|variant| {
+                    let geometry = if variant & SKINNED != 0 {
+                        Geometry::Skinned
+                    } else {
+                        Geometry::Items
+                    };
+                    forward(variant, geometry)
+                })
                 .collect(),
+            sets: (0..SKINNED).map(|v| forward(v, Geometry::Sets)).collect(),
             lines,
             effects,
             sky,
@@ -2161,6 +2204,33 @@ impl Renderer {
             })
     }
 
+    /// Uploads the placements of an instance set (ADR-0052), in the order of
+    /// their `clusters`, which cover them: the first cluster holds the first
+    /// `count` placements, the next one the `count` after them, and so on.
+    /// Each [`InstanceSet`](re_types::render::InstanceSet) of a snapshot that
+    /// names the handle draws its parts at every placement, culled cluster by
+    /// cluster.
+    ///
+    /// Fails with `RE6100` when the set is malformed (no placements, an empty
+    /// cluster, clusters that do not add up to the placements or whose bounds
+    /// and largest scale do not hold them, a position, scale or bound that is
+    /// not finite, or a zero rotation), and with `RE6101` when its placements
+    /// do not fit in one of the GPU's buffers.
+    pub fn upload_instance_set(
+        &mut self,
+        placements: &[Placement],
+        clusters: &[InstanceCluster],
+    ) -> Result<InstanceSetHandle, Diagnostic> {
+        self.sets
+            .upload(&self.device, &self.queue, placements, clusters)
+    }
+
+    /// Releases an instance set. Fails with `RE6104` for a released or unknown
+    /// handle.
+    pub fn release_instance_set(&mut self, handle: InstanceSetHandle) -> Result<(), Diagnostic> {
+        self.sets.release(handle)
+    }
+
     /// The model-space bounds of a live mesh (`None` for an empty or stale mesh).
     pub fn mesh_bounds(&self, handle: MeshHandle) -> Option<Aabb> {
         self.meshes.get(handle.index, handle.generation)?.aabb
@@ -2184,6 +2254,7 @@ impl Renderer {
             meshes,
             textures,
             materials,
+            instance_sets: self.sets.stats(),
             last_frame: self.last_frame,
         }
     }
@@ -2477,7 +2548,7 @@ impl Renderer {
     }
 }
 
-fn stale(code: re_core::Code, kind: &str, index: u32, generation: u32) -> Diagnostic {
+pub(crate) fn stale(code: re_core::Code, kind: &str, index: u32, generation: u32) -> Diagnostic {
     Diagnostic::error(
         code,
         format!("the {kind} handle {index}:{generation} was released or never issued"),

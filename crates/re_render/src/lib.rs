@@ -44,6 +44,7 @@ pub mod extras;
 mod frame;
 pub mod gpu;
 pub mod imgdiff;
+mod instances;
 mod post;
 mod renderer;
 pub mod shader;
@@ -106,6 +107,9 @@ diagnostics! {
     SHADER_REPLACED, "Project replaces an engine shader", "../explain/RE6033.md";
     SKINNING_UNSUPPORTED, "GPU skinning unsupported", "../explain/RE6040.md";
     BAD_SKINNED_ITEM, "Undrawable skinned item", "../explain/RE6041.md";
+    BAD_INSTANCE_SET, "Malformed instance set", "../explain/RE6100.md";
+    INSTANCE_SET_TOO_LARGE, "Instance set too large", "../explain/RE6101.md";
+    STALE_INSTANCE_SET, "Stale instance set handle", "../explain/RE6104.md";
 }
 
 /// The code range this crate owns (ARCHITECTURE §7).

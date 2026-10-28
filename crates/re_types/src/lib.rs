@@ -17,7 +17,7 @@
 //! | Module | Types |
 //! |---|---|
 //! | [`ids`] | [`EntityId`] |
-//! | [`render`] | [`RenderSnapshot`], [`Camera`], [`Light`], [`DrawItem`], [`SkinnedDrawItem`], [`DrawFlags`], [`DebugLine`], [`MeshHandle`], [`MaterialHandle`], [`TextureHandle`], [`TextureRef`], [`MaterialDesc`], [`TextureData`] |
+//! | [`render`] | [`RenderSnapshot`], [`Camera`], [`Light`], [`DrawItem`], [`SkinnedDrawItem`], [`DrawFlags`], [`DebugLine`], [`MeshHandle`], [`MaterialHandle`], [`TextureHandle`], [`TextureRef`], [`MaterialDesc`], [`TextureData`], [`InstanceSet`], [`InstancePart`], [`InstanceSetHandle`], [`Placement`], [`InstanceCluster`] |
 //! | [`mesh`] | [`MeshData`], [`Vertex`], [`Aabb`], [`SkinWeights`] |
 //! | [`anim`] | [`ClipData`], [`TargetChannels`], [`Channel`], [`SkinData`], [`JointDesc`], [`Trs`], [`AnimGraph`] |
 //! | [`physics`] | [`PhysicsCmd`], [`BodyDesc`], [`BodyKind`], [`ShapeDesc`], [`Layer`], [`GroupMask`], [`BodyPose`], [`ContactEvent`], [`RayHit`], [`CharacterDesc`], [`CharacterState`], [`ConstraintDesc`], [`ConstraintKind`], [`VehicleDesc`], [`VehicleKind`], [`WheelDesc`], [`WheelTester`], [`EngineDesc`], [`TransmissionDesc`], [`VehicleInput`], [`VehicleState`], [`WheelState`], [`WheelPose`] |
@@ -65,9 +65,9 @@ pub use physics::{
     VehicleInput, VehicleKind, VehicleState, WheelDesc, WheelPose, WheelState, WheelTester,
 };
 pub use render::{
-    AlphaMode, Camera, DebugLine, DrawFlags, DrawItem, Light, LightKind, MaterialDesc,
-    MaterialHandle, MeshHandle, RenderSnapshot, SkinnedDrawItem, TextureData, TextureFormat,
-    TextureHandle, TextureRef,
+    AlphaMode, Camera, DebugLine, DrawFlags, DrawItem, InstanceCluster, InstancePart, InstanceSet,
+    InstanceSetHandle, Light, LightKind, MaterialDesc, MaterialHandle, MeshHandle, Placement,
+    RenderSnapshot, SkinnedDrawItem, TextureData, TextureFormat, TextureHandle, TextureRef,
 };
 pub use replay::{RawReplayInput, ReplayCheck, ReplayCommand, ReplayDoc, ReplayInput};
 
