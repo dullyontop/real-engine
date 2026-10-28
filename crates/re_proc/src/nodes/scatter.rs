@@ -12,7 +12,7 @@ use glam::Vec3;
 use re_geom::math::sin_cos;
 use re_noise::Pcg32;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{
     Domain, NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, check_range, positive,
@@ -92,7 +92,7 @@ fn half_extent(ctx: &NodeCtx, field: Option<&Field>, extent: f32) -> f32 {
 }
 
 /// Parameters of `scatter.poisson`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct PoissonParams {
     /// The smallest distance between two points, in metres.
@@ -252,7 +252,7 @@ fn poisson(ctx: &NodeCtx, p: &PoissonParams) -> Result<Output, String> {
 }
 
 /// Parameters of `scatter.grid_jitter`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct GridParams {
     /// Distance between grid cells, in metres.

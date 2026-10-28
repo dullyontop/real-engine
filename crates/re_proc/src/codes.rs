@@ -86,6 +86,16 @@ pub const OPEN_GRAPH_DIFFERS: Code = Code::new("RE4022");
 /// that does not turn into entities.
 pub const STRUCTURE_REFUSED: Code = Code::new("RE4023");
 
+/// `field.combine` pairs two fields that cover different areas, so `b` is
+/// stretched over `a` by normalised position instead of being matched by
+/// world position (warning).
+pub const COMBINE_EXTENTS: Code = Code::new("RE4030");
+
+/// A builder script makes nodes without explicit ids. Their ids follow their
+/// position, so inserting a node renumbers the later ones, which reshuffles
+/// their seeds and orphans their overrides (note).
+pub const POSITIONAL_IDS: Code = Code::new("RE4031");
+
 /// A Luau node script under `scripts/generators/` does not declare a valid
 /// node kind: it fails to compile or run, does not return `proc.node{...}`,
 /// or its kind is malformed or taken (ADR-0043 §4).

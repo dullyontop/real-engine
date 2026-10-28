@@ -26,7 +26,7 @@
 //! kept in the memory cache too ([`NodeCtx::shared`](crate::NodeCtx::shared)).
 
 use std::any::Any;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -46,8 +46,8 @@ use crate::canon::{canonical_json, fragment_hash, hash64};
 use crate::codes;
 use crate::graph::ProcGraph;
 use crate::nodes::{
-    Domain, NodeCtx, NodeDef, NodeError, NodeRegistry, SharedValue, Streaming, natural_cmp,
-    sink_fragment_in,
+    Domain, InputValue, NodeCtx, NodeDef, NodeError, NodeRegistry, SharedValue, Streaming,
+    natural_cmp, sink_fragment_in,
 };
 use crate::value::{DerivedAsset, Field, Fragment, Output, PortType};
 
@@ -221,6 +221,9 @@ struct MemCache {
     shared: HashMap<[u8; 32], SharedEntry>,
     bytes: u64,
     tick: u64,
+    /// The ticks of the evaluations running now: nothing they used is
+    /// evicted until they finish.
+    active: BTreeSet<u64>,
 }
 
 /// The default memory-cache budget: 256 MiB.
@@ -252,12 +255,15 @@ impl Default for Evaluator {
     }
 }
 
-/// The output of a node and its key, ready to run.
+/// A node ready to run: its keys, inputs and files.
 struct Job<'a> {
     index: usize,
     def: &'a NodeDef,
-    params: Json,
+    params: &'a Json,
+    /// The node's key ([`NodeCtx::key`](crate::NodeCtx::key)).
     key: [u8; 32],
+    /// The key its output is cached under ([`lookup_key`]).
+    cache: [u8; 32],
     seed: u64,
     inputs: Vec<(String, Output)>,
     files: HashMap<String, Result<Arc<Vec<u8>>, String>>,
@@ -269,6 +275,19 @@ struct JobResult {
     ms: f64,
     warnings: Vec<Diagnostic>,
     logs: Vec<String>,
+}
+
+/// An evaluation running on an [`Evaluator`] ([`Evaluator::begin`]); it
+/// finishes when dropped, even if a node panicked.
+struct Running<'e> {
+    evaluator: &'e Evaluator,
+    tick: u64,
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        self.evaluator.finish(self.tick);
+    }
 }
 
 impl Evaluator {
@@ -352,6 +371,53 @@ impl Evaluator {
     /// a failed one are skipped.
     pub fn evaluate(&self, graph: &ProcGraph, opts: &EvalOptions) -> Evaluation {
         let start = Instant::now();
+        let stamp = graph.version_stamp(&self.registry).to_hex().to_string();
+        let ids = graph.nodes.keys().cloned().collect();
+        let problems = graph.validate(&self.registry);
+        if !problems.is_empty() {
+            let report = EvalReport {
+                graph: graph.id.clone(),
+                seed: opts.seed.unwrap_or(graph.seed),
+                threads: self.pool().threads(),
+                stamp,
+                nodes: graph
+                    .nodes
+                    .iter()
+                    .map(|(id, node)| skipped(id, &node.kind))
+                    .collect(),
+                diagnostics: problems,
+                ms: ms_since(start),
+                ..Default::default()
+            };
+            return Evaluation {
+                report,
+                ids,
+                sinks: vec![false; graph.nodes.len()],
+                outputs: vec![None; graph.nodes.len()],
+                domain: opts.domain,
+            };
+        }
+        let plan = Plan::new(graph, &self.registry);
+        let running = self.begin();
+        let (mut report, outputs) = self.run(&plan, opts, running.tick);
+        drop(running);
+        report.stamp = stamp;
+        report.ms = ms_since(start);
+        Evaluation {
+            report,
+            ids,
+            sinks: plan.sinks.clone(),
+            outputs,
+            domain: opts.domain,
+        }
+    }
+
+    /// Evaluates `plan`'s nodes, marking what they use in the memory cache
+    /// with `tick`: the evaluation's own, or, for a part a node reads, the
+    /// tick of the evaluation that node belongs to.
+    fn run(&self, plan: &Plan, opts: &EvalOptions, tick: u64) -> (EvalReport, Vec<Option<Output>>) {
+        let start = Instant::now();
+        let graph = plan.graph;
         let seed = opts.seed.unwrap_or(graph.seed);
         let pool = self.pool();
         let n = graph.nodes.len();
@@ -359,52 +425,35 @@ impl Evaluator {
             graph: graph.id.clone(),
             seed,
             threads: pool.threads(),
-            stamp: graph.version_stamp(&self.registry).to_hex().to_string(),
-            nodes: graph
-                .nodes
+            nodes: plan
+                .members
                 .iter()
-                .map(|(id, node)| NodeReport {
-                    id: id.clone(),
-                    kind: node.kind.clone(),
-                    key: String::new(),
-                    cache: CacheState::Skipped,
-                    ms: 0.0,
-                    output: None,
-                    diagnostics: Vec::new(),
-                    logs: Vec::new(),
+                .map(|&i| {
+                    let (id, node) = graph.nodes.get_index(i).expect("members are valid");
+                    skipped(id, &node.kind)
                 })
                 .collect(),
             ..Default::default()
         };
         let mut outputs: Vec<Option<Output>> = vec![None; n];
+        // Each node's key and cache key (see `lookup_key`).
         let mut keys: Vec<Option<[u8; 32]>> = vec![None; n];
-
-        let problems = graph.validate(&self.registry);
-        if !problems.is_empty() {
-            report.diagnostics = problems;
-            report.ms = ms_since(start);
-            return Evaluation::new(graph, report, outputs, opts.domain);
-        }
-        let levels = graph.levels().unwrap_or_default();
+        let mut caches: Vec<Option<[u8; 32]>> = vec![None; n];
         // In a streamed evaluation: the spacing global nodes sample at, each
-        // node's global key (its key without the window, when its output is
-        // the same for every window), and the nodes the output needs.
+        // node's global keys (its keys without the window, when its output
+        // is the same for every window), and the nodes the output needs.
         let global = opts
             .domain
             .map(|d| opts.global_spacing.unwrap_or(d.spacing));
         let mut gkeys: Vec<Option<[u8; 32]>> = vec![None; n];
+        let mut gcaches: Vec<Option<[u8; 32]>> = vec![None; n];
         let needed = match global {
-            Some(_) => self.needed(graph, &levels),
+            Some(_) => plan.needed(),
             None => vec![true; n],
         };
         let base = Pcg32::from_seed(seed);
-        let tick = {
-            let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
-            m.tick += 1;
-            m.tick
-        };
 
-        'levels: for level in levels {
+        'levels: for level in &plan.levels {
             if let Some(deadline) = opts.deadline
                 && Instant::now() >= deadline
             {
@@ -438,53 +487,50 @@ impl Evaluator {
                 break 'levels;
             }
             let mut jobs: Vec<Job> = Vec::new();
-            for &index in &level {
-                let (id, node) = graph
-                    .nodes
-                    .get_index(index)
-                    .expect("level indices are valid");
-                let Some(def) = self.registry.get(&node.kind) else {
+            for &index in level {
+                let Some(node) = &plan.nodes[index] else {
                     continue;
                 };
-                let mut inputs = graph.inputs_of(index);
-                inputs.sort_by(|a, b| natural_cmp(a.0, b.0));
+                let def = node.def;
                 // A global node in a streamed evaluation samples its fields.
                 let as_global = global.is_some() && def.streaming == Streaming::Global;
-                let sampled = |from: usize| {
-                    as_global && self.output_type(graph, from) == Some(PortType::Field)
-                };
+                let sampled =
+                    |from: usize| as_global && plan.output_type(from) == Some(PortType::Field);
                 // An input failed or was skipped, or the output does not need it.
                 let runs = needed[index]
-                    && inputs
+                    && node
+                        .inputs
                         .iter()
-                        .all(|(_, from)| outputs[*from].is_some() || sampled(*from));
+                        .all(|&(_, from)| outputs[from].is_some() || sampled(from));
                 let global_key = global.filter(|_| {
                     matches!(
                         def.streaming,
                         Streaming::Global | Streaming::Pointwise | Streaming::Region
-                    ) && inputs.iter().all(|(_, from)| gkeys[*from].is_some())
+                    ) && node.inputs.iter().all(|&(_, from)| gkeys[from].is_some())
                 });
                 if !runs && global_key.is_none() {
                     continue;
                 }
-                let node_seed = base.fork(hash64(id)).next_u64();
-                // Validation above guarantees the migration succeeds.
-                let Ok(params) = def.migrate(node.version, &node.params) else {
-                    continue;
-                };
-                let params = params.into_owned();
-                let files = load_files(def, &params, opts);
+                let node_seed = base.fork(node.salt).next_u64();
+                let files = load_files(def, &node.params, opts);
                 let key_inputs = KeyInputs {
-                    id,
+                    id: node.id,
                     def,
                     version: node.version,
-                    params: &params,
-                    inputs: &inputs,
+                    params: &node.params,
+                    inputs: &node.inputs,
                     keys: &keys,
                     seed: node_seed,
                     files: &files,
                     domain: opts.domain,
                     global: None,
+                    cache: false,
+                };
+                let cache_inputs = KeyInputs {
+                    params: &node.canonical,
+                    keys: &caches,
+                    cache: true,
+                    ..key_inputs
                 };
                 if let Some(spacing) = global_key {
                     gkeys[index] = Some(node_key(&KeyInputs {
@@ -493,60 +539,93 @@ impl Evaluator {
                         global: Some(spacing),
                         ..key_inputs
                     }));
+                    gcaches[index] = Some(node_key(&KeyInputs {
+                        keys: &gcaches,
+                        domain: None,
+                        global: Some(spacing),
+                        ..cache_inputs
+                    }));
                 }
                 if !runs {
                     continue;
                 }
-                let key = if as_global {
-                    let Some(key) = gkeys[index] else {
-                        let nr = &mut report.nodes[index];
+                let slot = plan.slot[index];
+                let (key, cache) = if as_global {
+                    let (Some(key), Some(cache)) = (gkeys[index], gcaches[index]) else {
+                        let nr = &mut report.nodes[slot];
                         nr.cache = CacheState::Failed;
                         nr.diagnostics.push(Diagnostic::error(
                             codes::NOT_STREAMABLE,
                             format!(
-                                "node `{id}` ({}) is global, but not all its inputs are global, pointwise or region nodes",
-                                node.kind
+                                "node `{}` ({}) is global, but not all its inputs are global, pointwise or region nodes",
+                                node.id, def.kind
                             ),
                         ));
                         continue;
                     };
-                    key
+                    (key, cache)
                 } else {
-                    node_key(&key_inputs)
+                    (node_key(&key_inputs), node_key(&cache_inputs))
                 };
                 keys[index] = Some(key);
-                report.nodes[index].key = blake3::Hash::from_bytes(key).to_hex().to_string();
+                caches[index] = Some(cache);
+                let cache = lookup_key(def, key, cache);
+                let nr = &mut report.nodes[slot];
+                nr.key = blake3::Hash::from_bytes(key).to_hex().to_string();
+                let gather = || -> Vec<(String, Output)> {
+                    node.inputs
+                        .iter()
+                        .filter(|(_, from)| !sampled(*from))
+                        .map(|&(port, from)| {
+                            (
+                                port.to_string(),
+                                outputs[from].clone().expect("checked above"),
+                            )
+                        })
+                        .collect()
+                };
+                // Input checks run whether or not the output is cached, so a
+                // warning does not come and go with the cache.
+                if def.checks_inputs() {
+                    let values: Vec<InputValue> = node
+                        .inputs
+                        .iter()
+                        .filter_map(|&(port, from)| {
+                            Some(InputValue {
+                                port,
+                                value: outputs[from].as_ref()?,
+                                from_kind: plan.nodes[from].as_ref()?.def.kind,
+                            })
+                        })
+                        .collect();
+                    nr.diagnostics.extend(
+                        def.check_inputs(&values)
+                            .into_iter()
+                            .map(|d| in_node(d, node.id, def.kind)),
+                    );
+                }
                 let hit = {
-                    let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
-                    m.map.get_mut(&key).map(|e| {
-                        e.used = tick;
+                    let mut m = self.lock_memory();
+                    m.map.get_mut(&cache).map(|e| {
+                        e.used = e.used.max(tick);
                         e.output.clone()
                     })
                 };
                 if let Some(output) = hit {
-                    report.nodes[index].cache = CacheState::Memory;
-                    report.nodes[index].output = Some(info(&output));
+                    nr.cache = CacheState::Memory;
+                    nr.output = Some(info(&output));
                     report.memory_hits += 1;
                     outputs[index] = Some(output);
                     continue;
                 }
-                let inputs = inputs
-                    .into_iter()
-                    .filter(|(_, from)| !sampled(*from))
-                    .map(|(port, from)| {
-                        (
-                            port.to_string(),
-                            outputs[from].clone().expect("checked above"),
-                        )
-                    })
-                    .collect();
                 jobs.push(Job {
                     index,
                     def,
-                    params,
+                    params: &node.params,
                     key,
+                    cache,
                     seed: node_seed,
-                    inputs,
+                    inputs: gather(),
                     files,
                 });
             }
@@ -555,24 +634,24 @@ impl Evaluator {
             if jobs.len() == 1 || opts.serial {
                 for (job, slot) in jobs.iter().zip(&results) {
                     *slot.lock().unwrap_or_else(|e| e.into_inner()) =
-                        Some(self.run_job(graph, job, pool, opts));
+                        Some(self.run_job(plan, job, pool, opts, tick));
                 }
             } else if !jobs.is_empty() {
                 pool.scope(|s| {
                     for (job, slot) in jobs.iter().zip(&results) {
                         s.spawn(move |_| {
-                            let r = self.run_job(graph, job, pool, opts);
+                            let r = self.run_job(plan, job, pool, opts, tick);
                             *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
                         });
                     }
                 });
             }
-            let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
+            let mut m = self.lock_memory();
             for (job, slot) in jobs.iter().zip(results) {
                 let Some(r) = slot.into_inner().unwrap_or_else(|e| e.into_inner()) else {
                     continue;
                 };
-                let nr = &mut report.nodes[job.index];
+                let nr = &mut report.nodes[plan.slot[job.index]];
                 nr.ms = r.ms;
                 nr.diagnostics.extend(r.warnings);
                 nr.logs = r.logs;
@@ -588,7 +667,7 @@ impl Evaluator {
                         }
                         let bytes = output.size().1;
                         if let Some(old) = m.map.insert(
-                            job.key,
+                            job.cache,
                             MemEntry {
                                 output: output.clone(),
                                 bytes,
@@ -607,57 +686,28 @@ impl Evaluator {
                 }
             }
         }
-        self.evict(tick);
         report.ms = ms_since(start);
-        Evaluation::new(graph, report, outputs, opts.domain)
-    }
-
-    /// The output type of node `index`'s kind.
-    fn output_type(&self, graph: &ProcGraph, index: usize) -> Option<PortType> {
-        let (_, node) = graph.nodes.get_index(index)?;
-        self.registry.get(&node.kind).map(|d| d.output)
-    }
-
-    /// The nodes a streamed evaluation of `graph` runs: all but those whose
-    /// output reaches the graph's output only as fields of global nodes,
-    /// which sample their fields themselves.
-    fn needed(&self, graph: &ProcGraph, levels: &[Vec<usize>]) -> Vec<bool> {
-        let mut needed: Vec<bool> = (0..graph.nodes.len()).map(|i| graph.is_sink(i)).collect();
-        for &index in levels.iter().rev().flatten() {
-            if !needed[index] {
-                continue;
-            }
-            let global = graph
-                .nodes
-                .get_index(index)
-                .and_then(|(_, node)| self.registry.get(&node.kind))
-                .is_some_and(|d| d.streaming == Streaming::Global);
-            for (_, from) in graph.inputs_of(index) {
-                if !(global && self.output_type(graph, from) == Some(PortType::Field)) {
-                    needed[from] = true;
-                }
-            }
-        }
-        needed
+        (report, outputs)
     }
 
     fn run_job(
         &self,
-        graph: &ProcGraph,
+        plan: &Plan,
         job: &Job,
         pool: &TaskPool,
         opts: &EvalOptions,
+        tick: u64,
     ) -> JobResult {
         let start = Instant::now();
-        let (id, node) = graph
-            .nodes
-            .get_index(job.index)
-            .expect("job indices are valid");
+        let node = plan.nodes[job.index]
+            .as_ref()
+            .expect("jobs are planned nodes");
+        let id = node.id;
         let mut warnings = Vec::new();
         if let Some(disk) = &self.disk
             && job.def.output != PortType::Fragment
         {
-            match disk.load(&job.key) {
+            match disk.load(&job.cache) {
                 Ok(Some(output)) if output.port_type() == job.def.output => {
                     return JobResult {
                         output: Ok(output),
@@ -675,40 +725,33 @@ impl Evaluator {
             .domain
             .map(|d| opts.global_spacing.unwrap_or(d.spacing));
         // A region node reads its inputs over its tiles' windows, and a cell
-        // node over its window with an apron: the graph an input comes from,
-        // evaluated again with that window as the domain.
+        // node over its window with an apron: the part of the plan an input
+        // comes from, evaluated again with that window as the domain.
         let reads = opts.domain.is_some()
             && matches!(job.def.streaming, Streaming::Region | Streaming::Cell);
         let read = |port: &str, domain: Domain| -> Result<Arc<Field>, String> {
             if !reads {
                 return Err("not a streamed region or cell node".into());
             }
-            let (sub, from) = input_graph(graph, job.index, port)
+            let from = node
+                .input(port)
                 .ok_or_else(|| format!("input `{port}` is not connected"))?;
             let opts = EvalOptions {
                 domain: Some(domain),
                 global_spacing: global,
                 ..opts.clone()
             };
-            let e = self.evaluate(&sub, &opts);
-            match e.output(&from) {
-                Some(Output::Field(f)) => Ok(f.clone()),
-                _ => Err(e
-                    .report
-                    .first_error()
-                    .map(|d| d.message.clone())
-                    .unwrap_or_else(|| format!("input `{port}` has no field"))),
-            }
+            self.read_field(plan, from, port, &opts, tick)
         };
-        // A global node samples its fields on the source's grid: the graph
-        // the field comes from, evaluated over small windows around the
-        // points at the global spacing.
+        // A global node samples its fields on the source's grid: the part of
+        // the plan the field comes from, evaluated over small windows around
+        // the points at the global spacing.
         let sampling = global.filter(|_| job.def.streaming == Streaming::Global);
         let sample = |port: &str, points: &[[f64; 2]]| -> Result<Option<Vec<f64>>, String> {
             let Some(spacing) = sampling else {
                 return Err("not a streamed global node".into());
             };
-            let Some((sub, from)) = input_graph(graph, job.index, port) else {
+            let Some(from) = node.input(port) else {
                 return Ok(None);
             };
             sample_field(points, spacing, |domain| {
@@ -717,15 +760,7 @@ impl Evaluator {
                     global_spacing: Some(spacing),
                     ..opts.clone()
                 };
-                let e = self.evaluate(&sub, &opts);
-                match e.output(&from) {
-                    Some(Output::Field(f)) => Ok(f.clone()),
-                    _ => Err(e
-                        .report
-                        .first_error()
-                        .map(|d| d.message.clone())
-                        .unwrap_or_else(|| format!("input `{port}` has no field"))),
-                }
+                self.read_field(plan, from, port, &opts, tick)
             })
             .map(Some)
         };
@@ -751,15 +786,15 @@ impl Evaluator {
             sample: sampling.map(|_| &sample as &crate::nodes::Sampler),
             share: Some(&share as &crate::nodes::Share),
         };
-        let output = job.def.eval(&ctx, &job.params).map_err(|e| {
+        let output = job.def.eval(&ctx, job.params).map_err(|e| {
             Diagnostic::error(
                 e.code,
-                format!("node `{id}` ({}): {}", node.kind, e.message),
+                format!("node `{id}` ({}): {}", job.def.kind, e.message),
             )
         });
         if let (Ok(o), Some(disk)) = (&output, &self.disk)
             && DiskCache::stores(o)
-            && let Err(e) = disk.store(&job.key, o)
+            && let Err(e) = disk.store(&job.cache, o)
         {
             warnings.push(cache_warning(id, e));
         }
@@ -769,6 +804,29 @@ impl Evaluator {
             ms: ms_since(start),
             warnings,
             logs: ctx.logs.into_inner().unwrap_or_else(|e| e.into_inner()),
+        }
+    }
+
+    /// Node `from`'s field, from the part of `plan` it comes from evaluated
+    /// with `opts` (a window): what a region or cell node reads and a global
+    /// node samples on input `port`. The part runs with the reading node's
+    /// `tick`, so it never evicts what that evaluation uses.
+    fn read_field(
+        &self,
+        plan: &Plan,
+        from: usize,
+        port: &str,
+        opts: &EvalOptions,
+        tick: u64,
+    ) -> Result<Arc<Field>, String> {
+        let part = plan.part(from);
+        let (report, outputs) = self.run(&part, opts, tick);
+        match &outputs[from] {
+            Some(Output::Field(f)) => Ok(f.clone()),
+            _ => Err(report
+                .first_error()
+                .map(|d| d.message.clone())
+                .unwrap_or_else(|| format!("input `{port}` has no field"))),
         }
     }
 
@@ -820,25 +878,45 @@ impl Evaluator {
         r.as_ref().map(|(v, _)| v.clone()).map_err(Clone::clone)
     }
 
-    /// Drops least recently used entries (outputs and shared values) until
-    /// the cache fits its budget; entries used by the evaluation that just
-    /// ran (`tick`) are kept, and so are shared values still being made,
-    /// which hold nothing yet.
-    fn evict(&self, tick: u64) {
-        let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
+    fn lock_memory(&self) -> std::sync::MutexGuard<'_, MemCache> {
+        self.memory.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Starts an evaluation: its tick in the memory cache. Nothing it uses
+    /// is evicted until the guard is dropped, which evicts
+    /// ([`Evaluator::finish`]).
+    fn begin(&self) -> Running<'_> {
+        let mut m = self.lock_memory();
+        m.tick += 1;
+        let tick = m.tick;
+        m.active.insert(tick);
+        Running {
+            evaluator: self,
+            tick,
+        }
+    }
+
+    /// Ends the evaluation of `tick`, then drops least recently used entries
+    /// (outputs and shared values) until the cache fits its budget. Entries
+    /// that a running evaluation used are kept (its tick or a later one),
+    /// and so are shared values still being made, which hold nothing yet.
+    fn finish(&self, tick: u64) {
+        let mut m = self.lock_memory();
+        m.active.remove(&tick);
         if m.bytes <= self.budget {
             return;
         }
+        let keep = m.active.first().map_or(tick, |&t| t.min(tick));
         let mut old: Vec<(u64, bool, [u8; 32], u64)> = m
             .map
             .iter()
-            .filter(|(_, e)| e.used < tick)
+            .filter(|(_, e)| e.used < keep)
             .map(|(k, e)| (e.used, false, *k, e.bytes))
             .collect();
         old.extend(
             m.shared
                 .iter()
-                .filter(|(_, e)| e.used < tick && e.slot.get().is_some())
+                .filter(|(_, e)| e.used < keep && e.slot.get().is_some())
                 .map(|(k, e)| (e.used, true, *k, e.bytes)),
         );
         old.sort_unstable();
@@ -946,6 +1024,37 @@ fn load_files(
         .collect()
 }
 
+/// The key a node's output is cached under, in memory and on disk: its
+/// cache key, so `16`, `16.0` and a left-out default of 16 share one entry.
+/// A mesh or a fragment names derived assets after node keys, which spellings
+/// do not share, so those are cached under the node's key.
+fn lookup_key(def: &NodeDef, key: [u8; 32], cache: [u8; 32]) -> [u8; 32] {
+    match def.output {
+        PortType::Mesh | PortType::Fragment => key,
+        PortType::Field | PortType::Points | PortType::Shapes | PortType::Path => cache,
+    }
+}
+
+/// A node's report before it runs.
+fn skipped(id: &str, kind: &str) -> NodeReport {
+    NodeReport {
+        id: id.to_string(),
+        kind: kind.to_string(),
+        key: String::new(),
+        cache: CacheState::Skipped,
+        ms: 0.0,
+        output: None,
+        diagnostics: Vec::new(),
+        logs: Vec::new(),
+    }
+}
+
+/// `d`, a problem of node `id`, saying so.
+fn in_node(mut d: Diagnostic, id: &str, kind: &str) -> Diagnostic {
+    d.message = format!("node `{id}` ({kind}): {}", d.message);
+    d
+}
+
 /// Everything a node's key hashes.
 struct KeyInputs<'a> {
     id: &'a str,
@@ -961,11 +1070,22 @@ struct KeyInputs<'a> {
     domain: Option<Domain>,
     /// For a global key: the global spacing (and `keys` are global keys).
     global: Option<f32>,
+    /// A cache key: `params` are canonical and `keys` are cache keys.
+    cache: bool,
 }
 
-/// A node's key. For a node at its kind's current version, outside a
-/// domain, and with a Rust kind, the bytes hashed are exactly M1's, so
-/// caches written before versioning stay valid.
+/// A node's key, or with [`KeyInputs::cache`] its cache key.
+///
+/// The key hashes the parameters as written (migrated to the kind's current
+/// shape), so `16` and `16.0` give two keys. It names the derived assets the
+/// node makes (`derived:<key>`), which the scene's entities reference. For a
+/// node at its kind's current version, outside a domain, and with a Rust
+/// kind, the bytes hashed are exactly M1's, so caches written before
+/// versioning stay valid.
+///
+/// The cache key hashes the [canonical](NodeDef::canonical_params)
+/// parameters and the inputs' cache keys instead, so spellings of the same
+/// parameters share it ([`lookup_key`]).
 fn node_key(k: &KeyInputs) -> [u8; 32] {
     let KeyInputs {
         id,
@@ -978,13 +1098,18 @@ fn node_key(k: &KeyInputs) -> [u8; 32] {
         files,
         domain,
         global,
+        cache,
     } = *k;
     let mut h = blake3::Hasher::new();
     let s = |h: &mut blake3::Hasher, t: &str| {
         h.update(&(t.len() as u64).to_le_bytes());
         h.update(t.as_bytes());
     };
-    h.update(b"re_proc node key v1");
+    h.update(if cache {
+        b"re_proc cache key v1".as_slice()
+    } else {
+        b"re_proc node key v1".as_slice()
+    });
     s(&mut h, def.kind);
     h.update(&version.to_le_bytes());
     s(&mut h, id);
@@ -1125,21 +1250,6 @@ pub struct Evaluation {
 }
 
 impl Evaluation {
-    fn new(
-        graph: &ProcGraph,
-        report: EvalReport,
-        outputs: Vec<Option<Output>>,
-        domain: Option<Domain>,
-    ) -> Self {
-        Evaluation {
-            report,
-            ids: graph.nodes.keys().cloned().collect(),
-            sinks: (0..graph.nodes.len()).map(|i| graph.is_sink(i)).collect(),
-            outputs,
-            domain,
-        }
-    }
-
     /// True if nothing failed.
     pub fn ok(&self) -> bool {
         self.report.ok()
@@ -1161,7 +1271,8 @@ impl Evaluation {
             return Err(d.clone());
         }
         let mut out = Fragment::default();
-        let mut seen: HashMap<String, ()> = HashMap::new();
+        let mut keys: HashSet<String> = HashSet::new();
+        let mut assets: HashSet<String> = HashSet::new();
         for (i, id) in self.ids.iter().enumerate() {
             if !self.sinks[i] {
                 continue;
@@ -1173,13 +1284,13 @@ impl Evaluation {
                 continue;
             };
             for item in &f.items {
-                if seen.insert(item.key.clone(), ()).is_some() {
+                if !keys.insert(item.key.clone()) {
                     return Err(duplicate(&self.report.graph, &item.key));
                 }
                 out.items.push(item.clone());
             }
             for asset in &f.assets {
-                if !out.assets.iter().any(|(n, _)| n == &asset.0) {
+                if assets.insert(asset.0.clone()) {
                     out.assets.push(asset.clone());
                 }
             }
@@ -1216,9 +1327,9 @@ pub fn to_scene_fragment(
     registry: &Registry,
 ) -> Result<SceneFragment, Diagnostic> {
     let mut out: SceneFragment = Vec::with_capacity(fragment.items.len());
-    let mut seen: HashMap<String, ()> = HashMap::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut push = |out: &mut SceneFragment, node: GenNode| {
-        if seen.insert(node.key.clone(), ()).is_some() {
+        if !seen.insert(node.key.clone()) {
             return Err(duplicate(graph, &node.key));
         }
         out.push(node);
@@ -1262,36 +1373,165 @@ pub fn fragment_hash_hex(fragment: &SceneFragment) -> String {
     fragment_hash(fragment).to_hex().to_string()
 }
 
-/// The part of `graph` that input `port` of node `index` comes from: the
-/// node it comes from, which is the part's one output, and that node's
-/// ancestors; with that node's id.
-fn input_graph(graph: &ProcGraph, index: usize, port: &str) -> Option<(ProcGraph, String)> {
-    let (_, from) = graph
-        .inputs_of(index)
-        .into_iter()
-        .find(|(p, _)| *p == port)?;
-    let (id, _) = graph.nodes.get_index(from)?;
-    Some((subgraph(graph, &[from]), id.clone()))
+/// A validated graph prepared for evaluation: each node's kind, its
+/// parameters migrated to the kind's current shape and in canonical form,
+/// its inputs in natural port order, and the levels. A region or cell
+/// node's reads and a global node's samples evaluate parts of it
+/// ([`Plan::part`]), each prepared once per evaluation however many windows
+/// they read.
+struct Plan<'a> {
+    graph: &'a ProcGraph,
+    /// Per node of `graph` (`None` only for a node validation refuses).
+    nodes: Arc<Vec<Option<PlanNode<'a>>>>,
+    /// The nodes evaluated, in document order.
+    members: Vec<usize>,
+    /// Per node of `graph`: its position in `members` (and the report).
+    slot: Vec<usize>,
+    /// `members` in topological levels.
+    levels: Vec<Vec<usize>>,
+    /// Per node of `graph`: true if its output is the plan's output.
+    sinks: Vec<bool>,
+    /// The parts prepared so far, by the node each one outputs.
+    parts: Mutex<HashMap<usize, Arc<Plan<'a>>>>,
 }
 
-/// The nodes `roots` and their ancestors.
-fn subgraph(graph: &ProcGraph, roots: &[usize]) -> ProcGraph {
-    let mut keep: std::collections::BTreeSet<usize> = roots.iter().copied().collect();
-    let mut todo: Vec<usize> = keep.iter().copied().collect();
-    while let Some(i) = todo.pop() {
-        for (_, from) in graph.inputs_of(i) {
-            if keep.insert(from) {
-                todo.push(from);
+struct PlanNode<'a> {
+    id: &'a str,
+    def: &'a NodeDef,
+    /// The version the node was written for.
+    version: u32,
+    /// Its parameters, migrated to the kind's current shape.
+    params: Json,
+    /// [`NodeDef::canonical_params`] of `params`.
+    canonical: Json,
+    /// Its inputs `(port, node)`, in natural port order (edge order within
+    /// a port).
+    inputs: Vec<(&'a str, usize)>,
+    /// `hash64(id)`, which forks its seed.
+    salt: u64,
+}
+
+impl PlanNode<'_> {
+    /// The node input `port` comes from.
+    fn input(&self, port: &str) -> Option<usize> {
+        self.inputs
+            .iter()
+            .find(|(p, _)| *p == port)
+            .map(|&(_, from)| from)
+    }
+}
+
+impl<'a> Plan<'a> {
+    /// The plan of `graph`, which validates against `registry`.
+    fn new(graph: &'a ProcGraph, registry: &'a NodeRegistry) -> Plan<'a> {
+        let n = graph.nodes.len();
+        let mut inputs: Vec<Vec<(&str, usize)>> = vec![Vec::new(); n];
+        let mut sinks = vec![true; n];
+        for e in &graph.edges {
+            if let (Some(from), Some(to)) = (
+                graph.nodes.get_index_of(&e.from.0),
+                graph.nodes.get_index_of(&e.to.0),
+            ) {
+                inputs[to].push((e.to.1.as_str(), from));
+                sinks[from] = false;
             }
         }
+        let nodes = graph
+            .nodes
+            .iter()
+            .zip(inputs)
+            .map(|((id, node), mut inputs)| {
+                let def = registry.get(&node.kind)?;
+                // Validation guarantees the migration succeeds.
+                let params = def.migrate(node.version, &node.params).ok()?.into_owned();
+                inputs.sort_by(|a, b| natural_cmp(a.0, b.0));
+                Some(PlanNode {
+                    id,
+                    def,
+                    version: node.version,
+                    canonical: def.canonical_params(&params),
+                    params,
+                    inputs,
+                    salt: hash64(id),
+                })
+            })
+            .collect();
+        Plan {
+            graph,
+            nodes: Arc::new(nodes),
+            members: (0..n).collect(),
+            slot: (0..n).collect(),
+            levels: graph.levels().unwrap_or_default(),
+            sinks,
+            parts: Mutex::default(),
+        }
     }
-    let mut sub = graph.clone();
-    let ids: std::collections::BTreeSet<String> = keep
-        .iter()
-        .filter_map(|i| graph.nodes.get_index(*i).map(|(id, _)| id.clone()))
-        .collect();
-    sub.nodes.retain(|id, _| ids.contains(id));
-    sub.edges
-        .retain(|e| ids.contains(&e.from.0) && ids.contains(&e.to.0));
-    sub
+
+    /// The part of this plan whose output is node `root`'s: `root` and its
+    /// ancestors.
+    fn part(&self, root: usize) -> Arc<Plan<'a>> {
+        let mut parts = self.parts.lock().unwrap_or_else(|e| e.into_inner());
+        parts
+            .entry(root)
+            .or_insert_with(|| {
+                let n = self.graph.nodes.len();
+                let mut keep = vec![false; n];
+                keep[root] = true;
+                let mut todo = vec![root];
+                while let Some(i) = todo.pop() {
+                    for &(_, from) in self.nodes[i].iter().flat_map(|node| &node.inputs) {
+                        if !keep[from] {
+                            keep[from] = true;
+                            todo.push(from);
+                        }
+                    }
+                }
+                let members: Vec<usize> = (0..n).filter(|&i| keep[i]).collect();
+                let mut slot = vec![usize::MAX; n];
+                for (s, &i) in members.iter().enumerate() {
+                    slot[i] = s;
+                }
+                let mut sinks = vec![false; n];
+                sinks[root] = true;
+                Arc::new(Plan {
+                    graph: self.graph,
+                    nodes: self.nodes.clone(),
+                    members,
+                    slot,
+                    levels: self
+                        .levels
+                        .iter()
+                        .map(|level| level.iter().copied().filter(|&i| keep[i]).collect())
+                        .filter(|level: &Vec<usize>| !level.is_empty())
+                        .collect(),
+                    sinks,
+                    parts: Mutex::default(),
+                })
+            })
+            .clone()
+    }
+
+    /// The output type of node `index`'s kind.
+    fn output_type(&self, index: usize) -> Option<PortType> {
+        self.nodes[index].as_ref().map(|node| node.def.output)
+    }
+
+    /// The nodes a streamed evaluation runs: all but those whose output
+    /// reaches the plan's output only as fields of global nodes, which
+    /// sample their fields themselves.
+    fn needed(&self) -> Vec<bool> {
+        let mut needed = self.sinks.clone();
+        for &index in self.levels.iter().rev().flatten() {
+            let Some(node) = self.nodes[index].as_ref().filter(|_| needed[index]) else {
+                continue;
+            };
+            let global = node.def.streaming == Streaming::Global;
+            for &(_, from) in &node.inputs {
+                if !(global && self.output_type(from) == Some(PortType::Field)) {
+                    needed[from] = true;
+                }
+            }
+        }
+        needed
+    }
 }
