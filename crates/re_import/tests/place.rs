@@ -13,6 +13,7 @@ use common::registry;
 use place_writer::{Compression, Inst, attributes, binary, inst, s, xml};
 use re_import::place::dom::{CFrame, Dom, Font, PlaceValue as V, rotation_of_id};
 use re_import::place::read_dom;
+use re_import::place::xml::MAX_DEPTH;
 use re_import::{ImportOptions, InputFormat, codes, import};
 use re_reflect::Value;
 use re_scene::World;
@@ -302,6 +303,37 @@ fn deep_xml_nesting_is_refused() {
     assert!(d.message.contains("deeper"), "{}", d.message);
 }
 
+/// `depth` folders, each the parent of the next.
+fn chain(depth: usize) -> Vec<Inst> {
+    (0..depth)
+        .map(|i| {
+            inst(
+                "Folder",
+                i.checked_sub(1),
+                vec![("Name", s(&format!("F{i}")))],
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn deep_binary_nesting_is_refused() {
+    // A small file whose instances form one long parent chain overflowed the
+    // stack in the import's recursive walks: an abort, with no crash report.
+    for compression in [Compression::None, Compression::Zstd] {
+        let bytes = binary(&chain(100_000), compression);
+        let d = read_dom(&bytes, "deep.rbxm").unwrap_err();
+        assert_eq!(d.code, codes::PLACE_MALFORMED);
+        assert!(d.message.contains("deeper"), "{}", d.message);
+    }
+    let d = read_dom(
+        &binary(&chain(MAX_DEPTH + 1), Compression::None),
+        "deep.rbxm",
+    )
+    .unwrap_err();
+    assert!(d.message.contains("deeper"), "{}", d.message);
+}
+
 // ---- The import end to end -------------------------------------------------
 
 fn load(project: &Path) -> World {
@@ -567,4 +599,26 @@ fn a_malformed_place_writes_nothing() {
     let d = import(&input, &project, &registry(), &ImportOptions::default()).unwrap_err();
     assert_eq!(d.code, codes::PLACE_MALFORMED);
     assert!(!project.exists());
+}
+
+#[test]
+fn a_model_nested_as_deep_as_the_limit_imports() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("Deep.rbxm");
+    std::fs::write(&input, binary(&chain(MAX_DEPTH), Compression::None)).unwrap();
+    let project = dir.path().join("game");
+    let report = import(&input, &project, &registry(), &ImportOptions::default()).unwrap();
+    assert!(report.ok(), "{}", report.render_human());
+    let w = load(&project);
+    let deepest = id_of(
+        &report,
+        &format!(
+            "Workspace.{}",
+            (0..MAX_DEPTH)
+                .map(|i| format!("F{i}"))
+                .collect::<Vec<_>>()
+                .join(".")
+        ),
+    );
+    assert!(w.entity(&deepest).is_ok());
 }

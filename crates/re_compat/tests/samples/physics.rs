@@ -247,7 +247,7 @@ fn script(ctx: &mut Ctx, args: &J) -> Result<(), String> {
             let start = re_core::time::Instant::now();
             for i in 0..n {
                 frames(h, 1);
-                let due = std::time::Duration::from_secs_f64(f64::from(i + 1) / 60.0);
+                let due = std::time::Duration::from_secs(1) * (i + 1) / 60;
                 if let Some(wait) = due.checked_sub(start.elapsed()) {
                     std::thread::sleep(wait);
                 }

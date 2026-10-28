@@ -8,6 +8,9 @@
 # Keep the list sorted by path.
 # `powi` stays allowed: it is compiled to multiplications or to compiler-builtins'
 # `__powisf2`, the same code on every target.
+# `Duration::from_secs_f32` and `from_secs_f64` panic on a negative, non-finite or
+# too large value, and scripts and real.toml give the engine such values: convert
+# with `Duration::try_from_secs_f32` or `try_from_secs_f64`.
 disallowed-methods = [
     { path = "f32::acos", reason = "platform libm; use libm (ADR-0036)" },
     { path = "f32::acosh", reason = "platform libm; use libm (ADR-0036)" },
@@ -59,4 +62,6 @@ disallowed-methods = [
     { path = "f64::sinh", reason = "platform libm; use libm (ADR-0036)" },
     { path = "f64::tan", reason = "platform libm; use libm (ADR-0036)" },
     { path = "f64::tanh", reason = "platform libm; use libm (ADR-0036)" },
+    { path = "std::time::Duration::from_secs_f32", reason = "panics when negative, non-finite or too large; use Duration::try_from_secs_f32" },
+    { path = "std::time::Duration::from_secs_f64", reason = "panics when negative, non-finite or too large; use Duration::try_from_secs_f64" },
 ]

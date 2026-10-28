@@ -29,6 +29,7 @@ use re_types::audio::{
 
 use crate::codes;
 use crate::meter::{Meter, MeterSlot};
+use crate::mixer::MAX_FADE;
 
 /// The most send tracks a graph may have: kira's 16, with one kept spare.
 pub const MAX_SENDS: usize = 15;
@@ -44,14 +45,24 @@ pub const DEFAULT_SNAPSHOT: &str = "default";
 const MIN_HZ: f32 = 10.0;
 const MAX_HZ: f32 = 20_000.0;
 
-/// A tween of `seconds` (0 is at once), linear. A length too long for a
-/// `Duration` never ends.
+/// The longest compressor attack or release, in milliseconds.
+const MAX_ENVELOPE_MS: f32 = 10_000.0;
+
+/// A tween of `seconds` (0 is at once), linear. Callers refuse a length past
+/// [`MAX_FADE`]; one they missed is clamped to it rather than handed to kira
+/// (a `Duration` overflows near 1.8e19 s).
 pub(crate) fn tween(seconds: f32) -> Tween {
     Tween {
         start_time: kira::StartTime::Immediate,
-        duration: Duration::try_from_secs_f32(seconds.max(0.0)).unwrap_or(Duration::MAX),
+        duration: seconds_to_duration(f64::from(seconds), MAX_FADE),
         easing: kira::Easing::Linear,
     }
+}
+
+/// `seconds` as a `Duration`, from 0 to `max` seconds. The callers have
+/// checked the range already; this keeps a value they missed from panicking.
+fn seconds_to_duration(seconds: f64, max: f32) -> Duration {
+    Duration::try_from_secs_f64(seconds.clamp(0.0, f64::from(max))).unwrap_or(Duration::ZERO)
 }
 
 /// The kira handle of one built effect.
@@ -275,8 +286,10 @@ pub(crate) fn validate(effect: &EffectDesc) -> Result<(), String> {
                 ));
             }
             for (name, ms) in [("attack_ms", c.attack_ms), ("release_ms", c.release_ms)] {
-                if !(ms.is_finite() && ms >= 0.0) {
-                    return Err(format!("{name} {ms} is not a finite number of 0 or more"));
+                if !(ms.is_finite() && (0.0..=MAX_ENVELOPE_MS).contains(&ms)) {
+                    return Err(format!(
+                        "{name} {ms} is not a number between 0 and {MAX_ENVELOPE_MS}"
+                    ));
                 }
             }
             unit("mix", c.mix)
@@ -438,7 +451,7 @@ fn distortion_kind(m: DistortionMode) -> DistortionKind {
 }
 
 fn ms(v: f32) -> Duration {
-    Duration::from_secs_f64(f64::from(v.max(0.0)) / 1000.0)
+    seconds_to_duration(f64::from(v) / 1000.0, MAX_ENVELOPE_MS / 1000.0)
 }
 
 /// Something effects can be added to.
@@ -489,7 +502,7 @@ fn add_effect(chain: &mut impl Chain, effect: &EffectDesc) -> EffectHandle {
         EffectDesc::Delay(d) => EffectHandle::Delay(
             chain.effect(
                 DelayBuilder::new()
-                    .delay_time(Duration::from_secs_f32(d.seconds))
+                    .delay_time(seconds_to_duration(f64::from(d.seconds), 10.0))
                     .feedback(Decibels(d.feedback_db))
                     .mix(Mix(d.mix)),
             ),
