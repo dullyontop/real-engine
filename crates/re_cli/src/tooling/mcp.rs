@@ -54,7 +54,8 @@ pub struct McpArgs {
     #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = re_mcp::http::DEFAULT_ADDR)]
     pub http: Option<String>,
     /// Write each tool call to FILE as one JSON line (time, tool,
-    /// arguments, outcome code, duration), as `real agent eval` does.
+    /// arguments, outcome code, duration), as `real agent eval` does. A
+    /// relative FILE is relative to the current directory.
     #[arg(long, value_name = "FILE")]
     pub record: Option<std::path::PathBuf>,
 }
@@ -545,7 +546,7 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Err(e) => {
             let file = args.record.as_deref().unwrap_or(Path::new("")).display();
             return Ok(fail(&Diagnostic::error(
-                re_agent::codes::EVAL_RUN_FAILED,
+                re_mcp::codes::RECORD_FAILED,
                 format!("cannot write the transcript {file}: {e}"),
             )));
         }
@@ -604,7 +605,17 @@ pub fn run(args: McpArgs, project: &Path) -> anyhow::Result<ExitCode> {
     drop(lock);
     match server.join() {
         Ok(result) => Ok(finish(result)),
-        Err(_) => anyhow::bail!("the MCP server thread panicked"),
+        // The panic hook has written the crash report; exit as a crash does
+        // (ADR-0022).
+        Err(_) => {
+            let d = Diagnostic::error(
+                re_mcp::codes::SERVER_PANICKED,
+                "the MCP server stopped with a panic",
+            )
+            .with_hint("start `real mcp` again, and please report the crash");
+            eprint!("{}", d.render_human());
+            Ok(ExitCode::from(101))
+        }
     }
 }
 
@@ -626,6 +637,8 @@ mod walk;
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use re_command::{AllowAll, CommandOutcome};
 
@@ -799,5 +812,82 @@ mod tests {
             false,
         );
         assert_eq!(code(out), re_agent::codes::BAD_PARAM_VALUE);
+    }
+
+    /// The dotted names in `text` that look like commands: a run of
+    /// lower-case words joined by one `.`, whose first word is one of
+    /// `namespaces` (`scene.save`). File names (`main.scene.json`,
+    /// `*.graph.json`) and longer dotted paths are not commands.
+    fn command_mentions(text: &str, namespaces: &BTreeSet<&str>) -> Vec<String> {
+        let word = |w: &str| {
+            w.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+                && w.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        };
+        text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+            .filter(|run| !run.starts_with('.'))
+            .map(|run| run.trim_end_matches('.'))
+            .filter_map(|run| {
+                let (first, rest) = run.split_once('.')?;
+                (word(first) && word(rest) && namespaces.contains(first)).then(|| run.to_string())
+            })
+            .collect()
+    }
+
+    /// Every string under a `description` key of a JSON Schema.
+    fn schema_descriptions<'a>(schema: &'a Json, out: &mut Vec<&'a str>) {
+        match schema {
+            Json::Object(map) => {
+                for (key, value) in map {
+                    match value {
+                        Json::String(text) if key == "description" => out.push(text),
+                        _ => schema_descriptions(value, out),
+                    }
+                }
+            }
+            Json::Array(items) => {
+                for item in items {
+                    schema_descriptions(item, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The tooling audit found `graph.add_node` telling agents to call
+    /// `scene.save`, which does not exist. Agents read every summary and
+    /// argument description, so each command they name must exist.
+    #[test]
+    fn descriptions_name_only_commands_that_exist() {
+        let mentions = command_mentions(
+            "Save with scene.save. A `.graph.json` file, main.scene.json, \
+             graph.generate, e.g. this; Transform.translation, proc.bake.",
+            &BTreeSet::from(["scene", "graph", "proc"]),
+        );
+        assert_eq!(mentions, ["scene.save", "graph.generate", "proc.bake"]);
+
+        let (_dir, opened) = agent_project("terrain", true);
+        let specs = opened.app.commands().specs();
+        let names: BTreeSet<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+        let namespaces: BTreeSet<&str> = names
+            .iter()
+            .filter_map(|n| n.split_once('.').map(|(first, _)| first))
+            .collect();
+        let mut unknown = Vec::new();
+        for spec in specs {
+            let mut texts = vec![spec.summary.as_str()];
+            schema_descriptions(&spec.input_schema, &mut texts);
+            if let Some(output) = &spec.output_schema {
+                schema_descriptions(output, &mut texts);
+            }
+            for text in texts {
+                for mention in command_mentions(text, &namespaces) {
+                    if !names.contains(mention.as_str()) {
+                        unknown.push(format!("{}: `{mention}` in {text:?}", spec.name));
+                    }
+                }
+            }
+        }
+        assert!(unknown.is_empty(), "{unknown:#?}");
     }
 }

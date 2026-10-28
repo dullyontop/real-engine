@@ -157,6 +157,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "Cannot listen on the HTTP address",
         page: include_str!("../explain/RE8504.md"),
     },
+    DiagInfo {
+        code: codes::RECORD_FAILED,
+        title: "Transcript cannot be written",
+        page: include_str!("../explain/RE8505.md"),
+    },
+    DiagInfo {
+        code: codes::PORT_NOT_FIXED,
+        title: "Client configs need a fixed port",
+        page: include_str!("../explain/RE8506.md"),
+    },
+    DiagInfo {
+        code: codes::SERVER_PANICKED,
+        title: "The MCP server crashed",
+        page: include_str!("../explain/RE8507.md"),
+    },
 ];
 
 /// The code range this crate owns (ARCHITECTURE §7).

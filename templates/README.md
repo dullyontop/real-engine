@@ -56,9 +56,23 @@ Each check sets exactly one kind:
 | --- | --- |
 | `verify = "ok"` | Every `real verify` stage passes. |
 | `verify_stage = "compile"` | That stage passes. |
-| `command = "query"` | A `read` command's result, with optional `args`, matches at `pointer`. Match with one of `equals`, `at_least`, `at_most` or `contains`. |
+| `command = "query"` | A `read` command's result, with optional `args`, matches at `pointer`. Match with one of `equals`, `at_least` and `at_most` (one or both), `near` with `tolerance`, or `contains`. |
 | `diff_stage = "boot"` | That stage changed (`changed = false`: it did not) since the recipe's checkpoint. Atomic recipes only. |
 | `no_regressions = true` | No stage that passed before the recipe fails after it. Atomic recipes only. |
+
+How a `command` check matches the value at `pointer`:
+- `equals`: the same JSON value; numbers compare as numbers, so `1` equals
+  `1.0`.
+- `at_least`, `at_most`: a number in that range, ends included. Give one or
+  both.
+- `near` with `tolerance`: a number within `tolerance` of `near`
+  (`near = 32.0`, `tolerance = 0.5` holds from 31.5 to 32.5). `tolerance`
+  is required, and 0 asks for the exact number.
+- `contains`: a string that contains the text, or an array that holds the
+  value.
+
+A number check on something that is not a number fails, and says what it
+found.
 
 The tests in `crates/re_cli` create a project from every template and run
 its checks, and apply every recipe over MCP.

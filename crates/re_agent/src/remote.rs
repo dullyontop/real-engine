@@ -38,8 +38,8 @@
 //! [`EngineHandle::with_origin`]; a connected handle starts as
 //! [`Origin::User`].
 //!
-//! Unix only in M1. On Windows, [`bind`] and [`connect`] return `RE8004`
-//! (named pipes are later work).
+//! Unix only for now. On Windows, [`bind`] and [`connect`] return `RE8004`
+//! until the named pipe of ADR-0020's Windows amendment.
 
 use std::path::Path;
 
@@ -546,7 +546,7 @@ mod imp {
     pub(super) fn unsupported(path: &Path) -> Diagnostic {
         Diagnostic::error(
             codes::SOCKET_UNSUPPORTED,
-            "the editor socket is not available on Windows in M1",
+            "this build of `real` has no editor socket on Windows",
         )
         .at(Location::file(path.display().to_string()))
         .with_hint(

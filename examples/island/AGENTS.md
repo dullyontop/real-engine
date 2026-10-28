@@ -22,8 +22,9 @@ grants you.
    `redo` step through them. File commands (`script.write`, `file.delete`)
    are not in the undo history: `checkpoint.restore` brings files back.
 4. Check: `verify` runs the project's checks, `screenshot` renders a frame
-   (the PNG path is in the result), and `play.run` steps a copy of the game
-   for some frames and reports what happened. None of them change the project.
+   to a PNG under `.real/out/` (the path is in the result), and `play.run`
+   steps a copy of the game for some frames and reports what happened. None
+   of them change the project.
    `verify.diff` runs verify and lists only what changed since your latest
    checkpoint: stages that now fail or pass, new or fixed diagnostics, and
    changed values. Take a checkpoint with `checkpoint.create` when the
@@ -142,11 +143,14 @@ tier:
 - `destructive`: changes that can lose work (`file.delete`); only when a
   person sets `max_tier = "destructive"`.
 
-File-writing commands may only write inside the policy's `[scopes]`, and
-never in `.real/` or `.git/` or through a symbolic link. Budgets cap `play.run` frames and the size of
-one transaction. A refused call returns `RE8001` (tier), `RE8002` (path) or
-`RE8008` (budget) and changes nothing; tell the user what you needed instead
-of working around it.
+Every file a command writes, whatever its tier, must be inside the policy's
+`[scopes]`, and never in `.real/` or `.git/` or through a symbolic link
+(`command.describe` lists a command's file arguments under `paths`). A
+screenshot goes under `.real/out/` unless you name a new `.png` inside the
+scopes; it never replaces a file. Budgets cap `play.run` frames and the size
+of one transaction. A refused call returns `RE8001` (tier), `RE8002` (path)
+or `RE8008` (budget) and changes nothing; tell the user what you needed
+instead of working around it.
 
 ## Commands
 
@@ -173,7 +177,7 @@ The MCP tool of each is its name with `_` for `.` (`entity.spawn` is `entity_spa
 | `resource.list` | `prefix`? | List the reference material agents can read: explain pages, engine documents and Luau definitions (the same items MCP serves as resources). |
 | `resource.read` | `uri` | Read one reference item by URI (an explain page, an engine document or a Luau definitions file). |
 | `scene.dump_tree` | `root`?, `depth`?, `components`?, `max_nodes`? | The entity tree as JSON: each entity's id, name, Roblox-style class, attributes and tags (and with `components: true`, every component), from a `root` or from every root. |
-| `screenshot` | `path`? | Capture the current view (the scene and the HUD) as a PNG in the project; returns its path, size and graphics backend. |
+| `screenshot` | `path`? | Capture the current view (the scene and the HUD) as a PNG, by default under .real/out/; returns its path, size and graphics backend. |
 | `template.list` | none | List the project templates `real new --template` offers, with their parameters and the checks a new project passes. |
 | `verify` | `boot_frames`? | Check the project as saved on disk: content files, scripts, a headless boot, replays (twice, comparing state hashes), golden screenshots and frame times. Returns the verify report. |
 | `verify.diff` | `checkpoint`?, `boot_frames`?, `include_timings`? | Run verify and report what changed since the agent session's latest checkpoint (or `checkpoint`): stages that now pass or fail, diagnostics that appeared or went away, and values that changed. Timings are left out unless `include_timings` is set. |
@@ -193,7 +197,7 @@ The MCP tool of each is its name with `_` for `.` (`entity.spawn` is `entity_spa
 | `entity.reparent` | `id`, `parent`?, `index`? | Move an entity under a new parent (null makes it a root), optionally at a child index. |
 | `entity.set` | `id`, `component`, `field`, `value` | Set one field of one component. On a generated entity this also records an override on its source. |
 | `entity.spawn` | `id`?, `name`?, `parent`?, `index`?, `components`? | Create an entity with components; returns its id (generated when not given). |
-| `graph.add_node` | `graph`, `kind`, `id`?, `params`?, `pos`? | Add a node to a graph file (opened for editing, saved by scene.save): its kind and parameters are checked; a fresh id is chosen when none is given, so a retry without an id adds another node. |
+| `graph.add_node` | `graph`, `kind`, `id`?, `params`?, `pos`? | Add a node to a graph file (opened for editing, and written with the scene): its kind and parameters are checked; a fresh id is chosen when none is given, so a retry without an id adds another node. |
 | `graph.connect` | `graph`, `from`, `to` | Connect a node's output to another node's input in a graph file; ports and types are checked, cycles refused, and an edge already into that input is replaced. |
 | `graph.disconnect` | `graph`, `from`, `to` | Remove the edge from a node's output to another node's input in a graph file. |
 | `graph.move_nodes` | `graph`, `positions` | Set the canvas positions of nodes in a graph file (layout only: nothing regenerates). |

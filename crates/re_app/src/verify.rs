@@ -21,7 +21,7 @@
 //! 6. `goldens`: the replays' screenshot checks against
 //!    `tests/goldens/<backend>/`;
 //! 7. `perf`: the PerfReport of the boot run, checked against
-//!    `real.toml [verify.perf]` (warnings only in M1).
+//!    `real.toml [verify.perf]` (warnings only).
 //!
 //! A stage this build cannot run is reported with `ok: true` and an `RE0512`
 //! note saying why. Stages after a failed `boot` are skipped.
@@ -972,7 +972,7 @@ fn stage_perf(perf: &PerfReport, config: &AppConfig) -> StageReport {
                 ),
             )
             .at(Location::file(crate::config::CONFIG_FILE))
-            .with_hint("budgets are warnings in M1, because CI renders in software"),
+            .with_hint("budgets are warnings, because CI renders in software"),
         );
     }
     StageReport::new(

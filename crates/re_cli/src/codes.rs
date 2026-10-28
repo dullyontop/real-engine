@@ -16,6 +16,11 @@ pub const WRITE_FAILED: Code = Code::new("RE0902");
 /// `real check` and verify's `scan` stage).
 pub const SCRIPT_API_GAP: Code = Code::new("RE0903");
 
+/// A runtime-only build of `real` was asked for something only the default
+/// (tooling) build has: a `real new` template other than the plain `native`
+/// one, `--set`, `--check` or `--list-templates`.
+pub const NEEDS_TOOLING: Code = Code::new("RE0904");
+
 /// `[package]` in `real.toml` has an invalid value, or a default `real build`
 /// had to choose (no `identifier`: a warning).
 pub const PACKAGE_CONFIG: Code = Code::new("RE0950");

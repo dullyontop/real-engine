@@ -17,3 +17,16 @@ pub const WEAK_TOKEN: Code = Code::new("RE8503");
 
 /// `real mcp --http` could not listen on its address.
 pub const BIND_FAILED: Code = Code::new("RE8504");
+
+/// `real mcp --record FILE` cannot create or write the transcript: an error
+/// when the file cannot be created at the start, a warning when a later line
+/// cannot be written (the call itself already happened).
+pub const RECORD_FAILED: Code = Code::new("RE8505");
+
+/// `real agent init --http ADDR` was given port 0. A client config names the
+/// server's URL, so the port must be fixed.
+pub const PORT_NOT_FIXED: Code = Code::new("RE8506");
+
+/// The thread serving MCP stopped with a panic (a bug in the engine; the
+/// crash report is in `.real/crash/`).
+pub const SERVER_PANICKED: Code = Code::new("RE8507");

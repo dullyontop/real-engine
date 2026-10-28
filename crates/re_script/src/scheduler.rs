@@ -927,7 +927,7 @@ pub(crate) fn task_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
                     if ADOPT(running(), seconds) then
                         return yield()
                     end
-                    error("[{yield_code}] task.wait inside a coroutine made with coroutine.create or coroutine.wrap is not supported in M1; use task.spawn", 2)
+                    error("[{yield_code}] task.wait inside a coroutine made with coroutine.create or coroutine.wrap is not supported; use task.spawn", 2)
                 end
                 return yield(SENTINEL, seconds or 0)
             end

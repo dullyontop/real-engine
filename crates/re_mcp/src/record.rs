@@ -7,8 +7,11 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use re_core::Diagnostic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
+
+use crate::codes;
 
 /// One tool call in a transcript.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -69,13 +72,18 @@ impl Recorder {
     }
 
     /// Appends `entry`. A write that fails is reported on stderr once per
-    /// call and otherwise ignored: the call itself already happened.
+    /// call, as an `RE8505` warning, and otherwise ignored: the call itself
+    /// already happened.
     pub fn record(&self, entry: &TranscriptEntry) {
         let mut line = serde_json::to_string(entry).unwrap_or_default();
         line.push('\n');
         let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
         if let Err(e) = file.write_all(line.as_bytes()).and_then(|()| file.flush()) {
-            eprintln!("real mcp: could not write the transcript: {e}");
+            let warning = Diagnostic::warning(
+                codes::RECORD_FAILED,
+                format!("could not write a call to the transcript: {e}"),
+            );
+            eprint!("{}", warning.render_human());
         }
     }
 }

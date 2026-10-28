@@ -10,7 +10,8 @@ use re_core::Code;
 /// (`.real/editor.lock`).
 pub const PROJECT_LOCKED: Code = Code::new("RE8003");
 
-/// The editor socket is not available on this platform (Windows in M1).
+/// The editor socket is not available on this platform (Windows, until the
+/// named pipe of ADR-0020's Windows amendment).
 pub const SOCKET_UNSUPPORTED: Code = Code::new("RE8004");
 
 /// The editor socket could not be bound or connected, or the connection was

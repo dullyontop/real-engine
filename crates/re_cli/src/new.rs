@@ -68,32 +68,67 @@ fn default_name(dir: &Path) -> String {
         .unwrap_or_else(|| "game".into())
 }
 
-/// Creates the project at `dir` from a template (ADR-0046). In a build
-/// without tooling only the default `native` template, with no parameters
-/// and no checks, is available.
+/// Creates the project at `dir` from a template (ADR-0046), with the
+/// engine's JSON Schemas in `schemas/`, which its files name in `$schema`.
+/// In a build without tooling only the default `native` template, with no
+/// parameters and no checks, is available.
 ///
 /// # Errors
 ///
-/// As [`create`]; the template codes `RE8019`–`RE8024`; `RE0902` with a
-/// hint to use the tooling build for anything else in a runtime-only build.
+/// As [`create`]; the template codes `RE8019`–`RE8024`; `RE0904` for
+/// anything else in a runtime-only build.
 pub fn create_from(dir: &Path, options: NewOptions<'_>) -> Result<Vec<String>, Diagnostic> {
     #[cfg(feature = "tooling")]
-    {
-        templated::create(dir, options)
-    }
+    let mut written = templated::create(dir, options)?;
     #[cfg(not(feature = "tooling"))]
-    {
-        if options.template == "native" && options.set.is_empty() && !options.check {
-            return create(dir, options.name);
+    let mut written = {
+        if options.template != "native" || !options.set.is_empty() || options.check {
+            return Err(Diagnostic::error(
+                codes::NEEDS_TOOLING,
+                "this build of `real` has only the plain `native` template",
+            )
+            .with_hint(
+                "use the default (tooling) build of `real` for templates, `--set` and `--check`",
+            ));
         }
-        Err(Diagnostic::error(
-            codes::WRITE_FAILED,
-            "this build of `real` has only the plain `native` template",
-        )
-        .with_hint(
-            "use the default (tooling) build of `real` for templates, `--set` and `--check`",
-        ))
+        create(dir, options.name)?
+    };
+    written.extend(write_schemas(dir)?);
+    Ok(written)
+}
+
+/// Writes the engine's JSON Schemas into the new project's `schemas/` (what
+/// `real schema` writes), so the `$schema` of its scenes and materials
+/// resolves. Returns the files written, relative to `dir`.
+fn write_schemas(dir: &Path) -> Result<Vec<String>, Diagnostic> {
+    let names = crate::schema::write_all(&dir.join("schemas"))?;
+    Ok(names.into_iter().map(|n| format!("schemas/{n}")).collect())
+}
+
+/// What to do with a new project in `dir`: the lines `real new` prints
+/// after creating it.
+pub fn next_steps(dir: &Path) -> String {
+    let shown = dir.display().to_string();
+    let plain = |c: char| c.is_ascii_alphanumeric() || "/._-+:\\".contains(c);
+    let shown = if shown.chars().all(plain) {
+        shown
+    } else {
+        format!("\"{shown}\"")
+    };
+    let mut steps = vec![
+        format!("cd {shown}"),
+        "real run          run it in a window".to_string(),
+        "real verify       check it without a window, as CI would".to_string(),
+    ];
+    if cfg!(feature = "tooling") {
+        steps.push("real editor       open it in the editor".to_string());
+        steps.push("real agent init   set it up for AI agents (MCP)".to_string());
     }
+    let mut out = "next steps:\n".to_string();
+    for step in steps {
+        out.push_str(&format!("  {step}\n"));
+    }
+    out
 }
 
 /// `real new --list-templates`: the templates and their parameters, as text
@@ -101,7 +136,7 @@ pub fn create_from(dir: &Path, options: NewOptions<'_>) -> Result<Vec<String>, D
 ///
 /// # Errors
 ///
-/// `RE8019` when a built-in template is invalid; `RE0902` in a runtime-only
+/// `RE8019` when a built-in template is invalid; `RE0904` in a runtime-only
 /// build.
 pub fn list_templates(json: bool) -> Result<String, Diagnostic> {
     #[cfg(feature = "tooling")]
@@ -112,7 +147,7 @@ pub fn list_templates(json: bool) -> Result<String, Diagnostic> {
     {
         let _ = json;
         Err(Diagnostic::error(
-            codes::WRITE_FAILED,
+            codes::NEEDS_TOOLING,
             "this build of `real` has only the plain `native` template",
         )
         .with_hint("use the default (tooling) build of `real`"))
@@ -400,6 +435,7 @@ mod tests {
     fn the_native_template_makes_the_plain_project() {
         let dir = tempfile::tempdir().unwrap();
         create(&dir.path().join("plain"), Some("Demo")).unwrap();
+        write_schemas(&dir.path().join("plain")).unwrap();
         let options = NewOptions {
             name: Some("Demo"),
             template: "native",
@@ -521,6 +557,50 @@ mod tests {
         );
         // Nothing was written for any of them.
         assert!(!dir.path().join("x").exists());
+    }
+
+    /// Every `$schema` a new project's files name is a file of the project
+    /// (`real new` writes `schemas/`), for each built-in template.
+    #[cfg(feature = "tooling")]
+    #[test]
+    fn schema_references_resolve() {
+        let dir = tempfile::tempdir().unwrap();
+        for t in ["native", "roblox", "terrain"] {
+            let project = dir.path().join(t);
+            let options = NewOptions {
+                name: None,
+                template: t,
+                set: &[],
+                check: false,
+            };
+            let written = create_from(&project, options).unwrap();
+            assert!(written.contains(&"schemas/scene.schema.json".to_string()));
+            let mut named = 0;
+            // The schemas name the JSON Schema draft they follow, a URL.
+            let files = written
+                .iter()
+                .filter(|p| p.ends_with(".json") && !p.starts_with("schemas/"));
+            for path in files {
+                let text = std::fs::read_to_string(project.join(path)).unwrap();
+                let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if let Some(schema) = doc["$schema"].as_str() {
+                    let file = project.join(path).parent().unwrap().join(schema);
+                    assert!(file.is_file(), "{t}: {path} names {schema}");
+                    named += 1;
+                }
+            }
+            assert!(named > 0 || t == "roblox", "{t}: no file names a schema");
+        }
+    }
+
+    #[test]
+    fn next_steps_quote_a_folder_with_spaces() {
+        let steps = next_steps(Path::new("my game"));
+        assert!(
+            steps.starts_with("next steps:\n  cd \"my game\"\n"),
+            "{steps}"
+        );
+        assert!(next_steps(Path::new("games/demo")).contains("  cd games/demo\n"));
     }
 
     #[test]

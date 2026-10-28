@@ -770,7 +770,7 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
     );
     registry.register_typed::<crate::AddNodeArgs, _>(
         "graph.add_node",
-        "Add a node to a graph file (opened for editing, saved by scene.save): its kind and parameters are checked; a fresh id is chosen when none is given, so a retry without an id adds another node.",
+        "Add a node to a graph file (opened for editing, and written with the scene): its kind and parameters are checked; a fresh id is chosen when none is given, so a retry without an id adds another node.",
         Tier::Edit,
         false,
         crate::edit::add_node::<C>,
