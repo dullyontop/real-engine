@@ -527,9 +527,10 @@ component! {
 
 component! {
     /// A box in a native UI tree (ADR-0058): its place, size and layout. Its
-    /// parent is the nearest ancestor with a `UiNode` or a [`UiRoot`]; its
-    /// children are its children with a `UiNode`, in child order. Sizes and
-    /// positions are a fraction of the parent's box (`_scale`) plus points.
+    /// parent is the entity's parent, which has a `UiNode` or a [`UiRoot`] (a
+    /// node under any other entity is not drawn); its children are its
+    /// children with a `UiNode`, in child order. Sizes and positions are a
+    /// fraction of the parent's box (`_scale`) plus points.
     pub struct UiNode {
         /// Left edge from the parent's, in points.
         pub x: f32 = 0.0,

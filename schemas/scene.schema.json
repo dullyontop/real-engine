@@ -1360,7 +1360,7 @@
     },
     "UiNode": {
       "type": "object",
-      "description": "A box in a native UI tree (ADR-0058): its place, size and layout. Its\nparent is the nearest ancestor with a `UiNode` or a [`UiRoot`]; its\nchildren are its children with a `UiNode`, in child order. Sizes and\npositions are a fraction of the parent's box (`_scale`) plus points.",
+      "description": "A box in a native UI tree (ADR-0058): its place, size and layout. Its\nparent is the entity's parent, which has a `UiNode` or a [`UiRoot`] (a\nnode under any other entity is not drawn); its children are its\nchildren with a `UiNode`, in child order. Sizes and positions are a\nfraction of the parent's box (`_scale`) plus points.",
       "properties": {
         "x": {
           "type": "number",

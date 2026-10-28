@@ -1,9 +1,10 @@
 //! The frame's UI tree from the World's UI components (ADR-0058 part 7):
-//! each entity with a `UiRoot` starts a root, and its descendants with a
-//! `UiNode` are the root's nodes, in child order (a `UiRoot` among them
-//! starts a root of its own). A node's look is its components' fields, then
-//! its style's over them, then the style's states the node is in. Colours
-//! are linear in the scene and sRGB in the core.
+//! each entity with a `UiRoot` starts a root, and its children with a
+//! `UiNode`, and theirs in turn, are the root's nodes, in child order (one
+//! with a `UiRoot` of its own starts another root instead). A node under an
+//! entity with neither is not drawn. A node's look is its components'
+//! fields, then its style's over them, then the style's states the node is
+//! in. Colours are linear in the scene and sRGB in the core.
 
 use std::collections::HashMap;
 
