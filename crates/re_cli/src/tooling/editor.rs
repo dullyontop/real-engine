@@ -44,8 +44,7 @@ pub fn run(args: EditorArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Err(d) => return Ok(fail(&d)),
     };
     // As `real run` does, the editor keeps a game's saved data in
-    // `.real/data/` (ADR-0048) and re-imports changed assets and shaders.
-    // Without a watcher it goes on, without reload.
+    // `.real/data/` (ADR-0048).
     app.persist_data();
     if let Err(d) = app.enable_hot_reload() {
         eprint!("{}", d.render_human());
