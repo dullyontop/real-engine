@@ -259,7 +259,8 @@ impl Default for ScriptsConfig {
     }
 }
 
-/// `[proc]`: the limits of Luau node kinds (ADR-0043 §4).
+/// `[proc]`: the limits of Luau node kinds (ADR-0043 §4) and the size of
+/// the node-output cache on disk.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcConfig {
@@ -269,6 +270,12 @@ pub struct ProcConfig {
     /// Memory limit of one Luau node evaluation, in MiB.
     #[serde(default = "default_luau_memory")]
     pub luau_memory_mb: u32,
+    /// The most the disk cache of node outputs (`proc/` in the cache folder,
+    /// `.real/cache/proc` in a project) keeps, in MiB: past it, the entries
+    /// used longest ago are removed. `0` keeps no disk cache. A browser
+    /// keeps at most 64 MiB of it, in memory.
+    #[serde(default = "default_disk_cache_mb")]
+    pub disk_cache_mb: u32,
 }
 
 fn default_luau_budget() -> u64 {
@@ -277,12 +284,16 @@ fn default_luau_budget() -> u64 {
 fn default_luau_memory() -> u32 {
     re_script::generator::DEFAULT_MEMORY_MB as u32
 }
+fn default_disk_cache_mb() -> u32 {
+    (re_proc::DEFAULT_DISK_CACHE_LIMIT >> 20) as u32
+}
 
 impl Default for ProcConfig {
     fn default() -> Self {
         ProcConfig {
             luau_budget: default_luau_budget(),
             luau_memory_mb: default_luau_memory(),
+            disk_cache_mb: default_disk_cache_mb(),
         }
     }
 }
@@ -294,6 +305,11 @@ impl ProcConfig {
             budget: self.luau_budget,
             memory_mb: self.luau_memory_mb as usize,
         }
+    }
+
+    /// `disk_cache_mb` in bytes.
+    pub fn disk_cache_bytes(&self) -> u64 {
+        u64::from(self.disk_cache_mb) << 20
     }
 }
 
@@ -875,6 +891,25 @@ effects = [{ bus = "sfx", effect = 0, cutoff_hz = 600.0 }]
                 panic!("no file location: {err:?}");
             };
             assert_eq!(at, Some(line), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_proc_disk_cache_is_limited_in_mib() {
+        let c = AppConfig::parse("[project]\nname = \"p\"\n").unwrap();
+        assert_eq!(c.proc.disk_cache_mb, 1024);
+        assert_eq!(c.proc.disk_cache_bytes(), re_proc::DEFAULT_DISK_CACHE_LIMIT);
+        let c = AppConfig::parse("[proc]\ndisk_cache_mb = 0\n").unwrap();
+        assert_eq!(c.proc.disk_cache_bytes(), 0);
+        let c = AppConfig::parse("[proc]\ndisk_cache_mb = 4294967295\n").unwrap();
+        assert_eq!(c.proc.disk_cache_bytes(), u64::from(u32::MAX) << 20);
+        for text in [
+            "[proc]\ndisk_cache_mb = -1\n",
+            "[proc]\ndisk_cache_mb = 1.5\n",
+            "[proc]\ndisk_cache = 64\n",
+        ] {
+            let err = AppConfig::parse(text).unwrap_err();
+            assert_eq!(err.code, codes::CONFIG_INVALID, "{text}");
         }
     }
 

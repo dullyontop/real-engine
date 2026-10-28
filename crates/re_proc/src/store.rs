@@ -18,8 +18,12 @@ use serde::Deserialize;
 
 use crate::NodeRegistry;
 use crate::codes;
-use crate::eval::{EvalReport, Evaluator};
+use crate::eval::{DEFAULT_DISK_CACHE_LIMIT, EvalReport, Evaluator};
 use crate::value::DerivedAsset;
+
+/// The most a disk cache held in memory keeps (a browser's: ADR-0049 §6
+/// keeps the cache folder in memory there): 64 MiB.
+pub const MEMORY_DISK_CACHE_LIMIT: u64 = 64 << 20;
 
 /// Limits on one evaluation (`graph.generate`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -167,16 +171,33 @@ impl GraphStore {
     }
 
     /// A store for the project at `root`: prefab paths are relative to it and
-    /// node outputs are cached in `<root>/.real/cache/proc`.
+    /// node outputs are cached in `<root>/.real/cache/proc`, up to
+    /// [`DEFAULT_DISK_CACHE_LIMIT`].
     pub fn for_project(root: impl Into<PathBuf>) -> Self {
         Self::for_files(ProjectFiles::project(root))
     }
 
     /// A store reading file parameters through `files` (ADR-0037) and caching
-    /// node outputs in `proc/` of its cache folder.
+    /// node outputs in `proc/` of its cache folder, up to
+    /// [`DEFAULT_DISK_CACHE_LIMIT`].
     pub fn for_files(files: ProjectFiles) -> Self {
-        let evaluator =
-            Evaluator::default().with_disk_cache_in(files.writable(Writable::Cache).sub("proc"));
+        Self::for_files_with_cache_limit(files, DEFAULT_DISK_CACHE_LIMIT)
+    }
+
+    /// As [`for_files`](Self::for_files), with the disk cache kept to at most
+    /// `bytes` (`[proc] disk_cache_mb`; see
+    /// [`Evaluator::with_disk_cache_limit`]); `0` keeps no disk cache. A
+    /// cache folder held in memory, as in a browser, takes the game's own
+    /// memory, so there the cache keeps at most [`MEMORY_DISK_CACHE_LIMIT`].
+    pub fn for_files_with_cache_limit(files: ProjectFiles, bytes: u64) -> Self {
+        let dir = files.writable(Writable::Cache).sub("proc");
+        let bytes = match dir.path() {
+            Some(_) => bytes,
+            None => bytes.min(MEMORY_DISK_CACHE_LIMIT),
+        };
+        let evaluator = Evaluator::default()
+            .with_disk_cache_limit(bytes)
+            .with_disk_cache_in(dir);
         let mut store = Self::with_evaluator(
             Arc::new(evaluator),
             files.project_dir().map(Path::to_path_buf),

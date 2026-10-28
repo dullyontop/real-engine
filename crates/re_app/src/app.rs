@@ -3163,7 +3163,7 @@ fn load_world(
         fail(format!("the entry scene {rel_path} does not parse")).with_related(e.to_diagnostic())
     })?;
     let mut world = content_world(config).map_err(|e| fail(e.message.clone()))?;
-    procedural::install(&mut world, files);
+    procedural::install(&mut world, files, config.proc.disk_cache_bytes());
     let mut problems = procedural::declare_generators(&mut world, files, config.proc.limits());
     world.load(&doc).map_err(|e| {
         fail(format!("the entry scene {rel_path} does not load")).with_related(e.to_diagnostic())

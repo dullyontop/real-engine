@@ -20,8 +20,10 @@ use crate::media::{DERIVED, Media};
 use crate::sync::physics::{HeightfieldData, ShapeLibrary};
 
 /// Registers the `graph` generator and the validator of open graph documents,
-/// and gives the World an empty store for the project read through `files`.
-pub fn install(world: &mut World, files: &ProjectFiles) {
+/// and gives the World an empty store for the project read through `files`,
+/// its disk cache kept to `disk_cache_bytes` (`[proc] disk_cache_mb`; `0`
+/// keeps none).
+pub fn install(world: &mut World, files: &ProjectFiles, disk_cache_bytes: u64) {
     re_proc::register_generator(&mut world.generators);
     re_proc::register_doc_validators(world);
     world
@@ -29,7 +31,10 @@ pub fn install(world: &mut World, files: &ProjectFiles) {
         .register::<re_proc::bake::Baked>(&mut world.ecs);
     world
         .ecs
-        .insert_resource(GraphStore::for_files(files.clone()));
+        .insert_resource(GraphStore::for_files_with_cache_limit(
+            files.clone(),
+            disk_cache_bytes,
+        ));
     world
         .ecs
         .insert_resource(re_scene::structure::SceneFiles(files.clone()));

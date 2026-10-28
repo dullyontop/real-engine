@@ -9,8 +9,8 @@
 //! * [`Evaluator`]: topological, parallel evaluation on the
 //!   [`TaskPool`](re_core::TaskPool), with per-node blake3 keys, per-node
 //!   seeds (`Pcg32::from_seed(seed).fork(hash64(node_id))`), a memory cache
-//!   and a postcard disk cache in `.real/cache/proc/`, reported in an
-//!   [`EvalReport`];
+//!   and a postcard disk cache in `.real/cache/proc/` kept to a size limit
+//!   (least recently used entries go first), reported in an [`EvalReport`];
 //! * [`GraphStore`]: the world resource holding each procedural source's
 //!   graph, the shared evaluator, the derived assets (meshes and
 //!   heightfields named `derived:<key>`) and the last reports; a source whose
@@ -71,8 +71,8 @@ pub use commands::{
 };
 pub use edit::{AddNodeArgs, ConnectArgs, MoveNodesArgs, RemoveNodeArgs, SetDefaultArgs};
 pub use eval::{
-    CacheState, DEFAULT_MEMORY_BUDGET, EvalOptions, EvalReport, Evaluation, Evaluator, NodeReport,
-    OutputInfo, fragment_hash_hex, to_scene_fragment,
+    CacheState, DEFAULT_DISK_CACHE_LIMIT, DEFAULT_MEMORY_BUDGET, EvalOptions, EvalReport,
+    Evaluation, Evaluator, NodeReport, OutputInfo, fragment_hash_hex, to_scene_fragment,
 };
 pub use generator::{
     GENERATOR, GENERATOR_VERSION, ParamOverrides, apply_overrides, overrides_text, parse_overrides,
@@ -83,7 +83,10 @@ pub use nodes::{
     CheckFn, CustomKind, CustomPort, Domain, EvalFn, MAX_LOG_LINE, MAX_LOG_LINES, MigrateFn,
     Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef, Streaming,
 };
-pub use store::{Budget, CurrentGraph, GraphStore, register_doc_validators, validate_graph_json};
+pub use store::{
+    Budget, CurrentGraph, GraphStore, MEMORY_DISK_CACHE_LIMIT, register_doc_validators,
+    validate_graph_json,
+};
 pub use value::{
     DerivedAsset, Field, FragItem, Fragment, MeshValue, Output, Point, Points, PortType, PrefabUse,
     RoadPath, Shapes,
