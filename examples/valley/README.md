@@ -2,10 +2,10 @@
 
 The M3 example (`docs/M3_PLAN.md`, WP28): a procedural valley to walk and
 drive through. CI checks it with `verify-valley`, and packs it and plays its
-replays from the package (`build-package`). The Platforms workflow, started by
-hand, does the same on Windows and macOS (`build-package-windows` and
-`build-package-macos`) and compares its replays' `state_hash` on the three
-platforms in `d2`.
+replays from the package (`build-package`). The Platforms workflow, which CI
+runs too while the repository is public, does the same on Windows and macOS
+(`build-package-windows` and `build-package-macos`) and compares its
+replays' `state_hash` on the three platforms in `d2`.
 
 The valley is a streamed world (ADR-0042): 16 km square, generated cell by
 cell (256 m cells) around the hero as you go, with the `[stream]` defaults,
