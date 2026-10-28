@@ -1,0 +1,25 @@
+frame 0: 1 drawn, hovered ReplicatedStorage/PlayerGui/ScreenGui/TextBox, sinks true, focus ReplicatedStorage/PlayerGui/ScreenGui/TextBox
+  item ReplicatedStorage/PlayerGui/ScreenGui/TextBox at (0.0, 36.0) size (200.0, 30.0) clip (0.0, 0.0, 800.0, 600.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsoluteSize = (800.0, 564.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.AbsoluteSize = (200.0, 30.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.TextBounds = (18.770000457763672, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.Text = ""
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.CursorPosition = 1
+frame 1: 1 drawn, hovered ReplicatedStorage/PlayerGui/ScreenGui/TextBox, sinks true, focus ReplicatedStorage/PlayerGui/ScreenGui/TextBox
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.TextBounds = (0.0, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.Text = "hellp"
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.CursorPosition = 6
+frame 2: 1 drawn, hovered none, sinks false, focus ReplicatedStorage/PlayerGui/ScreenGui/TextBox
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.TextBounds = (28.770000457763672, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.Text = "hello"
+frame 3: 1 drawn, hovered none, sinks false, focus none
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.TextBounds = (28.588001251220703, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.CursorPosition = -1
+frame 4: 1 drawn, hovered none, sinks false, focus ReplicatedStorage/PlayerGui/ScreenGui/TextBox
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.CursorPosition = 6
+frame 5: 1 drawn, hovered none, sinks false, focus none
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox.CursorPosition = -1

@@ -223,6 +223,7 @@ pub enum Op {
     /// without `layout` fails; add `/layout` as `{"h": [x, y]}` instead).
     SetDoc {
         /// The document's project-relative path (`graphs/island.graph.json`).
+        #[schemars(extend("x-real-path" = "write"))]
         doc: String,
         /// Where in the document, as a JSON pointer (`/nodes/0/params/size`).
         pointer: String,

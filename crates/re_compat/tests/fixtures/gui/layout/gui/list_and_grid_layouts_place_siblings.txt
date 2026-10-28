@@ -1,0 +1,55 @@
+frame 0: 10 drawn, hovered none, sinks false, focus none
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#0 at (0.0, 36.0) size (200.0, 300.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#0 at (75.0, 86.0) size (50.0, 20.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#1 at (75.0, 36.0) size (50.0, 20.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#2 at (75.0, 61.0) size (50.0, 20.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#1 at (300.0, 36.0) size (170.0, 200.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c1 at (300.0, 36.0) size (50.0, 50.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c2 at (360.0, 36.0) size (50.0, 50.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c3 at (420.0, 36.0) size (50.0, 50.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c4 at (300.0, 96.0) size (50.0, 50.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c5 at (360.0, 96.0) size (50.0, 50.0) clip (0.0, 0.0, 800.0, 600.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsoluteSize = (800.0, 564.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0.AbsoluteSize = (200.0, 300.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/UIListLayout.AbsoluteContentSize = (50.0, 70.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#0.AbsolutePosition = (75.0, 50.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#0.AbsoluteSize = (50.0, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#0.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#1.AbsolutePosition = (75.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#1.AbsoluteSize = (50.0, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#1.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#2.AbsolutePosition = (75.0, 25.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#2.AbsoluteSize = (50.0, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#2.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1.AbsolutePosition = (300.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1.AbsoluteSize = (170.0, 200.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/UIGridLayout.AbsoluteContentSize = (170.0, 110.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/UIGridLayout.AbsoluteCellSize = (50.0, 50.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/UIGridLayout.AbsoluteCellCount = (3.0, 2.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c1.AbsolutePosition = (300.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c1.AbsoluteSize = (50.0, 50.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c1.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c2.AbsolutePosition = (360.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c2.AbsoluteSize = (50.0, 50.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c2.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c3.AbsolutePosition = (420.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c3.AbsoluteSize = (50.0, 50.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c3.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c4.AbsolutePosition = (300.0, 60.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c4.AbsoluteSize = (50.0, 50.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c4.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c5.AbsolutePosition = (360.0, 60.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c5.AbsoluteSize = (50.0, 50.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/c5.AbsoluteRotation = 0.0
+frame 1: 9 drawn, hovered none, sinks false, focus none
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#0 at (75.0, 61.0) size (50.0, 20.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#2 at (75.0, 36.0) size (50.0, 20.0) clip (0.0, 0.0, 800.0, 600.0)
+  gone ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#1
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/UIListLayout.AbsoluteContentSize = (50.0, 45.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#0.AbsolutePosition = (75.0, 25.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#1.AbsolutePosition = (999.0, 999.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0/Frame#2.AbsolutePosition = (75.0, 0.0)

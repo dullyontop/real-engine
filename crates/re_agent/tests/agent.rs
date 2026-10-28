@@ -59,7 +59,7 @@ fn read_policy_refuses_edits_but_allows_dry_runs() {
     let mut s = state();
     // No policy file: read only.
     let policy = Policy::load(dir.path()).unwrap();
-    assert_eq!(policy, Policy::read_only());
+    assert_eq!(policy, Policy::read_only().in_project(dir.path()));
 
     let before = hash(&s);
     let out = reg.dispatch(&mut s, "entity.spawn", json!({ "id": "x" }), false, &policy);
@@ -120,7 +120,8 @@ fn edit_policy_allows_edits_but_not_destructive() {
 
 #[test]
 fn scopes_and_paths() {
-    let p = Policy::init_default();
+    let dir = tempfile::tempdir().unwrap();
+    let p = Policy::init_default().in_project(dir.path());
     assert_eq!(
         p.check_path("script.write", "scripts/./game/a.luau")
             .unwrap(),
@@ -129,6 +130,11 @@ fn scopes_and_paths() {
     assert_eq!(
         p.check_path("script.write", "scripts\\b.luau").unwrap(),
         "scripts/b.luau"
+    );
+    assert_eq!(
+        p.check_path("animgraph.create", "anims/walk.animgraph.json")
+            .unwrap(),
+        "anims/walk.animgraph.json"
     );
     for bad in [
         "../x.luau",
@@ -140,54 +146,246 @@ fn scopes_and_paths() {
         ".real/agent-policy.toml",
         ".git/config",
         "AGENTS.md",
+        // Inside the scopes, but spelled as another name on some file system.
+        "scripts/a.luau.",
+        "scripts/a.luau ",
+        "scripts/game./a.luau",
+        "scripts/a.luau::$DATA",
+        "scripts/PROGRA~1/a.luau",
+        "scripts/SECRET~1.LUA",
+        "scripts/PASSWO~1.MD",
+        "scripts/a~12.b",
+        "scripts/con.luau",
+        "scripts/NUL",
+        "scripts/com1.txt",
+        "scripts/LPT9/a.luau",
     ] {
         let err = p.check_path("script.write", bad).unwrap_err();
         assert_eq!(err.code.to_string(), "RE8002", "{bad}");
     }
-    // Even an allow-all scope never opens `.real/`.
-    let mut wide = Policy::init_default();
+    // Names that only look like those are fine.
+    for good in [
+        "scripts/console.luau",
+        "scripts/com10.luau",
+        "scripts/a~b.luau",
+        // Too long for an 8.3 name, so never a short one: the importer
+        // names a second script called `Rose` this way.
+        "scripts/Rose~2.luau",
+        "scripts/Rose~2.server.luau",
+        "scripts/Longer~12/a.luau",
+        "scripts/.hidden/a.luau",
+        "scripts/v1.2/a.luau",
+    ] {
+        assert!(p.check_path("script.write", good).is_ok(), "{good}");
+    }
+    // `allow` matches as written: another case fails closed.
+    assert!(p.check_path("script.write", "Scripts/a.luau").is_err());
+
+    // Even an allow-all scope never opens `.real/` or `.git/`, however they
+    // are spelled.
+    let mut wide = Policy::init_default().in_project(dir.path());
     wide.scopes.allow = vec!["**".into()];
-    assert!(wide.check_path("x", ".real/agent-policy.toml").is_err());
+    for protected in [
+        ".real/agent-policy.toml",
+        ".git/config",
+        ".Git/hooks/pre-commit",
+        ".GIT/config",
+        ".REAL/agent-policy.toml",
+        ".git./config",
+        ".git /config",
+        "GIT~1/config",
+        "git~12/config",
+        "REAL~1/agent-policy.toml",
+        ".git::$INDEX_ALLOCATION/config",
+        ".real/agent-policy.toml::$DATA",
+        ".g\u{200C}it/config",
+        "\u{FEFF}.real/agent-policy.toml",
+    ] {
+        let err = wide.check_path("x", protected).unwrap_err();
+        assert_eq!(err.code.to_string(), "RE8002", "{protected:?}");
+    }
+    assert!(policy::is_protected_dir(".Git"));
+    assert!(policy::is_protected_dir("REAL~2"));
+    assert!(!policy::is_protected_dir(".github"));
+    assert!(!policy::is_protected_dir("git"));
+    assert!(!policy::is_protected_dir("real~"));
+    assert!(wide.check_path("x", ".github/workflows/ci.yml").is_ok());
     assert!(wide.check_path("x", "notes/x.md").is_ok());
-    wide.scopes.deny = vec!["notes/**".into()];
-    assert!(wide.check_path("x", "notes/x.md").is_err());
+    // `deny` ignores case and the code points HFS+ ignores.
+    wide.scopes.deny = vec!["notes/**".into(), "scripts/secret/**".into()];
+    for denied in [
+        "notes/x.md",
+        "NOTES/x.md",
+        "scripts/Secret/x.luau",
+        "scripts/SECRET/deep/x.luau",
+        "scripts/se\u{200D}cret/x.luau",
+    ] {
+        let err = wide.check_path("x", denied).unwrap_err();
+        assert_eq!(err.code.to_string(), "RE8002", "{denied:?}");
+        assert!(err.message.contains("deny"), "{}", err.message);
+    }
+    assert!(wide.check_path("x", "scripts/secrets.luau").is_ok());
+
+    // A policy that does not know its project refuses every write rather
+    // than skip the link check.
+    let loose = Policy::init_default();
+    let err = loose
+        .check_path("script.write", "scripts/a.luau")
+        .unwrap_err();
+    assert_eq!(err.code.to_string(), "RE8002");
+    assert!(err.message.contains("project"), "{}", err.message);
 }
 
 #[test]
-fn policy_checks_path_arguments_of_mutating_calls() {
-    let p = Policy::init_default();
+fn images_go_under_real_out_or_to_new_files_in_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path();
+    std::fs::create_dir_all(project.join("assets")).unwrap();
+    std::fs::write(project.join("assets/hero.png"), b"png").unwrap();
+    let read = Policy::read_only().in_project(project);
+    let edit = Policy::init_default().in_project(project);
+    for p in [&read, &edit] {
+        assert_eq!(
+            p.check_output("screenshot", ".real/out/shot.png").unwrap(),
+            ".real/out/shot.png"
+        );
+        assert!(p.check_output("screenshot", ".real/out/a/b.PNG").is_ok());
+        for bad in [
+            "real.toml",
+            ".real/agent-policy.toml",
+            ".real/out/x.toml",
+            ".real/out/../agent-policy.png",
+            ".real/out/x.png.",
+            ".real/out/x.png::$DATA",
+            ".real/shot.png",
+            ".git/shot.png",
+            ".Real/out/x.png",
+            "REAL~1/out/x.png",
+            "../x.png",
+        ] {
+            let err = p.check_output("screenshot", bad).unwrap_err();
+            assert_eq!(err.code.to_string(), "RE8002", "{bad}");
+            assert!(
+                err.hint.as_deref().unwrap().contains(".real/out/"),
+                "{:?}",
+                err.hint
+            );
+        }
+    }
+    // Outside `.real/out/`: a new `.png` inside the scopes, never an
+    // existing file, so a screenshot never replaces one.
+    assert!(read.check_output("screenshot", "assets/new.png").is_err());
+    assert!(edit.check_output("screenshot", "assets/new.png").is_ok());
+    let err = edit
+        .check_output("screenshot", "assets/hero.png")
+        .unwrap_err();
+    assert!(err.message.contains("exists"), "{}", err.message);
+    assert!(edit.check_output("screenshot", "notes/new.png").is_err());
+    #[cfg(unix)]
+    {
+        // `.real/out/` gets the link check too.
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.join(".real")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), project.join(".real/out")).unwrap();
+        let err = read
+            .check_output("screenshot", ".real/out/shot.png")
+            .unwrap_err();
+        assert!(err.message.contains("symbolic link"), "{}", err.message);
+    }
+}
+
+#[test]
+fn policy_checks_the_declared_paths_of_every_call() {
+    use re_command::{PathAccess, PathArg};
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("taken.png"), b"png").unwrap();
+    let p = Policy::init_default().in_project(dir.path());
     let spec = |tier| re_command::CommandSpec {
-        name: "script.write".into(),
+        name: "files".into(),
         summary: String::new(),
         tier,
         input_schema: json!({}),
         annotations: re_command::CommandAnnotations::for_tier(tier, false),
         output_schema: None,
+        paths: vec![
+            PathArg {
+                pointer: "/target".into(),
+                access: PathAccess::Write,
+            },
+            PathArg {
+                pointer: "/ops/*/doc".into(),
+                access: PathAccess::Write,
+            },
+            PathArg {
+                pointer: "/shot".into(),
+                access: PathAccess::Output,
+            },
+            PathArg {
+                pointer: "/source".into(),
+                access: PathAccess::Read,
+            },
+        ],
     };
-    let edit = spec(re_command::Tier::Edit);
-    let out = p.check(&edit, &json!({ "path": "../x.luau" }), false);
-    assert_eq!(out.unwrap_err().code.to_string(), "RE8002");
-    assert!(
-        p.check(&edit, &json!({ "path": "scripts/x.luau" }), false)
+    let code = |r: Result<(), re_core::Diagnostic>| r.unwrap_err().code.to_string();
+    for tier in [re_command::Tier::Read, re_command::Tier::Edit] {
+        let s = spec(tier);
+        // Whatever the tier, every write is checked.
+        assert_eq!(
+            code(p.check(&s, &json!({ "target": "../x.luau" }), false)),
+            "RE8002"
+        );
+        assert!(
+            p.check(&s, &json!({ "target": "scripts/x.luau" }), false)
+                .is_ok()
+        );
+        assert_eq!(
+            code(p.check(
+                &s,
+                &json!({ "ops": [{ "op": "spawn" }, { "op": "set_doc", "doc": "levels/x.graph.json" }] }),
+                false
+            )),
+            "RE8002"
+        );
+        assert!(
+            p.check(
+                &s,
+                &json!({ "ops": [{ "op": "set_doc", "doc": "graphs/x.graph.json" }] }),
+                false
+            )
             .is_ok()
-    );
-    // A dry run writes nothing, so it is not scope-checked.
-    assert!(
-        p.check(&edit, &json!({ "path": "../x.luau" }), true)
+        );
+        assert_eq!(
+            code(p.check(&s, &json!({ "shot": "real.toml" }), false)),
+            "RE8002"
+        );
+        assert_eq!(
+            code(p.check(&s, &json!({ "shot": "taken.png" }), false)),
+            "RE8002"
+        );
+        assert!(
+            p.check(&s, &json!({ "shot": ".real/out/a.png" }), false)
+                .is_ok()
+        );
+        // Reads are not checked, and nor is an argument the spec does not
+        // declare, whatever its name.
+        assert!(
+            p.check(
+                &s,
+                &json!({ "source": "/etc/passwd", "dest": "../x", "out_path": ".git/x" }),
+                false
+            )
             .is_ok()
-    );
-    // `dest` is a path argument too.
-    let out = p.check(&edit, &json!({ "dest": "elsewhere/x.png" }), false);
-    assert_eq!(out.unwrap_err().code.to_string(), "RE8002");
-    // So are `*_path` keys and every string of `paths`.
-    let out = p.check(&edit, &json!({ "source_path": ".real/x" }), false);
-    assert_eq!(out.unwrap_err().code.to_string(), "RE8002");
-    let out = p.check(
-        &edit,
-        &json!({ "paths": ["scripts/a.luau", "../b"] }),
-        false,
-    );
-    assert_eq!(out.unwrap_err().code.to_string(), "RE8002");
+        );
+        // A dry run writes nothing, so it is not path-checked.
+        assert!(
+            p.check(
+                &s,
+                &json!({ "target": "../x.luau", "shot": "real.toml" }),
+                true
+            )
+            .is_ok()
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -199,7 +397,7 @@ fn file_commands_refuse_symbolic_links() {
     let reg = registry(&agent);
     let mut s = state();
     agent.start_session(&s.world).unwrap();
-    let policy = Policy::init_default();
+    let policy = Policy::init_default().in_project(project);
     std::fs::create_dir_all(project.join(".real")).unwrap();
     std::fs::write(
         project.join(".real/agent-policy.toml"),
@@ -235,7 +433,7 @@ fn file_commands_refuse_symbolic_links() {
     );
     assert!(!outside.path().join("x.luau").exists());
 
-    let mut all = Policy::init_default();
+    let mut all = Policy::init_default().in_project(project);
     all.max_tier = re_command::Tier::Destructive;
     let out = reg.dispatch(
         &mut s,
@@ -261,6 +459,7 @@ fn budgets() {
         input_schema: json!({}),
         annotations: re_command::CommandAnnotations::for_tier(re_command::Tier::Read, true),
         output_schema: None,
+        paths: Vec::new(),
     };
     assert!(
         p.check(&spec("play.run"), &json!({ "frames": 600 }), false)
@@ -453,7 +652,7 @@ fn file_delete_is_destructive_and_restorable() {
     let reg = registry(&agent);
     let mut s = state();
     agent.start_session(&s.world).unwrap();
-    let mut policy = Policy::init_default();
+    let mut policy = Policy::init_default().in_project(project);
     policy.max_tier = re_command::Tier::Destructive;
 
     let spec = reg.spec("file.delete").unwrap();
@@ -530,7 +729,7 @@ fn script_write_is_compile_gated_and_scoped() {
     let reg = registry(&agent);
     let mut s = state();
     agent.start_session(&s.world).unwrap();
-    let policy = Policy::init_default();
+    let policy = Policy::init_default().in_project(project);
     let call = |s: &mut EditState, path: &str, source: &str, dry: bool| {
         reg.dispatch(
             s,
@@ -574,7 +773,7 @@ fn script_write_is_compile_gated_and_scoped() {
     let out = call(&mut s, "scripts/x.txt", "return 1", false);
     assert_eq!(code(&out), "RE8013");
     // A read-only policy refuses the write but allows the dry run.
-    let read = Policy::read_only();
+    let read = Policy::read_only().in_project(project);
     let out = reg.dispatch(
         &mut s,
         "script.write",

@@ -173,11 +173,11 @@ These are tools, like cmake. The crates.io-only rule covers code dependencies. C
 
 | Asset | Version | License | Role | Source | Status |
 |---|---|---|---|---|---|
-| Montserrat, weights 400, 500, 700, 900 (latin subset, TTF) | `@fontsource/montserrat` 5.3.0 | OFL-1.1 | Compat UI substitute for geometric display families (ADR-0035) | npm package, WOFF 1.0 unpacked to TTF by `crates/re_compat/assets/fonts/tools/woff2ttf.py`; glyph data unchanged | Verified (WP15, #61) |
+| Montserrat, weights 400, 500, 700, 900 (latin subset, TTF) | `@fontsource/montserrat` 5.3.0 | OFL-1.1 | Compat UI substitute for geometric display families (ADR-0035) | npm package, WOFF 1.0 unpacked to TTF by `crates/re_ui/assets/fonts/tools/woff2ttf.py`; glyph data unchanged | Verified (WP15, #61) |
 | Source Sans 3, weights 400, 700 (latin subset, TTF) | `@fontsource/source-sans-3` 5.3.1 | OFL-1.1 | Compat UI default and substitute for sans families (ADR-0035) | as above | Verified (WP15, #61) |
 | Roboto Mono, weights 400, 700 (latin subset, TTF) | `@fontsource/roboto-mono` 5.3.0 | OFL-1.1 | Compat UI substitute for monospace families (ADR-0035) | as above | Verified (WP15, #61) |
 
-The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each family next to its `OFL-*.txt`. `substitutes.json` maps compat font families to them. They are files rather than crates, so the crates.io-only rule does not apply, and `cargo deny` does not see them; their licenses travel with them and go into the third-party notice.
+The files live in `crates/re_ui/assets/fonts/` (the UI core's, ADR-0058), about 307 KB in all, each family next to its `OFL-*.txt`. `crates/re_compat/assets/fonts/substitutes.json` maps compat font families to them. They are files rather than crates, so the crates.io-only rule does not apply, and `cargo deny` does not see them; their licenses travel with them and go into the third-party notice.
 
 ### Core, data and serialization
 

@@ -1,0 +1,16 @@
+visit #7 screen (root) at (0.0, 0.0) size (300.0, 300.0) rotation 0.0
+visit #0 fit at (0.0, 0.0) size (300.0, 150.0) rotation 0.0
+visit #1 follow height at (0.0, 0.0) size (40.0, 80.0) rotation 0.0
+visit #2 follow width at (0.0, 0.0) size (100.0, 25.0) rotation 0.0
+visit #3 zero ratio at (0.0, 0.0) size (100.0, 80.0) rotation 0.0
+visit #4 held under at (0.0, 0.0) size (120.0, 60.0) rotation 0.0
+visit #5 least over most at (0.0, 0.0) size (80.0, 80.0) rotation 0.0
+visit #6 ratio then limits at (0.0, 0.0) size (150.0, 133.33333) rotation 0.0
+root 0: 7 drawn
+item #0 fit at (0.0, 0.0) size (300.0, 150.0) scale 1.0 order (0, 1) input
+item #1 follow height at (0.0, 0.0) size (40.0, 80.0) scale 1.0 order (0, 2) input
+item #2 follow width at (0.0, 0.0) size (100.0, 25.0) scale 1.0 order (0, 3) input
+item #3 zero ratio at (0.0, 0.0) size (100.0, 80.0) scale 1.0 order (0, 4) input
+item #4 held under at (0.0, 0.0) size (120.0, 60.0) scale 1.0 order (0, 5) input
+item #5 least over most at (0.0, 0.0) size (80.0, 80.0) scale 1.0 order (0, 6) input
+item #6 ratio then limits at (0.0, 0.0) size (150.0, 133.33333) scale 1.0 order (0, 7) input

@@ -73,6 +73,7 @@ fn registry(project: &Path) -> CommandRegistry<EditState> {
                 input_schema: re_command::input_schema::<NoArgs>(tier),
                 annotations: CommandAnnotations::for_tier(tier, idempotent),
                 output_schema: None,
+                paths: Vec::new(),
             },
             std::sync::Arc::new(move |_t, _args, _call| {
                 if name == "screenshot" {
@@ -98,10 +99,12 @@ fn registry(project: &Path) -> CommandRegistry<EditState> {
     r
 }
 
-/// An engine thread serving `registry` with `policy`.
+/// An engine thread serving `registry` with `policy`, guarding `project`
+/// (as `Policy::load` gives `real mcp`).
 fn engine(project: &Path, policy: Policy) -> EngineHandle {
     let (handle, receiver) = channel();
     let reg = registry(project);
+    let policy = policy.in_project(project);
     std::thread::spawn(move || {
         let mut state = EditState::new();
         receiver.serve(&mut state, &reg, &policy);
@@ -361,6 +364,11 @@ fn tools_list_has_29_clean_tools(t: Transport) {
             "{name} has a format keyword: {schema}"
         );
         assert!(!has_key(schema, "$schema"), "{name}");
+        // The policy's file declarations are the engine's, not the client's.
+        assert!(
+            !has_key(schema, "x-real-path"),
+            "{name} has an x-real-path keyword: {schema}"
+        );
         let description = tool["description"].as_str().unwrap();
         assert!(description.len() < 4096, "{name}");
         let a = &tool["annotations"];

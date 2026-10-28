@@ -1,0 +1,31 @@
+visit #11 screen (root) at (0.0, 0.0) size (400.0, 300.0) rotation 0.0
+visit #0 label both at (0.0, 0.0) size (86.12, 28.0) rotation 0.0 text (86.12, 28.0) fits
+visit #1 label wrapped at (0.0, 40.0) size (120.0, 69.0) rotation 0.0 text (112.408, 69.0) fits
+visit #3 holder at (200.0, 0.0) size (60.0, 60.0) rotation 0.0
+visit #2 a at (235.0, 45.0) size (20.0, 10.0) rotation 0.0
+visit #4 capped at (0.0, 160.0) size (100.0, 24.0) rotation 0.0 text (168.936, 23.0) overflows
+visit #8 list at (300.0, 0.0) size (60.0, 68.0) rotation 0.0 content (50.0, 68.0)
+visit #5 row at (300.0, 0.0) size (50.0, 20.0) rotation 0.0
+visit #6 row at (300.0, 24.0) size (50.0, 20.0) rotation 0.0
+visit #7 row at (300.0, 48.0) size (50.0, 20.0) rotation 0.0
+visit #10 grows to a hidden child at (200.0, 200.0) size (80.0, 20.0) rotation 0.0
+visit #9 ghost at (270.0, 210.0) size (10.0, 10.0) rotation 0.0
+root 0: 10 drawn
+item #0 label both at (0.0, 0.0) size (86.12, 28.0) scale 1.0 order (0, 1) input
+  text fits size 20.0 in (86.12, 28.0) bounds (-43.0, 0.0, 43.120003, 28.0)
+  row at (-43.0, 0.0) size (86.12, 28.0) "Automatic"
+item #1 label wrapped at (0.0, 40.0) size (120.0, 69.0) scale 1.0 order (0, 2) input
+  text fits size 16.0 in (120.0, 69.0) bounds (-56.0, 0.0, 56.407997, 69.0)
+  row at (-56.0, 0.0) size (112.408, 23.0) "A longer line that "
+  row at (-51.0, 23.0) size (102.704, 23.0) "wraps inside its "
+  row at (-21.0, 46.0) size (41.984, 23.0) "width."
+item #3 holder at (200.0, 0.0) size (60.0, 60.0) scale 1.0 order (0, 3) input padding [5.0, 5.0, 5.0, 5.0]
+item #2 a at (235.0, 45.0) size (20.0, 10.0) scale 1.0 order (0, 4) input
+item #4 capped at (0.0, 160.0) size (100.0, 24.0) scale 1.0 order (0, 5) input
+  text overflows size 16.0 in (100.0, 24.0) bounds (-84.0, 0.0, 84.936005, 23.0)
+  row at (-84.0, 0.0) size (168.936, 23.0) "Wider than its largest size"
+item #8 list at (300.0, 0.0) size (60.0, 68.0) scale 1.0 order (0, 6) input
+item #5 row at (300.0, 0.0) size (50.0, 20.0) scale 1.0 order (0, 7) input
+item #6 row at (300.0, 24.0) size (50.0, 20.0) scale 1.0 order (0, 8) input
+item #7 row at (300.0, 48.0) size (50.0, 20.0) scale 1.0 order (0, 9) input
+item #10 grows to a hidden child at (200.0, 200.0) size (80.0, 20.0) scale 1.0 order (0, 10) input

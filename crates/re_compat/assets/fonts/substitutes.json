@@ -1,23 +1,7 @@
 {
   "format": "real-engine/font-substitutes",
   "version": 1,
-  "note": "Font families scripts name, mapped to the bundled open-licence substitutes. Generated data; see README.md.",
-  "substitutes": {
-    "montserrat": {
-      "400": "montserrat-latin-400.ttf",
-      "500": "montserrat-latin-500.ttf",
-      "700": "montserrat-latin-700.ttf",
-      "900": "montserrat-latin-900.ttf"
-    },
-    "source-sans-3": {
-      "400": "source-sans-3-latin-400.ttf",
-      "700": "source-sans-3-latin-700.ttf"
-    },
-    "roboto-mono": {
-      "400": "roboto-mono-latin-400.ttf",
-      "700": "roboto-mono-latin-700.ttf"
-    }
-  },
+  "note": "Font families scripts name, mapped to the bundled open-licence families of the UI core (crates/re_ui/assets/fonts). Generated data; see README.md.",
   "default": "source-sans-3",
   "families": {
     "BuilderSans": "montserrat",
