@@ -245,21 +245,43 @@ impl ServerTransport {
         addr: SocketAddr,
         max_links: usize,
     ) -> Result<ServerTransport, Diagnostic> {
-        let tries = if addr.port() == 0 { 16 } else { 1 };
+        let pick = addr.port() == 0;
+        let tries = if pick { 16 } else { 1 };
         let mut failed = None;
-        for _ in 0..tries {
-            let udp = UdpTransport::bind(addr)?;
-            let at = SocketAddr::new(addr.ip(), udp.local_addr().port());
-            match Listener::bind(at, max_links) {
-                Ok(listener) => {
-                    return Ok(ServerTransport {
-                        udp,
-                        ws: Some(listener),
-                        ws_first: false,
-                        forged: 0,
-                    });
+        for i in 0..tries {
+            // With port 0, every other try lets TCP pick the port and binds
+            // UDP to it: Windows keeps blocks of TCP ports from use (a bind
+            // there fails with WSAEACCES), and the UDP ports it hands out
+            // one after another can all fall in one block.
+            let bound = if pick && i % 2 == 1 {
+                match Listener::bind(addr, max_links) {
+                    Ok(listener) => {
+                        let at = SocketAddr::new(addr.ip(), listener.local.port());
+                        UdpTransport::bind(at).ok().map(|udp| (udp, listener))
+                    }
+                    Err(e) => {
+                        failed = Some((addr, e));
+                        None
+                    }
                 }
-                Err(e) => failed = Some((at, e)),
+            } else {
+                let udp = UdpTransport::bind(addr)?;
+                let at = SocketAddr::new(addr.ip(), udp.local_addr().port());
+                match Listener::bind(at, max_links) {
+                    Ok(listener) => Some((udp, listener)),
+                    Err(e) => {
+                        failed = Some((at, e));
+                        None
+                    }
+                }
+            };
+            if let Some((udp, listener)) = bound {
+                return Ok(ServerTransport {
+                    udp,
+                    ws: Some(listener),
+                    ws_first: false,
+                    forged: 0,
+                });
             }
         }
         let (at, e) = failed.expect("bound at least once");
