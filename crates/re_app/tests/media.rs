@@ -87,10 +87,38 @@ fn drawn_frames_report_their_submission_time() {
         app.frame(std::time::Duration::from_secs(1) / 60);
         app.draw_into(capture.view(), [160, 120], 1.0).unwrap();
     }
+    // The editor's scene view is an extra view, with no submission sample
+    // of its own.
+    let snapshot = app.snapshot().clone();
+    app.draw_view(
+        capture.view(),
+        &snapshot,
+        &re_render::SceneExtras::default(),
+    )
+    .unwrap();
     app.screenshot(None).unwrap();
     let perf = app.perf_report();
     assert_eq!(perf.render_submit.samples, 3, "{perf:?}");
     assert_eq!(perf.queue_submit.samples, 3, "{perf:?}");
+    let renderer = perf.renderer.as_ref().expect("the renderer drew");
+    let gfx = app.graphics().unwrap();
+    assert_eq!(renderer.backend, gfx.backend());
+    assert_eq!((renderer.frames, renderer.extra_views), (3, 1));
+    // The cube: one draw a frame, of twelve triangles.
+    assert_eq!(renderer.per_frame["draw_calls"].max, 1, "{renderer:?}");
+    assert_eq!(renderer.per_frame["triangles"].mean, 12.0, "{renderer:?}");
+    assert!(renderer.resources.meshes.count >= 1 && renderer.resources.meshes.bytes > 0);
+    assert!(renderer.warnings.is_empty(), "{:?}", renderer.warnings);
+    // Where passes can be timed, the frames before the last have their times
+    // by now: the screenshot's readback waited for them.
+    match &renderer.gpu_ms {
+        Some(gpu) => {
+            assert!(gfx.renderer().times_gpu());
+            assert_eq!(gpu.total.samples, 2, "{gpu:?}");
+            assert!(gpu.total.mean_ms >= gpu.scene.mean_ms, "{gpu:?}");
+        }
+        None => assert!(!gfx.renderer().times_gpu()),
+    }
     assert!(
         perf.render_submit.mean_ms > 0.0 && perf.render_submit.max_ms >= perf.render_submit.mean_ms
     );
@@ -104,6 +132,44 @@ fn drawn_frames_report_their_submission_time() {
     assert_eq!(old.queue_submit, re_app::TimeStats::default());
     app.reset_perf();
     assert_eq!(app.perf_report().render_submit.samples, 0);
+}
+
+/// The renderer's warnings reach the app's diagnostics once per code, and the
+/// PerfReport counts every one (ADR-0022).
+#[test]
+fn renderer_warnings_are_reported_once_and_counted() {
+    let lamps: String = (0..10)
+        .map(|i| {
+            format!(
+                r#",
+    {{ "id": "lamp{i}", "components": {{
+        "Light": {{ "kind": "Point", "range": 4.0 }},
+        "Transform": {{ "translation": [{i}.0, 1.0, 0.0] }} }} }}"#
+            )
+        })
+        .collect();
+    let scene = SCENE.replace("\n  ]\n}", &format!("{lamps}\n  ]\n}}"));
+    let dir = project(&scene);
+    let mut app = open(dir.path());
+    app.ensure_graphics().unwrap();
+    app.run_headless(Some(1), None).unwrap();
+    let too_many = |app: &mut App| {
+        app.take_diagnostics()
+            .iter()
+            .filter(|d| d.code == re_render::codes::TOO_MANY_LIGHTS)
+            .count()
+    };
+    for _ in 0..3 {
+        app.screenshot(None).unwrap();
+    }
+    assert_eq!(too_many(&mut app), 1, "once");
+    app.screenshot(None).unwrap();
+    assert_eq!(too_many(&mut app), 0, "and not again");
+    let renderer = app.perf_report().renderer.unwrap();
+    let code = re_render::codes::TOO_MANY_LIGHTS.to_string();
+    assert_eq!(renderer.warnings[&code], 4);
+    assert_eq!(renderer.per_frame["point_lights"].max, 8);
+    assert_eq!(renderer.per_frame["lights_dropped"].max, 2);
 }
 
 #[test]

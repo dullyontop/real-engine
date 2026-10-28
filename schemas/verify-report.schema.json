@@ -116,7 +116,15 @@
           "$ref": "#/$defs/PerfCounts"
         },
         "renderer": {
-          "description": "The renderer's resource statistics, when a renderer ran."
+          "description": "What the renderer drew, when it drew a view.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RendererReport"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -194,6 +202,183 @@
         "draw_items",
         "bodies",
         "characters"
+      ]
+    },
+    "RendererReport": {
+      "description": "What the renderer drew during the run and what it cost (ADR-0022's\namendment for WP32).",
+      "type": "object",
+      "properties": {
+        "backend": {
+          "description": "The wgpu backend (`vulkan`, `gl`, `metal`, `dx12`, `webgpu`).",
+          "type": "string"
+        },
+        "adapter": {
+          "description": "The adapter: its name, backend, type and driver.",
+          "type": "string"
+        },
+        "frames": {
+          "description": "The frames whose main view the renderer drew: a window's frames and\ncaptures.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "resources": {
+          "description": "The live resources at the end of the run.",
+          "$ref": "#/$defs/RendererResources"
+        },
+        "per_frame": {
+          "description": "Each count of the renderer's `FrameStats` over the main views drawn,\nby name (`draw_calls`, `triangles`, `lights_dropped`, …).",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CountStats"
+          }
+        },
+        "extra_views": {
+          "description": "The other views drawn: a compat game's surfaces and viewports, an\neditor's scene view. Their counts are not in `per_frame`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "gpu_ms": {
+          "description": "The GPU time of the passes of timed frames, where the device can time\nthem (not on GL). Measurements, not checks: times arrive a frame or\ntwo after their frame, and a frame whose readback is still in use is\nnot timed.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GpuPassTimes"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "warnings": {
+          "description": "Every renderer warning of the views drawn, counted by code.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "backend",
+        "adapter",
+        "frames",
+        "resources",
+        "per_frame",
+        "extra_views",
+        "warnings"
+      ]
+    },
+    "RendererResources": {
+      "description": "The renderer's live resources at the end of the run (`RenderStats`).",
+      "type": "object",
+      "properties": {
+        "meshes": {
+          "description": "Uploaded meshes.",
+          "$ref": "#/$defs/ResourceCount"
+        },
+        "textures": {
+          "description": "Uploaded textures.",
+          "$ref": "#/$defs/ResourceCount"
+        },
+        "materials": {
+          "description": "Created materials.",
+          "$ref": "#/$defs/ResourceCount"
+        }
+      },
+      "required": [
+        "meshes",
+        "textures",
+        "materials"
+      ]
+    },
+    "ResourceCount": {
+      "description": "The live count and GPU bytes of one kind of renderer resource.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "Live resources.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "bytes": {
+          "description": "GPU memory they use, in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "count",
+        "bytes"
+      ]
+    },
+    "CountStats": {
+      "description": "Mean, 95th percentile and maximum of a count over frames.",
+      "type": "object",
+      "properties": {
+        "mean": {
+          "description": "Mean.",
+          "type": "number",
+          "format": "double"
+        },
+        "p95": {
+          "description": "95th percentile (nearest rank).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max": {
+          "description": "Maximum.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "mean",
+        "p95",
+        "max"
+      ]
+    },
+    "GpuPassTimes": {
+      "description": "The GPU time of a timed frame's passes, by group, over the timed frames.",
+      "type": "object",
+      "properties": {
+        "shadow": {
+          "description": "The shadow cascades.",
+          "$ref": "#/$defs/TimeStats"
+        },
+        "scene": {
+          "description": "The scene pass.",
+          "$ref": "#/$defs/TimeStats"
+        },
+        "post": {
+          "description": "The post chain.",
+          "$ref": "#/$defs/TimeStats"
+        },
+        "overlay": {
+          "description": "The highlights and the world quads drawn on top.",
+          "$ref": "#/$defs/TimeStats"
+        },
+        "ui": {
+          "description": "The UI painted over the frame.",
+          "$ref": "#/$defs/TimeStats"
+        },
+        "total": {
+          "description": "All of a frame's passes.",
+          "$ref": "#/$defs/TimeStats"
+        }
+      },
+      "required": [
+        "shadow",
+        "scene",
+        "post",
+        "overlay",
+        "ui",
+        "total"
       ]
     }
   }

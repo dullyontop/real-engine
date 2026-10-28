@@ -1,5 +1,6 @@
 //! PerfReport (ADR-0022): per-phase frame times (mean, p95, max), counts and,
-//! when a renderer runs, its resource statistics.
+//! when a renderer draws, what it drew and what that cost (the amendment for
+//! WP32).
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -21,6 +22,11 @@ pub struct TimeStats {
     pub max_ms: f64,
 }
 
+/// The index of the 95th percentile of `n` sorted samples (nearest rank).
+fn p95_index(n: usize) -> usize {
+    ((0.95 * n as f64).ceil() as usize).clamp(1, n) - 1
+}
+
 impl TimeStats {
     /// The statistics of `ms` (milliseconds; any order).
     pub fn of(ms: &[f64]) -> TimeStats {
@@ -30,12 +36,35 @@ impl TimeStats {
         let mut sorted = ms.to_vec();
         sorted.sort_by(f64::total_cmp);
         let n = sorted.len();
-        let rank = ((0.95 * n as f64).ceil() as usize).clamp(1, n);
         TimeStats {
             samples: n as u64,
             mean_ms: sorted.iter().sum::<f64>() / n as f64,
-            p95_ms: sorted[rank - 1],
+            p95_ms: sorted[p95_index(n)],
             max_ms: sorted[n - 1],
+        }
+    }
+}
+
+/// Mean, 95th percentile and maximum of a count over frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CountStats {
+    /// Mean.
+    pub mean: f64,
+    /// 95th percentile (nearest rank).
+    pub p95: u64,
+    /// Maximum.
+    pub max: u64,
+}
+
+impl CountStats {
+    /// The statistics of `counts` (one a frame; any order).
+    pub fn of(counts: &[u64]) -> CountStats {
+        // As TimeStats: counts are exact in an f64 up to 2^53.
+        let t = TimeStats::of(&counts.iter().map(|&c| c as f64).collect::<Vec<_>>());
+        CountStats {
+            mean: t.mean_ms,
+            p95: t.p95_ms as u64,
+            max: t.max_ms as u64,
         }
     }
 }
@@ -51,6 +80,81 @@ pub struct PerfCounts {
     pub bodies: u64,
     /// Physics characters.
     pub characters: u64,
+}
+
+/// The live count and GPU bytes of one kind of renderer resource.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ResourceCount {
+    /// Live resources.
+    pub count: u64,
+    /// GPU memory they use, in bytes.
+    pub bytes: u64,
+}
+
+impl From<re_render::ResourceStats> for ResourceCount {
+    fn from(s: re_render::ResourceStats) -> ResourceCount {
+        ResourceCount {
+            count: s.count as u64,
+            bytes: s.bytes,
+        }
+    }
+}
+
+/// The renderer's live resources at the end of the run (`RenderStats`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RendererResources {
+    /// Uploaded meshes.
+    pub meshes: ResourceCount,
+    /// Uploaded textures.
+    pub textures: ResourceCount,
+    /// Created materials.
+    pub materials: ResourceCount,
+}
+
+/// The GPU time of a timed frame's passes, by group, over the timed frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GpuPassTimes {
+    /// The shadow cascades.
+    pub shadow: TimeStats,
+    /// The scene pass.
+    pub scene: TimeStats,
+    /// The post chain.
+    pub post: TimeStats,
+    /// The highlights and the world quads drawn on top.
+    pub overlay: TimeStats,
+    /// The UI painted over the frame.
+    pub ui: TimeStats,
+    /// All of a frame's passes.
+    pub total: TimeStats,
+}
+
+/// What the renderer drew during the run and what it cost (ADR-0022's
+/// amendment for WP32).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RendererReport {
+    /// The wgpu backend (`vulkan`, `gl`, `metal`, `dx12`, `webgpu`).
+    pub backend: String,
+    /// The adapter: its name, backend, type and driver.
+    pub adapter: String,
+    /// The frames whose main view the renderer drew: a window's frames and
+    /// captures.
+    pub frames: u64,
+    /// The live resources at the end of the run.
+    pub resources: RendererResources,
+    /// Each count of the renderer's `FrameStats` over the main views drawn,
+    /// by name (`draw_calls`, `triangles`, `lights_dropped`, …).
+    pub per_frame: BTreeMap<String, CountStats>,
+    /// The other views drawn: a compat game's surfaces and viewports, an
+    /// editor's scene view. Their counts are not in `per_frame`.
+    pub extra_views: u64,
+    /// The GPU time of the passes of timed frames, where the device can time
+    /// them (not on GL). Measurements, not checks: times arrive a frame or
+    /// two after their frame, and a frame whose readback is still in use is
+    /// not timed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_ms: Option<GpuPassTimes>,
+    /// Every renderer warning of the views drawn, counted by code.
+    pub warnings: BTreeMap<String, u64>,
 }
 
 /// The performance report of a run.
@@ -82,9 +186,9 @@ pub struct PerfReport {
     pub queue_submit: TimeStats,
     /// Counts at the end of the run.
     pub counts: PerfCounts,
-    /// The renderer's resource statistics, when a renderer ran.
+    /// What the renderer drew, when it drew a view.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub renderer: Option<serde_json::Value>,
+    pub renderer: Option<RendererReport>,
 }
 
 /// Collects timing samples during a run.
@@ -96,6 +200,55 @@ pub struct PerfRecorder {
     physics_step: Vec<f64>,
     render_submit: Vec<f64>,
     queue_submit: Vec<f64>,
+    renderer: RendererSamples,
+}
+
+/// What the renderer drew, from [`PerfRecorder::drawn`].
+#[derive(Clone, Debug, Default)]
+struct RendererSamples {
+    frames: Vec<re_render::FrameStats>,
+    extra_views: u64,
+    gpu: Vec<re_render::GpuTimes>,
+    warnings: BTreeMap<String, u64>,
+}
+
+impl RendererSamples {
+    /// `base` ([`Graphics::renderer_report`](crate::gfx::Graphics::renderer_report))
+    /// with these samples.
+    fn report(&self, base: RendererReport) -> RendererReport {
+        let counts: Vec<_> = self
+            .frames
+            .iter()
+            .map(re_render::FrameStats::counts)
+            .collect();
+        let per_frame = re_render::FrameStats::default()
+            .counts()
+            .iter()
+            .enumerate()
+            .map(|(i, (name, _))| {
+                let column: Vec<u64> = counts.iter().map(|c| c[i].1).collect();
+                (name.to_string(), CountStats::of(&column))
+            })
+            .collect();
+        let gpu = |part: fn(&re_render::GpuTimes) -> std::time::Duration| {
+            TimeStats::of(&self.gpu.iter().map(|t| ms(part(t))).collect::<Vec<_>>())
+        };
+        RendererReport {
+            frames: self.frames.len() as u64,
+            per_frame,
+            extra_views: self.extra_views,
+            gpu_ms: (!self.gpu.is_empty()).then(|| GpuPassTimes {
+                shadow: gpu(|t| t.shadow),
+                scene: gpu(|t| t.scene),
+                post: gpu(|t| t.post),
+                overlay: gpu(|t| t.overlay),
+                ui: gpu(|t| t.ui),
+                total: gpu(|t| t.total),
+            }),
+            warnings: self.warnings.clone(),
+            ..base
+        }
+    }
 }
 
 fn ms(d: Duration) -> f64 {
@@ -124,6 +277,17 @@ impl PerfRecorder {
         self.queue_submit.push(ms(t.submit));
     }
 
+    /// Records what the renderer drew ([`Graphics::take_drawn`](crate::gfx::Graphics::take_drawn)).
+    pub fn drawn(&mut self, drawn: &crate::gfx::Drawn) {
+        let r = &mut self.renderer;
+        r.frames.extend_from_slice(&drawn.frames);
+        r.extra_views += drawn.extra_views;
+        r.gpu.extend_from_slice(&drawn.gpu);
+        for code in &drawn.warnings {
+            *r.warnings.entry(code.to_string()).or_default() += 1;
+        }
+    }
+
     /// Ends a frame that took `d` in total.
     pub fn end_frame(&mut self, d: Duration) {
         self.frame.push(ms(d));
@@ -143,8 +307,10 @@ impl PerfRecorder {
         *self = PerfRecorder::default();
     }
 
-    /// The report so far, with the given counts and renderer statistics.
-    pub fn report(&self, counts: PerfCounts, renderer: Option<serde_json::Value>) -> PerfReport {
+    /// The report so far, with the given counts. `renderer`, the app's
+    /// [`Graphics::renderer_report`](crate::gfx::Graphics::renderer_report),
+    /// gets the views recorded, and is left out when none was drawn.
+    pub fn report(&self, counts: PerfCounts, renderer: Option<RendererReport>) -> PerfReport {
         PerfReport {
             frames: self.frames(),
             frame: TimeStats::of(&self.frame),
@@ -157,7 +323,9 @@ impl PerfRecorder {
             render_submit: TimeStats::of(&self.render_submit),
             queue_submit: TimeStats::of(&self.queue_submit),
             counts,
-            renderer,
+            renderer: renderer
+                .filter(|_| !self.renderer.frames.is_empty() || self.renderer.extra_views > 0)
+                .map(|base| self.renderer.report(base)),
         }
     }
 }
@@ -176,6 +344,86 @@ mod tests {
         assert!((s.mean_ms - 50.5).abs() < 1e-9);
         assert_eq!(TimeStats::of(&[]), TimeStats::default());
         assert_eq!(TimeStats::of(&[3.0]).p95_ms, 3.0);
+    }
+
+    #[test]
+    fn counts_use_nearest_rank() {
+        let c = CountStats::of(&(1..=100).rev().collect::<Vec<u64>>());
+        assert_eq!((c.p95, c.max), (95, 100));
+        assert!((c.mean - 50.5).abs() < 1e-9);
+        assert_eq!(CountStats::of(&[]), CountStats::default());
+    }
+
+    #[test]
+    fn the_renderer_part_counts_main_views_and_warnings() {
+        use re_render::{FrameStats, GpuTimes};
+        let base = RendererReport {
+            backend: "vulkan".into(),
+            adapter: "lavapipe".into(),
+            ..RendererReport::default()
+        };
+        let mut r = PerfRecorder::new();
+        let report =
+            |r: &PerfRecorder| r.report(PerfCounts::default(), Some(base.clone())).renderer;
+        assert_eq!(report(&r), None, "no view drawn");
+        let frame = |draw_calls| FrameStats {
+            draw_calls,
+            lights_dropped: 2,
+            ..FrameStats::default()
+        };
+        r.drawn(&crate::gfx::Drawn {
+            frames: vec![frame(4), frame(6)],
+            extra_views: 3,
+            warnings: vec![re_render::codes::TOO_MANY_LIGHTS; 3],
+            ..Default::default()
+        });
+        let renderer = report(&r).unwrap();
+        assert_eq!(
+            (
+                renderer.backend.as_str(),
+                renderer.frames,
+                renderer.extra_views
+            ),
+            ("vulkan", 2, 3)
+        );
+        assert_eq!(
+            renderer.per_frame.len(),
+            FrameStats::default().counts().len(),
+            "every count"
+        );
+        assert_eq!(
+            renderer.per_frame["draw_calls"],
+            CountStats {
+                mean: 5.0,
+                p95: 6,
+                max: 6
+            }
+        );
+        assert_eq!(renderer.per_frame["lights_dropped"].max, 2);
+        let code = re_render::codes::TOO_MANY_LIGHTS.to_string();
+        assert_eq!(renderer.warnings[&code], 3);
+        assert_eq!(renderer.gpu_ms, None, "nothing timed");
+
+        let ms = Duration::from_millis;
+        r.drawn(&crate::gfx::Drawn {
+            gpu: vec![GpuTimes {
+                shadow: ms(1),
+                scene: ms(2),
+                total: ms(3),
+                ..GpuTimes::default()
+            }],
+            ..Default::default()
+        });
+        let gpu = report(&r).unwrap().gpu_ms.unwrap();
+        assert_eq!((gpu.total.samples, gpu.total.mean_ms), (1, 3.0));
+        assert_eq!(
+            (gpu.shadow.max_ms, gpu.scene.max_ms, gpu.ui.max_ms),
+            (1.0, 2.0, 0.0)
+        );
+        // Without a renderer, or after a reset, there is no renderer part.
+        assert_eq!(r.report(PerfCounts::default(), None).renderer, None);
+        r.clear();
+        assert_eq!(report(&r), None);
     }
 
     #[test]

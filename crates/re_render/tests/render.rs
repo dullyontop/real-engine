@@ -1111,13 +1111,16 @@ fn timed_frames_give_their_pass_times() {
     assert_eq!(times.len(), 3, "{times:?}");
     for t in &times {
         println!("{t:?}");
-        let zero = Duration::ZERO;
-        assert!(
-            t.shadow > zero && t.scene > zero && t.post > zero && t.ui > zero,
-            "{t:?}"
-        );
-        assert_eq!(t.overlay, zero, "no highlights or quads on top");
         assert_eq!(t.total, t.shadow + t.scene + t.post + t.overlay + t.ui);
+        // Checked where CI and the development containers run: lavapipe.
+        if gpu.backend() == wgpu::Backend::Vulkan {
+            let zero = Duration::ZERO;
+            assert!(
+                t.shadow > zero && t.scene > zero && t.post > zero && t.ui > zero,
+                "{t:?}"
+            );
+            assert_eq!(t.overlay, zero, "no highlights or quads on top");
+        }
     }
     // Frames that are not timed give nothing.
     frame(&mut renderer, 4);
