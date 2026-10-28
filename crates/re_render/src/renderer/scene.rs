@@ -11,6 +11,7 @@ use super::{FrameReport, Renderer, SKINNED};
 use crate::extras::EffectVertex;
 use crate::frame::{InstanceRaw, LineVertex};
 use crate::post::DEPTH_CLEAR;
+use crate::timing::Group;
 
 /// What [`Renderer::draw_batches`] drew.
 #[derive(Clone, Copy, Debug, Default)]
@@ -123,7 +124,7 @@ impl Renderer {
                 }),
                 stencil_ops: None,
             }),
-            timestamp_writes: None,
+            timestamp_writes: self.timer.as_ref().and_then(|t| t.writes(Group::Scene)),
             occlusion_query_set: None,
             multiview_mask: None,
         });

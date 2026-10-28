@@ -14,6 +14,7 @@ use std::time::Duration;
 use re_core::Diagnostic;
 use re_core::time::Instant;
 
+use crate::timing::{GpuTimer, Group};
 use crate::{codes, shader};
 
 /// The overlay's format: gamma-space RGBA, as egui prefers.
@@ -239,13 +240,15 @@ impl UiPainter {
     }
 
     /// Paints `frame` over `target` (which keeps its contents) and returns the
-    /// time spent in `Queue::submit`.
+    /// time spent in `Queue::submit`. With `timer`, its passes are timed when
+    /// the frame is.
     pub fn paint(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         target: &wgpu::TextureView,
         frame: &UiFrame,
+        timer: Option<&GpuTimer>,
     ) -> Result<Duration, Diagnostic> {
         let texture = target.texture();
         let size = [texture.width(), texture.height()];
@@ -311,7 +314,7 @@ impl UiPainter {
                         },
                     })],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes: timer.and_then(|t| t.writes(Group::Ui)),
                     occlusion_query_set: None,
                     multiview_mask: None,
                 })
@@ -331,7 +334,7 @@ impl UiPainter {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: timer.and_then(|t| t.writes(Group::Ui)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

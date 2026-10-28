@@ -16,6 +16,7 @@ use re_types::render::{PostSettings, ToneMapping};
 
 use crate::renderer::{stores_gamma, with_checks};
 use crate::shader;
+use crate::timing::{GpuTimer, Group};
 
 /// The scene's colour format on every backend.
 pub(crate) const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -493,7 +494,12 @@ impl PostChain {
     }
 
     /// Records the chain from the resolved scene into `output`; returns the
-    /// number of passes recorded.
+    /// number of passes recorded. With `timer`, its passes are timed when the
+    /// frame is.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the frame's inputs, borrowed apart"
+    )]
     pub(crate) fn record(
         &mut self,
         device: &wgpu::Device,
@@ -502,6 +508,7 @@ impl PostChain {
         settings: &PostSettings,
         frame: PostFrame,
         output: &wgpu::TextureView,
+        timer: Option<&GpuTimer>,
     ) -> u32 {
         let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
         let targets = self
@@ -797,7 +804,7 @@ impl PostChain {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: timer.and_then(|t| t.writes(Group::Post)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

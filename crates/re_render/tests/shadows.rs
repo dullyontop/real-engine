@@ -83,6 +83,8 @@ fn golden_cascaded_shadows() {
     let image = render_image(&gpu, &mut renderer, &scene, 320, 240);
     let stats = renderer.stats().last_frame;
     assert_eq!(stats.shadow_cascades, 4, "{stats:?}");
+    // Every cascade has casters to draw.
+    assert!(stats.shadow_draw_calls >= 4, "{stats:?}");
     check_golden(&gpu, "cascaded_shadows", &image);
 
     // Probe the ground beside each pillar's shadow.
@@ -212,6 +214,9 @@ fn casters_outside_the_view_still_cast() {
     let stats = renderer.stats().last_frame;
     assert_eq!((stats.items_drawn, stats.items_culled), (1, 1), "{stats:?}");
     assert!(stats.shadow_casters >= 1, "{stats:?}");
+    // The ground and the wall are meshes of their own: one draw each in
+    // every cascade that takes them.
+    assert_eq!(stats.shadow_draw_calls, stats.shadow_casters, "{stats:?}");
     let probes = renderer
         .probe_sun_shadow(
             &gpu.device,
@@ -259,7 +264,14 @@ fn cascade_settings_apply() {
     scene.lights = vec![sun(SUN, 1.0, false)];
     render_image(&gpu, &mut renderer, &scene, 64, 48);
     let stats = renderer.stats().last_frame;
-    assert_eq!((stats.shadow_cascades, stats.shadow_casters), (0, 0));
+    assert_eq!(
+        (
+            stats.shadow_cascades,
+            stats.shadow_casters,
+            stats.shadow_draw_calls
+        ),
+        (0, 0, 0)
+    );
     let probe = renderer
         .probe_sun_shadow(&gpu.device, &gpu.queue, &[far], Vec3::Y)
         .unwrap()[0];

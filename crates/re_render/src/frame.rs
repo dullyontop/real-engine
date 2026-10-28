@@ -148,12 +148,44 @@ pub(crate) struct Sun {
     pub shadows: bool,
 }
 
+/// The lights a frame leaves out: `FrameStats::lights_culled` and
+/// `lights_dropped`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LeftOut {
+    /// Lights that light nothing: no intensity, range, cone or direction, or
+    /// values that are not finite.
+    pub culled: u32,
+    /// Lights over the limits: directional lights after the one drawn, and
+    /// point and spot lights past the most a frame draws.
+    pub dropped: u32,
+}
+
+impl LeftOut {
+    /// Counts `all` lights of a kind, of which `usable` can light something
+    /// and `kept` are drawn.
+    fn of(all: usize, usable: usize, kept: usize) -> LeftOut {
+        LeftOut {
+            culled: (all - usable) as u32,
+            dropped: (usable - kept) as u32,
+        }
+    }
+}
+
+impl std::ops::AddAssign for LeftOut {
+    fn add_assign(&mut self, other: LeftOut) {
+        self.culled += other.culled;
+        self.dropped += other.dropped;
+    }
+}
+
 /// The lights a frame draws.
 #[derive(Debug, Default)]
 pub(crate) struct LightSetup {
     pub sun: Option<Sun>,
     pub points: Vec<PointLightRaw>,
     pub warnings: Vec<Diagnostic>,
+    /// The directional and point lights left out.
+    pub left_out: LeftOut,
 }
 
 fn finite3(v: [f32; 3]) -> bool {
@@ -162,8 +194,8 @@ fn finite3(v: [f32; 3]) -> bool {
 
 /// Picks the lights to draw: one directional light (the first that casts shadows,
 /// else the first) and the eight point lights nearest the camera. Lights with
-/// non-finite values or no intensity are left out. Ignored lights give an `RE6017`
-/// warning.
+/// non-finite values or no intensity are left out (culled). Lights over the
+/// limits give an `RE6017` warning (dropped).
 pub(crate) fn select_lights(lights: &[Light], camera_pos: Vec3, exposure: f32) -> LightSetup {
     let mut setup = LightSetup::default();
     let usable = |l: &&Light| {
@@ -173,12 +205,16 @@ pub(crate) fn select_lights(lights: &[Light], camera_pos: Vec3, exposure: f32) -
             && l.position.is_finite()
             && l.direction.is_finite()
     };
-    let directional: Vec<&Light> = lights
-        .iter()
-        .filter(|l| l.kind == LightKind::Directional)
+    let of_kind = |kind: LightKind| lights.iter().filter(move |l| l.kind == kind);
+    let directional: Vec<&Light> = of_kind(LightKind::Directional)
         .filter(usable)
         .filter(|l| l.direction.length_squared() > 1e-12)
         .collect();
+    setup.left_out += LeftOut::of(
+        of_kind(LightKind::Directional).count(),
+        directional.len(),
+        directional.len().min(1),
+    );
     if let Some(sun) = directional
         .iter()
         .find(|l| l.shadows)
@@ -202,12 +238,15 @@ pub(crate) fn select_lights(lights: &[Light], camera_pos: Vec3, exposure: f32) -
             .with_hint("the one that casts shadows (or the first) is used"),
         );
     }
-    let mut points: Vec<&Light> = lights
-        .iter()
-        .filter(|l| l.kind == LightKind::Point)
+    let mut points: Vec<&Light> = of_kind(LightKind::Point)
         .filter(usable)
         .filter(|l| l.range.is_finite() && l.range > 0.0)
         .collect();
+    setup.left_out += LeftOut::of(
+        of_kind(LightKind::Point).count(),
+        points.len(),
+        points.len().min(MAX_POINT_LIGHTS),
+    );
     if points.len() > MAX_POINT_LIGHTS {
         setup.warnings.push(
             Diagnostic::warning(
@@ -241,14 +280,14 @@ pub(crate) fn select_lights(lights: &[Light], camera_pos: Vec3, exposure: f32) -
 }
 
 /// Picks the spot lights to draw: the [`MAX_SPOT_LIGHTS`](crate::extras::MAX_SPOT_LIGHTS)
-/// nearest the camera, leaving out lights with non-finite values, no intensity
-/// or no cone. More lights give an `RE6017` warning.
+/// nearest the camera, leaving out (culling) lights with non-finite values, no
+/// intensity or no cone. More lights give an `RE6017` warning (dropped).
 pub(crate) fn select_spots(
     spots: &[crate::extras::SpotLight],
     camera_pos: Vec3,
     exposure: f32,
     warnings: &mut Vec<Diagnostic>,
-) -> Vec<SpotLightRaw> {
+) -> (Vec<SpotLightRaw>, LeftOut) {
     use crate::extras::MAX_SPOT_LIGHTS;
     let mut usable: Vec<&crate::extras::SpotLight> = spots
         .iter()
@@ -265,6 +304,7 @@ pub(crate) fn select_spots(
                 && l.half_angle > 0.0
         })
         .collect();
+    let left_out = LeftOut::of(spots.len(), usable.len(), usable.len().min(MAX_SPOT_LIGHTS));
     if usable.len() > MAX_SPOT_LIGHTS {
         warnings.push(
             Diagnostic::warning(
@@ -284,7 +324,7 @@ pub(crate) fn select_spots(
         usable.truncate(MAX_SPOT_LIGHTS);
     }
     let lumens_to_candela = 1.0 / (4.0 * std::f32::consts::PI);
-    usable
+    let raw = usable
         .into_iter()
         .map(|l| {
             let half = l.half_angle.min(std::f32::consts::FRAC_PI_2 * 0.999);
@@ -298,7 +338,8 @@ pub(crate) fn select_spots(
                 direction: l.direction.normalize().extend(outer).to_array(),
             }
         })
-        .collect()
+        .collect();
+    (raw, left_out)
 }
 
 /// Checks a camera and returns the projection the GPU draws it with for
@@ -591,6 +632,14 @@ mod tests {
                 .iter()
                 .all(|w| w.code == codes::TOO_MANY_LIGHTS)
         );
+        // The second directional light and the two point lights.
+        assert_eq!(
+            setup.left_out,
+            LeftOut {
+                culled: 0,
+                dropped: 3
+            }
+        );
     }
 
     #[test]
@@ -601,6 +650,54 @@ mod tests {
         nan.direction = Vec3::NAN;
         let setup = select_lights(&[dark, nan], Vec3::ZERO, 1.0);
         assert!(setup.sun.is_none() && setup.points.is_empty() && setup.warnings.is_empty());
+        assert_eq!(
+            setup.left_out,
+            LeftOut {
+                culled: 2,
+                dropped: 0
+            }
+        );
+    }
+
+    #[test]
+    fn spot_lights_past_the_limit_are_dropped_and_dark_ones_culled() {
+        use crate::extras::{MAX_SPOT_LIGHTS, SpotLight};
+        let spot = |x: f32| SpotLight {
+            position: Vec3::new(x, 3.0, 0.0),
+            direction: Vec3::NEG_Y,
+            color: [1.0; 3],
+            intensity: 100.0,
+            range: 10.0,
+            half_angle: 0.4,
+        };
+        let mut spots: Vec<SpotLight> = (0..MAX_SPOT_LIGHTS + 2)
+            .map(|i| spot(i as f32 * 10.0))
+            .collect();
+        spots.push(SpotLight {
+            half_angle: 0.0,
+            ..spot(0.0)
+        });
+        spots.push(SpotLight {
+            direction: Vec3::ZERO,
+            ..spot(0.0)
+        });
+        let mut warnings = Vec::new();
+        let (raw, left_out) = select_spots(&spots, Vec3::ZERO, 1.0, &mut warnings);
+        assert_eq!(raw.len(), MAX_SPOT_LIGHTS);
+        // The two farthest are dropped; the ones with no cone or direction are culled.
+        assert!(
+            raw.iter()
+                .all(|s| s.position_range[0] < (MAX_SPOT_LIGHTS * 10) as f32 - 5.0)
+        );
+        assert_eq!(
+            left_out,
+            LeftOut {
+                culled: 2,
+                dropped: 2
+            }
+        );
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, codes::TOO_MANY_LIGHTS);
     }
 
     #[test]

@@ -266,12 +266,18 @@ impl Gpu {
                 )
             })?;
         let info = adapter.get_info();
+        // Block-compressed textures upload as they are where the adapter has
+        // them, and are decoded otherwise (ADR-0047). Passes are timed where
+        // it has timestamps, except on GL, whose timestamps are not taken at
+        // the passes' bounds (ADR-0022).
+        let wanted = match info.backend {
+            wgpu::Backend::Gl => wgpu::Features::TEXTURE_COMPRESSION_BC,
+            _ => wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::TIMESTAMP_QUERY,
+        };
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("re_render"),
-                // Block-compressed textures upload as they are where the
-                // adapter has them, and are decoded otherwise (ADR-0047).
-                required_features: adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC,
+                required_features: adapter.features() & wanted,
                 required_limits: pick_limits(&adapter),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,
