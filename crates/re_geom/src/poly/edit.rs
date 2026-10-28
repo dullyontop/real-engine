@@ -609,7 +609,7 @@ pub fn from_mesh(mesh: &MeshData) -> Result<PolyMesh, GeomError> {
     let mut uv = Vec::with_capacity(mesh.indices.len());
     let mut normal = Vec::with_capacity(mesh.indices.len());
     let mut color = Vec::with_capacity(mesh.indices.len());
-    for t in mesh.indices.chunks_exact(3) {
+    for t in mesh.indices.as_chunks::<3>().0 {
         let pts = [
             point_of[t[0] as usize],
             point_of[t[1] as usize],
