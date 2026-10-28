@@ -78,7 +78,7 @@ The M1, M2 and M3 ownership rules carry over, with these changes:
   - WP34's `Joint`, `Trigger` and `PhysicsMaterial` components in `re_scene` and its additions to `re_types/src/physics.rs` (the maintainer reviews), and compat's joints mapped onto native joints (WP47 reviews);
   - WP34's trigger delivery in `re_script/src/runtime.rs` (WP35 reviews), and its edits to `re_app`'s host and `[physics]` in its config (the maintainer reviews);
   - WP35's new host calls in `re_types::HostServices`, added as provided methods with a default body, as in M2 (the maintainer reviews);
-  - WP36's compat GUI on `re_ui` and the switch of `crates/re_app/src/compat.rs` onto its routing (WP47 reviews), `ScriptHost::ui()` (WP35 reviews), `ActionMap::actions_using` and the action filter's first part in `re_input` (WP37 reviews), UI textures in `gfx.rs` (WP32 reviews), and its UI components in `re_scene`, the `ui` rows of `ReplayDoc`, the theme schema and `[ui]` in its config (the maintainer reviews);
+  - WP36's compat GUI on `re_ui` and the switch of `crates/re_app/src/compat.rs` onto its routing (WP47 reviews), `ScriptHost::ui()` (WP35 reviews), UI textures in `gfx.rs` (WP32 reviews), and its UI components in `re_scene`, the `ui` rows of `ReplayDoc`, the theme schema and `[ui]` in its config (the maintainer reviews);
   - WP38's prefab expansion in `re_proc` (WP39 reviews), its change-signal binding in `re_script` (WP35 reviews), and its edits to `re_app`'s files module, `verify.rs` and `[history]` in its config and to `re_cli`'s prefab schema (the maintainer reviews);
   - WP39's metre UVs in `re_geom/src/terrain/` and the `terrain.layers` node, which WP33's terrain material reads (WP33 reviews the data shape); its deferred regeneration in `re_scene` (`Generators::set_deferred`, `World::apply_generated`) and `[proc]`'s editor budget in its config (the maintainer reviews), and the editor socket's wait for regeneration (WP42 reviews);
   - WP40's `re_types::graph` additions and `schemas/graph.schema.json` in its PR "params" (the maintainer reviews);
@@ -403,7 +403,7 @@ cargo test --locked -p re_compat --test gui
 
 **Build, PR "settings":** user settings (volume per mixer bus, display mode, resolution, vsync, a quality preset, and key bindings), stored apart from saves and applied at start.
 
-**Build, PR "rebinding":** rebinding actions from scripts, kept through settings; action contexts (gameplay, menu, vehicle); one-dimensional and trigger axes. Replays record the bindings they ran with.
+**Build, PR "rebinding":** rebinding actions from scripts, kept through settings; action contexts (gameplay, menu, vehicle); one-dimensional and trigger axes. Replays record the bindings they ran with. It also builds the `re_input` half of WP36's PR "input" (ADR-0058): `InputUse`, `ActionMap::actions_using`, and the action filter's latch and reset, which WP36 reviews and calls.
 
 **Stretch:** saved games that include physics state, with WP34, restored within a documented tolerance; touch input with on-screen sticks in the browser.
 
