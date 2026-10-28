@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use re_app::sync::audio::AudioSync;
 use re_app::{App, AppConfig};
 use re_types::AudioCmd;
 
@@ -306,4 +307,229 @@ fn one_shots_end_and_free_their_voices_in_a_headless_run() {
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     let playing = app.audio_mut().playing();
     assert!((5..=8).contains(&playing), "{playing} playing");
+}
+
+// The audio sync on its own, from a scene, with the commands a frame's scripts
+// queued before it.
+
+fn world(json: &str) -> re_scene::World {
+    let mut w = re_scene::World::new();
+    w.load(&re_scene::scene::from_json(json).unwrap()).unwrap();
+    w.propagate_all();
+    w
+}
+
+fn sync(w: &mut re_scene::World, s: &mut AudioSync, mut cmds: Vec<AudioCmd>) -> Vec<AudioCmd> {
+    re_app::sync::audio::build(w, s, &mut cmds);
+    cmds
+}
+
+fn listeners(cmds: &[AudioCmd]) -> Vec<glam::Vec3> {
+    cmds.iter()
+        .filter_map(|c| match c {
+            AudioCmd::SetListener { position, .. } => Some(*position),
+            _ => None,
+        })
+        .collect()
+}
+
+const LISTENING: &str = r#"{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    { "id": "cam", "components": { "Camera": { "active": true }, "Transform": { "translation": [0, 5, 10] } } },
+    { "id": "head", "components": { "AudioListener": {}, "Transform": { "translation": [1, 2, 3] } } },
+    { "id": "spare", "components": { "AudioListener": { "active": false }, "Transform": { "translation": [7, 7, 7] } } }
+  ]
+}
+"#;
+
+#[test]
+fn an_audio_listener_hears_in_place_of_the_camera() {
+    let mut w = world(LISTENING);
+    let mut s = AudioSync::new();
+    assert_eq!(
+        listeners(&sync(&mut w, &mut s, Vec::new())),
+        [glam::Vec3::new(1.0, 2.0, 3.0)]
+    );
+    // Unchanged, it is not sent again.
+    assert!(listeners(&sync(&mut w, &mut s, Vec::new())).is_empty());
+    // Without an active listener, the active camera hears.
+    w.set(
+        "head",
+        "AudioListener",
+        "active",
+        re_reflect::Value::Bool(false),
+    )
+    .unwrap();
+    assert_eq!(
+        listeners(&sync(&mut w, &mut s, Vec::new())),
+        [glam::Vec3::new(0.0, 5.0, 10.0)]
+    );
+    w.set(
+        "spare",
+        "AudioListener",
+        "active",
+        re_reflect::Value::Bool(true),
+    )
+    .unwrap();
+    assert_eq!(
+        listeners(&sync(&mut w, &mut s, Vec::new())),
+        [glam::Vec3::new(7.0, 7.0, 7.0)]
+    );
+}
+
+const SOURCES: &str = r#"{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    { "id": "radio", "components": {
+        "AudioSource": { "clip": "tone", "looping": true, "autoplay": false, "bus": "music", "rate": 1.5,
+                         "rolloff": "Inverse", "min_distance": 2, "max_distance": 40, "doppler": 1 },
+        "Transform": { "translation": [0, 0, -4] } } },
+    { "id": "hum", "components": {
+        "AudioSource": { "clip": "tone", "looping": true, "autoplay": true },
+        "Transform": { "translation": [0, 0, -8] } } }
+  ]
+}
+"#;
+
+#[test]
+fn scripts_start_and_fade_sources_through_the_sync() {
+    use re_types::{Rolloff, SoundOp, Spatial};
+    let mut w = world(SOURCES);
+    let id = |w: &re_scene::World, name: &str| re_scene::entity_id(w.entity(name).unwrap());
+    let (radio, hum) = (id(&w, "radio"), id(&w, "hum"));
+    let mut s = AudioSync::new();
+    // The hum autoplays with the default settings, so none are sent.
+    let cmds = sync(&mut w, &mut s, Vec::new());
+    assert!(
+        cmds.iter()
+            .any(|c| matches!(c, AudioCmd::StartSource { entity, .. } if *entity == hum)),
+        "{cmds:?}"
+    );
+    assert!(
+        !cmds
+            .iter()
+            .any(|c| matches!(c, AudioCmd::SetSourceSpatial { .. })),
+        "{cmds:?}"
+    );
+
+    // A script's `start` becomes the radio's start in its place, as autoplay
+    // would send it, settings first; the commands around it keep their order.
+    let before = AudioCmd::ApplySnapshot {
+        name: "default".into(),
+        seconds: 0.0,
+    };
+    let seek = AudioCmd::SourceControl {
+        entity: radio,
+        op: SoundOp::Seek { seconds: 1.0 },
+    };
+    let cmds = sync(
+        &mut w,
+        &mut s,
+        vec![
+            before.clone(),
+            AudioCmd::SourceControl {
+                entity: radio,
+                op: SoundOp::Start,
+            },
+            seek.clone(),
+        ],
+    );
+    let spatial = Spatial {
+        rolloff: Rolloff::Inverse,
+        min_distance: 2.0,
+        max_distance: 40.0,
+        doppler: 1.0,
+    };
+    assert_eq!(
+        cmds,
+        [
+            before,
+            AudioCmd::SetSourceSpatial {
+                entity: radio,
+                spatial,
+            },
+            AudioCmd::SetSourceBus {
+                entity: radio,
+                bus: "music".into(),
+            },
+            AudioCmd::StartSource {
+                entity: radio,
+                clip: "tone".into(),
+                volume: 1.0,
+                looping: true,
+                spatial: true,
+                position: glam::Vec3::new(0.0, 0.0, -4.0),
+            },
+            AudioCmd::SetSourceRate {
+                entity: radio,
+                rate: 1.5,
+            },
+            seek,
+        ]
+    );
+
+    // A script fading the volume writes the field and sends the fade in the
+    // same frame: the sync does not cut the fade with an instant change.
+    let value = |v: f64| re_reflect::Value::Float(v);
+    w.set("radio", "AudioSource", "volume", value(0.25))
+        .unwrap();
+    w.set("radio", "AudioSource", "rate", value(0.5)).unwrap();
+    let fades = vec![
+        AudioCmd::SourceControl {
+            entity: radio,
+            op: SoundOp::Volume {
+                volume: 0.25,
+                fade: 2.0,
+            },
+        },
+        AudioCmd::SourceControl {
+            entity: radio,
+            op: SoundOp::Rate {
+                rate: 0.5,
+                fade: 2.0,
+            },
+        },
+    ];
+    assert_eq!(sync(&mut w, &mut s, fades.clone()), fades);
+    // A write without a fade is sent as it is.
+    w.set("radio", "AudioSource", "volume", value(1.0)).unwrap();
+    assert_eq!(
+        sync(&mut w, &mut s, Vec::new()),
+        [AudioCmd::SetSourceVolume {
+            entity: radio,
+            volume: 1.0,
+        }]
+    );
+
+    // Settings changed while it plays follow it; unchanged, nothing is sent.
+    w.set(
+        "radio",
+        "AudioSource",
+        "rolloff",
+        re_reflect::Value::Enum("Off".into()),
+    )
+    .unwrap();
+    let cmds = sync(&mut w, &mut s, Vec::new());
+    assert_eq!(
+        cmds,
+        [AudioCmd::SetSourceSpatial {
+            entity: radio,
+            spatial: Spatial {
+                rolloff: Rolloff::Off,
+                ..spatial
+            },
+        }]
+    );
+    assert!(sync(&mut w, &mut s, Vec::new()).is_empty());
+
+    // A `start` on an entity without an AudioSource is left for the mixer,
+    // which ignores it.
+    let stray = AudioCmd::SourceControl {
+        entity: re_types::EntityId(u64::MAX),
+        op: SoundOp::Start,
+    };
+    assert_eq!(sync(&mut w, &mut s, vec![stray.clone()]), [stray]);
 }

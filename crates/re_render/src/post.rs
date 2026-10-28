@@ -20,6 +20,14 @@ use crate::shader;
 /// The scene's colour format on every backend.
 pub(crate) const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// What the scene's depth targets are cleared to: the far plane. Every pass
+/// over the scene's depth clears with it.
+pub(crate) const DEPTH_CLEAR: f32 = 1.0;
+/// The depth test of the scene's pipelines: a fragment nearer than what is
+/// there passes.
+pub(crate) const DEPTH_COMPARE: wgpu::CompareFunction = wgpu::CompareFunction::Less;
+/// [`DEPTH_COMPARE`] that also passes a fragment at the same depth.
+pub(crate) const DEPTH_COMPARE_EQUAL: wgpu::CompareFunction = wgpu::CompareFunction::LessEqual;
 /// Bloom never uses more levels than this.
 const MAX_BLOOM_LEVELS: usize = 8;
 /// Passes in one chain at most: sun rays, 2 x 8 bloom, 2 blur and the final one.
@@ -65,6 +73,9 @@ pub(crate) struct HdrTargets {
     ping: Option<wgpu::TextureView>,
     bloom: Vec<((u32, u32), wgpu::TextureView)>,
     blur: Option<[wgpu::TextureView; 2]>,
+    /// The passes' bind groups with the two textures each reads, all of them
+    /// these targets' own: a handful, so a list.
+    bind_groups: Vec<(wgpu::TextureView, wgpu::TextureView, wgpu::BindGroup)>,
 }
 
 fn texture(
@@ -125,6 +136,7 @@ impl HdrTargets {
             ping: None,
             bloom: Vec::new(),
             blur: None,
+            bind_groups: Vec::new(),
         }
     }
 
@@ -250,6 +262,10 @@ pub(crate) struct PostChain {
     targets: TargetCache<((u32, u32), u32), HdrTargets>,
     /// The targets the last scene pass used.
     active: ((u32, u32), u32),
+    /// A chain's passes and their uniforms, kept between frames for their
+    /// allocations.
+    steps: Vec<Step>,
+    bytes: Vec<u8>,
 }
 
 /// Values by key, the least recently used dropped first when more than
@@ -293,6 +309,10 @@ impl<K: Copy + Eq + Hash, V> TargetCache<K, V> {
         let (value, last) = self.entries.get_mut(&key).expect("kept or inserted above");
         *last = now;
         value
+    }
+
+    fn get(&self, key: &K) -> Option<&V> {
+        self.entries.get(key).map(|(v, _)| v)
     }
 
     fn get_mut(&mut self, key: &K) -> Option<&mut V> {
@@ -377,20 +397,30 @@ impl PostChain {
             slot,
             targets: TargetCache::new(),
             active: ((0, 0), 0),
+            steps: Vec::new(),
+            bytes: Vec::new(),
         }
     }
 
-    /// The scene targets for `size` and `samples`, created on first use.
-    pub(crate) fn targets(
+    /// Makes the scene targets for `size` and `samples` the active ones,
+    /// creating them on first use.
+    pub(crate) fn prepare_targets(
         &mut self,
         device: &wgpu::Device,
         size: (u32, u32),
         samples: u32,
-    ) -> &HdrTargets {
+    ) {
         let key = (size, samples);
         self.active = key;
         self.targets
-            .get_or_insert_with(key, || HdrTargets::new(device, size, samples))
+            .get_or_insert_with(key, || HdrTargets::new(device, size, samples));
+    }
+
+    /// The scene targets [`PostChain::prepare_targets`] made active.
+    pub(crate) fn active_targets(&self) -> &HdrTargets {
+        self.targets
+            .get(&self.active)
+            .expect("the frame prepared its targets")
     }
 
     fn pipeline(
@@ -478,7 +508,7 @@ impl PostChain {
             .expect("the scene pass ran");
         let size = targets.size;
         let texel = |(w, h): (u32, u32)| [1.0 / w as f32, 1.0 / h as f32];
-        let mut steps: Vec<Step> = Vec::new();
+        let mut steps = std::mem::take(&mut self.steps);
         let mut current = targets.scene.clone();
         // The clear colour goes behind the scene in the first pass that reads it.
         let clear = frame
@@ -515,7 +545,7 @@ impl PostChain {
         let mut bloom = None;
         if bloom_intensity > 0.0 {
             let levels = bloom_levels(finite(settings.bloom.radius), size);
-            let chain = targets.bloom(device, levels).to_vec();
+            let chain = targets.bloom(device, levels);
             let mut source = (size, current.clone());
             for (k, (level_size, view)) in chain.iter().enumerate() {
                 let [x, y] = texel(source.0);
@@ -682,13 +712,16 @@ impl PostChain {
             },
         });
 
-        let mut bytes = vec![0u8; self.slot as usize * steps.len()];
+        let mut bytes = std::mem::take(&mut self.bytes);
+        bytes.clear();
+        bytes.resize(self.slot as usize * steps.len(), 0);
         for (i, step) in steps.iter().enumerate() {
             let at = i * self.slot as usize;
             bytes[at..at + size_of::<PostUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&step.uniform));
         }
         queue.write_buffer(&self.uniforms, 0, &bytes);
+        self.bytes = bytes;
 
         for step in &steps {
             if step.output {
@@ -701,33 +734,51 @@ impl PostChain {
                 self.hdr_pipelines.insert(step.entry, p);
             }
         }
+        let targets = self
+            .targets
+            .get_mut(&self.active)
+            .expect("the scene pass ran");
         for (i, step) in steps.iter().enumerate() {
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("re_render post"),
-                layout: &self.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.uniforms,
-                            offset: 0,
-                            size: NonZeroU64::new(size_of::<PostUniform>() as u64),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&step.source),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&step.extra),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                ],
-            });
+            // The uniform buffer and the sampler never change, so a pass's
+            // group depends only on the two textures it reads.
+            let groups = &mut targets.bind_groups;
+            let kept = groups
+                .iter()
+                .position(|(source, extra, _)| *source == step.source && *extra == step.extra);
+            let n = match kept {
+                Some(n) => n,
+                None => {
+                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("re_render post"),
+                        layout: &self.layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                    buffer: &self.uniforms,
+                                    offset: 0,
+                                    size: NonZeroU64::new(size_of::<PostUniform>() as u64),
+                                }),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(&step.source),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(&step.extra),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::Sampler(&self.sampler),
+                            },
+                        ],
+                    });
+                    groups.push((step.source.clone(), step.extra.clone(), group));
+                    groups.len() - 1
+                }
+            };
+            let bind_group = &groups[n].2;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(step.entry),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -754,10 +805,14 @@ impl PostChain {
                 &self.hdr_pipelines[step.entry]
             };
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &bind_group, &[(i as u64 * self.slot) as u32]);
+            pass.set_bind_group(0, bind_group, &[(i as u64 * self.slot) as u32]);
             pass.draw(0..3, 0..1);
         }
-        steps.len() as u32
+        let passes = steps.len() as u32;
+        // The steps hold the chain's textures: emptied, so only the targets do.
+        steps.clear();
+        self.steps = steps;
+        passes
     }
 }
 

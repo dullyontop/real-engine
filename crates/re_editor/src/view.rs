@@ -3,7 +3,7 @@
 
 use re_app::App;
 use re_core::Diagnostic;
-use re_render::{Capture, Renderer, wgpu};
+use re_render::{Capture, Renderer, SceneExtras, wgpu};
 
 use crate::Editor;
 
@@ -13,8 +13,10 @@ use crate::Editor;
 const VIEW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// The scene as the editor shows it: the World in edit mode (nothing
-/// simulates), drawn from its own camera into a texture the size of the
-/// viewport panel.
+/// simulates), drawn from the editor camera (or through the game's camera,
+/// when the view is set to) into a texture the size of the viewport panel,
+/// with the editor's overlays: the grid, the selected camera's or light's
+/// reach and the selection's outline ([`crate::overlay`]).
 ///
 /// The editor's GPU device and scene renderer belong to the [`App`] (its
 /// [`Graphics`](re_app::Graphics)), so the app uploads the meshes and
@@ -80,11 +82,13 @@ impl GameView {
         Ok(())
     }
 
-    /// Draws the World into the texture: [`App::edit_frame`] regenerates
-    /// changed procedural sources, uploads new meshes and materials and
-    /// rebuilds the render snapshot from the World as it is (edit mode), which
-    /// is then drawn with the project's clear colour, with the runtime's
+    /// Draws the World into the texture as `editor` shows it:
+    /// [`App::edit_frame`] regenerates changed procedural sources, uploads new
+    /// meshes and materials and rebuilds the render snapshot from the World as
+    /// it is (edit mode); a copy of it is drawn from the editor camera, with
+    /// the editor's overlays, the project's clear colour and the runtime's
     /// default material for entities without one, as `real run` draws it.
+    /// The app's own snapshot, which `screenshot` draws, is left as built.
     ///
     /// The game's HUD is not drawn here.
     ///
@@ -92,16 +96,27 @@ impl GameView {
     ///
     /// `RE0516` when the app has no GPU side, and the renderer's errors
     /// (`RE6005`, `RE6007`); nothing is drawn then.
-    pub fn render(&mut self, app: &mut App) -> Result<(), Diagnostic> {
+    pub fn render(&mut self, app: &mut App, editor: &Editor) -> Result<(), Diagnostic> {
         let Some((capture, _)) = &self.target else {
             return Ok(());
         };
         app.edit_frame();
-        let snapshot = app.snapshot().clone();
+        let mut snapshot = app.snapshot().clone();
+        let mut extras = SceneExtras::default();
+        let render = &app.config().render;
+        let game_aspect = render.width.max(1) as f32 / render.height.max(1) as f32;
+        crate::overlay::dress(
+            editor,
+            app.world(),
+            app.render_origin(),
+            game_aspect,
+            &mut snapshot,
+            &mut extras,
+        );
         let gfx = app.graphics_mut().ok_or_else(no_graphics)?;
         let (device, queue) = (gfx.gpu().device.clone(), gfx.gpu().queue.clone());
         gfx.renderer_mut()
-            .render(&device, &queue, capture.view(), &snapshot)?;
+            .render_with(&device, &queue, capture.view(), &snapshot, &extras)?;
         Ok(())
     }
 

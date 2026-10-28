@@ -237,7 +237,7 @@ impl Host {
             &mut output,
             [gfx.config.width, gfx.config.height],
         );
-        match gfx.view.render(&mut self.app) {
+        match gfx.view.render(&mut self.app, &self.editor) {
             // A persistent render error is logged once, not every frame.
             Err(d) if self.last_render_error.as_ref() != Some(&d.message) => {
                 self.editor.log_diagnostic(&d);
