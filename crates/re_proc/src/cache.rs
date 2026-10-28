@@ -15,12 +15,11 @@
 //! that share it with counts of their own (an editor and a `real verify`)
 //! each bring it back under the limit. An entry's age is its file's
 //! ([`WritableDir::list_by_age`]): writing an entry makes it young, and so
-//! does a hit, once between trims ([`WritableDir::touch`]). Everything in the
-//! folder counts, entries of an older format included. An entry larger than
-//! the limit is not stored, and a trim that fails is tried again a tenth of
-//! the limit of writes later.
+//! does a hit ([`WritableDir::touch`]). Everything in the folder counts,
+//! entries of an older format included. An entry larger than the limit is
+//! not stored, and a trim that fails is tried again a tenth of the limit of
+//! writes later.
 
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use re_core::files::WritableDir;
@@ -31,10 +30,6 @@ use crate::value::{Field, MeshValue, Output, Points, RoadPath, Shapes};
 const MAGIC: [u8; 8] = *b"REPROC\0\0";
 /// Bump when the stored types change; older entries are then ignored.
 const FORMAT_VERSION: u32 = 1;
-
-/// The most entries remembered as used since the last trim; past it they
-/// are forgotten, and a hit then marks its entry once more.
-const MAX_FRESH: usize = 1 << 16;
 
 #[derive(Serialize, Deserialize)]
 enum Stored {
@@ -63,8 +58,6 @@ struct Usage {
     /// Held while a trim runs: a writer that finds the folder over the limit
     /// waits for the running trim, then looks again.
     trimming: Mutex<()>,
-    /// The entries marked used since the last trim.
-    fresh: Mutex<HashSet<[u8; 32]>>,
 }
 
 /// The folder's size, as last listed plus what was written since.
@@ -92,21 +85,8 @@ impl Usage {
         self.tally.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn fresh(&self) -> MutexGuard<'_, HashSet<[u8; 32]>> {
-        self.fresh.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
     fn trimming(&self) -> MutexGuard<'_, ()> {
         self.trimming.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// Remembers that `key`'s entry was marked used; true if it was not yet.
-    fn mark_fresh(&self, key: &[u8; 32]) -> bool {
-        let mut fresh = self.fresh();
-        if fresh.len() >= MAX_FRESH {
-            fresh.clear();
-        }
-        fresh.insert(*key)
     }
 
     /// Counts `bytes` written; true when the folder may now be over `limit`.
@@ -148,7 +128,8 @@ impl DiskCache {
     /// The cached output for `key`: `Ok(None)` when there is none, `Err` when
     /// the entry is unreadable or damaged.
     pub(crate) fn load(&self, key: &[u8; 32]) -> Result<Option<Output>, String> {
-        let bytes = match self.dir.read(&Self::path(key)) {
+        let path = Self::path(key);
+        let bytes = match self.dir.read(&path) {
             Ok(Some(b)) => b,
             Ok(None) => return Ok(None),
             Err(e) => return Err(format!("cache entry could not be read: {e}")),
@@ -189,9 +170,7 @@ impl DiskCache {
         };
         // A used entry is young again, so trims keep it. Marking it is
         // worth no warning: an entry that cannot be marked only goes sooner.
-        if self.usage.mark_fresh(key) {
-            let _ = self.dir.touch(&Self::path(key));
-        }
+        let _ = self.dir.touch(&path);
         Ok(Some(output))
     }
 
@@ -258,9 +237,6 @@ impl DiskCache {
                 )),
             ),
         };
-        // From now on the next hit on an entry marks it again, so the next
-        // trim sees what was used since this one.
-        self.usage.fresh().clear();
         let mut t = self.usage.tally();
         // After a failure the next try is a tenth of the limit of writes
         // away, not at every write.
@@ -381,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hit_marks_its_entry_once_between_trims() {
+    fn a_hit_makes_its_entry_the_youngest() {
         let size = entry_size(16);
         let dir = WritableDir::memory();
         let cache = DiskCache::new(dir.clone(), size * 4 + size / 2);
@@ -392,14 +368,14 @@ mod tests {
         cache.load(&key(0)).unwrap().unwrap();
         cache.load(&key(1)).unwrap().unwrap();
         assert_eq!(ages(&dir), paths([2, 3, 0, 1]));
-        // Marked already since the last trim: the order stays.
+        // Every hit marks its entry, one marked before too.
         cache.load(&key(0)).unwrap().unwrap();
-        assert_eq!(ages(&dir), paths([2, 3, 0, 1]));
-        // A trim, which removes the oldest, 2; after it a hit marks again.
+        assert_eq!(ages(&dir), paths([2, 3, 1, 0]));
+        // A trim removes the oldest, 2; a miss marks nothing.
         cache.store(&key(4), &field(16, 0.0)).unwrap();
-        assert_eq!(ages(&dir), paths([3, 0, 1, 4]));
-        cache.load(&key(0)).unwrap().unwrap();
-        assert_eq!(ages(&dir), paths([3, 1, 4, 0]));
+        assert_eq!(ages(&dir), paths([3, 1, 0, 4]));
+        assert!(cache.load(&key(2)).unwrap().is_none());
+        assert_eq!(ages(&dir), paths([3, 1, 0, 4]));
     }
 
     #[test]

@@ -915,30 +915,20 @@ struct MemoryStore {
     files: Mutex<MemoryFiles>,
 }
 
-/// Each file's bytes and its age: the clock's value when it was last written
-/// or touched.
+/// The files, and the order they were written or touched in.
 #[derive(Debug, Default)]
 struct MemoryFiles {
-    files: BTreeMap<String, (Vec<u8>, u64)>,
-    clock: u64,
+    files: BTreeMap<String, Vec<u8>>,
+    /// Every file's path and size, the one written or touched longest ago
+    /// first.
+    by_age: Vec<(String, u64)>,
 }
 
 impl MemoryFiles {
-    fn tick(&mut self) -> u64 {
-        self.clock += 1;
-        self.clock
-    }
-
-    /// The files under `dir` (`""` for all).
-    fn under<'a>(&'a self, dir: &str) -> impl Iterator<Item = (&'a String, &'a (Vec<u8>, u64))> {
-        let prefix = if dir.is_empty() {
-            String::new()
-        } else {
-            format!("{dir}/")
-        };
-        self.files
-            .iter()
-            .filter(move |(k, _)| k.starts_with(&prefix))
+    /// Takes `rel` out of [`by_age`](Self::by_age).
+    fn take(&mut self, rel: &str) -> Option<(String, u64)> {
+        let i = self.by_age.iter().position(|(p, _)| p == rel)?;
+        Some(self.by_age.remove(i))
     }
 }
 
@@ -948,45 +938,62 @@ impl MemoryStore {
     }
 }
 
+/// What the paths under `dir` (`""` for all) start with.
+fn dir_prefix(dir: &str) -> String {
+    if dir.is_empty() {
+        String::new()
+    } else {
+        format!("{dir}/")
+    }
+}
+
 impl WritableStore for MemoryStore {
     fn read(&self, rel: &str) -> io::Result<Option<Vec<u8>>> {
-        Ok(self.files().files.get(rel).map(|(bytes, _)| bytes.clone()))
+        Ok(self.files().files.get(rel).cloned())
     }
 
     fn write(&self, rel: &str, bytes: &[u8]) -> io::Result<()> {
         let mut files = self.files();
-        let age = files.tick();
-        files.files.insert(rel.to_owned(), (bytes.to_vec(), age));
+        files.files.insert(rel.to_owned(), bytes.to_vec());
+        files.take(rel);
+        files.by_age.push((rel.to_owned(), bytes.len() as u64));
         Ok(())
     }
 
     fn remove(&self, rel: &str) -> io::Result<()> {
-        self.files().files.remove(rel);
+        let mut files = self.files();
+        if files.files.remove(rel).is_some() {
+            files.take(rel);
+        }
         Ok(())
     }
 
     fn list(&self, dir: &str) -> io::Result<Vec<String>> {
-        Ok(self.files().under(dir).map(|(k, _)| k.clone()).collect())
+        let prefix = dir_prefix(dir);
+        Ok(self
+            .files()
+            .files
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect())
     }
 
     fn list_by_age(&self, dir: &str) -> io::Result<Vec<(String, u64)>> {
-        let files = self.files();
-        let mut out: Vec<(u64, &String, u64)> = files
-            .under(dir)
-            .map(|(k, (bytes, age))| (*age, k, bytes.len() as u64))
-            .collect();
-        out.sort_unstable();
-        Ok(out
-            .into_iter()
-            .map(|(_, path, len)| (path.clone(), len))
+        let prefix = dir_prefix(dir);
+        Ok(self
+            .files()
+            .by_age
+            .iter()
+            .filter(|(p, _)| p.starts_with(&prefix))
+            .cloned()
             .collect())
     }
 
     fn touch(&self, rel: &str) -> io::Result<()> {
         let mut files = self.files();
-        let age = files.tick();
-        if let Some((_, a)) = files.files.get_mut(rel) {
-            *a = age;
+        if let Some(file) = files.take(rel) {
+            files.by_age.push(file);
         }
         Ok(())
     }
