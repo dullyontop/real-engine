@@ -40,11 +40,13 @@ pub enum PanelId {
     Debugger,
     /// The node canvas of a graph file.
     Canvas,
+    /// One material file's keys.
+    Material,
 }
 
 impl PanelId {
     /// Every panel.
-    pub const ALL: [PanelId; 7] = [
+    pub const ALL: [PanelId; 8] = [
         PanelId::Viewport,
         PanelId::Canvas,
         PanelId::Hierarchy,
@@ -52,6 +54,7 @@ impl PanelId {
         PanelId::Graph,
         PanelId::Console,
         PanelId::Debugger,
+        PanelId::Material,
     ];
 
     /// The tab's title.
@@ -64,6 +67,7 @@ impl PanelId {
             PanelId::Console => "Console",
             PanelId::Debugger => "Debugger",
             PanelId::Canvas => "Node graph",
+            PanelId::Material => "Material",
         }
     }
 }
@@ -159,14 +163,16 @@ pub fn layout_path(root: &Path) -> PathBuf {
 }
 
 /// The default layout: the hierarchy on the left, the inspector over the
-/// procedural panel on the right, the console and the debugger (tabs) under
-/// the game view, and the node canvas a tab behind the game view.
+/// procedural panel on the right with the material panel a tab behind the
+/// inspector, the console and the debugger (tabs) under the game view, and
+/// the node canvas a tab behind the game view.
 pub fn default_dock() -> DockState<PanelId> {
     let mut dock = DockState::new(vec![PanelId::Viewport, PanelId::Canvas]);
     let tree = dock.main_surface_mut();
     let root = egui_dock::NodeIndex::root();
     let [centre, _left] = tree.split_left(root, 0.2, vec![PanelId::Hierarchy]);
-    let [centre, right] = tree.split_right(centre, 0.72, vec![PanelId::Inspector]);
+    let [centre, right] =
+        tree.split_right(centre, 0.72, vec![PanelId::Inspector, PanelId::Material]);
     tree.split_below(right, 0.6, vec![PanelId::Graph]);
     tree.split_below(centre, 0.75, vec![PanelId::Console, PanelId::Debugger]);
     dock

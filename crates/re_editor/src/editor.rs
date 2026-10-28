@@ -45,11 +45,13 @@ pub enum Panel {
     Viewport,
     /// The node canvas.
     Canvas,
+    /// One material file's keys.
+    Material,
 }
 
 impl Panel {
     /// Every panel, in drawing order.
-    pub const ALL: [Panel; 8] = [
+    pub const ALL: [Panel; 9] = [
         Panel::Toolbar,
         Panel::Hierarchy,
         Panel::Inspector,
@@ -58,6 +60,7 @@ impl Panel {
         Panel::Palette,
         Panel::Viewport,
         Panel::Canvas,
+        Panel::Material,
     ];
 
     fn index(self) -> usize {
@@ -67,7 +70,7 @@ impl Panel {
 
 /// Where each panel was drawn in the last frame, in egui points.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct PanelRects([Option<egui::Rect>; 8]);
+pub struct PanelRects([Option<egui::Rect>; 9]);
 
 impl PanelRects {
     /// The rectangle of `panel`, or `None` if it was not drawn.
@@ -194,6 +197,7 @@ pub struct Editor {
     pub(crate) view: ViewSettings,
     pub(crate) debug: crate::debugger::DebugPanel,
     pub(crate) canvas: crate::canvas::Canvas,
+    pub(crate) material: crate::panels::MaterialPanel,
     pub(crate) dock: egui_dock::DockState<PanelId>,
     /// Each panel's own view state, as read from the layout (kept and
     /// written back).
@@ -263,6 +267,7 @@ impl Editor {
             view: ViewSettings::default(),
             debug: Default::default(),
             canvas: Default::default(),
+            material: Default::default(),
             dock: layout::default_dock(),
             panel_states: PanelStates::new(),
             layout_root: None,

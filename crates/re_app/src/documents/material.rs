@@ -24,6 +24,12 @@ use crate::app::App;
 /// The suffix of material files.
 pub const SUFFIX: &str = ".material.json";
 
+/// The JSON Schema of material files, as `schemas/material.schema.json`
+/// holds it: the editor's Material panel builds its form from it.
+pub fn schema() -> Json {
+    serde_json::to_value(schemars::schema_for!(re_assets::MaterialFile)).unwrap_or(Json::Null)
+}
+
 /// Arguments of `material.create`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -57,8 +63,9 @@ pub struct EditArgs {
     pub unset: Vec<String>,
 }
 
-/// The validator of open `*.material.json` documents.
-pub(super) fn validate(value: &Json) -> Result<(), String> {
+/// The validator of open `*.material.json` documents: checks a material as
+/// the asset server's loader does; `Err` says why it is refused.
+pub fn validate(value: &Json) -> Result<(), String> {
     re_assets::check_material(value).map(|_| ())
 }
 

@@ -23,6 +23,11 @@
 //! the `graph.*` commands, each one undo step, and the graph stays an
 //! unsaved open document until the scene is saved.
 //!
+//! The **material** panel ([`MaterialSpot`]; ADR-0064 §3) shows one material
+//! file's keys with the widgets the material schema gives them; each
+//! finished edit is one `material.edit`, and "New material" is
+//! `material.create`.
+//!
 //! The panels other than the toolbar and the palette are tabs in a dock
 //! (egui_dock): they can be dragged into other splits, stacked or floated.
 //! The arrangement, the gizmo settings, the editor camera, the view's
@@ -86,7 +91,7 @@ pub use canvas::CanvasSpot;
 pub use editor::{ConsoleLine, Editor, LineKind, Panel, PanelRects};
 pub use headless::HeadlessEditor;
 pub use overlay::ViewSettings;
-pub use panels::ProceduralSpot;
+pub use panels::{MaterialSpot, ProceduralSpot};
 pub use selection::Selection;
 pub use socket::EditorSocket;
 pub use view::GameView;

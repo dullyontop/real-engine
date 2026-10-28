@@ -95,8 +95,9 @@ fn panels_render_headless() {
     assert_eq!((image.width, image.height), (1280, 720));
     let rects = *ed.editor.rects();
     for panel in Panel::ALL {
-        if panel == Panel::Canvas {
-            // A tab behind the game view (tests/canvas.rs brings it forward).
+        if matches!(panel, Panel::Canvas | Panel::Material) {
+            // Tabs behind the game view and the inspector (tests/canvas.rs
+            // and tests/material.rs bring them forward).
             continue;
         }
         let rect = rects

@@ -7,6 +7,7 @@
 mod console;
 mod hierarchy;
 mod inspector;
+mod material;
 mod palette;
 mod procedural;
 mod toolbar;
@@ -19,6 +20,8 @@ use crate::editor::{Action, Editor, Pending};
 use crate::layout::PanelId;
 use crate::selection::Selection;
 
+pub(crate) use material::MaterialPanel;
+pub use material::MaterialSpot;
 pub(crate) use palette::palette_action;
 pub use procedural::ProceduralSpot;
 
@@ -58,6 +61,7 @@ pub(crate) fn draw(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut 
             );
     });
     ed.dock = dock;
+    ed.material_to_front();
 
     palette::palette(ed, ui.ctx(), app, actions);
 
@@ -123,6 +127,13 @@ impl egui_dock::TabViewer for Tabs<'_> {
             PanelId::Canvas => {
                 crate::canvas::ui(ed, ui, app, actions);
                 Panel::Canvas
+            }
+            PanelId::Material => {
+                egui::ScrollArea::vertical()
+                    .id_salt("re_editor.material")
+                    .auto_shrink(false)
+                    .show(ui, |ui| material::material(ed, ui, app, actions));
+                Panel::Material
             }
         };
         ed.rects.set(panel, rect);

@@ -41,6 +41,9 @@ tracing.workspace = true
 # config.set writes real.toml back with its comments and layout (ADR-0064 §5);
 # the document commands are not built for the browser.
 toml_edit.workspace = true
+# The material schema the editor's Material panel builds its form from
+# (documents::material::schema).
+re_assets = { workspace = true, features = ["schemars"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # The browser runtime awaits the GPU device (src/web/play.rs, ADR-0049).
