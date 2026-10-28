@@ -1,5 +1,6 @@
 //! The shadow pass: one depth-only pass per cascade of the sun's shadow map,
-//! each drawing the casters its fit took (ADR-0038).
+//! each drawing the casters its fit took (ADR-0038), the draw items' and then
+//! the instance sets' (ADR-0052).
 
 use super::prepare::PreparedFrame;
 use super::{FrameReport, Renderer, SKINNED};
@@ -44,6 +45,18 @@ impl Renderer {
                 },
             );
             report.stats.shadow_casters += drawn.instances;
+            if let Some(runs) = frame.sets.cascades.get(n) {
+                let drawn = self.sets.draw(
+                    &mut pass,
+                    &frame.sets,
+                    &frame.sets.cascade_runs[runs.clone()],
+                    &self.meshes,
+                    None,
+                    1,
+                    &|_| &self.sets.shadow_pipeline,
+                );
+                report.stats.shadow_casters += drawn.instances;
+            }
         }
     }
 }

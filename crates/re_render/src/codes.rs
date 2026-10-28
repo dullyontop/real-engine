@@ -93,3 +93,14 @@ pub const SKINNING_UNSUPPORTED: Code = Code::new("RE6040");
 /// A skinned draw item is not drawable: its mesh has no skin, or its palette
 /// range is outside the snapshot's joint palette or too short for the mesh.
 pub const BAD_SKINNED_ITEM: Code = Code::new("RE6041");
+
+/// An instance set cannot be uploaded: it has no placements, a cluster is
+/// empty, the clusters do not add up to the placements or do not hold them, a
+/// position, scale or bound is not finite, or a rotation is zero (ADR-0052).
+pub const BAD_INSTANCE_SET: Code = Code::new("RE6100");
+
+/// An instance set's placements do not fit in one of the GPU's buffers.
+pub const INSTANCE_SET_TOO_LARGE: Code = Code::new("RE6101");
+
+/// An instance set handle was released, or never issued by this renderer.
+pub const STALE_INSTANCE_SET: Code = Code::new("RE6104");

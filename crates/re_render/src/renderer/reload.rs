@@ -17,7 +17,8 @@ use std::collections::HashMap;
 use re_core::{Diagnostic, Location};
 
 use super::{
-    Renderer, ScenePipelines, mask_pipelines, probe_pipeline, shadow_pipeline, with_checks,
+    Geometry, Renderer, ScenePipelines, mask_pipelines, probe_pipeline, shadow_pipeline,
+    with_checks,
 };
 use crate::post::PostShader;
 use crate::ui::UiBlit;
@@ -42,21 +43,25 @@ enum Family {
     Highlight,
     Shadow,
     ShadowSkinned,
+    ShadowSet,
     Mask,
     MaskSkinned,
+    MaskSet,
     Post,
     Ui,
     Probe,
 }
 
 impl Family {
-    const ALL: [Family; 9] = [
+    const ALL: [Family; 11] = [
         Family::Scene,
         Family::Highlight,
         Family::Shadow,
         Family::ShadowSkinned,
+        Family::ShadowSet,
         Family::Mask,
         Family::MaskSkinned,
+        Family::MaskSet,
         Family::Post,
         Family::Ui,
         Family::Probe,
@@ -67,6 +72,7 @@ impl Family {
             Family::Scene => &[
                 "forward.wgsl",
                 "forward_skinned.wgsl",
+                "forward_set.wgsl",
                 "lines.wgsl",
                 "effects.wgsl",
                 "sky.wgsl",
@@ -75,8 +81,10 @@ impl Family {
             Family::Highlight => &["highlight.wgsl"],
             Family::Shadow => &["shadow.wgsl"],
             Family::ShadowSkinned => &["shadow_skinned.wgsl"],
+            Family::ShadowSet => &["shadow_set.wgsl"],
             Family::Mask => &["mask.wgsl"],
             Family::MaskSkinned => &["mask_skinned.wgsl"],
+            Family::MaskSet => &["mask_set.wgsl"],
             Family::Post => &["post.wgsl"],
             Family::Ui => &["ui_blit.wgsl"],
             Family::Probe => &["probe.wgsl"],
@@ -112,6 +120,8 @@ enum Saved {
         /// forward, lines, effects, sky, quad.
         modules: [wgpu::ShaderModule; 5],
         skinned: Option<wgpu::ShaderModule>,
+        /// forward_set.
+        set: wgpu::ShaderModule,
         pipelines: HashMap<u32, ScenePipelines>,
         top_quads: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     },
@@ -121,8 +131,10 @@ enum Saved {
     ),
     Shadow(wgpu::RenderPipeline),
     ShadowSkinned(wgpu::RenderPipeline),
+    ShadowSet(wgpu::RenderPipeline),
     Mask([wgpu::RenderPipeline; 2]),
     MaskSkinned([wgpu::RenderPipeline; 2]),
+    MaskSet([wgpu::RenderPipeline; 2]),
     Post(PostShader),
     Ui(UiBlit),
     Probe(Option<wgpu::RenderPipeline>),
@@ -244,6 +256,7 @@ impl Renderer {
                         self.quad_shader.clone(),
                     ],
                     skinned: self.skinning.as_ref().map(|s| s.forward_shader.clone()),
+                    set: self.sets.forward_shader.clone(),
                     pipelines: std::mem::take(&mut self.pipelines),
                     top_quads: std::mem::take(&mut self.top_quad_pipelines),
                 };
@@ -254,6 +267,7 @@ impl Renderer {
                         "effects.wgsl" => self.effects_shader = module,
                         "sky.wgsl" => self.sky_shader = module,
                         "quad.wgsl" => self.quad_shader = module,
+                        "forward_set.wgsl" => self.sets.forward_shader = module,
                         _ => {
                             if let Some(s) = &mut self.skinning {
                                 s.forward_shader = module;
@@ -284,22 +298,38 @@ impl Renderer {
                 saved
             }
             Family::Shadow => {
-                let pipeline = shadow_pipeline(&self.device, &self.layouts.shadow, &only(), false);
+                let pipeline =
+                    shadow_pipeline(&self.device, &self.layouts.shadow, &only(), Geometry::Items);
                 Saved::Shadow(std::mem::replace(&mut self.shadow_pipeline, pipeline))
             }
             Family::ShadowSkinned => {
                 let s = self.skinning.as_mut().expect("skinned roots need skinning");
-                let pipeline = shadow_pipeline(&self.device, &s.shadow_layout, &only(), true);
+                let pipeline =
+                    shadow_pipeline(&self.device, &s.shadow_layout, &only(), Geometry::Skinned);
                 Saved::ShadowSkinned(std::mem::replace(&mut s.shadow_pipeline, pipeline))
             }
+            Family::ShadowSet => {
+                let s = &mut self.sets;
+                let pipeline =
+                    shadow_pipeline(&self.device, &s.shadow_layout, &only(), Geometry::Sets);
+                Saved::ShadowSet(std::mem::replace(&mut s.shadow_pipeline, pipeline))
+            }
             Family::Mask => {
-                let pipelines = mask_pipelines(&self.device, &self.layouts.mask, &only(), false);
+                let pipelines =
+                    mask_pipelines(&self.device, &self.layouts.mask, &only(), Geometry::Items);
                 Saved::Mask(std::mem::replace(&mut self.mask_pipelines, pipelines))
             }
             Family::MaskSkinned => {
                 let s = self.skinning.as_mut().expect("skinned roots need skinning");
-                let pipelines = mask_pipelines(&self.device, &s.mask_layout, &only(), true);
+                let pipelines =
+                    mask_pipelines(&self.device, &s.mask_layout, &only(), Geometry::Skinned);
                 Saved::MaskSkinned(std::mem::replace(&mut s.mask_pipelines, pipelines))
+            }
+            Family::MaskSet => {
+                let s = &mut self.sets;
+                let pipelines =
+                    mask_pipelines(&self.device, &s.mask_layout, &only(), Geometry::Sets);
+                Saved::MaskSet(std::mem::replace(&mut s.mask_pipelines, pipelines))
             }
             Family::Post => Saved::Post(self.post.replace_shader(&self.device, only())),
             Family::Ui => Saved::Ui(self.ui.replace_blit(&self.device, only())),
@@ -316,6 +346,7 @@ impl Renderer {
             Saved::Scene {
                 modules: [forward, lines, effects, sky, quad],
                 skinned,
+                set,
                 pipelines,
                 top_quads,
             } => {
@@ -327,6 +358,7 @@ impl Renderer {
                 if let (Some(s), Some(module)) = (&mut self.skinning, skinned) {
                     s.forward_shader = module;
                 }
+                self.sets.forward_shader = set;
                 self.pipelines = pipelines;
                 self.top_quad_pipelines = top_quads;
             }
@@ -340,12 +372,14 @@ impl Renderer {
                     s.shadow_pipeline = pipeline;
                 }
             }
+            Saved::ShadowSet(pipeline) => self.sets.shadow_pipeline = pipeline,
             Saved::Mask(pipelines) => self.mask_pipelines = pipelines,
             Saved::MaskSkinned(pipelines) => {
                 if let Some(s) = &mut self.skinning {
                     s.mask_pipelines = pipelines;
                 }
             }
+            Saved::MaskSet(pipelines) => self.sets.mask_pipelines = pipelines,
             Saved::Post(old) => self.post.restore_shader(old),
             Saved::Ui(old) => self.ui.restore_blit(old),
             Saved::Probe(pipeline) => self.probe = pipeline,

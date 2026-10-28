@@ -19,9 +19,9 @@ use re_types::render::{DrawFlags, MaterialHandle, MeshHandle, QuadDepth, RenderS
 use super::{
     CascadeUniform, FrameReport, MAX_PALETTE, QuadUniform, Renderer, SKINNED, Skinning, stale_item,
 };
-use crate::codes;
 use crate::extras::{self, MAX_HIGHLIGHTS, SceneExtras};
 use crate::frame::{self, FrameUniform, InstanceRaw, LineVertex, PointLightRaw, SpotLightRaw};
+use crate::{codes, instances};
 
 /// A resource slot: `(index, generation)`.
 pub(crate) type Slot = (u32, u32);
@@ -126,13 +126,15 @@ pub(crate) struct PreparedFrame {
     pub(super) effect_quads: usize,
     /// Debug line vertices.
     pub(super) line_vertices: usize,
+    /// What the frame draws of the instance sets (ADR-0052).
+    pub(crate) sets: instances::SetFrame,
 
     // Working lists, kept for their allocations.
     draws: Vec<Draw>,
     /// Each draw's palette start; `None` draws unskinned.
     palettes: Vec<Option<u32>>,
     /// The stale handles reported this frame: kind (0 mesh, 1 material, 2
-    /// texture), index and generation.
+    /// texture, 3 instance set), index and generation.
     reported: HashSet<(u8, u32, u32)>,
     /// Each highlighted entity's highlight number (1-based; the first wins).
     highlight_of: HashMap<u64, u8>,
@@ -176,6 +178,7 @@ impl PreparedFrame {
         self.cascade_group = None;
         self.effect_quads = 0;
         self.line_vertices = 0;
+        self.sets.clear();
         self.draws.clear();
         self.palettes.clear();
         self.reported.clear();
@@ -329,6 +332,16 @@ impl Renderer {
         );
         self.world_quads(prepared, snapshot, camera_pos, report);
         batch(prepared);
+        self.sets.prepare(
+            &mut prepared.sets,
+            snapshot,
+            &self.meshes,
+            &self.materials,
+            &mut prepared.reported,
+            &frustum,
+            camera_pos,
+            report,
+        );
 
         // Lights and the shadow fit.
         let exposure = Some(snapshot.post.exposure)
@@ -349,7 +362,7 @@ impl Renderer {
         );
         if let Some(sun) = lights
             .sun
-            .filter(|s| s.shadows && !prepared.casters.is_empty())
+            .filter(|s| s.shadows && (!prepared.casters.is_empty() || prepared.sets.has_casters()))
         {
             let light = frame::light_view(sun.direction);
             prepared.light_boxes.extend(
@@ -358,6 +371,7 @@ impl Renderer {
                     .iter()
                     .map(|c| c.3.map(|b| frame::transform_aabb(&b, &light))),
             );
+            prepared.sets.light_boxes(&light);
             let mut near = snapshot.camera.near;
             for &far in &splits[..usize::from(shadows.cascades)] {
                 let fit = frame::fit_cascade(
@@ -397,6 +411,10 @@ impl Renderer {
                             instances: 1,
                         }),
                     }
+                }
+                // The instance sets' casters, in runs of their own.
+                if let Some(d) = prepared.sets.cascade(&fit) {
+                    caster_depth = Some(caster_depth.map_or(d, |c| c.min(d)));
                 }
                 prepared
                     .cascade_fits
@@ -750,9 +768,9 @@ impl Renderer {
         report.stats.world_quads = prepared.quad_uniforms.len() as u32;
     }
 
-    /// Writes the instances, the joint palette, the debug lines, the sprites
-    /// and ribbons, the cascades' and the world quads' uniforms, and finds the
-    /// bind groups that read them.
+    /// Writes the instances, the instance sets' entries, the joint palette,
+    /// the debug lines, the sprites and ribbons, the cascades' and the world
+    /// quads' uniforms, and finds the bind groups that read them.
     #[expect(
         clippy::too_many_arguments,
         reason = "the frame's inputs, borrowed apart"
@@ -769,6 +787,7 @@ impl Renderer {
     ) {
         self.instances
             .write(device, queue, bytemuck::cast_slice(&prepared.instances));
+        self.sets.write(device, queue, &mut prepared.sets);
         prepared.palette = match &mut self.skinning {
             Some(skinning) if prepared.palettes.iter().any(Option::is_some) => {
                 skinning.palette.write(

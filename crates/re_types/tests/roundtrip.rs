@@ -41,6 +41,11 @@ const _: () = {
     contract::<MeshHandle>();
     contract::<MaterialHandle>();
     contract::<TextureHandle>();
+    contract::<InstanceSetHandle>();
+    contract::<Placement>();
+    contract::<InstanceCluster>();
+    contract::<InstanceSet>();
+    contract::<InstancePart>();
     contract::<TextureRef>();
     contract::<MaterialDesc>();
     contract::<AlphaMode>();
@@ -191,12 +196,27 @@ fn render() {
             bounds: Aabb::new(Vec3::NEG_ONE, Vec3::ONE),
         }],
         joint_palette: vec![mat(), Mat4::IDENTITY],
+        instance_sets: vec![InstanceSet {
+            entity: EntityId(11),
+            set: InstanceSetHandle::new(2, 3),
+            transform: Mat4::from_translation(Vec3::new(256.0, 0.0, -512.0)),
+            parts: vec![InstancePart {
+                mesh: MeshHandle::new(6, 0),
+                material: MaterialHandle::new(3, 4),
+                transform: mat(),
+                flags: DrawFlags::CAST_SHADOWS,
+                min_distance: 0.0,
+                max_distance: 300.0,
+            }],
+            flags: DrawFlags::CAST_SHADOWS | DrawFlags::SELECTED,
+        }],
     };
     round_trip(&snapshot);
-    // A snapshot written before skinning existed still loads.
+    // A snapshot written before skinning and instance sets existed still loads.
     let mut old = serde_json::to_value(RenderSnapshot::default()).unwrap();
     old.as_object_mut().unwrap().remove("skinned");
     old.as_object_mut().unwrap().remove("joint_palette");
+    old.as_object_mut().unwrap().remove("instance_sets");
     assert_eq!(
         serde_json::from_value::<RenderSnapshot>(old).unwrap(),
         RenderSnapshot::default()
@@ -264,6 +284,38 @@ fn render() {
     assert_eq!(round_trip(&DrawFlags::SELECTED), "4");
 }
 
+/// Placements quantise their rotation and tint as the GPU reads them, and a
+/// cluster holds its placements' roots and largest scale.
+#[test]
+fn placements() {
+    let q = Quat::from_rotation_y(1.0) * Quat::from_rotation_x(-0.4);
+    let p = Placement::new(Vec3::new(1.5, -2.0, 63.75), q * 2.0, 1.25, 7);
+    assert_eq!(std::mem::size_of::<Placement>(), 32);
+    assert!(p.quat().angle_between(q) < 1e-4, "{:?} {q:?}", p.quat());
+    assert_eq!(p.tint, [255; 4]);
+    assert_eq!(p.with_tint([0.5, 0.0, 2.0]).tint, [128, 0, 255, 255]);
+    let expected = Mat4::from_scale_rotation_translation(Vec3::splat(1.25), q, p.position.into());
+    assert!(p.transform().abs_diff_eq(expected, 1e-4));
+    // -32768 reads as -1, as snorm16 does on the GPU.
+    let mut flipped = p;
+    flipped.rotation = [0, 0, 0, i16::MIN];
+    assert_eq!(flipped.quat(), Quat::from_xyzw(0.0, 0.0, 0.0, -1.0));
+    round_trip(&p);
+
+    let placements = [
+        p,
+        Placement::new(Vec3::new(-3.0, 0.5, 60.0), Quat::IDENTITY, -2.0, 8),
+    ];
+    assert_eq!(
+        InstanceCluster::of(&placements),
+        Some(InstanceCluster {
+            count: 2,
+            bounds: Aabb::new(Vec3::new(-3.0, -2.0, 60.0), Vec3::new(1.5, 0.5, 63.75)),
+            max_scale: 2.0,
+        })
+    );
+    assert_eq!(InstanceCluster::of(&[]), None);
+}
 #[test]
 fn block_compressed_textures_carry_their_mip_chain() {
     assert_eq!(
