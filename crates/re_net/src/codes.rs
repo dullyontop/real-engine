@@ -45,3 +45,21 @@ pub const WEBSOCKET: Code = Code::new("RE8910");
 
 /// This platform cannot serve: a browser build is always a client.
 pub const CANNOT_SERVE: Code = Code::new("RE8911");
+
+/// The server refused the handshake: the join code is wrong, or the client
+/// encrypted to a key that is not the server's.
+pub const HANDSHAKE_REFUSED: Code = Code::new("RE8912");
+
+/// The join code does not fit the server: it needs one and none was given,
+/// or one was given to a server that uses none.
+pub const JOIN_CODE_MISMATCH: Code = Code::new("RE8913");
+
+/// The server's key is not the one pinned with its fingerprint.
+pub const KEY_MISMATCH: Code = Code::new("RE8914");
+
+/// A join code or a server key's fingerprint does not parse.
+pub const BAD_CODE: Code = Code::new("RE8915");
+
+/// The platform has no secure random numbers, or the server key file cannot
+/// be read, parsed or written.
+pub const SECRETS: Code = Code::new("RE8916");

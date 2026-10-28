@@ -123,6 +123,17 @@ tracy-client = { version = "=0.19.0", default-features = false, features = ["ena
 # Networking (ADR-0050's amendment for PR "web"): the WebSocket listener beside a
 # server's UDP socket and the native WebSocket client; re_net only, no TLS.
 tungstenite = { version = "=0.30.0", default-features = false, features = ["handshake"] }
+# Encrypted online play (ADR-0067): re_net's own Noise_NKpsk0_25519_ChaChaPoly_BLAKE2s
+# over these primitives; re_net only. No `precomputed-tables`, for the web runtime's
+# size; `zeroize` so every key wipes itself when dropped.
+x25519-dalek = { version = "=3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["zeroize"] }
+blake2 = { version = "=0.11.0", default-features = false, features = ["zeroize"] }
+zeroize = "=1.9.1"
+subtle = { version = "=2.6.1", default-features = false }
+# Every key, salt and join code; re_net turns on `wasm_js` for the browser's
+# crypto.getRandomValues. In the lockfile already through rand.
+getrandom = "=0.4.3"
 
 # Tools, CLI, agent.
 clap = { version = "=4.6.7", features = ["derive"] }
@@ -145,6 +156,22 @@ oxijolt-sys = { path = "third_party/oxijolt-sys" }
 
 [profile.dev]
 debug = "line-tables-only"
+
+# Online play seals every packet (ADR-0067). Unoptimized, its cryptography runs
+# 50 to 100 times slower, which made the network tests of a debug build take
+# minutes: re_net is where the generic ChaCha20-Poly1305 and BLAKE2s code is
+# compiled, and the crates below hold the rest. Optimized, a debug build's
+# network tests are as fast as they were before encryption.
+[profile.dev.package.re_net]
+opt-level = 3
+[profile.dev.package.chacha20]
+opt-level = 3
+[profile.dev.package.poly1305]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
 
 # The packaged game's runtime (ADR-0037; cargo reserves the name `package`):
 # `real build` builds it with `--no-default-features --features game`. Debug
