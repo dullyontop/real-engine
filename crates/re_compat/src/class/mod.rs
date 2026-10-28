@@ -20,15 +20,23 @@
 //!
 //! The own component is named `Compat_<Class>` rather than `Compat.<Class>`,
 //! because component names are identifiers (ADR-0032).
+//!
+//! Each class has a number, its [`ClassId`], and the registry keeps each
+//! class's ancestors as a bitset, so [`ClassRegistry::is_a`] is two lookups
+//! and a bit test, with no allocation. [`ClassIndex`] finds every instance
+//! of a class without walking the world.
 
 pub(crate) mod access;
+mod index;
 mod trace;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
-use re_reflect::{FieldType, RecordId, Value, component, suggest};
+use re_reflect::{
+    ComponentOrigin, ComponentSchema, FieldSchema, FieldType, RecordId, Reflect, Value, suggest,
+};
 use re_scene::ecs as bevy_ecs;
 use re_scene::{Entity, World};
 
@@ -39,13 +47,65 @@ use crate::data::{
 use crate::error::CompatError;
 
 pub use access::own_component_name;
+pub use index::ClassIndex;
 pub use trace::TRACE_ENV as MEMBER_TRACE_ENV;
 
-component! {
-    /// Marks an entity as an instance of a Roblox-style class.
-    pub struct ClassMarker {
-        /// The class name (`Part`, `Folder`, `Script`).
-        pub class: String = String::new(),
+/// Marks an entity as an instance of a Roblox-style class.
+///
+/// Immutable, as an instance's class never changes (`ClassName` is
+/// read-only): every write replaces it, so its hooks keep the
+/// [`ClassIndex`] exact across spawn, despawn, scene load and fork.
+#[derive(bevy_ecs::component::Component, Clone, Debug, PartialEq, Default)]
+#[component(
+    immutable,
+    on_insert = index::marker_inserted,
+    on_discard = index::marker_discarded
+)]
+pub struct ClassMarker {
+    /// The class name (`Part`, `Folder`, `Script`).
+    pub class: String,
+}
+
+impl Reflect for ClassMarker {
+    const NAME: &'static str = "ClassMarker";
+
+    fn schema() -> ComponentSchema {
+        ComponentSchema {
+            name: Self::NAME.to_string(),
+            doc: "Marks an entity as an instance of a Roblox-style class.".to_string(),
+            fields: vec![FieldSchema {
+                name: "class".to_string(),
+                ty: FieldType::String,
+                doc: "The class name (`Part`, `Folder`, `Script`).".to_string(),
+                default: Value::Str(String::new()),
+            }],
+            origin: ComponentOrigin::Native,
+        }
+    }
+
+    fn get_field(&self, index: usize) -> Value {
+        assert_eq!(index, 0, "ClassMarker: field index {index} out of range");
+        Value::Str(self.class.clone())
+    }
+
+    fn set_field(&mut self, index: usize, value: &Value) {
+        assert_eq!(index, 0, "ClassMarker: field index {index} out of range");
+        let Value::Str(class) = value else {
+            panic!("value was coerced to the field type");
+        };
+        self.class.clone_from(class);
+    }
+}
+
+/// A class's number in its [`ClassRegistry`]: its place in name order. It
+/// means nothing to another registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ClassId(u16);
+
+impl ClassId {
+    /// The number, as an index into tables kept per class.
+    pub fn index(self) -> usize {
+        usize::from(self.0)
     }
 }
 
@@ -418,9 +478,11 @@ impl ClassRegistryBuilder {
         for doc in &docs {
             classes.push(class_def(doc, &names, &enums)?);
         }
+        let tree = Tree::new(&classes, &names)?;
         let reg = ClassRegistry {
             by_name: names,
             classes,
+            tree,
             enums,
             libraries,
             converters: self.converters,
@@ -433,6 +495,66 @@ impl ClassRegistryBuilder {
 
 fn bad(msg: String) -> CompatError {
     CompatError::InvalidData(msg)
+}
+
+/// The inheritance tree by [`ClassId`], worked out once when the registry is
+/// built.
+#[derive(Debug)]
+struct Tree {
+    /// Each class's chain: the class, then its superclasses up to `Instance`.
+    chains: Vec<Box<[ClassId]>>,
+    /// Each class's ancestors, itself included, as `words` bits per class.
+    ancestors: Vec<u64>,
+    words: usize,
+    /// Each class and the classes that inherit from it, in id order.
+    families: Vec<Box<[ClassId]>>,
+}
+
+impl Tree {
+    /// Fails on a superclass cycle, or more classes than a [`ClassId`] can
+    /// number.
+    fn new(classes: &[ClassDef], names: &HashMap<String, usize>) -> Result<Tree, CompatError> {
+        if classes.len() > usize::from(u16::MAX) + 1 {
+            return Err(bad(format!(
+                "{} classes are more than the class layer can number",
+                classes.len()
+            )));
+        }
+        let id = |i: usize| ClassId(i as u16);
+        let mut chains = Vec::with_capacity(classes.len());
+        for (i, c) in classes.iter().enumerate() {
+            let mut chain = vec![id(i)];
+            let mut cur = c.superclass.as_deref().and_then(|s| names.get(s));
+            while let Some(&s) = cur {
+                if chain.contains(&id(s)) {
+                    return Err(bad(format!("class {}'s superclasses form a cycle", c.name)));
+                }
+                chain.push(id(s));
+                cur = classes[s].superclass.as_deref().and_then(|s| names.get(s));
+            }
+            chains.push(chain.into_boxed_slice());
+        }
+        let words = classes.len().div_ceil(64);
+        let mut ancestors = vec![0u64; classes.len() * words];
+        let mut families: Vec<Vec<ClassId>> = vec![Vec::new(); classes.len()];
+        for (i, chain) in chains.iter().enumerate() {
+            for a in chain.iter().map(|a| a.index()) {
+                ancestors[i * words + a / 64] |= 1 << (a % 64);
+                families[a].push(id(i));
+            }
+        }
+        Ok(Tree {
+            chains,
+            ancestors,
+            words,
+            families: families.into_iter().map(Vec::into_boxed_slice).collect(),
+        })
+    }
+
+    fn is_a(&self, class: ClassId, ancestor: ClassId) -> bool {
+        let a = ancestor.index();
+        self.ancestors[class.index() * self.words + a / 64] & (1 << (a % 64)) != 0
+    }
 }
 
 fn class_def(
@@ -610,6 +732,7 @@ fn register_records(
 pub struct ClassRegistry {
     classes: Vec<ClassDef>,
     by_name: HashMap<String, usize>,
+    tree: Tree,
     enums: BTreeMap<String, EnumDoc>,
     libraries: BTreeMap<String, LibraryDoc>,
     converters: HashMap<String, Converter>,
@@ -627,11 +750,9 @@ impl ClassRegistry {
     }
 
     fn check_data(&self) -> Result<(), CompatError> {
-        for c in &self.classes {
-            // Walking the ancestry fails on a cycle.
-            let chain = self.chain(&c.name)?;
+        for (c, chain) in self.classes.iter().zip(&self.tree.chains) {
             // A member may override an inherited member of the same kind only.
-            for anc in chain.iter().skip(1) {
+            for anc in chain.iter().skip(1).map(|&a| self.def(a)) {
                 for m in members_of(c) {
                     if let Some(inherited) = members_of(anc).find(|x| x.name() == m.name())
                         && inherited.kind() != m.kind()
@@ -697,32 +818,45 @@ impl ClassRegistry {
         Ok(())
     }
 
-    /// The class and its superclasses, the class first. Fails on a cycle.
-    fn chain(&self, class: &str) -> Result<Vec<&ClassDef>, CompatError> {
-        let mut out = Vec::new();
-        let mut cur = Some(self.class(class)?);
-        while let Some(c) = cur {
-            if out.iter().any(|x: &&ClassDef| x.name == c.name) {
-                return Err(bad(format!("class {class}'s superclasses form a cycle")));
-            }
-            out.push(c);
-            cur = c.superclass.as_deref().and_then(|s| self.try_class(s));
+    /// The class and its superclasses, the class first, ending at
+    /// `Instance`; `RE9001` for an unknown class.
+    fn chain(
+        &self,
+        class: &str,
+    ) -> Result<impl DoubleEndedIterator<Item = &ClassDef>, CompatError> {
+        let id = self.id(class).ok_or_else(|| self.unknown(class))?;
+        Ok(self.tree.chains[id.index()].iter().map(|&c| self.def(c)))
+    }
+
+    fn unknown(&self, name: &str) -> CompatError {
+        CompatError::UnknownClass {
+            name: name.to_string(),
+            suggestion: suggest(name, self.classes.iter().map(|c| c.name.as_str())),
         }
-        Ok(out)
     }
 
     /// The class named `name`, or `RE9001` with a did-you-mean.
     pub fn class(&self, name: &str) -> Result<&ClassDef, CompatError> {
-        self.try_class(name)
-            .ok_or_else(|| CompatError::UnknownClass {
-                name: name.to_string(),
-                suggestion: suggest(name, self.classes.iter().map(|c| c.name.as_str())),
-            })
+        self.try_class(name).ok_or_else(|| self.unknown(name))
     }
 
     /// The class named `name`.
     pub fn try_class(&self, name: &str) -> Option<&ClassDef> {
         self.by_name.get(name).map(|&i| &self.classes[i])
+    }
+
+    /// The number of the class named `name`.
+    pub fn id(&self, name: &str) -> Option<ClassId> {
+        self.by_name.get(name).map(|&i| ClassId(i as u16))
+    }
+
+    /// The class numbered `id`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` is not one of this registry's.
+    pub fn def(&self, id: ClassId) -> &ClassDef {
+        &self.classes[id.index()]
     }
 
     /// Every class, sorted by name.
@@ -733,20 +867,33 @@ impl ClassRegistry {
     /// The class and its superclasses, the class first, ending at `Instance`.
     /// Empty for an unknown class.
     pub fn ancestry(&self, class: &str) -> Vec<&ClassDef> {
-        self.chain(class).unwrap_or_default()
+        self.chain(class).map(Iterator::collect).unwrap_or_default()
     }
 
-    /// True if `class` is `ancestor` or inherits from it (`IsA`).
+    /// True if `class` is `ancestor` or inherits from it (`IsA`); false if
+    /// either is unknown. Constant-time, with no allocation.
     pub fn is_a(&self, class: &str, ancestor: &str) -> bool {
-        self.ancestry(class).iter().any(|c| c.name == ancestor)
+        match (self.id(class), self.id(ancestor)) {
+            (Some(c), Some(a)) => self.tree.is_a(c, a),
+            _ => false,
+        }
+    }
+
+    /// [`ClassRegistry::is_a`] by number.
+    pub fn is_a_id(&self, class: ClassId, ancestor: ClassId) -> bool {
+        self.tree.is_a(class, ancestor)
+    }
+
+    /// `class` and every class that inherits from it, in id order.
+    pub fn family(&self, class: ClassId) -> &[ClassId] {
+        &self.tree.families[class.index()]
     }
 
     /// The member `name` of `class`, declared on the class or inherited (the
     /// nearest declaration wins), or `RE9001` with a did-you-mean over every
     /// member the class has.
     pub fn member(&self, class: &str, name: &str) -> Result<MemberRef<'_>, CompatError> {
-        let chain = self.chain(class)?;
-        for c in &chain {
+        for c in self.chain(class)? {
             if let Some(m) = members_of(c).find(|m| m.name() == name) {
                 return Ok(MemberRef {
                     class: c,
@@ -754,8 +901,8 @@ impl ClassRegistry {
                 });
             }
         }
-        let all: Vec<&str> = chain
-            .iter()
+        let all: Vec<&str> = self
+            .chain(class)?
             .flat_map(|c| members_of(c).map(|m| m.name()))
             .collect();
         Err(CompatError::UnknownMember {

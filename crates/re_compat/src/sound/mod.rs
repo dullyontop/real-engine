@@ -607,15 +607,10 @@ pub fn step(lua: &Lua, dt: f64) -> mlua::Result<()> {
     let st = state(lua)?;
     let classes = st.setup.classes.clone();
     let sounds: Vec<(Entity, Props)> = with_world(lua, |w| {
-        let mut out = Vec::new();
-        let mut q = w.ecs.query::<(Entity, &crate::ClassMarker)>();
-        for (e, m) in q.iter(&w.ecs) {
-            if m.class == "Sound" && !tree::is_destroyed(w, e) {
-                out.push(e);
-            }
-        }
-        out.sort_by_key(|e| e.to_bits());
-        out.into_iter()
+        classes
+            .instances_exactly(w, "Sound")
+            .into_iter()
+            .filter(|&e| !tree::is_destroyed(w, e))
             .map(|e| (e, props(w, &classes, e)))
             .collect()
     })?;
