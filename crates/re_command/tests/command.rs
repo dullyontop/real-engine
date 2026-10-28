@@ -1134,3 +1134,35 @@ fn set_note_round_trips_through_undo() {
         .unwrap_err();
     assert!(err.to_string().contains("generated"), "{err}");
 }
+
+#[test]
+fn spawns_without_ids_repeat_under_one_session_seed() {
+    // A replay's `entity.spawn` without an id, run twice with the same seed
+    // (ADR-0036 amendment): the same ids, the same log, the same world.
+    let run = |seed: i64| {
+        let mut w = world();
+        w.set_id_gen(re_scene::IdGen::session(seed));
+        let mut h = History::default();
+        let spawn = |name: &str| Op::Spawn {
+            id: None,
+            name: name.into(),
+            parent: None,
+            index: None,
+            components: IndexMap::new(),
+        };
+        let applied = h.execute(&mut w, tx(vec![spawn("a"), spawn("b")])).unwrap();
+        let ids: Vec<String> = applied
+            .iter()
+            .map(|op| match op {
+                Op::Spawn { id: Some(id), .. } => id.clone(),
+                other => panic!("not a spawn with its id filled in: {other:?}"),
+            })
+            .collect();
+        (ids, h.log_since_jsonl(0), w.state_hash())
+    };
+    let first = run(11);
+    assert_eq!(first.0.len(), 2);
+    assert_ne!(first.0[0], first.0[1]);
+    assert_eq!(run(11), first);
+    assert_ne!(run(12).0, first.0);
+}

@@ -75,11 +75,18 @@ impl IdIndex {
 
 /// Generates short random ids such as `e7kq2m9x4tb`: `e` plus ten Crockford
 /// base32 characters (50 bits). Seeded from the clock and process id by
-/// default; [`IdGen::seeded`] gives a reproducible sequence.
+/// default, so ids added while editing on two branches do not clash;
+/// [`IdGen::seeded`] gives a reproducible sequence, and [`IdGen::session`]
+/// the sequence of a play session (ADR-0036 amendment).
 #[derive(Resource, Clone, Debug)]
 pub struct IdGen {
     state: u64,
 }
+
+/// What [`IdGen::session`] mixes into the run's seed ("native"), so a native
+/// session's ids are a stream apart from compat's server and client streams
+/// and from `math.random`'s, which is derived from the same seed.
+pub const SESSION_SALT: u64 = 0x6e61_7469_7665_0001;
 
 impl Default for IdGen {
     fn default() -> Self {
@@ -95,6 +102,18 @@ impl IdGen {
     /// A generator with a fixed seed.
     pub fn seeded(seed: u64) -> Self {
         Self { state: seed }
+    }
+
+    /// The generator of a native play session whose seed is `seed` (the
+    /// run's `[scripts] seed`, or its replay's): a game that spawns without
+    /// ids makes the same ids in every run with that seed, on every platform.
+    pub fn session(seed: i64) -> Self {
+        Self::seeded(seed as u64 ^ SESSION_SALT)
+    }
+
+    /// The stream's position: `IdGen::seeded(state)` continues it.
+    pub fn state(&self) -> u64 {
+        self.state
     }
 
     /// The next id. Uniqueness against the world is checked by the caller
