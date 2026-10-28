@@ -828,3 +828,60 @@ fn a_builder_graph_is_read_only_until_it_is_converted_to_a_graph_file() {
     );
     assert_eq!(fragment(&mut app), built);
 }
+
+/// The island's last evaluation.
+fn report(app: &App) -> re_proc::EvalReport {
+    app.world()
+        .ecs
+        .get_resource::<re_proc::GraphStore>()
+        .expect("a graph store")
+        .report("island")
+        .expect("the island was evaluated")
+}
+
+fn badge(ed: &HeadlessEditor, node: &str, badge: &str) -> Option<egui::Rect> {
+    ed.editor.canvas_spot(CanvasSpot::Badge(node, badge))
+}
+
+#[test]
+fn each_node_shows_its_last_evaluation_under_it() {
+    let dir = project();
+    let mut app = open(dir.path());
+    let mut ed = editor(&mut app);
+
+    // Nothing was cached: every node computed its output. Its badges sit
+    // under its header: the time, "computed" and the output's size.
+    let first = report(&app);
+    assert_eq!(first.nodes.len(), 5, "{first:?}");
+    for n in &first.nodes {
+        let time = badge(&ed, &n.id, "time").unwrap_or_else(|| panic!("{}", n.id));
+        assert!(
+            time.top() > spot(&ed, CanvasSpot::Header(&n.id)).y,
+            "{}",
+            n.id
+        );
+        assert!(badge(&ed, &n.id, "computed").is_some(), "{}", n.id);
+        assert!(badge(&ed, &n.id, "size").is_some(), "{}", n.id);
+        assert!(badge(&ed, &n.id, "problems").is_none(), "{}", n.id);
+    }
+
+    // `h`'s height changed: `h` and the nodes it feeds compute again, and
+    // `mask` and `flat` come from the memory cache.
+    let height = spot(&ed, CanvasSpot::Param("h", "height", ""));
+    drag(
+        &mut ed,
+        &mut app,
+        height,
+        height + egui::vec2(60.0, 0.0),
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(sent(&ed, 0), ["graph.set_default"]);
+    settle(&mut ed, &mut app);
+    for n in ["h", "land", "ground"] {
+        assert!(badge(&ed, n, "computed").is_some(), "{n}");
+    }
+    for n in ["mask", "flat"] {
+        assert!(badge(&ed, n, "memory").is_some(), "{n}");
+        assert!(badge(&ed, n, "computed").is_none(), "{n}");
+    }
+}

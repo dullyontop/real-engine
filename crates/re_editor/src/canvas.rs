@@ -31,6 +31,13 @@
 //! "Open script" names the script in the console, and "Convert to a graph
 //! file" sends `proc.convert_builder` with the positions the nodes are drawn
 //! at, after which the source reads the file and the canvas edits it.
+//!
+//! Under each node, badges from the source's last evaluation (the
+//! `EvalReport` that `graph.report` returns): the time the node took, with a
+//! bar against the slowest node; where its output came from (the memory or
+//! disk cache, computed, skipped or failed); the output's size; and the
+//! node's problems and logs, listed on hover. They are dimmed while the
+//! report is of another seed than the source's.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -40,7 +47,7 @@ use egui_snarl::ui::{PinInfo, PinWireInfo, SnarlPin, SnarlStyle, SnarlViewer, Sn
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use re_app::App;
 use re_core::{Diagnostic, Location};
-use re_proc::{GraphStore, NodeDef, NodeRegistry, PortType};
+use re_proc::{CacheState, EvalReport, GraphStore, NodeDef, NodeRegistry, NodeReport, PortType};
 use re_reflect::Value;
 use re_scene::World;
 use re_types::graph::{EdgeDoc, GraphDoc, NodeDoc};
@@ -86,6 +93,11 @@ pub enum CanvasSpot<'a> {
     /// A button above the canvas, by its text: `"Open script"` and
     /// `"Convert to a graph file"` for a builder source.
     Button(&'a str),
+    /// A badge under a node, from the source's last evaluation, by node id
+    /// and badge: `"time"`; where the output came from, by its text
+    /// (`"memory"`, `"disk"`, `"computed"`, `"skipped"` or `"failed"`);
+    /// `"size"`; `"problems"`; `"logs"`.
+    Badge(&'a str, &'a str),
 }
 
 impl CanvasSpot<'_> {
@@ -98,6 +110,7 @@ impl CanvasSpot<'_> {
             CanvasSpot::MenuItem(m) => format!("menu\u{1f}{m}"),
             CanvasSpot::Param(n, p, part) => format!("param\u{1f}{n}\u{1f}{p}\u{1f}{part}"),
             CanvasSpot::Button(b) => format!("button\u{1f}{b}"),
+            CanvasSpot::Badge(n, b) => format!("badge\u{1f}{n}\u{1f}{b}"),
         }
     }
 }
@@ -469,6 +482,12 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
     let assets = move |kind: &str| schema::project_assets(&files, kind);
     let overrides = overrides(world, &source);
     let read_only = builder.then(|| read_only_text(&path));
+    let report = store.report(&source);
+    let seed = match world.get(&source, "Procedural", "seed") {
+        Ok(Value::Int(s)) => Some(s as u64),
+        _ => None,
+    };
+    let badges = report.as_ref().map(|r| Badges::new(r, seed));
     let mut viewer = Viewer {
         path: &path,
         source: &source,
@@ -477,6 +496,7 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         overrides: &overrides,
         assets: &assets,
         read_only: read_only.as_deref(),
+        badges: badges.as_ref(),
         tried: false,
         queued: Vec::new(),
         edits: Vec::new(),
@@ -957,6 +977,8 @@ struct Viewer<'a> {
     /// Why nothing can be edited (a builder graph), shown on the disabled
     /// widgets.
     read_only: Option<&'a str>,
+    /// The badges from the source's last evaluation.
+    badges: Option<&'a Badges<'a>>,
     /// An edit was tried on a read-only graph.
     tried: bool,
     queued: Vec<Queued>,
@@ -1132,6 +1154,182 @@ fn label(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response
     ui.add(egui::Label::new(text).selectable(false))
 }
 
+/// The badges of a source's last evaluation, by node.
+struct Badges<'a> {
+    rows: HashMap<&'a str, &'a NodeReport>,
+    /// The slowest node's time, in milliseconds: the time bars' full width.
+    slowest: f64,
+    /// Why the report is not of the graph as shown, when it is not.
+    stale: Option<String>,
+}
+
+impl<'a> Badges<'a> {
+    fn new(report: &'a EvalReport, seed: Option<u64>) -> Badges<'a> {
+        let stale = seed.filter(|s| *s != report.seed).map(|s| {
+            format!(
+                "The last evaluation used seed {}; the source's seed is {s}. These \
+                 badges change when the source next regenerates.",
+                report.seed
+            )
+        });
+        Badges {
+            rows: report.nodes.iter().map(|n| (n.id.as_str(), n)).collect(),
+            slowest: report.nodes.iter().map(|n| n.ms).fold(0.0, f64::max),
+            stale,
+        }
+    }
+
+    /// Draws the badges of one node's `row`, and returns where each one is
+    /// (by its [`CanvasSpot::Badge`] name).
+    fn show(&self, ui: &mut egui::Ui, row: &NodeReport) -> Vec<(&'static str, egui::Rect)> {
+        let mut parts = Vec::new();
+        if self.stale.is_some() {
+            ui.multiply_opacity(0.45);
+        }
+        let hover = |text: String| match &self.stale {
+            Some(why) => format!("{text}\n\n{why}"),
+            None => text,
+        };
+        // The time, with a bar against the slowest node.
+        let text = label(ui, RichText::new(time_text(row.ms)).small().monospace());
+        let (rect, bar) = ui.allocate_exact_size(egui::vec2(BAR_WIDTH, 6.0), egui::Sense::hover());
+        let fill = if self.slowest > 0.0 {
+            (row.ms / self.slowest).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        };
+        let painter = ui.painter();
+        painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
+        let mut done = rect;
+        done.set_width(BAR_WIDTH * fill);
+        painter.rect_filled(done, 2.0, ui.visuals().selection.bg_fill);
+        let time = text.union(bar).on_hover_text(hover(format!(
+            "{} loading or computing this node in the last evaluation; the bar is \
+             against the slowest node's {}",
+            time_text(row.ms),
+            time_text(self.slowest)
+        )));
+        parts.push(("time", time.rect));
+
+        let (cache, colour, about) = cache_text(row.cache);
+        let r = label(ui, RichText::new(cache).small().color(colour));
+        parts.push((cache, r.on_hover_text(hover(about.into())).rect));
+
+        if let Some(out) = &row.output {
+            let r = label(ui, RichText::new(size_text(out)).small()).on_hover_text(hover(format!(
+                "The {} output: {}, about {} in memory",
+                out.ty.port_name(),
+                items_text(out),
+                bytes_text(out.bytes)
+            )));
+            parts.push(("size", r.rect));
+        }
+
+        if !row.diagnostics.is_empty() {
+            let error = row
+                .diagnostics
+                .iter()
+                .any(|d| d.severity == re_core::Severity::Error);
+            let colour = if error { Color32::RED } else { WARNING };
+            let list: Vec<String> = row
+                .diagnostics
+                .iter()
+                .map(|d| format!("{}: {}", d.code, d.message))
+                .collect();
+            let text = format!("⚠ {}", row.diagnostics.len());
+            let r = label(ui, RichText::new(text).small().color(colour))
+                .on_hover_text(hover(list.join("\n")));
+            parts.push(("problems", r.rect));
+        }
+
+        if !row.logs.is_empty() {
+            let text = format!("log {}", row.logs.len());
+            let r = label(ui, RichText::new(text).small().weak())
+                .on_hover_text(hover(row.logs.join("\n")));
+            parts.push(("logs", r.rect));
+        }
+        parts
+    }
+}
+
+/// The time bar's width, in points.
+const BAR_WIDTH: f32 = 36.0;
+
+/// The colour of a node's warnings.
+const WARNING: Color32 = Color32::from_rgb(0xe0, 0xc0, 0x40);
+
+/// A node's time: `< 0.1 ms`, `12.3 ms` or `1.25 s`.
+fn time_text(ms: f64) -> String {
+    if ms < 0.1 {
+        "< 0.1 ms".into()
+    } else if ms < 1000.0 {
+        format!("{ms:.1} ms")
+    } else {
+        format!("{:.2} s", ms / 1000.0)
+    }
+}
+
+/// Where a node's output came from: the badge, its colour and what it means.
+fn cache_text(cache: CacheState) -> (&'static str, Color32, &'static str) {
+    match cache {
+        CacheState::Memory => (
+            "memory",
+            Color32::from_rgb(0x6c, 0xc0, 0x7a),
+            "The output came from the memory cache",
+        ),
+        CacheState::Disk => (
+            "disk",
+            Color32::from_rgb(0x6c, 0xb0, 0xc0),
+            "The output came from the disk cache",
+        ),
+        CacheState::Miss => (
+            "computed",
+            Color32::GRAY,
+            "The node computed its output: nothing cached matched its inputs, parameters and seed",
+        ),
+        CacheState::Skipped => (
+            "skipped",
+            Color32::DARK_GRAY,
+            "The node did not run: an input failed, the budget ran out, or a streamed \
+             evaluation did not need it",
+        ),
+        CacheState::Failed => ("failed", Color32::RED, "The node ran and failed"),
+    }
+}
+
+/// An output's size: its items and its bytes.
+fn size_text(out: &re_proc::OutputInfo) -> String {
+    format!("{} · {}", items_text(out), bytes_text(out.bytes))
+}
+
+/// An output's items, in its type's unit: `81 samples`, `1 vertex`.
+fn items_text(out: &re_proc::OutputInfo) -> String {
+    let (one, many) = match out.ty {
+        PortType::Field | PortType::Path => ("sample", "samples"),
+        PortType::Mesh => ("vertex", "vertices"),
+        PortType::Points | PortType::Shapes => ("point", "points"),
+        PortType::Fragment => ("entity", "entities"),
+    };
+    let unit = if out.items == 1 { one } else { many };
+    format!("{} {unit}", out.items)
+}
+
+/// `bytes` in B, KiB, MiB or GiB.
+fn bytes_text(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+    let mut v = bytes as f64;
+    let mut unit = 0;
+    while v >= 1024.0 && unit + 1 < UNITS.len() {
+        v /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{v:.1} {}", UNITS[unit])
+    }
+}
+
 impl SnarlViewer<NodeView> for Viewer<'_> {
     fn title(&mut self, node: &NodeView) -> String {
         node.id.clone()
@@ -1222,6 +1420,32 @@ impl SnarlViewer<NodeView> for Viewer<'_> {
                     }
                 });
         });
+    }
+
+    fn has_footer(&mut self, node: &NodeView) -> bool {
+        self.badges
+            .is_some_and(|b| b.rows.contains_key(node.id.as_str()))
+    }
+
+    fn show_footer(
+        &mut self,
+        node: NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut egui::Ui,
+        snarl: &mut Snarl<NodeView>,
+    ) {
+        let n = &snarl[node];
+        let Some(badges) = self.badges else {
+            return;
+        };
+        let Some(row) = badges.rows.get(n.id.as_str()) else {
+            return;
+        };
+        let parts = ui.horizontal(|ui| badges.show(ui, row)).inner;
+        for (badge, rect) in parts {
+            self.spot(ui, CanvasSpot::Badge(&n.id, badge), rect);
+        }
     }
 
     fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<NodeView>) -> bool {
@@ -1359,5 +1583,97 @@ mod tests {
         assert_eq!(at["d"], egui::pos2(0.0, 100.0 + GAP.y));
         assert_eq!(at["b"], egui::pos2(300.0 + GAP.x, 0.0));
         assert_eq!(at["c"], egui::pos2(500.0 + 2.0 * GAP.x, 0.0));
+    }
+
+    #[test]
+    fn badges_are_stale_while_the_report_is_of_another_seed() {
+        let node = |id: &str, ms: f64| NodeReport {
+            id: id.into(),
+            kind: "terrain.heightfield".into(),
+            key: String::new(),
+            cache: CacheState::Miss,
+            ms,
+            output: None,
+            diagnostics: Vec::new(),
+            logs: Vec::new(),
+        };
+        let report = EvalReport {
+            seed: 7,
+            nodes: vec![node("a", 2.0), node("b", 8.0)],
+            ..Default::default()
+        };
+        let badges = Badges::new(&report, Some(7));
+        assert!(badges.stale.is_none());
+        assert_eq!(badges.slowest, 8.0);
+        assert_eq!(badges.rows["a"].ms, 2.0);
+        // A source with no seed field (or no report seed to compare) is not
+        // called stale.
+        assert!(Badges::new(&report, None).stale.is_none());
+        let stale = Badges::new(&report, Some(8)).stale.unwrap();
+        assert!(
+            stale.contains("seed 7") && stale.contains("seed is 8"),
+            "{stale}"
+        );
+    }
+
+    #[test]
+    fn a_node_shows_the_badges_its_report_has() {
+        let plain = NodeReport {
+            id: "a".into(),
+            kind: "terrain.heightfield".into(),
+            key: String::new(),
+            cache: CacheState::Memory,
+            ms: 1.0,
+            output: None,
+            diagnostics: Vec::new(),
+            logs: Vec::new(),
+        };
+        let full = NodeReport {
+            id: "b".into(),
+            cache: CacheState::Failed,
+            output: Some(re_proc::OutputInfo {
+                ty: PortType::Field,
+                items: 81,
+                bytes: 324,
+            }),
+            diagnostics: vec![Diagnostic::warning(codes::PARAM_VALUE, "odd")],
+            logs: vec!["hello".into()],
+            ..plain.clone()
+        };
+        let report = EvalReport {
+            nodes: vec![plain.clone(), full.clone()],
+            ..Default::default()
+        };
+        let badges = Badges::new(&report, None);
+        let ctx = egui::Context::default();
+        let mut shown = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for row in [&plain, &full] {
+                let parts = ui.horizontal(|ui| badges.show(ui, row)).inner;
+                shown.push(parts.into_iter().map(|(b, _)| b).collect::<Vec<_>>());
+            }
+        });
+        // Nothing paints the font atlas here.
+        output.textures_delta.clear();
+        assert_eq!(shown[0], ["time", "memory"]);
+        assert_eq!(shown[1], ["time", "failed", "size", "problems", "logs"]);
+    }
+
+    #[test]
+    fn badge_texts() {
+        assert_eq!(time_text(0.04), "< 0.1 ms");
+        assert_eq!(time_text(12.34), "12.3 ms");
+        assert_eq!(time_text(1250.0), "1.25 s");
+        assert_eq!(bytes_text(512), "512 B");
+        assert_eq!(bytes_text(1536), "1.5 KiB");
+        assert_eq!(bytes_text(3 * 1024 * 1024), "3.0 MiB");
+        let out = |ty, items| re_proc::OutputInfo {
+            ty,
+            items,
+            bytes: 48,
+        };
+        assert_eq!(size_text(&out(PortType::Mesh, 1)), "1 vertex · 48 B");
+        assert_eq!(size_text(&out(PortType::Field, 81)), "81 samples · 48 B");
+        assert_eq!(size_text(&out(PortType::Fragment, 2)), "2 entities · 48 B");
     }
 }
