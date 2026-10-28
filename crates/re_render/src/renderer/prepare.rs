@@ -346,6 +346,7 @@ impl Renderer {
         let lights = frame::select_lights(&snapshot.lights, camera_pos, exposure);
         report.warnings.extend(lights.warnings);
         report.stats.point_lights = lights.points.len() as u32;
+        let mut left_out = lights.left_out;
         let shadow_far = shadows
             .distance
             .min(snapshot.camera.far)
@@ -425,13 +426,16 @@ impl Renderer {
         }
         let mut points = [PointLightRaw::default(); frame::MAX_POINT_LIGHTS];
         points[..lights.points.len()].copy_from_slice(&lights.points);
-        let spot_list = frame::select_spots(
+        let (spot_list, spots_left_out) = frame::select_spots(
             &extras.spot_lights,
             camera_pos,
             exposure,
             &mut report.warnings,
         );
         report.stats.spot_lights = spot_list.len() as u32;
+        left_out += spots_left_out;
+        report.stats.lights_culled = left_out.culled;
+        report.stats.lights_dropped = left_out.dropped;
         let mut spots = [SpotLightRaw::default(); extras::MAX_SPOT_LIGHTS];
         spots[..spot_list.len()].copy_from_slice(&spot_list);
         let (ambient_sky, ambient_ground) = extras.ambient.map_or(

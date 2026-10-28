@@ -161,6 +161,53 @@ fn run_headless_writes_a_screenshot() {
     assert_eq!(&png[1..4], b"PNG");
 }
 
+/// The screenshot's renderer warnings reach the run's report, as its errors
+/// do (ADR-0022): ten point lights are two more than a frame draws.
+#[test]
+fn run_reports_the_screenshots_renderer_warnings() {
+    let dir = tempfile::tempdir().unwrap();
+    real(&["new", "g"], dir.path());
+    let scene_path = dir.path().join("g/scenes/main.scene.json");
+    let mut scene: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&scene_path).unwrap()).unwrap();
+    let entities = scene["entities"].as_array_mut().unwrap();
+    for i in 0..10 {
+        entities.push(serde_json::json!({
+            "id": format!("lamp{i}"),
+            "components": {
+                "Light": { "kind": "Point", "range": 4.0 },
+                "Transform": { "translation": [f64::from(i), 1.0, 0.0] }
+            }
+        }));
+    }
+    std::fs::write(&scene_path, scene.to_string()).unwrap();
+    let o = real(
+        &[
+            "run",
+            "--project",
+            "g",
+            "--headless",
+            "--frames",
+            "2",
+            "--screenshot",
+            "out/shot.png",
+            "--json",
+        ],
+        dir.path(),
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let report: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    let code = re_render::codes::TOO_MANY_LIGHTS.to_string();
+    let warnings: Vec<_> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == code.as_str())
+        .collect();
+    assert_eq!(warnings.len(), 1, "{report:#}");
+    assert_eq!(warnings[0]["severity"], "warning", "{report:#}");
+}
+
 #[test]
 fn graph_eval_reports_each_node() {
     let dir = tempfile::tempdir().unwrap();

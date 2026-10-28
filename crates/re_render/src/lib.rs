@@ -48,6 +48,7 @@ mod post;
 mod renderer;
 pub mod shader;
 mod slots;
+mod timing;
 mod ui;
 
 pub use capture::{Capture, Image, ImageStats};
@@ -61,6 +62,7 @@ pub use renderer::{
     DrawTime, FrameReport, FrameStats, RenderStats, Renderer, RendererSettings, ResourceStats,
     ShaderReload, ShadowProbe,
 };
+pub use timing::GpuTimes;
 pub use ui::UiFrame;
 
 /// Re-exported so callers name the same wgpu and egui versions as the renderer.

@@ -5,8 +5,9 @@ use std::path::Path;
 
 use re_core::Diagnostic;
 
-use re_render::Image;
+use re_render::{Image, SceneExtras, wgpu};
 use re_script::ContextKind;
+use re_types::RenderSnapshot;
 
 use crate::codes;
 use crate::gfx::{self, Graphics};
@@ -113,6 +114,7 @@ impl App {
         let gfx = self.graphics.as_mut().expect("ensured");
         self.perf.draw(gfx.take_draw_time());
         self.diagnostics.extend(gfx.take_errors());
+        self.record_drawn();
         if let Some(path) = path {
             gfx::save_png(&image, &self.output_path(path)?)?;
         }
@@ -127,16 +129,11 @@ impl App {
     /// `RE0516` when the app has no GPU side, and the renderer's errors.
     pub fn draw_into(
         &mut self,
-        target: &re_render::wgpu::TextureView,
+        target: &wgpu::TextureView,
         size_px: [u32; 2],
         pixels_per_point: f32,
     ) -> Result<(), Diagnostic> {
-        let gfx = self.graphics.as_mut().ok_or_else(|| {
-            Diagnostic::error(
-                codes::SCREENSHOT_FAILED,
-                "the app has no GPU side to draw with",
-            )
-        })?;
+        let gfx = self.graphics.as_mut().ok_or_else(no_graphics)?;
         let drawn = if self.compat.is_some() {
             self.view_size = size_px;
             self.view_ppp = pixels_per_point;
@@ -151,7 +148,38 @@ impl App {
             gfx.draw(target, size_px, pixels_per_point, &self.snapshot, &self.hud)
         };
         self.perf.draw(gfx.take_draw_time());
+        self.record_drawn();
         drawn
+    }
+
+    /// Draws `snapshot` with `extras` into `target` with the app's GPU side,
+    /// as a view other than the game's own (the editor's scene view). The
+    /// PerfReport counts it among the renderer's `extra_views`, and its
+    /// warnings reach the diagnostics as the game's do (ADR-0022).
+    ///
+    /// # Errors
+    ///
+    /// `RE0516` when the app has no GPU side, and the renderer's errors.
+    pub fn draw_view(
+        &mut self,
+        target: &wgpu::TextureView,
+        snapshot: &RenderSnapshot,
+        extras: &SceneExtras,
+    ) -> Result<(), Diagnostic> {
+        let gfx = self.graphics.as_mut().ok_or_else(no_graphics)?;
+        let drawn = gfx.draw_view(target, snapshot, extras);
+        self.record_drawn();
+        drawn
+    }
+
+    /// Moves what the GPU side drew since the last call into the PerfReport,
+    /// and the first renderer warning of each code into the diagnostics.
+    pub(super) fn record_drawn(&mut self) {
+        if let Some(gfx) = &mut self.graphics {
+            let mut drawn = gfx.take_drawn();
+            self.perf.drawn(&drawn);
+            self.diagnostics.append(&mut drawn.first_warnings);
+        }
     }
 
     /// The HUD lines of the last frame.
@@ -318,6 +346,7 @@ impl App {
         if let Some(gfx) = self.graphics.as_mut() {
             self.perf.draw(gfx.take_draw_time());
         }
+        self.record_drawn();
         let image = match captured {
             Ok(i) => i,
             Err(d) => {
@@ -339,4 +368,11 @@ impl App {
             }
         }
     }
+}
+
+fn no_graphics() -> Diagnostic {
+    Diagnostic::error(
+        codes::SCREENSHOT_FAILED,
+        "the app has no GPU side to draw with",
+    )
 }

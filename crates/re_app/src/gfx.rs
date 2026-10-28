@@ -9,8 +9,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use re_core::time::Instant;
-use re_core::{Diagnostic, Location};
-use re_render::{Capture, Gpu, Image, Renderer, UiFrame, egui, wgpu};
+use re_core::{Code, Diagnostic, Location};
+use re_render::{
+    Capture, FrameReport, FrameStats, Gpu, GpuTimes, Image, Renderer, SceneExtras, UiFrame, egui,
+    wgpu,
+};
 use re_scene::World;
 use re_types::{MaterialDesc, RenderSnapshot, TextureHandle, TextureRef};
 
@@ -18,6 +21,7 @@ use crate::codes;
 use crate::compat_view::CompatView;
 use crate::hud::{self, HudLine};
 use crate::media::{DERIVED, LoadedMaterial, Media};
+use crate::perf::{RendererReport, RendererResources};
 use crate::sync::render::{self, RenderAssets};
 
 /// The wgpu backends for a project: `RE_BACKENDS` when set, else the first of
@@ -52,6 +56,61 @@ pub fn backend_name(backend: wgpu::Backend) -> &'static str {
     }
 }
 
+/// True for a warning the renderer gave about a view it drew: a renderer code
+/// that is not an error, which [`Graphics`] passes to the app's diagnostics
+/// once per code. Reports that keep only the errors of a run they repeat
+/// (`real verify`'s goldens stage, `real run`'s screenshot) keep these too,
+/// since nothing else reports them (ADR-0022).
+pub fn is_renderer_warning(d: &Diagnostic) -> bool {
+    !d.is_error() && re_render::CODE_RANGE.contains(&d.code.number())
+}
+
+/// What the renderer drew since the last [`Graphics::take_drawn`]: the
+/// PerfReport's renderer samples and the warnings for the app's diagnostics
+/// (ADR-0022).
+#[derive(Clone, Debug, Default)]
+pub struct Drawn {
+    /// The statistics of each main view drawn: a window's frame or a capture.
+    pub frames: Vec<FrameStats>,
+    /// The other views drawn: a compat game's surfaces and viewports, and the
+    /// views of [`Graphics::draw_view`] (the editor's).
+    pub extra_views: u64,
+    /// The code of every warning of those views.
+    pub warnings: Vec<Code>,
+    /// The first warning of each code since these graphics were made, for
+    /// the app's diagnostics; each is also logged once.
+    pub first_warnings: Vec<Diagnostic>,
+    /// The pass times of the timed frames read back since the last call.
+    pub gpu: Vec<GpuTimes>,
+}
+
+/// The renderer's reports, kept until the app takes them.
+#[derive(Default)]
+struct Reports {
+    drawn: Drawn,
+    /// The warning codes reported once already (a few).
+    warned: Vec<Code>,
+}
+
+impl Reports {
+    /// Keeps `report`, of a main view or (`main` false) of another view.
+    fn note(&mut self, report: FrameReport, main: bool) {
+        if main {
+            self.drawn.frames.push(report.stats);
+        } else {
+            self.drawn.extra_views += 1;
+        }
+        for warning in report.warnings {
+            self.drawn.warnings.push(warning.code);
+            if !self.warned.contains(&warning.code) {
+                self.warned.push(warning.code);
+                tracing::warn!(code = %warning.code, "{}", warning.message);
+                self.drawn.first_warnings.push(warning);
+            }
+        }
+    }
+}
+
 /// The GPU side of an [`App`](crate::App).
 pub struct Graphics {
     renderer: Renderer,
@@ -59,6 +118,7 @@ pub struct Graphics {
     textures: HashMap<String, TextureHandle>,
     started: Instant,
     keep_derived: bool,
+    reports: Reports,
     // Last, so the device outlives the renderer's resources.
     gpu: Gpu,
 }
@@ -89,6 +149,7 @@ impl Graphics {
             textures: HashMap::new(),
             started: Instant::now(),
             keep_derived: false,
+            reports: Reports::default(),
             gpu,
         }
     }
@@ -300,8 +361,11 @@ impl Graphics {
         snapshot: &RenderSnapshot,
         hud_lines: &[HudLine],
     ) -> Result<(), Diagnostic> {
-        self.renderer
+        self.renderer.time_next_frame();
+        let report = self
+            .renderer
             .render(&self.gpu.device, &self.gpu.queue, target, snapshot)?;
+        self.reports.note(report, true);
         if hud_lines.is_empty() {
             return Ok(());
         }
@@ -330,26 +394,33 @@ impl Graphics {
         let prepared = view.prepare(&mut self.renderer)?;
         let mut ui = view.take_ui();
         // The surfaces and viewports are drawn into their textures first.
-        view.draw_textured(
+        let mut reports = Vec::new();
+        let textured = view.draw_textured(
             device,
             queue,
             &mut self.renderer,
             &self.egui,
             ui.as_mut(),
             pixels_per_point,
-        )?;
-        match prepared {
+            &mut reports,
+        );
+        for report in reports {
+            self.reports.note(report, false);
+        }
+        textured?;
+        self.renderer.time_next_frame();
+        let report = match prepared {
             Some((mut snapshot, extras)) => {
                 // Surfaces painted for the first time this frame get quads now.
                 snapshot.quads = view.quads();
                 self.renderer
-                    .render_with(device, queue, target, &snapshot, &extras)?;
+                    .render_with(device, queue, target, &snapshot, &extras)?
             }
-            None => {
-                self.renderer
-                    .render(device, queue, target, &RenderSnapshot::default())?;
-            }
-        }
+            None => self
+                .renderer
+                .render(device, queue, target, &RenderSnapshot::default())?,
+        };
+        self.reports.note(report, true);
         let mut output = match ui {
             Some(o) => o,
             None if hud_lines.is_empty() => return Ok(()),
@@ -409,10 +480,60 @@ impl Graphics {
         capture.read(&self.gpu.device, &self.gpu.queue)
     }
 
+    /// Draws `snapshot` with `extras` into `target` as a view other than the
+    /// game's own (the editor's scene view): a [`Drawn::extra_views`], whose
+    /// warnings reach the app like the game's. The renderer's drawing time
+    /// goes to the next main view's sample, as before.
+    ///
+    /// # Errors
+    ///
+    /// The renderer's errors.
+    pub fn draw_view(
+        &mut self,
+        target: &wgpu::TextureView,
+        snapshot: &RenderSnapshot,
+        extras: &SceneExtras,
+    ) -> Result<(), Diagnostic> {
+        let report = self.renderer.render_with(
+            &self.gpu.device,
+            &self.gpu.queue,
+            target,
+            snapshot,
+            extras,
+        )?;
+        self.reports.note(report, false);
+        Ok(())
+    }
+
     /// The renderer's drawing time since the last call: PerfReport's
     /// `render_submit` and `queue_submit` (ADR-0038).
     pub fn take_draw_time(&mut self) -> re_render::DrawTime {
         self.renderer.take_draw_time()
+    }
+
+    /// What the renderer drew since the last call ([`Drawn`]), with the pass
+    /// times read back meanwhile.
+    pub fn take_drawn(&mut self) -> Drawn {
+        let mut drawn = std::mem::take(&mut self.reports.drawn);
+        drawn.gpu = self.renderer.take_gpu_times();
+        drawn
+    }
+
+    /// The renderer's part of a PerfReport, before the samples
+    /// ([`PerfRecorder::report`](crate::perf::PerfRecorder::report) adds
+    /// them): the backend, the adapter and the live resources.
+    pub fn renderer_report(&self) -> RendererReport {
+        let stats = self.renderer.stats();
+        RendererReport {
+            backend: self.backend().to_string(),
+            adapter: self.gpu.adapter_line(),
+            resources: RendererResources {
+                meshes: stats.meshes.into(),
+                textures: stats.textures.into(),
+                materials: stats.materials.into(),
+            },
+            ..RendererReport::default()
+        }
     }
 
     /// GPU errors reported since the last call.

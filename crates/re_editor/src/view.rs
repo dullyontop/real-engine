@@ -113,11 +113,9 @@ impl GameView {
             &mut snapshot,
             &mut extras,
         );
-        let gfx = app.graphics_mut().ok_or_else(no_graphics)?;
-        let (device, queue) = (gfx.gpu().device.clone(), gfx.gpu().queue.clone());
-        gfx.renderer_mut()
-            .render_with(&device, &queue, capture.view(), &snapshot, &extras)?;
-        Ok(())
+        app.graphics().ok_or_else(no_graphics)?;
+        // As an extra view, whose warnings reach the console (ADR-0022).
+        app.draw_view(capture.view(), &snapshot, &extras)
     }
 
     /// Forgets the texture (before the UI renderer is dropped).

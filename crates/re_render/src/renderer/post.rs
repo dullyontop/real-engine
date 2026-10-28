@@ -8,6 +8,7 @@ use super::prepare::PreparedFrame;
 use super::{FrameReport, HighlightUniform, OUTLINE_PX, Renderer, SKINNED};
 use crate::extras::{MAX_HIGHLIGHTS, SceneExtras};
 use crate::post::{DEPTH_CLEAR, PostFrame};
+use crate::timing::Group;
 
 impl Renderer {
     /// Records the post chain into `target`, then the highlights and the
@@ -37,6 +38,7 @@ impl Renderer {
                 clear: (!frame.sky).then_some(snapshot.clear),
             },
             target,
+            self.timer.as_ref(),
         );
         if !frame.highlight_batches.is_empty() {
             report.stats.highlights = frame.highlights as u32;
@@ -66,7 +68,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: self.timer.as_ref().and_then(|t| t.writes(Group::Overlay)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -149,7 +151,7 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: self.timer.as_ref().and_then(|t| t.writes(Group::Overlay)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -172,7 +174,7 @@ impl Renderer {
                 },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: self.timer.as_ref().and_then(|t| t.writes(Group::Overlay)),
             occlusion_query_set: None,
             multiview_mask: None,
         });

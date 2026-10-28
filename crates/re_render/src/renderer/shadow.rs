@@ -3,6 +3,7 @@
 
 use super::prepare::PreparedFrame;
 use super::{FrameReport, Renderer, SKINNED};
+use crate::timing::Group;
 
 impl Renderer {
     /// Records the frame's cascades into the shadow map's layers.
@@ -27,7 +28,7 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: self.timer.as_ref().and_then(|t| t.writes(Group::Shadow)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -44,6 +45,7 @@ impl Renderer {
                 },
             );
             report.stats.shadow_casters += drawn.instances;
+            report.stats.shadow_draw_calls += drawn.draw_calls;
         }
     }
 }

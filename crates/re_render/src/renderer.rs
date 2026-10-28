@@ -26,6 +26,7 @@ use crate::frame::{self, FrameUniform, InstanceRaw, LineVertex, MaterialUniform}
 use crate::gpu::Gpu;
 use crate::post::{DEPTH_COMPARE, DEPTH_COMPARE_EQUAL, DEPTH_FORMAT, HDR_FORMAT, PostChain};
 use crate::slots::Slots;
+use crate::timing::{GpuTimer, GpuTimes};
 use crate::ui::{UiFrame, UiPainter};
 use crate::{capture, codes, shader};
 
@@ -145,6 +146,65 @@ pub struct FrameStats {
     pub post_passes: u32,
     /// Skinned draw items drawn (also counted in `items_drawn`).
     pub skinned_items: u32,
+    /// Draw calls into the shadow map, summed over the cascades.
+    pub shadow_draw_calls: u32,
+    /// Lights left out because they light nothing: no intensity, range, cone
+    /// or direction, or values that are not finite.
+    pub lights_culled: u32,
+    /// Lights left out by the limits: directional lights after the one drawn,
+    /// and the point and spot lights past [`MAX_POINT_LIGHTS`](crate::MAX_POINT_LIGHTS)
+    /// and [`MAX_SPOT_LIGHTS`](crate::MAX_SPOT_LIGHTS), which `RE6017` warns about.
+    pub lights_dropped: u32,
+}
+
+impl FrameStats {
+    /// Every count by its field's name, for reports (ADR-0022): `PerfReport`
+    /// gives each one's mean, 95th percentile and maximum over a run.
+    pub fn counts(&self) -> [(&'static str, u64); 19] {
+        // No `..`: a new field does not compile until it is listed here.
+        let FrameStats {
+            draw_calls,
+            items_drawn,
+            items_skipped,
+            items_culled,
+            shadow_casters,
+            shadow_cascades,
+            triangles,
+            debug_lines,
+            point_lights,
+            spot_lights,
+            effect_quads,
+            highlights,
+            samples,
+            world_quads,
+            post_passes,
+            skinned_items,
+            shadow_draw_calls,
+            lights_culled,
+            lights_dropped,
+        } = *self;
+        [
+            ("draw_calls", draw_calls.into()),
+            ("items_drawn", items_drawn.into()),
+            ("items_skipped", items_skipped.into()),
+            ("items_culled", items_culled.into()),
+            ("shadow_casters", shadow_casters.into()),
+            ("shadow_cascades", shadow_cascades.into()),
+            ("triangles", triangles),
+            ("debug_lines", debug_lines.into()),
+            ("point_lights", point_lights.into()),
+            ("spot_lights", spot_lights.into()),
+            ("effect_quads", effect_quads.into()),
+            ("highlights", highlights.into()),
+            ("samples", samples.into()),
+            ("world_quads", world_quads.into()),
+            ("post_passes", post_passes.into()),
+            ("skinned_items", skinned_items.into()),
+            ("shadow_draw_calls", shadow_draw_calls.into()),
+            ("lights_culled", lights_culled.into()),
+            ("lights_dropped", lights_dropped.into()),
+        ]
+    }
 }
 
 /// The result of [`Renderer::render`]: what was drawn and the warnings.
@@ -441,6 +501,8 @@ pub struct Renderer {
     ui: UiPainter,
     last_frame: FrameStats,
     draw_time: DrawTime,
+    /// The pass timer, where the device can time passes (ADR-0022).
+    timer: Option<GpuTimer>,
     /// The shader files, with any set at run time (ADR-0038).
     sources: shader::ShaderSources,
     /// Each root shader file, preprocessed, as its pipelines were last built.
@@ -1247,6 +1309,7 @@ impl Renderer {
             mask_frame_group,
             ui: UiPainter::new(&device),
             draw_time: DrawTime::default(),
+            timer: GpuTimer::new(&device, &queue),
             adapter: gpu.adapter.clone(),
             device,
             queue,
@@ -2264,6 +2327,9 @@ impl Renderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("re_render frame"),
         });
+        if let Some(timer) = &mut self.timer {
+            timer.begin_frame(&mut encoder);
+        }
         self.record_shadows(&mut encoder, &frame, &mut report);
         self.record_scene(&mut encoder, &frame, &mut report);
         self.record_post(
@@ -2431,7 +2497,9 @@ impl Renderer {
         ui: &UiFrame,
     ) -> Result<(), Diagnostic> {
         let start = Instant::now();
-        let painted = self.ui.paint(device, queue, target, ui);
+        let painted = self
+            .ui
+            .paint(device, queue, target, ui, self.timer.as_ref());
         let waited = *painted.as_ref().unwrap_or(&Duration::ZERO);
         self.draw_time.submit += waited;
         self.draw_time.encode += start.elapsed().saturating_sub(waited);
@@ -2442,6 +2510,32 @@ impl Renderer {
     /// `render_submit` and `queue_submit` (ADR-0038).
     pub fn take_draw_time(&mut self) -> DrawTime {
         std::mem::take(&mut self.draw_time)
+    }
+
+    /// True when the device can time passes: it has `TIMESTAMP_QUERY`, which
+    /// the renderer asks for on Vulkan, DX12, Metal and WebGPU, never on GL.
+    pub fn times_gpu(&self) -> bool {
+        self.timer.is_some()
+    }
+
+    /// Times the GPU passes of the next frame (ADR-0022): the next
+    /// [`Renderer::render`] or [`Renderer::render_with`] call, and the
+    /// [`Renderer::paint_ui`] calls after it until the following render
+    /// call. Call it before a frame's main view, so other views drawn into
+    /// textures are not timed. The times arrive a frame or two later through
+    /// [`Renderer::take_gpu_times`]; nothing waits for them, so a frame is
+    /// left untimed when its readback buffer is still in use. Does nothing
+    /// where the device cannot time passes ([`Renderer::times_gpu`]).
+    pub fn time_next_frame(&mut self) {
+        if let Some(timer) = &mut self.timer {
+            timer.arm();
+        }
+    }
+
+    /// The pass times of the timed frames read back since the last call,
+    /// oldest first.
+    pub fn take_gpu_times(&mut self) -> Vec<GpuTimes> {
+        self.timer.as_mut().map(GpuTimer::take).unwrap_or_default()
     }
 
     /// Makes a texture view usable in egui (for example a scene [`Capture`](crate::Capture)

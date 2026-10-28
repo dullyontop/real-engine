@@ -532,7 +532,10 @@ impl App {
             bodies: u64::from(self.physics.body_count()),
             characters: self.physics.character_count() as u64,
         };
-        self.perf.report(counts, None)
+        // Pass times that arrived since the last view was drawn.
+        self.record_drawn();
+        let renderer = self.graphics.as_ref().map(Graphics::renderer_report);
+        self.perf.report(counts, renderer)
     }
 
     /// A [`Host`] over this app's state, for the script runtime. The World is

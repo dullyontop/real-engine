@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use re_compat::gui::{MAX_VIEWPORT, SurfaceDraw, SurfaceRedraws, ViewportDraw};
 use re_compat::render::{FrameItem, MaterialKey, MeshKey, RenderFrame, ViewportScene};
 use re_core::Diagnostic;
-use re_render::{Capture, Renderer, SceneExtras, UiFrame, egui, wgpu};
+use re_render::{Capture, FrameReport, Renderer, SceneExtras, UiFrame, egui, wgpu};
 use re_scene::Entity;
 use re_types::mesh::{MeshData, SkinWeights};
 use re_types::render::{
@@ -366,11 +366,17 @@ impl CompatView {
     /// surfaces [`SurfaceRedraws`] plans (with `ui`'s texture changes, the
     /// font atlas, applied first), before the frame that shows them.
     /// `pixels_per_point` is the screen UI's. Call it after
-    /// [`prepare`](Self::prepare), which uploads the viewports' meshes.
+    /// [`prepare`](Self::prepare), which uploads the viewports' meshes. The
+    /// report of each view drawn goes to `reports`, also when a later one
+    /// fails.
     ///
     /// # Errors
     ///
     /// The renderer's errors.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the GPU, the UI pass and where the reports go"
+    )]
     pub fn draw_textured(
         &mut self,
         device: &wgpu::Device,
@@ -379,6 +385,7 @@ impl CompatView {
         ctx: &egui::Context,
         ui: Option<&mut egui::FullOutput>,
         pixels_per_point: f32,
+        reports: &mut Vec<FrameReport>,
     ) -> Result<(), Diagnostic> {
         let Some(f) = &self.frame else {
             return Ok(());
@@ -437,7 +444,7 @@ impl CompatView {
                 t.capture = viewport_capture(device, px)?;
                 r.update_ui_texture(t.id, t.capture.view());
             }
-            r.render_with(device, queue, t.capture.view(), &snapshot, &extras)?;
+            reports.push(r.render_with(device, queue, t.capture.view(), &snapshot, &extras)?);
             t.drawn = Some(scene.clone());
             if let Some(s) = v.surface {
                 repaint.push(s);
@@ -477,7 +484,7 @@ impl CompatView {
                 shadows: self.shadows,
                 ..RenderSnapshot::default()
             };
-            r.render(device, queue, t.capture.view(), &clear)?;
+            reports.push(r.render(device, queue, t.capture.view(), &clear)?);
             let frame = UiFrame {
                 primitives: ctx.tessellate(s.shapes.clone(), s.pixels_per_point),
                 textures_delta: delta.take().unwrap_or_default(),

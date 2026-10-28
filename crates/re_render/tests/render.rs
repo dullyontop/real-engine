@@ -7,6 +7,8 @@
 
 mod common;
 
+use std::time::Duration;
+
 use common::*;
 use glam::{Mat4, Quat, Vec3};
 use re_render::{Capture, Gpu, Renderer, RendererSettings, codes};
@@ -996,6 +998,10 @@ fn bad_input_is_rejected_with_diagnostics() {
         .render(&gpu.device, &gpu.queue, capture.view(), &snapshot)
         .unwrap();
     assert_eq!(report.stats.point_lights, 8);
+    assert_eq!(
+        (report.stats.lights_culled, report.stats.lights_dropped),
+        (0, 2)
+    );
     assert_eq!(report.warnings[0].code, codes::TOO_MANY_LIGHTS);
     assert_eq!(gpu.errors().count(), 0, "{:?}", gpu.errors().take());
 }
@@ -1059,6 +1065,69 @@ fn settings_apply_to_the_next_frame() {
     snapshot.post.exposure = 2.0;
     let bright = render_image(&gpu, &mut renderer, &snapshot, 96, 64);
     assert!(bright.stats([0; 4]).luma_mean > dim.stats([0; 4]).luma_mean + 5.0);
+}
+
+/// Where the device has timestamps (on every backend but GL), the passes of
+/// a timed frame, and of the UI painted after it, are timed on the GPU, and
+/// the times arrive after later frames without anything waiting for them.
+#[test]
+fn timed_frames_give_their_pass_times() {
+    let gpu = gpu();
+    let mut renderer = Renderer::new(&gpu, Capture::FORMAT);
+    if gpu.backend() == wgpu::Backend::Gl {
+        assert!(!renderer.times_gpu());
+    }
+    let snapshot = shadow_scene(&mut renderer, true);
+    let (w, h) = (96, 64);
+    let capture = Capture::new(&gpu.device, w, h).unwrap();
+    let ctx = egui::Context::default();
+    let frame = |renderer: &mut Renderer, n: u32| {
+        renderer
+            .render(&gpu.device, &gpu.queue, capture.view(), &snapshot)
+            .unwrap();
+        let ui = ui_frame(&ctx, w, h, n, demo_panel);
+        renderer
+            .paint_ui(&gpu.device, &gpu.queue, capture.view(), &ui)
+            .unwrap();
+    };
+    let settle = || {
+        gpu.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
+    };
+    // Three timed frames, then one more, whose commands read the last back.
+    for n in 0..3 {
+        renderer.time_next_frame();
+        frame(&mut renderer, n);
+    }
+    frame(&mut renderer, 3);
+    settle();
+    let times = renderer.take_gpu_times();
+    if !renderer.times_gpu() {
+        println!("{:?} cannot time passes", gpu.backend());
+        assert!(times.is_empty(), "{times:?}");
+        return;
+    }
+    assert_eq!(times.len(), 3, "{times:?}");
+    for t in &times {
+        println!("{t:?}");
+        assert_eq!(t.total, t.shadow + t.scene + t.post + t.overlay + t.ui);
+        // Checked where CI and the development containers run: lavapipe.
+        if gpu.backend() == wgpu::Backend::Vulkan {
+            let zero = Duration::ZERO;
+            assert!(
+                t.shadow > zero && t.scene > zero && t.post > zero && t.ui > zero,
+                "{t:?}"
+            );
+            assert_eq!(t.overlay, zero, "no highlights or quads on top");
+        }
+    }
+    // Frames that are not timed give nothing.
+    frame(&mut renderer, 4);
+    frame(&mut renderer, 5);
+    settle();
+    assert!(renderer.take_gpu_times().is_empty());
+    assert_eq!(gpu.errors().count(), 0, "{:?}", gpu.errors().take());
 }
 
 /// A backend set with no adapter is an `RE6002` diagnostic, not a panic.
