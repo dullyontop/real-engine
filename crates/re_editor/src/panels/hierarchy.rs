@@ -389,8 +389,9 @@ fn shortcut(modifiers: Modifiers, key: Key) -> Option<KeyboardShortcut> {
     Some(KeyboardShortcut::new(modifiers, key))
 }
 
-/// A menu item with its shortcut, recorded for [`Editor::menu_item`].
-fn item(
+/// A menu item with its shortcut, recorded for [`Editor::menu_item`]. The
+/// procedural entries of a row's menu (`procedural::entity_menu`) use it too.
+pub(super) fn item(
     ui: &mut egui::Ui,
     ed: &mut Editor,
     label: &str,
