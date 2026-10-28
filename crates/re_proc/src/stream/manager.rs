@@ -560,9 +560,9 @@ impl Streamer {
     }
 
     /// The world's streamed sources, checked, with the problems to report
-    /// (once per subject): sources that cannot stream, and nodes written for
-    /// an older version (streamed cells skip the generator, which reports
-    /// those).
+    /// (once per subject): sources that cannot stream, overrides they ignore
+    /// and nodes written for an older version (streamed cells skip the
+    /// generator, which reports those).
     fn describe_sources(&mut self, world: &mut World) -> (Vec<Source>, Vec<(String, Diagnostic)>) {
         let mut sources = Vec::new();
         let mut problems = Vec::new();
@@ -572,7 +572,7 @@ impl Streamer {
         for (id, e) in entities {
             match source::describe(world, e, &self.config, &mut self.described) {
                 Ok(s) => {
-                    for d in &s.outdated {
+                    for d in &s.warnings {
                         problems.push((format!("{id}: {}", d.message), d.clone()));
                     }
                     sources.push(s);
@@ -1407,16 +1407,16 @@ impl Streamer {
                     ymax = ymax.max(hi);
                 }
             }
+            let by_name: BTreeMap<&str, &DerivedAsset> =
+                out.assets.iter().map(|(n, a)| (n.as_str(), a)).collect();
             for n in out.fragment.iter().filter(|_| applied.is_ok()) {
                 let (y, mesh) = translation_and_mesh(n);
                 // An entity drawing a derived mesh (a corner-local terrain
                 // cell) spans its mesh's heights, not its origin's.
-                let range = mesh
-                    .and_then(|m| out.assets.iter().find(|(name, _)| name == m))
-                    .and_then(|(_, a)| match a {
-                        DerivedAsset::Mesh(m) => mesh_height_range(m),
-                        DerivedAsset::Heightfield(_) => None,
-                    });
+                let range = mesh.and_then(|m| by_name.get(m)).and_then(|a| match a {
+                    DerivedAsset::Mesh(m) => mesh_height_range(m),
+                    DerivedAsset::Heightfield(_) => None,
+                });
                 match (range, y) {
                     (Some((lo, hi)), y) => {
                         let y = y.unwrap_or(0.0);

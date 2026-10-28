@@ -8,14 +8,15 @@ use re_app::App;
 use re_command::{CommandOutcome, Origin, PolicyCheck};
 use re_core::{Diagnostic, Severity};
 use re_reflect::{Doc, FieldType, Value};
-use re_scene::World;
+use re_scene::{Generated, World};
 use serde_json::{Value as Json, json};
 
 use crate::camera::{EditorCamera, Navigation};
+use crate::clipboard::{self, Clip, Place};
 use crate::gizmo::{Gizmo, GizmoSettings};
 use crate::layout::{self, Layout, PanelId, PanelStates};
 use crate::overlay::{self, ViewSettings};
-use crate::panels;
+use crate::panels::{self, GENERATED_NAME, Rename};
 use crate::selection::Selection;
 
 /// The most console lines kept; older ones are dropped.
@@ -122,6 +123,8 @@ pub(crate) enum Action {
     },
     /// Report a problem found while reading the panels' input.
     Report(Diagnostic),
+    /// Paste copied entities with fresh ids (a paste or a duplicate).
+    Paste { clip: Clip, place: Place },
 }
 
 /// The command palette's state.
@@ -158,6 +161,16 @@ pub(crate) fn row_key(id: &str) -> String {
     format!("row\u{1f}{id}")
 }
 
+/// The key of an entity's note field in [`Pending`].
+pub(crate) fn note_key(id: &str) -> String {
+    format!("note\u{1f}{id}")
+}
+
+/// The key of one context menu item in [`Pending::rects`].
+pub(crate) fn menu_key(label: &str) -> String {
+    format!("menu\u{1f}{label}")
+}
+
 /// The key of one inspector field in [`Pending`].
 pub(crate) fn field_key(id: &str, component: &str, field: &str) -> String {
     format!("{id}\u{1f}{component}\u{1f}{field}")
@@ -179,6 +192,13 @@ pub struct Editor {
     pub(crate) graph_new: HashMap<String, [String; 3]>,
     /// A selection clicked in the last frame, applied after this one.
     pub(crate) select_next: Option<Selection>,
+    /// The entity being renamed in the Hierarchy.
+    pub(crate) renaming: Option<Rename>,
+    /// The active entity the Hierarchy last scrolled to.
+    pub(crate) revealed: Option<String>,
+    /// Where a paste from a menu goes, until the host hands over the
+    /// clipboard's text ([`Editor::paste_clipboard`]).
+    pub(crate) paste_request: Option<Place>,
     pub(crate) later: Vec<Action>,
     pub(crate) rects: PanelRects,
     pub(crate) status: String,
@@ -252,6 +272,9 @@ impl Editor {
             pending: Pending::default(),
             graph_new: HashMap::new(),
             select_next: None,
+            renaming: None,
+            revealed: None,
+            paste_request: None,
             later: Vec::new(),
             rects: PanelRects::default(),
             status: String::new(),
@@ -321,6 +344,31 @@ impl Editor {
             .rects
             .get(&row_key(id))
             .and_then(|r| r.first().copied())
+    }
+
+    /// Where the inspector drew the note field of entity `id` in the last
+    /// frame (in egui points), if it was shown.
+    pub fn note_field(&self, id: &str) -> Option<egui::Rect> {
+        self.pending
+            .rects
+            .get(&note_key(id))
+            .and_then(|r| r.first().copied())
+    }
+
+    /// Where the open context menu drew its item `label` in the last frame
+    /// (in egui points), if a menu with that item was open.
+    pub fn menu_item(&self, label: &str) -> Option<egui::Rect> {
+        self.pending
+            .rects
+            .get(&menu_key(label))
+            .and_then(|r| r.first().copied())
+    }
+
+    /// The entity being renamed in the Hierarchy, and the name typed so far.
+    pub fn renaming(&self) -> Option<(&str, &str)> {
+        self.renaming
+            .as_ref()
+            .map(|r| (r.id.as_str(), r.text.as_str()))
     }
 
     /// The console's lines, oldest first.
@@ -494,29 +542,172 @@ impl Editor {
     ) -> Option<CommandOutcome> {
         match self.delete_action(app.world())? {
             Action::Command { name, args, .. } => {
-                self.selection.clear();
+                self.change_selection(Selection::new());
                 Some(self.run(app, policy, &name, args, false))
             }
             _ => None,
         }
     }
 
+    /// Selects `selection` now. When the active entity changes, the edits
+    /// in progress in the Inspector are dropped (they belonged to the entity
+    /// it showed).
+    pub(crate) fn change_selection(&mut self, selection: Selection) {
+        if self.selection.active() != selection.active() {
+            // Where this frame's widgets were drawn stays true until the next.
+            self.pending = Pending {
+                rects: std::mem::take(&mut self.pending.rects),
+                ..Pending::default()
+            };
+        }
+        self.selection = selection;
+    }
+
+    /// The clipboard text Ctrl+C writes: the selected entities that have no
+    /// selected ancestor, each with everything under it, in the format of
+    /// [`clipboard`](crate::clipboard). Notes on what was left out go to the
+    /// console. `None` when nothing could be copied.
+    pub fn copy_selection(&mut self, world: &World) -> Option<String> {
+        let copied = clipboard::copy(world, &self.selection);
+        for d in &copied.notes {
+            self.log_diagnostic(d);
+        }
+        copied.clip.map(|clip| clip.to_text())
+    }
+
+    /// Pastes clipboard `text`, as Ctrl+V does (after the active entity,
+    /// under its parent) or, with `as_child`, as "Paste as child" does
+    /// (under the active entity): one `scene.apply` of `restore` ops with
+    /// fresh ids, so one undo step, after which the pasted roots are
+    /// selected. `None` (nothing is sent) when the text holds no entities
+    /// or the paste is refused; the console says why.
+    pub fn paste(
+        &mut self,
+        app: &mut App,
+        policy: &dyn PolicyCheck,
+        text: &str,
+        as_child: bool,
+    ) -> Option<CommandOutcome> {
+        let place = if as_child {
+            Place::Under
+        } else {
+            Place::Beside
+        };
+        match Clip::parse(text) {
+            Ok(clip) => self.paste_clip(app, policy, &clip, place),
+            Err(d) => {
+                self.log_diagnostic(&d);
+                None
+            }
+        }
+    }
+
+    /// Whether a menu's Paste or "Paste as child" waits for the clipboard's
+    /// text. egui cannot read the system clipboard, so the host reads it
+    /// and calls [`Editor::paste_clipboard`] after the frame.
+    pub fn wants_clipboard(&self) -> bool {
+        self.paste_request.is_some()
+    }
+
+    /// Does the paste a menu asked for with `text`, the system clipboard's
+    /// text (`None` when it holds no text, which the console notes). `None`
+    /// when no paste was asked for, nothing could be pasted, or the paste
+    /// was refused; the console says why.
+    pub fn paste_clipboard(
+        &mut self,
+        app: &mut App,
+        policy: &dyn PolicyCheck,
+        text: Option<&str>,
+    ) -> Option<CommandOutcome> {
+        let place = self.paste_request.take()?;
+        match Clip::parse(text.unwrap_or_default()) {
+            Ok(clip) => self.paste_clip(app, policy, &clip, place),
+            Err(d) => {
+                self.log_diagnostic(&d);
+                None
+            }
+        }
+    }
+
+    /// Starts renaming entity `id` in its Hierarchy row (F2, a double-click,
+    /// or the menu's Rename). A generated entity is not renamed (the
+    /// `rename` op refuses it); the console says why.
+    pub(crate) fn start_rename(&mut self, world: &World, id: &str) {
+        let Ok(e) = world.entity(id) else {
+            return;
+        };
+        if world.ecs.get::<Generated>(e).is_some() {
+            self.log(
+                LineKind::Info,
+                format!("{id} cannot be renamed: {GENERATED_NAME}"),
+            );
+            return;
+        }
+        self.renaming = Some(Rename::new(id, world.name_of(e)));
+    }
+
+    /// Duplicates the selection, as Ctrl+D does: a copy of each selected
+    /// entity that has no selected ancestor, with everything under it, after
+    /// its original, in one undo step; the copies are selected. The
+    /// clipboard is not touched. `None` when nothing could be copied.
+    pub fn duplicate_selection(
+        &mut self,
+        app: &mut App,
+        policy: &dyn PolicyCheck,
+    ) -> Option<CommandOutcome> {
+        let clip = self.copy_clip(app.world())?;
+        self.paste_clip(app, policy, &clip, Place::AfterOriginals)
+    }
+
+    pub(crate) fn copy_clip(&mut self, world: &World) -> Option<Clip> {
+        let copied = clipboard::copy(world, &self.selection);
+        for d in &copied.notes {
+            self.log_diagnostic(d);
+        }
+        copied.clip
+    }
+
+    fn paste_clip(
+        &mut self,
+        app: &mut App,
+        policy: &dyn PolicyCheck,
+        clip: &Clip,
+        place: Place,
+    ) -> Option<CommandOutcome> {
+        let pasted = match clipboard::paste(app.world_mut(), clip, &self.selection, place) {
+            Ok(pasted) => pasted,
+            Err(d) => {
+                self.log_diagnostic(&d);
+                return None;
+            }
+        };
+        for d in &pasted.notes {
+            self.log_diagnostic(d);
+        }
+        let outcome = self.run(app, policy, "scene.apply", pasted.args, false);
+        if outcome.ok {
+            self.change_selection(Selection::from_ids(pasted.roots, None));
+        }
+        Some(outcome)
+    }
+
     /// The edit [`Editor::delete_selection`] sends.
     pub(crate) fn delete_action(&self, world: &World) -> Option<Action> {
-        let ids = self.selection.topmost(world);
-        let label = match ids.as_slice() {
-            [] => return None,
-            [one] => format!("delete {one}"),
-            _ => format!("delete {} entities", ids.len()),
-        };
-        let ops: Vec<Json> = ids
+        despawn(&self.selection.topmost(world))
+    }
+
+    /// Ctrl+X and the menu's Cut: the selection's clipboard text, as
+    /// [`Editor::copy_selection`] writes it, and the edit that deletes what
+    /// was copied (one undo step). An entity left out of the copy is not
+    /// deleted; `None`, and nothing deleted, when nothing could be copied.
+    pub(crate) fn cut(&mut self, world: &World) -> Option<(String, Action)> {
+        let clip = self.copy_clip(world)?;
+        let roots: Vec<String> = clip
+            .subtrees
             .iter()
-            .map(|id| json!({ "op": "despawn", "id": id }))
+            .map(|s| s.entities[0].id.clone())
             .collect();
-        Some(command(
-            "scene.apply",
-            json!({ "label": label, "ops": ops }),
-        ))
+        Some((clip.to_text(), despawn(&roots)?))
     }
 
     /// Points the editor camera at the selection (F), or at everything
@@ -760,6 +951,10 @@ impl Editor {
         let mut actions = Vec::new();
         self.shortcuts(ui.ctx(), app.world(), &mut actions);
         panels::draw(self, ui, app, &mut actions);
+        // A rename the Hierarchy did not show (its tab is hidden) is dropped.
+        if self.rects.get(Panel::Hierarchy).is_none() {
+            self.renaming = None;
+        }
         // A field committed in the same frame as an Undo or Redo click (the
         // click took its focus) is applied first, so undo sees it.
         actions.sort_by_key(
@@ -807,6 +1002,63 @@ impl Editor {
         } else if ctx.input_mut(|i| i.consume_shortcut(&down)) {
             self.select_next = Some(self.selection.children(world));
         }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F2))
+            && let Some(id) = self.selection.active().map(str::to_string)
+        {
+            self.start_rename(world, &id);
+        }
+        self.clipboard_keys(ctx, world, actions);
+    }
+
+    /// Ctrl+C, Ctrl+X and Ctrl+V (which egui turns into events), Ctrl+D, and
+    /// Delete (Backspace too on macOS).
+    fn clipboard_keys(&mut self, ctx: &egui::Context, world: &World, actions: &mut Vec<Action>) {
+        use egui::{Event, Key, KeyboardShortcut, Modifiers};
+        // Text selected in a label keeps Ctrl+C for itself.
+        let label_text = ctx
+            .with_plugin(|s: &mut egui::text_selection::LabelSelectionState| s.has_selection())
+            .unwrap_or(false);
+        for event in ctx.input(|i| i.events.clone()) {
+            match event {
+                Event::Copy if !label_text => {
+                    if let Some(text) = self.copy_selection(world) {
+                        ctx.copy_text(text);
+                    }
+                }
+                Event::Cut if !label_text => {
+                    if let Some((text, delete)) = self.cut(world) {
+                        ctx.copy_text(text);
+                        actions.push(delete);
+                        self.change_selection(Selection::new());
+                    }
+                }
+                Event::Paste(text) => match Clip::parse(&text) {
+                    Ok(clip) => actions.push(Action::Paste {
+                        clip,
+                        place: Place::Beside,
+                    }),
+                    Err(d) => self.log_diagnostic(&d),
+                },
+                _ => {}
+            }
+        }
+        let duplicate = KeyboardShortcut::new(Modifiers::COMMAND, Key::D);
+        if ctx.input_mut(|i| i.consume_shortcut(&duplicate))
+            && let Some(clip) = self.copy_clip(world)
+        {
+            actions.push(Action::Paste {
+                clip,
+                place: Place::AfterOriginals,
+            });
+        }
+        let delete = ctx.input_mut(|i| {
+            i.consume_key(Modifiers::NONE, Key::Delete)
+                || (cfg!(target_os = "macos") && i.consume_key(Modifiers::NONE, Key::Backspace))
+        });
+        if delete && let Some(action) = self.delete_action(world) {
+            actions.push(action);
+            self.change_selection(Selection::new());
+        }
     }
 
     pub(crate) fn apply(&mut self, app: &mut App, policy: &dyn PolicyCheck, action: Action) {
@@ -829,6 +1081,9 @@ impl Editor {
                 self.set_field(app, policy, &id, &component, &field, &ty, &value);
             }
             Action::Report(d) => self.log_diagnostic(&d),
+            Action::Paste { clip, place } => {
+                self.paste_clip(app, policy, &clip, place);
+            }
         }
     }
 
@@ -1000,6 +1255,24 @@ fn initial_camera(app: &App) -> EditorCamera {
         .map(|(world, fov)| EditorCamera::from_pose(world, fov))
         .filter(EditorCamera::is_finite)
         .unwrap_or_default()
+}
+
+/// One `scene.apply` that deletes `ids` and everything under them (one undo
+/// step); `None` when there are none.
+fn despawn(ids: &[String]) -> Option<Action> {
+    let label = match ids {
+        [] => return None,
+        [one] => format!("delete {one}"),
+        _ => format!("delete {} entities", ids.len()),
+    };
+    let ops: Vec<Json> = ids
+        .iter()
+        .map(|id| json!({ "op": "despawn", "id": id }))
+        .collect();
+    Some(command(
+        "scene.apply",
+        json!({ "label": label, "ops": ops }),
+    ))
 }
 
 pub(crate) fn command(name: &str, args: Json) -> Action {

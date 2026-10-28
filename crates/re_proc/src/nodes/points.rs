@@ -9,7 +9,7 @@ use re_geom::math::{cross, quat_from_yaw};
 use re_reflect::Value;
 use re_scene::PrefabFile;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::scatter::{Limits, limits_of};
 use super::{
@@ -18,7 +18,7 @@ use super::{
 use crate::value::{FragItem, Fragment, Output, Points, PortType, PrefabUse};
 
 /// Parameters of `points.filter`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct FilterParams {
     /// Drop points below this height (metres).
@@ -80,7 +80,7 @@ fn filter(ctx: &NodeCtx, p: &FilterParams) -> Result<Output, String> {
 }
 
 /// One choice of [`PickParams`].
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Choice {
     /// The tag given to the points that pick this choice.
@@ -95,7 +95,7 @@ fn one() -> f32 {
 }
 
 /// Parameters of `points.pick`.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct PickParams {
     /// The choices; each point picks one at random by weight.
@@ -145,7 +145,7 @@ fn pick(ctx: &NodeCtx, p: &PickParams) -> Result<Output, String> {
 }
 
 /// Parameters of `points.instance`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct InstanceParams {
     /// The prefab placed at untagged points (or at every point when
