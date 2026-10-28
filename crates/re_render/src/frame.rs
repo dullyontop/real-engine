@@ -354,7 +354,10 @@ pub(crate) fn transform_aabb(aabb: &Aabb, world: &Mat4) -> Aabb {
 pub(crate) struct Frustum([Vec4; 6]);
 
 impl Frustum {
-    /// The frustum of a DirectX-depth (0..1) `view_proj`.
+    /// The frustum of a DirectX-depth (0..1) `view_proj`. The planes are not
+    /// normalised. Of a reversed, infinite projection like [`projection`], the
+    /// `z` plane has a zero normal and culls nothing and `w - z` is the near
+    /// plane: cull with [`Frustum::of_camera`], and divide by no plane's length.
     pub fn new(view_proj: &Mat4) -> Frustum {
         let r = view_proj.transpose();
         let (x, y, z, w) = (r.x_axis, r.y_axis, r.z_axis, r.w_axis);
