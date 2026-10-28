@@ -198,14 +198,14 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 - `PhysicsWorld` is `Send + Sync` (`unsafe impl` at `world.rs:500` and `:533` in the oxijolt source), so the stepping call may run on a pool thread.
 - Input is a `Vec<PhysicsCmd>` sorted by `(kind, entity)` before it is applied, so the result does not depend on the order in which scripts issued commands.
 - Output is one batched pose pull per step through `active_body_poses_into(&mut Vec<BodyPose>)`, plus `take_events()`. oxijolt's `BodyPose` carries only the body id, position and rotation, and covers active bodies only. So `re_types::BodyPose` has no velocities, sleeping bodies keep their last `Transform` (`Physics::poses_into` also reports the final pose of bodies that fell asleep during the step, so that value is exact), and velocities are read per body (`Physics::velocity`) only for the entities that need them.
-- **Layers decide collisions; group masks filter queries and characters.** Which bodies collide is decided by `re_physics::LayerTable` alone: each engine `Layer` becomes two Jolt object layers, one for static bodies (in the static broad-phase tree) and one for moving bodies (dynamic and kinematic, in the moving tree), so a pair of layers has a moving-vs-moving and a moving-vs-static switch. The standard table has 8 layers, layer 1 being debris (moving debris hits static bodies only). `GroupMask` does not affect body-to-body collision: it filters queries (`QueryFilter::groups`) and characters (a character only collides with bodies whose groups intersect its own, through a contact-validate listener).
+- **Layers decide collisions; group masks filter queries and characters.** Which bodies collide is decided by `re_physics::LayerTable` alone: each engine `Layer` becomes two Jolt object layers, one for static bodies (in the static broad-phase tree) and one for moving bodies (dynamic and kinematic, in the moving tree), so a pair of layers has a moving-vs-moving and a moving-vs-static switch. Sensors use copies of those two, numbered after every solid one, with the same collision rules, so a query that leaves sensors out passes only the solid object layers to Jolt and never meets a sensor (WP34 PR "correctness"). The standard table has 8 layers, layer 1 being debris (moving debris hits static bodies only). `GroupMask` does not affect body-to-body collision: it filters queries (`QueryFilter::groups`) and characters (a character only collides with bodies whose groups intersect its own, through a contact-validate listener).
 - Characters use `CharacterVirtual`. It is not a body and reports nothing in contact events unless it has an inner body, so `CharacterDesc` has an `inner_body` flag, on by default for the player, which lets the character trigger sensors.
 - `re_physics` makes up for the other gotchas the spike found:
   - A kinematic body keeps its last velocity. We zero it when no target is set.
   - `Removed` contact events can name bodies that are already gone. We filter those against our id map.
   - `Removed` also fires when a pair falls asleep. We document this and expose sleeping separately.
   - `position()` is the shape origin, not the centre of mass.
-  - Mesh and heightfield shapes are refused on dynamic and kinematic bodies. We report this as `RE5003`, not a panic.
+  - Jolt computes no mass for a mesh and cannot move a heightfield, so a mesh on a dynamic body and a heightfield on a dynamic or kinematic one are refused with `RE5003`, not a panic. A kinematic body may use a mesh, with the description's mass (WP34 PR "correctness").
   - World positions are limited to ±5 km, because `Real` is f32. re_physics refuses bodies, characters and transforms beyond that with RE5006, and the command is dropped.
   - A character standing on a slope crept downhill (found in M3 by the valley): Jolt slides a character's velocity along the ground, so gravity's part along the slope moved it 1 mm a step on 20° at 60 Hz. A character that is not walking (slower than 1 mm/s) or jumping, on still ground it can stand on, feels no gravity: as in Jolt's sample, that is a contact that is not moving and no steeper than its max slope, and never steeper than 50°, so a character whose max slope is near vertical (compat's default is 89°) still slides off a steep face rather than hanging on it. On a moving platform, or touching only steeper ground, it feels all of gravity, as before. A still character on a ledge's edge stays there while the edge is ground it can stand on (with the default 0.4 m radius and 45° max slope, its centre up to about 0.27 m past the edge), where before it rolled off slowly.
 
@@ -640,6 +640,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - During play, `RE0652` refuses agent edits first. The editor's window serves the socket only through the approvals module; `EditorSocket::serve_pending` stays the tests' path.
 - Approval guards the engine's commands. It is not a sandbox for agents with their own shell (ADR-0020: no shell tier).
 
+**Amendment (M4, WP36 PR "components"; accepted by the maintainer, 2026-10-28).** The scopes `real agent init` writes gain `ui/**`, after `materials/**`, so an agent can edit the game UI's themes and images (ADR-0058) that `ui/` holds.
+
 ## ADR-0021: Profiling: our own `profile_scope!` over puffin or Tracy
 
 **Status:** Accepted
@@ -1023,8 +1025,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Context.** Compat GUI text (`TextLabel`, `TextButton`, `TextBox`, WP15) names font families from the vendor's catalogue. Those font files are not ours to ship, and egui's default fonts (ADR-0019) cover only one sans and one monospace family, so headings, body text and code would all look alike.
 
 **Decision.**
-- Ship three OFL-1.1 families as files under `crates/re_compat/assets/fonts/`: Montserrat (weights 400, 500, 700, 900), Source Sans 3 (400, 700) and Roboto Mono (400, 700). That is 8 files, about 307 KB, latin subset only.
-- The source is the `@fontsource` packages on npm: montserrat 5.3.0, source-sans-3 5.3.1, roboto-mono 5.3.0. Their WOFF 1.0 files are converted to TTF by a small script under `crates/re_compat/assets/fonts/tools/`, which only unpacks the zlib-compressed tables and changes no glyph data. `crates/re_compat/assets/fonts/README.md` records the package versions and the conversion step.
+- Ship three OFL-1.1 families as files under `crates/re_ui/assets/fonts/` (in `crates/re_compat/assets/fonts/` until ADR-0058 moved them to the UI core): Montserrat (weights 400, 500, 700, 900), Source Sans 3 (400, 700) and Roboto Mono (400, 700). That is 8 files, about 307 KB, latin subset only.
+- The source is the `@fontsource` packages on npm: montserrat 5.3.0, source-sans-3 5.3.1, roboto-mono 5.3.0. Their WOFF 1.0 files are converted to TTF by a small script under `crates/re_ui/assets/fonts/tools/`, which only unpacks the zlib-compressed tables and changes no glyph data. `crates/re_ui/assets/fonts/README.md` records the package versions and the conversion step.
 - Each family's `OFL.txt` sits next to its files and goes into the generated third-party notice.
 - `crates/re_compat/assets/fonts/substitutes.json` maps compat font families to a bundled family:
   - geometric display families (Gotham and its relatives) go to Montserrat;
@@ -1317,6 +1319,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Amendment (maintainer, 2026-10-27; ADR-0019's amendment of that date).** The notices give each crate used under MPL-2.0 one more line, where its source is: `Source: https://crates.io/crates/<name>/<version>`. MPL-2.0 asks that a build's recipients be told how to get the source of the files it covers (its section 3.2), and Real Engine is proprietary, so its builds are the only form it will be distributed in. Today that is `triple_buffer`, in every runtime. An MPL-2.0 crate that does not come from crates.io (a patched copy under `third_party/`, or a git checkout) fails the build with `RE0954`, since its source would have to be published first.
 
 **Evidence.** `research/m3/wp19/measurements.md`: the compression table (four codecs, three models and the content text), the importer and cache-hit timings, Luau bytecode size, determinism and load time, the index timings, the runtime binary's size, `ldd` and glibc symbols, the license-file scan of the runtime crates, and the API facts checked in mlua 0.12.2, mlua-sys 0.13.0, luau0-src 0.22.0+luau740, wgpu-types 30.0.1 and zstd 0.14.2.
+
+**Amendment (M4, WP36 PR "components"; accepted by the maintainer, 2026-10-28).** `ui/` is a default packed directory, beside the ones above, for `*.theme.json` files. A `[ui] theme` in `real.toml` that the archive leaves out fails the build with `RE0957`, as a packed scene that names such a file does.
 
 ## ADR-0038: HDR post chain, cascaded sun shadows, shader hot reload, and no render thread yet
 
@@ -1929,6 +1933,8 @@ Also: the bus volume is a `volume_control` effect, not the track volume, so mete
 - *Levels*, "records peak and RMS per channel for each render batch": the `Meter` effect (`crates/re_audio/src/meter.rs`) keeps one peak (the largest absolute sample of either channel) and one RMS over both channels, accumulated over every render batch since the last `Audio::bus_levels()` call, which starts a new window. A window in which nothing was rendered reads as silence.
 - *Levels*, "the editor's mixer panel (WP25) can draw it, and `real verify` can report it": neither is built. `re_editor` has no mixer panel (`re_editor::layout::PanelId` has none), and `real verify`'s report (`re_app::VerifyReport`) has no bus levels.
 
+**Amendment (maintainer, 2026-10-28: the code-health audit's crash paths).** *Validation* gains two upper bounds. A compressor's `attack_ms` and `release_ms` are at most 10,000 (`RE7406`), and a bus volume, effect parameter or snapshot tween lasts at most 3,600 seconds (`RE7404` for a volume, `RE7406` for the others). kira takes these lengths as a `Duration`, and converting a float that large panicked: a finite `attack_ms` of `1e30` in `real.toml`, or a script's tween of `1e20` seconds, crashed the game. `clippy.toml` now bans `Duration::from_secs_f32` and `from_secs_f64`, which panic; code uses `Duration::try_from_secs_*` or integer arithmetic.
+
 ## ADR-0042: World streaming: cells by StableKey, deterministic budgets, stitched terrain LOD, regional erosion and a floating origin
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP23). Built in WP23 PRs "cells" (#108), "async" (#128) and "terrain" (#139), with "stream-app" (#118), "floating origin" (#148), "terrain view" (#162), "terrain seams" (#172) and "focus forward" (#176), and the changes in the amendments at the end. Evidence: WP23's phase-0 measurements (research bundle `m3/wp23/measurements.md`, with the scratch benchmark that produced them).
@@ -2414,6 +2420,8 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 - Builder sources are listed and drawn read-only (`RE8852`), with "open script" and "convert to a graph file": `proc.convert_builder` creates the graph file through ADR-0064's document lifecycle and points the source at it in one undo step (`RE4090`, `RE4091`).
 - Field-override markers in the Inspector, drawn by `widgets::field_row`, with `proc.revert` (clears an entity's field overrides, or a deletion override, and puts back what the source generates, read from the source's fragment computed without applying it, in one transaction; `RE4092`, `RE4093`); `prefab.revert` and `prefab.apply` for linked instances (WP38). The Hierarchy's context menu adds `proc.replace`, `proc.insert`, `proc.revert`, `proc.clear_structure` and `proc.bake`. `path.spline` points are handles in the viewport, drawn through `panels::procedural::viewport_overlay` (WP42's PR "camera"), one undo step per drag.
 - The canvas's view state is `panels.canvas` in `layout.json` version 2.
+
+**Amendment (maintainer, 2026-10-28: saving documents).** No `scene.save` command exists. After a command that changes the World (not a dry run), `App::dispatch` writes the scene and each open document with unsaved changes, in `real do`, `real mcp` and the editor, which all set `AppConfig::persist_edits`; `project.status` reports the documents not yet written.
 
 ## ADR-0045: The script debugger: Luau's own breakpoints, stepping on temporary breakpoints, pausing by yield
 
@@ -3747,6 +3755,263 @@ pub sky_light_specular: f32 = 1.0,
 - Goldens move only where a scene turns these on: the valley's in PRs "atmosphere" and "ibl", the templates' where they have any, the town's (WP48), and compat places with skyboxes (WP47).
 - ARCHITECTURE §3 (lighting: the atmosphere's units and the sun's transmittance) and §8 (`[render.environment]`) change through the maintainer; `schemas/` is regenerated.
 
+## ADR-0055: Joints: a `Joint` component of eight kinds between two bodies or a body and the world, with limits, springs, friction, motors and servos, breaking by force and torque, joints kept when a body is replaced or reshaped, and their state in snapshots and `state_hash`
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP34), for WP34's PRs "joints" (§1 to §11 and §13) and "compat joints" (§12). It extends the M4 contract "Physics for gameplay" (`crates/re_types/src/physics.rs`, `crates/re_types/src/host.rs`, `crates/re_scene/src/components.rs`): the types of §1, §3 and §10 are frozen at PR "joints". It keeps M1's constraint commands (§3). It comes with two amendments: one to ADR-0056 §1, whose "Bodies that are replaced instead" line no longer lists a body that a joint holds (§6), and one to ADR-0057 §7, which adds joint breaks to the delivery table (§10). PR "joints" comes before PR "compounds", with today's bodies until then (§2). Evidence: the code at `f16368f` (main after the App split, #198); the joints spike (`research/m4/wp34/joints-spike/README.md`: oxijolt 1.1.0 and Jolt 5.6.0 with the engine's features and patched `oxijolt-sys`, every scene with 1, 2 and 4 workers, run in two processes on 2026-10-28 and again on a quiet machine with the scenes this draft needed); oxijolt 1.1.0's source as the lockfile pins it; the accepted ADR-0008 amendment (WP34; §4's ranks, §7's locked axes), ADR-0056 (WP34; §1's replaced bodies, §8's listener), ADR-0057 (WP35; host methods and codes), ADR-0059 (WP37; saves) and ADR-0060 §5 (WP38; entity references in prefabs).
+
+**Context.**
+- **What exists.**
+  - **M1's constraints.** `ConstraintKind` is `Fixed`, `Hinge { pivot, axis, limits }` or `Distance { point_a, point_b, min, max }`, in world space when the constraint is made (`re_types/src/physics.rs:306`). `PhysicsCmd::AddConstraint` (rank 5) and `RemoveConstraint` (rank 0) carry them; only tests send them. Removing a body removes its constraints with `RE5014`, and `AddConstraint` waits while a body is out of reach of a moved origin (`world.rs`). Nothing in the scene, the sync or the scripts makes one.
+  - **Compat's joints** (`parts/joints.rs`). Ball sockets with a cone and a twist range, hinges that turn freely, by motor or by servo, ropes and rods, between assemblies. Each joint keeps a frame on each assembly, relative to its origin, and makes the Jolt constraint in world space from the assemblies' poses then (`frame1`, `frame2`). The servo walks its target toward the goal at its speed, on an 8 Hz spring. A reshape takes the assembly's joints out and puts them back from their descriptions (`suspend_joints_of`, `resume_joints`), and removing an assembly drops its joints (`take_dropped_joints`).
+- **oxijolt 1.1.0's constraints.**
+  - **Kinds:** fixed, point, hinge, slider, cone, swing-twist, distance and six-DOF (and gears, pulleys and paths, which games here do not need yet).
+  - **Frames.** Each kind takes a frame on each body (a point and, but for the point and the distance, perpendicular unit axes) in world space at the poses when it is made, or relative to each centre of mass. Jolt then keeps them on the bodies. The rest pose (angle 0, position 0) is where the two frames coincide.
+  - **Refusals.** A character's inner body, a ragdoll part, a soft body and a body with restricted degrees of freedom (`AllowedDofs`) cannot be joined. Each point that holds a dynamic body must be within 1,000 times the body's size of its centre of mass (`MAX_LEVER_ARM_RATIO`). Frequency springs are checked against a bound of the bodies' effective mass.
+  - **Bodies it holds.** While a constraint exists, `remove_body`, motion type changes and `set_shape` refuse its bodies (`UsedByConstraint`). Making or removing one wakes its bodies.
+  - **Limits.** A hinge's minimum is in [−π, 0] and its maximum in [0, π], and equal limits need a soft spring. A slider's are within ±2,000 m around 0, with the same rule. A distance range is 0 ≤ min ≤ max ≤ 2,000 m, or the distance when it is made. A cone's half angle is in [0, π]. Swing-twist has two half cone angles in [0, π] and a twist range in [−π, π]. Six-DOF makes each axis free, fixed or limited (min < max), translations within ±2,000 m and rotations within [−π, π]; only its translations have limit springs, and a cone swing needs symmetric Y and Z limits (a pyramid allows any).
+  - **Motors.** Off, velocity or position. A position motor is a spring (frequency and damping, or stiffness and damping), Jolt's default 2 Hz with damping 1 and no force limit, and a frequency of 0 switches it off. A velocity motor holds its speed within its force or torque limit. oxijolt refuses a hinge's target outside [−π, π], a slider's outside ±2,000 m, and velocity targets above `MAX_LINEAR_VELOCITY` (500 m/s) and `MAX_ANGULAR_VELOCITY` (15π rad/s, 2,700°/s), which are also the fastest a body moves.
+  - **Setters.** The hinge and the slider can change their motor state, targets, motor settings, limits, limit spring and friction in place; the distance its range and spring; the cone its angle; swing-twist and six-DOF their motor states, motor settings and targets. No kind has a setter for its frames or points, and swing-twist's limits and six-DOF's axes, limits and friction have none either: changing them means making the constraint again.
+  - **Readouts.** Each solver part's total impulse over the last step solved (`total_lambda_*`), the hinge's angle and the slider's position.
+  - **State.** `ConstraintMut::set_enabled(false)` keeps a constraint, with its readouts, while it acts as if absent. `WorldState` saves each constraint's enabled flag, motor states, targets and impulses, not its settings. Making or removing a constraint makes earlier states unrestorable; disabling one does not.
+  - **No body fixed to the world.** oxijolt has no `Body::sFixedToWorld`, so a joint to the world needs a static body to hold.
+- **What games need** (the plan's WP34). Doors, lids, gates and drawbridges; lifts and cranes; ropes and chains; trailers; wrecking balls; planks, fences and signs that break off; motors that scripts drive; an event when something breaks; and the same results on three platforms.
+- **The spike** (`joints-spike/README.md`).
+  - **Motors.** A velocity motor holds 1.0000 rad/s and 0.50000 m/s. A position motor is a spring: a 50 kg lift held 3 m up rests 62.2 mm low at Jolt's 2 Hz and 2.48 mm low at 10 Hz (`g/(2πf)²`), and with 0 Hz it falls. A door driven to 90° at 2 Hz overshoots 15.3° under its torque limit.
+  - **Servo.** A target walked at 90°/s on a 10 Hz spring brings the door within 0.5° at 1.13 s, for a target that arrives at 1.00 s, with 0.78° of overshoot; the lift walked up at 1 m/s is within 1 mm of its sag point at 3.10 s and never passes 3 m.
+  - **Breaking.** The impulses of the last step, over the step, give the load exactly: a weld pulled down 50 N more each step reads `m g` plus the pull within 0.9 N and breaks above 1,000 N after step 19 at 1,047.23 N, as the static estimate says. A door against its limit is held by the limit alone (499.58 N·m read for 500 N·m applied), so a break torque must count the limits.
+  - **Disabling instead of removing.** A weld disabled when it breaks moves its box bit for bit as a removed one, a snapshot from before the break restores after it, with the weld enabled again, and the run repeats with the break at the same step; with the weld removed, the snapshot is refused. In a 780-weld sheet both ways break the same 19 welds at the same steps.
+  - **Rest poses.** A hinge taken out while the door stands at 42.18° and made again from the bodies' own frames reads 42.18° and stays within 0.00017° of one never taken out; made from one world frame, it reads 0°.
+  - **Floating origin.** Moving every body, the anchor too, by 16 m or 1,000 m does not disturb a hinge (no jump; f32 rounding only).
+  - **Cost.** Checking 780 welds' readouts takes 75 to 105 ns a joint, 2 to 4 % of the step.
+  - **Determinism.** Every scene gives the same digest with 1, 2 and 4 workers and in two processes, and a restored snapshot repeats bit for bit.
+
+**Decision.**
+
+**§1 The `Joint` component.** One component in `re_scene` for every kind, as the plan asks; the fields a kind does not read are ignored, as `Collider`'s are. One joint per entity; more joints for one body sit on child entities.
+```rust
+field_enum! { pub enum JointKind { Fixed, Point, Hinge, Slider, Cone, SwingTwist, Distance, SixDof } }
+field_enum! { pub enum JointMotor { Off, Velocity, Position } }
+field_enum! { pub enum JointAxis { Fixed, Limited, Free } }
+```
+- **The bodies (§2).** `kind: JointKind = Fixed`; `other: Option<Entity> = None`, the other side (none: the world).
+- **The frame**, in this entity's space: `anchor: Vec3 = ZERO`, the joint's point; `axis: Vec3 = X`, its main axis (a hinge turns about it, a slider slides along it, a cone and a swing-twist twist about it); `normal: Vec3 = Y`, the direction of angle 0, made perpendicular to `axis`. The anchor scales with the entity; the axes only turn.
+- **`other_anchor: Vec3 = ZERO`**, a distance joint's other end, in `other`'s space (the world's when `other` is none).
+- **Limits.**
+  - `limited: bool = false`: a hinge's or a slider's limits apply.
+  - `linear_min`, `linear_max: Vec3 = ZERO` (metres) and `angular_min_deg`, `angular_max_deg: Vec3 = ZERO` (degrees), per axis of the frame (X the main axis, Y the normal, Z their cross product).
+  - A hinge reads angular X and a slider linear X; both must contain 0, the rest pose, as Jolt asks. A distance reads linear X as its range, and 0 and 0 mean the distance when the joint is made. A cone reads `angular_max_deg.y`, the largest angle between the two main axes. A swing-twist reads its twist range from angular X and its swing half angles from `angular_max_deg.y` and `.z`. A six-DOF reads every axis.
+  - `linear_x`, `linear_y`, `linear_z`, `angular_x`, `angular_y`, `angular_z: JointAxis = Fixed`: a six-DOF joint's axes. A `Limited` axis takes its range from the limits above. Symmetric angular Y and Z limits make a cone swing, others a pyramid.
+  - `limit_frequency: f32 = 0` (Hz; 0: rigid) and `limit_damping: f32 = 0`: soft limits for a hinge, a slider, a distance and six-DOF translations.
+- **Motors (§7).**
+  - `linear_motor: JointMotor = Off`, `linear_target: Vec3 = ZERO` (metres), `linear_speed: Vec3 = ZERO` (m/s).
+  - `angular_motor: JointMotor = Off`, `angular_target_deg: Vec3 = ZERO` (a rotation vector, degrees), `angular_speed_deg: Vec3 = ZERO` (deg/s).
+  - With `Velocity`, the speed fields are the target velocity. With `Position`, the target fields are the goal and the speed fields how fast the target walks to it (a servo; 0 jumps). §7 says how angle goals wrap, which speeds are clamped and which targets are refused.
+  - A hinge reads angular X, a slider linear X, a swing-twist the angular fields and a six-DOF both. Fixed, point, cone and distance joints have no motor.
+  - `motor_frequency: f32 = 10` (Hz, above 0) and `motor_damping: f32 = 1`: the position motor's spring.
+  - `max_force: f32 = 0` (N) and `max_torque: f32 = 0` (N·m): the motors' strength; 0 is no limit.
+- **Friction.** `friction_force: f32 = 0` (N) and `friction_torque: f32 = 0` (N·m), which resist motion while the motor is off: a hinge's and a swing-twist's torque, a slider's force, a six-DOF's force on its translations and torque on its rotations.
+- **Breaking (§8).** `break_force: f32 = 0` (N) and `break_torque: f32 = 0` (N·m); 0 never breaks.
+- **Switches.** `collide: bool = false`: the two bodies collide with each other. `enabled: bool = true`: false makes the joint act as if absent, keeping its frames. `broken: bool = false`: set by physics when the joint breaks (§8); false again mends it.
+
+**§2 Bodies and frames.**
+- **Which bodies.** A side's body is the body physics has for its entity: the entity's own, or else the nearest ancestor's. One side is the Joint's entity; the other is `other`. A side that belongs to no body is the world, so a Joint on an entity outside every body, naming a body as `other`, holds that body to the world at the Joint's place.
+- **Before and after PR "compounds".** PR "joints" lands first, with today's bodies: every `Collider` entity is a body of its own, and a Joint entity without one walks up to the nearest ancestor that has one. From PR "compounds" on, ADR-0056 §1 decides: a collider that joins an ancestor's compound belongs to that ancestor's body, and a follower is a kinematic body of its own. So PR "compounds" changes which body a Joint below a moving owner belongs to, and the sync handles that as any change of a side's body (§5): the joint is made again, with a new other frame.
+- **Followers can be joined.** The walk finds a follower's own body before it reaches the `CharacterController`, `Ragdoll` or `VehicleWheel` above it, so a Joint can name a collider that a character or a car holds: a lantern on a chain, a tow rope. A follower teleported with its owner (ADR-0056 §1) drags its jointed body across the whole distance in one step, and the joint's rest pose is the follower's pose when the joint is made. Before PR "compounds", such a collider is a static body of its own that the sync moves, which behaves the same way.
+- **What the sync refuses** (`RE0721`, a warning, and no joint): both sides the world, both sides one body, or a walk from either side that reaches a `CharacterController`, a `Ragdoll` or a `VehicleWheel` entity before a body (Jolt cannot join those; a collider they hold is a body of its own, above). An `other` naming an entity that no longer exists removes the joint, with `RE0721` as a note: despawning one side is how a game ends a joint. In a prefab, `other` names an entity of the same prefab (ADR-0060 §5).
+- **The Joint's frame.** The sync computes it in its body's space from the local transforms on the way down from that body to the Joint's entity, with `anchor`, `axis` and `normal`; for the world, in world space. No pose read back from physics enters it, so it changes only on an edit.
+- **The other frame is taken when the joint is made**: the same point and axes in world space, at the bodies' poses then, put into the other body's space (for a distance, `other_anchor` instead). So the bodies' poses when a joint is made are its rest pose, as in Unity and Godot. physics keeps that frame for the joint's life: an edit of the limits, the motors, the switches or the Joint's own frame keeps it, and so do a replaced or reshaped body (§6) and a move of the origin. It is taken again only when the joint is made again, after its `kind` or either side's body changes, or after the component is removed and added. A loaded scene's joints are made from the poses the scene gives, which a save does not change (ADR-0059: a save is the game's data, and a game sets an open door's target after loading).
+- **Moving a joint.** An edit of `anchor`, `axis` or `normal`, or of the transforms between the Joint's body and its entity, moves the joint on that side and keeps the other frame, so the solver pulls the other body after it: a Joint entity outside every body, moved by a script, drags its body along. Since oxijolt has no setter for a joint's frames, each such move makes the joint again (§5). For an anchor that moves every step, such as a crane's hook driven by a script or an animated child, give the Joint's entity a kinematic `RigidBody` and a collider (a small sensor will do). Its side is then a body that the sync moves by kinematic target, and the joint is never made again.
+- **Which side reads as moving.** Readouts and motor targets are the moving side's motion relative to the reference side. The reference is the world when either side is the world, and otherwise `other`'s body: a door on a hinge to the world reads its own angle, and a car's Joint naming its trailer reads the car's angle relative to the trailer. physics makes Jolt's body 1 the reference.
+- **The sync stays O(changed).** It re-resolves a joint only when its Joint, the ancestry of its entity or of `other`, or the bodies at or above them change, by the change ticks and removals PR "sync" already follows.
+
+**§3 The contract.** In `re_types::physics`, radians and metres. The types stay off `re_types`' root, which already exports `anim::JointDesc` (a skeleton's joint), except `JointState`, `JointEvent` and `MotorMode`, which clash with nothing there. `re_physics`' root exports compat's `JointDesc` and `JointKind`, which `re_compat` imports. They become `PartJointDesc` and `PartJointKind` in whichever PR first brings both into one file (§12).
+```rust
+pub struct JointFrame { pub pos: Vec3, pub rot: Quat }   // X the main axis, Y the normal
+pub enum JointKind {                                     // serde tag "type", snake_case
+    Fixed, Point,
+    Hinge { limits: Option<[f32; 2]> },                  // about X
+    Slider { limits: Option<[f32; 2]> },                 // along X
+    Cone { half_angle: f32 },
+    SwingTwist { twist: [f32; 2], swing: [f32; 2] },     // twist about X; half angles about Y, Z
+    Distance { range: Option<[f32; 2]> },                // None: the distance when made
+    SixDof { axes: [JointAxisDesc; 6] },                 // X, Y, Z translations, then rotations
+}
+pub enum JointAxisDesc { Fixed, Free, Limited { min: f32, max: f32 } }
+pub enum MotorMode { Off, Velocity, Position }
+pub struct JointMotorDesc { pub mode: MotorMode, pub target: Vec3, pub speed: Vec3 }
+pub struct JointSpring { pub frequency: f32, pub damping: f32 }
+pub struct JointDesc {
+    pub kind: JointKind,
+    pub a: Option<EntityId>,          // the body on the Joint's side, by entity; None: the world
+    pub b: Option<EntityId>,          // the body on the other side
+    pub frame_a: JointFrame,          // in a's space (the world's when None)
+    pub frame_b: Option<JointFrame>,  // None: taken when the joint is made (§2)
+    pub linear_motor: JointMotorDesc,
+    pub angular_motor: JointMotorDesc,
+    pub motor_spring: JointSpring,
+    pub max_force: Option<f32>,       // None: no limit
+    pub max_torque: Option<f32>,
+    pub friction_force: f32,
+    pub friction_torque: f32,
+    pub limit_spring: Option<JointSpring>, // None: rigid
+    pub break_force: Option<f32>,     // None: never
+    pub break_torque: Option<f32>,
+    pub collide: bool,
+    pub enabled: bool,
+    pub broken: bool,
+}
+```
+- **Commands.** They rank after every earlier kind, as the vehicle, ragdoll and force commands did, so no rank changes and a replay that sends none keeps its hash: `RemoveJoint { id }` 27 (a removal, so it applies with the removals), `AddJoint { id, desc }` 28 (after every body, vehicle and ragdoll is made), `SetJoint { id, desc }` 29. A joint is keyed by its Joint's entity.
+- **Keys physics refused or dropped.** physics keeps the description of a joint it refused (`RE5008`, §4) or dropped (`RE5014`, §6) by its key, as a parked joint. A `SetJoint` for a parked key tries to make it again, so a Joint whose bad limits a script fixes is made then. A `RemoveJoint` for a parked key forgets it quietly, and a `RemoveJoint` also drops an `AddJoint` that waits out of reach (§4), as `drop_deferred` does for `AddConstraint`. `AddJoint` for a key that has a joint, made, waiting or parked, is `RE5005`. `SetJoint` and `RemoveJoint` for a key physics never saw are `RE5004`.
+- **Payloads.**
+  - `JointState { active, broken, angle, position, offset: Vec3, rotation: Quat, force, torque, motor_force, motor_torque }` from `Physics::joint(id)`, as of the last step.
+  - `active`: Jolt solved the joint in the last step (enabled, not broken, a body awake that can move).
+  - `angle`: a hinge's angle. `position`: a slider's position, or a distance joint's distance.
+  - `offset` and `rotation`: the moving frame relative to the reference frame, for every kind.
+  - `force` and `torque`: what breaking compares (§8), as of the last step the joint was solved.
+  - `motor_force` and `motor_torque`: what the motors exerted.
+  - `JointEvent::Broken { joint, a, b, force, torque }` from `Physics::joint_events()` after each step, in joint order, where `a` and `b` are the two sides' body entities (`None` for the world).
+- **M1's commands stay.** `AddConstraint` and `RemoveConstraint` keep their ranks and meaning, served by the same joint table: their world-space points and axes become the two frames when made, with `collide = true` and no motor or breaking. New code uses the joint commands.
+
+**§4 Making a joint.**
+- **Frames to Jolt.** physics turns each side's frame into world space at the bodies' poses now and gives Jolt both (`frame1`, `frame2`, or the two points), in world space, as compat does. So a joint keeps its rest pose however often it is made again (the spike's "rest"), and Jolt takes the centre of mass into account itself.
+- **Kinds.** `Fixed`, `Point`, `Hinge`, `Slider`, `Cone`, `SwingTwist` (cone swing type, the half angles about Y and Z) and `Distance` map to Jolt's own. `SixDof` maps each axis to Jolt's free, fixed or limited, with a pyramid swing for asymmetric Y and Z limits.
+- **The world.** A side that is the world holds the world anchor: one static body per physics world, made with the first joint to the world and kept for the world's life. oxijolt has no empty shape and no body fixed to the world, so the anchor is a static sphere of radius 0.01 m at the origin, on one more Jolt object layer, after the sensors' copies (PR "correctness"), that collides with nothing and that no query selects, compat's queries included. It moves with the floating origin like every body (`set_origin` lists it), so a joint to the world keeps its place in the world (the spike's "rebase"), and it counts as one body toward PR "settings"' `max_bodies`. A world without joints to the world has no anchor, so it simulates and hashes as before.
+- **Checks** (`RE5008`, an error, and the joint is parked, §3): a frame that is not finite; a zero `axis`; limits out of Jolt's ranges (§1), equal hinge or slider limits without a limit spring, or a limited six-DOF axis with min ≥ max; a slider's target beyond ±2,000 m, or a target or speed that is not finite (§7 wraps and clamps the rest); a position motor whose frequency is not above 0, or a negative damping; a negative strength, friction or break threshold; a body Jolt cannot join (a character's inner body, a ragdoll part, a body with a locked axis, as the ADR-0008 amendment's §7 says); a lever arm past Jolt's ratio; and anything else Jolt refuses, with Jolt's reason. A `normal` parallel to `axis`, or zero, is replaced by whichever of the frame's X, Y and Z axes is least aligned with `axis`, made perpendicular.
+- **Doing nothing.** A joint without a dynamic body, between static and kinematic bodies or the world, is made but does nothing: `RE5022`, a warning.
+- **Waking.** Making a joint wakes its bodies, as Jolt does, also after a `sleep` in the same tick (`Sleep` ranks 26, `AddJoint` 28).
+- **Waiting.** `AddJoint` waits while a body waits out of reach of a moved origin, as `AddConstraint` does, and is made when both are in Jolt. A `RemoveJoint` drops it while it waits (§3).
+- **Collisions between the two bodies.** With `collide` false, the listener that `Physics::new` installs in every world (`PartListener`) rejects contacts between the two bodies in `contact_validate`, from a set of body pairs that physics keeps between steps, read only when it is not empty. Joints to the world reject nothing.
+
+**§5 Edits.** physics compares a `SetJoint`'s description with the joint's.
+- **In place,** where Jolt has setters: motor modes, targets and speeds, and the motor spring and strength, for every kind with a motor; hinge and slider limits, limit springs and friction; swing-twist friction; a distance's range and spring; a cone's angle; `collide`, which only changes the pair set (§4); `enabled` (Jolt's `set_enabled`, which keeps the frames); and `broken` (§8). Targets set in place keep the joint's warm start, so a script that changes a target every frame costs a setter call.
+- **Made again,** keeping the other frame (§2): `frame_a`, swing-twist limits, and six-DOF axes, limits, limit springs and friction, which have no setters. So a move of the Joint's frame (§2), by an edit, a script or an animation, makes the joint again on every step it moves. Making a joint again restarts its warm start, a drift of at most 0.00017° over a second in the spike, and makes every earlier snapshot unrestorable (§9, `RE5012`). An anchor that moves every step belongs on a kinematic body (§2).
+- **Made again with a new other frame:** `kind`, `a` or `b`. The sync sends that as `RemoveJoint` and `AddJoint`. PR "compounds" moving a Joint's side into its owner's body is such a change (§2).
+- **A refused edit.** A `SetJoint` that fails a check of §4 leaves the joint as it was, with its last valid description, and reports `RE5008` once for that edit. A joint that was refused when it was made is parked (§3), and the next `SetJoint` tries again.
+
+**§6 Replaced and reshaped bodies.**
+- **Replaced in one apply.** `RemoveBody` for a jointed body takes its joints out first (Jolt cannot remove a body a constraint holds) and keeps them aside, with their other frames and servo positions. At the end of the apply, each one whose two bodies exist again is made again from its description, so a replaced chassis or a body whose motion type changed keeps its joints. One whose body did not come back is dropped with `RE5014`, as today, and parked (§3). The sync sends `SetJoint` for each joint that names an entity whose body it adds again, which makes a parked one again (and leaves one that physics kept as it was).
+- **Reshaped.** `SetShape` on a jointed body takes its joints out, sets the shape and makes them again from their descriptions, as compat's `set_assembly_parts` does. So the sync sends `SetShape` to a jointed body as to any other body, and keeps replacement for vehicle chassis only. Such a body keeps its Jolt body and contacts, and its joints keep their rest poses (the spike's "rest"). Like every `SetShape` of a moving body it wakes, and making its joints again wakes both of their bodies. ADR-0056 §1 listed a body that a joint holds among the bodies that are replaced; the maintainer's amendment to ADR-0056 records that it is reshaped (Consequences).
+- **Removed.** A Joint removed, or despawned with its entity, sends `RemoveJoint`. When the sync removes a body for good, it also sends `RemoveJoint` for each joint on it: `RemoveBody` (rank 1) takes them out first and `RemoveJoint` (rank 27) then drops them, so their order does not matter, and `RE5014` is left for a body removed without its joints' removals that does not come back.
+
+**§7 Motors and servos.**
+- **Velocity motors** drive at the speed fields within `max_force` or `max_torque`. A speed above Jolt's 500 m/s or 2,700°/s is clamped to it: no body moves faster.
+- **Goals.** A hinge's angle goal wraps into [−180°, 180°], since a full turn is the same pose. A free hinge's servo then turns the short way to it. A limited hinge's goal is clamped to its limits, as Jolt clamps its target (`HingeConstraint.h`), and its servo walks along the angle inside the limits, never across the gap outside them: a hinge at 160° in [−170°, 170°] servoed to −160° turns back through 0°. Compat's servo wraps today, so PR "compat joints", which moves it onto this walk, changes it only for hinges whose limits span more than 180°. Jolt's motor itself drives the short way to its target (`CenterAngleAroundZero` in `HingeConstraint.cpp`), so a jump (speed 0) of more than half a turn on a hinge whose limits span more than 180° can stall against a limit (Known limits). A rotation-vector goal (swing-twist, six-DOF) is a rotation, so it counts modulo a turn and the motor turns the short way. A slider's goal must be within ±2,000 m (§4).
+- **Position motors** are Jolt's springs, at `motor_frequency` (default 10 Hz) and `motor_damping` (default 1). The default is five times Jolt's 2 Hz: a body held against gravity sags `g/(2πf)²`, 2.5 mm at 10 Hz against 62 mm at 2 Hz (the spike). The docs give the sag, and a game that needs less raises the frequency.
+- **Servos.** With speed fields above 0, physics walks the motor's target toward the goal before each step: by `speed × dt` along one axis, a straight line of the speed vector's length for three-axis targets, and a turn the short way at the angular speed vector's length for rotations. The walks use glam's quaternion functions (the workspace builds glam with `libm`) or `libm`, never `f32`'s own (ADR-0036; clippy enforces it). The walked target is Jolt's motor target, which `WorldState` saves, so the servo's position needs no state of physics' own in a snapshot (the spike's "servo"). A servo starts from the joint's current angle or position when its joint is made, as compat's does.
+- **Six-DOF motors** drive every axis of their group (translations or rotations) that is not fixed; a game that drives one axis alone uses a hinge or a slider.
+
+**§8 Breaking.**
+- **When.** After each step, physics checks every joint with a break threshold that Jolt solved in that step (`is_active`), in joint order. A sleeping or disabled joint keeps old readouts, so it is not checked.
+- **The force** is the length of the impulses that hold the joint's point, with a slider's limits and a distance's range, over the step. **The torque** is the length of the impulses that hold its orientation, with its angular limits (a hinge's, a cone's, swing-twist's three, six-DOF's), over the step. Motor and friction impulses do not count: a motor never breaks its own joint.
+- **Breaking** disables the joint in Jolt (`set_enabled(false)`) rather than removing it: the bodies move exactly as if it were removed (bit for bit in the spike), and every earlier snapshot stays restorable. physics marks it broken, pushes `JointEvent::Broken`, and drops it from the pair set, so the two bodies collide from the next step, as they do in Unity and Godot once a joint is gone (bodies that overlapped are pushed apart).
+- **In the scene.** The sync writes `broken = true` to the Joint when it pulls the step, so saves, `e:get`, the editor and the network see it, and the scene's hash covers it. The sync records the value it wrote, as `written` does for poses, so its own write does not come back as a `SetJoint`. A Joint whose `broken` is set to false, by a script or an edit, is mended: physics enables it again, and the solver pulls the bodies back to its rest frames, as strongly as its limits and motors allow. A script that sets `broken` to true breaks it without an event.
+- **One step late, by design.** A joint breaks after the step whose load exceeded its threshold, compared with that step's mean (impulse over the step): the weld that read 1,047 N for a 1,000 N threshold broke after the first step above it.
+
+**§9 State.**
+- **Snapshots.** `PhysicsSnapshot` holds each joint's broken flag and other frame beside Jolt's `WorldState`, which holds the rest (enabled flags, motor states, targets, impulses). A snapshot restores after a break, and the restore rebuilds the pair set from the restored `broken` flags. It does not restore after a joint was made or removed, made again included (§5), as for bodies (`RE5012`).
+- **Another world** (`motion_state`, `apply_motion_state`, the play copy). `MotionState` carries each joint's other frame and servo position by key. `apply_motion_state` makes a joint of the same key, kind and bodies again with them, so a play copy started while a door stands open keeps its rest pose.
+- **`state_hash`.** `App::state_hash` adds `Physics::joint_state_bytes()` when it is not empty (`"real-engine/state-hash+joints/1"`): each joint's key, other frame and servo positions, in key order. The joint layer sits after the ragdoll layer and before the animation layer, so a scene with ragdolls or skinned graphs and no joints hashes as before. The Joint's fields, its `broken` flag and the bodies' poses are already in the scene's hash. So the plan's motor targets reach `state_hash` through the scene, and a servo's walked target through these bytes. A game without joints hashes as before.
+
+**§10 Scripts.**
+- **Making joints.** Scripts add, edit and remove `Joint` like any component (`e:add("Joint", {...})`, `e:set`, `e:remove`).
+- **`physics.joint(e) -> JointInfo?`**: nil without a joint in the physics world (none, waiting or parked, §3), else `{ active: boolean, broken: boolean, angle_deg: number, position: number, offset: vector, rotation_deg: vector, force: number, torque: number, motor_force: number, motor_torque: number }`, as of the last step. `rotation_deg` is a rotation vector in degrees.
+- **`physics.set_motor(e, motor)`** writes the Joint's motor fields, in its units, as `e:set` would, so it holds until the next call or edit, saves and replays as scene state, and applies at the next physics phase. `motor` is `{ mode: "off" | "velocity" | "position"?, target: number | vector?, speed: number | vector? }` for the kind's motor (a hinge's angular X, a slider's linear X, a swing-twist's angular vectors), or `{ linear: {...}?, angular: {...}? }` for either motor of any kind. `set_motor` knows the Joint's kind, so it checks the kind's ranges at the caller's line: an entity without a Joint, a kind without a motor, an unknown key, a number that is not finite, or a slider target beyond ±2,000 m is `RE3006`. A hinge's goal wraps and a speed above Jolt's is clamped, as §7 says.
+- **`physics.on_joint_break(f: (joint: Entity, info: { body: Entity?, other: Entity?, force: number, torque: number }) -> ()) -> Connection`**: every break, in joint order, delivered in PostSimulation after the step's contacts and trigger events and before due `task.wait` threads (`re_script/src/runtime.rs`, which WP35 reviews, and the ADR-0057 amendment). `body` is the Joint's side and `other` the other side (nil for the world). It is an `on_*` connection like the rest of the `physics` library (the ADR-0008 amendment kept `on_touch_end` so).
+- **`HostServices::joint_state(&self, entity) -> HostResult<Option<JointState>>`**, a provided method whose default answers unavailable (ADR-0057's rule), serves `physics.joint`. `set_motor` needs no host method.
+- **`engine.d.luau`** declares the three functions and `JointInfo`.
+
+**§11 Codes.**
+- `RE5008` (existing, wider): a joint that cannot be made (§4), or an edit that cannot be applied (§5). Its explain page lists the eight kinds and their rules, the target ranges of §4 and §7 included.
+- `RE5014` (existing): a joint dropped because a body was removed and did not come back in the same apply. The joint is parked (§3).
+- `RE5022` (new, `re_physics`): a joint without a dynamic body does nothing.
+- `RE0721` (new, `re_app`, of WP34's `RE0720` to `RE0739`): a Joint the sync cannot resolve to two sides (§2), as a warning, or as a note when `other` is gone.
+- `RE3006` (existing): bad arguments to `physics.set_motor`.
+- Each has an explain page.
+
+**§12 Compat joints (PR "compat joints").**
+- **One joint core.** `re_physics` gets one joint module that makes the Jolt constraint from a `JointDesc`, walks servos, reads out, breaks, takes joints out around a reshape or a replacement and puts them back, and parks refused and dropped joints (§3), where compat's `take_dropped_joints` finds its own. Compat's `parts/joints.rs` keeps its Roblox kinds and its frames on assemblies (its own types are `PartJointDesc` and `PartJointKind` by then, §3), and maps them onto the contract's `JointDesc` with both frames given (`frame_b: Some`), `collide = true` (Roblox constraints collide, unless a `NoCollisionConstraint` says otherwise), no break thresholds, and its own servo spring (8 Hz, its tuning).
+- **The mapping.** A ball socket with neither cone nor twist is a point joint, and with either a swing-twist. A hinge is a hinge: free, a velocity motor, or a position motor walked at its speed (`set_hinge_drive` becomes a motor edit). A rope is a distance joint with range [0, L], a rod one with [L, L]. New: a prismatic constraint is a slider, with its limits, motor or servo; a cylindrical one is a six-DOF joint free (or limited) along and about X and fixed otherwise; a spring is a distance joint at its free length with a limit spring from its stiffness and damping (`SpringSettings::StiffnessAndDamping`), and with limits a second, rigid distance joint for the range.
+- **Reviews and checks.** WP47 reviews the PR. Compat's tests stay green, and the plaza's replays keep their hashes.
+
+**§13 Tests.**
+- **PR "joints", in `re_physics`.**
+  - **Kinds.** Each kind keeps what it should: a weld the relative pose; a point joint the point; a hinge turns about X only; a slider moves along X only; a cone keeps the main axes within its angle; a swing-twist keeps its twist and swing; a distance joint keeps its range; a six-DOF joint each axis as free, fixed or limited.
+  - **Limits.** Hinge, slider and distance limits hold, and soft ones give at the spring's rate.
+  - **Motors.** A hinge's velocity motor holds 1 rad/s; a lift's position motor rests within its sag of the target; a servo walks at its speed and arrives (the spike's numbers within 1 %); a hinge in [−170°, 170°] at 160°, servoed to −160°, arrives through 0°; a motor at its strength saturates; friction holds a small load and slips past a larger one.
+  - **Breaking.** A weld under a growing pull breaks after the step the force passes its threshold; a hinge at its limit breaks at its torque; the event names the joint and both sides; the bodies collide afterwards; a mended joint holds again.
+  - **Rest poses.** A replaced body, a reshaped body and a body whose motion type changes keep their joints and rest angles.
+  - **The world.** Joints to the world from either side; a move of the origin keeps them; a world without joints to the world has no anchor.
+  - **Collisions.** Joined bodies do not collide by default and do with `collide`.
+  - **Refusals and warnings.** A character, a ragdoll part, a locked-axis body, bad limits, a slider target beyond ±2,000 m and a target that is not finite are `RE5008`; a joint without a dynamic body is `RE5022`. A free hinge's goal of 270° drives to −90° the short way, and a speed of 5,000°/s is clamped to 2,700°/s.
+  - **Refused edits and parked keys.** A `SetJoint` that fails a check keeps the joint's last valid description and reports `RE5008` once. A refused joint whose limits a later `SetJoint` fixes is made; a dropped joint is made again by a `SetJoint` once its body is back; a `RemoveJoint` forgets a parked key without a diagnostic and drops a waiting `AddJoint`; an `AddJoint` for a known key is `RE5005`, and a `SetJoint` or `RemoveJoint` for a key never seen is `RE5004`.
+  - **Waiting.** A joint whose body waits out of reach is made when the body joins.
+  - **State.** A snapshot saved before a break restores after it and repeats bit for bit, with collisions between its bodies rejected again as the restored `broken` flags say; a snapshot saved before a joint was made again is refused (`RE5012`); a play copy keeps rest poses and servo positions; a 780-weld sheet gives the same digest with 1, 2 and 4 workers.
+  - **M1.** The existing constraint tests pass unchanged.
+- **PR "joints", in `re_app`.**
+  - The sync resolves both sides (on the body, on a child, from outside every body, on a collider that a character or a vehicle holds), and `RE0721` fires for each refusal.
+  - Edits in place, frame moves and kind changes behave as §5 says, and a Joint on a kinematic body that a script moves every step is never made again; `broken` is written and mended, and the sync's own write sends no `SetJoint`; a body added again sends `SetJoint` for its parked joints.
+  - `physics.joint`, `physics.set_motor` and `physics.on_joint_break` work from Luau.
+  - `state_hash` is unchanged without joints and covers joints with them.
+  - The examples d2-run replays (today the island, the plaza and the valley; the town joins when WP48's #196 merges) keep their hashes against `main` (`cargo xtask d2`).
+- **The three-platform test** (the plan's acceptance). PR "joints" adds a small test project, `crates/re_app/tests/fixtures/joints` (a scene, one script and one replay of 600 frames, no assets). In it a door on a hinge to the world is a servo to 90° at 90°/s, a lift on a slider has a position motor 2 m up, and a weld under a box that the script pulls down harder each step (`physics.add_force`, PR "queries") breaks above its `break_force`, with `on_joint_break` writing the step and force to a `HudText`. A re_app test runs it headless and checks the door, the lift and the break. The fixture's `--project crates/re_app/tests/fixtures/joints` goes wherever `cargo xtask d2` runs on the three platforms when PR "joints" lands (d2-run's command in `platforms.yml` today, though WP31's PRs may move it), one line that WP31 reviews, so `d2` compares its `state_hash` at every checkpoint on Linux, Windows and macOS. The fixture, its re_app test and `RE0721`'s page are WP34's files in PR "joints". The plan's WP34 acceptance runs `cargo xtask d2 --project crates/re_app/tests/fixtures/joints --json`.
+- **PR "compat joints".** Each Roblox constraint kind, prismatic, cylindrical and spring included, against its native mapping; compat's existing joint tests; the plaza's hashes.
+
+**§14 Ownership and reviews.**
+- **The contract.** The `re_types` types and commands (§3), the `Joint` component and its enums in `re_scene` with the regenerated schemas (§1), and `HostServices::joint_state` (§10) go through maintainer-reviewed PRs.
+- **Other threads' reviews.** WP35 reviews the delivery of breaks in `runtime.rs`; WP47 reviews PR "compat joints"; WP31 reviews the fixture's d2 line (§13).
+- **The rest is WP34's:** `re_physics`, `sync/physics.rs`, the `physics` library, the test project and its re_app test, and the explain pages.
+- **Debug drawing.** WP35's `debug.physics` (ADR-0057 §9) can draw joints from `Physics::joint` and the frames later; nothing here depends on it.
+
+**Alternatives.**
+- **Removing a broken joint.** Simpler, and what the first spike did. But removing a constraint makes every earlier snapshot unrestorable (refused in the spike), and a disabled joint moves its bodies bit for bit as a removed one.
+- **A component per kind** (Unity's `HingeJoint` and `FixedJoint`, Godot's joint nodes). Fewer fields each, but the plan asks for one `Joint`, and one table is simpler for scripts, agents and the editor, which change a joint's kind by one field.
+- **Both frames authored** (Roblox's two attachments, Unreal's frames per body). They survive anything, but an author must place two frames that coincide, and a mistake yanks the bodies together at the start. Taking the other frame when the joint is made is what Unity and Godot do; compat keeps its explicit frames through `frame_b`.
+- **Motor targets as runtime state** set by `physics.set_motor`, as `physics.drive` sets a car's input. They would need their own place in snapshots, saves, the network and the hash. As Joint fields, they are scene state like any other, and `set_motor` is a convenience over `e:set`.
+- **A `SetJointMotor` command.** `SetJoint` already changes motors in place (§5).
+- **Jolt's 2 Hz default spring.** A lift would sag 62 mm and a door overshoot 15° (the spike); 10 Hz sags 2.5 mm.
+- **Rigid position motors (frequency 0).** Jolt switches such a motor off, so the lift falls (the spike); a non-positive frequency is `RE5008`.
+- **A static anchor body per joint to the world.** It costs a body per joint for nothing; one anchor per world holds them all.
+- **An ADR-0057 `Event` handle** (`physics.joint_broken`). The `physics` library's events are `on_*` connections; moving the whole library to `Event` handles is a separate change.
+- **Rejecting collisions between joined bodies by collision groups** (Jolt's `GroupFilterTable`, as ragdolls use). The engine's groups are its own bit masks, and a table per joint pair would need sub-group ids for every body; the listener's pair set is one lookup, only while such joints exist.
+
+**Consequences.**
+- **Unchanged scenes.** Scenes without joints simulate and hash as before: the new commands rank after every earlier kind, the anchor exists only with joints to the world, the extra object layer selects and collides with nothing, and `state_hash` adds joint bytes only when there are joints. Both PRs check the replays of the examples that d2-run replays against `main`.
+- **ADR-0056 §1.** Its accepted text stays as it is. A maintainer amendment appended to ADR-0056 records that a body a joint holds is reshaped, not replaced (§6); like every reshaped moving body it wakes, and making its joints again wakes both bodies.
+- **The contract** "Physics for gameplay" gains §3's types and commands and `HostServices::joint_state`, all additive.
+- **CI.** The three-platform d2 run (d2-run today) replays one more project, of 600 frames, on each platform.
+- **Costs.** A setter call per joint edit; a readout check per breakable joint per step (about 0.1 µs); a servo target per moving servo per step; one pair lookup per contact candidate while joints with `collide = false` exist.
+- **Known limits.**
+  - **The rest pose is the pose when the joint is made.** A script that moves a jointed body before its joint is first made (in the frame a scene loads) moves the rest pose with it; set the pose a step later, or set the motor target instead.
+  - **Hinge and slider limits must contain the rest pose** (Jolt's rule): a door that rests closed opens within [0°, 120°], not [10°, 120°].
+  - **Position motors sag** under load by `load/(m(2πf)²)` (§7).
+  - **Six-DOF motors drive every free or limited axis of their group** (§7).
+  - **Long chains and large mass ratios.** Jolt's solver is iterative: a long chain stretches under a heavy load, and a light body between heavy ones yields.
+  - **Breaking compares a step's mean load** and happens after that step (§8).
+  - **Wide limits and the short way.** On a hinge whose limits span more than 180°, a jump (speed 0) to a goal more than half a turn away, or a servo whose body lags more than half a turn behind its target, makes Jolt's motor push the short way into a limit, where it stalls; give the motor a speed and the body room to follow. Swing-twist and six-DOF goals always turn the short way (§7), so with twist limits wider than 180° a goal on the far side stalls the same way.
+  - **Characters and ragdolls cannot be joined** (Jolt refuses their bodies), **but a collider they hold can be** (§2). A character carries things through ADR-0056's followers, and ragdolls have their own joints (ADR-0040).
+  - **Moving a joint's frame makes it again.** A Joint's entity that a script or an animation moves, outside every body or on a child, makes its joint again on every step it moves (§5): the warm start restarts, and earlier snapshots stop restoring (`RE5012`). An anchor that moves every step goes on a kinematic body (§2).
+  - **Mending snaps the bodies back.** If the bodies have moved apart (a plank that fell), mending a joint pulls them back over a few steps, as hard as the joint allows, and pushes whatever is between them. A game moves the body back before it sets `broken` to false.
+  - **Other cells and generated entities.** `other` holds an entity, and references resolve at load among the entities that exist (ADR-0060). A streamed cell's content is despawned on unload and spawned again on load, and a generated entity is replaced when its source regenerates. So a joint whose `other` is in another cell, or is generated, ends when that entity goes (`RE0721`'s note) and does not come back by itself. Keep both sides in one cell or one output, or make the joint from a script once both exist.
+  - **Joints inside a cell** are made again each time the cell loads, from the poses the cell gives.
+- **Saves.** A save stores the game's data, not the world (ADR-0059), so joints come back from the scene's poses and a game restores what it stored (a door's open state as its motor target). Saving physics state, joints included, stays the plan's stretch item with WP37.
+- **Docs.** The plan's WP34 acceptance runs the fixture's d2 (§13), and the plan keeps PR "joints" before PR "compounds" (§2). ARCHITECTURE §7 notes sub-ranges, not single codes, so `RE0721` needs no line there; the note on WP34's `RE0720` to `RE0739` rides in whichever of PR "joints" and PR "compounds" lands first, for the maintainer's review.
+
+| Item | PR | Owner of the file |
+|---|---|---|
+| `Joint`, `JointKind`, `JointMotor`, `JointAxis` and the schemas | "joints" | maintainer review (`re_scene`) |
+| `JointDesc`, `JointKind`, `JointAxisDesc`, `JointMotorDesc`, `JointSpring`, `JointState`, `JointEvent`, `MotorMode`, `AddJoint`, `SetJoint`, `RemoveJoint` | "joints" | maintainer review (`re_types`) |
+| `HostServices::joint_state` | "joints" | maintainer review (`re_types/src/host.rs`) |
+| The joint module, the world anchor, parked keys, breaking, servos, the pair set, snapshots, `RE5022` and the pages of `RE5008` and `RE5014` | "joints" | WP34 (`re_physics`) |
+| Resolution, frames, `broken` written back, `RE0721` | "joints" | WP34 (`sync/physics.rs`) |
+| `App::state_hash`'s joint bytes | "joints" | maintainer review (`re_app/src/app/mod.rs`) |
+| `physics.joint`, `physics.set_motor`, `physics.on_joint_break` | "joints" | WP34; WP35 reviews `runtime.rs` |
+| The test project and its re_app test | "joints" | WP34 |
+| The fixture's d2 `--project` line | "joints" | WP31 review (d2-run in `platforms.yml` today) |
+| Compat's `JointDesc` and `JointKind` renamed `PartJointDesc` and `PartJointKind` | the first PR that brings both into one file | WP34 (`re_physics`); WP47 reviews `re_compat`'s imports |
+| Compat's joints on the core; prismatic, cylindrical and spring | "compat joints" | WP34; WP47 reviews |
+| The ADR-0057 amendment (appended to ADR-0057) | "joints" | maintainer, with WP35's review of `runtime.rs` |
+
 ## ADR-0056: Compound bodies and physics materials: child colliders join the moving body above them, library compounds, cylinders, tapered shapes and planes, surfaces per collider and per triangle combined by compat's rule, and the collider and surface touched in contacts and hits
 
 **Status:** Accepted (maintainer, 2026-10-28; drafted by WP34), for WP34's PRs "compounds" (§1 to §6, §10 and the parts of §11 that name colliders) and "materials" (§7 to §9 and the parts of §11 that name surfaces). It amends M1's mapping rule "a `Collider` without a `RigidBody` is a `Static` body" (docs/M1_PLAN.md, WP0's component notes) and extends the M4 contract "Physics for gameplay" (`crates/re_types/src/physics.rs`, `crates/re_scene/src/components.rs`): the types of §2, §6 and §10 are frozen at PR "compounds", those of §7 at PR "materials". Evidence: the code at `046043d`; the compound and materials spike (`research/m4/wp34/compound-spike/README.md`: oxijolt 1.1.0 and Jolt 5.6.0 with the engine's features and patched `oxijolt-sys`, run twice on 2026-10-28); oxijolt 1.1.0's source as the lockfile pins it; the physics and entity audit (`research/m4/audit/physics-entity.md` §1.2, §4.1 item 3, §5 candidate 6); the sample game's F11; the accepted ADR-0008 amendment (WP34), whose §6 already counts a compound's children among its entity's bodies.
@@ -4049,6 +4314,8 @@ pub sky_light_specular: f32 = 1.0,
 | The shared listener, interning and freeing, `RE5021`, surface resolution | "materials" | WP34, WP47 reviews the listener |
 | `HostServices::body_of` and `surface_name` | "compounds", "materials" | maintainer review (`re_types/src/host.rs`) |
 | Luau fields, `physics.body` | both | WP34; WP35 reviews `push_contacts` |
+
+**Amendment (maintainer, 2026-10-28: ADR-0055 §6).** A body that a joint holds is not replaced: physics takes its joints out, sets the new shape with `SetShape` and makes them again from their descriptions (ADR-0055 §6), so the body keeps its Jolt body and contacts, and its joints keep their rest poses. Of §1's "Bodies that are replaced instead", only a vehicle's chassis remains.
 
 ## ADR-0057: The gameplay scripting API: typed events, prefabs at run time, the cursor and raw input, the late frame and time scale, and recorded replays
 
@@ -4383,6 +4650,8 @@ A fixture project, `crates/re_app/tests/projects/gameplay/`, calls every new fun
 
 **Amendment (M4, WP36 PR "luau"; accepted by the maintainer, 2026-10-28).** The UI's events join §7's table: PreRender's settle also delivers the `ui` events (`ui.clicked`, `ui.changed`, `ui.submitted`, `ui.back` and `ui.focus_changed`) raised in the same frame's Input, where the UI routes input (ADR-0058 part 5).
 
+**Amendment (M4, WP34 PR "joints"; accepted by the maintainer, 2026-10-28).** Joint breaks join §7's table: PostSimulation's script work runs `physics.on_joint_break` connections after contacts and before due `task.wait` threads.
+
 ## ADR-0058: Native UI on one core: `re_ui` lays out and paints plain node trees for native UI and the compat GUI, with UI components in the scene, input routed ahead of the action filter and recorded in replays, and a `ui` library
 
 **Status:** Accepted (maintainer, 2026-10-28; drafted by WP36), for WP36's PRs "core", "input", "components", "luau" and "screens" (part 11). It rests on a spike whose patch, numbers and images are in `research/m4/wp36/` (its `README.md` gives the method). It builds on ADR-0057 (engine events, `LateFrame`, `ReplayDoc` version 2), WP37's ADR-0030 amendment (the action filter that takes the actions the UI blocks) and ADR-0059 (the `settings` library the settings screen binds to).
@@ -4540,6 +4809,8 @@ A fixture project, `crates/re_app/tests/projects/gameplay/`, calls every new fun
 - The web runtime: PR "core" moves code between crates and adds the plain tree compat now builds each frame, 4,085 bytes gzipped as CI measures it, so it waits for the 10 MB budget; every later PR reports its growth (ADR-0049 amendment).
 - egui 0.37, when the maintainer moves to it, touches re_ui's text and painting; compat's goldens, the native goldens and the layout test catch any change.
 - Other WPs: WP47 reviews PR "core", and its "gui input" lands before PR "input" and brings typed text; WP37 takes the blocked actions in its filter; WP35 reviews `ScriptHost::ui()`; WP32 reviews the UI texture registration; WP43's inspector shows the components as it shows any, with a picker on `UiImage.image`; WP44's templates copy the screens and its guide documents the library; WP48's town uses the screens.
+
+**Amendment (M4, WP36 PR "components"; accepted by the maintainer, 2026-10-28).** Parts 3 and 10: a `UiImage` is not registered with `Renderer::register_ui_texture`, since egui's UI pass blends premultiplied RGBA8 and processed textures are straight alpha and often BC7. The UI host in `re_app` reads the image's processed texture through `re_assets`, with the project's `[assets]` settings, in every build, so a project and its package draw the same pixels. It checks the texture with `TextureData::is_well_formed`, decodes a BC top level with `re_render::decode_blocks` (public; WP32 reviews) and makes a premultiplied egui texture of it; `gfx.rs` gets no texture code. An image that cannot be loaded is `RE0520`, with the loader's error related, as the renderer reports textures. UI images are stored as every texture is (ADR-0047).
 
 ## ADR-0059: Scenes, saves and settings: a named scene list, additive loading with kept entities, save slots and user settings in the data folder, all repeatable in verify runs and replays
 
@@ -5401,6 +5672,11 @@ The `box16` rows other than the chain take under a millisecond and vary by up to
 - **The browser runtime grows.** Procedural sources regenerate in the browser, so `re_geom::poly`, the node kinds and the straight skeleton go into `real_bg.wasm`. Each PR reports `build-web`'s size and its growth in its description (ADR-0049's amendment), against the about 2 MB that M4 has left after WP31's #193.
 - `re_geom`'s goldens and `re_proc`'s per-version goldens grow with each PR.
 - Each operation allocates a new mesh, so a chain of many operations on a large mesh pays a copy per step (the spike's `box256` chain: 5.6 s for about 15 million output faces). That suits buildings and props of thousands of faces, not sculpting-scale meshes, which are a non-goal.
+
+**Amendment (M4, WP41 PRs "extrude" and "subdivide"; accepted by the maintainer, 2026-10-28).** Output groups, refusals, creases and bevel ends:
+- **Output groups (§3).** An operation that names output groups first takes the faces it makes (walls, rings) out of `group`, then puts each face it makes or moves in its role's output group (`side_group`, `top_group`, `ring_group`) and out of its other output groups. An empty name is no group; a named one exists afterwards even when it holds no face. `poly.bevel` names none: a strip copies the first of its two faces in the group, and a cap the first face around its point in the group, groups and material included.
+- **Refusals (§4).** `RE4514` also covers a face an operation makes or moves that would cross itself (a wall, moved face, strip or cap), a moved face turned inside out, a closed mesh that would lose its volume (to zero or below: faces that share points, which the crossing test skips, can pass through each other), and a subdivision quad that would cross itself where smoothing pulls points past each other. Subdivision checks each quad on its own and runs no crossing test. An inset's or bevel's shrunk face that turns over or crosses itself stays `RE4513`. The `re_geom` API reports a missing group, or an output name that is a face attribute of another type, with `RE4510`; nodes check first and report `RE4150`, `poly.group`'s `name` included.
+- **Creases and bevel ends (§6).** In a subdivision, every face on a crease edge (a boundary, an edge that more than two faces share, or one that two faces run the same way) shares the edge's point, so a result is as connected as its input; the spike gave each face its own. At a point with one bevelled edge and four or more faces, a triangle through the point closes the strip's end.
 
 ## ADR-0063: The play session in the editor: a second App forked from the edit world, stepped frame by frame in the editor's window
 

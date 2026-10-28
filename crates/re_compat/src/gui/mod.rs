@@ -20,12 +20,11 @@
 //! ([`RenderFrame::viewports`](crate::render::RenderFrame)) into a texture
 //! and passes the texture back in [`GuiFrame::images`].
 
+mod build;
 mod fonts;
 mod layout;
-mod paint;
 pub(crate) mod props;
 mod surface;
-mod text;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -42,10 +41,10 @@ use crate::class::Accessor;
 use crate::instance::tree;
 use crate::runtime::{Bindings, state, with_world};
 use crate::{CompatError, signal};
-use layout::{Item, Kind, Layout, Root};
-use paint::{Looks, Painter};
+use build::{Built, Kind};
 use props::{Scope, vec2_value};
 use re_core::Diagnostic;
+use re_ui::{Item, Layout, Looks, NodeId, Painter, Root};
 use surface::Placement;
 
 /// Gives `ctx` egui's default fonts plus the bundled substitutes
@@ -53,13 +52,13 @@ use surface::Placement;
 /// draws UI: text laid out before the fonts are in uses egui's own. A host
 /// with fonts of its own uses [`add_fonts`] instead.
 pub fn install_fonts(ctx: &egui::Context) {
-    fonts::install(ctx);
+    re_ui::fonts::install(ctx);
 }
 
 /// Adds the bundled substitutes to a host's font definitions, keeping its
 /// fonts; pass the result to `egui::Context::set_fonts`.
 pub fn add_fonts(defs: &mut egui::FontDefinitions) {
-    fonts::add_to(defs);
+    re_ui::fonts::add_to(defs);
 }
 
 /// Paints the shapes of a [`step`] on a background layer of `ctx`, under
@@ -138,6 +137,31 @@ pub struct GuiOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// What one UI frame laid out and wrote, from [`step_recorded`]: tests
+/// compare it with committed values, exactly (ADR-0058).
+#[derive(Clone, Debug, Default)]
+pub struct GuiRecord {
+    /// The drawn elements in drawing order: the screen's, then each
+    /// surface's in its canvas pixels.
+    pub items: Vec<GuiItem>,
+    /// Every property value the frame gave, in order, those equal to the
+    /// value already there included (the step does not write them).
+    pub writes: Vec<(Entity, &'static str, Value)>,
+}
+
+/// A drawn element's rectangle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GuiItem {
+    pub entity: Entity,
+    /// Its top-left corner, before rotation.
+    pub min: Vec2,
+    pub size: Vec2,
+    /// Its total rotation in degrees.
+    pub angle: f32,
+    /// What it is clipped to.
+    pub clip: Option<egui::Rect>,
+}
+
 /// A drawn `ViewportFrame`: the host renders its parts into a texture of
 /// `size` times the pixels per point of where it is drawn (the window's, or
 /// the surface's [`SurfaceDraw::pixels_per_point`]), capped at
@@ -182,9 +206,42 @@ enum Warning {
     Scaled,
 }
 
+/// A root placed for this frame: a `ScreenGui`, a `BillboardGui` or a
+/// `SurfaceGui`.
+struct RootAt {
+    e: Entity,
+    /// The screen point of the root's top-left corner.
+    origin: Vec2,
+    /// The screen point that `AbsolutePosition` 0 is: the corner of GUI
+    /// space, below the top bar, for screen UI and billboards alike (so a
+    /// billboard's elements report where they are on the screen).
+    abs_origin: Vec2,
+    size: Vec2,
+    global_z: bool,
+    clip: Option<egui::Rect>,
+    /// False when the root does not take input (a billboard that is not
+    /// `Active`).
+    input: bool,
+}
+
+impl RootAt {
+    /// The UI core's root, at the root's node.
+    fn at(&self, node: NodeId) -> Root {
+        Root {
+            node,
+            origin: self.origin,
+            abs_origin: self.abs_origin,
+            size: self.size,
+            global_z: self.global_z,
+            clip: self.clip,
+            input: self.input,
+        }
+    }
+}
+
 /// A `SurfaceGui` to lay out this frame.
 struct SurfaceRoot {
-    root: Root,
+    root: RootAt,
     at: Placement,
     /// Texture pixels per canvas pixel.
     k: f32,
@@ -334,10 +391,10 @@ fn billboards(w: &mut World) -> Vec<Entity> {
 /// The roots to draw, back to front: the enabled `ScreenGui` children of the
 /// containers (or a container that is one), and the enabled `BillboardGui`s
 /// inside them.
-fn roots(s: &Scope, frame: &GuiFrame, boards_in_world: &[Entity]) -> Vec<Root> {
+fn roots(s: &Scope, frame: &GuiFrame, boards_in_world: &[Entity]) -> Vec<RootAt> {
     let w = s.w;
-    let mut screens: Vec<(i64, usize, Root)> = Vec::new();
-    let mut boards: Vec<(f32, usize, Root)> = Vec::new();
+    let mut screens: Vec<(i64, usize, RootAt)> = Vec::new();
+    let mut boards: Vec<(f32, usize, RootAt)> = Vec::new();
     let viewport = egui::Rect::from_min_size(
         egui::Pos2::ZERO,
         egui::vec2(frame.viewport.x, frame.viewport.y),
@@ -371,7 +428,7 @@ fn roots(s: &Scope, frame: &GuiFrame, boards_in_world: &[Entity]) -> Vec<Root> {
             screens.push((
                 p.int("DisplayOrder", 0),
                 n,
-                Root {
+                RootAt {
                     e,
                     origin,
                     abs_origin: inset,
@@ -413,7 +470,7 @@ fn roots(s: &Scope, frame: &GuiFrame, boards_in_world: &[Entity]) -> Vec<Root> {
             boards.push((
                 depth,
                 n,
-                Root {
+                RootAt {
                     e,
                     origin: min,
                     abs_origin: inset,
@@ -511,7 +568,7 @@ fn surface_roots(
         }
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(canvas.x, canvas.y));
         out.push(SurfaceRoot {
-            root: Root {
+            root: RootAt {
                 e,
                 origin: Vec2::ZERO,
                 abs_origin: Vec2::ZERO,
@@ -527,21 +584,13 @@ fn surface_roots(
     out
 }
 
-/// True if screen point `p` is inside the drawn item.
-fn contains(it: &Item, p: Vec2) -> bool {
-    if it.clip.is_some_and(|c| !c.contains(egui::pos2(p.x, p.y))) {
-        return false;
-    }
-    let q = it.rot.inverse().transform_point2(p);
-    q.cmpge(it.min).all() && q.cmple(it.min + it.size).all()
-}
-
 /// Takes input: a button, a text box or an `Active` element.
-fn takes_input(s: &Scope, it: &Item) -> bool {
+fn takes_input(s: &Scope, built: &Built, it: &Item) -> bool {
+    let e = built.entity(it.node);
     it.interactable
-        && (it.kind == Kind::TextBox
-            || s.is_a(it.e, "GuiButton")
-            || s.props(it.e).bool("Active", false))
+        && (built.kind(it.node) == Kind::TextBox
+            || s.is_a(e, "GuiButton")
+            || s.props(e).bool("Active", false))
 }
 
 /// The `GuiService`, when it exists and has `SelectedObject`.
@@ -555,6 +604,26 @@ fn gui_service(s: &Scope, game: Entity) -> Option<Entity> {
 /// Lays out, paints and takes the input of one UI frame. Call it from the
 /// host's egui pass on the client VM; see the module docs.
 pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<GuiOutput> {
+    step_with(lua, ctx, frame, None)
+}
+
+/// [`step`], also giving what the frame laid out and wrote.
+pub fn step_recorded(
+    lua: &Lua,
+    ctx: &egui::Context,
+    frame: &GuiFrame,
+) -> mlua::Result<(GuiOutput, GuiRecord)> {
+    let mut record = GuiRecord::default();
+    let out = step_with(lua, ctx, frame, Some(&mut record))?;
+    Ok((out, record))
+}
+
+fn step_with(
+    lua: &Lua,
+    ctx: &egui::Context,
+    frame: &GuiFrame,
+    record: Option<&mut GuiRecord>,
+) -> mlua::Result<GuiOutput> {
     let st = state(lua)?;
     let classes = st.setup.classes.clone();
     let game = st.game;
@@ -624,29 +693,35 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
             let scope = Scope::new(w, classes);
             let s = &scope;
             let w: &World = w;
-            let mut lay = Layout::new(s, ctx);
+            // The nodes of every root, then their layout.
             let roots = roots(s, frame, &boards_in_world);
+            let mut built = Built::default();
+            let screen_roots: Vec<Root> = roots
+                .iter()
+                .map(|r| r.at(built.root(s, r.e, &frame.images)))
+                .collect();
+            let surface_roots: Vec<Root> = surfaces
+                .iter()
+                .map(|r| r.root.at(built.root(s, r.root.e, &frame.images)))
+                .collect();
+            let built = built;
+            let mut lay = Layout::new(&built.tree, ctx);
             let mut items: Vec<Item> = Vec::new();
-            for r in &roots {
-                lay.root(r);
-                let mut mine = std::mem::take(&mut lay.items);
-                mine.sort_by_key(|it| it.key);
-                items.extend(mine);
+            for r in &screen_roots {
+                items.extend(lay.root(r));
             }
             // The surfaces' elements follow the screen's, each surface's in
             // its own span and in canvas pixels.
             let n_screen = items.len();
             let mut spans = Vec::with_capacity(surfaces.len());
-            for r in &surfaces {
+            for r in &surface_roots {
                 let start = items.len();
-                lay.root(&r.root);
-                let mut mine = std::mem::take(&mut lay.items);
-                mine.sort_by_key(|it| it.key);
-                items.extend(mine);
+                items.extend(lay.root(r));
                 spans.push(start..items.len());
             }
-            let mut writes = std::mem::take(&mut lay.writes);
+            let mut writes = built.writes(&lay.take_visits());
             drop(lay);
+            let ent = |i: usize| built.entity(items[i].node);
 
             // Hover: every element under the pointer; the topmost takes input.
             // Screen UI under the pointer comes first; otherwise the surface
@@ -654,7 +729,7 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
             let under_at = |range: std::ops::Range<usize>, p: Vec2| -> Vec<usize> {
                 range
                     .rev()
-                    .filter(|&i| items[i].interactable && contains(&items[i], p))
+                    .filter(|&i| items[i].interactable && items[i].contains(p))
                     .collect()
             };
             let screen_under = input
@@ -667,14 +742,17 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
                     input.pointer.unwrap_or_default() - Vec2::new(0.0, frame.top_inset),
                 ),
             };
-            let target = under.iter().copied().find(|&i| takes_input(s, &items[i]));
+            let target = under
+                .iter()
+                .copied()
+                .find(|&i| takes_input(s, &built, &items[i]));
             let pxy = |_: Option<Vec2>| {
                 vec![
                     Arg::Int(event_at.x.round() as i64),
                     Arg::Int(event_at.y.round() as i64),
                 ]
             };
-            let now: Vec<Entity> = under.iter().map(|&i| items[i].e).collect();
+            let now: Vec<Entity> = under.iter().map(|&i| ent(i)).collect();
             for &e in &hub.hovered {
                 if !now.contains(&e) && tree::alive(w, e) {
                     events.push((e, "MouseLeave", pxy(input.pointer)));
@@ -690,7 +768,7 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
             // MouseMoved only when the pointer moved is the original's rule; the
             // host's pointer is per frame, so it fires each frame it is over.
             hub.hovered = now;
-            let target_e = target.map(|i| items[i].e);
+            let target_e = target.map(ent);
             let is_button = |e: Entity| s.is_a(e, "GuiButton");
 
             // Buttons.
@@ -783,7 +861,7 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
             if let Some(e) = hub.focused
                 && (!tree::alive(w, e)
                     || tree::is_destroyed(w, e)
-                    || !items.iter().any(|it| it.e == e))
+                    || !items.iter().any(|it| built.entity(it.node) == e))
             {
                 if tree::alive(w, e) && !tree::is_destroyed(w, e) {
                     focus_to(&mut hub, &mut events, &mut writes, None, false);
@@ -832,19 +910,20 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
             // The wheel scrolls the topmost scrolling frame under the pointer.
             if input.scroll != Vec2::ZERO
                 && let Some(&i) = under.iter().find(|&&i| {
-                    items[i].kind == Kind::Scrolling
-                        && s.props(items[i].e).bool("ScrollingEnabled", true)
+                    built.kind(items[i].node) == Kind::Scrolling
+                        && s.props(ent(i)).bool("ScrollingEnabled", true)
                 })
             {
                 let it = &items[i];
-                let p = s.props(it.e);
+                let e = ent(i);
+                let p = s.props(e);
                 let dir = p.item("ScrollingDirection", "XY");
                 let (ax, ay) = match dir.as_str() {
                     "X" => (true, false),
                     "Y" => (false, true),
                     _ => (true, true),
                 };
-                let at = written_vec2(&writes, it.e, "CanvasPosition")
+                let at = written_vec2(&writes, e, "CanvasPosition")
                     .unwrap_or_else(|| p.vec2("CanvasPosition", Vec2::ZERO));
                 let canvas = it.canvas.unwrap_or(it.size) / it.scale.max(1e-6);
                 let max = (canvas - it.size / it.scale.max(1e-6)).max(Vec2::ZERO);
@@ -861,7 +940,7 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
                     d.x = -input.scroll.y / it.scale.max(1e-6);
                 }
                 let next = (at + d).clamp(Vec2::ZERO, max);
-                writes.push((it.e, "CanvasPosition", vec2_value(next)));
+                writes.push((e, "CanvasPosition", vec2_value(next)));
             }
 
             // Gamepad selection.
@@ -877,16 +956,20 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
             {
                 let selectable: Vec<&Item> = items[..n_screen]
                     .iter()
-                    .filter(|it| it.interactable && s.props(it.e).bool("Selectable", false))
+                    .filter(|it| {
+                        it.interactable && s.props(built.entity(it.node)).bool("Selectable", false)
+                    })
                     .collect();
                 let from = selected
-                    .and_then(|e| items.iter().find(|it| it.e == e))
-                    .map(|it| it.rot.transform_point2(it.min + it.size * 0.5));
+                    .and_then(|e| items.iter().find(|it| built.entity(it.node) == e))
+                    .map(|it| it.center());
                 let next = match from {
                     Some(c) => selectable
                         .iter()
-                        .filter(|it| it.e != selected.unwrap_or(Entity::PLACEHOLDER))
-                        .map(|it| (it.e, it.rot.transform_point2(it.min + it.size * 0.5) - c))
+                        .filter(|it| {
+                            built.entity(it.node) != selected.unwrap_or(Entity::PLACEHOLDER)
+                        })
+                        .map(|it| (built.entity(it.node), it.center() - c))
                         .filter(|(_, d)| d.dot(dir) > 0.0)
                         .min_by(|a, b| {
                             let score = |d: Vec2| {
@@ -897,7 +980,7 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
                             score(a.1).total_cmp(&score(b.1))
                         })
                         .map(|x| x.0),
-                    None => selectable.first().map(|it| it.e),
+                    None => selectable.first().map(|it| built.entity(it.node)),
                 };
                 if let Some(n) = next {
                     selected = Some(n);
@@ -907,44 +990,40 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
             if input.select_activate
                 && let Some(e) = selected
                 && is_button(e)
-                && items.iter().any(|it| it.e == e && it.interactable)
+                && items
+                    .iter()
+                    .any(|it| built.entity(it.node) == e && it.interactable)
             {
                 events.push((e, "MouseButton1Click", Vec::new()));
                 events.push((e, "Activated", vec![Arg::Nil, Arg::Int(1)]));
             }
             // Paint.
+            let id = |e: Option<Entity>| e.and_then(|e| built.id(e));
             let looks = Looks {
-                hovered: target_e,
-                pressed: hub.pressed1.filter(|_| input.button1),
-                selected,
-                focused: hub.focused,
+                hovered: id(target_e),
+                pressed: id(hub.pressed1.filter(|_| input.button1)),
+                selected: id(selected),
+                focused: id(hub.focused),
             };
-            let mut painter = Painter {
-                s,
-                screen: egui::Rect::from_min_size(
+            let mut painter = Painter::new(
+                &built.tree,
+                egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(frame.viewport.x, frame.viewport.y),
                 ),
-                shapes: Vec::new(),
-                images: &frame.images,
-            };
+            );
             for it in &items[..n_screen] {
                 painter.item(it, &looks);
             }
-            let shapes = std::mem::take(&mut painter.shapes);
+            let shapes = painter.finish();
             let finite = |x: f32, or: f32| if x.is_finite() { x } else { or };
             let mut drawn_surfaces = Vec::with_capacity(surfaces.len());
             for (r, span) in surfaces.iter().zip(&spans) {
                 let canvas = r.root.size;
-                let mut painter = Painter {
-                    s,
-                    screen: egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(canvas.x, canvas.y),
-                    ),
-                    shapes: Vec::new(),
-                    images: &frame.images,
-                };
+                let mut painter = Painter::new(
+                    &built.tree,
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(canvas.x, canvas.y)),
+                );
                 for it in &items[span.clone()] {
                     painter.item(it, &looks);
                 }
@@ -955,7 +1034,7 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
                     canvas,
                     texture_px: surface::texture_px(canvas, r.k),
                     pixels_per_point: r.k,
-                    shapes: painter.shapes,
+                    shapes: painter.finish(),
                     world: r.at.world(),
                     size: r.at.size,
                     depth: surface::depth(s, r.root.e),
@@ -966,9 +1045,9 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
             let viewports = items
                 .iter()
                 .enumerate()
-                .filter(|(_, it)| it.kind == Kind::Viewport)
+                .filter(|(_, it)| built.kind(it.node) == Kind::Viewport)
                 .map(|(i, it)| ViewportDraw {
-                    entity: it.e,
+                    entity: built.entity(it.node),
                     size: it.size,
                     surface: spans
                         .iter()
@@ -979,13 +1058,26 @@ pub fn step(lua: &Lua, ctx: &egui::Context, frame: &GuiFrame) -> mlua::Result<Gu
             let out = GuiOutput {
                 shapes,
                 drawn: items.len(),
-                hovered: under.first().map(|&i| items[i].e),
+                hovered: under.first().map(|&i| ent(i)),
                 sinks_pointer: target.is_some(),
                 text_focus: hub.focused,
                 surfaces: drawn_surfaces,
                 viewports,
                 diagnostics: std::mem::take(&mut diagnostics),
             };
+            if let Some(r) = record {
+                r.items = items
+                    .iter()
+                    .map(|it| GuiItem {
+                        entity: built.entity(it.node),
+                        min: it.min,
+                        size: it.size,
+                        angle: it.angle,
+                        clip: it.clip,
+                    })
+                    .collect();
+                r.writes = writes.clone();
+            }
             // Where each write goes, while the scope can say.
             let mut written = props::FxMap::default();
             for (e, name, v) in writes {

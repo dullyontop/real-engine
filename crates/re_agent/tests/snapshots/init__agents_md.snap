@@ -26,8 +26,9 @@ grants you.
    `redo` step through them. File commands (`script.write`, `file.delete`)
    are not in the undo history: `checkpoint.restore` brings files back.
 4. Check: `verify` runs the project's checks, `screenshot` renders a frame
-   (the PNG path is in the result), and `play.run` steps a copy of the game
-   for some frames and reports what happened. None of them change the project.
+   to a PNG under `.real/out/` (the path is in the result), and `play.run`
+   steps a copy of the game for some frames and reports what happened. None
+   of them change the project.
    `verify.diff` runs verify and lists only what changed since your latest
    checkpoint: stages that now fail or pass, new or fixed diagnostics, and
    changed values. Take a checkpoint with `checkpoint.create` when the
@@ -146,11 +147,14 @@ tier:
 - `destructive`: changes that can lose work (`file.delete`); only when a
   person sets `max_tier = "destructive"`.
 
-File-writing commands may only write inside the policy's `[scopes]`, and
-never in `.real/` or `.git/` or through a symbolic link. Budgets cap `play.run` frames and the size of
-one transaction. A refused call returns `RE8001` (tier), `RE8002` (path) or
-`RE8008` (budget) and changes nothing; tell the user what you needed instead
-of working around it.
+Every file a command writes, whatever its tier, must be inside the policy's
+`[scopes]`, and never in `.real/` or `.git/` or through a symbolic link
+(`command.describe` lists a command's file arguments under `paths`). A
+screenshot goes under `.real/out/` unless you name a new `.png` inside the
+scopes; it never replaces a file. Budgets cap `play.run` frames and the size
+of one transaction. A refused call returns `RE8001` (tier), `RE8002` (path)
+or `RE8008` (budget) and changes nothing; tell the user what you needed
+instead of working around it.
 
 ## Commands
 

@@ -22,7 +22,7 @@ use re_scene::World;
 use re_types::graph::GraphDoc;
 use re_types::mesh::MeshData;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 use support::{evaluator, fixtures, graph, output_hash};
 
@@ -529,7 +529,7 @@ fn cells_share_out_shape_meshes() {
 /// How many values `test.shared` nodes have made.
 static MADE: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(Default, Deserialize, JsonSchema)]
+#[derive(Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct KeyParams {
     key: u8,
@@ -623,7 +623,7 @@ fn a_global_spacing_must_be_positive() {
     assert!(message.contains("must be positive"), "{message}");
 }
 
-#[derive(Default, Deserialize, JsonSchema)]
+#[derive(Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct NoParams {}
 

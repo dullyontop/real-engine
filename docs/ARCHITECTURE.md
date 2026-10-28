@@ -70,6 +70,10 @@ graph TD
     net[re_net] --> core
   end
 
+  subgraph "UI core (M4: egui, glam and libm only)"
+    ui[re_ui]
+  end
+
   subgraph Scripting
     script[re_script] --> command
     script --> scene
@@ -101,6 +105,7 @@ graph TD
     compat --> physics
     compat --> noise
     compat --> net
+    compat --> ui
     app --> compat
     cli --> compat
   end
@@ -143,6 +148,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_audio` | kira playback, with a headless capture fallback | `Audio::new_or_headless`, `apply(&[AudioCmd])`, `advance(Duration)`, `set_user_volume`, `CaptureBackend` | `re_scene` |
 | `re_input` | Raw input, the action map and replay | `RawInput`, `InputConfig`, `ActionMap`, `Replay`, `ReplayRecorder` | `re_scene` |
 | `re_assets` | Import, material files, cache and hot reload | `AssetId`, `AssetServer`, `import_gltf`, `load_material`, `ProcessedCache`, `AssetWatcher` | `re_scene` |
+| `re_ui` | The UI core (M4, ADR-0058): plain node trees laid out by the compat GUI's rules (scale-plus-offset sizes, anchors, padding, lists and grids, size and aspect limits, automatic size, scale, rotation, clipping, scrolling), text over the bundled fonts (ADR-0035, in its `assets/fonts/`) and painting as egui shapes, for the compat GUI and native UI | `UiTree`, `Node`, `Layout`, `Root`, `Item`, `Visit`, `Painter`, `Looks`, `TextStyle`, `fonts::install` | every engine crate (it uses only egui, glam and libm) |
 | `re_anim` | glTF node clips, skeletal poses for skins, animation graphs, keyframe tracks, IK and tweens | `Sampler`, `Tween`, `graph::{validate, BoundGraph, GraphPlayer}` | `re_scene` |
 | `re_net` | Connections over UDP with our own reliability, and over WebSockets for players in a browser; a transport seam with in-memory and conditioned links (M3, WP30, ADR-0050) | `Endpoint`, `Transport`, `UdpTransport`, `ServerTransport`, `WsTransport`, `MemoryNet`, `Conditioned` | every engine crate but `re_core` |
 | `re_script` | The Luau VMs, contexts, native API, scheduler, compile check and engine type definitions | `ScriptRuntime`, `Context`, `compile_check`, `api::definitions` | subsystems (it reaches them through `HostServices`), full_moon |
@@ -151,10 +157,10 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_cli` | The `real` binary and the `explain` command | subcommands | — |
 | `re_agent` | Agent policy, sessions, checkpoints, agent commands, `AGENTS.md` and client configs, the editor socket (client and server loop; Unix only in M1) and the single-writer lock | `Policy`, `Session`, `Checkpoint`, `register_commands`, `generate_agents_md`, `remote::{connect, serve}`, `lock::{acquire, probe}` | tokio |
 | `re_mcp` | The MCP server (rmcp, stdio or streamable HTTP on loopback), the tool-call recorder, and small blocking MCP clients for tests and the eval harness | `serve_stdio(EngineHandle, McpOptions)`, `http`, `record::Recorder`, `client::{HttpClient, StdioClient}` | `re_app` |
-| `re_editor` | The editor UI: dockable panel tabs (layout in `.real/editor/layout.json`), translate, rotate and scale gizmos (W, E, R) whose drags edit live as one undo step, the node canvas over graph files, the debugger panel, and the editor socket (ADR-0044, ADR-0045) | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
+| `re_editor` | The editor UI: dockable panel tabs (layout in `.real/editor/layout.json`), translate, rotate and scale gizmos (W, E, R) on one or several selected entities, about the active one or the selection's centre, whose drags edit live as one undo step, an editor camera (orbit, pan, zoom, fly, frame) and editor-only overlays (grid, axis indicator, light and camera icons, selection outline), the node canvas over graph files, the debugger panel, and the editor socket (ADR-0044, ADR-0045) | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
 | `re_import` | Static importer for Rojo-style projects and Studio loader scripts (tooling, M2 WP16); it never runs Luau | `import`, `ImportReport`, `new_project` | `re_app` |
 | `re_web` | The browser runtime (M3, WP29): a wasm-bindgen `Session` that takes a project's archive or files and plays or replays it (ADR-0049) | `Session` | tokio, any tooling crate |
-| `re_compat` | The Roblox-style compatibility layer (M2): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, the compat VM with instances, signals and core services, and the `RenderFrame` it builds for the renderer (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app`. It uses `re_noise` for the seeded particle effects and material detail textures |
+| `re_compat` | The Roblox-style compatibility layer (M2): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, the compat VM with instances, signals and core services, and the `RenderFrame` it builds for the renderer (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `class::ClassIndex`, `class::ClassId`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app`. It uses `re_noise` for the seeded particle effects and material detail textures, and `re_ui` for its GUI's layout, text, fonts and painting (ADR-0058) |
 
 Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
 
@@ -369,7 +375,7 @@ The layer is Luau plus Rust on top of the native model. The core spike checked h
 | `Vector3`, `Vector2`, `Color3`, `UDim2`, `Enum.*` | `Vector3` maps to the native Luau vector. The others are userdata or frozen tables generated from a JSON table. |
 | `RBXScriptSignal`, `:Connect`, `:Once`, `:Wait`, legacy `connect` | A Luau signal library over engine events |
 | `Changed`, `GetPropertyChangedSignal` | Per-component change ticks, plus a per-field diff when signals are dispatched |
-| `ChildAdded`, `DescendantAdded`, `AncestryChanged` | Observers on `ChildOf` (`On<Insert<ChildOf>>`, `On<Discard<ChildOf>>`). Not hooks: `ChildOf` is a bevy relationship and already owns its `on_insert` and `on_discard` hooks, and registering a second one panics. Hooks remain fine on our own components (`StableId`, the tag index). |
+| `ChildAdded`, `DescendantAdded`, `AncestryChanged` | Observers on `ChildOf` (`On<Insert<ChildOf>>`, `On<Discard<ChildOf>>`). Not hooks: `ChildOf` is a bevy relationship and already owns its `on_insert` and `on_discard` hooks, and registering a second one panics. Hooks remain fine on our own components (`StableId`, the tag index, `ClassMarker`'s class index). |
 | `RunService` events (render-step bindings, `RenderStepped`, `PreAnimation`, `Stepped` / `PreSimulation`, `Heartbeat` / `PostSimulation`) | The engine phases in §3, in the same order |
 | `task.*`, `wait`, `delay`, `spawn` | The `re_script` scheduler (coroutines resumed in the phases) |
 | `Humanoid` and character | `CharacterController` (Jolt CharacterVirtual) plus a Humanoid state component and the event set |
@@ -387,7 +393,7 @@ The class layer as built (WP9):
 - `ClassRegistry` is built from the data files `classes/*.json`, `enums/*.json` and `libraries/*.json` (globals that are not classes: datatype tables, function libraries such as `task`, and instance globals such as `game`), which are embedded at build time. Each class has a superclass, `creatable`, the components it adds, and its properties, methods and events, each with a coverage status. A class file can `extend` a class declared in another file, so each WP owns the rows it implements.
 - A property is stored in one of three ways: an alias to a native field (optionally through a converter), an `own` field of the class's host component `Compat_<Class>`, or a `builtin` Rust accessor. Host components are registered with `Registry::register_host` before a scene loads; scene files store their fields by name without declaring their schemas, so adding a property never breaks a saved scene (ADR-0032).
 - Unknown and unimplemented members raise `RE9001` with a "did you mean" suggestion. A write to a read-only property raises `RE9005`, and a deprecated member gives an `RE9101` warning with its replacement.
-- Every instance carries a `ClassMarker { class }`. The root entity has the stable id `game` and class `DataModel`. Each service is a child of `game` whose stable id and name are its class name, with a `ServiceTag`. A script instance's `ScriptRef.context` is `Server`, `Client` or `Module`, from its class and `RunContext`; the native runtime starts only `Game` and `Tools` scripts. A compat project says `[compat] api = "roblox"` in `real.toml`, and convention breaks are reported as `RE9004`.
+- Every instance carries a `ClassMarker { class }`. `ClassMarker` is immutable, since an instance's class never changes, and its hooks keep the world's `ClassIndex` (each class's instances, in entity order), so `ClassRegistry::instances` finds a class's instances without walking the world. `IsA` is a bit test on the ancestor bitsets the registry works out once, when it is built. The root entity has the stable id `game` and class `DataModel`. Each service is a child of `game` whose stable id and name are its class name, with a `ServiceTag`. A script instance's `ScriptRef.context` is `Server`, `Client` or `Module`, from its class and `RunContext`; the native runtime starts only `Game` and `Tools` scripts. A compat project says `[compat] api = "roblox"` in `real.toml`, and convention breaks are reported as `RE9004`.
 
 The runtime as built so far (WP10, WP11, WP12, WP13, WP14, WP15, WP16 "boot"):
 - A compat VM is a `re_script::Context` of kind `Server` or `Client`, with the native sandbox (no `loadstring`, `getfenv` or `setfenv`), created and driven by `re_compat::CompatVm`, one per world. `ScriptRuntime` stays native-only. Each area registers its accessors, methods, globals and value conversions in `Bindings`, and `CompatSetup` refuses to start if a member marked `implemented` has no implementation.
@@ -649,6 +655,7 @@ Recipes are data: a recipe runs only registered commands, up to the `edit` tier,
 | RE72xx | `re_input` |
 | RE74xx | `re_audio` |
 | RE76xx | `re_anim` |
+| RE77xx | `re_ui` (M4, ADR-0058) |
 | RE8000–8099 | `re_agent` |
 | RE8500–8599 | `re_mcp` |
 | RE8800–8899 | `re_editor` |
@@ -693,7 +700,7 @@ my-game/
   tests/goldens/<backend>/*.png
   .real/agent-policy.toml    committed
   .real/cache/  .real/agent/sessions/  .real/crash/  .real/types/   ignored
-  .real/data/  .real/out/  .real/editor/layout.json  .real/mcp-http.json      ignored (saved data, captures, the editor's dock layout, the HTTP MCP state)
+  .real/data/  .real/out/  .real/editor/layout.json  .real/mcp-http.json      ignored (saved data, captures, the editor's layout (dock, gizmo, camera, view and selection), the HTTP MCP state)
   .real/editor.lock  .real/editor.owner  .real/editor.sock                 ignored; the editor or a headless writer holds an OS lock on editor.lock and writes its pid and kind to editor.owner; the socket exists only while the editor runs
   AGENTS.md  CLAUDE.md       generated by `real agent init`
 ```

@@ -1,11 +1,11 @@
-//! Graph validation (`RE4000`–`RE4007`, `RE4012`), the node registry and the
-//! diagnostic catalogue.
+//! Graph validation (`RE4000`–`RE4007`, `RE4012`), the builder id note
+//! (`RE4031`), the node registry and the diagnostic catalogue.
 
 mod support;
 
 use std::collections::BTreeMap;
 
-use re_proc::{CODE_RANGE, DIAGNOSTICS, NodeRegistry, ProcGraph};
+use re_proc::{CODE_RANGE, DIAGNOSTICS, NodeRegistry, ProcGraph, positional_ids};
 use re_types::graph::GraphDoc;
 use serde_json::{Value as Json, json};
 use support::{graph, island};
@@ -93,6 +93,22 @@ fn every_validation_problem_has_its_code() {
         (
             "wrong parameter type",
             doc_of(&one("mesh.primitive", json!({ "shape": 3 })), &[]),
+            "RE4005",
+        ),
+        (
+            "water plane without cells",
+            doc_of(
+                &one("terrain.water_plane", json!({ "subdivisions": 0 })),
+                &[],
+            ),
+            "RE4005",
+        ),
+        (
+            "water plane with too many cells",
+            doc_of(
+                &one("terrain.water_plane", json!({ "subdivisions": 100_000 })),
+                &[],
+            ),
             "RE4005",
         ),
         (
@@ -224,6 +240,40 @@ fn every_schema_ref_resolves() {
         let pointer = r.strip_prefix('#').expect("local refs only");
         assert!(schema.pointer(pointer).is_some(), "dangling {r}");
     }
+}
+
+/// Nodes a builder gave no id get `n<position>`; a note names them, since
+/// inserting a node renumbers the later ones.
+#[test]
+fn positional_builder_ids_get_a_note() {
+    let ids = |ids: &[&str]| {
+        let nodes: Vec<(&str, &str, Json)> = ids
+            .iter()
+            .map(|id| (*id, "terrain.heightfield", json!({})))
+            .collect();
+        graph(1, &nodes, &[])
+    };
+    let builder = "scripts/tools/g.luau";
+    assert!(positional_ids(&ids(&["height", "mask"]), builder).is_none());
+    // `n1` second is not its position.
+    assert!(positional_ids(&ids(&["height", "n1"]), builder).is_none());
+
+    let note = positional_ids(&ids(&["n1", "n2", "trees", "n4"]), builder).unwrap();
+    assert_eq!(note.code.to_string(), "RE4031");
+    assert_eq!(note.severity, re_core::Severity::Note);
+    assert_eq!(
+        note.message,
+        "builder `scripts/tools/g.luau`: 3 nodes have ids from their position (`n1`, `n2`, `n4`)"
+    );
+    let one = positional_ids(&ids(&["height", "n2"]), builder).unwrap();
+    assert!(
+        one.message
+            .contains("1 node has an id from its position (`n2`)")
+    );
+    let many: Vec<String> = (1..=7).map(|i| format!("n{i}")).collect();
+    let many: Vec<&str> = many.iter().map(String::as_str).collect();
+    let note = positional_ids(&ids(&many), builder).unwrap();
+    assert!(note.message.ends_with("(`n1`, `n2`, `n3`, `n4`, `n5`, …)"));
 }
 
 #[test]

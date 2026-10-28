@@ -3957,6 +3957,7 @@ dependencies = [
  "re_scene",
  "re_script",
  "re_types",
+ "re_ui",
  "schemars",
  "serde",
  "serde_json",
@@ -4235,6 +4236,16 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "re_ui"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "glam 0.34.1",
+ "libm",
+ "re_render",
 ]
 
 [[package]]

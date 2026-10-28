@@ -45,6 +45,7 @@ pub struct ReplaceArgs {
     /// A prefab with one root entity: the entity becomes its root, and the
     /// prefab's other entities its descendants.
     #[serde(default)]
+    #[schemars(extend("x-real-path" = "read"))]
     pub prefab: Option<String>,
     /// Components as in a scene file: `{"<component>": {"<field>": value}}`.
     #[serde(default)]
@@ -76,6 +77,7 @@ pub struct InsertArgs {
     pub name: Option<String>,
     /// A prefab with one root entity.
     #[serde(default)]
+    #[schemars(extend("x-real-path" = "read"))]
     pub prefab: Option<String>,
     /// Components as in a scene file.
     #[serde(default)]

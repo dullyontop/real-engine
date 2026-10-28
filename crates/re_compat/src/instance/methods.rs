@@ -81,12 +81,13 @@ pub(crate) fn register(b: &mut Bindings) {
 fn is_a(lua: &Lua, e: Entity, a: MultiValue) -> Result<MultiValue> {
     let class: String = args(lua, a, "IsA")?;
     let st = state(lua)?;
-    let live = with_world(lua, |w| tree::class(w, e).map(str::to_string))?;
-    let own = match live {
-        Some(c) => Some(c),
-        None => tomb_of(lua, e)?.map(|t| t.class),
+    let classes = &st.setup.classes;
+    let live = with_world(lua, |w| tree::class(w, e).map(|c| classes.is_a(c, &class)))?;
+    let yes = match live {
+        Some(yes) => yes,
+        None => tomb_of(lua, e)?.is_some_and(|t| classes.is_a(&t.class, &class)),
     };
-    ret(lua, own.is_some_and(|c| st.setup.classes.is_a(&c, &class)))
+    ret(lua, yes)
 }
 
 fn tomb_of(lua: &Lua, e: Entity) -> Result<Option<Tombstone>> {
