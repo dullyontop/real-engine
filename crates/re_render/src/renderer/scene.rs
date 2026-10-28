@@ -132,8 +132,10 @@ impl Renderer {
             pass.set_pipeline(&pipelines.sky);
             pass.draw(0..3, 0..1);
         }
-        // The runs of batches between depth-tested world quads; each run binds
-        // what it needs again, since a quad changes the pipeline and group 1.
+        // The opaque batches, then the blended ones in runs between the
+        // depth-tested world quads, which sort among the blended ones only.
+        // Each run binds what it needs again, since a quad changes the
+        // pipeline and group 1.
         let draw_run =
             |pass: &mut wgpu::RenderPass<'_>, run: Range<usize>, report: &mut FrameReport| {
                 let drawn =
@@ -143,7 +145,9 @@ impl Renderer {
                 report.stats.draw_calls += drawn.draw_calls;
                 report.stats.triangles += drawn.triangles;
             };
-        let mut first = 0;
+        draw_run(&mut pass, 0..frame.opaque_batches, report);
+        // Here the opaque scene is drawn and nothing blended yet.
+        let mut first = frame.opaque_batches;
         for &(before, n) in &frame.tested_quads {
             if before > first {
                 draw_run(&mut pass, first..before, report);
