@@ -1,6 +1,7 @@
 //! Run-time ids repeat (ADR-0036 amendment): a game that spawns without ids
 //! makes the same ids, and ends with the same state hash, in every run with
-//! the same seed: headless, after a restart and in `play.run`.
+//! the same seed: headless, after a restart, in a scene opened again and in
+//! `play.run`.
 
 use std::path::Path;
 
@@ -113,4 +114,17 @@ fn play_run_makes_the_ids_a_headless_run_makes() {
     let headless = open(dir.path()).run_headless(Some(30), None).unwrap();
     assert_eq!(a["output"], json!(headless.output));
     assert_eq!(a["state_hash"], json!(headless.state_hash));
+}
+
+#[test]
+fn opening_a_scene_repeats_the_first_runs_ids() {
+    let dir = project();
+    let mut app = open(dir.path());
+    let first = app.run_headless(Some(30), None).unwrap();
+    // The editor opens the scene again: a fresh World, as a restart makes.
+    app.open_scene("scenes/main.scene.json").unwrap();
+    let again = app.run_headless(Some(30), None).unwrap();
+    assert!(again.ok(), "{:?}", again.diagnostics);
+    assert_eq!(again.output, first.output);
+    assert_eq!(again.state_hash, first.state_hash);
 }
