@@ -19,7 +19,7 @@ use re_scene::{Entity, World};
 use super::{HUM, body, get_bool, root_part, rt};
 use crate::anim::cframe_value;
 use crate::anim::pose::{self, cframe_prop};
-use crate::class::{ClassMarker, ClassRegistry};
+use crate::class::ClassRegistry;
 use crate::datatypes::CFrame;
 use crate::input::{get_own, set_own};
 use crate::instance::methods_api::{args, ret};
@@ -128,14 +128,9 @@ fn touched_seat(
     let half = super::root_height(w, classes, hum, root).max(0.5);
     let radius = (size(w, classes, root).x.max(size(w, classes, root).z) / 2.0).clamp(0.25, half);
     let centre = Vec3::from_array(root_cf.p);
-    let mut seats: Vec<Entity> = w
-        .ecs
-        .query::<(Entity, &ClassMarker)>()
-        .iter(&w.ecs)
-        .filter(|(_, m)| SEATS.iter().any(|s| classes.is_a(&m.class, s)))
-        .map(|(e, _)| e)
-        .collect();
-    seats.sort();
+    let mut seats: Vec<Entity> = SEATS.iter().flat_map(|s| classes.instances(w, s)).collect();
+    // A VehicleSeat is no Seat, so each entity is in one list.
+    seats.sort_unstable();
     seats.into_iter().find(|&s| {
         tree::in_game(w, game, s)
             && !tree::is_destroyed(w, s)

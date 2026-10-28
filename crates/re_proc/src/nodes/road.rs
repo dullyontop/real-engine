@@ -6,7 +6,7 @@ use std::sync::Arc;
 use re_geom::polygon::MAX_COORD;
 use re_geom::road::{self, ControlPoint, Network, RoadStyle};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::shape::dist2_to_segment;
 use super::{
@@ -29,7 +29,7 @@ fn distance(name: &str, v: f64, min: f64) -> Result<(), String> {
 
 /// A control point of `path.spline`: `[x, y, z]`, or an object that can
 /// also set the width and bank there.
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum PointDoc {
     /// A position `[x, y, z]` in metres.
@@ -48,7 +48,7 @@ pub enum PointDoc {
 }
 
 /// Parameters of `path.spline`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct SplineParams {
     /// The control points (2 or more; 3 or more when `closed`). With a
@@ -167,7 +167,7 @@ fn spline(ctx: &NodeCtx, p: &SplineParams) -> Result<Output, NodeError> {
 }
 
 /// Parameters of `road.mesh`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct RoadMeshParams {
     /// Roads are cut back this far (metres) around a junction, and the
@@ -272,7 +272,7 @@ fn shared_network(
 }
 
 /// Parameters of `road.footprint`.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct FootprintParams {
     /// Metres to grow the footprint by on each side (for a verge, or to
@@ -292,7 +292,7 @@ fn footprint(ctx: &NodeCtx, p: &FootprintParams) -> Result<Output, NodeError> {
 }
 
 /// Parameters of `terrain.conform`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct ConformParams {
     /// Flat ground kept on each side beyond the road's edge, in metres.

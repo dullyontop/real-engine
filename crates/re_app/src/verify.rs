@@ -4,7 +4,8 @@
 //! (`{ ok, stages: [{ name, ok, diagnostics, duration_ms, data }], perf }`):
 //!
 //! 1. `schema`: every content file parses and loads (scenes, prefabs, graphs,
-//!    replays);
+//!    replays), every scene `[scenes]` lists exists and loads, and the scene
+//!    changes a replay lists name scenes of the project (ADR-0059);
 //! 2. `compile`: every script compiles (tier 1);
 //! 3. `scan`: the static API scan (tier 2), passed in by `re_cli` as a
 //!    [`VerifyStage`] when it is built with `tooling`; for a `[compat]`
@@ -230,24 +231,7 @@ fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
 
     let scenes = content_files(project, "scenes", ".scene.json");
     for file in &scenes {
-        let checked = read(project, file).and_then(|text| {
-            let doc = re_scene::scene::from_json(&text).map_err(|e| {
-                invalid(
-                    file,
-                    format!("{file} is not a valid scene"),
-                    Some(e.to_diagnostic()),
-                )
-            })?;
-            let mut world = crate::app::content_world(config)?;
-            world.load(&doc).map(|_| ()).map_err(|e| {
-                invalid(
-                    file,
-                    format!("{file} does not load"),
-                    Some(e.to_diagnostic()),
-                )
-            })
-        });
-        diags.extend(checked.err());
+        diags.extend(check_scene(project, config, file).err());
     }
     // Scenes outside `scenes/` are allowed; boot loads (and so checks) the entry.
     if !project.join(&config.project.entry_scene).is_file() {
@@ -259,6 +243,23 @@ fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
             ),
             None,
         ));
+    }
+    // The scenes `[scenes]` lists (ADR-0059 §1); the loop above loaded the
+    // ones under `scenes/`.
+    let list = config.scene_list().ok();
+    for (name, path) in list.iter().flat_map(|l| l.iter()) {
+        if path == config.project.entry_scene {
+            continue;
+        }
+        if !project.join(path).is_file() {
+            diags.push(invalid(
+                path,
+                format!("the scene {name:?} that [scenes] lists in real.toml is missing: {path}"),
+                None,
+            ));
+        } else if !scenes.iter().any(|s| s == path) {
+            diags.extend(check_scene(project, config, path).err());
+        }
     }
     counts.insert("scenes".into(), scenes.len().into());
 
@@ -272,7 +273,7 @@ fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
                     Some(e.to_diagnostic()),
                 )
             })?;
-            let mut w = crate::app::content_world(config)?;
+            let mut w = crate::scenes::content_world(config)?;
             w.declare_script_components(&p.script_components)
                 .and_then(|()| p.instantiate(&w.registry, "verify"))
                 .map(|_| ())
@@ -305,6 +306,9 @@ fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
         let checked = read(project, file).and_then(|text| {
             let doc: re_types::ReplayDoc = serde_json::from_str(&text)
                 .map_err(|e| invalid(file, format!("{file} is not a valid replay: {e}"), None))?;
+            if let Some(problem) = scene_changes_problem(project, list.as_ref(), &doc) {
+                return Err(invalid(file, format!("{file}: {problem}"), None));
+            }
             if let Ok(layout) = &layout {
                 re_input::Replay::new(doc, layout)
                     .map(|_| ())
@@ -327,6 +331,69 @@ fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
     counts.insert("replays".into(), replays.len().into());
 
     StageReport::new("schema", diags, Json::Object(counts))
+}
+
+/// Parses the scene file `file` and loads it into an empty World.
+fn check_scene(project: &Path, config: &AppConfig, file: &str) -> Result<(), Diagnostic> {
+    let text = read(project, file)?;
+    let doc = re_scene::scene::from_json(&text).map_err(|e| {
+        invalid(
+            file,
+            format!("{file} is not a valid scene"),
+            Some(e.to_diagnostic()),
+        )
+    })?;
+    let mut world = crate::scenes::content_world(config)?;
+    world.load(&doc).map(|_| ()).map_err(|e| {
+        invalid(
+            file,
+            format!("{file} does not load"),
+            Some(e.to_diagnostic()),
+        )
+    })
+}
+
+/// The first problem of a replay's `scenes` list (ADR-0059 §6): an entry
+/// that does not name exactly one change, entries out of frame order or past
+/// the replay's end, or a scene the project does not have (a name `list`
+/// does not hold, or a path that is not a scene file of the project, as a
+/// run that began in an unlisted scene names it).
+fn scene_changes_problem(
+    project: &Path,
+    list: Option<&crate::scenes::SceneList>,
+    doc: &re_types::ReplayDoc,
+) -> Option<String> {
+    let changes = doc.scenes.as_ref()?;
+    let mut last = 0;
+    for (i, change) in changes.iter().enumerate() {
+        let entry = format!("scene change {} (frame {})", i + 1, change.frame);
+        let Some((_, name)) = change.kind() else {
+            return Some(format!(
+                "{entry} must name a scene in exactly one of switch, load, unload and restart"
+            ));
+        };
+        if change.frame < last {
+            return Some(format!("{entry} comes after a change at frame {last}"));
+        }
+        if change.frame >= doc.frames {
+            return Some(format!(
+                "{entry} is past the replay's last frame ({})",
+                doc.frames.saturating_sub(1)
+            ));
+        }
+        last = change.frame;
+        let known = if name.contains('/') {
+            name.ends_with(crate::scenes::list::SCENE_SUFFIX) && project.join(name).is_file()
+        } else {
+            list.is_none_or(|l| l.path(name).is_some())
+        };
+        if !known {
+            return Some(format!(
+                "{entry} names scene {name:?}, which the project does not have (the scenes are named in [scenes] in real.toml)"
+            ));
+        }
+    }
+    None
 }
 
 fn timed(f: impl FnOnce() -> StageReport) -> StageReport {
@@ -388,6 +455,9 @@ struct RegenWatch {
     ground: Option<std::collections::BTreeSet<String>>,
     characters: std::collections::BTreeMap<String, re_scene::Entity>,
     restarts: u64,
+    /// Scene changes seen (ADR-0059): a change replaces content, it does not
+    /// regenerate it.
+    scene_changes: u64,
     seen: Vec<Regeneration>,
     problems: Vec<Diagnostic>,
 }
@@ -415,9 +485,11 @@ impl RegenWatch {
     fn after_frame(&mut self, app: &mut App) {
         // The frame that just ran (the counter has moved past it).
         let frame = app.frame_count().saturating_sub(1);
-        if app.restarts() != self.restarts {
-            // A fresh World: its characters start over and are not the ones
-            // a regeneration was waiting on.
+        // A restart or a scene change: other content, whose characters start
+        // over and are not the ones a regeneration was waiting on.
+        let restarted =
+            app.restarts() != self.restarts || app.scenes().changes() != self.scene_changes;
+        if restarted {
             for r in &mut self.seen {
                 r.waiting.clear();
             }
@@ -459,7 +531,6 @@ impl RegenWatch {
             }
         }
         let ground = crate::procedural::ground(app.world_mut());
-        let restarted = app.restarts() != self.restarts;
         let world = app.world_mut();
         if !restarted
             && let Some(old) = &self.ground
@@ -511,6 +582,7 @@ impl RegenWatch {
             });
         }
         self.restarts = app.restarts();
+        self.scene_changes = app.scenes().changes();
         self.characters = Self::characters(app.world_mut());
         self.ground = Some(ground);
     }

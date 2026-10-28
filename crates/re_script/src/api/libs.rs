@@ -1,6 +1,6 @@
 //! The libraries other than `world`: `input`, `physics`, `audio`, `anim`, `ui`,
-//! `time`, `task`, `quat`, `color`, `proc`, `stream`, `command` (tools only), and
-//! the `print`, `warn` and `script` globals.
+//! `time`, `task`, `quat`, `color`, `proc`, `stream`, `scene`, `command` (tools
+//! only), and the `print`, `warn` and `script` globals.
 
 use mlua::{Function, IntoLua, Lua, MultiValue, Result, Table, Value};
 use re_command::Origin;
@@ -93,6 +93,11 @@ pub(crate) fn all(lua: &Lua, kind: ContextKind) -> Result<Vec<(&'static str, Tab
             "stream",
             "World streaming: the loaded cells and their load and unload events.",
             stream,
+        ));
+        libs.push((
+            "scene",
+            "Scene switches, scenes loaded beside the main one, and entities kept across switches.",
+            super::scene::lib,
         ));
     }
     if kind == ContextKind::Tools {

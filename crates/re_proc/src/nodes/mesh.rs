@@ -5,15 +5,16 @@ use std::sync::Arc;
 use glam::Vec3;
 use re_geom::math::quat_from_euler_deg;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{
-    NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, natural_cmp, positive, within,
+    NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, natural_cmp, positive, tessellation,
+    within,
 };
 use crate::value::{MeshValue, Output, PortType};
 
 /// The shape of a [`PrimitiveParams`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PrimitiveShape {
     /// A box of `size`.
@@ -30,7 +31,7 @@ pub enum PrimitiveShape {
 }
 
 /// Parameters of `mesh.primitive`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct PrimitiveParams {
     /// `box`, `sphere`, `cylinder`, `capsule` or `plane`.
@@ -68,16 +69,6 @@ impl Params for PrimitiveParams {
     /// the graph is loaded or an override is set, not a failure at
     /// evaluation.
     fn validate(&self) -> Result<(), String> {
-        let count = |name: &str, v: u32, min: u32| {
-            if (min..=re_geom::primitives::MAX_TESSELLATION).contains(&v) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "`{name}` must be {min} to {}, got {v}",
-                    re_geom::primitives::MAX_TESSELLATION
-                ))
-            }
-        };
         match self.shape {
             PrimitiveShape::Box => {
                 for v in self.size {
@@ -87,23 +78,23 @@ impl Params for PrimitiveParams {
             PrimitiveShape::Plane => {
                 positive("size", self.size[0])?;
                 positive("size", self.size[2])?;
-                count("subdivisions", self.subdivisions, 1)?;
+                tessellation("subdivisions", self.subdivisions, 1)?;
             }
             PrimitiveShape::Sphere => {
                 positive("radius", self.radius)?;
-                count("segments", self.segments, 3)?;
-                count("rings", self.rings, 2)?;
+                tessellation("segments", self.segments, 3)?;
+                tessellation("rings", self.rings, 2)?;
             }
             PrimitiveShape::Cylinder => {
                 positive("radius", self.radius)?;
                 positive("height", self.height)?;
-                count("segments", self.segments, 3)?;
+                tessellation("segments", self.segments, 3)?;
             }
             PrimitiveShape::Capsule => {
                 positive("radius", self.radius)?;
                 within("height", self.height, 0.0, f32::MAX)?;
-                count("segments", self.segments, 3)?;
-                count("rings", self.rings, 1)?;
+                tessellation("segments", self.segments, 3)?;
+                tessellation("rings", self.rings, 1)?;
             }
         }
         Ok(())
@@ -128,7 +119,7 @@ fn primitive(ctx: &NodeCtx, p: &PrimitiveParams) -> Result<Output, String> {
 }
 
 /// Parameters of `mesh.transform`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct TransformParams {
     /// Moves the mesh, in metres.
@@ -180,7 +171,7 @@ fn transform(ctx: &NodeCtx, p: &TransformParams) -> Result<Output, String> {
 }
 
 /// Parameters of `mesh.merge` (none).
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MergeParams {}
 
@@ -214,7 +205,7 @@ fn merge(ctx: &NodeCtx, _: &MergeParams) -> Result<Output, String> {
 }
 
 /// Parameters of `material.assign`.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct MaterialParams {
     /// A material file, relative to the project root

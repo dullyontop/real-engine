@@ -23,8 +23,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use re_core::TaskPool;
+use re_core::{Diagnostic, TaskPool};
 use schemars::JsonSchema;
+use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value as Json, json};
 
@@ -46,8 +47,10 @@ pub struct PortDef {
 }
 
 /// A node's parameters: a JSON object deserialized with serde (unknown keys
-/// refused, missing keys defaulted) and then range-checked.
-pub trait Params: DeserializeOwned + JsonSchema + Send + Sync + 'static {
+/// refused, missing keys defaulted) and then range-checked. Serialized back,
+/// they are the node's parameters in canonical form, which its cache key
+/// hashes ([`NodeDef::canonical_params`]).
+pub trait Params: DeserializeOwned + Serialize + JsonSchema + Send + Sync + 'static {
     /// Checks values serde cannot (ranges, non-empty strings, …).
     fn validate(&self) -> Result<(), String> {
         Ok(())
@@ -192,6 +195,23 @@ pub type EvalFn = Arc<dyn Fn(&NodeCtx, &Json) -> Result<Output, NodeError> + Sen
 /// failed step's `from` version and its message.
 pub type MigrateFn =
     Arc<dyn Fn(u32, &mut serde_json::Map<String, Json>) -> Result<(), (u32, String)> + Send + Sync>;
+/// Checks a node's inputs, in natural port order, whenever it runs or its
+/// output comes from a cache: warnings for its report, such as `RE4030` for
+/// `field.combine` inputs that cover different areas.
+pub type InputCheckFn = Arc<dyn Fn(&[InputValue]) -> Vec<Diagnostic> + Send + Sync>;
+
+/// One input of a node, for [`NodeDef::with_input_check`].
+#[derive(Clone, Copy, Debug)]
+pub struct InputValue<'a> {
+    /// The input port.
+    pub port: &'a str,
+    /// The value on it.
+    pub value: &'a Output,
+    /// The kind of the node it comes from.
+    pub from_kind: &'a str,
+}
+/// Writes a kind's parameters in canonical form ([`NodeDef::canonical_params`]).
+type CanonFn = Arc<dyn Fn(&Json) -> Json + Send + Sync>;
 
 /// A node kind.
 #[derive(Clone)]
@@ -232,6 +252,9 @@ pub struct NodeDef {
     check: CheckFn,
     eval: EvalFn,
     custom_migrate: Option<MigrateFn>,
+    /// `None`: canonical parameters come from `params_schema`.
+    canon: Option<CanonFn>,
+    input_check: Option<InputCheckFn>,
 }
 
 impl fmt::Debug for NodeDef {
@@ -324,6 +347,71 @@ pub struct NodeSpec {
     pub file_params: &'static [&'static str],
 }
 
+/// `params` parsed into `P` and written back: every parameter there, at its
+/// default when it was left out, and each number as its type writes it (`16`
+/// and `16.0` for an `f32` are both `16.0`). Parameters `P` does not parse
+/// are returned as they are.
+fn canonical<P: Params>(params: &Json) -> Json {
+    let empty = Json::Object(Default::default());
+    let value = if params.is_null() { &empty } else { params };
+    P::deserialize(value)
+        .ok()
+        .and_then(|p| serde_json::to_value(&p).ok())
+        .unwrap_or_else(|| params.clone())
+}
+
+/// The canonical form of the parameters of a kind with no Rust parameter
+/// type ([`NodeDef::custom`]), from its schema: each top-level property that
+/// was left out at its `default`, and numbers written by the property's type
+/// (`number` as a float, `integer` as an integer, an array of numbers with
+/// each as a float). Other values are kept as they are.
+fn canonical_from_schema(schema: &Json, params: &Json) -> Json {
+    let mut map = match params {
+        Json::Object(m) => m.clone(),
+        Json::Null => serde_json::Map::new(),
+        _ => return params.clone(),
+    };
+    if let Some(properties) = schema.get("properties").and_then(Json::as_object) {
+        for (name, property) in properties {
+            if !map.contains_key(name)
+                && let Some(default) = property.get("default")
+            {
+                map.insert(name.clone(), default.clone());
+            }
+            if let Some(v) = map.get_mut(name) {
+                *v = typed_number(property, v);
+            }
+        }
+    }
+    Json::Object(map)
+}
+
+/// `v` written as the number type `schema` gives it, when it is a number (or
+/// an array of them). Negative zero is kept: it is not `0` everywhere.
+fn typed_number(schema: &Json, v: &Json) -> Json {
+    match (schema.get("type").and_then(Json::as_str), v) {
+        (Some("number"), Json::Number(n)) => n
+            .as_f64()
+            .and_then(serde_json::Number::from_f64)
+            .map_or_else(|| v.clone(), Json::Number),
+        (Some("integer"), Json::Number(n)) => match n.as_f64() {
+            Some(f)
+                if f.fract() == 0.0
+                    && f.abs() <= 9.007_199_254_740_992e15
+                    && !(f == 0.0 && f.is_sign_negative()) =>
+            {
+                Json::from(f as i64)
+            }
+            _ => v.clone(),
+        },
+        (Some("array"), Json::Array(items)) => match schema.get("items") {
+            Some(item) => Json::Array(items.iter().map(|x| typed_number(item, x)).collect()),
+            None => v.clone(),
+        },
+        _ => v.clone(),
+    }
+}
+
 fn parse<P: Params>(params: &Json) -> Result<P, String> {
     let value = if params.is_null() {
         Json::Object(Default::default())
@@ -365,6 +453,8 @@ impl NodeDef {
                 eval(ctx, &p).map_err(Into::into)
             }),
             custom_migrate: None,
+            canon: Some(Arc::new(canonical::<P>)),
+            input_check: None,
         }
     }
 
@@ -376,6 +466,11 @@ impl NodeDef {
     /// The strings and ports are kept for the life of the process
     /// (`NodeDef`'s fields are `'static`), interned by content, so declaring
     /// the same kinds again (a hot reload) keeps no more memory.
+    ///
+    /// Its cache keys take the parameters in the canonical form its schema
+    /// gives ([`NodeDef::canonical_params`]), so `eval` must treat a
+    /// parameter that is left out as its schema's `default`, and a number by
+    /// its value (an `integer` written `4.0` is `4`), as Luau nodes do.
     pub fn custom(def: CustomKind) -> NodeDef {
         use std::collections::{HashMap, HashSet};
         use std::sync::{LazyLock, Mutex, PoisonError};
@@ -430,6 +525,8 @@ impl NodeDef {
             check: def.check,
             eval: def.eval,
             custom_migrate: def.migrate,
+            canon: None,
+            input_check: None,
         }
     }
 
@@ -438,6 +535,44 @@ impl NodeDef {
     pub fn with_implementation(mut self, hash: [u8; 32]) -> Self {
         self.implementation = hash;
         self
+    }
+
+    /// Checks the node's inputs with `check` whenever it runs or its output
+    /// comes from a cache ([`InputCheckFn`]).
+    #[must_use]
+    pub fn with_input_check(
+        mut self,
+        check: impl Fn(&[InputValue]) -> Vec<Diagnostic> + Send + Sync + 'static,
+    ) -> Self {
+        self.input_check = Some(Arc::new(check));
+        self
+    }
+
+    /// True if the kind checks its inputs ([`NodeDef::with_input_check`]).
+    pub fn checks_inputs(&self) -> bool {
+        self.input_check.is_some()
+    }
+
+    /// The warnings [`NodeDef::with_input_check`]'s check gives for `inputs`.
+    pub fn check_inputs(&self, inputs: &[InputValue]) -> Vec<Diagnostic> {
+        self.input_check
+            .as_ref()
+            .map_or_else(Vec::new, |check| check(inputs))
+    }
+
+    /// `params` (in the current shape) in canonical form: for a Rust kind,
+    /// parsed into its parameter type and written back, so every parameter
+    /// is there (at its default when it was left out) and each number is
+    /// written as its type writes it; for a [custom](NodeDef::custom) kind,
+    /// filled in and written from its schema. Parameter objects with the
+    /// same canonical form give the same output, so a node's cache key
+    /// hashes this form: `16`, `16.0` and a left-out default of 16 are one
+    /// key.
+    pub fn canonical_params(&self, params: &Json) -> Json {
+        match &self.canon {
+            Some(canon) => canon(params),
+            None => canonical_from_schema(&self.params_schema, params),
+        }
     }
 
     /// Checks parameters against the kind (`Err` is the message of `RE4005`).
@@ -572,8 +707,9 @@ impl NodeRegistry {
         Self::default()
     }
 
-    /// The registry with the built-in node kinds: the 16 of M1 (hence the
-    /// name) and the 10 polygon and road kinds of ADR-0043 §5.
+    /// The registry with the 28 built-in node kinds: the 16 of M1 (hence the
+    /// name), the two streaming added (`terrain.erode` and `terrain.chunks`,
+    /// ADR-0042) and the 10 polygon and road kinds of ADR-0043 §5.
     pub fn m1() -> Self {
         let mut r = Self::new();
         terrain::register(&mut r);
@@ -1087,6 +1223,19 @@ pub(crate) fn positive(name: &str, v: f32) -> Result<(), String> {
     }
 }
 
+/// Checks a tessellation count: `min` to
+/// [`MAX_TESSELLATION`](re_geom::primitives::MAX_TESSELLATION).
+pub(crate) fn tessellation(name: &str, v: u32, min: u32) -> Result<(), String> {
+    if (min..=re_geom::primitives::MAX_TESSELLATION).contains(&v) {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{name}` must be {min} to {}, got {v}",
+            re_geom::primitives::MAX_TESSELLATION
+        ))
+    }
+}
+
 /// Natural order of port names: digit runs compare as numbers (`in2` < `in10`).
 pub(crate) fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     fn parts(s: &str) -> Vec<(bool, &str)> {
@@ -1129,6 +1278,46 @@ mod tests {
         let mut v = vec!["in10", "in2", "b", "a", "in1"];
         v.sort_by(|a, b| natural_cmp(a, b));
         assert_eq!(v, ["a", "b", "in1", "in2", "in10"]);
+    }
+
+    #[test]
+    fn canonical_parameters_of_a_rust_kind() {
+        let r = NodeRegistry::m1();
+        let h = r.get("terrain.heightfield").unwrap();
+        let c = |p: Json| h.canonical_params(&p);
+        assert_eq!(
+            c(json!({ "cell": 2 })),
+            c(json!({ "cell": 2.0, "size": 128 }))
+        );
+        assert_eq!(c(json!({ "cell": 2 }))["cell"], json!(2.0));
+        assert_eq!(c(Json::Null), c(json!({})));
+        assert_ne!(c(json!({ "cell": 2 })), c(json!({ "cell": 3 })));
+        // Parameters the type refuses are kept as they are.
+        assert_eq!(c(json!({ "sise": 1 })), json!({ "sise": 1 }));
+    }
+
+    #[test]
+    fn canonical_parameters_from_a_schema() {
+        let schema = json!({ "properties": {
+            "r": { "type": "number", "default": 16 },
+            "n": { "type": "integer" },
+            "v": { "type": "array", "items": { "type": "number" } },
+            "s": { "type": "string", "default": "x" },
+        }});
+        let c = |p: Json| canonical_from_schema(&schema, &p);
+        assert_eq!(
+            c(json!({ "n": 4.0, "v": [1, 2.5] })),
+            json!({ "r": 16.0, "n": 4, "v": [1.0, 2.5], "s": "x" })
+        );
+        assert_eq!(c(Json::Null), json!({ "r": 16.0, "s": "x" }));
+        // An integer written with a fraction, or as negative zero, keeps its
+        // own key.
+        assert_eq!(c(json!({ "n": 4.5 }))["n"], json!(4.5));
+        let zero = &c(json!({ "n": -0.0 }))["n"];
+        assert!(zero.is_f64() && zero.as_f64().unwrap().is_sign_negative());
+        // Unknown properties are kept; a value that is not an object too.
+        assert_eq!(c(json!({ "q": 1 }))["q"], json!(1));
+        assert_eq!(c(json!(3)), json!(3));
     }
 
     #[test]
