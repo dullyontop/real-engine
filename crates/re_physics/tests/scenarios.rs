@@ -799,7 +799,8 @@ fn determinism_and_snapshots() {
 }
 
 /// A body 4 km out rests correctly; one beyond the world limit is refused with RE5006,
-/// and meshes on moving bodies with RE5003, never with a panic.
+/// and a mesh on a dynamic body or a heightfield on a kinematic one with RE5003, never
+/// with a panic.
 #[test]
 fn large_world() {
     let mut p = world(1);

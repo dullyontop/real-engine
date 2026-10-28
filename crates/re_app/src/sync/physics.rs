@@ -14,8 +14,11 @@
 //! Shapes are in the entity's local space and scaled by its world scale (the
 //! product of its and its ancestors' `Transform` scales). A body's
 //! pose is the entity's world pose; a character's pose is its capsule's centre.
-//! Any change to a body's description replaces the body (remove, then add at the
-//! current pose); a `Transform` written by anything other than [`pull`] (a
+//! A change to a body's shape alone (its collider's size or `source`, or the
+//! entity's scale) changes the shape in place, keeping the body's motion and
+//! contacts, except on a vehicle's chassis; any other change to its description
+//! replaces the body (remove, then add at the current pose, a dynamic body keeping
+//! its velocity). A `Transform` written by anything other than [`pull`] (a
 //! script, an edit) teleports the body, or moves a kinematic body's target.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -164,7 +167,10 @@ pub enum LinkKind {
 struct Link {
     entity: Entity,
     kind: LinkKind,
+    /// The fingerprint of the description without its pose and shape.
     fingerprint: blake3::Hash,
+    /// The fingerprint of the shape.
+    shape: blake3::Hash,
     /// The local translation and rotation last written by [`pull`] or seen by
     /// [`push`]; a different value means someone else moved the entity.
     written: (Vec3, Quat),
@@ -511,30 +517,35 @@ impl Wanted {
     }
 }
 
-/// The fingerprint of a description, ignoring its pose. A library shape
-/// counts by its content hash and scale, so its data is neither copied nor
-/// hashed on each push.
-fn fingerprint(w: &Wanted) -> blake3::Hash {
-    let mut h = blake3::Hasher::new();
+/// The fingerprints of a description, ignoring its pose: of everything but the
+/// shape, and of the shape. A library shape counts by its content hash and
+/// scale, so its data is neither copied nor hashed on each push.
+fn fingerprints(w: &Wanted) -> (blake3::Hash, blake3::Hash) {
+    let (mut rest, mut shape) = (blake3::Hasher::new(), blake3::Hasher::new());
     match w {
         Wanted::Body(d, lib) => {
-            let mut d = d.clone();
-            d.pos = Vec3::ZERO;
-            d.rot = Quat::IDENTITY;
-            let _ = serde_json::to_writer(&mut h, &d);
+            let _ = serde_json::to_writer(&mut shape, &d.shape);
             if let Some(lib) = lib {
-                h.update(&[lib.kind]);
-                h.update(lib.content.as_bytes());
+                shape.update(&[lib.kind]);
+                shape.update(lib.content.as_bytes());
                 for c in lib.scale.to_array() {
-                    h.update(&c.to_le_bytes());
+                    shape.update(&c.to_le_bytes());
                 }
             }
+            // The shape is small here: a primitive, or the stand-in for a library one.
+            let d = BodyDesc {
+                shape: PENDING_SHAPE,
+                pos: Vec3::ZERO,
+                rot: Quat::IDENTITY,
+                ..d.clone()
+            };
+            let _ = serde_json::to_writer(&mut rest, &d);
         }
         Wanted::Character(d) => {
-            let _ = serde_json::to_writer(&mut h, d);
+            let _ = serde_json::to_writer(&mut rest, d);
         }
     }
-    h.finalize()
+    (rest.finalize(), shape.finalize())
 }
 
 fn wanted(
@@ -703,11 +714,39 @@ pub fn push(
         let rigid_body = world.ecs.get::<RigidBody>(entity).is_some();
         seen.insert(id);
         let (pos, rot, _) = world_pose;
-        let fp = fingerprint(&w);
+        let (fp, shape_fp) = fingerprints(&w);
         let local = local_tr(world, entity);
         let parent = parent_affine(world, entity);
+        // Jolt cannot change the shape of a body that carries a vehicle.
+        let reshapes = !sync.vehicles.contains_key(&id);
         match sync.links.get_mut(&id) {
-            Some(link) if link.fingerprint == fp && link.entity == entity => {
+            Some(link)
+                if link.fingerprint == fp
+                    && link.entity == entity
+                    && (link.shape == shape_fp || reshapes) =>
+            {
+                if link.shape != shape_fp {
+                    // Only the shape changed: the body keeps its motion and contacts.
+                    match w.complete(world, entity, shapes) {
+                        Ok(Wanted::Body(desc, _)) => {
+                            link.shape = shape_fp;
+                            link.library = library;
+                            cmds.push(PhysicsCmd::SetShape {
+                                id,
+                                shape: desc.shape,
+                            });
+                        }
+                        Ok(Wanted::Character(_)) => {}
+                        Err(d) => {
+                            let key = (id, *blake3::hash(d.message.as_bytes()).as_bytes());
+                            if sync.reported.insert(key) {
+                                diagnostics.push(d);
+                            }
+                            seen.remove(&id);
+                            continue;
+                        }
+                    }
+                }
                 if link.written != local || link.parent != parent {
                     // A character only turned (root motion's yaw, ADR-0039,
                     // or any rotation-only write): it keeps interpolating,
@@ -759,6 +798,7 @@ pub fn push(
                         entity,
                         kind,
                         fingerprint: fp,
+                        shape: shape_fp,
                         written: local,
                         parent,
                         prev: (pos, rot),
@@ -1141,9 +1181,22 @@ mod tests {
             .count()
     }
 
+    /// The samples of the one heightfield `cmds` sets on a body in place.
+    fn reshaped_samples(cmds: &[PhysicsCmd]) -> Option<&[f32]> {
+        match cmds {
+            [
+                PhysicsCmd::SetShape {
+                    shape: ShapeDesc::Heightfield { samples, .. },
+                    ..
+                },
+            ] => Some(samples),
+            _ => None,
+        }
+    }
+
     /// An unchanged heightfield is not rebuilt on each push; new data, an
     /// equal copy and a new scale behave as they did when its samples were
-    /// fingerprinted.
+    /// fingerprinted (new data and a new scale change the shape in place).
     #[test]
     fn heightfields_are_fingerprinted_by_content_and_scale() {
         let mut world = World::new();
@@ -1180,22 +1233,104 @@ mod tests {
         // An equal copy under the same name changes nothing.
         shapes.insert_heightfield("derived:t", field(1.0));
         assert!(push_once(&mut world, &shapes).is_empty());
-        // New data replaces the body.
+        // New data changes the shape.
         shapes.insert_heightfield("derived:t", field(2.0));
-        assert_eq!(adds(&push_once(&mut world, &shapes)), 1);
+        let changed = push_once(&mut world, &shapes);
+        assert_eq!(
+            reshaped_samples(&changed),
+            Some(&[2.0; 9][..]),
+            "{changed:?}"
+        );
         // So does a new scale.
         world.ecs.get_mut::<Transform>(e).unwrap().scale = Vec3::new(1.0, 2.0, 1.0);
         let scaled = push_once(&mut world, &shapes);
-        assert_eq!(adds(&scaled), 1);
-        let Some(PhysicsCmd::AddBody { desc, .. }) = scaled
-            .iter()
-            .find(|c| matches!(c, PhysicsCmd::AddBody { .. }))
-        else {
-            panic!("{scaled:?}");
+        assert_eq!(reshaped_samples(&scaled), Some(&[4.0; 9][..]), "{scaled:?}");
+        assert!(push_once(&mut world, &shapes).is_empty());
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    /// A body whose shape alone changes keeps its body, and so its motion and
+    /// contacts: the push changes the shape in place, and moves the body too when
+    /// its `Transform` moved. Any other change replaces the body, and so does a
+    /// change of shape on a vehicle's chassis, which Jolt cannot reshape.
+    #[test]
+    fn a_change_of_shape_alone_keeps_the_body() {
+        let mut world = World::new();
+        let shapes = ShapeLibrary::default();
+        let e = world
+            .ecs
+            .spawn((
+                Transform::default(),
+                RigidBody {
+                    kind: SceneBodyKind::Dynamic,
+                    ..Default::default()
+                },
+                Collider::default(),
+            ))
+            .id();
+        let mut sync = PhysicsSync::new();
+        let mut diagnostics = Vec::new();
+        let mut push_once = |world: &mut World| {
+            let mut cmds = Vec::new();
+            push(world, &mut sync, &shapes, &mut cmds, &mut diagnostics);
+            cmds
         };
+        assert_eq!(adds(&push_once(&mut world)), 1);
+        let boxed = |cmd: &PhysicsCmd| match cmd {
+            PhysicsCmd::SetShape {
+                shape: ShapeDesc::Box { half_extents },
+                ..
+            } => Some(*half_extents),
+            _ => None,
+        };
+        // The collider's size.
+        world.ecs.get_mut::<Collider>(e).unwrap().half_extents = Vec3::splat(0.25);
+        let cmds = push_once(&mut world);
+        assert_eq!(cmds.len(), 1, "{cmds:?}");
+        assert_eq!(boxed(&cmds[0]), Some(Vec3::splat(0.25)), "{cmds:?}");
+        // The entity's scale, and a move: the new shape at the new pose.
+        {
+            let mut t = world.ecs.get_mut::<Transform>(e).unwrap();
+            t.scale = Vec3::splat(2.0);
+            t.translation = Vec3::Y;
+        }
+        let cmds = push_once(&mut world);
+        assert_eq!(cmds.len(), 2, "{cmds:?}");
+        assert_eq!(boxed(&cmds[0]), Some(Vec3::splat(0.5)), "{cmds:?}");
         assert!(
-            matches!(&desc.shape, ShapeDesc::Heightfield { samples, .. } if samples == &vec![4.0; 9]),
-            "{desc:?}"
+            matches!(cmds[1], PhysicsCmd::SetTransform { pos, .. } if pos == Vec3::Y),
+            "{cmds:?}"
+        );
+        assert!(push_once(&mut world).is_empty());
+        // Anything else about the body replaces it.
+        world.ecs.get_mut::<RigidBody>(e).unwrap().friction = 0.9;
+        let cmds = push_once(&mut world);
+        assert!(
+            matches!(
+                cmds.as_slice(),
+                [PhysicsCmd::RemoveBody { .. }, PhysicsCmd::AddBody { .. }]
+            ),
+            "{cmds:?}"
+        );
+        // A chassis is replaced, and its vehicle added again.
+        world.ecs.entity_mut(e).insert(Vehicle::default());
+        let cmds = push_once(&mut world);
+        assert!(
+            matches!(cmds.as_slice(), [PhysicsCmd::AddVehicle { .. }]),
+            "{cmds:?}"
+        );
+        world.ecs.get_mut::<Collider>(e).unwrap().half_extents = Vec3::splat(0.4);
+        let cmds = push_once(&mut world);
+        assert!(
+            matches!(
+                cmds.as_slice(),
+                [
+                    PhysicsCmd::RemoveBody { .. },
+                    PhysicsCmd::AddBody { .. },
+                    PhysicsCmd::AddVehicle { .. }
+                ]
+            ),
+            "{cmds:?}"
         );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
@@ -1229,9 +1364,13 @@ mod skip_tests {
         assert!(replaced(&push_once(&mut world)));
         assert!(push_once(&mut world).is_empty());
         assert!(push_once(&mut world).is_empty());
-        // A collider edit.
+        // A collider edit changes the shape in place.
         world.ecs.get_mut::<Collider>(e).unwrap().half_extents = Vec3::ONE;
-        assert!(replaced(&push_once(&mut world)));
+        let edited = push_once(&mut world);
+        assert!(
+            matches!(edited.as_slice(), [PhysicsCmd::SetShape { .. }]),
+            "{edited:?}"
+        );
         assert!(push_once(&mut world).is_empty());
         // A move is a teleport.
         world.ecs.get_mut::<Transform>(e).unwrap().translation = Vec3::X;
