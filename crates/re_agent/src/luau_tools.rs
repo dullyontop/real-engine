@@ -406,6 +406,14 @@ impl PolicyCheck for NestedPolicy<'_> {
             None => Ok(()),
         }
     }
+
+    fn check_write(&self, command: &str, path: &str) -> Result<(), Diagnostic> {
+        // A file is written even when the tool's world changes are undone.
+        match self.agent {
+            Some(p) => p.check_write(command, path),
+            None => Ok(()),
+        }
+    }
 }
 
 /// The script host of one tool call: the target's world, no game services,
@@ -770,7 +778,7 @@ pub fn register<C: EditTarget + 'static>(
     }
     // An unreadable policy file grants agents nothing (`real mcp` refuses to
     // start on one anyway).
-    let policy = Policy::load(project).unwrap_or_else(|_| Policy::read_only());
+    let policy = Policy::load(project).unwrap_or_else(|_| Policy::read_only().in_project(project));
     for def in &defs {
         let mut nested = CommandRegistry::new();
         re_command::register_builtin_commands(&mut nested);
@@ -787,6 +795,8 @@ pub fn register<C: EditTarget + 'static>(
             input_schema: def.input.clone(),
             annotations: re_command::CommandAnnotations::for_tier(def.tier, def.idempotent),
             output_schema: def.output.clone(),
+            // From the input schema's `x-real-path` keywords, if it has any.
+            paths: Vec::new(),
         };
         registry.register(
             spec,

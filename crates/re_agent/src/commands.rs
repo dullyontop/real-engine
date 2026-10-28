@@ -113,6 +113,7 @@ pub struct CreateOutput {
 pub struct ScriptWriteArgs {
     /// The script's path, relative to the project root, ending in `.luau`
     /// (for example `scripts/game/player.luau`).
+    #[schemars(extend("x-real-path" = "write"))]
     pub path: String,
     /// The whole Luau source. It must compile; otherwise nothing is written.
     pub source: String,
@@ -123,6 +124,7 @@ pub struct ScriptWriteArgs {
 #[serde(deny_unknown_fields)]
 pub struct DeleteArgs {
     /// The file, relative to the project root (for example `assets/old.png`).
+    #[schemars(extend("x-real-path" = "write"))]
     pub path: String,
 }
 
@@ -138,8 +140,8 @@ pub fn project_path(command: &str, path: &str) -> Result<String, Diagnostic> {
         .at(Location::command(command.to_string()))
     };
     let normal = normalize(path).map_err(refuse)?;
-    let first = normal.split('/').next().unwrap_or("").to_ascii_lowercase();
-    if crate::policy::PROTECTED_DIRS.contains(&first.as_str()) {
+    let first = normal.split('/').next().unwrap_or("");
+    if crate::policy::is_protected_dir(first) {
         return Err(refuse("`.real/` and `.git/` are not writable by commands"));
     }
     Ok(normal)

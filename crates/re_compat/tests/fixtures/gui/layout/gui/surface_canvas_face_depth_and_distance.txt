@@ -1,0 +1,22 @@
+frame 0: 0 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (80.0, 60.0) texture [80, 60] at 1.0 pixels a point
+  Workspace/Part/SurfaceGui.AbsoluteSize = (80.0, 60.0)
+  Workspace/Part/SurfaceGui.AbsolutePosition = (0.0, 0.0)
+frame 1: 0 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (80.0, 60.0) texture [80, 60] at 1.0 pixels a point
+frame 2: 0 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (80.0, 60.0) texture [80, 60] at 1.0 pixels a point
+frame 3: 0 drawn, hovered none, sinks false, focus none
+frame 4: 0 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (80.0, 60.0) texture [80, 60] at 1.0 pixels a point
+  Workspace/Part/SurfaceGui.AbsoluteSize = (80.0, 60.0)
+  Workspace/Part/SurfaceGui.AbsolutePosition = (0.0, 0.0)
+frame 5: 0 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (4096.0, 1024.0) texture [2048, 512] at 0.5 pixels a point
+  [RE9410] SurfaceGui Workspace.Part.SurfaceGui's canvas of 4096x1024 pixels is drawn scaled down to fit a 2048-pixel texture
+  Workspace/Part/SurfaceGui.AbsoluteSize = (4096.0, 1024.0)
+frame 6: 0 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (4096.0, 1024.0) texture [2048, 512] at 0.5 pixels a point
+frame 7: 0 drawn, hovered none, sinks false, focus none
+  [RE9410] SurfaceGui ReplicatedStorage.PlayerGui.SurfaceGui has no part to be drawn on
+frame 8: 0 drawn, hovered none, sinks false, focus none

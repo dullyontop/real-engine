@@ -38,9 +38,12 @@ pub fn command_name<'a>(tool: &str, specs: &'a [CommandSpec]) -> Option<&'a str>
 
 /// Makes a command's input schema acceptable to every client: the root is
 /// an object with `type: "object"` and no `anyOf`/`oneOf`/`allOf`, and no
-/// `format` or `$schema` keywords remain anywhere.
+/// `format`, `$schema` or `x-real-path` keywords remain anywhere (the last
+/// declares a command's file arguments for the agent policy;
+/// [`re_command::CommandSpec::paths`] carries it).
 pub fn sanitize_schema(schema: &Json) -> JsonObject {
-    // `format` is removed as a keyword, not as a property called "format".
+    // `format` and `x-real-path` are removed as keywords (string values),
+    // not as properties of those names.
     let mut root = match sanitize_schema_value(schema) {
         Json::Object(map) => map,
         _ => JsonObject::new(),
@@ -147,8 +150,10 @@ fn sanitize_schema_value(schema: &Json) -> Json {
     fn strip(value: &mut Json) {
         match value {
             Json::Object(map) => {
-                if map.get("format").is_some_and(Json::is_string) {
-                    map.remove("format");
+                for keyword in ["format", "x-real-path"] {
+                    if map.get(keyword).is_some_and(Json::is_string) {
+                        map.remove(keyword);
+                    }
                 }
                 map.remove("$schema");
                 for v in map.values_mut() {

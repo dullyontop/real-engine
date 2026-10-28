@@ -1,0 +1,44 @@
+frame 0: 2 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part#0/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  surface Workspace/Part#1/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  item Workspace/Part#0/SurfaceGui/TextLabel at (0.0, 0.0) size (100.0, 40.0) clip (0.0, 0.0, 800.0, 600.0)
+  item Workspace/Part#1/SurfaceGui/TextLabel at (0.0, 0.0) size (100.0, 40.0) clip (0.0, 0.0, 800.0, 600.0)
+  Workspace/Part#0/SurfaceGui.AbsoluteSize = (800.0, 600.0)
+  Workspace/Part#0/SurfaceGui.AbsolutePosition = (0.0, 0.0)
+  Workspace/Part#0/SurfaceGui/TextLabel.AbsolutePosition = (0.0, 0.0)
+  Workspace/Part#0/SurfaceGui/TextLabel.AbsoluteSize = (100.0, 40.0)
+  Workspace/Part#0/SurfaceGui/TextLabel.AbsoluteRotation = 0.0
+  Workspace/Part#0/SurfaceGui/TextLabel.TextBounds = (21.944000244140625, 20.0)
+  Workspace/Part#0/SurfaceGui/TextLabel.TextFits = true
+  Workspace/Part#1/SurfaceGui.AbsoluteSize = (800.0, 600.0)
+  Workspace/Part#1/SurfaceGui.AbsolutePosition = (0.0, 0.0)
+  Workspace/Part#1/SurfaceGui/TextLabel.AbsolutePosition = (0.0, 0.0)
+  Workspace/Part#1/SurfaceGui/TextLabel.AbsoluteSize = (100.0, 40.0)
+  Workspace/Part#1/SurfaceGui/TextLabel.AbsoluteRotation = 0.0
+  Workspace/Part#1/SurfaceGui/TextLabel.TextBounds = (21.944000244140625, 20.0)
+  Workspace/Part#1/SurfaceGui/TextLabel.TextFits = true
+frame 1: 2 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part#0/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  surface Workspace/Part#1/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+frame 2: 2 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part#0/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  surface Workspace/Part#1/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+frame 3: 2 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part#0/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  surface Workspace/Part#1/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  Workspace/Part#1/SurfaceGui/TextLabel.TextBounds = (21.588001251220703, 20.0)
+frame 4: 2 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part#0/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  surface Workspace/Part#1/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+frame 5: 2 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part#0/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  surface Workspace/Part#1/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+frame 6: 2 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part#0/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  surface Workspace/Part#1/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+frame 7: 1 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  item Workspace/Part/SurfaceGui/TextLabel at (0.0, 0.0) size (100.0, 40.0) clip (0.0, 0.0, 800.0, 600.0)
+  gone Workspace/Part#0/SurfaceGui/TextLabel
+frame 8: 1 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point

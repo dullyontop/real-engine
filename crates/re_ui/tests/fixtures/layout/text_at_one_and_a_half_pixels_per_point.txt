@@ -1,0 +1,41 @@
+visit #9 screen (root) at (0.0, 0.0) size (400.0, 300.0) rotation 0.0
+visit #0 scaled to fit at (0.0, 0.0) size (200.0, 40.0) rotation 0.0 text (133.82133, 40.0) fits
+visit #1 wrapped at (0.0, 44.0) size (100.0, 40.0) rotation 0.0 text (98.13334, 60.0) overflows
+visit #2 truncated at (0.0, 88.0) size (80.0, 20.0) rotation 0.0 text (76.60533, 20.0) fits
+visit #3 rich at (0.0, 132.0) size (300.0, 20.0) rotation 0.0 text (118.99133, 20.0) fits
+visit #4 line height at (0.0, 176.0) size (120.0, 40.0) rotation 0.0 text (21.170666, 42.666668) overflows
+visit #5 bottom right at (0.0, 220.0) size (120.0, 40.0) rotation 0.0 text (48.0, 17.333334) fits
+visit #6 bold sans at (0.0, 264.0) size (120.0, 20.0) rotation 0.0 text (84.725334, 20.0) fits
+visit #7 mono, nearest weight at (0.0, 308.0) size (160.0, 20.0) rotation 0.0 text (134.40137, 18.666666) fits
+visit #8 scaled node at (250.0, 0.0) size (120.0, 40.0) rotation 0.0 text (28.618666, 17.0) fits
+root 0: 9 drawn
+item #0 scaled to fit at (0.0, 0.0) size (200.0, 40.0) scale 1.0 order (0, 1) input
+  text fits size 14.0 in (200.0, 40.0) bounds (-66.666664, 0.0, 67.15467, 40.0)
+  row at (-66.666664, 0.0) size (133.82133, 40.0) "Fits the box"
+item #1 wrapped at (0.0, 44.0) size (100.0, 40.0) scale 1.0 order (0, 2) input
+  text overflows size 14.0 in (100.0, 40.0) bounds (0.0, 0.0, 98.13334, 60.0)
+  row at (0.0, 0.0) size (75.46667, 20.0) "Wraps at the "
+  row at (0.0, 20.0) size (98.13334, 20.0) "box's width, and "
+  row at (0.0, 40.0) size (78.152664, 20.0) "runs out of it."
+item #2 truncated at (0.0, 88.0) size (80.0, 20.0) scale 1.0 order (0, 3) input
+  text fits size 14.0 in (80.0, 20.0) bounds (-38.0, 0.0, 38.60533, 20.0) elided
+  row at (-38.0, 0.0) size (76.60533, 20.0) "A long line …"
+item #3 rich at (0.0, 132.0) size (300.0, 20.0) scale 1.0 order (0, 4) input
+  text fits size 14.0 in (300.0, 20.0) bounds (-59.333332, 0.0, 59.658, 20.0)
+  row at (-59.333332, 0.0) size (118.99133, 20.0) "Bold and red & plain"
+item #4 line height at (0.0, 176.0) size (120.0, 40.0) scale 1.0 order (0, 5) input
+  text overflows size 12.0 in (120.0, 40.0) bounds (-10.666667, 0.0, 10.503999, 42.666668)
+  row at (-10.0, 0.0) size (19.952, 21.333334) "One"
+  row at (-10.666667, 21.333334) size (21.170666, 21.333334) "Two"
+item #5 bottom right at (0.0, 220.0) size (120.0, 40.0) scale 1.0 order (0, 6) input
+  text fits size 14.0 in (120.0, 40.0) bounds (-48.0, 0.0, 0.0, 17.333334)
+  row at (-48.0, 0.0) size (47.739998, 17.333334) "Corner"
+item #6 bold sans at (0.0, 264.0) size (120.0, 20.0) scale 1.0 order (0, 7) input
+  text fits size 14.0 in (120.0, 20.0) bounds (-42.666668, 0.0, 42.058666, 20.0)
+  row at (-42.666668, 0.0) size (84.725334, 20.0) "Source Sans 3"
+item #7 mono, nearest weight at (0.0, 308.0) size (160.0, 20.0) scale 1.0 order (0, 8) input
+  text fits size 14.0 in (160.0, 20.0) bounds (-67.333336, 0.0, 67.06803, 18.666666)
+  row at (-67.333336, 0.0) size (134.40137, 18.666666) "Roboto Mono 0123"
+item #8 scaled node at (250.0, 0.0) size (120.0, 40.0) scale 2.0 order (0, 9) input
+  text fits size 24.0 in (120.0, 40.0) bounds (-28.666666, 0.0, 28.570665, 34.0)
+  row at (-28.666666, 0.0) size (57.23733, 34.0) "Twice"

@@ -33,6 +33,7 @@ use crate::store::{GraphStore, parse_graph};
 #[serde(deny_unknown_fields)]
 pub struct AddNodeArgs {
     /// The graph file, relative to the project (`graphs/island.graph.json`).
+    #[schemars(extend("x-real-path" = "write"))]
     pub graph: String,
     /// The node kind (`describe` lists them).
     pub kind: String,
@@ -52,6 +53,7 @@ pub struct AddNodeArgs {
 #[serde(deny_unknown_fields)]
 pub struct RemoveNodeArgs {
     /// The graph file, relative to the project.
+    #[schemars(extend("x-real-path" = "write"))]
     pub graph: String,
     /// The node's id. Its edges, its layout entry and the procedural
     /// sources' `GraphSource.params` overrides of it go with it; its
@@ -65,6 +67,7 @@ pub struct RemoveNodeArgs {
 #[serde(deny_unknown_fields)]
 pub struct ConnectArgs {
     /// The graph file, relative to the project.
+    #[schemars(extend("x-real-path" = "write"))]
     pub graph: String,
     /// The output: `[node, port]` (the port is the output type's name, or `out`).
     pub from: (String, String),
@@ -77,6 +80,7 @@ pub struct ConnectArgs {
 #[serde(deny_unknown_fields)]
 pub struct MoveNodesArgs {
     /// The graph file, relative to the project.
+    #[schemars(extend("x-real-path" = "write"))]
     pub graph: String,
     /// The new canvas positions: `{"<node>": [x, y]}`.
     pub positions: BTreeMap<String, [f32; 2]>,
@@ -87,6 +91,7 @@ pub struct MoveNodesArgs {
 #[serde(deny_unknown_fields)]
 pub struct SetDefaultArgs {
     /// The graph file, relative to the project.
+    #[schemars(extend("x-real-path" = "write"))]
     pub graph: String,
     /// The node's id.
     pub node: String,
