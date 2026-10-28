@@ -330,6 +330,7 @@ The entity core is bevy_ecs 0.20.0 used standalone, behind our own API (ADR-0005
   - `AudioSource.rolloff` (`Natural`, `Inverse`, `Linear` or `Off`, default `Natural`), `AudioSource.min_distance` (default 1) and `AudioSource.max_distance` (default 100): how a spatial sound's volume falls with distance from the listener, changeable while it plays (M4 plan, WP45 PR "control");
   - `AudioSource.doppler` (default 0): how much a spatial sound's pitch follows its own and the listener's motion along the line between them; 1 is physical, more exaggerates;
   - `AudioListener` (`active`, default true): where sounds are heard from. The first active one in entity order hears; without one, the first active camera does.
+  - Native UI (ADR-0058): `UiRoot` makes an entity the root of a UI tree, on the screen (drawn by `order`, laid out in points or for a `reference_height`) or in the world (a box facing the camera, `world_height` metres high); its descendants with a `UiNode` are the tree's nodes, in child order, each placed as a fraction of its parent's box plus points, with padding, size limits, an aspect ratio, automatic size, a row, column or grid of children, order, z, clipping, scale, rotation, opacity and a `style` name. `UiPanel`, `UiText`, `UiImage`, `UiButton`, `UiBar`, `UiScroll` and `UiTextInput` give a node its fill, text, image, button, bar, scrolling and text field. A style (the engine's default theme, under the project's `[ui] theme`, or a root's own `theme`) sets the look fields it names, and its `hover`, `pressed`, `focused` and `disabled` variants set them in those states; `re_app` builds the tree from the World at Sync and `re_ui` lays it out and paints it.
 - **Hierarchy**: bevy's `ChildOf` / `Children` relationship: ordered children, recursive despawn. Files store a `parent` id per entity. `GlobalTransform` is recomputed in the Sync phase by a change-driven propagation system that only touches subtrees whose `Transform` or `ChildOf` changed (0.42 to 1.36 ms per update at 100,100 entities in the spike, against 5.5 ms for a full pass). `world.find("Island/Crates/Crate_3")` resolves a path of names as a convenience; it is not an identity.
 - **Change tracking**: bevy's per-component change ticks. Writing an equal value through the registry does not mark a component changed.
 - **Edits** go through `re_command` operations and transactions (ADR-0003): atomic, with exact undo and redo, and a log. Project files the editor or an agent edits in memory (graph files) are open documents in the World, changed by the `set_doc` operation, checked by a validator per file suffix, listed as unsaved by `project.status` and written back by the scene save (ADR-0044).
@@ -689,6 +690,7 @@ my-game/
   materials/*.material.json  PBR-lite parameters + texture asset refs
   graphs/*.graph.json        ProcGraph IR
   anims/*.animgraph.json     animation graphs (ADR-0039)
+  ui/*.theme.json            native UI themes: styles over the engine's default (ADR-0058)
   scripts/game/**.luau       game context
   scripts/tools/**.luau      tools context (graph builders, editor helpers)
   scripts/shared/**.luau     modules require-able from both
@@ -773,6 +775,9 @@ effects = [{ kind = "reverb", feedback = 0.85, damping = 0.3, mix = 1.0 }]
 [audio.snapshots.underwater]
 buses = { sfx = -3.0 }
 effects = [{ bus = "footsteps", effect = 0, cutoff_hz = 600.0 }]
+
+[ui]                          # native UI (M4, ADR-0058)
+theme = "ui/game.theme.json"  # styles over the engine's default theme, by name; unset: the default alone
 
 [stream]                      # world streaming (M3, ADR-0042; re_proc::stream::StreamConfig); keys and defaults in the ADR
 cell_size = 256.0
@@ -949,7 +954,7 @@ Every runtime read of a project file goes through `re_core::files::ProjectFiles`
 - the entries' bytes, back to back, in index order; an entry is zstd-compressed (level 9) only when that saves at least 10%;
 - the index: postcard, zstd-compressed, sorted by path: the engine, Luau, bytecode and compiler versions (`COMPILER_ID`, ADR-0036), the `[package]` name, identifier and version, and per entry its path, form (`Source`, `Bytecode` or `Processed`), offset, sizes, compression and the blake3 of its bytes.
 
-The default content is `real.toml`, `.luaurc`, `scenes/`, `prefabs/`, `materials/`, `graphs/`, `anims/`, `scripts/`, `shaders/`, `assets/` and `data/seed/`; `tests/`, `.real/`, `.git/`, `AGENTS.md` and `CLAUDE.md` are never packed. Animation graphs (`*.animgraph.json`) go in `anims/`; elsewhere one is packed when it lies in another default folder or matches `[package] include`, and a packed scene that names a file the archive leaves out fails the build (`RE0957`). Scripts are stored as Luau bytecode. Every read checks the entry's hash, and an archive from another engine, Luau or compiler version is refused (`RE0602`). `[package]` in `real.toml` sets the identifier, display name, version, icon, the scripts and assets forms, `exclude`, `include` and `notices`. `real verify --package DIR` runs the packaged game as a child process (a boot and every replay) and compares its `state_hash`es with the project's.
+The default content is `real.toml`, `.luaurc`, `scenes/`, `prefabs/`, `materials/`, `graphs/`, `anims/`, `ui/`, `scripts/`, `shaders/`, `assets/` and `data/seed/`; `tests/`, `.real/`, `.git/`, `AGENTS.md` and `CLAUDE.md` are never packed. Animation graphs (`*.animgraph.json`) go in `anims/` and UI themes in `ui/`; elsewhere one is packed when it lies in another default folder or matches `[package] include`, and a packed scene that names a file the archive leaves out fails the build (`RE0957`), as does a `[ui] theme` the archive leaves out. Scripts are stored as Luau bytecode. Every read checks the entry's hash, and an archive from another engine, Luau or compiler version is refused (`RE0602`). `[package]` in `real.toml` sets the identifier, display name, version, icon, the scripts and assets forms, `exclude`, `include` and `notices`. `real verify --package DIR` runs the packaged game as a child process (a boot and every replay) and compares its `state_hash`es with the project's.
 
 ### Web builds
 

@@ -71,6 +71,9 @@ pub struct AppConfig {
     /// `[package]`: how `real build` packs the game (ADR-0037).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<crate::package::PackageConfig>,
+    /// `[ui]`: the native UI's theme (ADR-0058).
+    #[serde(default, skip_serializing_if = "UiConfig::is_default")]
+    pub ui: UiConfig,
     /// Runtime option: run without a window. Headless runs use a fixed frame
     /// time of one simulation step.
     #[serde(skip)]
@@ -98,9 +101,28 @@ impl Default for AppConfig {
             compat: None,
             net: crate::net::NetConfig::default(),
             package: None,
+            ui: UiConfig::default(),
             headless: true,
             persist_edits: false,
         }
+    }
+}
+
+/// `[ui]`: the native UI (ADR-0058).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiConfig {
+    /// A theme file (`*.theme.json`) over the engine's default theme: its
+    /// styles extend or replace the default's by name. Empty: the default
+    /// theme alone.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub theme: String,
+}
+
+impl UiConfig {
+    /// True when nothing is set (the section is left out of a written file).
+    pub fn is_default(&self) -> bool {
+        self.theme.is_empty()
     }
 }
 

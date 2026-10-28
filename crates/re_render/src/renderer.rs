@@ -949,14 +949,10 @@ fn malformed_texture(data: &TextureData) -> String {
 }
 
 /// One level of block-compressed `blocks` decoded to `width` x `height` RGBA8,
-/// for a device without BC formats (ADR-0047). BC5's two channels become red
-/// and green, with blue 0 and alpha 255.
-pub(crate) fn decode_blocks(
-    format: TextureFormat,
-    width: u32,
-    height: u32,
-    blocks: &[u8],
-) -> Vec<u8> {
+/// for a device without BC formats (ADR-0047) and for the native UI's images,
+/// which egui takes as RGBA8 (ADR-0058). BC5's two channels become red and
+/// green, with blue 0 and alpha 255.
+pub fn decode_blocks(format: TextureFormat, width: u32, height: u32, blocks: &[u8]) -> Vec<u8> {
     let (w, h) = (width as usize, height as usize);
     let blocks_wide = w.div_ceil(4);
     let mut out = vec![0u8; w * h * 4];

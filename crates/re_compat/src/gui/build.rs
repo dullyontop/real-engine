@@ -189,6 +189,8 @@ impl Built {
                 _ => None,
             },
             look: look(s, e),
+            bar: None,
+            opacity: 1.0,
         };
         let id = self.push(e, kind, decor.layout, node);
         let by_name = matches!(self.tree.node(id).arrange, Some(a) if sorts_by_name(&a));

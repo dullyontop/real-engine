@@ -28,6 +28,7 @@ pub const DEFAULT_DIRS: &[&str] = &[
     "materials",
     "graphs",
     "anims",
+    "ui",
     "scripts",
     "shaders",
     "assets",
@@ -329,7 +330,14 @@ pub fn pack(project: &Path, config: &AppConfig) -> (PackageWriter, PackReport) {
             Err(d) => report.diagnostics.push(d),
         }
     }
-    let named = named_files(&files, &paths);
+    let mut named = named_files(&files, &paths);
+    // `[ui] theme` names the native UI's theme file (ADR-0058).
+    let theme = &config.ui.theme;
+    if !theme.is_empty() && files.is_file(theme) {
+        named
+            .entry(theme.clone())
+            .or_insert_with(|| "real.toml".to_owned());
+    }
     report.diagnostics.extend(unpacked_names(&named, &paths));
 
     // Two paths that differ only by case cannot both be found ignoring case.

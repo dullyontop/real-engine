@@ -104,6 +104,11 @@ impl App {
         let audio_problems = audio.set_graph(&config.audio);
         let bus_levels = audio.bus_levels();
         let script_levels = script_levels(&audio, &bus_levels);
+        let dev = files.project_dir().is_some();
+        let (ui, ui_problems) =
+            crate::ui::UiHost::new(files.clone(), Some(config.ui.theme.as_str()), dev);
+        let mut diagnostics = audio_problems;
+        diagnostics.extend(ui_problems);
         Ok(App {
             project: files
                 .project_dir()
@@ -140,6 +145,7 @@ impl App {
             render_assets: RenderAssets::default(),
             snapshot: RenderSnapshot::default(),
             hud: Vec::new(),
+            ui,
             watcher: None,
             shaders: Default::default(),
             shader_watcher: None,
@@ -175,7 +181,7 @@ impl App {
             screenshots: Vec::new(),
             captures: Vec::new(),
             perf: PerfRecorder::new(),
-            diagnostics: audio_problems,
+            diagnostics,
             verify_stages: Vec::new(),
             config,
         })

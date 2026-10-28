@@ -16,9 +16,10 @@ use re_types::{MaterialDesc, RenderSnapshot, TextureHandle, TextureRef};
 
 use crate::codes;
 use crate::compat_view::CompatView;
-use crate::hud::{self, HudLine};
 use crate::media::{DERIVED, LoadedMaterial, Media};
 use crate::sync::render::{self, RenderAssets};
+use crate::ui::hud::HudLine;
+use crate::ui::{UiHost, View};
 
 /// The wgpu backends for a project: `RE_BACKENDS` when set, else the first of
 /// `real.toml [render] backends` that parses (all of them combined), else the
@@ -287,7 +288,8 @@ impl Graphics {
         self.renderer.create_material(&desc)
     }
 
-    /// Draws `snapshot` and the HUD into `target` (`size_px` physical pixels).
+    /// Draws `snapshot`, then the native UI and the HUD, into `target`
+    /// (`size_px` physical pixels).
     ///
     /// # Errors
     ///
@@ -298,18 +300,23 @@ impl Graphics {
         size_px: [u32; 2],
         pixels_per_point: f32,
         snapshot: &RenderSnapshot,
+        ui: &mut UiHost,
         hud_lines: &[HudLine],
     ) -> Result<(), Diagnostic> {
         self.renderer
             .render(&self.gpu.device, &self.gpu.queue, target, snapshot)?;
-        if hud_lines.is_empty() {
+        if hud_lines.is_empty() && !ui.has_roots() {
             return Ok(());
         }
         let time = self.started.elapsed().as_secs_f64();
-        let mut output = hud::run(&self.egui, hud_lines, size_px, pixels_per_point, time);
-        let ui = UiFrame::from_output(&self.egui, &mut output, size_px);
+        let view = View {
+            size_px,
+            pixels_per_point,
+        };
+        let mut output = ui.run(hud_lines, view, time);
+        let frame = UiFrame::from_output(ui.ctx(), &mut output, size_px);
         self.renderer
-            .paint_ui(&self.gpu.device, &self.gpu.queue, target, &ui)
+            .paint_ui(&self.gpu.device, &self.gpu.queue, target, &frame)
     }
 
     /// Draws a compat game's view (its 3D frame and its UI pass, or the
@@ -324,6 +331,7 @@ impl Graphics {
         size_px: [u32; 2],
         pixels_per_point: f32,
         view: &mut CompatView,
+        host: &mut UiHost,
         hud_lines: &[HudLine],
     ) -> Result<(), Diagnostic> {
         let (device, queue) = (&self.gpu.device, &self.gpu.queue);
@@ -352,10 +360,14 @@ impl Graphics {
         }
         let mut output = match ui {
             Some(o) => o,
-            None if hud_lines.is_empty() => return Ok(()),
+            None if hud_lines.is_empty() && !host.has_roots() => return Ok(()),
             None => {
                 let time = self.started.elapsed().as_secs_f64();
-                hud::run(&self.egui, hud_lines, size_px, pixels_per_point, time)
+                let at = View {
+                    size_px,
+                    pixels_per_point,
+                };
+                host.run(hud_lines, at, time)
             }
         };
         let ui = UiFrame::from_output(&self.egui, &mut output, size_px);
@@ -371,10 +383,11 @@ impl Graphics {
         &mut self,
         size: [u32; 2],
         view: &mut CompatView,
+        host: &mut UiHost,
         hud_lines: &[HudLine],
     ) -> Result<Image, Diagnostic> {
         let capture = Capture::new(&self.gpu.device, size[0], size[1])?;
-        self.draw_compat(capture.view(), size, 1.0, view, hud_lines)?;
+        self.draw_compat(capture.view(), size, 1.0, view, host, hud_lines)?;
         capture.read(&self.gpu.device, &self.gpu.queue)
     }
 
@@ -393,7 +406,14 @@ impl Graphics {
         &self.egui
     }
 
-    /// Draws `snapshot` and the HUD offscreen and reads the image back.
+    /// Lays out and paints the UI with `ctx`: the app's UI host's, so text
+    /// laid out at Sync paints with the same font atlas.
+    pub fn set_egui(&mut self, ctx: egui::Context) {
+        self.egui = ctx;
+    }
+
+    /// Draws `snapshot`, the native UI and the HUD offscreen and reads the
+    /// image back.
     ///
     /// # Errors
     ///
@@ -402,10 +422,11 @@ impl Graphics {
         &mut self,
         size: [u32; 2],
         snapshot: &RenderSnapshot,
+        ui: &mut UiHost,
         hud_lines: &[HudLine],
     ) -> Result<Image, Diagnostic> {
         let capture = Capture::new(&self.gpu.device, size[0], size[1])?;
-        self.draw(capture.view(), size, 1.0, snapshot, hud_lines)?;
+        self.draw(capture.view(), size, 1.0, snapshot, ui, hud_lines)?;
         capture.read(&self.gpu.device, &self.gpu.queue)
     }
 

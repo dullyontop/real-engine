@@ -76,10 +76,10 @@ impl App {
 
     /// Applies file changes (from a watcher, or made by a command): re-imports
     /// what changed, uploads it again and forgets collider shapes built from
-    /// it, and rebuilds the shaders of changed shader files
-    /// ([`crate::shaders`]). Returns the problems re-imports and rebuilds
-    /// reported (the last good version of each stays loaded); they are also in
-    /// the app's diagnostics.
+    /// it, rebuilds the shaders of changed shader files ([`crate::shaders`]),
+    /// and loads the native UI's changed images and themes again. Returns the
+    /// problems re-imports and rebuilds reported (the last good version of
+    /// each stays loaded); they are also in the app's diagnostics.
     pub fn apply_file_changes(&mut self, changes: &[re_assets::AssetChange]) -> Vec<Diagnostic> {
         let (report, stale) = self.media.apply_changes(changes);
         let mut problems = report.problems.clone();
@@ -137,6 +137,10 @@ impl App {
         let doc_problems = self.reload_open_docs(&paths);
         self.diagnostics.extend(doc_problems.iter().cloned());
         problems.extend(doc_problems);
+        // The native UI loads its changed images and theme files again.
+        let ui_problems = self.ui.files_changed(&paths);
+        self.diagnostics.extend(ui_problems.iter().cloned());
+        problems.extend(ui_problems);
         let graphs: Vec<String> = paths
             .iter()
             .filter(|p| procedural::is_graph_input(&mut self.world, p))

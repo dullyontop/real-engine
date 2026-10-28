@@ -462,12 +462,277 @@ component! {
     }
 }
 
+field_enum! {
+    /// Where a [`UiRoot`] draws: on the screen, or in the world facing the
+    /// camera.
+    pub enum UiSpace { Screen, World }
+}
+
+field_enum! {
+    /// Which axes of a [`UiNode`]'s box grow to fit its text and children.
+    pub enum UiAutoSize { None, Width, Height, Both }
+}
+
+field_enum! {
+    /// How a [`UiNode`] places its children: where their own fields say, in
+    /// a row, in a column, or in a grid of cells.
+    pub enum UiLayout { None, Row, Column, Grid }
+}
+
+field_enum! {
+    /// Where content sits along one axis: left or top, centre, right or
+    /// bottom.
+    pub enum UiAlign { Start, Center, End }
+}
+
+field_enum! {
+    /// A [`UiText`]'s family: Source Sans 3, Montserrat or Roboto Mono.
+    pub enum UiFont { Sans, Display, Mono }
+}
+
+field_enum! {
+    /// The edge a [`UiBar`] fills from.
+    pub enum UiBarDirection { Right, Left, Up, Down }
+}
+
+component! {
+    /// Makes this entity the root of a native UI tree (ADR-0058): its
+    /// children with a [`UiNode`] are the tree's nodes. On the screen the root
+    /// fills the view; in the world it is a box at this entity's position that
+    /// faces the camera, as wide and tall as its own `UiNode`'s size.
+    pub struct UiRoot {
+        /// On the screen or in the world.
+        pub space: UiSpace = UiSpace::Screen,
+        /// Screen roots draw by order, lowest first, then by stable id.
+        pub order: i32 = 0,
+        /// Takes keyboard and gamepad focus and navigation while shown.
+        pub focus: bool = false,
+        /// False lets the pointer pass through to the game, as for a HUD.
+        pub input: bool = true,
+        /// The view height in the root's units: 0 makes a unit a point, 720
+        /// lays out for a 720-point-high view and scales to the real one.
+        pub reference_height: f32 = 0.0,
+        /// A theme file for this root in place of the project's `[ui] theme`
+        /// (empty: the project's).
+        pub theme: String = String::new(),
+        /// World roots: the metres the root's height spans.
+        pub world_height: f32 = 1.0,
+        /// World roots: where the root's centre is from this entity, in metres.
+        pub offset: Vec3 = Vec3::ZERO,
+        /// World roots: hidden further than this from the camera, in metres
+        /// (0: no limit).
+        pub max_distance: f32 = 0.0,
+    }
+}
+
+component! {
+    /// A box in a native UI tree (ADR-0058): its place, size and layout. Its
+    /// parent is the nearest ancestor with a `UiNode` or a [`UiRoot`]; its
+    /// children are its children with a `UiNode`, in child order. Sizes and
+    /// positions are a fraction of the parent's box (`_scale`) plus points.
+    pub struct UiNode {
+        /// Left edge from the parent's, in points.
+        pub x: f32 = 0.0,
+        /// Top edge from the parent's, in points.
+        pub y: f32 = 0.0,
+        /// Left edge from the parent's, as a fraction of its width.
+        pub x_scale: f32 = 0.0,
+        /// Top edge from the parent's, as a fraction of its height.
+        pub y_scale: f32 = 0.0,
+        /// Width in points, added to `width_scale`'s.
+        pub width: f32 = 100.0,
+        /// Height in points, added to `height_scale`'s.
+        pub height: f32 = 100.0,
+        /// Width as a fraction of the parent's.
+        pub width_scale: f32 = 0.0,
+        /// Height as a fraction of the parent's.
+        pub height_scale: f32 = 0.0,
+        /// The point of the box placed at the position: 0 left, 1 right.
+        pub anchor_x: f32 = 0.0,
+        /// The point of the box placed at the position: 0 top, 1 bottom.
+        pub anchor_y: f32 = 0.0,
+        /// Which axes grow to fit the text and the children.
+        pub auto_size: UiAutoSize = UiAutoSize::None,
+        /// Space inside the left edge, in points.
+        pub padding_left: f32 = 0.0,
+        /// Space inside the top edge, in points.
+        pub padding_top: f32 = 0.0,
+        /// Space inside the right edge, in points.
+        pub padding_right: f32 = 0.0,
+        /// Space inside the bottom edge, in points.
+        pub padding_bottom: f32 = 0.0,
+        /// The smallest width in points (0: none).
+        pub min_width: f32 = 0.0,
+        /// The smallest height in points (0: none).
+        pub min_height: f32 = 0.0,
+        /// The largest width in points (0: none).
+        pub max_width: f32 = 0.0,
+        /// The largest height in points (0: none).
+        pub max_height: f32 = 0.0,
+        /// Width over height, kept inside the size given (0: none).
+        pub aspect: f32 = 0.0,
+        /// How the children are placed.
+        pub layout: UiLayout = UiLayout::None,
+        /// Space between the children of a row, column or grid, in points.
+        pub gap: f32 = 0.0,
+        /// Where a row, column or grid sits across the box.
+        pub align_x: UiAlign = UiAlign::Start,
+        /// Where a row, column or grid sits down the box.
+        pub align_y: UiAlign = UiAlign::Start,
+        /// A grid's cell width in points.
+        pub cell_width: f32 = 100.0,
+        /// A grid's cell height in points.
+        pub cell_height: f32 = 100.0,
+        /// A grid's cells per line (0: as many as fit).
+        pub max_cells: i32 = 0,
+        /// The place among its siblings in a row, column or grid, lowest
+        /// first; ties keep child order.
+        pub order: i32 = 0,
+        /// Drawn over siblings with a lower z.
+        pub z: i32 = 0,
+        /// False hides the box and everything under it.
+        pub visible: bool = true,
+        /// Cuts off what the children draw outside the box.
+        pub clip: bool = false,
+        /// Scales the box and everything under it about its centre.
+        pub scale: f32 = 1.0,
+        /// Turns the box and everything under it about its centre, in degrees.
+        pub rotation_deg: f32 = 0.0,
+        /// Multiplies the alpha of the box and everything under it, 0 to 1.
+        /// No style sets it, so it fades any node.
+        pub opacity: f32 = 1.0,
+        /// The theme's style that gives the box its look (empty: none).
+        pub style: String = String::new(),
+    }
+}
+
+component! {
+    /// Fills a [`UiNode`]'s box, with rounded corners, an outline or a
+    /// gradient.
+    pub struct UiPanel {
+        /// Linear fill colour (alpha 0: no fill).
+        pub color: Color = Color::rgba(0.0, 0.0, 0.0, 0.0),
+        /// Corner radius in points.
+        pub corner: f32 = 0.0,
+        /// Outline width in points (0: none).
+        pub outline: f32 = 0.0,
+        /// Linear outline colour.
+        pub outline_color: Color = Color::WHITE,
+        /// The linear colour the fill blends to across the box (alpha 0: none).
+        pub gradient: Color = Color::rgba(0.0, 0.0, 0.0, 0.0),
+        /// The blend's direction in degrees: 0 left to right, clockwise.
+        pub gradient_angle_deg: f32 = 0.0,
+    }
+}
+
+component! {
+    /// Text in a [`UiNode`]'s box.
+    pub struct UiText {
+        /// The text; `\n` breaks a line.
+        pub text: String = String::new(),
+        /// The family.
+        pub font: UiFont = UiFont::Sans,
+        /// CSS-style weight: 400 regular, 700 bold.
+        pub weight: i32 = 400,
+        /// Size in points.
+        pub size: f32 = 18.0,
+        /// Linear colour.
+        pub color: Color = Color::WHITE,
+        /// Where the text sits across the box.
+        pub align_x: UiAlign = UiAlign::Start,
+        /// Where the text sits down the box.
+        pub align_y: UiAlign = UiAlign::Start,
+        /// Wraps at the box's width.
+        pub wrap: bool = false,
+        /// Takes the largest size that fits the box, in place of `size`.
+        pub fit: bool = false,
+        /// Ends text that does not fit with an ellipsis.
+        pub truncate: bool = false,
+        /// Reads `<b>`, `<font color="#rrggbb">`, `<font size="n">` and the
+        /// XML escapes.
+        pub rich: bool = false,
+        /// Line spacing: 1 is the font's own.
+        pub line_height: f32 = 1.0,
+        /// Linear colour of a one-point outline (alpha 0: none).
+        pub outline_color: Color = Color::rgba(0.0, 0.0, 0.0, 0.0),
+    }
+}
+
+component! {
+    /// A texture over a [`UiNode`]'s box.
+    pub struct UiImage {
+        /// The texture asset, e.g. `ui/icons/coin.png`.
+        pub image: String = String::new(),
+        /// Linear colour the texture is multiplied by.
+        pub tint: Color = Color::WHITE,
+    }
+}
+
+component! {
+    /// Makes a [`UiNode`] a button: it takes the pointer, focus and presses,
+    /// and raises its events (ADR-0058).
+    pub struct UiButton {
+        /// False shows the style's disabled state and takes no presses.
+        pub enabled: bool = true,
+        /// Darkens the panel on hover and press when the style gives no colour
+        /// for those states.
+        pub auto_color: bool = true,
+    }
+}
+
+component! {
+    /// Fills part of a [`UiNode`]'s box from one edge: a progress or health
+    /// bar.
+    pub struct UiBar {
+        /// The part filled, 0 to 1.
+        pub value: f32 = 0.0,
+        /// The edge it fills from.
+        pub direction: UiBarDirection = UiBarDirection::Right,
+        /// Linear fill colour.
+        pub color: Color = Color::WHITE,
+    }
+}
+
+component! {
+    /// Makes a [`UiNode`] a scrolling view of a content area larger than its
+    /// box.
+    pub struct UiScroll {
+        /// How far the content is scrolled right, in points. Layout keeps the
+        /// view inside the content without writing this back.
+        pub scroll_x: f32 = 0.0,
+        /// How far the content is scrolled down, in points.
+        pub scroll_y: f32 = 0.0,
+        /// The content's width in points (0: grows to fit the children).
+        pub content_width: f32 = 0.0,
+        /// The content's height in points (0: grows to fit the children).
+        pub content_height: f32 = 0.0,
+        /// The scroll bar's width in points.
+        pub bar: f32 = 6.0,
+        /// Linear colour of the scroll bar.
+        pub bar_color: Color = Color::rgba(1.0, 1.0, 1.0, 0.3),
+    }
+}
+
+component! {
+    /// Makes a [`UiNode`] with a [`UiText`] a text field: its text is the
+    /// `UiText`'s.
+    pub struct UiTextInput {
+        /// Shown, faded, while the text is empty.
+        pub placeholder: String = String::new(),
+        /// The most characters it takes (0: no limit).
+        pub max_length: i32 = 0,
+        /// Empties the text when the field takes focus.
+        pub clear_on_focus: bool = false,
+    }
+}
+
 /// Registers every built-in component, in a fixed order: `Transform`,
 /// `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light`, `RigidBody`,
 /// `Collider`, `CharacterController`, `ScriptRef`, `AudioSource`, `AnimPlayer`,
 /// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `SkinnedMesh`,
 /// `Streamed`, `StreamFocus`, `Vehicle`, `VehicleWheel`, `Ragdoll`, `Animator`,
-/// `BoneAttachment`, `AudioListener`.
+/// `BoneAttachment`, `AudioListener`, `UiRoot`, `UiNode`, `UiPanel`, `UiText`,
+/// `UiImage`, `UiButton`, `UiBar`, `UiScroll`, `UiTextInput`.
 pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<Transform>(world);
     registry.register::<MeshRef>(world);
@@ -497,4 +762,14 @@ pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<BoneAttachment>(world);
     // Added in M4.
     registry.register::<AudioListener>(world);
+    // Native UI (ADR-0058).
+    registry.register::<UiRoot>(world);
+    registry.register::<UiNode>(world);
+    registry.register::<UiPanel>(world);
+    registry.register::<UiText>(world);
+    registry.register::<UiImage>(world);
+    registry.register::<UiButton>(world);
+    registry.register::<UiBar>(world);
+    registry.register::<UiScroll>(world);
+    registry.register::<UiTextInput>(world);
 }

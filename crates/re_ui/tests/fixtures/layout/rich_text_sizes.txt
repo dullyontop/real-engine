@@ -1,0 +1,14 @@
+visit #3 screen (root) at (0.0, 0.0) size (400.0, 300.0) rotation 0.0
+visit #0 sized run at (0.0, 0.0) size (300.0, 40.0) rotation 0.0 text (106.57, 40.0) fits
+visit #1 sized run, scaled node at (0.0, 50.0) size (600.0, 80.0) rotation 0.0 text (107.07, 40.0) fits
+visit #2 sized run, scaled to fit at (0.0, 140.0) size (200.0, 60.0) rotation 0.0 text (39.696, 60.0) fits
+root 0: 3 drawn
+item #0 sized run at (0.0, 0.0) size (300.0, 40.0) scale 1.0 order (0, 1) input
+  text fits size 14.0 in (300.0, 40.0) bounds (-53.0, 0.0, 53.57, 40.0)
+  row at (-53.0, 0.0) size (106.57, 40.0) "Small big small"
+item #1 sized run, scaled node at (0.0, 50.0) size (600.0, 80.0) scale 2.0 order (0, 2) input
+  text fits size 28.0 in (600.0, 80.0) bounds (-107.0, 0.0, 107.14, 80.0)
+  row at (-107.0, 0.0) size (214.14, 80.0) "Small big small"
+item #2 sized run, scaled to fit at (0.0, 140.0) size (200.0, 60.0) scale 1.0 order (0, 3) input
+  text fits size 14.0 in (200.0, 60.0) bounds (-20.0, 0.0, 19.696, 60.0)
+  row at (-20.0, 0.0) size (39.696, 60.0) "A B"

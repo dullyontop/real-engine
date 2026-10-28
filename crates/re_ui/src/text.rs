@@ -57,12 +57,15 @@ impl Default for TextStyle {
     }
 }
 
-/// One run of text with its own weight and colour.
+/// One run of text with its own weight, colour and size.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Run {
     pub text: String,
     pub bold: bool,
     pub color: Option<[f32; 3]>,
+    /// A `<font size=...>`'s size in pixels, at the text's own size (it
+    /// scales as the text does).
+    pub size: Option<f32>,
 }
 
 fn hex_color(s: &str) -> Option<[f32; 3]> {
@@ -90,18 +93,32 @@ fn rgb_color(s: &str) -> Option<[f32; 3]> {
     }
 }
 
-/// The colour of a `<font color=...>` tag.
-fn font_tag_color(tag: &str) -> Option<[f32; 3]> {
-    let at = tag.find("color")?;
-    let rest = tag[at + 5..].trim_start().strip_prefix('=')?.trim_start();
+/// The quoted value of a `<font>` tag's attribute `name`.
+fn font_attr<'t>(tag: &'t str, name: &str) -> Option<&'t str> {
+    let at = tag.find(name)?;
+    let rest = tag[at + name.len()..]
+        .trim_start()
+        .strip_prefix('=')?
+        .trim_start();
     let q = rest.chars().next()?;
     if q != '"' && q != '\'' {
         return None;
     }
     let body = &rest[1..];
     let end = body.find(q)?;
-    let v = body[..end].trim();
+    Some(body[..end].trim())
+}
+
+/// The colour of a `<font color=...>` tag.
+fn font_tag_color(tag: &str) -> Option<[f32; 3]> {
+    let v = font_attr(tag, "color")?;
     hex_color(v).or_else(|| rgb_color(&v.replace(' ', "")))
+}
+
+/// The size of a `<font size=...>` tag, in pixels from 1 to 100.
+fn font_tag_size(tag: &str) -> Option<f32> {
+    let v: f32 = font_attr(tag, "size")?.parse().ok()?;
+    v.is_finite().then(|| v.clamp(1.0, 100.0))
 }
 
 fn unescape(s: &str) -> String {
@@ -112,31 +129,37 @@ fn unescape(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// Splits rich text into runs: `<b>`, `<font color=...>` and the escapes
-/// `&lt; &gt; &quot; &apos; &amp;`. Other tags stay as text.
+/// Splits rich text into runs: `<b>`, `<font color=... size=...>` and the
+/// escapes `&lt; &gt; &quot; &apos; &amp;`. Other tags stay as text.
 pub fn runs(text: &str, rich: bool) -> Vec<Run> {
     if !rich {
         return vec![Run {
             text: text.to_string(),
             bold: false,
             color: None,
+            size: None,
         }];
     }
     let mut out: Vec<Run> = Vec::new();
     let mut bold = 0usize;
+    // Each open <font>'s colour and size, NaN where neither it nor an outer
+    // one gives them.
     let mut colors: Vec<[f32; 3]> = Vec::new();
+    let mut sizes: Vec<f32> = Vec::new();
     let mut buf = String::new();
     let mut rest = text;
-    let flush = |buf: &mut String, out: &mut Vec<Run>, bold: usize, colors: &[[f32; 3]]| {
-        if !buf.is_empty() {
-            out.push(Run {
-                text: unescape(buf),
-                bold: bold > 0,
-                color: colors.last().copied(),
-            });
-            buf.clear();
-        }
-    };
+    let flush =
+        |buf: &mut String, out: &mut Vec<Run>, bold: usize, fonts: (&[[f32; 3]], &[f32])| {
+            if !buf.is_empty() {
+                out.push(Run {
+                    text: unescape(buf),
+                    bold: bold > 0,
+                    color: fonts.0.last().copied(),
+                    size: fonts.1.last().copied().filter(|s| !s.is_nan()),
+                });
+                buf.clear();
+            }
+        };
     while let Some(lt) = rest.find('<') {
         buf.push_str(&rest[..lt]);
         let after = &rest[lt..];
@@ -148,23 +171,28 @@ pub fn runs(text: &str, rich: bool) -> Vec<Run> {
         let tag = &after[1..gt];
         let lower = tag.trim().to_ascii_lowercase();
         let known = if lower == "b" {
-            flush(&mut buf, &mut out, bold, &colors);
+            flush(&mut buf, &mut out, bold, (&colors, &sizes));
             bold += 1;
             true
         } else if lower == "/b" {
-            flush(&mut buf, &mut out, bold, &colors);
+            flush(&mut buf, &mut out, bold, (&colors, &sizes));
             bold = bold.saturating_sub(1);
             true
         } else if lower.starts_with("font ") || lower == "font" {
-            flush(&mut buf, &mut out, bold, &colors);
+            flush(&mut buf, &mut out, bold, (&colors, &sizes));
             let c = font_tag_color(tag)
                 .or_else(|| colors.last().copied())
                 .unwrap_or([f32::NAN; 3]);
             colors.push(c);
+            let size = font_tag_size(tag)
+                .or_else(|| sizes.last().copied())
+                .unwrap_or(f32::NAN);
+            sizes.push(size);
             true
         } else if lower == "/font" {
-            flush(&mut buf, &mut out, bold, &colors);
+            flush(&mut buf, &mut out, bold, (&colors, &sizes));
             colors.pop();
+            sizes.pop();
             true
         } else {
             false
@@ -175,7 +203,7 @@ pub fn runs(text: &str, rich: bool) -> Vec<Run> {
         rest = &after[gt + 1..];
     }
     buf.push_str(rest);
-    flush(&mut buf, &mut out, bold, &colors);
+    flush(&mut buf, &mut out, bold, (&colors, &sizes));
     // A <font> without a colour keeps the outer one (NaN marks "none").
     for r in &mut out {
         if r.color.is_some_and(|c| c[0].is_nan()) {
@@ -191,6 +219,13 @@ fn job(style: &TextStyle, size: f32, wrap_width: Option<f32>, max_rows: usize) -
         let color = match run.color {
             Some(c) => Rgba([c[0], c[1], c[2], style.color.0[3]]),
             None => style.color,
+        };
+        // A sized run scales with the text: by the node's scale, or to the
+        // size that fits the box.
+        let size = match run.size {
+            Some(s) if style.size > 0.0 => s * size / style.size,
+            Some(s) => s,
+            None => size,
         };
         let start = job.text.len();
         job.text.push_str(&run.text);
@@ -344,5 +379,30 @@ mod tests {
             runs("<font color='rgb(0,255,0)'>g</font>", true)[0].color,
             Some([0.0, 1.0, 0.0])
         );
+    }
+
+    #[test]
+    fn font_sizes_nest_and_clamp() {
+        let r = runs(
+            "a<font size=\"36\">b<font color=\"#ff0000\">c</font><font size='200'>d</font>\
+             </font><font size=\"big\">e</font><font size=\"0.5\">f</font>",
+            true,
+        );
+        let t: Vec<_> = r
+            .iter()
+            .map(|r| (r.text.as_str(), r.size, r.color))
+            .collect();
+        assert_eq!(
+            t,
+            vec![
+                ("a", None, None),
+                ("b", Some(36.0), None),
+                ("c", Some(36.0), Some([1.0, 0.0, 0.0])),
+                ("d", Some(100.0), None),
+                ("e", None, None),
+                ("f", Some(1.0), None),
+            ]
+        );
+        assert_eq!(runs("<font size=\"20\">x</font>", false)[0].size, None);
     }
 }

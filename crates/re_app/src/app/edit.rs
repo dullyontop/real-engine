@@ -9,9 +9,9 @@ use re_core::Diagnostic;
 use re_scene::SaveOptions;
 
 use crate::codes;
-use crate::hud;
 use crate::procedural;
 use crate::sync::render::{self, RenderInputs};
+use crate::ui::hud;
 
 use super::{App, rel};
 
@@ -149,8 +149,8 @@ impl App {
 
     /// The work an edit needs outside the simulation: regenerate procedural
     /// sources whose inputs changed, then propagate transforms. With a GPU side
-    /// (an editor's), also upload new assets and rebuild the snapshot and HUD,
-    /// so [`App::draw_into`] draws the World as it is.
+    /// (an editor's), also upload new assets and rebuild the snapshot, the HUD
+    /// and the native UI, so [`App::draw_into`] draws the World as it is.
     pub fn edit_frame(&mut self) {
         self.regenerate_changed();
         self.world.propagate();
@@ -167,8 +167,20 @@ impl App {
                 shadows: self.config.render.shadows,
                 origin: self.physics.origin(),
             };
+            let origin = inputs.origin;
             self.snapshot = render::build(&mut self.world, &inputs);
             self.hud = hud::collect(&mut self.world);
+            let view = crate::ui::View {
+                size_px: self.view_size,
+                pixels_per_point: self.view_ppp,
+            };
+            self.ui.sync(
+                &mut self.world,
+                &self.snapshot.camera,
+                origin,
+                view,
+                &mut self.diagnostics,
+            );
         }
     }
 

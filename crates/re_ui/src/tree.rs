@@ -77,6 +77,23 @@ impl Rgba {
         Rgba([r, g, b, 1.0])
     }
 
+    /// The colour of linear channels (a native colour, as scene files write
+    /// them), alpha unchanged.
+    pub fn from_linear(c: [f32; 4]) -> Rgba {
+        let encode = |x: f32| {
+            let x = if x.is_nan() { 0.0 } else { x.clamp(0.0, 1.0) };
+            if x <= 0.003_130_8 {
+                x * 12.92
+            } else if x >= 1.0 {
+                // Exactly, where the curve's constants round just under.
+                1.0
+            } else {
+                1.055 * libm::powf(x, 1.0 / 2.4) - 0.055
+            }
+        };
+        Rgba([encode(c[0]), encode(c[1]), encode(c[2]), c[3]])
+    }
+
     /// The colour with its alpha scaled by `1 - t`.
     pub fn with_transparency(self, t: f32) -> Rgba {
         let mut c = self.0;
@@ -321,6 +338,55 @@ impl Default for Look {
     }
 }
 
+/// The edge a bar fills from, as `UiBar.direction` names it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub enum BarDirection {
+    /// From the left edge to the right.
+    #[default]
+    Right,
+    /// From the right edge to the left.
+    Left,
+    /// From the bottom edge up.
+    Up,
+    /// From the top edge down.
+    Down,
+}
+
+/// A fill over part of a node's box, from one edge: a progress or health
+/// bar.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bar {
+    /// How much of the box it fills, from 0 to 1 (clamped; not a number is
+    /// 0).
+    pub value: f32,
+    pub direction: BarDirection,
+    pub color: Rgba,
+}
+
+impl Bar {
+    /// The filled part of a box at `min` of `size`: its corner and size.
+    pub fn fill(&self, min: Vec2, size: Vec2) -> (Vec2, Vec2) {
+        let v = if self.value.is_nan() {
+            0.0
+        } else {
+            self.value.clamp(0.0, 1.0)
+        };
+        match self.direction {
+            BarDirection::Right => (min, Vec2::new(size.x * v, size.y)),
+            BarDirection::Left => (
+                min + Vec2::new(size.x * (1.0 - v), 0.0),
+                Vec2::new(size.x * v, size.y),
+            ),
+            BarDirection::Up => (
+                min + Vec2::new(0.0, size.y * (1.0 - v)),
+                Vec2::new(size.x, size.y * v),
+            ),
+            BarDirection::Down => (min, Vec2::new(size.x, size.y * v)),
+        }
+    }
+}
+
 /// A picture over a node's box.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Image {
@@ -384,6 +450,11 @@ pub struct Node {
     pub text: Option<TextStyle>,
     pub image: Option<Image>,
     pub look: Look,
+    /// A fill over part of the box, drawn over the background.
+    pub bar: Option<Bar>,
+    /// Multiplies the alpha of the node and everything under it, from 0 to 1
+    /// (clamped; not a number is 1). It changes no layout and no input.
+    pub opacity: f32,
 }
 
 impl Default for Node {
@@ -411,6 +482,8 @@ impl Default for Node {
             text: None,
             image: None,
             look: Look::default(),
+            bar: None,
+            opacity: 1.0,
         }
     }
 }
@@ -462,5 +535,11 @@ impl UiTree {
             .scale
             .filter(|s| s.is_finite() && *s >= 0.0)
             .unwrap_or(1.0)
+    }
+
+    /// The factor a node's [`Node::opacity`] gives.
+    pub(crate) fn opacity_of(&self, id: NodeId) -> f32 {
+        let o = self.node(id).opacity;
+        if o.is_nan() { 1.0 } else { o.clamp(0.0, 1.0) }
     }
 }
