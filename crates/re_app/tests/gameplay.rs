@@ -99,7 +99,7 @@ fn a_late_frame_camera_follows_where_the_body_is_drawn() {
     let mut app = open(dir.path());
     // A frame and a half of fixed steps per frame: alpha is 0.5 on every
     // other frame, so the falling box is drawn between its last two steps.
-    let frame_time = Duration::from_secs_f64(1.5 / 60.0);
+    let frame_time = Duration::from_millis(25);
     let mut between = 0;
     for _ in 0..20 {
         app.frame(frame_time);
@@ -130,7 +130,7 @@ fn a_late_frame_camera_follows_where_the_body_is_drawn() {
 fn a_rig_on_a_moving_body_turned_in_the_late_frame_is_drawn_turned() {
     let dir = project_with(RIG_SCENE, &[("rig.luau", RIG)]);
     let mut app = open(dir.path());
-    let frame_time = Duration::from_secs_f64(1.5 / 60.0);
+    let frame_time = Duration::from_millis(25);
     for n in 1..=10 {
         app.frame(frame_time);
         let (_, body, _) = drawn(&app, "box").to_scale_rotation_translation();
@@ -189,7 +189,7 @@ end)
 "#,
     );
     let mut app = open(dir.path());
-    let frame_time = Duration::from_secs_f64(1.0 / 60.0);
+    let frame_time = Duration::from_secs(1) / 60;
     app.frame(frame_time);
     app.frame(frame_time);
     assert_eq!(app.take_script_output(), ["[game] 1", "[game] 2"]);
