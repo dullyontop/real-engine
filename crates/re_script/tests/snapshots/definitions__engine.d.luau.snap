@@ -91,6 +91,20 @@ declare extern type GraphPort with
     read port: string
 end
 
+-- A scene load started by scene.switch or scene.load.
+declare extern type SceneLoad with
+    -- The scene's name.
+    read name: string
+    -- How far the load got, from 0 to 1.
+    read progress: number
+    -- True once the load is over, applied or failed.
+    read done: boolean
+    -- Why the load failed (nothing changed then), or nil.
+    read error: string?
+    -- Suspends this script thread until the load is over; returns at once when it is.
+    function wait(self): ()
+end
+
 -- Entities, components and the scene.
 declare world: {
     -- The entity with this stable id, or nil.
@@ -267,6 +281,26 @@ declare stream: {
     load: (key: string) -> (),
     -- Tools only: lets a cell kept by `stream.load` unload when no focus wants it.
     release: (key: string) -> (),
+}
+
+-- Scene switches, scenes loaded beside the main one, and entities kept across switches.
+declare scene: {
+    -- Unloads every scene and loads `name` in their place, keeping the kept entities; the change applies at the end of a frame.
+    switch: (name: string) -> SceneLoad,
+    -- Loads `name` beside the loaded scenes; it applies at the end of a frame.
+    load: (name: string) -> SceneLoad,
+    -- Unloads a scene that scene.load added, at the end of this frame.
+    unload: (name: string) -> (),
+    -- The main scene: the entry scene at start, then the last one switched to.
+    current: () -> string,
+    -- The loaded scenes: the main scene, then the added ones in load order.
+    loaded: () -> {string},
+    -- Every scene the game can load (real.toml [scenes] and the entry scene), sorted.
+    list: () -> {string},
+    -- Keeps a root entity, with its subtree, across scene switches; `false` stops keeping it.
+    keep: (entity: Entity, keep: boolean?) -> (),
+    -- True if the entity is kept across scene switches.
+    is_kept: (entity: Entity) -> boolean,
 }
 
 -- Commands (tools context only): the same registry the CLI, editor and agents use.

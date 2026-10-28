@@ -659,6 +659,38 @@ fn shapes_follow_draw_order() {
     assert_eq!(fills, [egui::Color32::RED, egui::Color32::GREEN]);
 }
 
+/// A size that works out negative (an offset larger than the parent, or a
+/// tween that overshoots zero) or NaN is not an error: a rounded gradient
+/// background on it paints nothing.
+#[test]
+fn gradients_on_empty_and_nan_sizes_paint_nothing() {
+    let mut u = ui();
+    u.run(
+        r#"
+        local sg = Instance.new("ScreenGui")
+        sg.Parent = S.pg
+        local parent = Instance.new("Frame")
+        parent.Size = UDim2.fromOffset(30, 30)
+        parent.Parent = sg
+        local sizes = {UDim2.fromOffset(20, 20), UDim2.new(1, -40, 0, 20), UDim2.fromOffset(0 / 0, 20)}
+        for _, size in ipairs(sizes) do
+            local f = Instance.new("Frame")
+            f.Size = size
+            f.Parent = parent
+            Instance.new("UICorner").Parent = f
+            Instance.new("UIGradient").Parent = f
+        end
+        "#,
+    );
+    let out = u.frame();
+    let meshes = out
+        .shapes
+        .iter()
+        .filter(|s| matches!(s.shape, egui::Shape::Mesh(_)))
+        .count();
+    assert_eq!(meshes, 1, "only the 20 by 20 frame has a gradient to paint");
+}
+
 /// A sheet of the UI features, painted through re_render: corners, strokes,
 /// a gradient, rotation, the three substitute fonts, rich and scaled text, a
 /// button, an image placeholder, a scrolled list and a grid. Compared with

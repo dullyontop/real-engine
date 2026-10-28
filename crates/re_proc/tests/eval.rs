@@ -1,5 +1,6 @@
 //! Evaluation: determinism (D1), seed stability, incremental re-evaluation,
-//! caches, budgets, `points.instance` and golden outputs per node.
+//! caches and their keys, budgets, input warnings, `points.instance` and
+//! golden outputs per node.
 
 mod support;
 
@@ -7,10 +8,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use re_core::time::Instant;
-use re_proc::{CacheState, EvalOptions, Evaluator, NodeRegistry, ProcGraph, fragment_hash_hex};
+use re_proc::{
+    CacheState, CustomKind, Domain, EvalOptions, Evaluator, Field, NodeDef, NodeRegistry, Output,
+    PortType, ProcGraph, Streaming, fragment_hash_hex,
+};
 use re_reflect::Value;
 use re_types::graph::GraphDoc;
-use serde_json::json;
+use serde_json::{Value as Json, json};
 use support::{evaluator, fixtures, graph, island, output_hash};
 
 fn compile(doc: &GraphDoc) -> ProcGraph {
@@ -227,6 +231,182 @@ fn the_memory_budget_evicts_entries_the_last_evaluation_did_not_use() {
     assert_eq!(ev.memory_entries(), g.nodes.len());
     ev.clear_memory();
     assert_eq!(ev.memory_entries(), 0);
+}
+
+/// Parameters are hashed for the cache as their type writes them back:
+/// `16` and `16.0` for a float, and a left-out default, are one entry, in
+/// memory and on disk.
+#[test]
+fn parameters_written_differently_share_one_cache_entry() {
+    let doc = |params: Json| graph(1, &[("h", "terrain.heightfield", params)], &[]);
+    // `height` defaults to 30.
+    let variants = [
+        json!({ "size": 17, "cell": 16, "height": 30 }),
+        json!({ "size": 17, "cell": 16.0, "height": 30.0 }),
+        json!({ "size": 17, "cell": 16.0 }),
+    ];
+    let ev = evaluator(2);
+    for (i, params) in variants.iter().enumerate() {
+        let e = ev.evaluate(&compile(&doc(params.clone())), &opts());
+        assert!(e.ok(), "{:#?}", e.report.diagnostics);
+        let expected = if i == 0 {
+            CacheState::Miss
+        } else {
+            CacheState::Memory
+        };
+        assert_eq!(e.report.node("h").unwrap().cache, expected, "{params}");
+    }
+    let other = doc(json!({ "size": 17, "cell": 16.0, "height": 31 }));
+    let e = ev.evaluate(&compile(&other), &opts());
+    assert_eq!(e.report.node("h").unwrap().cache, CacheState::Miss);
+
+    let dir = tempfile::tempdir().unwrap();
+    let make = || evaluator(2).with_disk_cache(dir.path().to_path_buf());
+    assert!(
+        make()
+            .evaluate(&compile(&doc(variants[0].clone())), &opts())
+            .ok()
+    );
+    let e = make().evaluate(&compile(&doc(variants[2].clone())), &opts());
+    assert_eq!(e.report.node("h").unwrap().cache, CacheState::Disk);
+}
+
+/// A kind with no Rust parameter type (a Luau node) is hashed for the cache
+/// as its schema writes the parameters: left-out properties at their
+/// defaults, `number`s as floats and `integer`s as integers.
+#[test]
+fn custom_kinds_share_cache_entries_through_their_schema() {
+    let mut registry = NodeRegistry::m1();
+    registry.register(NodeDef::custom(CustomKind {
+        kind: "test.flat".into(),
+        version: 1,
+        oldest: 1,
+        streaming: Streaming::Whole,
+        implementation: [7; 32],
+        doc: "A flat field.".into(),
+        inputs: Vec::new(),
+        output: PortType::Field,
+        uses_seed: false,
+        params_schema: json!({
+            "type": "object",
+            "properties": {
+                "height": { "type": "number", "default": 16 },
+                "size": { "type": "integer", "default": 3 },
+            },
+            "additionalProperties": false,
+        }),
+        check: Arc::new(|_| Ok(())),
+        eval: Arc::new(|_, p| {
+            let number =
+                |name: &str, default: f64| p.get(name).and_then(Json::as_f64).unwrap_or(default);
+            let size = number("size", 3.0) as u32;
+            let values = vec![number("height", 16.0) as f32; (size * size) as usize];
+            Ok(Output::Field(Arc::new(Field::new(size, 1.0, values)?)))
+        }),
+        migrate: None,
+    }));
+    let registry = Arc::new(registry);
+    let ev = Evaluator::new(registry.clone());
+    let cache = |params: Json| {
+        let doc = graph(1, &[("f", "test.flat", params)], &[]);
+        let g = ProcGraph::from_doc(&doc, &registry).expect("graph is valid");
+        let e = ev.evaluate(&g, &EvalOptions::default());
+        assert!(e.ok(), "{:#?}", e.report.diagnostics);
+        e.report.node("f").unwrap().cache
+    };
+    assert_eq!(cache(json!({ "height": 16, "size": 3 })), CacheState::Miss);
+    assert_eq!(
+        cache(json!({ "height": 16.0, "size": 3.0 })),
+        CacheState::Memory
+    );
+    assert_eq!(cache(json!({})), CacheState::Memory);
+    assert_eq!(cache(json!({ "height": 17 })), CacheState::Miss);
+}
+
+/// `field.combine` warns (`RE4030`) when its fields cover different areas,
+/// whether it runs or its output comes from the cache. The same area at
+/// another cell size is fine, and so is an island mask, a relative mask made
+/// to be stretched.
+#[test]
+fn combining_fields_of_different_areas_warns_with_re4030() {
+    let combine = |kind: &str, b: Json| {
+        graph(
+            1,
+            &[
+                (
+                    "a",
+                    "terrain.heightfield",
+                    json!({ "size": 33, "cell": 2.0 }),
+                ),
+                ("b", kind, b),
+                ("land", "field.combine", json!({ "op": "mul" })),
+            ],
+            &[("a", "field", "land", "a"), ("b", "field", "land", "b")],
+        )
+    };
+    let ev = evaluator(2);
+    let warnings = |doc: &GraphDoc| {
+        let e = ev.evaluate(&compile(doc), &opts());
+        assert!(e.ok(), "{:#?}", e.report.diagnostics);
+        e.report
+            .all_diagnostics()
+            .filter(|d| d.code.to_string() == "RE4030")
+            .map(|d| d.message.clone())
+            .collect::<Vec<_>>()
+    };
+    let smaller = combine("terrain.heightfield", json!({ "size": 17, "cell": 2.0 }));
+    let first = warnings(&smaller);
+    assert_eq!(
+        first,
+        [
+            "node `land` (field.combine): `a` covers 64 m from (-32, -32) and `b` 32 m from (-16, -16): `b` is stretched over `a` by normalised position, not matched by world position"
+        ]
+    );
+    assert_eq!(warnings(&smaller), first, "from the memory cache");
+    let coarser = combine("terrain.heightfield", json!({ "size": 17, "cell": 4.0 }));
+    assert!(warnings(&coarser).is_empty());
+    let mask = combine("terrain.island_mask", json!({ "size": 17 }));
+    assert!(warnings(&mask).is_empty());
+}
+
+/// A streamed cell node reads its input over its window grown by an apron:
+/// a nested evaluation through the same caches. It evicts nothing the
+/// evaluation it runs in uses, so evaluating the window again is all memory
+/// hits even on a one-byte budget.
+#[test]
+fn nested_reads_never_evict_what_their_evaluation_uses() {
+    let doc = graph(
+        7,
+        &[
+            (
+                "h",
+                "terrain.heightfield",
+                json!({ "cell": 4.0, "height": 60.0 }),
+            ),
+            ("ground", "terrain.mesh", json!({})),
+        ],
+        &[("h", "field", "ground", "field")],
+    );
+    let g = compile(&doc);
+    let ev = Evaluator::new(Arc::new(NodeRegistry::m1())).with_memory_budget(1);
+    let o = EvalOptions {
+        domain: Some(Domain {
+            origin: [0, 0],
+            n: 17,
+            spacing: 4.0,
+        }),
+        ..opts()
+    };
+    let first = ev.evaluate(&g, &o);
+    assert!(first.ok(), "{:#?}", first.report.diagnostics);
+    assert_eq!(first.report.misses, 2);
+    let second = ev.evaluate(&g, &o);
+    assert!(second.ok(), "{:#?}", second.report.diagnostics);
+    assert_eq!(second.report.memory_hits, 2, "{:#?}", second.report.nodes);
+    assert_eq!(
+        output_hash(first.output("ground").unwrap()),
+        output_hash(second.output("ground").unwrap())
+    );
 }
 
 #[test]

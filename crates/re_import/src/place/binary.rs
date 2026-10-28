@@ -23,14 +23,16 @@
 //!
 //! The reader trusts nothing: every length is checked against the bytes
 //! left before anything is allocated, a chunk may expand to at most
-//! [`MAX_CHUNK`] bytes and a file may hold at most [`MAX_INSTANCES`]
-//! instances. It returns `RE9809` with the chunk and offset, never panics.
+//! [`MAX_CHUNK`] bytes, a file may hold at most [`MAX_INSTANCES`]
+//! instances, and they may nest at most [`MAX_DEPTH`] levels deep. It
+//! returns `RE9809` with the chunk and offset, never panics.
 
 use std::collections::HashMap;
 
 use re_core::Diagnostic;
 
 use super::dom::{CFrame, Dom, Font, Instance, PlaceValue, rotation_of_id};
+use super::xml::MAX_DEPTH;
 use crate::codes;
 
 /// The magic the file starts with.
@@ -470,39 +472,67 @@ pub fn read(bytes: &[u8], file: &str) -> R<Dom> {
         dom.instances[i].properties[k].1 = PlaceValue::Ref(target);
     }
     let parents = parents.unwrap_or_else(|| vec![None; dom.instances.len()]);
-    check_cycles(&parents).map_err(|i| {
-        At {
+    check_ancestry(&parents).map_err(|e| {
+        let at = At {
             file: file.to_string(),
             chunk: "PRNT".into(),
             offset: 0,
+        };
+        match e {
+            Ancestry::Cycle(i) => at.error(format!(
+                "instance {i} ({}) is its own ancestor",
+                dom.instances[i].class
+            )),
+            Ancestry::TooDeep(i) => at.error(format!(
+                "instance {i} ({}) nests deeper than {MAX_DEPTH} levels",
+                dom.instances[i].class
+            )),
         }
-        .error(format!(
-            "instance {i} ({}) is its own ancestor",
-            dom.instances[i].class
-        ))
     })?;
     dom.link(&parents);
     Ok(dom)
 }
 
-/// The index of an instance on a parent cycle, if there is one.
-pub(crate) fn check_cycles(parents: &[Option<usize>]) -> Result<(), usize> {
-    // 0 unvisited, 1 on the current walk, 2 known to reach a root.
+/// What is wrong with a file's parent links.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Ancestry {
+    /// This instance is its own ancestor.
+    Cycle(usize),
+    /// This instance lies more than [`MAX_DEPTH`] levels below its root.
+    TooDeep(usize),
+}
+
+/// Checks that the parent links form trees at most [`MAX_DEPTH`] levels deep.
+/// The import walks them recursively, so a deeper chain would overflow the
+/// stack, an abort with no crash report, instead of failing with `RE9809`.
+pub(crate) fn check_ancestry(parents: &[Option<usize>]) -> Result<(), Ancestry> {
+    // 0 unvisited, 1 on the current walk, 2 depth known.
     let mut state = vec![0u8; parents.len()];
+    let mut depth = vec![0usize; parents.len()];
     for start in 0..parents.len() {
         let mut walk = Vec::new();
         let mut at = Some(start);
+        // The depth of the walk's topmost instance: 0 for a root, else one
+        // below the first ancestor whose depth is known.
+        let mut top = 0;
         while let Some(i) = at {
             match state[i] {
-                2 => break,
-                1 => return Err(i),
+                2 => {
+                    top = depth[i] + 1;
+                    break;
+                }
+                1 => return Err(Ancestry::Cycle(i)),
                 _ => {}
             }
             state[i] = 1;
             walk.push(i);
             at = parents[i];
         }
-        for i in walk {
+        for (k, &i) in walk.iter().rev().enumerate() {
+            depth[i] = top + k;
+            if depth[i] >= MAX_DEPTH {
+                return Err(Ancestry::TooDeep(i));
+            }
             state[i] = 2;
         }
     }

@@ -184,7 +184,7 @@ impl Conn {
 
     /// The smoothed round-trip time, once a packet has been acked.
     pub(crate) fn rtt(&self) -> Option<Duration> {
-        self.srtt.map(Duration::from_secs_f64)
+        self.srtt.and_then(|s| Duration::try_from_secs_f64(s).ok())
     }
 
     /// Reliable bytes queued and not yet acked.
@@ -208,7 +208,7 @@ impl Conn {
     fn rto(&self) -> Duration {
         let rto = match self.srtt {
             None => Duration::from_millis(200),
-            Some(s) => Duration::from_secs_f64(s + 4.0 * self.rttvar),
+            Some(s) => Duration::try_from_secs_f64(s + 4.0 * self.rttvar).unwrap_or(Duration::MAX),
         };
         rto.max(self.rto_min)
             .min(Duration::from_secs(1).max(self.rto_min))

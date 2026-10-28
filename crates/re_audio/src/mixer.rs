@@ -37,8 +37,9 @@ const NOW: Tween = Tween {
 /// cost grows with the rate, and a huge rate never finishes a buffer.
 pub const MAX_RATE: f32 = 16.0;
 
-/// The longest fade a sound control takes, in seconds: an hour. A longer one
-/// is refused (RE7411).
+/// The longest fade a sound control takes, and the longest volume, parameter
+/// or snapshot tween, in seconds: an hour. A longer one is refused (RE7411 for
+/// a sound control, the command's own code for a tween).
 pub const MAX_FADE: f32 = 3600.0;
 
 /// The longest glide of a doppler change: a frame's step, up to this.
@@ -913,12 +914,12 @@ fn quiet(r: Result<(), Option<Diagnostic>>) -> Result<(), Diagnostic> {
 }
 
 fn check_seconds(seconds: f32, code: re_core::Code) -> Result<f32, Diagnostic> {
-    if seconds.is_finite() && seconds >= 0.0 {
+    if (0.0..=MAX_FADE).contains(&seconds) {
         Ok(seconds)
     } else {
         Err(Diagnostic::error(
             code,
-            format!("tween length {seconds} s is not a finite number >= 0"),
+            format!("tween length {seconds} s is not a number of seconds from 0 to {MAX_FADE}"),
         ))
     }
 }

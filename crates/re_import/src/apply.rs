@@ -325,8 +325,34 @@ struct Sync<'a> {
     taken: HashSet<String>,
 }
 
-/// Plans the import of `tree` into `project`.
+/// Plans the import of `tree` into `project`, on a thread with room for a
+/// deep tree.
 pub fn plan(
+    tree: &Tree,
+    format: InputFormat,
+    input_label: &str,
+    project: &Project,
+    classes: &ClassRegistry,
+    remove_stale: bool,
+    dry_run: bool,
+) -> Result<Plan, Diagnostic> {
+    crate::deep(
+        || format!("importing {input_label}"),
+        || {
+            plan_here(
+                tree,
+                format,
+                input_label,
+                project,
+                classes,
+                remove_stale,
+                dry_run,
+            )
+        },
+    )
+}
+
+fn plan_here(
     tree: &Tree,
     format: InputFormat,
     input_label: &str,

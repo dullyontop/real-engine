@@ -672,8 +672,44 @@ fn bad_tweens_and_volumes_are_refused() {
             name: "default".into(),
             seconds: f32::INFINITY,
         },
+        // Finite, but longer than a `Duration` holds.
+        AudioCmd::SetBusVolume {
+            bus: "sfx".into(),
+            volume_db: -3.0,
+            seconds: 1e20,
+        },
+        AudioCmd::ApplySnapshot {
+            name: "default".into(),
+            seconds: 1e20,
+        },
     ]);
-    assert_eq!(codes(&problems), ["RE7404", "RE7404", "RE7406"]);
+    assert_eq!(
+        codes(&problems),
+        ["RE7404", "RE7404", "RE7406", "RE7404", "RE7406"]
+    );
+}
+
+#[test]
+fn compressor_envelopes_longer_than_ten_seconds_are_refused() {
+    let mut a = audio();
+    let compressor = |attack_ms: &str| {
+        format!(
+            r#"{{ "kind": "compressor", "threshold_db": -18.0, "ratio": 4.0, "attack_ms": {attack_ms}, "release_ms": 50.0, "makeup_db": 3.0 }}"#
+        )
+    };
+    let desc = one_bus(&format!("{}, {}", compressor("1e30"), compressor("1.0")));
+    let problems = a.set_graph(&desc);
+    assert_eq!(codes(&problems), ["RE7406"], "{problems:?}");
+    assert!(problems[0].message.contains("attack_ms"), "{problems:?}");
+    let problems = a.apply(&[AudioCmd::SetEffectParam {
+        bus: "sfx".into(),
+        effect: 1,
+        param: "release_ms".into(),
+        value: EffectParam::Number(1e30),
+        seconds: 0.0,
+    }]);
+    assert_eq!(codes(&problems), ["RE7406"], "{problems:?}");
+    assert!(problems[0].message.contains("between"), "{problems:?}");
 }
 
 #[test]
