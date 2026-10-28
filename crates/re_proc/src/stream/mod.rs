@@ -4,8 +4,9 @@
 //! * [`StreamConfig`]: `[stream]` in `real.toml` (`RE4300`).
 //! * [`Streamer`]: the manager, a world resource. [`step`] runs it once per
 //!   fixed tick: the focuses ([`re_scene::StreamFocus`], else the active
-//!   camera) give the desired cells, near them and further ahead of the way
-//!   each one is going; a cell requested at tick `t` is generated and
+//!   camera, or in an editor a view focus that replaces them,
+//!   [`Streamer::set_view_focus`]) give the desired cells, near them and
+//!   further ahead of the way each one is going; a cell requested at tick `t` is generated and
 //!   applied at tick `t + delay_ticks`, in key order, within
 //!   `apply_entities` per tick; loaded cells farther than `radius_ahead +
 //!   unload_margin` from every focus unload; memory is accounted from data

@@ -6,7 +6,7 @@ use std::f32::consts::FRAC_1_SQRT_2;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 use re_command::EditState;
 use re_reflect::Value;
 use re_scene::World;
@@ -716,6 +716,67 @@ fn stream_a_forked_world_unloads_its_own_cells() {
     assert_eq!(w.state_hash(), before);
 }
 
+/// An editor's view focus replaces the world's focuses (the `StreamFocus`
+/// entities, else the active camera) for the cells while it is set; a fork
+/// does not keep it, and clearing it streams around the world's focuses
+/// again.
+#[test]
+fn stream_a_view_focus_replaces_the_focuses_until_cleared() {
+    let has = |cells: &[String], k: &str| cells.iter().any(|c| c == k);
+    for camera in [false, true] {
+        let extra = json!([{
+            "id": "camera",
+            "components": {
+                "Camera": { "active": true },
+                "Transform": { "translation": [160.0, 10.0, 160.0] }
+            }
+        }]);
+        let mut st = streamed(world_graph(), 160.0, 160.0, extra);
+        let w = &mut st.world;
+        if camera {
+            let player = w.entity("player").unwrap();
+            w.ecs.entity_mut(player).remove::<re_scene::StreamFocus>();
+        }
+        run(w, 0..12);
+        assert!(has(&loaded(w), "c/2_2"), "{:?}", loaded(w));
+
+        // In c/-3_-2, looking along +Z: c/-3_0 is 96 m ahead and loads,
+        // c/-3_-4 is 96 m behind and does not, and the cells around the
+        // world's focus unload.
+        let view = Focus {
+            position: Vec2::new(-160.0, -96.0),
+            forward: Vec2::new(0.0, 2.0),
+        };
+        w.ecs.resource_mut::<Streamer>().set_view_focus(Some(view));
+        let s = w.ecs.resource::<Streamer>();
+        assert_eq!(s.view_focus().map(|f| f.forward), Some(Vec2::Y));
+        let r = run(w, 12..24);
+        assert!(r.iter().all(|r| r.diagnostics.is_empty()), "{r:#?}");
+        let cells = loaded(w);
+        assert!(has(&cells, "c/-3_-2") && has(&cells, "c/-3_0"), "{cells:?}");
+        assert!(
+            !has(&cells, "c/-3_-4") && !has(&cells, "c/2_2"),
+            "{cells:?}"
+        );
+
+        // A fork streams around the world's focus.
+        let mut fork = w.fork();
+        fork.ecs
+            .insert_resource(w.ecs.resource::<GraphStore>().clone());
+        let streamer = w.ecs.resource::<Streamer>().forked(w, &fork);
+        assert_eq!(streamer.view_focus(), None);
+        fork.ecs.insert_resource(streamer);
+        run(&mut fork, 24..36);
+
+        // Cleared, the world's focus is streamed around again.
+        w.ecs.resource_mut::<Streamer>().set_view_focus(None);
+        run(w, 24..36);
+        let cells = loaded(w);
+        assert!(has(&cells, "c/2_2") && !has(&cells, "c/-3_-2"), "{cells:?}");
+        assert_eq!(loaded(&fork), cells, "camera: {camera}");
+    }
+}
+
 #[test]
 fn stream_jobs_run_ahead_and_waits_are_counted() {
     // With no delay a result can never be ready in time: every load waits.
@@ -1006,6 +1067,38 @@ fn stream_terrain_follows_the_focus_without_drawing_ground_twice() {
     move_to(w, -200.0, -200.0);
     settle_view(w, t);
     assert_eq!(fine_at(w), [(-1, -1), (-1, 0), (0, -1), (0, 0)]);
+}
+
+#[test]
+fn stream_the_terrain_view_follows_a_view_focus() {
+    let fine = |w: &World| -> Vec<(i32, i32)> {
+        let mut v: Vec<_> = w
+            .ecs
+            .resource::<TerrainView>()
+            .chunks()
+            .filter(|c| c.key.level == 0)
+            .map(|c| (c.key.x, c.key.z))
+            .collect();
+        v.sort();
+        v
+    };
+    // The player is far away; the view focus is where the fine chunks are.
+    let mut st = streamed(chunked_graph(), 1200.0, 1200.0, json!([]));
+    let w = &mut st.world;
+    let mut s = Streamer::new(terrain_config()).unwrap();
+    s.set_view_focus(Some(Focus {
+        position: Vec2::new(-200.0, -200.0),
+        forward: Vec2::ZERO,
+    }));
+    w.ecs.insert_resource(s);
+    complete_view(w);
+    assert_eq!(fine(w), [(-1, -1), (-1, 0), (0, -1), (0, 0)]);
+    // Stepped, it stays there; cleared, it follows the player.
+    let t = settle_view(w, 0);
+    assert_eq!(fine(w), [(-1, -1), (-1, 0), (0, -1), (0, 0)]);
+    w.ecs.resource_mut::<Streamer>().set_view_focus(None);
+    settle_view(w, t);
+    assert_eq!(fine(w), []);
 }
 
 #[test]
@@ -1792,6 +1885,50 @@ fn stream_origin_follows_the_focus_on_its_grid() {
     let fork = w.fork();
     let f = w.ecs.resource::<Streamer>().forked(w, &fork);
     assert_eq!(f.origin(), Vec3::new(4096.0, 0.0, -2048.0));
+}
+
+/// A view focus picks cells, not the simulation: the floating origin, the
+/// way each focus is going and terrain collision stay as they are while it
+/// is set, and follow the world's focuses again once it is cleared.
+#[test]
+fn stream_a_view_focus_leaves_the_simulation_state_as_it_is() {
+    let mut st = streamed(chunked_graph(), 0.0, 0.0, json!([]));
+    let w = &mut st.world;
+    let cfg = collision_config();
+    let steps = |w: &mut World, ticks: std::ops::Range<u64>| {
+        for t in ticks {
+            let r = step(w, t, &cfg);
+            assert!(r.diagnostics.is_empty(), "tick {t}: {:#?}", r.diagnostics);
+            w.update();
+        }
+    };
+    steps(w, 0..8);
+    let chunks = collision_chunks(w);
+    assert_eq!(chunks.len(), 4);
+
+    // A view focus beyond origin_shift and physics' reach neither moves the
+    // origin nor reports RE4308, and the player's collision chunks stay in
+    // place while it is set, even when the player moves away.
+    let view = Focus {
+        position: Vec2::new(4500.0, 0.0),
+        forward: Vec2::ZERO,
+    };
+    w.ecs.resource_mut::<Streamer>().set_view_focus(Some(view));
+    move_to(w, 2100.0, -300.0);
+    steps(w, 8..20);
+    assert_eq!(w.ecs.resource::<Streamer>().origin(), Vec3::ZERO);
+    let same: Vec<String> = collision_chunks(w).into_iter().map(|c| c.0).collect();
+    let before: Vec<String> = chunks.into_iter().map(|c| c.0).collect();
+    assert_eq!(same, before);
+
+    // Cleared: the origin follows the player, and the chunks it left go.
+    w.ecs.resource_mut::<Streamer>().set_view_focus(None);
+    steps(w, 20..32);
+    assert_eq!(
+        w.ecs.resource::<Streamer>().origin(),
+        Vec3::new(2048.0, 0.0, 0.0)
+    );
+    assert!(collision_chunks(w).is_empty());
 }
 
 #[test]

@@ -152,7 +152,7 @@ Used only by `re_mcp`, a tooling crate, so the runtime-only binary does not link
 | cargo-deny | 0.20.2 | MIT OR Apache-2.0 | The `deny` CI job, which installs the release's static Linux build checked against its sha256 (`tools/ci/cargo-deny.sh`) | WP0: `cargo deny check` on this tree passes (advisories, bans, licenses, sources ok; `unmatched-skip` and `unused-wrapper` warnings only for crates not yet in the tree) | Verified |
 | wasi-sdk | 34 | Apache-2.0 WITH LLVM-exception | Clang, wasi-libc and the exception-enabled libc++ that build Luau and Jolt for `wasm32-unknown-unknown` (`tools/ci/wasi-sdk.sh`, sha256-pinned) | WP29 PR "toolchain" (#99) | Verified (Linux) |
 | wasm-bindgen-cli | 0.2.129 | MIT OR Apache-2.0 | Writes the browser build's JavaScript glue (`cargo install --locked`), matching the lockfile's wasm-bindgen | WP29 PR "toolchain" (#99) | Verified |
-| binaryen (`wasm-opt`) | 133 | Apache-2.0 | Shrinks the browser build to its 8 MB gzip budget (`tools/ci/binaryen.sh`, sha256 from the release's own file) | WP29 PR "runtime": 18.2 MB, 6.9 MB gzip, same `state_hash` | Verified (Linux) |
+| binaryen (`wasm-opt`) | 133 | Apache-2.0 | Shrinks the browser build to its 10 MB gzip budget (`tools/ci/binaryen.sh`, sha256 from the release's own file) | WP29 PR "runtime": 18.2 MB, 6.9 MB gzip, same `state_hash` | Verified (Linux) |
 | Node.js | 22 | MIT | Runs the wasm checks of `build-web` (`actions/setup-node`) | WP29 PRs "toolchain" and "runtime" | Verified |
 | Playwright (npm) | 1.56.1, with its Chromium | Apache-2.0 | `tools/web-test` only: drives headless Chromium with WebGPU in `build-web`. Pinned in `tools/web-test/package.json` and its lockfile (`npm ci`, `npx playwright install chromium`; the runner image has the libraries Chromium needs). Not part of any build of the engine. | WP29 PR "runtime" | Verified (Linux) |
 
@@ -295,7 +295,7 @@ apt-get install -y \
 
 ### macOS
 
-Xcode command line tools and `cmake` (Homebrew). wgpu uses Metal. The Platforms workflow's `build-macos` (`macos-latest`, Apple silicon) runs the whole test suite, the GPU crates on Metal, then `real verify` on the island, the plaza and the valley, goldens included (ADR-0023's amendment for WP18 PR "blocking", #87). `build-package-macos` builds and checks the app bundle, and `d2-run` produces the macOS replay hashes that the `d2` job compares with Linux and Windows (ADR-0036). The workflow runs when started by hand, before a release and for changes that touch one platform (ADR-0023's amendment of 2026-10-27).
+Xcode command line tools and `cmake` (Homebrew). wgpu uses Metal. The Platforms workflow's `build-macos` (`macos-latest`, Apple silicon) runs the whole test suite, the GPU crates on Metal, then `real verify` on the island, the plaza and the valley, goldens included (ADR-0023's amendment for WP18 PR "blocking", #87). `build-package-macos` builds and checks the app bundle, and `d2-run` produces the macOS replay hashes that the `d2` job compares with Linux and Windows (ADR-0036). CI runs the workflow on every PR that changes more than documentation while the repository is public; while it is private, the workflow is started by hand, before a release and for changes that touch one platform (ADR-0023's amendment of 2026-10-27 and its amendment for the public repository).
 
 ### Windows
 
