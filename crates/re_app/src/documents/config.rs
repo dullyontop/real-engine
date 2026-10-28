@@ -384,6 +384,8 @@ fn set_cmd(app: &mut App, a: SetArgs, call: &mut Call) -> Result<Json, Diagnosti
         ))
         .with_hint("leave `value` out to remove the key"));
     }
+    // No argument names real.toml, so the policy has not seen it yet.
+    call.check_write(CONFIG_FILE)?;
     let opened = open_file(app, CONFIG_FILE, parse)?;
     let root = app
         .world()

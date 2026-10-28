@@ -173,7 +173,13 @@ fn convert_builder<C: EditTarget>(
                 )
                 .at(Location::command("proc.convert_builder"))
             })?,
-        None => default_path(&a.source),
+        None => {
+            let path = default_path(&a.source);
+            // The default file is named by no argument, so the policy has
+            // not seen it yet.
+            call.check_write(&path)?;
+            path
+        }
     };
     let mut doc = src.doc;
     for (node, p) in &a.layout {

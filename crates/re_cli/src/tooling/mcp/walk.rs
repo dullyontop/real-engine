@@ -196,7 +196,8 @@ fn suffix(command: &str) -> &'static str {
         "script.write" => ".luau",
         "screenshot" | "asset.import" => ".png",
         "animgraph.create" | "animgraph.edit" => ".animgraph.json",
-        "scene.apply" | TOOL | "proc.create_source" => ".graph.json",
+        "material.create" | "material.edit" => ".material.json",
+        "scene.apply" | TOOL | "proc.create_source" | "proc.convert_builder" => ".graph.json",
         c if c.starts_with("graph.") => ".graph.json",
         _ => "",
     }
@@ -290,6 +291,26 @@ fn arguments(command: &str) -> Option<Vec<Json>> {
             "source": "rocks", "key": "walk", "prefab": "prefabs/rock.prefab.json"
         })],
         "proc.clear_structure" => vec![json!({ "source": "rocks" })],
+        // The default graph file, which no argument names, is asked of the
+        // policy by the command.
+        "proc.convert_builder" => vec![
+            json!({ "source": "built", "graph": "graphs/built.graph.json" }),
+            json!({ "source": "built" }),
+        ],
+        "proc.revert" => vec![json!({ "source": "built", "key": "gen/box1" })],
+        "material.create" => vec![
+            json!({ "path": "materials/made.material.json", "set": { "roughness": 0.5 } }),
+            json!({
+                "path": "materials/copied.material.json", "from": "materials/stone.material.json"
+            }),
+        ],
+        "material.edit" => vec![json!({
+            "path": "materials/stone.material.json", "set": { "roughness": 0.25 }, "unset": ["metallic"]
+        })],
+        "config.get" => vec![json!({}), json!({ "key": "project.name" })],
+        // real.toml, which no argument names, is asked of the policy by the
+        // command.
+        "config.set" => vec![json!({ "key": "sim.fixed_hz", "value": 30 })],
         "script.write" => {
             vec![json!({ "path": "scripts/game/walked.luau", "source": "return 1\n" })]
         }
@@ -442,6 +463,14 @@ const GENERATOR: &str = r#"return proc.node {
 }
 "#;
 
+const MATERIAL: &str = "{ \"base_color\": [0.5, 0.5, 0.5, 1.0], \"metallic\": 0.1 }\n";
+
+/// A builder script whose graph `proc.convert_builder` turns into a file.
+const BUILDER: &str = r#"local g = proc.graph("built")
+g:node("project.walk", { count = 1 }, nil, "gen")
+return g
+"#;
+
 const PREFAB: &str = r#"{
   "format": "real-engine/prefab",
   "version": 1,
@@ -469,10 +498,11 @@ const TOOL_SOURCE: &str = r#"return {
 "#;
 
 /// The walk's project, `game` in the returned folder: the native template
-/// with Git's files, scripts, the denied folder, an image, a prefab, a
-/// procedural source with its graph file (open), an animation graph, the
-/// Luau tool, `walk`'s policy, and a link to the folder `outside`, all made
-/// by a person before the agent's session starts.
+/// with Git's files, scripts, the denied folder, an image, a material, a
+/// prefab, a procedural source with its graph file (open), a source whose
+/// graph a builder script makes with one generated entity deleted, an
+/// animation graph, the Luau tool, `walk`'s policy, and a link to the folder
+/// `outside`, all made by a person before the agent's session starts.
 fn walk_project(walk: Walk) -> (tempfile::TempDir, AgentApp) {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("game");
@@ -494,6 +524,8 @@ fn walk_project(walk: Walk) -> (tempfile::TempDir, AgentApp) {
         ("scripts/generators/walk.luau", GENERATOR.as_bytes()),
         ("scripts/tools/commands/walk.luau", TOOL_SOURCE.as_bytes()),
         ("assets/existing.png", PNG),
+        ("materials/stone.material.json", MATERIAL.as_bytes()),
+        ("scripts/builders/built.luau", BUILDER.as_bytes()),
         ("prefabs/rock.prefab.json", PREFAB.as_bytes()),
         (".real/agent-policy.toml", policy.as_bytes()),
     ];
@@ -522,6 +554,19 @@ fn walk_project(walk: Walk) -> (tempfile::TempDir, AgentApp) {
             "graph.add_node",
             json!({ "graph": "graphs/rocks.graph.json", "kind": "mesh.primitive", "id": "feed" }),
         ),
+        (
+            "scene.apply",
+            json!({ "ops": [{
+                "op": "spawn", "id": "built", "name": "Built", "components": {
+                    "GraphSource": { "builder": "scripts/builders/built.luau" },
+                    "Procedural": { "generator": "graph", "seed": 1 },
+                    "Transform": {}
+                }
+            }] }),
+        ),
+        // A deleted generated entity, which `proc.revert` brings back.
+        ("graph.regenerate", json!({ "source": "built" })),
+        ("entity.delete", json!({ "id": "built/gen/box1" })),
         (
             "animgraph.create",
             json!({ "path": "anims/walk.animgraph.json" }),

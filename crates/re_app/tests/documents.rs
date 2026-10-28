@@ -6,8 +6,11 @@
 
 use std::path::Path;
 
+use std::sync::Mutex;
+
 use re_app::{App, AppConfig};
-use re_command::{AllowAll, CommandOutcome, LogKind, Origin};
+use re_command::{AllowAll, CommandOutcome, CommandSpec, LogKind, Origin, PolicyCheck};
+use re_core::Diagnostic;
 use serde_json::{Value as Json, json};
 
 const CONFIG: &str = "[project]\nname = \"documents\"\n\n# Simulation rate.\n[sim]\nfixed_hz = 60   # steps per second\n\n[render]\nwidth = 320\nheight = 200\n";
@@ -366,4 +369,66 @@ fn a_builder_source_converted_to_a_graph_file_generates_the_same_before_the_save
         json!({ "source": "island" }),
     ));
     assert_eq!(fragment(&app), built);
+}
+
+/// Lets every call through, refuses every file that no argument names
+/// (ADR-0020's WP44 amendment), and records the files it was asked about.
+#[derive(Default)]
+struct NoUnnamedWrites {
+    asked: Mutex<Vec<String>>,
+}
+
+impl PolicyCheck for NoUnnamedWrites {
+    fn check(&self, _spec: &CommandSpec, _args: &Json, _dry_run: bool) -> Result<(), Diagnostic> {
+        Ok(())
+    }
+
+    fn check_write(&self, command: &str, path: &str) -> Result<(), Diagnostic> {
+        self.asked.lock().unwrap().push(format!("{command} {path}"));
+        Err(Diagnostic::error(
+            re_core::Code::new("RE8002"),
+            format!("{command} may not write {path}"),
+        ))
+    }
+}
+
+#[test]
+fn files_no_argument_names_are_asked_of_the_policy_first() {
+    let dir = project();
+    let p = dir.path();
+    std::fs::create_dir_all(p.join("scripts/tools")).unwrap();
+    std::fs::write(p.join("scripts/tools/flat.luau"), FLAT).unwrap();
+    std::fs::write(p.join("scenes/main.scene.json"), BUILT).unwrap();
+    let mut app = open(p);
+    let policy = NoUnnamedWrites::default();
+    let call = |app: &mut App, name: &str, args: Json, dry_run: bool| {
+        app.dispatch(name, args, dry_run, &policy, Origin::User)
+    };
+
+    // real.toml, which `config.set` writes whatever its arguments.
+    let set = json!({ "key": "sim.fixed_hz", "value": 30 });
+    let out = call(&mut app, "config.set", set.clone(), false);
+    refused(&app, out, "RE8002", 0);
+    assert!(app.world().doc("real.toml").is_none());
+    // The default graph file of `proc.convert_builder`.
+    let convert = json!({ "source": "island" });
+    let out = call(&mut app, "proc.convert_builder", convert.clone(), false);
+    refused(&app, out, "RE8002", 0);
+    assert!(app.world().doc("graphs/island.graph.json").is_none());
+    // A dry run writes nothing, so it asks nothing.
+    assert!(call(&mut app, "config.set", set, true).ok);
+    assert!(call(&mut app, "proc.convert_builder", convert, true).ok);
+    assert_eq!(
+        *policy.asked.lock().unwrap(),
+        [
+            "config.set real.toml",
+            "proc.convert_builder graphs/island.graph.json"
+        ]
+    );
+    // A graph file named by the arguments is the policy's to check before
+    // the handler runs, so the handler does not ask again.
+    let named = json!({ "source": "island", "graph": "graphs/made.graph.json" });
+    ok(app.dispatch("proc.convert_builder", named, false, &policy, Origin::User));
+    assert_eq!(policy.asked.lock().unwrap().len(), 2);
+    assert_eq!(read(p, "real.toml").as_deref(), Some(CONFIG));
 }
