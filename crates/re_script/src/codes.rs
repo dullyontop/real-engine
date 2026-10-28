@@ -53,6 +53,10 @@ pub const SERVICE_UNAVAILABLE: Code = Code::new("RE3015");
 /// [`SERVICE_UNAVAILABLE`] as the `&'static str` a `HostError` carries.
 pub const SERVICE_UNAVAILABLE_STR: &str = "RE3015";
 
+/// A read that depends on frame timing or live output
+/// (`Entity:drawn_transform`, `audio.levels`) was made during a fixed step.
+pub const FRAME_ONLY: Code = Code::new("RE3026");
+
 /// `scene.switch`, `scene.load` or `scene.unload` named a scene the game does
 /// not have (ADR-0059 §3).
 pub const SCENE_UNKNOWN: Code = Code::new("RE3100");

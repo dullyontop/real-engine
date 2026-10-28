@@ -94,9 +94,8 @@ impl App {
         let gfx = self.graphics.as_mut().expect("ensured");
         let inputs = RenderInputs {
             assets: &self.render_assets,
-            physics: &self.physics_sync,
+            drawn: &self.drawn,
             skins: &self.skin_sync,
-            alpha: self.alpha,
             clear: self.config.render.clear,
             post: self.config.render.post,
             shadows: self.config.render.shadows,

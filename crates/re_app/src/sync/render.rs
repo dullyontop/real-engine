@@ -3,8 +3,8 @@
 //!
 //! Mesh and material asset strings are resolved to renderer handles through
 //! [`RenderAssets`]; an entity whose mesh is not uploaded (yet) is not drawn.
-//! Moving bodies and characters are drawn at their interpolated pose between
-//! the last two physics steps.
+//! Moving bodies and characters, and everything under them, are drawn at
+//! their [`DrawnPoses`]: interpolated between the last two physics steps.
 
 use std::collections::HashMap;
 
@@ -21,7 +21,7 @@ use re_types::{
 };
 
 use super::anim_skin::SkinSync;
-use super::physics::PhysicsSync;
+use super::drawn::DrawnPoses;
 
 /// Renderer handles for the asset strings scenes use (`MeshRef.asset`,
 /// `MaterialRef.asset`), filled as meshes and materials are uploaded.
@@ -98,12 +98,10 @@ impl RenderAssets {
 pub struct RenderInputs<'a> {
     /// Asset handles.
     pub assets: &'a RenderAssets,
-    /// Physics poses, for interpolation.
-    pub physics: &'a PhysicsSync,
+    /// Where moving bodies and what they carry are drawn this frame.
+    pub drawn: &'a DrawnPoses,
     /// Skeleton palettes of skinned meshes.
     pub skins: &'a SkinSync,
-    /// Interpolation factor between the last two physics steps (0 to 1).
-    pub alpha: f32,
     /// The clear colour.
     pub clear: [f32; 4],
     /// Exposure and the post chain (`real.toml [render.post]`).
@@ -164,18 +162,12 @@ pub fn referenced_skins(world: &mut World) -> Vec<String> {
 }
 
 fn global(world: &World, inputs: &RenderInputs<'_>, entity: Entity) -> Affine3A {
-    let id = entity_id(entity);
-    if let Some((pos, rot)) = inputs.physics.interpolated(id, inputs.alpha) {
-        let scale = world
+    let mut g = inputs.drawn.get(entity).unwrap_or_else(|| {
+        world
             .ecs
             .get::<GlobalTransform>(entity)
-            .map_or(Vec3::ONE, |g| g.0.to_scale_rotation_translation().0);
-        return Affine3A::from_scale_rotation_translation(scale, rot, pos - inputs.origin);
-    }
-    let mut g = world
-        .ecs
-        .get::<GlobalTransform>(entity)
-        .map_or(Affine3A::IDENTITY, |g| g.0);
+            .map_or(Affine3A::IDENTITY, |g| g.0)
+    });
     g.translation -= glam::Vec3A::from(inputs.origin);
     g
 }

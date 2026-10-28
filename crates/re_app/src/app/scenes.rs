@@ -138,6 +138,7 @@ impl App {
             Err(d) => self.diagnostics.push(d),
         }
         self.physics_sync = PhysicsSync::new();
+        self.drawn.clear();
         self.physics_cmds.clear();
         self.origin_refused = None;
         self.audio_cmds.push(AudioCmd::StopAll);

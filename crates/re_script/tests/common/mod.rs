@@ -1,6 +1,7 @@
 //! A small rig around `ScriptRuntime` for the integration tests.
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -35,6 +36,8 @@ pub struct Services {
     /// Ragdoll mode changes and impulses, as text.
     pub ragdolls: Vec<String>,
     pub restarts: usize,
+    /// What `drawn_pose` answers (none: drawn where the world has it).
+    pub drawn: HashMap<EntityId, re_types::glam::Affine3A>,
     none: NoServices,
 }
 
@@ -158,6 +161,9 @@ impl HostServices for Services {
     }
     fn anim_joint(&self, e: EntityId, j: &str) -> HostResult<(Vec3, re_types::glam::Quat)> {
         self.none.anim_joint(e, j)
+    }
+    fn drawn_pose(&self, e: EntityId) -> Option<re_types::glam::Affine3A> {
+        self.drawn.get(&e).copied()
     }
 }
 

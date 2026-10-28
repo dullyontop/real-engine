@@ -194,11 +194,13 @@ impl Context {
         run_in(self, host, f)
     }
 
-    /// Drains what `print` and `warn` wrote.
+    /// Drains what `print` and `warn` wrote, oldest first (at most
+    /// [`vm::MAX_OUTPUT_LINES`] since the last drain, after a warning that
+    /// counts the lines dropped, if any).
     pub fn take_output(&self) -> Vec<OutputLine> {
         self.lua
             .app_data_mut::<vm::Output>()
-            .map(|mut o| std::mem::take(&mut o.lines))
+            .map(|mut o| o.drain())
             .unwrap_or_default()
     }
 
@@ -381,14 +383,15 @@ impl ScriptRuntime {
         let mut out = Vec::new();
         for ctx in [&self.game, &self.tools] {
             if let Some(mut o) = ctx.lua.app_data_mut::<vm::Output>() {
-                out.append(&mut o.lines);
+                out.append(&mut o.drain());
             }
         }
         out
     }
 
     /// Runs the scripts' work for `phase`; `dt` is the frame time for
-    /// `PreRender` and the fixed step for the fixed-step phases, in seconds.
+    /// `PreRender` and `LateFrame` and the fixed step for the fixed-step
+    /// phases, in seconds.
     pub fn run_phase(
         &mut self,
         host: &mut dyn ScriptHost,
@@ -485,6 +488,11 @@ impl ScriptRuntime {
                         scheduler::with(lua, |s| s.in_step = false)?;
                         fired
                     }));
+                }
+            }
+            Phase::LateFrame => {
+                for ctx in [&self.game, &self.tools] {
+                    diags.extend(run_in(ctx, host, |lua| fire_dt(lua, Signal::LateFrame, dt)));
                 }
             }
             _ => {}

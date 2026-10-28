@@ -61,9 +61,7 @@ impl App {
         let mut diagnostics = self.take_diagnostics();
         diagnostics.retain(|d| d.severity != re_core::Severity::Note || d.is_error());
         report.diagnostics.extend(diagnostics);
-        report
-            .output
-            .extend(std::mem::take(&mut self.script_output));
+        report.output.extend(self.script_output.take());
         report.state_hash = self.state_hash().to_hex().to_string();
         report.compat = self.compat.as_ref().map(|c| c.info());
         results

@@ -119,7 +119,7 @@ impl App {
             diagnostics,
             perf: self.perf_report(),
             screenshots: std::mem::take(&mut self.screenshots),
-            output: std::mem::take(&mut self.script_output),
+            output: self.script_output.take(),
             scenes: self
                 .scenes
                 .log()
@@ -132,8 +132,8 @@ impl App {
     }
 
     /// Runs one frame of play (ADR-0009): Input, PreRender, the fixed steps
-    /// (PreAnimation, PreSimulation, Physics, PostSimulation), Sync, Render and
-    /// EndFrame. `frame_time` is the wall time since the last frame (a headless
+    /// (PreAnimation, PreSimulation, Physics, PostSimulation), LateFrame, Sync,
+    /// Render and EndFrame. `frame_time` is the wall time since the last frame (a headless
     /// run passes one step). A network client waits in it for its server
     /// (ADR-0050 §7); [`App::try_frame`] does not.
     pub fn frame(&mut self, frame_time: Duration) {
@@ -198,8 +198,8 @@ impl App {
     }
 
     /// The rest of a frame [`App::begin_frame`] began: a compat game's client
-    /// half (which a lockstep network client waits in), Sync, Render and
-    /// EndFrame.
+    /// half (which a lockstep network client waits in), LateFrame, Sync,
+    /// Render and EndFrame.
     fn finish_frame(&mut self, half: HalfFrame) {
         let HalfFrame {
             start: frame_start,
@@ -210,6 +210,7 @@ impl App {
         if self.compat.is_some() {
             self.compat_client_frame(frame_time.as_secs_f64(), steps);
         }
+        self.late_frame_phase(frame_time);
         self.sync_phase(f);
         self.render_phase(frame_time);
 
@@ -379,12 +380,28 @@ impl App {
         self.perf.add(Phase::PostSimulation, t.elapsed());
     }
 
+    /// LateFrame (ADR-0057 §7): once a frame after the last fixed step, the
+    /// frame's drawn poses for its alpha, then the scripts' late-frame work
+    /// (`time.on_late_frame`, with the frame time) and its settle.
+    fn late_frame_phase(&mut self, frame_time: Duration) {
+        let t = Instant::now();
+        self.world.propagate();
+        self.drawn
+            .compute(&self.world, &self.physics_sync, self.alpha);
+        self.run_scripts(Phase::LateFrame, frame_time.as_secs_f64());
+        self.perf.add(Phase::LateFrame, t.elapsed());
+    }
+
     /// Sync: assets uploaded, and the World propagated and read into the
     /// render snapshot, the HUD and the audio commands. A network client sends
     /// its frame here.
     fn sync_phase(&mut self, f: u64) {
         let t = Instant::now();
         self.world.propagate();
+        // Late-frame callbacks may have moved what rides on a moving body (a
+        // camera rig turned on a vehicle): it is drawn where they left it.
+        self.drawn
+            .compute(&self.world, &self.physics_sync, self.alpha);
         if self.graphics.is_some()
             && (!self.pending.screenshots.is_empty()
                 || self.screenshots.iter().any(|r| r.frame == f))
@@ -394,9 +411,8 @@ impl App {
         self.upload_assets();
         let inputs = RenderInputs {
             assets: &self.render_assets,
-            physics: &self.physics_sync,
+            drawn: &self.drawn,
             skins: &self.skin_sync,
-            alpha: self.alpha,
             clear: self.config.render.clear,
             post: self.config.render.post,
             shadows: self.config.render.shadows,

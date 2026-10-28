@@ -423,18 +423,25 @@ fn compiling_a_required_module_is_not_script_time() {
     }
     big.push_str("\treturn t\nend\nreturn M\n");
     let dir = temp_project(&[("scripts/big.luau", &big)]);
-    let mut rig = Rig::with_config(Rig::budget(RuntimeConfig::new(dir.path()), 2));
-    let t = Instant::now();
+    // How long the require takes on this machine, in a context of its own
+    // (each VM compiles its own copy) under a budget it cannot reach.
+    let compile = {
+        let mut rig = Rig::with_config(Rig::budget(RuntimeConfig::new(dir.path()), 60_000));
+        let t = Instant::now();
+        rig.exec("require('./big')").unwrap();
+        t.elapsed()
+    };
+    // A budget a third of that: counted, the compile would pass it three
+    // times over, while the few safepoints after the require stay far inside
+    // it even when a loaded runner stalls the test (a fixed 2 ms did not, on
+    // macOS).
+    let ms = (compile.as_millis() as u64 / 3).max(1);
+    let mut rig = Rig::with_config(Rig::budget(RuntimeConfig::new(dir.path()), ms));
     // The loop after the require reaches the budget's clock checks.
     let n = rig
-        .exec("local big = require('./big') local n = 0 for i = 1, 10000 do n += 1 end return n")
+        .exec("local big = require('./big') local n = 0 for i = 1, 4096 do n += 1 end return n")
         .unwrap();
-    assert_eq!(n, 10000);
-    assert!(
-        t.elapsed() > Duration::from_millis(2),
-        "the module compiled within the budget anyway ({:?})",
-        t.elapsed()
-    );
+    assert_eq!(n, 4096);
 }
 
 #[test]

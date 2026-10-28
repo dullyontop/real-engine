@@ -25,11 +25,13 @@ use crate::scenes::{self, Scenes};
 use crate::sync::anim::AnimSync;
 use crate::sync::anim_skin::SkinSync;
 use crate::sync::audio::AudioSync;
+use crate::sync::drawn::DrawnPoses;
 use crate::sync::physics::{self, PhysicsSync, ShapeLibrary};
 use crate::sync::ragdoll::RagdollSync;
 use crate::sync::render::RenderAssets;
 
 use super::physics_step::load_collider_sources;
+use super::scripts::ScriptOutput;
 use super::{App, RunReport, script_levels};
 
 impl App {
@@ -133,6 +135,7 @@ impl App {
             time_scale: 1.0,
             physics,
             physics_sync: PhysicsSync::new(),
+            drawn: DrawnPoses::new(),
             shapes: ShapeLibrary::default(),
             physics_cmds: Vec::new(),
             poses: Vec::new(),
@@ -168,7 +171,7 @@ impl App {
             half: None,
             view_size: [config.render.width, config.render.height],
             view_ppp: 1.0,
-            script_output: Vec::new(),
+            script_output: ScriptOutput::default(),
             script_errors: Default::default(),
             audio_sync: AudioSync::new(),
             audio_cmds: Vec::new(),

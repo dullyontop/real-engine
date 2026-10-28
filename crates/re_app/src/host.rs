@@ -13,7 +13,7 @@
 //! - sounds go to the frame's audio commands;
 //! - HUD text, screenshots, regeneration and restart are applied in EndFrame.
 
-use glam::{Quat, Vec3};
+use glam::{Affine3A, Quat, Vec3};
 use re_anim::graph::{GraphPlayer, Param};
 use re_physics::{Physics, QueryFilter};
 use re_types::anim::AnimValue;
@@ -25,6 +25,7 @@ use re_types::{
 
 use crate::codes::{HOST_INVALID_ARGUMENT_STR, HOST_NO_SUCH_THING_STR};
 use crate::sync::anim_skin::SkinSync;
+use crate::sync::drawn::DrawnPoses;
 use crate::sync::physics::{LinkKind, PhysicsSync};
 
 /// Requests queued by scripts (and commands) for the end of the frame.
@@ -69,6 +70,8 @@ pub struct Host<'a> {
     pub skins: &'a mut SkinSync,
     /// How fast simulation time runs against frame time (`time.set_scale`).
     pub time_scale: &'a mut f64,
+    /// Where moving bodies and what they carry are drawn (the last LateFrame's).
+    pub drawn: &'a DrawnPoses,
 }
 
 /// The largest time scale `time.set_scale` takes.
@@ -523,6 +526,10 @@ impl HostServices for Host<'_> {
 
     fn time_scale(&self) -> f64 {
         *self.time_scale
+    }
+
+    fn drawn_pose(&self, entity: EntityId) -> Option<Affine3A> {
+        re_scene::entity_from_id(entity).and_then(|e| self.drawn.get(e))
     }
 
     fn anim_set(&mut self, entity: EntityId, param: &str, value: AnimValue) -> HostResult<()> {

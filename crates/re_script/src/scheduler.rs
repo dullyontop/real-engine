@@ -78,6 +78,8 @@ pub(crate) enum Signal {
     Step,
     /// Every fixed step, in `PostSimulation`, after contacts and waits.
     PostStep,
+    /// Every frame, in `LateFrame`, with the frame time.
+    LateFrame,
     /// A button action went down this frame.
     Pressed(String),
     /// A button action went up this frame.
@@ -100,6 +102,7 @@ impl Signal {
             Signal::Frame => "time.on_frame".into(),
             Signal::Step => "time.on_step".into(),
             Signal::PostStep => "time.on_post_step".into(),
+            Signal::LateFrame => "time.on_late_frame".into(),
             Signal::Pressed(a) => format!("input.on_pressed({a:?})"),
             Signal::Released(a) => format!("input.on_released({a:?})"),
             Signal::Contact => "physics.on_contact".into(),

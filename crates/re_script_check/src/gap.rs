@@ -300,6 +300,7 @@ mod tests {
             "task.wait",
             "physics.raycast",
             "time.on_step",
+            "time.on_late_frame",
             "proc.graph",
         ] {
             assert!(c.members.contains(m), "{m}");

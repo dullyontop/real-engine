@@ -111,6 +111,7 @@ impl App {
                 pending: &mut self.pending,
                 skins: &mut self.skin_sync,
                 time_scale: &mut self.time_scale,
+                drawn: &self.drawn,
             },
             game: None,
         };
@@ -118,15 +119,7 @@ impl App {
         let diags = c.keep(kind, diags);
         let output = c.take_output();
         self.report_script_errors(diags);
-        for line in output {
-            let text = format!("[{}] {}", line.context.name(), line.text);
-            if line.warn {
-                tracing::warn!(target: "script", "{text}");
-            } else {
-                tracing::info!(target: "script", "{text}");
-            }
-            self.script_output.push(text);
-        }
+        self.script_output.extend(output);
     }
 
     /// The client half of a compat frame, after the server's fixed steps:
