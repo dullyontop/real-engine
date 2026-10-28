@@ -340,52 +340,46 @@ impl ProcGraph {
 
     /// The nodes grouped by depth: level 0 has no inputs, and each node is
     /// one level after its deepest input. Within a level, nodes keep document
-    /// order. `Err` lists the nodes on or after a cycle.
+    /// order. `Err` lists the nodes on or after a cycle. Linear in the nodes
+    /// and edges.
     pub fn levels(&self) -> Result<Vec<Vec<usize>>, Vec<String>> {
         let n = self.nodes.len();
-        let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n];
-        for e in &self.edges {
-            if let (Some(f), Some(t)) = (
-                self.nodes.get_index_of(&e.from.0),
-                self.nodes.get_index_of(&e.to.0),
-            ) {
-                preds[t].push(f);
+        let inputs = self.input_lists();
+        // Each node's readers, and how many of its inputs have no level yet.
+        let mut readers: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut waiting: Vec<usize> = inputs.iter().map(Vec::len).collect();
+        for (to, list) in inputs.iter().enumerate() {
+            for &(_, from) in list {
+                readers[from].push(to);
             }
         }
         let mut level: Vec<Option<usize>> = vec![None; n];
-        let mut done = 0;
-        loop {
-            let mut progressed = false;
-            for i in 0..n {
-                if level[i].is_some() {
-                    continue;
-                }
-                if preds[i].iter().all(|p| level[*p].is_some()) {
-                    level[i] = Some(
-                        preds[i]
-                            .iter()
-                            .map(|p| level[*p].unwrap_or(0) + 1)
-                            .max()
-                            .unwrap_or(0),
-                    );
-                    done += 1;
-                    progressed = true;
+        let mut ready: Vec<usize> = (0..n).filter(|&i| waiting[i] == 0).collect();
+        while let Some(i) = ready.pop() {
+            level[i] = Some(
+                inputs[i]
+                    .iter()
+                    .map(|&(_, p)| level[p].unwrap_or(0) + 1)
+                    .max()
+                    .unwrap_or(0),
+            );
+            for &r in &readers[i] {
+                waiting[r] -= 1;
+                if waiting[r] == 0 {
+                    ready.push(r);
                 }
             }
-            if done == n {
-                break;
-            }
-            if !progressed {
-                return Err((0..n)
-                    .filter(|i| level[*i].is_none())
-                    .map(|i| {
-                        self.nodes
-                            .get_index(i)
-                            .map(|(k, _)| k.clone())
-                            .unwrap_or_default()
-                    })
-                    .collect());
-            }
+        }
+        if level.iter().any(Option::is_none) {
+            return Err((0..n)
+                .filter(|i| level[*i].is_none())
+                .map(|i| {
+                    self.nodes
+                        .get_index(i)
+                        .map(|(k, _)| k.clone())
+                        .unwrap_or_default()
+                })
+                .collect());
         }
         let depth = level.iter().flatten().max().map_or(0, |m| m + 1);
         let mut out = vec![Vec::new(); depth];
@@ -397,8 +391,25 @@ impl ProcGraph {
         Ok(out)
     }
 
+    /// Every node's input edges, as `(port, source node index)` in document
+    /// order, indexed like `nodes`: [`ProcGraph::inputs_of`] for all nodes at
+    /// once, in one pass over the edges.
+    pub fn input_lists(&self) -> Vec<Vec<(&str, usize)>> {
+        let mut out: Vec<Vec<(&str, usize)>> = vec![Vec::new(); self.nodes.len()];
+        for e in &self.edges {
+            if let (Some(from), Some(to)) = (
+                self.nodes.get_index_of(&e.from.0),
+                self.nodes.get_index_of(&e.to.0),
+            ) {
+                out[to].push((e.to.1.as_str(), from));
+            }
+        }
+        out
+    }
+
     /// The input edges of node `index`, as `(port, source node index)`, in
-    /// document order.
+    /// document order. It scans every edge: [`ProcGraph::input_lists`] gives
+    /// every node's at once.
     pub fn inputs_of(&self, index: usize) -> Vec<(&str, usize)> {
         let id = self.nodes.get_index(index).map(|(k, _)| k.as_str());
         self.edges
