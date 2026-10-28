@@ -165,7 +165,7 @@ impl Renderer {
                     &self.meshes,
                     None,
                     1,
-                    &|_| &self.sets.mask_pipelines[0],
+                    &|_| &self.sets.mask_pipeline,
                 );
             }
             self.draw_batches(&mut pass, frame, highlighted, 1, None, &mask(1));

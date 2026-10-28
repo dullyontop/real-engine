@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use re_core::{Diagnostic, Location};
 
 use super::{
-    Geometry, Renderer, ScenePipelines, mask_pipelines, probe_pipeline, shadow_pipeline,
-    with_checks,
+    Geometry, Renderer, ScenePipelines, mask_pipeline, mask_pipelines, probe_pipeline,
+    shadow_pipeline, with_checks,
 };
 use crate::post::PostShader;
 use crate::ui::UiBlit;
@@ -134,7 +134,7 @@ enum Saved {
     ShadowSet(wgpu::RenderPipeline),
     Mask([wgpu::RenderPipeline; 2]),
     MaskSkinned([wgpu::RenderPipeline; 2]),
-    MaskSet([wgpu::RenderPipeline; 2]),
+    MaskSet(wgpu::RenderPipeline),
     Post(PostShader),
     Ui(UiBlit),
     Probe(Option<wgpu::RenderPipeline>),
@@ -327,9 +327,9 @@ impl Renderer {
             }
             Family::MaskSet => {
                 let s = &mut self.sets;
-                let pipelines =
-                    mask_pipelines(&self.device, &s.mask_layout, &only(), Geometry::Sets);
-                Saved::MaskSet(std::mem::replace(&mut s.mask_pipelines, pipelines))
+                let pipeline =
+                    mask_pipeline(&self.device, &s.mask_layout, &only(), Geometry::Sets, false);
+                Saved::MaskSet(std::mem::replace(&mut s.mask_pipeline, pipeline))
             }
             Family::Post => Saved::Post(self.post.replace_shader(&self.device, only())),
             Family::Ui => Saved::Ui(self.ui.replace_blit(&self.device, only())),
@@ -379,7 +379,7 @@ impl Renderer {
                     s.mask_pipelines = pipelines;
                 }
             }
-            Saved::MaskSet(pipelines) => self.sets.mask_pipelines = pipelines,
+            Saved::MaskSet(pipeline) => self.sets.mask_pipeline = pipeline,
             Saved::Post(old) => self.post.restore_shader(old),
             Saved::Ui(old) => self.ui.restore_blit(old),
             Saved::Probe(pipeline) => self.probe = pipeline,

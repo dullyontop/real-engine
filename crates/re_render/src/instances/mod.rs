@@ -32,7 +32,7 @@ use re_types::render::{DrawFlags, InstanceCluster, InstanceSetHandle, Placement,
 
 use crate::frame::{self, CascadeBox, Frustum};
 use crate::renderer::{
-    Drawn, Geometry, GpuMaterial, GpuMesh, GrowBuffer, Layouts, Slot, mask_pipelines,
+    Drawn, Geometry, GpuMaterial, GpuMesh, GrowBuffer, Layouts, Slot, mask_pipeline,
     shadow_pipeline, stale,
 };
 use crate::slots::Slots;
@@ -341,11 +341,11 @@ pub(crate) struct Sets {
     /// cascade, entry: kept to rebuild `shadow_pipeline`.
     pub(crate) shadow_layout: wgpu::PipelineLayout,
     pub(crate) shadow_pipeline: wgpu::RenderPipeline,
-    /// frame, entry: kept to rebuild `mask_pipelines`.
+    /// frame, entry: kept to rebuild `mask_pipeline`.
     pub(crate) mask_layout: wgpu::PipelineLayout,
-    /// The highlight mask's depth-only (0) and numbering (1) pipelines; the
-    /// mask draws sets only in its depth pass.
-    pub(crate) mask_pipelines: [wgpu::RenderPipeline; 2],
+    /// The highlight mask's depth-only pipeline: the mask draws sets only in
+    /// its depth pass, so they hide the highlights behind them.
+    pub(crate) mask_pipeline: wgpu::RenderPipeline,
 }
 
 impl Sets {
@@ -404,11 +404,12 @@ impl Sets {
                 &shader::module(device, "shadow_set.wgsl"),
                 Geometry::Sets,
             ),
-            mask_pipelines: mask_pipelines(
+            mask_pipeline: mask_pipeline(
                 device,
                 &mask_layout,
                 &shader::module(device, "mask_set.wgsl"),
                 Geometry::Sets,
+                false,
             ),
             entry_layout,
             forward_layout,
@@ -874,8 +875,7 @@ mod tests {
             near: 0.1,
             far,
         };
-        let projection = frame::projection(&camera, 1.0).unwrap();
-        (Frustum::new(&(projection * camera.view())), eye)
+        (Frustum::of_camera(&camera, 1.0), eye)
     }
 
     /// The clusters of `row(n, per)` and their boxes for a unit cube part.

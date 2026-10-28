@@ -131,7 +131,7 @@ pub(crate) struct PreparedFrame {
     /// Debug line vertices.
     pub(super) line_vertices: usize,
     /// What the frame draws of the instance sets (ADR-0052).
-    pub(crate) sets: instances::SetFrame,
+    pub(super) sets: instances::SetFrame,
 
     // Working lists, kept for their allocations.
     draws: Vec<Draw>,
@@ -347,7 +347,7 @@ impl Renderer {
             &self.meshes,
             &self.materials,
             &mut prepared.reported,
-            &frustum,
+            &view.frustum,
             camera_pos,
             report,
         );

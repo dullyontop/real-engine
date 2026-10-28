@@ -547,59 +547,69 @@ fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
 }
 
 /// The highlight mask's pipelines: the depth-only pass (0) and the numbering
-/// pass (1), from `mask.wgsl`, `mask_skinned.wgsl` or `mask_set.wgsl`.
+/// pass (1), from `mask.wgsl` or `mask_skinned.wgsl`.
 pub(crate) fn mask_pipelines(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     module: &wgpu::ShaderModule,
     geometry: Geometry,
 ) -> [wgpu::RenderPipeline; 2] {
-    let buffers = geometry.buffers(position_only_layout());
-    let entry = geometry.vertex_entry("mask");
-    [DEPTH_COMPARE, DEPTH_COMPARE_EQUAL]
-        .into_iter()
-        .enumerate()
-        .map(|(i, compare)| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("re_render highlight mask"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module,
-                    entry_point: Some(&entry),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &buffers,
+    [
+        mask_pipeline(device, layout, module, geometry, false),
+        mask_pipeline(device, layout, module, geometry, true),
+    ]
+}
+
+/// One of the highlight mask's pipelines: the depth-only pass, or with
+/// `numbering` the pass that writes each highlight's number where it is
+/// nearest. Instance sets need only the first (`mask_set.wgsl`).
+pub(crate) fn mask_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+    geometry: Geometry,
+    numbering: bool,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("re_render highlight mask"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some(&geometry.vertex_entry("mask")),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &geometry.buffers(position_only_layout()),
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(if numbering {
+                DEPTH_COMPARE_EQUAL
+            } else {
+                DEPTH_COMPARE
+            }),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_mask"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: MASK_FORMAT,
+                blend: None,
+                // The depth-only pass writes no number.
+                write_mask: if numbering {
+                    wgpu::ColorWrites::ALL
+                } else {
+                    wgpu::ColorWrites::empty()
                 },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(compare),
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module,
-                    entry_point: Some("fs_mask"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: MASK_FORMAT,
-                        blend: None,
-                        // The depth-only pass (index 0) writes no number.
-                        write_mask: if i == 0 {
-                            wgpu::ColorWrites::empty()
-                        } else {
-                            wgpu::ColorWrites::ALL
-                        },
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
-        })
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap_or_else(|_| unreachable!("two mask pipelines"))
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 /// The shadow pass's pipeline, from `shadow.wgsl`, `shadow_skinned.wgsl` or
