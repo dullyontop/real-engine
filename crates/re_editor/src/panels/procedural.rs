@@ -130,10 +130,14 @@ pub(super) fn graph(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut
             .id_salt(("re_editor.graph", id))
             .default_open(true)
             .show(ui, |ui| {
-                if let Some(s) = seed_rows(&mut ed.pending, ui, id, seed, has_regenerate)
-                    && s != seed
-                {
-                    actions.push(set_seed(id, s, has_regenerate));
+                match seed_rows(&mut ed.pending, ui, id, seed, has_regenerate) {
+                    Some(SeedSend::Seed(s)) if s != seed => {
+                        actions.push(set_seed(id, s, has_regenerate));
+                    }
+                    Some(SeedSend::Again) => {
+                        actions.push(command("graph.regenerate", json!({ "source": id })));
+                    }
+                    _ => {}
                 }
                 if let Some(gk) = graph_key
                     && registry.has(&world.ecs, e, gk)
@@ -206,15 +210,24 @@ impl Scrub {
     }
 }
 
-/// The seed scrubber of source `id` (and "Regenerate"), which returns the
-/// seed to send, when a button was clicked or the pointer released.
+/// What the seed rows of a source send.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SeedSend {
+    /// This seed.
+    Seed(i64),
+    /// The generator again, with the seed the source has ("Regenerate").
+    Again,
+}
+
+/// The seed scrubber of source `id` (and "Regenerate"), which returns what
+/// to send, when a button was clicked or the pointer released.
 fn seed_rows(
     pending: &mut Pending,
     ui: &mut egui::Ui,
     id: &str,
     seed: i64,
     has_regenerate: bool,
-) -> Option<i64> {
+) -> Option<SeedSend> {
     let strip_id = Id::new(("re_editor.scrub", id));
     let scrub = ui.data(|d| d.get_temp::<Scrub>(strip_id));
     let mut send = None;
@@ -226,7 +239,7 @@ fn seed_rows(
             r.clicked()
         };
         if button(ui, pending, "◀", "Regenerate with the seed before") {
-            send = Some(seed.saturating_sub(1));
+            send = Some(SeedSend::Seed(seed.saturating_sub(1)));
         }
         let shown = scrub.map_or(seed, Scrub::seed);
         let (r, change) = schema::drag_int(
@@ -238,14 +251,14 @@ fn seed_rows(
         let r = r.on_hover_text("The source's seed: drag it, or click it and type one");
         record(pending, ProceduralSpot::Seed(id), r.rect);
         if let Some(Change::Done(v)) = change {
-            send = v.as_i64();
+            send = v.as_i64().map(SeedSend::Seed);
         }
         if button(ui, pending, "▶", "Regenerate with the seed after") {
-            send = Some(seed.saturating_add(1));
+            send = Some(SeedSend::Seed(seed.saturating_add(1)));
         }
         let hover = "Regenerate with the next seed of a fixed sequence";
         if button(ui, pending, "New seed", hover) {
-            send = Some(next_seed(seed));
+            send = Some(SeedSend::Seed(next_seed(seed)));
         }
         let regenerate = ui
             .add_enabled(has_regenerate, egui::Button::new("Regenerate"))
@@ -260,8 +273,7 @@ fn seed_rows(
             regenerate.rect,
         );
         if regenerate.clicked() {
-            // The same seed: `graph.regenerate` without one.
-            send = Some(seed);
+            send = Some(SeedSend::Again);
         }
     });
 
@@ -288,7 +300,7 @@ fn seed_rows(
         s.dx = p.x - s.origin;
     }
     if r.drag_stopped() {
-        send = state.take().map(Scrub::seed);
+        send = state.take().map(|s| SeedSend::Seed(s.seed()));
     }
     match state {
         Some(s) if r.dragged() => {

@@ -5,10 +5,12 @@
 //! These tests need a GPU adapter (lavapipe in CI); run them with
 //! `--test-threads=1`.
 
+use std::cell::RefCell;
 use std::path::Path;
 
 use re_app::{App, AppConfig};
-use re_command::AllowAll;
+use re_command::{AllowAll, CommandSpec, PolicyCheck};
+use re_core::Diagnostic;
 use re_editor::layout::PanelId;
 use re_editor::{HeadlessEditor, Panel, ProceduralSpot};
 use re_reflect::Value;
@@ -88,13 +90,48 @@ fn editor(app: &mut App) -> HeadlessEditor {
     ed
 }
 
-fn frame(ed: &mut HeadlessEditor, app: &mut App, mut events: Vec<egui::Event>) {
+fn frame(ed: &mut HeadlessEditor, app: &mut App, events: Vec<egui::Event>) {
+    frame_with(ed, app, &AllowAll, events);
+}
+
+fn frame_with(
+    ed: &mut HeadlessEditor,
+    app: &mut App,
+    policy: &dyn PolicyCheck,
+    mut events: Vec<egui::Event>,
+) {
     events.insert(0, egui::Event::ModifiersChanged(egui::Modifiers::NONE));
     let input = egui::RawInput {
         events,
         ..egui::RawInput::default()
     };
-    ed.frame(app, &AllowAll, input).unwrap();
+    ed.frame(app, policy, input).unwrap();
+}
+
+/// A policy that allows everything and keeps each call it is asked about.
+#[derive(Default)]
+struct Calls(RefCell<Vec<(String, Json)>>);
+
+impl PolicyCheck for Calls {
+    fn check(&self, spec: &CommandSpec, args: &Json, _dry_run: bool) -> Result<(), Diagnostic> {
+        self.0.borrow_mut().push((spec.name.clone(), args.clone()));
+        Ok(())
+    }
+}
+
+/// The commands a click at `at` sends.
+fn clicked(ed: &mut HeadlessEditor, app: &mut App, at: egui::Pos2) -> Vec<(String, Json)> {
+    let calls = Calls::default();
+    let events = vec![
+        egui::Event::PointerMoved(at),
+        button(at, true),
+        button(at, false),
+    ];
+    frame_with(ed, app, &calls, events);
+    for _ in 0..2 {
+        frame_with(ed, app, &calls, vec![]);
+    }
+    calls.0.into_inner()
 }
 
 fn idle(ed: &mut HeadlessEditor, app: &mut App) {
@@ -254,6 +291,20 @@ fn the_seed_scrubber_sends_one_regenerate_per_release() {
     let field = spot(&ed, ProceduralSpot::Seed("island"));
     type_into(&mut ed, &mut app, field, "77");
     assert_eq!(seed(&app), 77, "{:?}", ed.editor.console());
+    assert_eq!(log_len(&app), 5);
+
+    // "Regenerate" runs the generator again with the seed the source has:
+    // no transaction.
+    let again = spot(&ed, ProceduralSpot::SeedButton("island", "Regenerate"));
+    let calls = clicked(&mut ed, &mut app, again);
+    assert_eq!(
+        calls,
+        [(
+            "graph.regenerate".to_string(),
+            json!({ "source": "island" })
+        )]
+    );
+    assert_eq!(seed(&app), 77);
     assert_eq!(log_len(&app), 5);
 
     // Each seed is one undo step.
