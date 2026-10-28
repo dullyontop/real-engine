@@ -38,3 +38,8 @@ pub const COPY_LEFT_OUT: Code = Code::new("RE8807");
 /// A pasted entity referred to an entity that does not exist where it was
 /// pasted; the reference was cleared.
 pub const REFERENCE_CLEARED: Code = Code::new("RE8808");
+
+/// The Hierarchy did not move an entity dropped where it cannot go: under
+/// itself, out of its procedural source's output, or under a generated
+/// entity.
+pub const MOVE_REFUSED: Code = Code::new("RE8809");

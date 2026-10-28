@@ -495,8 +495,13 @@ fn draw(
 }
 
 /// The toolbar's gizmo controls: mode, orientation, pivot and snapping. Keys
-/// W, E and R pick the mode when no text field has the keyboard.
-pub(crate) fn toolbar(settings: &mut GizmoSettings, ui: &mut egui::Ui) {
+/// W, E and R pick the mode when no text field has the keyboard. Returns
+/// where the Steps button was drawn and, while its menu is open, each step's
+/// field, by label ("Steps", "Move step", "Rotate step", "Scale step").
+pub(crate) fn toolbar(
+    settings: &mut GizmoSettings,
+    ui: &mut egui::Ui,
+) -> Vec<(&'static str, egui::Rect)> {
     for (mode, label, key) in [
         (GizmoMode::Translate, "Move", "W"),
         (GizmoMode::Rotate, "Rotate", "E"),
@@ -543,6 +548,69 @@ pub(crate) fn toolbar(settings: &mut GizmoSettings, ui: &mut egui::Ui) {
             "Snap drags to {} m, {}° and ×{}",
             settings.translate_step, settings.angle_step_deg, settings.scale_step
         ));
+    // A click on a step's number types into it, so only a click outside the
+    // menu closes it.
+    let (button, menu) = egui::containers::menu::MenuButton::new("Steps")
+        .config(
+            egui::containers::menu::MenuConfig::new()
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+        )
+        .ui(ui, |ui| snap_steps(settings, ui));
+    let mut rects = vec![("Steps", button.rect)];
+    rects.extend(menu.map(|m| m.inner).unwrap_or_default());
+    button.on_hover_text("The snap steps of moving, rotating and scaling");
+    rects
+}
+
+/// The snap steps, kept with the gizmo settings in the layout. Returns where
+/// each step's field was drawn.
+fn snap_steps(settings: &mut GizmoSettings, ui: &mut egui::Ui) -> Vec<(&'static str, egui::Rect)> {
+    let field = |ui: &mut egui::Ui, label: &str, value: egui::DragValue<'_>| {
+        ui.label(label);
+        let rect = ui.add(value).rect;
+        ui.end_row();
+        rect
+    };
+    egui::Grid::new("re_editor.snap_steps")
+        .num_columns(2)
+        .show(ui, |ui| {
+            vec![
+                (
+                    "Move step",
+                    field(
+                        ui,
+                        "Move",
+                        egui::DragValue::new(&mut settings.translate_step)
+                            .range(0.001..=1000.0)
+                            .speed(0.01)
+                            .suffix(" m"),
+                    ),
+                ),
+                (
+                    "Rotate step",
+                    field(
+                        ui,
+                        "Rotate",
+                        egui::DragValue::new(&mut settings.angle_step_deg)
+                            .range(0.1..=180.0)
+                            .speed(0.5)
+                            .suffix("°"),
+                    ),
+                ),
+                (
+                    "Scale step",
+                    field(
+                        ui,
+                        "Scale",
+                        egui::DragValue::new(&mut settings.scale_step)
+                            .range(0.001..=10.0)
+                            .speed(0.01)
+                            .prefix("×"),
+                    ),
+                ),
+            ]
+        })
+        .inner
 }
 
 /// W, E and R pick the gizmo mode.

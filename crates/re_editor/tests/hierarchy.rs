@@ -1,6 +1,7 @@
-//! The Hierarchy's context menu, renaming in place and revealing the active
-//! entity, and notes in the Inspector (ADR-0044's amendment for WP42, §7),
-//! on a small project in a temporary directory, headless.
+//! The Hierarchy's context menu, renaming in place, revealing the active
+//! entity, dragging rows to move entities and the search, and notes in the
+//! Inspector (ADR-0044's amendment for WP42, §7), on a small project in a
+//! temporary directory, headless.
 //!
 //! The GPU tests need an adapter (lavapipe in CI); run them with
 //! `--test-threads=1`.
@@ -8,11 +9,11 @@
 use std::path::Path;
 
 use egui::{Event, Key, Modifiers, PointerButton, Pos2};
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use re_app::{App, AppConfig};
 use re_command::AllowAll;
 use re_editor::{HeadlessEditor, Panel, Selection};
-use re_scene::Generated;
+use re_scene::{Generated, GlobalTransform};
 
 const CONFIG: &str = r#"[project]
 name = "fixture"
@@ -35,7 +36,8 @@ const SCENE: &str = r#"{
         "Transform": { "translation": [-2.0, 0.5, 0.0] } } },
     { "id": "lamp", "name": "Lamp", "note": "Hangs over the door", "components": {
         "Light": { "kind": "Point" },
-        "Transform": { "translation": [3.0, 1.0, 0.0] } } }
+        "Transform": { "translation": [3.0, 1.0, 0.0] } } },
+    { "id": "Gate", "components": { "Transform": { "translation": [0.0, 0.0, -6.0] } } }
   ]
 }
 "#;
@@ -169,6 +171,39 @@ fn note(app: &App, id: &str) -> String {
     world.note_of(world.entity(id).unwrap()).to_string()
 }
 
+fn global(app: &App, id: &str) -> Mat4 {
+    let world = app.world();
+    let e = world.entity(id).unwrap();
+    Mat4::from(world.ecs.get::<GlobalTransform>(e).unwrap().0)
+}
+
+/// Presses the primary button at `from`, drags past egui's click distance,
+/// and lets go at `to`.
+fn drag(ed: &mut HeadlessEditor, app: &mut App, from: Pos2, to: Pos2) {
+    let button = |at, pressed| Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    let steps = [
+        vec![Event::PointerMoved(from), button(from, true)],
+        vec![Event::PointerMoved(from + egui::vec2(12.0, 0.0))],
+        vec![Event::PointerMoved(to)],
+        vec![Event::PointerMoved(to), button(to, false)],
+    ];
+    for events in steps {
+        ed.frame(app, &AllowAll, input(events)).unwrap();
+    }
+    frames(ed, app, 1);
+}
+
+/// Under the Hierarchy's rows.
+fn under_the_rows(ed: &HeadlessEditor) -> Pos2 {
+    let panel = ed.editor.rects().get(Panel::Hierarchy).unwrap();
+    Pos2::new(panel.center().x, panel.bottom() - 8.0)
+}
+
 fn console_has(ed: &HeadlessEditor, text: &str) -> bool {
     ed.editor.console().iter().any(|l| l.text.contains(text))
 }
@@ -220,12 +255,8 @@ fn the_context_menu_copies_pastes_and_deletes() {
     assert!(ed.editor.hierarchy_row("lamp_2").is_some());
 
     // Under the rows, Paste puts the copy at the root.
-    let panel = ed.editor.rects().get(Panel::Hierarchy).unwrap();
-    open_menu(
-        &mut ed,
-        &mut app,
-        Pos2::new(panel.center().x, panel.bottom() - 8.0),
-    );
+    let at = under_the_rows(&ed);
+    open_menu(&mut ed, &mut app, at);
     choose(&mut ed, &mut app, "Paste");
     assert_eq!(parent(&app, "lamp_3"), None);
     assert_eq!(selected(&ed), ["lamp_3"]);
@@ -392,4 +423,134 @@ fn the_inspector_edits_notes() {
     select(&mut ed, &mut app, &["crate_2"]);
     frames(&mut ed, &mut app, 1);
     assert!(ed.editor.note_field("crate_2").is_none());
+}
+
+/// A row dropped on another row goes under it, keeping where it is in the
+/// world, as one undo step; a selected row carries the selection; under the
+/// rows is the root.
+#[test]
+fn dragging_rows_moves_entities_where_they_stand() {
+    let dir = project();
+    let mut app = open(dir.path());
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    frames(&mut ed, &mut app, 2);
+    let hash = app.state_hash();
+    let lamp = global(&app, "lamp");
+    let (from, to) = (row(&ed, "lamp"), row(&ed, "box"));
+    drag(&mut ed, &mut app, from, to);
+    assert_eq!(parent(&app, "lamp").as_deref(), Some("box"));
+    assert!(global(&app, "lamp").abs_diff_eq(lamp, 1e-4));
+    assert_eq!(app.history().undo_label(), Some("move lamp"));
+    assert!(ed.editor.selection().is_empty(), "dragging selects nothing");
+
+    // Back to the root, from under the box.
+    select(&mut ed, &mut app, &["lamp"]);
+    frames(&mut ed, &mut app, 12);
+    let (from, to) = (row(&ed, "lamp"), under_the_rows(&ed));
+    drag(&mut ed, &mut app, from, to);
+    assert_eq!(parent(&app, "lamp"), None);
+    assert!(global(&app, "lamp").abs_diff_eq(lamp, 1e-4));
+
+    // Two selected crates, by one of their rows, under the lamp.
+    select(&mut ed, &mut app, &["crate_1", "crate_2"]);
+    frames(&mut ed, &mut app, 12);
+    let crate_2 = global(&app, "crate_2");
+    let (from, to) = (row(&ed, "crate_2"), row(&ed, "lamp"));
+    drag(&mut ed, &mut app, from, to);
+    let world = app.world();
+    let lamp_e = world.entity("lamp").unwrap();
+    let under: Vec<&str> = re_scene::hierarchy::children(&world.ecs, lamp_e)
+        .iter()
+        .filter_map(|c| world.id_of(*c))
+        .collect();
+    assert_eq!(under, ["crate_1", "crate_2"]);
+    assert!(global(&app, "crate_2").abs_diff_eq(crate_2, 1e-4));
+    assert_eq!(app.history().undo_label(), Some("move 2 entities"));
+    for _ in 0..3 {
+        assert!(ed.editor.undo(&mut app, &AllowAll).ok);
+    }
+    assert_eq!(app.state_hash(), hash, "each drop was one undo step");
+}
+
+/// A drop under the dragged entity itself, or of a generated entity out of
+/// its source's output, moves nothing and says why (RE8809).
+#[test]
+fn a_drop_where_an_entity_cannot_go_is_refused() {
+    let dir = project();
+    let mut app = open(dir.path());
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    frames(&mut ed, &mut app, 2);
+    select(&mut ed, &mut app, &["crate_1"]);
+    frames(&mut ed, &mut app, 12);
+    let log = app.history().log().len();
+    let (from, to) = (row(&ed, "crates"), row(&ed, "crate_1"));
+    select(&mut ed, &mut app, &[]);
+    drag(&mut ed, &mut app, from, to);
+    assert!(console_has(&ed, "RE8809"), "{:?}", ed.editor.console());
+    assert!(console_has(&ed, "its own descendant"));
+    assert_eq!(parent(&app, "crate_1").as_deref(), Some("crates"));
+    assert_eq!(parent(&app, "crates"), None);
+
+    generated(&mut app, "crate_2", "crates");
+    let (from, to) = (row(&ed, "crate_2"), under_the_rows(&ed));
+    drag(&mut ed, &mut app, from, to);
+    assert!(console_has(&ed, "crate_2 is made by crates"));
+    assert_eq!(parent(&app, "crate_2").as_deref(), Some("crates"));
+    assert_eq!(app.history().log().len(), log, "nothing was sent");
+}
+
+/// The search shows the entities whose name or id holds the text, or with
+/// `c:` those with a matching component, each with the rows above it; the
+/// layout keeps it for the next editor.
+#[test]
+fn the_search_shows_matches_with_the_rows_above_them() {
+    let dir = project();
+    let mut app = open(dir.path());
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    frames(&mut ed, &mut app, 2);
+    let shown = |ed: &HeadlessEditor| -> Vec<&str> {
+        [
+            "Gate", "box", "camera", "crates", "crate_1", "crate_2", "lamp",
+        ]
+        .into_iter()
+        .filter(|id| ed.editor.hierarchy_row(id).is_some())
+        .collect()
+    };
+    assert_eq!(shown(&ed), ["Gate", "box", "camera", "crates", "lamp"]);
+    let field = ed.editor.hierarchy_search().expect("a search field");
+    ed.frame(
+        &mut app,
+        &AllowAll,
+        click(field.center(), PointerButton::Primary),
+    )
+    .unwrap();
+    ed.frame(&mut app, &AllowAll, typed("CRATE_2")).unwrap();
+    frames(&mut ed, &mut app, 1);
+    assert_eq!(shown(&ed), ["crates", "crate_2"], "case is ignored");
+
+    // By id, which may have capitals.
+    ed.frame(&mut app, &AllowAll, key(Key::A, Modifiers::COMMAND))
+        .unwrap();
+    ed.frame(&mut app, &AllowAll, typed("gate")).unwrap();
+    frames(&mut ed, &mut app, 1);
+    assert_eq!(shown(&ed), ["Gate"]);
+
+    // By name: "Crate" is both crates' name, and the group's.
+    ed.frame(&mut app, &AllowAll, key(Key::A, Modifiers::COMMAND))
+        .unwrap();
+    ed.frame(&mut app, &AllowAll, typed("crate")).unwrap();
+    frames(&mut ed, &mut app, 1);
+    assert_eq!(shown(&ed), ["crates", "crate_1", "crate_2"]);
+
+    // By component.
+    ed.frame(&mut app, &AllowAll, key(Key::A, Modifiers::COMMAND))
+        .unwrap();
+    ed.frame(&mut app, &AllowAll, typed("c:light")).unwrap();
+    frames(&mut ed, &mut app, 2);
+    assert_eq!(shown(&ed), ["lamp"]);
+
+    // The next editor reads the search back.
+    let mut next = HeadlessEditor::new(&mut app, 1280, 720).unwrap();
+    frames(&mut next, &mut app, 2);
+    assert_eq!(shown(&next), ["lamp"]);
 }

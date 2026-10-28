@@ -828,6 +828,46 @@ fn the_layout_is_saved_per_project() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
 }
 
+/// The toolbar's Steps menu sets the snap steps: a click on a step's field
+/// edits its number, and Enter keeps it. The steps are editor state, saved
+/// with the layout for the next editor and never in the undo history.
+#[test]
+fn the_steps_menu_sets_the_snap_steps() {
+    let dir = project();
+    let mut app = open(dir.path(), false);
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    for _ in 0..2 {
+        ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    }
+    assert!(
+        ed.editor.menu_item("Move step").is_none(),
+        "the menu is shut"
+    );
+    let steps = ed.editor.menu_item("Steps").expect("a Steps button");
+    ed.frame(&mut app, &AllowAll, input(click(steps.center())))
+        .unwrap();
+    ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    let field = ed.editor.menu_item("Move step").expect("the move step");
+    ed.frame(&mut app, &AllowAll, input(click(field.center())))
+        .unwrap();
+    ed.frame(
+        &mut app,
+        &AllowAll,
+        input(vec![egui::Event::Text("0.25".into())]),
+    )
+    .unwrap();
+    ed.frame(&mut app, &AllowAll, input(vec![key(egui::Key::Enter)]))
+        .unwrap();
+    ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    assert_eq!(ed.editor.gizmo_settings().translate_step, 0.25);
+    assert!(!app.history().can_undo(), "a step is not a command");
+    drop(ed);
+
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    ed.frame(&mut app, &AllowAll, input(vec![])).unwrap();
+    assert_eq!(ed.editor.gizmo_settings().translate_step, 0.25);
+}
+
 /// The debugger panel draws a recorded stop: a script VM with a breakpoint
 /// and no DAP client records its stack, and the panel (brought to the front
 /// of its leaf) shows it.

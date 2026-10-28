@@ -12,18 +12,109 @@
 //! When another entity becomes the active one (a click in the view, a
 //! paste, Ctrl+Up or Ctrl+Down), the rows above it unfold and the list
 //! scrolls to it.
+//!
+//! Dragging rows moves entities ([`crate::reparent`]): onto a row puts them
+//! under it, between two rows beside it, and under the rows at the root. A
+//! selected row drags the selection.
+//!
+//! The search shows the entities whose name or id holds its text, or with
+//! `c:` and a name, those with a component whose name holds it (ignoring
+//! case), each with the rows above it. It is kept with the layout.
 
 use std::collections::HashSet;
 
 use egui::{Key, KeyboardShortcut, Modifiers, RichText};
 use re_app::App;
 use re_scene::hierarchy::{children, parent};
-use re_scene::{Entity, Generated};
+use re_scene::{Entity, Generated, World};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::clipboard::Place;
-use crate::editor::{Action, Editor, command, menu_key, row_key};
+use crate::editor::{Action, Editor, command, menu_key, row_key, search_key};
+use crate::reparent::{self, Drop};
 use crate::selection::Selection;
+
+/// The Hierarchy's entry in the layout's `panels`.
+const PANEL: &str = "hierarchy";
+
+/// The Hierarchy's view state, kept in the layout.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct View {
+    /// The search text.
+    search: String,
+}
+
+/// What a search shows.
+enum Filter {
+    /// Entities whose name or id holds this (lowercase).
+    Text(String),
+    /// Entities with a component whose name holds this (lowercase).
+    Component(String),
+}
+
+impl Filter {
+    fn new(search: &str) -> Option<Filter> {
+        let search = search.trim();
+        if search.is_empty() {
+            return None;
+        }
+        let component = search
+            .get(..2)
+            .filter(|p| p.eq_ignore_ascii_case("c:"))
+            .map(|_| search[2..].trim());
+        match component {
+            Some("") => None,
+            Some(name) => Some(Filter::Component(name.to_lowercase())),
+            None => Some(Filter::Text(search.to_lowercase())),
+        }
+    }
+
+    fn matches(&self, world: &World, e: Entity, id: &str) -> bool {
+        match self {
+            Filter::Text(text) => {
+                id.to_lowercase().contains(text) || world.name_of(e).to_lowercase().contains(text)
+            }
+            Filter::Component(name) => world
+                .registry
+                .components_of(&world.ecs, e)
+                .iter()
+                .any(|k| world.registry.schema(*k).name.to_lowercase().contains(name)),
+        }
+    }
+}
+
+/// The rows a search shows: the matches and the entities above them.
+struct Found {
+    matched: HashSet<Entity>,
+    shown: HashSet<Entity>,
+}
+
+impl Found {
+    fn new(world: &World, filter: &Filter) -> Found {
+        let mut found = Found {
+            matched: HashSet::new(),
+            shown: HashSet::new(),
+        };
+        for (id, e) in world.ids().iter() {
+            if !filter.matches(world, e, id) {
+                continue;
+            }
+            found.matched.insert(e);
+            let mut up = Some(e);
+            while let Some(u) = up
+                && found.shown.insert(u)
+            {
+                up = parent(&world.ecs, u);
+            }
+        }
+        found
+    }
+}
+
+/// The entities a row drag carries.
+struct Dragged(Vec<String>);
 
 /// Why a generated entity has no Rename (the `rename` op refuses it).
 pub(crate) const GENERATED_NAME: &str =
@@ -76,6 +167,27 @@ pub(super) fn hierarchy(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: 
         }
     });
     ui.separator();
+    let mut view: View = ed.panel_state(PANEL);
+    ui.horizontal(|ui| {
+        let clear = !view.search.is_empty();
+        let width = ui.available_width() - if clear { 28.0 } else { 0.0 };
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut view.search)
+                .hint_text("Search: name, id or c:Component")
+                .desired_width(width),
+        );
+        ed.pending.rects.insert(search_key(), vec![r.rect]);
+        if clear
+            && ui
+                .small_button("×")
+                .on_hover_text("Clear the search")
+                .clicked()
+        {
+            view.search.clear();
+        }
+    });
+    ed.set_panel_state(PANEL, &view);
+    let found = Filter::new(&view.search).map(|f| Found::new(world, &f));
     let mut roots: Vec<(&str, Entity)> = world
         .ids()
         .iter()
@@ -101,7 +213,9 @@ pub(super) fn hierarchy(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: 
         actions,
         reveal,
         unfold,
+        found,
         clicked: None,
+        dropped: None,
         rows: Vec::new(),
     };
     egui::ScrollArea::vertical()
@@ -110,6 +224,8 @@ pub(super) fn hierarchy(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: 
         .show(ui, |ui| {
             if roots.is_empty() {
                 ui.label(RichText::new("The scene is empty.").weak());
+            } else if tree.found.as_ref().is_some_and(|f| f.shown.is_empty()) {
+                ui.label(RichText::new("No entity matches the search.").weak());
             }
             for (_, e) in roots {
                 tree.node(ui, e);
@@ -120,11 +236,49 @@ pub(super) fn hierarchy(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: 
             if rest.clicked() {
                 tree.ed.select_next = Some(Selection::new());
             }
+            if rest.dnd_hover_payload::<Dragged>().is_some() {
+                paint_drop(ui, rest.rect, &Drop::Root);
+                if let Some(dragged) = rest.dnd_release_payload::<Dragged>() {
+                    tree.dropped = Some((dragged.0.clone(), Drop::Root));
+                }
+            }
             rest.context_menu(|ui| tree.root_menu(ui));
         });
     let Tree {
-        ed, clicked, rows, ..
+        ed,
+        actions,
+        clicked,
+        dropped,
+        rows,
+        ..
     } = tree;
+    if let Some((ids, drop)) = dropped {
+        let moves = reparent::plan(world, &ids, &drop);
+        actions.extend(moves.refused.into_iter().map(Action::Report));
+        if let Some(args) = moves.apply {
+            actions.push(command("scene.apply", args));
+        }
+        for args in moves.proc_moves {
+            actions.push(command("proc.move", args));
+        }
+    }
+    // What a drag carries follows the pointer.
+    if let Some(dragged) = egui::DragAndDrop::payload::<Dragged>(ui.ctx())
+        && let Some(at) = ui.ctx().pointer_interact_pos()
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        let text = match dragged.0.as_slice() {
+            [one] => one.clone(),
+            ids => format!("{} entities", ids.len()),
+        };
+        egui::Area::new(egui::Id::new("re_editor.hierarchy.drag"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(at + egui::vec2(14.0, 10.0))
+            .interactable(false)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| ui.label(text));
+            });
+    }
     if let Some(id) = clicked {
         let modifiers = ui.input(|i| i.modifiers);
         let order: Vec<&str> = rows.iter().map(|(id, _)| id.as_str()).collect();
@@ -191,6 +345,10 @@ struct Tree<'a> {
     /// The entity to scroll to, and the entities above it, to unfold.
     reveal: Option<String>,
     unfold: HashSet<Entity>,
+    /// While searching, the rows shown.
+    found: Option<Found>,
+    /// What was dropped this frame, and where.
+    dropped: Option<(Vec<String>, Drop)>,
     /// The row clicked this frame.
     clicked: Option<String>,
     /// Each row drawn, in order, and where.
@@ -204,6 +362,20 @@ impl Tree<'_> {
             return;
         };
         let kids = children(&world.ecs, e);
+        match self.found.as_ref().map(|f| f.shown.contains(&e)) {
+            Some(false) => return,
+            Some(true) => {
+                // While searching, every row on the way to a match is open.
+                self.row(ui, e, id);
+                ui.indent(("re_editor.found", id), |ui| {
+                    for kid in kids {
+                        self.node(ui, *kid);
+                    }
+                });
+                return;
+            }
+            None => {}
+        }
         if kids.is_empty() {
             self.row(ui, e, id);
             return;
@@ -264,7 +436,12 @@ impl Tree<'_> {
         if self.selection.len() > 1 && self.selection.active() == Some(id) {
             text = text.strong();
         }
-        let mut r = ui.selectable_label(self.selection.contains(id), text);
+        if self.found.as_ref().is_some_and(|f| !f.matched.contains(&e)) {
+            text = text.weak();
+        }
+        let selected = self.selection.contains(id);
+        let mut r =
+            ui.add(egui::Button::selectable(selected, text).sense(egui::Sense::click_and_drag()));
         let note = world.note_of(e);
         if !note.is_empty() {
             r = r.on_hover_text(note);
@@ -278,8 +455,32 @@ impl Tree<'_> {
         } else if r.clicked() {
             self.clicked = Some(id.to_string());
         }
-        if r.secondary_clicked() && !self.selection.contains(id) {
+        if r.secondary_clicked() && !selected {
             self.ed.select_next = Some(Selection::one(id));
+        }
+        // A selected row drags the selection's topmost entities.
+        if r.drag_started() {
+            let ids = if selected {
+                self.selection.topmost(world)
+            } else {
+                vec![id.to_string()]
+            };
+            egui::DragAndDrop::set_payload(ui.ctx(), Dragged(ids));
+        }
+        if let Some(dragged) = r.dnd_hover_payload::<Dragged>()
+            && !dragged.0.iter().any(|d| d == id)
+            && let Some(at) = ui.ctx().pointer_interact_pos()
+        {
+            let height = r.rect.height().max(1.0);
+            let drop = match (at.y - r.rect.top()) / height {
+                y if y < 0.25 => Drop::Before(id.to_string()),
+                y if y > 0.75 => Drop::After(id.to_string()),
+                _ => Drop::Into(id.to_string()),
+            };
+            paint_drop(ui, r.rect, &drop);
+            if let Some(dragged) = r.dnd_release_payload::<Dragged>() {
+                self.dropped = Some((dragged.0.clone(), drop));
+            }
         }
         r.context_menu(|ui| self.menu(ui, e, id, generated));
     }
@@ -385,6 +586,24 @@ impl Tree<'_> {
     }
 }
 
+/// Shows where a drop would go: a line between rows, or a frame around the
+/// row it would go under.
+fn paint_drop(ui: &egui::Ui, rect: egui::Rect, drop: &Drop) {
+    let stroke = egui::Stroke::new(2.0, ui.visuals().selection.bg_fill);
+    let painter = ui.painter();
+    match drop {
+        Drop::Before(_) | Drop::Root => {
+            painter.hline(rect.x_range(), rect.top(), stroke);
+        }
+        Drop::After(_) => {
+            painter.hline(rect.x_range(), rect.bottom(), stroke);
+        }
+        Drop::Into(_) => {
+            painter.rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Inside);
+        }
+    }
+}
+
 fn shortcut(modifiers: Modifiers, key: Key) -> Option<KeyboardShortcut> {
     Some(KeyboardShortcut::new(modifiers, key))
 }
@@ -437,5 +656,21 @@ mod tests {
             &order,
         );
         assert!(next.is_empty());
+    }
+
+    #[test]
+    fn a_search_reads_text_or_a_component_name() {
+        let read = |search: &str| match Filter::new(search) {
+            None => "none".to_string(),
+            Some(Filter::Text(t)) => format!("text {t}"),
+            Some(Filter::Component(c)) => format!("component {c}"),
+        };
+        assert_eq!(read("  "), "none");
+        assert_eq!(read(" Crate "), "text crate");
+        assert_eq!(read("c: PointLight"), "component pointlight");
+        assert_eq!(read("C:mesh"), "component mesh");
+        // A prefix with no name yet shows every row.
+        assert_eq!(read("c: "), "none");
+        assert_eq!(read("cab"), "text cab");
     }
 }

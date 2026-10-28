@@ -5,7 +5,7 @@ use egui::RichText;
 use re_app::App;
 use serde_json::json;
 
-use crate::editor::{Editor, command};
+use crate::editor::{Editor, command, menu_key};
 use crate::gizmo;
 
 pub(super) fn toolbar(ed: &mut Editor, ui: &mut egui::Ui, app: &App) {
@@ -42,7 +42,9 @@ pub(super) fn toolbar(ed: &mut Editor, ui: &mut egui::Ui, app: &App) {
             ed.set_palette_open(open);
         }
         ui.separator();
-        gizmo::toolbar(&mut ed.gizmo.settings, ui);
+        for (label, rect) in gizmo::toolbar(&mut ed.gizmo.settings, ui) {
+            ed.pending.rects.insert(menu_key(label), vec![rect]);
+        }
         ui.separator();
         ui.label(RichText::new(&ed.status).weak());
     });
