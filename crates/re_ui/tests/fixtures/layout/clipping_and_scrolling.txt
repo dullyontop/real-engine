@@ -1,0 +1,38 @@
+visit #16 screen (root) at (0.0, 0.0) size (400.0, 300.0) rotation 0.0
+visit #3 clipper at (10.0, 10.0) size (100.0, 50.0) rotation 0.0
+visit #0 spill at (90.0, 40.0) size (50.0, 50.0) rotation 0.0
+visit #2 inner clipper at (70.0, 10.0) size (60.0, 40.0) rotation 0.0
+visit #1 inner spill at (50.0, -10.0) size (60.0, 60.0) rotation 0.0
+visit #8 scrolled past its end at (150.0, 10.0) size (100.0, 80.0) rotation 0.0 canvas (100.0, 240.0) window (100.0, 80.0) held at (0.0, 160.0)
+visit #4 line at (150.0, -150.0) size (100.0, 60.0) rotation 0.0
+visit #5 line at (150.0, -90.0) size (100.0, 60.0) rotation 0.0
+visit #6 line at (150.0, -30.0) size (100.0, 60.0) rotation 0.0
+visit #7 line at (150.0, 30.0) size (100.0, 60.0) rotation 0.0
+visit #15 strip that grows at (10.0, 120.0) size (160.0, 60.0) rotation 0.0 canvas (318.0, 60.0) window (160.0, 60.0) held at (0.0, 0.0) content (310.0, 40.0)
+visit #9 tile at (14.0, 124.0) size (50.0, 40.0) rotation 0.0
+visit #10 tile at (66.0, 124.0) size (50.0, 40.0) rotation 0.0
+visit #11 tile at (118.0, 124.0) size (50.0, 40.0) rotation 0.0
+visit #12 tile at (170.0, 124.0) size (50.0, 40.0) rotation 0.0
+visit #13 tile at (222.0, 124.0) size (50.0, 40.0) rotation 0.0
+visit #14 tile at (274.0, 124.0) size (50.0, 40.0) rotation 0.0
+visit #18 clipped root (root) at (0.0, 0.0) size (60.0, 60.0) rotation 0.0
+visit #17 past the clip at (-10.0, -10.0) size (40.0, 40.0) rotation 0.0
+root 0: 16 drawn
+item #3 clipper at (10.0, 10.0) size (100.0, 50.0) scale 1.0 order (0, 1) input
+item #0 spill at (90.0, 40.0) size (50.0, 50.0) scale 1.0 order (0, 2) input clip (10.0, 10.0, 110.0, 60.0)
+item #2 inner clipper at (70.0, 10.0) size (60.0, 40.0) scale 1.0 order (0, 3) input clip (10.0, 10.0, 110.0, 60.0)
+item #1 inner spill at (50.0, -10.0) size (60.0, 60.0) scale 1.0 order (0, 4) input clip (70.0, 10.0, 110.0, 50.0)
+item #8 scrolled past its end at (150.0, 10.0) size (100.0, 80.0) scale 1.0 order (0, 5) input canvas (100.0, 240.0)
+item #4 line at (150.0, -150.0) size (100.0, 60.0) scale 1.0 order (0, 6) input clip (150.0, 10.0, 250.0, 90.0)
+item #5 line at (150.0, -90.0) size (100.0, 60.0) scale 1.0 order (0, 7) input clip (150.0, 10.0, 250.0, 90.0)
+item #6 line at (150.0, -30.0) size (100.0, 60.0) scale 1.0 order (0, 8) input clip (150.0, 10.0, 250.0, 90.0)
+item #7 line at (150.0, 30.0) size (100.0, 60.0) scale 1.0 order (0, 9) input clip (150.0, 10.0, 250.0, 90.0)
+item #15 strip that grows at (10.0, 120.0) size (160.0, 60.0) scale 1.0 order (0, 10) input padding [4.0, 4.0, 4.0, 4.0] canvas (318.0, 60.0)
+item #9 tile at (14.0, 124.0) size (50.0, 40.0) scale 1.0 order (0, 11) input clip (10.0, 120.0, 170.0, 180.0)
+item #10 tile at (66.0, 124.0) size (50.0, 40.0) scale 1.0 order (0, 12) input clip (10.0, 120.0, 170.0, 180.0)
+item #11 tile at (118.0, 124.0) size (50.0, 40.0) scale 1.0 order (0, 13) input clip (10.0, 120.0, 170.0, 180.0)
+item #12 tile at (170.0, 124.0) size (50.0, 40.0) scale 1.0 order (0, 14) input clip (10.0, 120.0, 170.0, 180.0)
+item #13 tile at (222.0, 124.0) size (50.0, 40.0) scale 1.0 order (0, 15) input clip (10.0, 120.0, 170.0, 180.0)
+item #14 tile at (274.0, 124.0) size (50.0, 40.0) scale 1.0 order (0, 16) input clip (10.0, 120.0, 170.0, 180.0)
+root 1: 1 drawn
+item #17 past the clip at (290.0, 190.0) size (40.0, 40.0) scale 1.0 order (0, 17) input clip (300.0, 200.0, 360.0, 260.0)

@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 //! The test place shared by the WP15 tests: a client VM over a place with the
-//! `TweenTarget` test class.
+//! `TweenTarget` test class. The GUI frames a place steps are compared with
+//! committed values when it is dropped ([`gui_log`]).
+
+mod gui_log;
 
 use std::sync::Arc;
 
@@ -18,7 +21,16 @@ pub struct Place {
     pub game: re_scene::Entity,
     pub services: NoServices,
     pub vm: CompatVm,
+    gui_log: gui_log::GuiLog,
     _dir: tempfile::TempDir,
+}
+
+impl Drop for Place {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            self.gui_log.check();
+        }
+    }
 }
 
 pub fn place() -> Place {
@@ -56,6 +68,7 @@ pub fn place_in(behavior: SignalBehavior, services: &[&str]) -> Place {
         game,
         services: NoServices::default(),
         vm,
+        gui_log: gui_log::GuiLog::default(),
         _dir: dir,
     }
 }
@@ -125,13 +138,19 @@ impl Place {
         };
         let mut out = None;
         let d = vm.run(&mut host, |lua| {
-            out = Some(re_compat::gui::step(lua, ctx, frame)?);
+            out = Some(re_compat::gui::step_recorded(lua, ctx, frame)?);
             Ok(())
         });
         assert!(d.is_empty(), "{d:#?}");
+        let (out, record) = out.expect("the step ran");
+        self.gui_log.frame(&self.world, &out, &record);
+        let mut host = WorldHost {
+            world: &mut self.world,
+            services: &mut self.services,
+        };
         let d = vm.step(&mut host, 0.0);
         assert!(d.is_empty(), "{d:#?}");
-        out.expect("the step ran")
+        out
     }
 
     /// One physics step of `dt` (static cells, moved parts), then the

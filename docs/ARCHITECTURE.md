@@ -70,6 +70,10 @@ graph TD
     net[re_net] --> core
   end
 
+  subgraph "UI core (M4: egui, glam and libm only)"
+    ui[re_ui]
+  end
+
   subgraph Scripting
     script[re_script] --> command
     script --> scene
@@ -101,6 +105,7 @@ graph TD
     compat --> physics
     compat --> noise
     compat --> net
+    compat --> ui
     app --> compat
     cli --> compat
   end
@@ -143,6 +148,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_audio` | kira playback, with a headless capture fallback | `Audio::new_or_headless`, `apply(&[AudioCmd])`, `advance(Duration)`, `set_user_volume`, `CaptureBackend` | `re_scene` |
 | `re_input` | Raw input, the action map and replay | `RawInput`, `InputConfig`, `ActionMap`, `Replay`, `ReplayRecorder` | `re_scene` |
 | `re_assets` | Import, material files, cache and hot reload | `AssetId`, `AssetServer`, `import_gltf`, `load_material`, `ProcessedCache`, `AssetWatcher` | `re_scene` |
+| `re_ui` | The UI core (M4, ADR-0058): plain node trees laid out by the compat GUI's rules (scale-plus-offset sizes, anchors, padding, lists and grids, size and aspect limits, automatic size, scale, rotation, clipping, scrolling), text over the bundled fonts (ADR-0035, in its `assets/fonts/`) and painting as egui shapes, for the compat GUI and native UI | `UiTree`, `Node`, `Layout`, `Root`, `Item`, `Visit`, `Painter`, `Looks`, `TextStyle`, `fonts::install` | every engine crate (it uses only egui, glam and libm) |
 | `re_anim` | glTF node clips, skeletal poses for skins, animation graphs, keyframe tracks, IK and tweens | `Sampler`, `Tween`, `graph::{validate, BoundGraph, GraphPlayer}` | `re_scene` |
 | `re_net` | Connections over UDP with our own reliability, and over WebSockets for players in a browser; a transport seam with in-memory and conditioned links (M3, WP30, ADR-0050) | `Endpoint`, `Transport`, `UdpTransport`, `ServerTransport`, `WsTransport`, `MemoryNet`, `Conditioned` | every engine crate but `re_core` |
 | `re_script` | The Luau VMs, contexts, native API, scheduler, compile check and engine type definitions | `ScriptRuntime`, `Context`, `compile_check`, `api::definitions` | subsystems (it reaches them through `HostServices`), full_moon |
@@ -154,7 +160,7 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_editor` | The editor UI: dockable panel tabs (layout in `.real/editor/layout.json`), translate, rotate and scale gizmos (W, E, R) whose drags edit live as one undo step, the node canvas over graph files, the debugger panel, and the editor socket (ADR-0044, ADR-0045) | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
 | `re_import` | Static importer for Rojo-style projects and Studio loader scripts (tooling, M2 WP16); it never runs Luau | `import`, `ImportReport`, `new_project` | `re_app` |
 | `re_web` | The browser runtime (M3, WP29): a wasm-bindgen `Session` that takes a project's archive or files and plays or replays it (ADR-0049) | `Session` | tokio, any tooling crate |
-| `re_compat` | The Roblox-style compatibility layer (M2): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, the compat VM with instances, signals and core services, and the `RenderFrame` it builds for the renderer (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app`. It uses `re_noise` for the seeded particle effects and material detail textures |
+| `re_compat` | The Roblox-style compatibility layer (M2): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, the compat VM with instances, signals and core services, and the `RenderFrame` it builds for the renderer (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app`. It uses `re_noise` for the seeded particle effects and material detail textures, and `re_ui` for its GUI's layout, text, fonts and painting (ADR-0058) |
 
 Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
 
@@ -649,6 +655,7 @@ Recipes are data: a recipe runs only registered commands, up to the `edit` tier,
 | RE72xx | `re_input` |
 | RE74xx | `re_audio` |
 | RE76xx | `re_anim` |
+| RE77xx | `re_ui` (M4, ADR-0058) |
 | RE8000–8099 | `re_agent` |
 | RE8500–8599 | `re_mcp` |
 | RE8800–8899 | `re_editor` |
