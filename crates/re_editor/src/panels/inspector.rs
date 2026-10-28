@@ -9,7 +9,7 @@ use re_scene::{Generated, World};
 use serde_json::json;
 
 use crate::editor::{Action, Editor, Pending, command, note_key};
-use crate::widgets::{FieldTarget, field_widget};
+use crate::widgets::{self, Fields};
 
 pub(super) fn inspector(
     ed: &mut Editor,
@@ -54,6 +54,7 @@ pub(super) fn inspector(
     }
     let registry = &world.registry;
     let present = registry.components_of(&world.ecs, e);
+    let mut fields = Fields::new(ed, world);
     for key in &present {
         let schema = registry.schema(*key);
         let values = registry.get_all(&world.ecs, e, *key).unwrap_or_default();
@@ -68,16 +69,8 @@ pub(super) fn inspector(
                     .num_columns(2)
                     .striped(true)
                     .show(ui, |ui| {
-                        for (field, value) in schema.fields.iter().zip(&values) {
-                            ui.label(&field.name).on_hover_text(&field.doc);
-                            let target = FieldTarget {
-                                id: &id,
-                                component: &schema.name,
-                                field: &field.name,
-                                ty: &field.ty,
-                            };
-                            field_widget(ui, &mut ed.pending, world, &target, value, actions);
-                            ui.end_row();
+                        for (index, value) in values.iter().enumerate() {
+                            widgets::field_row(ui, &mut fields, &id, *key, index, value, actions);
                         }
                     });
                 if ui.small_button("Remove component").clicked() {

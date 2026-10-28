@@ -1,17 +1,22 @@
 //! The field widgets that the inspector and the procedural panel share: one
 //! widget per field type, and the rules that keep a dragged or typed value
-//! pending until it is committed, once.
+//! pending until it is committed, once. The Inspector draws each field with
+//! [`field_row`], which adds the pickers, the container editors and the
+//! override markers.
 
 use egui::RichText;
 use glam::{EulerRot, Quat, Vec3};
 use re_core::Diagnostic;
 use re_reflect::{Color, FieldType, Value};
-use re_scene::World;
+use re_scene::{Entity, World};
 
 use crate::codes;
 use crate::editor::{Action, Pending};
 
+mod fields;
 pub(crate) mod schema;
+
+pub(crate) use fields::{Fields, Picking, field_row, take_pick};
 
 /// The field an inspector widget edits.
 pub(crate) struct FieldTarget<'a> {
@@ -119,35 +124,12 @@ pub(crate) fn field_widget(
             settle(ui, &rs, pending, key, value, current, target, actions);
         }
         (FieldType::String, Value::Str(s)) => {
-            if let Some(text) = text_field(ui, pending, &key, s) {
+            if let (_, Some(text)) = text_field(ui, pending, &key, s) {
                 actions.push(target.set(Value::Str(text)));
             }
         }
         (FieldType::Entity, Value::Entity(e)) => {
-            let shown_id = e.and_then(|e| world.id_of(e)).unwrap_or("");
-            if let Some(text) = text_field(ui, pending, &key, shown_id) {
-                let text = text.trim();
-                if text.is_empty() {
-                    actions.push(target.set(Value::Entity(None)));
-                } else {
-                    match world.entity(text) {
-                        Ok(e) => actions.push(target.set(Value::Entity(Some(e)))),
-                        Err(_) => actions.push(Action::Report(
-                            Diagnostic::error(
-                                codes::INVALID_FIELD_TEXT,
-                                format!(
-                                    "no entity has the id {text:?} (for {}.{} of {})",
-                                    target.component, target.field, target.id
-                                ),
-                            )
-                            .with_hint(
-                                "type the id of an existing entity, as the hierarchy shows it, \
-                                 or clear the field for no entity",
-                            ),
-                        )),
-                    }
-                }
-            }
+            entity_text(ui, pending, world, target, *e, actions);
         }
         (FieldType::Enum(variants), Value::Enum(v)) => {
             egui::ComboBox::from_id_salt(("re_editor.enum", &key))
@@ -164,6 +146,60 @@ pub(crate) fn field_widget(
             ui.label(RichText::new(other.describe()).weak());
         }
     }
+}
+
+/// An entity field's id, typed: a text field that sets the entity with that
+/// id when it is committed, no entity when it is cleared, and reports an id
+/// no entity has (`RE8803`).
+pub(crate) fn entity_text(
+    ui: &mut egui::Ui,
+    pending: &mut Pending,
+    world: &World,
+    target: &FieldTarget<'_>,
+    current: Option<Entity>,
+    actions: &mut Vec<Action>,
+) -> egui::Response {
+    let key = target.key();
+    let shown_id = current.and_then(|e| world.id_of(e)).unwrap_or("");
+    let (r, text) = text_field(ui, pending, &key, shown_id);
+    let Some(text) = text else {
+        return r;
+    };
+    let text = text.trim();
+    if text.is_empty() {
+        actions.push(target.set(Value::Entity(None)));
+        return r;
+    }
+    match world.entity(text) {
+        Ok(e) => actions.push(target.set(Value::Entity(Some(e)))),
+        Err(_) => actions.push(Action::Report(
+            Diagnostic::error(
+                codes::INVALID_FIELD_TEXT,
+                format!(
+                    "no entity has the id {text:?} (for {}.{} of {})",
+                    target.component, target.field, target.id
+                ),
+            )
+            .with_hint(
+                "type the id of an existing entity, as the hierarchy shows it, \
+                 or clear the field for no entity",
+            ),
+        )),
+    }
+    r
+}
+
+/// A "…" button with a picker's list: the menu stays open while it is
+/// clicked inside (its search box), and closes when something outside it is
+/// clicked or an item calls `ui.close()`.
+pub(crate) fn list_menu<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> (egui::Response, Option<R>) {
+    use egui::containers::menu::{MenuButton, MenuConfig};
+    let config = MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    let (button, inner) = MenuButton::new("…").config(config).ui(ui, add_contents);
+    (button, inner.map(|i| i.inner))
 }
 
 /// Three drag values in a row (a Vec3, or a rotation as Euler angles). They
@@ -208,14 +244,7 @@ pub(crate) fn settle(
     if rs.iter().any(egui::Response::changed) {
         pending.values.insert(key.clone(), value);
     }
-    // Each widget is checked on its own (a union of responses keeps only the
-    // first one's id, hiding the others' focus); an open popup, such as the
-    // colour picker, counts as in use.
-    let in_use = rs.iter().any(|r| r.dragged() || r.has_focus())
-        || ui.ctx().dragged_id().is_some()
-        || ui.ctx().any_popup_open()
-        || ui.input(|i| i.pointer.any_down());
-    if !in_use
+    if !in_use(ui, rs)
         && let Some(v) = pending.values.remove(&key)
         && v != *current
     {
@@ -223,14 +252,26 @@ pub(crate) fn settle(
     }
 }
 
-/// A single-line text field that returns its text when it is committed
-/// (Enter or focus lost, not Escape) and differs from `current`.
+/// True while any of a field's widgets is in use, so its pending value
+/// waits: dragged or focused, or while anything is dragged, a popup (such
+/// as the colour picker) is open or a pointer button is down. Each widget is
+/// checked on its own: a union of responses keeps only the first one's id,
+/// hiding the others' focus.
+pub(crate) fn in_use(ui: &egui::Ui, rs: &[egui::Response]) -> bool {
+    rs.iter().any(|r| r.dragged() || r.has_focus())
+        || ui.ctx().dragged_id().is_some()
+        || ui.ctx().any_popup_open()
+        || ui.input(|i| i.pointer.any_down())
+}
+
+/// A single-line text field, and its text when it is committed (Enter or
+/// focus lost, not Escape) and differs from `current`.
 pub(crate) fn text_field(
     ui: &mut egui::Ui,
     pending: &mut Pending,
     key: &str,
     current: &str,
-) -> Option<String> {
+) -> (egui::Response, Option<String>) {
     let mut text = pending
         .texts
         .get(key)
@@ -241,12 +282,13 @@ pub(crate) fn text_field(
         pending.texts.remove(key);
         // Escape cancels the edit.
         let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
-        return (!cancelled && text != current).then_some(text);
+        let text = (!cancelled && text != current).then_some(text);
+        return (r, text);
     }
     if r.has_focus() {
         pending.texts.insert(key.to_string(), text);
     } else {
         pending.texts.remove(key);
     }
-    None
+    (r, None)
 }

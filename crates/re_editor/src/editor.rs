@@ -145,13 +145,17 @@ pub(crate) struct Palette {
 }
 
 /// Input that is being edited and not yet committed: a value being dragged,
-/// or text in a focused field.
+/// text in a focused field, or an entity field waiting for a click in the
+/// viewport.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Pending {
     pub values: HashMap<String, Value>,
     pub texts: HashMap<String, String>,
     /// Where each field's widgets were drawn in the last frame.
     pub rects: HashMap<String, Vec<egui::Rect>>,
+    /// The entity field whose picker waits for the next click in the
+    /// viewport ([`crate::widgets::take_pick`]).
+    pub picking: Option<crate::widgets::Picking>,
 }
 
 impl Pending {

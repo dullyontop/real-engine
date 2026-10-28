@@ -820,7 +820,7 @@ fn asset_picker(
         let mut out =
             text_field(ui, id, current, 140.0, env, "").map(|t| Change::Done(Json::String(t)));
         let search_id = id.with("search");
-        let r = ui.menu_button("…", |ui| {
+        let (button, _) = super::list_menu(ui, |ui| {
             let mut search = ui
                 .data(|d| d.get_temp::<Typed>(search_id))
                 .map(|t| t.0)
@@ -852,8 +852,8 @@ fn asset_picker(
                 });
             ui.data_mut(|d| d.insert_temp(search_id, Typed(search)));
         });
-        env.part(ui, "…", r.response.rect);
-        r.response.on_hover_text(format!("Choose a {kind} file"));
+        env.part(ui, "…", button.rect);
+        button.on_hover_text(format!("Choose a {kind} file"));
         out.filter(|c| !matches!(c, Change::Done(Json::String(s)) if s == current))
     })
     .inner

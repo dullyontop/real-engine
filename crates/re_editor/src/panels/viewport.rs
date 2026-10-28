@@ -9,7 +9,7 @@ use re_app::App;
 use super::procedural;
 use crate::camera::{self, Navigation, SPEEDS, View};
 use crate::editor::{Action, Editor};
-use crate::{Panel, overlay};
+use crate::{Panel, overlay, widgets};
 
 /// Draws the viewport into `ui`. Its rectangle in [`Editor::rects`] is its
 /// image's, under the row of view controls.
@@ -86,7 +86,8 @@ pub(super) fn viewport(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &
     };
     // A click (not a drag, not with Alt, which orbits) on an axis end looks
     // along it; on an icon, selects its light or camera (Ctrl toggles it,
-    // Shift adds it). The gizmo's handles take a click before both.
+    // Shift adds it), unless an Inspector entity field waits for a pick. The
+    // gizmo's handles take a click before both.
     let modifiers = ui.input(|i| i.modifiers);
     if response.clicked() && !modifiers.alt && pointer.is_some() {
         if let Some(axis) = axis {
@@ -95,7 +96,9 @@ pub(super) fn viewport(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &
             {
                 cam.look_from(axis);
             }
-        } else if let Some(id) = icon {
+        } else if !widgets::take_pick(ed, icon.as_deref(), actions)
+            && let Some(id) = icon
+        {
             ed.select_next = Some(selection.clicked(&id, modifiers));
         }
     }
