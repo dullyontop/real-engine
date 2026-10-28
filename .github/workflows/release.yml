@@ -38,6 +38,7 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     permissions:
       contents: write
     steps:
@@ -87,6 +88,7 @@ jobs:
 
   web-runtime:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: write
     steps:

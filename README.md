@@ -83,9 +83,10 @@ cargo test --locked -p re_render -p re_app -p re_cli -p re_editor -p re_web -- -
 cargo xtask check        # crate-graph rules, duplicate versions, explain pages, schema drift, compat coverage, web clippy settings
 cargo run --locked --release -p re_cli -- verify --project examples/island --json   # the demo's headless gate
 cargo deny check         # needs cargo-deny 0.20.2: cargo install cargo-deny --version 0.20.2 --locked
+                         # (or, on Linux x86_64, its release build: eval "$(tools/ci/cargo-deny.sh)")
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same checks on every PR and on main, `real verify` on the island, the plaza and the valley (with assertions on the JSON) and windowed smoke runs under Xvfb, plus a build with Rust 1.95.0, the browser build and the packaged Linux games. All 12 of its checks are required for a merge (ADR-0023). The whole suite on Windows and macOS, their packaged games and the cross-platform `state_hash` check are in `.github/workflows/platforms.yml`, which is started by hand before a release and for changes that touch one platform (ADR-0023's amendment of 2026-10-27). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
+CI (`.github/workflows/ci.yml`) runs these checks, `real verify` on the island, the plaza and the valley (with assertions on the JSON) and windowed smoke runs under Xvfb, plus a build with Rust 1.95.0, the browser build and the packaged Linux games. Its 12 checks are the merge rule (ADR-0023). The repository's CI minutes are billed, so a `changes` job runs only the checks a change needs: a draft PR runs nothing, a change to documentation alone runs `fmt`, and a push to main runs the release checks only when it changes a build input (ADR-0023's amendment of 2026-10-28). The whole suite on Windows and macOS, their packaged games and the cross-platform `state_hash` check are in `.github/workflows/platforms.yml`, which is started by hand before a release and for changes that touch one platform (ADR-0023's amendment of 2026-10-27). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
 
 ## Running the renderer tests
 

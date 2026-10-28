@@ -198,7 +198,7 @@ All paths are in the private research folder `/mnt/project-files/real-engine/res
      sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
      ```
    - The action versions: `actions/checkout@v7` and `Swatinem/rust-cache@v2`, the newest majors, verified 2026-10-14 with `git ls-remote --tags` (`refs/tags/v7` of actions/checkout is `3d3c42e5aac5ba805825da76410c181273ba90b1`; `refs/tags/v2` of Swatinem/rust-cache is `49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c`).
-   - After the first green run on `main`, the maintainer marks the eight Linux jobs as required status checks in the repository's branch protection.
+   - After the first green run on `main`, the maintainer marks the eight Linux jobs as required status checks in the repository's branch protection. (Not done: `main` has no branch protection, and ADR-0023's merge rule says which checks must be green.)
 4. **`re_core`** (modules `diag`, `time`, `phase`, `task`, `events`, `profile`, `log`):
    - `Diagnostic { code, severity, message, location, hint, related }`, `Severity`, `Code`, `Location` (file/line/column, entity id, or command name), `DiagInfo { code, title, page }`, and `render_human` / `render_json`;
    - `FixedClock` (integer nanoseconds, a 5-step cap) and the `Phase` enum, in the order of ADR-0009;
