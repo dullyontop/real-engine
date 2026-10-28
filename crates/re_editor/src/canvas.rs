@@ -37,7 +37,9 @@
 //! bar against the slowest node; where its output came from (the memory or
 //! disk cache, computed, skipped or failed); the output's size; and the
 //! node's problems and logs, listed on hover. They are dimmed while the
-//! report is of another seed than the source's.
+//! report is of another seed than the source's. A subgraph instance `a`
+//! has no row of its own, only its inner nodes' rows (`a/x`): its badges sum
+//! them (ADR-0061 §7).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -487,7 +489,7 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         Ok(Value::Int(s)) => Some(s as u64),
         _ => None,
     };
-    let badges = report.as_ref().map(|r| Badges::new(r, seed));
+    let badges = report.map(|r| Badges::new(r, seed));
     let mut viewer = Viewer {
         path: &path,
         source: &source,
@@ -978,7 +980,7 @@ struct Viewer<'a> {
     /// widgets.
     read_only: Option<&'a str>,
     /// The badges from the source's last evaluation.
-    badges: Option<&'a Badges<'a>>,
+    badges: Option<&'a Badges>,
     /// An edit was tried on a read-only graph.
     tried: bool,
     queued: Vec<Queued>,
@@ -1155,16 +1157,19 @@ fn label(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response
 }
 
 /// The badges of a source's last evaluation, by node.
-struct Badges<'a> {
-    rows: HashMap<&'a str, &'a NodeReport>,
+struct Badges {
+    rows: HashMap<String, NodeReport>,
+    /// The subgraph instances among `rows`, with the number of inner nodes
+    /// each one's row sums.
+    instances: HashMap<String, usize>,
     /// The slowest node's time, in milliseconds: the time bars' full width.
     slowest: f64,
     /// Why the report is not of the graph as shown, when it is not.
     stale: Option<String>,
 }
 
-impl<'a> Badges<'a> {
-    fn new(report: &'a EvalReport, seed: Option<u64>) -> Badges<'a> {
+impl Badges {
+    fn new(report: EvalReport, seed: Option<u64>) -> Badges {
         let stale = seed.filter(|s| *s != report.seed).map(|s| {
             format!(
                 "The last evaluation used seed {}; the source's seed is {s}. These \
@@ -1172,9 +1177,31 @@ impl<'a> Badges<'a> {
                 report.seed
             )
         });
+        let mut rows: HashMap<String, NodeReport> = HashMap::new();
+        let mut inner: BTreeMap<String, Vec<NodeReport>> = BTreeMap::new();
+        for n in report.nodes {
+            if let Some((instance, _)) = n.id.split_once('/') {
+                inner
+                    .entry(instance.to_string())
+                    .or_default()
+                    .push(n.clone());
+            }
+            rows.insert(n.id.clone(), n);
+        }
+        let mut instances = HashMap::new();
+        for (id, nodes) in inner {
+            if rows.contains_key(&id) {
+                continue;
+            }
+            instances.insert(id.clone(), nodes.len());
+            let row = summed(id.clone(), nodes);
+            rows.insert(id, row);
+        }
+        let slowest = rows.values().map(|n| n.ms).fold(0.0, f64::max);
         Badges {
-            rows: report.nodes.iter().map(|n| (n.id.as_str(), n)).collect(),
-            slowest: report.nodes.iter().map(|n| n.ms).fold(0.0, f64::max),
+            rows,
+            instances,
+            slowest,
             stale,
         }
     }
@@ -1203,9 +1230,13 @@ impl<'a> Badges<'a> {
         let mut done = rect;
         done.set_width(BAR_WIDTH * fill);
         painter.rect_filled(done, 2.0, ui.visuals().selection.bg_fill);
+        let what = match self.instances.get(&row.id) {
+            Some(n) => format!("this subgraph's {n} inner nodes, together,"),
+            None => "this node".to_string(),
+        };
         let time = text.union(bar).on_hover_text(hover(format!(
-            "{} loading or computing this node in the last evaluation; the bar is \
-             against the slowest node's {}",
+            "{} loading or computing {what} in the last evaluation; the bar is against \
+             the slowest node's {}",
             time_text(row.ms),
             time_text(self.slowest)
         )));
@@ -1312,6 +1343,42 @@ fn items_text(out: &re_proc::OutputInfo) -> String {
     };
     let unit = if out.items == 1 { one } else { many };
     format!("{} {unit}", out.items)
+}
+
+/// One row for a subgraph instance `id` from its inner nodes' rows: their
+/// time summed, the worst of their cache states (failed, computed, disk,
+/// memory; skipped only when every one was), and their problems and logs.
+/// No output: the report does not say which inner node feeds the instance's
+/// `$out`.
+fn summed(id: String, nodes: Vec<NodeReport>) -> NodeReport {
+    let rank = |c: CacheState| match c {
+        CacheState::Skipped => 0,
+        CacheState::Memory => 1,
+        CacheState::Disk => 2,
+        CacheState::Miss => 3,
+        CacheState::Failed => 4,
+    };
+    let cache = nodes
+        .iter()
+        .map(|n| n.cache)
+        .max_by_key(|c| rank(*c))
+        .unwrap_or(CacheState::Skipped);
+    let mut row = NodeReport {
+        id,
+        kind: "subgraph".into(),
+        key: String::new(),
+        cache,
+        ms: 0.0,
+        output: None,
+        diagnostics: Vec::new(),
+        logs: Vec::new(),
+    };
+    for n in nodes {
+        row.ms += n.ms;
+        row.diagnostics.extend(n.diagnostics);
+        row.logs.extend(n.logs);
+    }
+    row
 }
 
 /// `bytes` in B, KiB, MiB or GiB.
@@ -1423,8 +1490,7 @@ impl SnarlViewer<NodeView> for Viewer<'_> {
     }
 
     fn has_footer(&mut self, node: &NodeView) -> bool {
-        self.badges
-            .is_some_and(|b| b.rows.contains_key(node.id.as_str()))
+        self.badges.is_some_and(|b| b.rows.contains_key(&node.id))
     }
 
     fn show_footer(
@@ -1439,7 +1505,7 @@ impl SnarlViewer<NodeView> for Viewer<'_> {
         let Some(badges) = self.badges else {
             return;
         };
-        let Some(row) = badges.rows.get(n.id.as_str()) else {
+        let Some(row) = badges.rows.get(&n.id) else {
             return;
         };
         let parts = ui.horizontal(|ui| badges.show(ui, row)).inner;
@@ -1602,14 +1668,14 @@ mod tests {
             nodes: vec![node("a", 2.0), node("b", 8.0)],
             ..Default::default()
         };
-        let badges = Badges::new(&report, Some(7));
+        let badges = Badges::new(report.clone(), Some(7));
         assert!(badges.stale.is_none());
         assert_eq!(badges.slowest, 8.0);
         assert_eq!(badges.rows["a"].ms, 2.0);
         // A source with no seed field (or no report seed to compare) is not
         // called stale.
-        assert!(Badges::new(&report, None).stale.is_none());
-        let stale = Badges::new(&report, Some(8)).stale.unwrap();
+        assert!(Badges::new(report.clone(), None).stale.is_none());
+        let stale = Badges::new(report, Some(8)).stale.unwrap();
         assert!(
             stale.contains("seed 7") && stale.contains("seed is 8"),
             "{stale}"
@@ -1644,7 +1710,7 @@ mod tests {
             nodes: vec![plain.clone(), full.clone()],
             ..Default::default()
         };
-        let badges = Badges::new(&report, None);
+        let badges = Badges::new(report, None);
         let ctx = egui::Context::default();
         let mut shown = Vec::new();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -1657,6 +1723,42 @@ mod tests {
         output.textures_delta.clear();
         assert_eq!(shown[0], ["time", "memory"]);
         assert_eq!(shown[1], ["time", "failed", "size", "problems", "logs"]);
+    }
+
+    #[test]
+    fn a_subgraph_instance_sums_its_inner_nodes() {
+        let node = |id: &str, cache, ms: f64, logs: &[&str]| NodeReport {
+            id: id.into(),
+            kind: "field.combine".into(),
+            key: String::new(),
+            cache,
+            ms,
+            output: None,
+            diagnostics: Vec::new(),
+            logs: logs.iter().map(|l| l.to_string()).collect(),
+        };
+        let report = EvalReport {
+            nodes: vec![
+                node("h", CacheState::Miss, 1.0, &[]),
+                node("a/x", CacheState::Memory, 2.0, &["x ran"]),
+                node("a/y", CacheState::Miss, 3.0, &[]),
+                node("a/b/z", CacheState::Disk, 4.0, &["z ran"]),
+                node("s/x", CacheState::Skipped, 0.0, &[]),
+            ],
+            ..Default::default()
+        };
+        let badges = Badges::new(report, None);
+        let a = &badges.rows["a"];
+        assert_eq!(a.ms, 9.0);
+        assert_eq!(a.cache, CacheState::Miss);
+        assert_eq!(a.logs, ["x ran", "z ran"]);
+        assert!(a.output.is_none());
+        assert_eq!(badges.instances["a"], 3);
+        // Skipped only when every inner node was.
+        assert_eq!(badges.rows["s"].cache, CacheState::Skipped);
+        // The bars are against the slowest row shown, the instance's sum.
+        assert_eq!(badges.slowest, 9.0);
+        assert!(!badges.instances.contains_key("h"));
     }
 
     #[test]
