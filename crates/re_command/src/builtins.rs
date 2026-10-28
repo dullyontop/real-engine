@@ -195,7 +195,19 @@ fn entity_json<C: EditTarget>(
         .iter()
         .filter_map(|c| world.id_of(*c))
         .collect();
-    Ok(json!({
+    // The kind of asset each hinted field names (ADR-0064 §9).
+    let mut assets: IndexMap<&str, IndexMap<&str, &str>> = IndexMap::new();
+    for name in components.keys() {
+        let Some(key) = world.registry.try_key(name) else {
+            continue;
+        };
+        for (i, f) in world.registry.schema(key).fields.iter().enumerate() {
+            if let Some(kind) = world.registry.field_hint(key, i).asset {
+                assets.entry(name).or_default().insert(&f.name, kind);
+            }
+        }
+    }
+    let mut out = json!({
         "id": doc.id,
         "name": doc.name,
         "parent": doc.parent,
@@ -203,7 +215,11 @@ fn entity_json<C: EditTarget>(
         "generated": generated,
         "components": components,
         "overrides": doc.overrides,
-    }))
+    });
+    if !assets.is_empty() {
+        out["assets"] = json!(assets);
+    }
+    Ok(out)
 }
 
 /// Registers the built-in commands.

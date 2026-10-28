@@ -10,7 +10,7 @@
 use bevy_ecs::component::Component;
 use bevy_ecs::world::World as EcsWorld;
 use glam::{Affine3A, Quat, Vec3};
-use re_reflect::{Color, Registry, component, field_enum};
+use re_reflect::{Color, FieldHint, Registry, component, field_enum};
 
 use crate::procedural::{GraphSource, Procedural};
 
@@ -462,12 +462,31 @@ component! {
     }
 }
 
+/// The built-in fields that name an asset, with its kind (ADR-0064 §9).
+const ASSET_FIELDS: [(&str, &str, &str); 10] = [
+    ("MeshRef", "asset", "model"),
+    ("MaterialRef", "asset", "material"),
+    ("Collider", "source", "model"),
+    ("ScriptRef", "path", "script"),
+    ("AudioSource", "clip", "audio"),
+    ("AnimPlayer", "clip", "clip"),
+    ("GraphSource", "graph", "graph"),
+    ("GraphSource", "builder", "script"),
+    ("SkinnedMesh", "asset", "skin"),
+    ("Animator", "graph", "animgraph"),
+];
+
 /// Registers every built-in component, in a fixed order: `Transform`,
 /// `MeshRef`, `MaterialRef`, `Visible`, `Camera`, `Light`, `RigidBody`,
 /// `Collider`, `CharacterController`, `ScriptRef`, `AudioSource`, `AnimPlayer`,
 /// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `SkinnedMesh`,
 /// `Streamed`, `StreamFocus`, `Vehicle`, `VehicleWheel`, `Ragdoll`, `Animator`,
-/// `BoneAttachment`, `AudioListener`.
+/// `BoneAttachment`, `AudioListener`. The fields that name an asset get a
+/// [`FieldHint`] with its kind (ADR-0064 §9): `MeshRef.asset` and
+/// `Collider.source` a model, `MaterialRef.asset` a material,
+/// `ScriptRef.path` and `GraphSource.builder` a script, `AudioSource.clip`
+/// audio, `AnimPlayer.clip` a clip, `GraphSource.graph` a graph,
+/// `SkinnedMesh.asset` a skin and `Animator.graph` an animation graph.
 pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<Transform>(world);
     registry.register::<MeshRef>(world);
@@ -497,4 +516,9 @@ pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<BoneAttachment>(world);
     // Added in M4.
     registry.register::<AudioListener>(world);
+    for (component, field, kind) in ASSET_FIELDS {
+        registry
+            .set_field_hint(component, field, FieldHint { asset: Some(kind) })
+            .expect("a built-in component's field");
+    }
 }

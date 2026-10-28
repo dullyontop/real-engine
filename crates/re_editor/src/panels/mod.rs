@@ -1,9 +1,11 @@
 //! The panels: toolbar, hierarchy, inspector, procedural sources, console,
-//! command palette and the viewport, one module each. They read the [`App`]
+//! command palette, the viewport, the material and the project's assets, one
+//! module each. They read the [`App`]
 //! and push [`Action`]s; [`Editor::ui`](crate::Editor::ui) applies them
 //! afterwards. The field widgets that the inspector and the procedural panel
 //! share are in [`crate::widgets`].
 
+mod assets;
 mod console;
 mod hierarchy;
 mod inspector;
@@ -20,6 +22,8 @@ use crate::editor::{Action, Editor, Pending};
 use crate::layout::PanelId;
 use crate::selection::Selection;
 
+pub(crate) use assets::AssetsPanel;
+pub use assets::{AssetDrag, AssetSpot};
 pub(crate) use material::MaterialPanel;
 pub use material::MaterialSpot;
 pub(crate) use palette::palette_action;
@@ -62,6 +66,8 @@ pub(crate) fn draw(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut 
     });
     ed.dock = dock;
     ed.material_to_front();
+    ed.assets_to_front();
+    assets::system_drops(ed, ui.ctx(), app, actions);
 
     palette::palette(ed, ui.ctx(), app, actions);
 
@@ -134,6 +140,11 @@ impl egui_dock::TabViewer for Tabs<'_> {
                     .auto_shrink(false)
                     .show(ui, |ui| material::material(ed, ui, app, actions));
                 Panel::Material
+            }
+            PanelId::Assets => {
+                // Its folder tree, items and details scroll themselves.
+                assets::assets(ed, ui, app, actions);
+                Panel::Assets
             }
         };
         ed.rects.set(panel, rect);

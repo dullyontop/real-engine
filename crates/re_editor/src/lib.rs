@@ -28,6 +28,12 @@
 //! finished edit is one `material.edit`, and "New material" is
 //! `material.create`.
 //!
+//! The **assets** panel ([`AssetSpot`]; ADR-0064 §7) shows the project's
+//! files by folder and kind from the asset index ([`AssetIndex`]), which a
+//! worker thread builds and the App's file changes keep current: each file's
+//! details, the entities that use it, opening it by its kind, new materials,
+//! prefabs and scenes, and imports.
+//!
 //! The panels other than the toolbar and the palette are tabs in a dock
 //! (egui_dock): they can be dragged into other splits, stacked or floated.
 //! The arrangement, the gizmo settings, the editor camera, the view's
@@ -94,7 +100,7 @@ pub use canvas::CanvasSpot;
 pub use editor::{ConsoleLine, Editor, LineKind, Panel, PanelRects};
 pub use headless::HeadlessEditor;
 pub use overlay::ViewSettings;
-pub use panels::{MaterialSpot, ProceduralSpot};
+pub use panels::{AssetDrag, AssetSpot, MaterialSpot, ProceduralSpot};
 pub use preview::MaterialPreview;
 pub use selection::Selection;
 pub use socket::EditorSocket;

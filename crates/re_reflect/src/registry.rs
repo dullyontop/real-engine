@@ -348,6 +348,17 @@ impl ComponentKey {
 /// [`Registry::set_change_hook`]; the registry knows nothing else about it.
 pub type ChangeHook = fn(&mut World, Entity, ComponentKey);
 
+/// What a field holds beyond its type, for tools (ADR-0064 §9). Hints are
+/// kept in a side table on the [`Registry`] ([`Registry::set_field_hint`]),
+/// so that no [`FieldSchema`] changes; [`Registry::describe`] shows them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct FieldHint {
+    /// The kind of asset a string field names, as the editor's asset index
+    /// knows them (ADR-0064 §7): `material`, `prefab`, `scene`, `graph`,
+    /// `animgraph`, `script`, `texture`, `model`, `clip`, `skin` or `audio`.
+    pub asset: Option<&'static str>,
+}
+
 /// The component registry. It belongs to one bevy `World` (component ids are per world).
 #[derive(Default)]
 pub struct Registry {
@@ -355,6 +366,8 @@ pub struct Registry {
     by_name: HashMap<String, usize>,
     by_id: HashMap<ComponentId, usize>,
     change_hook: Option<ChangeHook>,
+    /// Field hints by (entry, field index).
+    hints: HashMap<(usize, usize), FieldHint>,
 }
 
 impl Registry {
@@ -483,7 +496,32 @@ impl Registry {
             let (id, ops) = e.ops.register_in(&e.schema, world);
             out.push(e.schema.clone(), id, ops);
         }
+        out.hints.clone_from(&self.hints);
         out
+    }
+
+    /// Gives one field of a registered component a hint for tools
+    /// (ADR-0064 §9), replacing the one it had.
+    ///
+    /// # Errors
+    ///
+    /// The component is not registered, or has no such field.
+    pub fn set_field_hint(
+        &mut self,
+        component: &str,
+        field: &str,
+        hint: FieldHint,
+    ) -> Result<(), ReflectError> {
+        let key = self.key(component)?;
+        let index = self.schema(key).field_index(field)?;
+        self.hints.insert((key.0, index), hint);
+        Ok(())
+    }
+
+    /// The hint of field `index` of the component `key` (no hint when none
+    /// was given).
+    pub fn field_hint(&self, key: ComponentKey, index: usize) -> FieldHint {
+        self.hints.get(&(key.0, index)).copied().unwrap_or_default()
     }
 
     /// The key of the component named `name`, or an error with a suggestion.

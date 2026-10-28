@@ -95,9 +95,10 @@ fn panels_render_headless() {
     assert_eq!((image.width, image.height), (1280, 720));
     let rects = *ed.editor.rects();
     for panel in Panel::ALL {
-        if matches!(panel, Panel::Canvas | Panel::Material) {
-            // Tabs behind the game view and the inspector (tests/canvas.rs
-            // and tests/material.rs bring them forward).
+        if matches!(panel, Panel::Canvas | Panel::Material | Panel::Assets) {
+            // Tabs behind the game view, the inspector and the console
+            // (tests/canvas.rs, tests/material.rs and tests/assets_panel.rs
+            // bring them forward).
             continue;
         }
         let rect = rects

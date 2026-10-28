@@ -554,6 +554,58 @@ fn scene_apply_is_atomic() {
 }
 
 #[test]
+fn describe_and_entity_get_name_the_asset_kind_of_hinted_fields() {
+    let reg = registry();
+    let mut s = state();
+    let d = reg.dispatch(&mut s, "describe", json!({}), false, &AllowAll);
+    let field = |component: &str, field: &str| {
+        d.data["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == component)
+            .and_then(|c| c["fields"].as_array())
+            .and_then(|fs| fs.iter().find(|f| f["name"] == field))
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(field("MeshRef", "asset")["asset"], "model");
+    assert_eq!(field("GraphSource", "builder")["asset"], "script");
+    assert!(field("Transform", "translation").get("asset").is_none());
+
+    let out = reg.dispatch(
+        &mut s,
+        "entity.spawn",
+        json!({ "id": "statue", "components": {
+            "MeshRef": { "asset": "assets/models/statue.glb" },
+            "MaterialRef": { "asset": "materials/stone.material.json" },
+            "Transform": {} } }),
+        false,
+        &AllowAll,
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    let g = reg.dispatch(
+        &mut s,
+        "entity.get",
+        json!({"id": "statue"}),
+        false,
+        &AllowAll,
+    );
+    assert_eq!(
+        g.data["assets"],
+        json!({ "MaterialRef": { "asset": "material" }, "MeshRef": { "asset": "model" } })
+    );
+    let only = reg.dispatch(
+        &mut s,
+        "entity.get",
+        json!({"id": "statue", "components": ["Transform"]}),
+        false,
+        &AllowAll,
+    );
+    assert!(only.data.get("assets").is_none(), "{}", only.data);
+}
+
+#[test]
 fn builtin_commands_read_and_edit() {
     let reg = registry();
     let mut s = state();

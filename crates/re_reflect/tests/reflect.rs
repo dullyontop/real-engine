@@ -10,7 +10,7 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use glam::{Quat, Vec3};
 use re_reflect::{
-    Color, ComponentKey, Doc, FieldType, ReflectError, Registry, Value, component,
+    Color, ComponentKey, Doc, FieldHint, FieldType, ReflectError, Registry, Value, component,
     f32_from_parsed_f64, field_enum,
 };
 
@@ -405,6 +405,46 @@ fn schema_lists_components_fields_and_docs() {
         js["$schema"],
         "https://json-schema.org/draft/2020-12/schema"
     );
+}
+
+#[test]
+fn field_hints_are_described_and_kept_by_a_rebuild() {
+    let mut f = Fixture::new();
+    let model = FieldHint {
+        asset: Some("model"),
+    };
+    f.registry
+        .set_field_hint("PointLight", "intensity", model)
+        .unwrap();
+    assert!(matches!(
+        f.registry.set_field_hint("Lamp", "intensity", model),
+        Err(ReflectError::UnknownComponent { .. })
+    ));
+    assert!(
+        f.registry
+            .set_field_hint("PointLight", "brightness", model)
+            .is_err()
+    );
+    let key = f.registry.key("PointLight").unwrap();
+    let index = f.registry.schema(key).field_index("intensity").unwrap();
+    assert_eq!(f.registry.field_hint(key, index), model);
+    assert_eq!(f.registry.field_hint(key, index + 1), FieldHint::default());
+
+    let d = f.registry.describe();
+    let light = d["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "PointLight")
+        .unwrap();
+    for field in light["fields"].as_array().unwrap() {
+        let want = (field["name"] == "intensity").then_some("model");
+        assert_eq!(field["asset"].as_str(), want, "{field}");
+    }
+
+    let mut other = World::new();
+    let rebuilt = f.registry.rebuild_for(&mut other);
+    assert_eq!(rebuilt.field_hint(key, index), model);
 }
 
 #[test]

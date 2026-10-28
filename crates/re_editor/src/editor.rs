@@ -47,11 +47,13 @@ pub enum Panel {
     Canvas,
     /// One material file's keys.
     Material,
+    /// The project's files by folder and kind.
+    Assets,
 }
 
 impl Panel {
     /// Every panel, in drawing order.
-    pub const ALL: [Panel; 9] = [
+    pub const ALL: [Panel; 10] = [
         Panel::Toolbar,
         Panel::Hierarchy,
         Panel::Inspector,
@@ -61,6 +63,7 @@ impl Panel {
         Panel::Viewport,
         Panel::Canvas,
         Panel::Material,
+        Panel::Assets,
     ];
 
     fn index(self) -> usize {
@@ -70,7 +73,7 @@ impl Panel {
 
 /// Where each panel was drawn in the last frame, in egui points.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct PanelRects([Option<egui::Rect>; 9]);
+pub struct PanelRects([Option<egui::Rect>; 10]);
 
 impl PanelRects {
     /// The rectangle of `panel`, or `None` if it was not drawn.
@@ -200,6 +203,7 @@ pub struct Editor {
     pub(crate) material: crate::panels::MaterialPanel,
     /// The project's files by kind ([`crate::assets`]).
     pub(crate) assets: crate::assets::AssetIndex,
+    pub(crate) assets_panel: crate::panels::AssetsPanel,
     pub(crate) dock: egui_dock::DockState<PanelId>,
     /// Each panel's own view state, as read from the layout (kept and
     /// written back).
@@ -271,6 +275,7 @@ impl Editor {
             canvas: Default::default(),
             material: Default::default(),
             assets: Default::default(),
+            assets_panel: Default::default(),
             dock: layout::default_dock(),
             panel_states: PanelStates::new(),
             layout_root: None,
@@ -703,6 +708,31 @@ impl Editor {
         self.layout_dirty = true;
     }
 
+    /// A panel's own view state as the layout holds it, read with the
+    /// panel's types; the defaults when there is none or it does not parse.
+    pub(crate) fn panel_state<T: serde::de::DeserializeOwned + Default>(
+        &self,
+        panel: PanelId,
+    ) -> T {
+        self.panel_states
+            .get(&panel_key(panel))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    /// Sets a panel's own view state, saved with the layout when it
+    /// changed.
+    pub(crate) fn set_panel_state<T: serde::Serialize>(&mut self, panel: PanelId, state: &T) {
+        let Ok(value) = serde_json::to_value(state) else {
+            return;
+        };
+        let key = panel_key(panel);
+        if self.panel_states.get(&key) != Some(&value) {
+            self.panel_states.insert(key, value);
+            self.layout_dirty = true;
+        }
+    }
+
     fn layout_json(&self) -> String {
         layout::to_json(&Layout {
             dock: self.dock.clone(),
@@ -1012,6 +1042,14 @@ impl Editor {
             self.log(LineKind::Info, line);
         }
     }
+}
+
+/// A panel's key among the layout's panel states: its name in the dock.
+fn panel_key(panel: PanelId) -> String {
+    serde_json::to_value(panel)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 /// The editor camera a project starts with: where the game's camera is,

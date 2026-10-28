@@ -257,22 +257,29 @@ fn doc_json(doc: &Doc) -> Json {
 
 impl Registry {
     /// The registry description: every component with its origin, doc and
-    /// fields (name, type, default, doc), in registration order.
+    /// fields (name, type, default, doc, and `asset`, the kind of asset it
+    /// names, on a field with that hint), in registration order.
     pub fn describe(&self) -> Json {
         let no_names = |_| None;
         let components: Vec<Json> = self
-            .schemas()
-            .map(|s| {
+            .keys()
+            .map(|key| {
+                let s = self.schema(key);
                 let fields: Vec<Json> = s
                     .fields
                     .iter()
-                    .map(|f| {
-                        json!({
+                    .enumerate()
+                    .map(|(i, f)| {
+                        let mut field = json!({
                             "name": f.name,
                             "type": FieldTypeDoc::from(&f.ty),
                             "default": doc_json(&Doc::from_value(&f.default, &f.ty, &no_names)),
                             "doc": f.doc,
-                        })
+                        });
+                        if let Some(kind) = self.field_hint(key, i).asset {
+                            field["asset"] = json!(kind);
+                        }
+                        field
                     })
                     .collect();
                 json!({
