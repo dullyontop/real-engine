@@ -414,6 +414,30 @@ fn cpu_budget_stops_runaway_loops_and_the_context_stays_usable() {
 }
 
 #[test]
+fn compiling_a_required_module_is_not_script_time() {
+    // A module that takes far longer to compile than the budget allows and
+    // next to nothing to run: the function holding its bulk is never called.
+    let mut big = String::from("local M = {}\nfunction M.unused()\n\tlocal t = {}\n");
+    for i in 0..60_000 {
+        big.push_str(&format!("\tt[{i}] = {i}\n"));
+    }
+    big.push_str("\treturn t\nend\nreturn M\n");
+    let dir = temp_project(&[("scripts/big.luau", &big)]);
+    let mut rig = Rig::with_config(Rig::budget(RuntimeConfig::new(dir.path()), 2));
+    let t = Instant::now();
+    // The loop after the require reaches the budget's clock checks.
+    let n = rig
+        .exec("local big = require('./big') local n = 0 for i = 1, 10000 do n += 1 end return n")
+        .unwrap();
+    assert_eq!(n, 10000);
+    assert!(
+        t.elapsed() > Duration::from_millis(2),
+        "the module compiled within the budget anyway ({:?})",
+        t.elapsed()
+    );
+}
+
+#[test]
 fn memory_limit_raises_and_the_vm_recovers() {
     let mut config = Rig::budget(RuntimeConfig::new(project()), 10_000);
     config.memory_limit = 16 * 1024 * 1024;
@@ -957,6 +981,70 @@ fn ragdoll_functions_reach_the_host() {
     let d = rig.exec_err("physics.ragdoll(world.get('man'), 'floppy')");
     assert_eq!(d.code, codes::BAD_ARGUMENT);
     assert!(d.message.contains("`floppy`"), "{}", d.message);
+}
+
+#[test]
+fn velocities_and_the_time_scale_reach_the_host() {
+    let mut rig = Rig::new();
+    rig.exec(
+        r#"
+        local crate = world.spawn({ id = 'crate', components = {
+            Collider = { shape = "Box" }, RigidBody = { kind = "Dynamic" } } })
+        physics.set_velocity(crate, vector.create(1, 2, 3))
+        physics.set_velocity(crate, vector.create(0, 0, 1), vector.create(0, 4, 0))
+        physics.impulse(crate, vector.create(0, 5, 0))
+        time.set_scale(0.25)
+        print(time.scale())
+        "#,
+    )
+    .unwrap();
+    assert_eq!(rig.output(), ["0.25"]);
+    let id = re_scene::entity_id(rig.world.entity("crate").unwrap());
+    assert_eq!(
+        rig.services.velocities,
+        [
+            (id, Vec3::new(1.0, 2.0, 3.0), Vec3::ZERO),
+            (id, Vec3::Z, Vec3::new(0.0, 4.0, 0.0))
+        ]
+    );
+    assert_eq!(rig.services.impulses, [(id, Vec3::new(0.0, 5.0, 0.0))]);
+    assert_eq!(rig.services.time_scale, Some(0.25));
+
+    // Only a dynamic body moves; the script hears why.
+    rig.exec("world.spawn({ id = 'sign', components = { Collider = { shape = 'Box' } } })")
+        .unwrap();
+    for call in [
+        "physics.set_velocity(world.get('sign'), vector.zero)",
+        "physics.impulse(world.get('sign'), vector.zero)",
+    ] {
+        let d = rig.exec_err(call);
+        assert_eq!(d.code, codes::BAD_ARGUMENT, "{call}");
+        assert!(d.message.contains("not a dynamic body"), "{}", d.message);
+    }
+}
+
+#[test]
+fn math_random_starts_from_the_seed_and_os_clock_is_simulation_time() {
+    let draw = |seed: i64, kind: ContextKind| {
+        let mut rig = Rig::with_config(RuntimeConfig::new(project()).with_seed(seed));
+        rig.exec_in(kind, "return math.random(1, 1000000)").unwrap()
+    };
+    assert_eq!(draw(3, ContextKind::Game), draw(3, ContextKind::Game));
+    assert_ne!(draw(3, ContextKind::Game), draw(4, ContextKind::Game));
+    // The tools context draws a sequence of its own.
+    assert_ne!(draw(3, ContextKind::Game), draw(3, ContextKind::Tools));
+
+    // Reseeding starts the sequence again.
+    let mut rig = Rig::with_config(RuntimeConfig::new(project()).with_seed(3));
+    let first = rig.exec("return math.random(1, 1000000)").unwrap();
+    rig.rt.reseed(3).unwrap();
+    assert_eq!(rig.exec("return math.random(1, 1000000)").unwrap(), first);
+
+    // os.clock is a fixed start plus simulation time.
+    assert_eq!(rig.exec("return os.clock()").unwrap(), 86_400.0);
+    rig.run_for(0.5, STEP);
+    let t = rig.exec("return os.clock() - 86400").unwrap();
+    assert!((t.as_f64().unwrap() - 0.5).abs() < 0.02, "{t}");
 }
 
 #[test]

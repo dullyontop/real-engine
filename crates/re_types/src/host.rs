@@ -80,6 +80,17 @@ pub trait HostServices {
     /// A body's velocities after the last step: `(linear, angular)`.
     fn body_velocity(&self, entity: EntityId) -> HostResult<(Vec3, Vec3)>;
 
+    /// Sets the linear (m/s) and angular (rad/s) velocity of the dynamic body on
+    /// `entity` at the next physics phase, in place of what it had. An entity
+    /// that has no body yet is accepted: one spawned this frame gets its body in
+    /// that phase, before the velocity is set.
+    fn set_body_velocity(
+        &mut self,
+        entity: EntityId,
+        linear: Vec3,
+        angular: Vec3,
+    ) -> HostResult<()>;
+
     /// Sets the driver input of the vehicle on `entity` from the next step
     /// until the next call (ADR-0040).
     fn vehicle_drive(&mut self, entity: EntityId, input: VehicleInput) -> HostResult<()>;
@@ -126,6 +137,16 @@ pub trait HostServices {
     /// Asks the runtime to restart the game (reload the entry scene) at the end of
     /// the frame.
     fn request_restart(&mut self);
+
+    /// Sets how fast simulation time runs against frame time, from the next
+    /// fixed steps the runtime counts: 1 is normal, 0.5 half speed, and 0 runs
+    /// no fixed steps (frame callbacks still run); 0 to 10. The step itself
+    /// never changes, only how many run per frame. A restart sets it back to 1.
+    fn set_time_scale(&mut self, scale: f64) -> HostResult<()>;
+
+    /// The time scale in effect (1 unless [`set_time_scale`](Self::set_time_scale)
+    /// changed it).
+    fn time_scale(&self) -> f64;
 
     /// This frame's raw device state and events, for layers that read keys
     /// rather than actions. `None` when the host has no raw input (the

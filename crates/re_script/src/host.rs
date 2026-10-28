@@ -158,6 +158,9 @@ impl HostServices for NoServices {
     fn body_velocity(&self, _: EntityId) -> HostResult<(Vec3, Vec3)> {
         Self::unavailable("physics.velocity")
     }
+    fn set_body_velocity(&mut self, _: EntityId, _: Vec3, _: Vec3) -> HostResult<()> {
+        Self::unavailable("physics.set_velocity")
+    }
     fn vehicle_drive(&mut self, _: EntityId, _: VehicleInput) -> HostResult<()> {
         Self::unavailable("physics.drive")
     }
@@ -200,6 +203,12 @@ impl HostServices for NoServices {
         Self::unavailable("proc.regenerate")
     }
     fn request_restart(&mut self) {}
+    fn set_time_scale(&mut self, _: f64) -> HostResult<()> {
+        Self::unavailable("time.set_scale")
+    }
+    fn time_scale(&self) -> f64 {
+        1.0
+    }
     fn anim_set(&mut self, _: EntityId, _: &str, _: AnimValue) -> HostResult<()> {
         Self::unavailable("anim.set")
     }

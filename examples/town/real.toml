@@ -1,0 +1,93 @@
+[project]
+name = "town"
+entry_scene = "scenes/main.scene.json"
+
+[render]
+width = 1280
+height = 720
+clear = [0.42, 0.6, 0.86, 1.0]
+
+# The truck: `drive`'s Y is the throttle (against the way the truck rolls it
+# brakes first), its X steers, and `brake` pulls the hand brake. `start`
+# starts a shift (and a new town after one), `pause` pauses it, `camera`
+# switches between the chase camera and the view from above, `reset` sets
+# the truck back on its wheels and `horn` sounds the horn.
+[input.buttons]
+brake = ["key:Space", "pad:South"]
+start = ["key:Enter", "pad:Start"]
+pause = ["key:KeyP", "key:Escape", "pad:Select"]
+camera = ["key:KeyC", "pad:North"]
+reset = ["key:KeyR", "pad:West"]
+horn = ["key:KeyH", "pad:LeftThumb"]
+
+[input.axes]
+drive = [
+    { composite = ["key:KeyW", "key:KeyS", "key:KeyA", "key:KeyD"] },
+    { composite = ["key:ArrowUp", "key:ArrowDown", "key:ArrowLeft", "key:ArrowRight"] },
+    { stick = "left", dead_zone = 0.15 },
+]
+
+# Post-processing (ADR-0038): neutral tone mapping, a little bloom on the
+# lamps, and slightly richer colour.
+[render.post]
+tone_mapping = "PbrNeutral"
+
+[render.post.bloom]
+intensity = 0.06
+threshold = 1.0
+
+[render.post.grading]
+saturation = 0.12
+
+# Sun shadows in four cascades out to 220 m: the houses shade the streets
+# around the truck.
+[render.shadows]
+cascades = 4
+distance = 220.0
+split_lambda = 0.85
+
+# `real build` (ADR-0037): the identifier names the folders the packaged game
+# saves in. models/ (the truck) is not a default package folder.
+[package]
+identifier = "com.example.town"
+display_name = "Town Courier"
+include = ["models/**"]
+
+# The mixer (ADR-0041). The engine has its own bus under `sfx`, squeezed by a
+# compressor; everything under `sfx` also feeds `street`, a short reverb, as if
+# the houses answered. While the game is paused the `paused` snapshot muffles
+# the music and turns the world down; the shift's last quarter (at most half a
+# minute) brings the music up (`hurry`). tools/make_sounds.py writes every sound
+# in assets/.
+[audio]
+default_bus = "sfx"
+
+[audio.buses.sfx]
+sends = { street = -12.0 }
+
+[audio.buses.engine]
+parent = "sfx"
+volume_db = -5.0
+effects = [
+    { kind = "compressor", threshold_db = -14.0, ratio = 3.0, attack_ms = 5.0, release_ms = 120.0, makeup_db = 2.0 },
+]
+
+[audio.buses.ui]
+volume_db = -3.0
+
+[audio.buses.music]
+volume_db = -12.0
+effects = [{ kind = "filter", mode = "low_pass", cutoff_hz = 18000.0 }]
+
+[audio.buses.ambience]
+volume_db = -10.0
+
+[audio.sends.street]
+effects = [{ kind = "reverb", feedback = 0.55, damping = 0.5, mix = 1.0 }]
+
+[audio.snapshots.paused]
+buses = { sfx = -18.0, ambience = -20.0, music = -16.0 }
+effects = [{ bus = "music", effect = 0, cutoff_hz = 700.0 }]
+
+[audio.snapshots.hurry]
+buses = { music = -7.0 }

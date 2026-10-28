@@ -2,9 +2,9 @@
 #
 # Its checks are the merge rule (ADR-0023 and its amendments):
 # - on Ubuntu, 12: fmt, clippy, test, msrv, deny, xtask, verify-demo,
-#   xvfb-smoke, verify-plaza (M2) and verify-valley (WP28); build-web (WP29 PR
-#   "portable"); build-package, the packaged Linux games (ADR-0037, WP19 PR
-#   "bundles");
+#   xvfb-smoke, verify-plaza (M2) and verify-valley (WP28; it also checks the
+#   sample game, examples/town); build-web (WP29 PR "portable"); build-package,
+#   the packaged Linux games (ADR-0037, WP19 PR "bundles");
 # - while the repository is public, the Windows and macOS checks and d2 of
 #   platforms.yml, which the `platforms` job calls with the release checks
 #   (ADR-0023's amendment for the public repository). A private repository's
@@ -270,7 +270,8 @@ jobs:
 
   verify-valley:
     # The M3 example (M3_PLAN WP28): a streamed world (ADR-0042). ADR-0023's
-    # WP28 amendment makes it required.
+    # WP28 amendment makes it required. The sample game (examples/town) is
+    # checked here too, after the valley, sharing the build.
     needs: changes
     if: needs.changes.outputs.full == 'true'
     timeout-minutes: 50
@@ -329,6 +330,38 @@ jobs:
         run: |
           xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/valley --frames 300 --exit-after | tee out/run.log
           grep -qx 'RUN OK' out/run.log
+      - name: The committed town models and sounds are what their generators write
+        run: |
+          (cd examples/town && python3 tools/make_models.py && python3 tools/make_sounds.py)
+          git diff --exit-code -- examples/town/models examples/town/assets
+      - name: real check --types on the town
+        run: target/release/real check --types --project examples/town
+      - name: real verify on the town
+        run: target/release/real verify --project examples/town --json > out/verify-town.json
+      - name: Check the town's verify report
+        # Every stage ran and passed, the drive, shift and newtown replays each
+        # ran twice with the same state_hash, and at least seven goldens match.
+        run: |
+          jq -e '
+            .ok == true
+            and ([.stages[].name] | contains(["schema", "compile", "scan", "boot", "replays", "goldens", "perf"]))
+            and all(.stages[]; .ok and ((.data | type) != "object" or (.data | has("skipped") | not)))
+            and ([.stages[] | select(.name == "replays") | .data.runs[]] as $r
+                 | ($r | length) >= 3 and all($r[]; .deterministic)
+                   and any($r[]; .file | endswith("drive.replay.json"))
+                   and any($r[]; .file | endswith("shift.replay.json"))
+                   and any($r[]; .file | endswith("newtown.replay.json")))
+            and ([.stages[] | select(.name == "goldens") | .data.checks[]] as $g
+                 | ($g | length) >= 7 and all($g[]; .matches))
+          ' out/verify-town.json
+          jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic), state_hash=\(.state_hash)"' out/verify-town.json
+          jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify-town.json
+      - name: real verify on the town with GL
+        env:
+          RE_BACKENDS: gl
+        run: |
+          target/release/real verify --project examples/town --json > out/verify-town-gl.json
+          jq -e '.ok == true and ([.stages[] | select(.name == "goldens") | .data.checks[]] | length >= 7 and all(.[]; .matches))' out/verify-town-gl.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -336,6 +369,7 @@ jobs:
           path: |
             out/verify*.json
             examples/valley/.real/out/goldens/
+            examples/town/.real/out/goldens/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -372,16 +406,16 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
       - run: cargo build --locked --release -p re_cli
-      - name: real build the island, the plaza and the valley
+      - name: real build the island, the plaza, the valley and the town
         run: |
           mkdir -p out
-          for project in island plaza valley; do
+          for project in island plaza valley town; do
             target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
             jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes; notices for \(.notices.crates) crates"' "out/build-$project.json"
           done
       - name: real verify --package
         run: |
-          for project in island plaza valley; do
+          for project in island plaza valley town; do
             target/release/real verify --project "examples/$project" --package "dist/$project"
           done
       - name: The game needs at most glibc 2.35 and links no hot reload

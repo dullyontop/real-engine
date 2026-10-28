@@ -9,7 +9,7 @@ use re_app::AppConfig;
 use re_app::verify::{StageReport, VerifyContext, VerifyStage};
 use re_core::{Diagnostic, Location};
 use re_script_check::corpus::{self, CorpusOptions, CorpusReport};
-use re_script_check::types::TypesOptions;
+use re_script_check::types::{TypesOptions, is_generator_script};
 use re_script_check::{Coverage, GapReport};
 use serde_json::json;
 
@@ -214,12 +214,30 @@ pub fn run(args: CheckArgs, project: &Path) -> anyhow::Result<ExitCode> {
         Some(c) if args.types && c.compat.is_some() => compat_definitions(project),
         _ => None,
     };
+    // Generator scripts are checked against `generator.d.luau`, written next
+    // to `engine.d.luau` when the project has any.
+    let generator_definitions = match (&config, args.types) {
+        (Some(_), true) if project.join(re_script::generator::GENERATORS_DIR).is_dir() => {
+            match re_script::generator::write_definitions(project) {
+                Ok(path) => Some(path),
+                Err(e) => {
+                    eprintln!(
+                        "warning: cannot write {}: {e}; the type checker uses a temporary copy",
+                        re_script::generator::DEFINITIONS_PATH
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let options = CorpusOptions {
         types: args.types,
         types_options: TypesOptions {
             checker: checker(project, &args, config.as_ref()),
             definitions,
             compat_definitions,
+            generator_definitions,
         },
     };
     let mut report = corpus::run(&dirs, &options);
@@ -283,12 +301,18 @@ impl VerifyStage for ScanStage {
     fn run(&self, ctx: &VerifyContext<'_>) -> StageReport {
         let files = re_app::verify::content_files(ctx.project, "scripts", ".luau");
         let mut usage = re_script_check::ApiUsage::default();
+        // Generator scripts have an API of their own.
+        let mut generator_usage = re_script_check::ApiUsage::default();
         let mut diags = Vec::new();
         for file in &files {
             match std::fs::read_to_string(ctx.project.join(file)) {
                 Ok(source) => match re_script_check::scan_source(&source, file) {
                     Ok(u) => {
-                        usage.merge(&u);
+                        if is_generator_script(Path::new(file)) {
+                            generator_usage.merge(&u);
+                        } else {
+                            usage.merge(&u);
+                        }
                         diags.extend(re_script_check::pow_warnings(&source, file));
                     }
                     Err(d) => diags.push(d),
@@ -321,6 +345,7 @@ impl VerifyStage for ScanStage {
         if compat {
             gap.drop_children(&service_children(ctx.project));
         }
+        gap.merge(GapReport::new(&generator_usage, &Coverage::generator()));
         diags.extend(gap_warnings(&gap));
         StageReport::new(
             "scan",
