@@ -88,8 +88,9 @@ impl egui_dock::TabViewer for Tabs<'_> {
         let rect = ui.max_rect();
         let panel = match tab {
             PanelId::Viewport => {
+                // Its rectangle is its image's, set by the panel.
                 viewport::viewport(ed, ui, app, actions);
-                Panel::Viewport
+                return;
             }
             PanelId::Hierarchy => {
                 hierarchy::hierarchy(ed, ui, app.world(), actions);
