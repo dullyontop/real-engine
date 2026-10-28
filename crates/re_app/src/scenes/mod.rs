@@ -17,8 +17,10 @@
 mod apply;
 pub mod check;
 mod fresh;
+mod game;
 pub mod list;
 pub mod read;
+pub mod saves;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -28,13 +30,15 @@ use re_core::time::Instant;
 use re_core::{Diagnostic, Location};
 use re_proc::stream::{Lateness, StreamConfig};
 use re_scene::{SceneDoc, World};
-use re_script::{GameAccess, SceneLoadState, SceneRefusal, SceneRequestKind};
+use re_script::{SceneLoadState, SceneRefusal, SceneRequestKind};
 use re_types::{SceneChange, SceneChangeKind};
 
 pub use apply::unreferenced;
 pub use check::{Existing, check};
 pub use fresh::{content_world, ensure_streamer, fork_world, fresh_world};
+pub use game::Game;
 pub use list::SceneList;
+pub use saves::{SaveFile, Saves, SavesConfig};
 
 use crate::codes;
 use crate::media::Media;
@@ -635,8 +639,19 @@ fn missed(want: &SceneChange) -> Diagnostic {
     .with_hint("record the replay again, or find what kept the run from changing scenes")
 }
 
-impl GameAccess for Scenes {
-    fn scene_request(&mut self, kind: SceneRequestKind, name: &str) -> Result<u64, SceneRefusal> {
+/// The `scene` library's calls ([`re_script::GameAccess`], through [`Game`]).
+impl Scenes {
+    /// Starts a switch or an additive load, and returns its load id.
+    ///
+    /// # Errors
+    ///
+    /// [`SceneRefusal::Unknown`] for a name the list does not have, and
+    /// [`SceneRefusal::Refused`] for a load of a scene loaded or asked for.
+    pub fn scene_request(
+        &mut self,
+        kind: SceneRequestKind,
+        name: &str,
+    ) -> Result<u64, SceneRefusal> {
         if self.list.path(name).is_none() {
             return Err(SceneRefusal::Unknown);
         }
@@ -669,7 +684,13 @@ impl GameAccess for Scenes {
             .expect("a switch or load has a load id"))
     }
 
-    fn scene_unload(&mut self, name: &str) -> Result<(), SceneRefusal> {
+    /// Unloads an added scene at EndFrame.
+    ///
+    /// # Errors
+    ///
+    /// [`SceneRefusal::Unknown`] for a name the list does not have, and
+    /// [`SceneRefusal::Refused`] for the main scene or one not loaded.
+    pub fn scene_unload(&mut self, name: &str) -> Result<(), SceneRefusal> {
         if self.list.path(name).is_none() {
             return Err(SceneRefusal::Unknown);
         }
@@ -703,23 +724,14 @@ impl GameAccess for Scenes {
         Ok(())
     }
 
-    fn scene_load(&self, id: u64) -> Option<SceneLoadState> {
+    /// The state of load `id`, or `None` for an id never given.
+    pub fn scene_load(&self, id: u64) -> Option<SceneLoadState> {
         self.loads.get(&id).cloned()
     }
 
-    fn scene_current(&self) -> String {
-        self.main.clone()
-    }
-
-    fn scenes_loaded(&self) -> Vec<String> {
-        self.loaded()
-    }
-
-    fn scenes_listed(&self) -> Vec<String> {
-        self.list.names()
-    }
-
-    fn keep(&mut self, id: &str, keep: bool) {
+    /// Keeps the root with stable id `id` across switches, or stops keeping
+    /// it.
+    pub fn keep(&mut self, id: &str, keep: bool) {
         if keep {
             self.kept.insert(id.to_string());
         } else {
@@ -727,7 +739,8 @@ impl GameAccess for Scenes {
         }
     }
 
-    fn is_kept(&self, id: &str) -> bool {
+    /// True if the entity with stable id `id` is kept across switches.
+    pub fn is_kept(&self, id: &str) -> bool {
         self.kept.contains(id)
     }
 }

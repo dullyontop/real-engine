@@ -230,7 +230,8 @@ Render         Renderer::render(device, queue, view, &snapshot); egui overlay th
 EndFrame       apply scripts' host requests (HUD text, mouse behaviour, regeneration, screenshots);
                regenerate changed sources and release the derived assets they dropped; then a
                restart, or the scene switches, loads and unloads that are ready (ADR-0059), and
-               the script threads waiting on them woken for the next frame; PerfReport sample
+               the script threads waiting on them woken for the next frame; the save slots
+               written since the last frame written to the data folder; PerfReport sample
 ```
 
 The phase order matches the order Roblox-style scripts expect: render-step work happens before simulation, "stepped" before physics, and "heartbeat" after physics (ADR-0009). This makes the M2 mapping direct.
@@ -695,7 +696,7 @@ my-game/
   scripts/shared/**.luau     modules require-able from both
   scripts/generators/**.luau Luau node kinds (`project.*`, ADR-0043)
   shaders/*.wgsl             WGSL files that replace or add to the engine's shader files (ADR-0038); packed by `real build`
-  data/seed/**               saved data that verify runs, replays and new saves start from (ADR-0048); packed by `real build`
+  data/seed/**               saved data that verify runs, replays and new saves start from (ADR-0048; save slots in data/seed/saves/, ADR-0059); packed by `real build`
   assets/**                  .gltf/.glb, .png/.jpg, .wav, each with a .meta.json (uuid, import settings)
   tests/replays/*.replay.json
   tests/goldens/<backend>/*.png
@@ -717,6 +718,10 @@ entry_scene = "scenes/main.scene.json"
 
 [scenes]                      # the scenes scripts load by name (M4, ADR-0059); the entry scene is listed too,
 harbour = "scenes/harbour.scene.json"   # under its file stem (here `main`) unless a name here has its path
+
+[saves]                       # save slots (M4, ADR-0059 §7)
+version = 1                   # the game's data version this build writes; older slots pass through save.migrate steps
+mode = "persist"              # or "session": never keep saves, even in `real run`
 
 [sim]
 fixed_hz = 60
@@ -935,6 +940,16 @@ A replay may also carry `raw` rows (`RawReplayInput`) for layers that read keys 
 ```
 
 Goldens are kept per backend, because GL and Vulkan differ in small ways (ADR-0010). `verify` compares against the set for the backend it ran on, using `[verify]` `golden_mean_tolerance` and `golden_max_outliers` from `real.toml`. `real verify --update-goldens` rewrites the current backend's set from this run; review the images before committing them. The dx12 and metal sets can only be rendered on Windows and macOS: the `goldens` workflow renders them there for a branch and commits them to it (ADR-0023).
+
+### Save slots
+
+A native game keeps its players' progress in save slots (M4, ADR-0059 §7). The `save` library writes a table of the game's data under a slot name (1 to 64 characters from `a`–`z`, `0`–`9`, `_` and `-`), stamped with `[saves] version` and the run's `os.time()`, and reads it back through the game's `save.migrate` steps when an older version wrote it. A slot is the file `saves/<slot>.json` in the data folder (`schemas/save.schema.json`):
+
+```json
+{ "format": "real-engine/save", "version": 1, "data_version": 2, "saved_at": 1798128000, "data": { "coins": 12, "visited": ["town"] } }
+```
+
+A run that keeps data (`real run` without `--replay`, the editor, a packaged game, the browser) reads and writes the data folder's `saves/` when `[saves] mode` is `persist`. Every other run (`real verify`, replays, `play.run`, the test harness, or `mode = "session"`) starts from an in-memory copy of `data/seed/saves/` and writes nothing, so it repeats; `real verify` checks the seeded slots. Reads see a write at once, and the file is written at EndFrame, once per slot. A file that cannot be written is `RE0573` (the slot stays in memory), and a file that is not a save is set aside as `<slot>.json.bad` (`RE0574`). A restart keeps the slots, as it keeps the data folder's files.
 
 ### Caches
 

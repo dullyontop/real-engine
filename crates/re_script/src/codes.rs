@@ -62,5 +62,26 @@ pub const SCENE_UNKNOWN: Code = Code::new("RE3100");
 /// entity that is not a root (ADR-0059 §3).
 pub const SCENE_REFUSED: Code = Code::new("RE3101");
 
+/// A save slot name is not 1 to 64 characters from `a`–`z`, `0`–`9`, `_` and
+/// `-` (ADR-0059 §7).
+pub const SAVE_SLOT_INVALID: Code = Code::new("RE3102");
+
+/// `save.write` was given data a save cannot hold as written: not a table, a
+/// vector, an entity, a function, a number key outside a sequence, NaN or
+/// infinity, nesting deeper than 64, or more than 4 MiB as JSON (ADR-0059 §7).
+pub const SAVE_VALUE_INVALID: Code = Code::new("RE3103");
+
+/// `save.read` found data of an older version with no `save.migrate` step
+/// from it (ADR-0059 §7).
+pub const SAVE_MIGRATION_MISSING: Code = Code::new("RE3104");
+
+/// A `save.migrate` step raised an error or returned something other than a
+/// table (ADR-0059 §7).
+pub const SAVE_MIGRATION_FAILED: Code = Code::new("RE3105");
+
+/// `save.read` found data written by a newer version of the game than
+/// `[saves] version` (ADR-0059 §7).
+pub const SAVE_TOO_NEW: Code = Code::new("RE3106");
+
 /// A script read a member the engine API does not have.
 pub const UNSUPPORTED_MEMBER: Code = Code::new("RE9001");

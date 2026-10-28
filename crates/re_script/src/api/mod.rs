@@ -25,6 +25,7 @@ pub(crate) mod json;
 pub(crate) mod libs;
 pub mod math;
 pub mod proc;
+pub mod save;
 pub(crate) mod scene;
 pub(crate) mod stream;
 pub mod value;

@@ -246,7 +246,7 @@ fn find_location(text: &str) -> Option<(&str, u32, &str)> {
 }
 
 /// Splits `scripts/a.luau:12: boom` into chunk, line and message.
-fn split_location(raw: &str) -> (Option<String>, Option<u32>, String) {
+pub(crate) fn split_location(raw: &str) -> (Option<String>, Option<u32>, String) {
     let (first, rest) = match raw.split_once('\n') {
         Some((f, r)) => (f, Some(r)),
         None => (raw, None),

@@ -76,6 +76,13 @@ pub struct AppConfig {
     /// scene (ADR-0059 §1; [`crate::scenes::SceneList`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub scenes: BTreeMap<String, String>,
+    /// `[saves]`: the data version save slots are written with, and whether
+    /// a run that keeps data keeps them (ADR-0059 §7).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::scenes::saves::SavesConfig::is_default"
+    )]
+    pub saves: crate::scenes::saves::SavesConfig,
     /// Runtime option: run without a window. Headless runs use a fixed frame
     /// time of one simulation step.
     #[serde(skip)]
@@ -104,6 +111,7 @@ impl Default for AppConfig {
             net: crate::net::NetConfig::default(),
             package: None,
             scenes: BTreeMap::new(),
+            saves: crate::scenes::saves::SavesConfig::default(),
             headless: true,
             persist_edits: false,
         }
@@ -443,6 +451,10 @@ impl AppConfig {
             .validate()
             .map_err(|d| d.at(Location::file(CONFIG_FILE)))?;
         self.scene_list()?;
+        if let Some(problem) = self.saves.problem() {
+            return Err(Diagnostic::error(codes::SAVES_SETTINGS_INVALID, problem)
+                .at(Location::file(CONFIG_FILE)));
+        }
         Ok(())
     }
 
@@ -781,6 +793,35 @@ effects = [{ bus = "sfx", effect = 0, cutoff_hz = 600.0 }]
         assert_eq!(c.project.entry_scene, "scenes/main.scene.json");
         assert_eq!(c.sim.fixed_hz, 60);
         assert_eq!(c.sim.max_steps_per_frame, 5);
+    }
+
+    #[test]
+    fn saves_take_defaults_and_refuse_version_0() {
+        use crate::scenes::saves::{SaveMode, SavesConfig};
+        let c = AppConfig::parse("[project]\nname = \"x\"\n").unwrap();
+        assert!(c.saves.is_default());
+        assert_eq!((c.saves.version, c.saves.mode), (1, SaveMode::Persist));
+        let c = AppConfig::parse("[saves]\nversion = 3\nmode = \"session\"\n").unwrap();
+        assert_eq!(
+            c.saves,
+            SavesConfig {
+                version: 3,
+                mode: SaveMode::Session
+            }
+        );
+        let e = AppConfig::parse("[saves]\nversion = 0\n").unwrap_err();
+        assert_eq!(e.code, codes::SAVES_SETTINGS_INVALID);
+        assert_eq!(e.message, "[saves] version is 0; data versions start at 1");
+        let e = AppConfig::parse("[saves]\nmode = \"cloud\"\n").unwrap_err();
+        assert_eq!(e.code, codes::CONFIG_INVALID);
+        // The explain page's example is a valid section.
+        let page = include_str!("../explain/RE0576.md");
+        let example = page
+            .split("```toml\n")
+            .nth(1)
+            .and_then(|rest| rest.split("```").next())
+            .expect("a toml example");
+        assert_eq!(AppConfig::parse(example).unwrap().saves.version, 2);
     }
 
     #[test]

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Real Engine save",
+  "description": "A save file: `saves/<slot>.json` in the data folder.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "An optional JSON Schema reference, for a seed written by hand.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "format": {
+      "description": "Always `real-engine/save`.",
+      "type": "string",
+      "const": "real-engine/save"
+    },
+    "version": {
+      "description": "The file's version: 1.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0,
+      "const": 1
+    },
+    "data_version": {
+      "description": "The game's data version: `[saves] version` of the build that wrote it.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 1
+    },
+    "saved_at": {
+      "description": "The run's `os.time()` when the slot was written: seconds since 1970,\nUTC.",
+      "type": "integer",
+      "format": "int64"
+    },
+    "data": {
+      "description": "The game's data: the table `save.write` was given, as JSON (an array\nfor a table with the keys 1 to n, else an object).",
+      "type": [
+        "object",
+        "array"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "data_version",
+    "saved_at",
+    "data"
+  ]
+}

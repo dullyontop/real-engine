@@ -329,7 +329,52 @@ fn stage_schema(project: &Path, config: &AppConfig) -> StageReport {
     }
     counts.insert("replays".into(), replays.len().into());
 
+    // The save slots repeatable runs start from (ADR-0059 §7).
+    let seeds = content_files(project, crate::scenes::saves::SEED_DIR, ".json");
+    for file in &seeds {
+        diags.extend(seeded_save_problem(project, config, file));
+    }
+    if !seeds.is_empty() {
+        counts.insert("seeded_saves".into(), seeds.len().into());
+    }
+
     StageReport::new("schema", diags, Json::Object(counts))
+}
+
+/// What is wrong with the seeded save `file`: a name that is not
+/// `<slot>.json`, a file that is not a save, or data newer than
+/// `[saves] version`, which `save.read` would refuse.
+fn seeded_save_problem(project: &Path, config: &AppConfig, file: &str) -> Option<Diagnostic> {
+    let seed = crate::scenes::saves::SEED_DIR;
+    let slot = file
+        .strip_prefix(seed)
+        .and_then(|f| f.strip_prefix('/'))
+        .and_then(|f| f.strip_suffix(".json"));
+    if !slot.is_some_and(re_script::is_slot_name) {
+        return Some(invalid(
+            file,
+            format!(
+                "{file} is not a save slot: a seeded slot is {seed}/<slot>.json, with a slot name of 1 to 64 characters from a-z, 0-9, _ and -"
+            ),
+            None,
+        ));
+    }
+    let bytes = match std::fs::read(project.join(file)) {
+        Ok(bytes) => bytes,
+        Err(e) => return Some(invalid(file, format!("cannot read {file}: {e}"), None)),
+    };
+    match crate::scenes::saves::parse(&bytes) {
+        Err(why) => Some(invalid(file, format!("{file} {why}"), None)),
+        Ok(s) if s.data_version > config.saves.version => Some(invalid(
+            file,
+            format!(
+                "{file} holds version {} data, newer than [saves] version {} in real.toml; save.read would refuse it",
+                s.data_version, config.saves.version
+            ),
+            None,
+        )),
+        Ok(_) => None,
+    }
 }
 
 /// Parses the scene file `file` and loads it into an empty World.

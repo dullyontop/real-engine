@@ -191,6 +191,9 @@ pub struct App {
     /// What a restart forks instead of loading the scene the run began in
     /// ([`App::set_start_world`]).
     start_world: Option<self::scenes::StartWorld>,
+    /// The run's save slots (ADR-0059 §7), in the data folder once
+    /// [`App::persist_data`] is called.
+    saves: crate::scenes::Saves,
     /// How many times the World was reloaded by [`App::restart`].
     restarts: u64,
     /// Characters [`App::link_new_characters`] already tried to link.

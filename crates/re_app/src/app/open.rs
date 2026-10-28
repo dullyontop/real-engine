@@ -21,7 +21,7 @@ use crate::host::Pending;
 use crate::media::Media;
 use crate::perf::PerfRecorder;
 use crate::procedural;
-use crate::scenes::{self, Scenes};
+use crate::scenes::{self, Saves, Scenes};
 use crate::sync::anim::AnimSync;
 use crate::sync::anim_skin::SkinSync;
 use crate::sync::audio::AudioSync;
@@ -99,6 +99,7 @@ impl App {
         scenes::ensure_streamer(&mut world, &config.stream)?;
         let compat_config = crate::compat::compat_config(&config)?;
         let scenes = Scenes::new(config.scene_list()?, &config.project.entry_scene);
+        let saves = Saves::new(&files, &config.saves, false);
         let graph_inputs = procedural::inputs(&mut world);
         let physics = Physics::new(physics_config(&config), TaskPool::global())?;
         let clock = FixedClock::new(config.sim.fixed_hz, config.sim.max_steps_per_frame);
@@ -153,6 +154,7 @@ impl App {
             graph_inputs,
             scenes,
             start_world: None,
+            saves,
             restarts: 0,
             link_tried: Default::default(),
             scripts: None,
@@ -234,6 +236,8 @@ impl App {
         )?;
         copy.alpha = self.alpha;
         copy.shaders = self.shaders.clone();
+        // The copy saves to memory, from the live run's slots.
+        copy.saves = self.saves.fork();
         if restarted {
             copy.scenes.begin_at(self.scenes.start_path());
         } else {

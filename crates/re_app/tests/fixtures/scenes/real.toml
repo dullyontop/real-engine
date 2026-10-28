@@ -1,7 +1,8 @@
 # The scenes fixture (ADR-0059): a title, a town and a HUD loaded over the
-# town, a director and a player kept across switches, and replays that check
-# the scene changes they make. `cargo xtask d2` runs its replays on three
-# platforms.
+# town, a director and a player kept across switches, a save slot that
+# migrates from version 1 of the game's data and is saved at every switch,
+# and replays that check the scene changes they make. `cargo xtask d2` runs
+# its replays on three platforms.
 [project]
 name = "scenes"
 entry_scene = "scenes/title.scene.json"
@@ -10,6 +11,9 @@ entry_scene = "scenes/title.scene.json"
 title = "scenes/title.scene.json"
 town = "scenes/town.scene.json"
 hud = "scenes/hud.scene.json"
+
+[saves]
+version = 2
 
 [input.buttons]
 next = ["key:Enter", "pad:Start"]

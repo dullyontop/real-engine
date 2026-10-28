@@ -1,9 +1,12 @@
-//! Scenes in the running game (ADR-0059), on the scenes fixture: its replays
-//! switch, load and unload scenes at the frames their `scenes` lists name,
-//! with the same state hash on every run; a replay whose list differs fails
-//! with `RE0571`; kept entities stand in for the scene's own; `world.restart()`
-//! goes back to the scene the run began in, or to a play session's start
-//! world; and edit mode opens and saves another scene.
+//! Scenes and saves in the running game (ADR-0059), on the scenes fixture:
+//! its replays switch, load and unload scenes at the frames their `scenes`
+//! lists name, with the same state hash on every run; a replay whose list
+//! differs fails with `RE0571`; kept entities stand in for the scene's own;
+//! `world.restart()` goes back to the scene the run began in, or to a play
+//! session's start world; edit mode opens and saves another scene; and the
+//! progress slot migrates from the seed's version 1, is saved and read back
+//! at every switch, and reaches the data folder only in a run that keeps
+//! data.
 
 use std::path::{Path, PathBuf};
 
@@ -27,7 +30,7 @@ fn replay(name: &str) -> ReplayDoc {
 /// A copy of the fixture to write into.
 fn copy() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    for sub in ["", "scenes", "scripts", "tests/replays"] {
+    for sub in ["", "scenes", "scripts", "tests/replays", "data/seed/saves"] {
         std::fs::create_dir_all(dir.path().join(sub)).unwrap();
         for entry in std::fs::read_dir(fixture().join(sub)).unwrap() {
             let entry = entry.unwrap();
@@ -311,17 +314,21 @@ fn a_play_session_restarts_from_its_start_world() {
 
 #[test]
 fn play_run_plays_a_copy_with_the_same_scenes() {
-    let mut app = open(&fixture());
+    let dir = copy();
+    let mut app = open(dir.path());
+    app.persist_data();
     let doc = replay("tour");
     let (report, _, _) = app
         .play_copy(doc.frames, Some(doc.clone()), &[], false)
         .unwrap();
     assert!(report.ok(), "{:#?}", report.diagnostics);
     assert_eq!(Some(report.scenes), doc.scenes);
-    // Nothing reached the live app.
+    // Nothing reached the live app, nor its data folder: the copy saved its
+    // progress in memory.
     assert_eq!(app.scenes().main(), "title");
     assert!(app.scenes().log().is_empty());
     assert!(app.world().entity("floor").is_ok());
+    assert!(!dir.path().join(".real/data/saves").exists());
 }
 
 #[test]
@@ -417,4 +424,130 @@ fn verify_checks_the_listed_scenes_and_the_scenes_replays_name() {
             "the scene \"harbour\" that [scenes] lists in real.toml is missing: levels/harbour.scene.json",
         ]
     );
+}
+
+#[test]
+fn verify_checks_the_seeded_saves() {
+    let dir = copy();
+    let seed = dir.path().join("data/seed/saves");
+    let progress = std::fs::read_to_string(seed.join("progress.json")).unwrap();
+    std::fs::write(seed.join("Slot.json"), &progress).unwrap();
+    std::fs::write(seed.join("broken.json"), "{").unwrap();
+    std::fs::write(
+        seed.join("future.json"),
+        progress.replace("\"data_version\": 1", "\"data_version\": 3"),
+    )
+    .unwrap();
+    let config = AppConfig::load(dir.path()).unwrap();
+    let report = re_app::verify::content_stages(dir.path(), &config, &[])
+        .into_iter()
+        .find(|s| s.name == "schema")
+        .unwrap();
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .all(|d| d.code == codes::CONTENT_INVALID)
+    );
+    let messages: Vec<&str> = report
+        .diagnostics
+        .iter()
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "data/seed/saves/Slot.json is not a save slot: a seeded slot is data/seed/saves/<slot>.json, with a slot name of 1 to 64 characters from a-z, 0-9, _ and -",
+            "data/seed/saves/broken.json is not JSON (EOF while parsing an object at line 1 column 1)",
+            "data/seed/saves/future.json holds version 3 data, newer than [saves] version 2 in real.toml; save.read would refuse it",
+        ]
+    );
+    assert_eq!(report.data["seeded_saves"], 4);
+}
+
+#[test]
+fn the_progress_slot_migrates_from_the_seed_and_is_saved_at_every_switch() {
+    // A run that keeps no data starts from the seed: version 1 data, which
+    // the game's step migrates to version 2.
+    let mut app = open(&fixture());
+    app.run_headless(Some(1), None).unwrap();
+    assert_eq!(text(&app, "progress"), "coins 3, visited title");
+    let mut app = open(&fixture());
+    let report = app.run_headless(None, Some(replay("tour"))).unwrap();
+    assert!(report.ok(), "{:#?}", report.diagnostics);
+    assert_eq!(
+        text(&app, "progress"),
+        "coins 5, visited title > town > title"
+    );
+    // A restart keeps the slots, as it keeps the data folder's files: the
+    // script that starts again reads what the run saved before it.
+    let mut app = open(&fixture());
+    let report = app.run_headless(None, Some(replay("restart"))).unwrap();
+    assert!(report.ok(), "{:#?}", report.diagnostics);
+    assert_eq!(app.restarts(), 1);
+    assert_eq!(
+        text(&app, "progress"),
+        "coins 5, visited title > town > town"
+    );
+    // Nothing reached the fixture's data folder.
+    assert!(!fixture().join(".real/data/saves").exists());
+}
+
+#[test]
+fn a_run_that_keeps_data_writes_its_slots_and_the_next_run_reads_them() {
+    let dir = copy();
+    let saves = dir.path().join(".real/data/saves");
+    // The data folder starts empty, not from the seed: a new game.
+    let mut app = open(dir.path());
+    app.persist_data();
+    let report = app.run_headless(None, Some(replay("tour"))).unwrap();
+    assert!(report.ok(), "{:#?}", report.diagnostics);
+    assert_eq!(
+        text(&app, "progress"),
+        "coins 2, visited title > town > title"
+    );
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(saves.join("progress.json")).unwrap())
+            .unwrap();
+    assert_eq!(file["format"], "real-engine/save");
+    assert_eq!(
+        (&file["version"], &file["data_version"]),
+        (&1.into(), &2.into())
+    );
+    assert_eq!(
+        file["data"],
+        serde_json::json!({ "coins": 2, "visited": ["title", "town", "title"] })
+    );
+    assert!(file["saved_at"].is_i64());
+
+    // The next run reads the data folder, not the seed.
+    let mut next = open(dir.path());
+    next.persist_data();
+    next.run_headless(Some(1), None).unwrap();
+    assert_eq!(
+        text(&next, "progress"),
+        "coins 2, visited title > town > title"
+    );
+
+    // With `mode = "session"`, even a run that keeps data keeps no saves.
+    std::fs::remove_dir_all(&saves).unwrap();
+    let toml = dir.path().join("real.toml");
+    let text_of = std::fs::read_to_string(&toml).unwrap();
+    std::fs::write(
+        &toml,
+        text_of.replace(
+            "[saves]\nversion = 2\n",
+            "[saves]\nversion = 2\nmode = \"session\"\n",
+        ),
+    )
+    .unwrap();
+    let mut session = open(dir.path());
+    session.persist_data();
+    let report = session.run_headless(None, Some(replay("tour"))).unwrap();
+    assert!(report.ok(), "{:#?}", report.diagnostics);
+    assert_eq!(
+        text(&session, "progress"),
+        "coins 5, visited title > town > title"
+    );
+    assert!(!saves.exists());
 }

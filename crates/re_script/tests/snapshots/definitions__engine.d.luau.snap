@@ -303,6 +303,24 @@ declare scene: {
     is_kept: (entity: Entity) -> boolean,
 }
 
+-- Save slots: the game's data by slot name, kept across runs, with migrations between data versions.
+declare save: {
+    -- Saves a table of the game's data in `slot`, stamped with [saves] version and os.time(); reads see it at once, and the file is written at the end of the frame.
+    write: (slot: string, data: {[any]: any}) -> (),
+    -- The data in `slot`, migrated to [saves] version by the save.migrate steps; nil for an empty slot.
+    read: (slot: string) -> {[any]: any}?,
+    -- True if `slot` holds data.
+    exists: (slot: string) -> boolean,
+    -- Every slot that holds data, sorted by name, with the data version and os.time() it was written with.
+    list: () -> { { slot: string, version: number, saved_at: number } },
+    -- Empties `slot`; its file goes at the end of the frame.
+    delete: (slot: string) -> (),
+    -- [saves] version: the data version this build writes.
+    version: () -> number,
+    -- Registers the step that turns version `from` data into version `from + 1` data; save.read runs the steps a slot needs, in turn.
+    migrate: (from: number, step: (data: {[any]: any}) -> {[any]: any}) -> (),
+}
+
 -- Commands (tools context only): the same registry the CLI, editor and agents use.
 declare command: {
     -- Runs a registered command as this script (undoable, logged with the script's path).

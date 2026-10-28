@@ -1,6 +1,6 @@
 //! The libraries other than `world`: `input`, `physics`, `audio`, `anim`, `ui`,
-//! `time`, `task`, `quat`, `color`, `proc`, `stream`, `scene`, `command` (tools
-//! only), and the `print`, `warn` and `script` globals.
+//! `time`, `task`, `quat`, `color`, `proc`, `stream`, `scene`, `save`,
+//! `command` (tools only), and the `print`, `warn` and `script` globals.
 
 use mlua::{Function, IntoLua, Lua, MultiValue, Result, Table, Value};
 use re_command::Origin;
@@ -98,6 +98,11 @@ pub(crate) fn all(lua: &Lua, kind: ContextKind) -> Result<Vec<(&'static str, Tab
             "scene",
             "Scene switches, scenes loaded beside the main one, and entities kept across switches.",
             super::scene::lib,
+        ));
+        libs.push((
+            "save",
+            "Save slots: the game's data by slot name, kept across runs, with migrations between data versions.",
+            super::save::lib,
         ));
     }
     if kind == ContextKind::Tools {
