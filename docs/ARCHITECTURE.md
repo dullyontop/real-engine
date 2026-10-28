@@ -70,6 +70,10 @@ graph TD
     net[re_net] --> core
   end
 
+  subgraph "UI core (M4: egui, glam and libm only)"
+    ui[re_ui]
+  end
+
   subgraph Scripting
     script[re_script] --> command
     script --> scene
@@ -101,6 +105,7 @@ graph TD
     compat --> physics
     compat --> noise
     compat --> net
+    compat --> ui
     app --> compat
     cli --> compat
   end
@@ -140,9 +145,10 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_proc` | ProcGraph IR, nodes, evaluation, cache, the `graph` generator for procedural sources, `graph.*` commands | `ProcGraph`, `NodeRegistry`, `NodeDef`, `Evaluator`, `EvalReport`, `GraphStore`, `register_generator`, `register_commands` | wgpu, oxijolt, mlua |
 | `re_render` | The GPU renderer, GPU resources, headless capture and egui painting | `Gpu`, `Renderer`, `Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot)`, `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`, `upload_*` / `create_material` / `release_*`, `stats`, `RendererSettings`, `Capture`, `imgdiff` | `re_scene` |
 | `re_physics` | Jolt through oxijolt | `Physics::new(PhysicsConfig, &'static TaskPool)`, `apply(&mut Vec<PhysicsCmd>)`, `step(dt)`, `poses_into(&mut Vec<BodyPose>)`, `velocity(id)`, `character(id)`, `events()`, `raycast` / `shape_cast` / `overlap_sphere` with a `QueryFilter`, `LayerTable`, `save_state` / `restore_state`, `motion_state` / `apply_motion_state` (`JoltRayonJobs` is internal) | `re_scene` |
-| `re_audio` | kira playback, with a headless capture fallback | `Audio::new_or_headless`, `apply(&[AudioCmd])`, `advance(Duration)`, `CaptureBackend` | `re_scene` |
+| `re_audio` | kira playback, with a headless capture fallback | `Audio::new_or_headless`, `apply(&[AudioCmd])`, `advance(Duration)`, `set_user_volume`, `CaptureBackend` | `re_scene` |
 | `re_input` | Raw input, the action map and replay | `RawInput`, `InputConfig`, `ActionMap`, `Replay`, `ReplayRecorder` | `re_scene` |
 | `re_assets` | Import, material files, cache and hot reload | `AssetId`, `AssetServer`, `import_gltf`, `load_material`, `ProcessedCache`, `AssetWatcher` | `re_scene` |
+| `re_ui` | The UI core (M4, ADR-0058): plain node trees laid out by the compat GUI's rules (scale-plus-offset sizes, anchors, padding, lists and grids, size and aspect limits, automatic size, scale, rotation, clipping, scrolling), text over the bundled fonts (ADR-0035, in its `assets/fonts/`) and painting as egui shapes, for the compat GUI and native UI | `UiTree`, `Node`, `Layout`, `Root`, `Item`, `Visit`, `Painter`, `Looks`, `TextStyle`, `fonts::install` | every engine crate (it uses only egui, glam and libm) |
 | `re_anim` | glTF node clips, skeletal poses for skins, animation graphs, keyframe tracks, IK and tweens | `Sampler`, `Tween`, `graph::{validate, BoundGraph, GraphPlayer}` | `re_scene` |
 | `re_net` | Connections over UDP with our own reliability, and over WebSockets for players in a browser; a transport seam with in-memory and conditioned links (M3, WP30, ADR-0050) | `Endpoint`, `Transport`, `UdpTransport`, `ServerTransport`, `WsTransport`, `MemoryNet`, `Conditioned` | every engine crate but `re_core` |
 | `re_script` | The Luau VMs, contexts, native API, scheduler, compile check and engine type definitions | `ScriptRuntime`, `Context`, `compile_check`, `api::definitions` | subsystems (it reaches them through `HostServices`), full_moon |
@@ -151,10 +157,10 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_cli` | The `real` binary and the `explain` command | subcommands | — |
 | `re_agent` | Agent policy, sessions, checkpoints, agent commands, `AGENTS.md` and client configs, the editor socket (client and server loop; Unix only in M1) and the single-writer lock | `Policy`, `Session`, `Checkpoint`, `register_commands`, `generate_agents_md`, `remote::{connect, serve}`, `lock::{acquire, probe}` | tokio |
 | `re_mcp` | The MCP server (rmcp, stdio or streamable HTTP on loopback), the tool-call recorder, and small blocking MCP clients for tests and the eval harness | `serve_stdio(EngineHandle, McpOptions)`, `http`, `record::Recorder`, `client::{HttpClient, StdioClient}` | `re_app` |
-| `re_editor` | The editor UI: dockable panel tabs (layout in `.real/editor/layout.json`), translate, rotate and scale gizmos (W, E, R) whose drags edit live as one undo step, the node canvas over graph files, the debugger panel, and the editor socket (ADR-0044, ADR-0045) | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
+| `re_editor` | The editor UI: dockable panel tabs (layout in `.real/editor/layout.json`), translate, rotate and scale gizmos (W, E, R) on one or several selected entities, about the active one or the selection's centre, whose drags edit live as one undo step, an editor camera (orbit, pan, zoom, fly, frame) and editor-only overlays (grid, axis indicator, light and camera icons, selection outline), the node canvas over graph files, the debugger panel, and the editor socket (ADR-0044, ADR-0045) | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
 | `re_import` | Static importer for Rojo-style projects and Studio loader scripts (tooling, M2 WP16); it never runs Luau | `import`, `ImportReport`, `new_project` | `re_app` |
 | `re_web` | The browser runtime (M3, WP29): a wasm-bindgen `Session` that takes a project's archive or files and plays or replays it (ADR-0049) | `Session` | tokio, any tooling crate |
-| `re_compat` | The Roblox-style compatibility layer (M2): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, the compat VM with instances, signals and core services, and the `RenderFrame` it builds for the renderer (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app`. It uses `re_noise` for the seeded particle effects and material detail textures |
+| `re_compat` | The Roblox-style compatibility layer (M2): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, the compat VM with instances, signals and core services, and the `RenderFrame` it builds for the renderer (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app`. It uses `re_noise` for the seeded particle effects and material detail textures, and `re_ui` for its GUI's layout, text, fonts and painting (ADR-0058) |
 
 Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
 
@@ -163,7 +169,7 @@ Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) read
 ```
 Cargo.toml              workspace (members: crates/*, tools/*), [workspace.dependencies] with exact versions
 Cargo.lock              committed
-rust-toolchain.toml     channel = "stable" (MSRV 1.95 is checked by a CI job)
+rust-toolchain.toml     channel = "1.99.1", the pinned stable release (MSRV 1.95 is checked by a CI job)
 deny.toml               licenses, bans, duplicate allow-list
 .github/workflows/ci.yml
 crates/re_*/            the crates above
@@ -320,6 +326,10 @@ The entity core is bevy_ecs 0.20.0 used standalone, behind our own API (ADR-0005
   - `Vehicle` (on a dynamic `RigidBody`) and `VehicleWheel` (on its child entities, in child order): a wheeled vehicle or motorcycle on Jolt; the default wheel tester is `Ray` (ADR-0040);
   - `Ragdoll` (on an entity with a `SkinnedMesh`): a ragdoll generated on the skin's skeleton, with the modes (the enum `RagdollControl`) `Animated` (follows the animation), `Simulated` (falls freely) and `Powered` (motors pull it toward the animated pose with a `strength` from 0 to 1); the skin shows the simulated pose blended in over `blend_seconds` (ADR-0040);
   - `Streamed` and `StreamFocus` (`re_scene::stream`): a streamed procedural source or authored root, and a focus that cells load around (ADR-0042).
+- **M4 built-ins** (so far):
+  - `AudioSource.rolloff` (`Natural`, `Inverse`, `Linear` or `Off`, default `Natural`), `AudioSource.min_distance` (default 1) and `AudioSource.max_distance` (default 100): how a spatial sound's volume falls with distance from the listener, changeable while it plays (M4 plan, WP45 PR "control");
+  - `AudioSource.doppler` (default 0): how much a spatial sound's pitch follows its own and the listener's motion along the line between them; 1 is physical, more exaggerates;
+  - `AudioListener` (`active`, default true): where sounds are heard from. The first active one in entity order hears; without one, the first active camera does.
 - **Hierarchy**: bevy's `ChildOf` / `Children` relationship: ordered children, recursive despawn. Files store a `parent` id per entity. `GlobalTransform` is recomputed in the Sync phase by a change-driven propagation system that only touches subtrees whose `Transform` or `ChildOf` changed (0.42 to 1.36 ms per update at 100,100 entities in the spike, against 5.5 ms for a full pass). `world.find("Island/Crates/Crate_3")` resolves a path of names as a convenience; it is not an identity.
 - **Change tracking**: bevy's per-component change ticks. Writing an equal value through the registry does not mark a component changed.
 - **Edits** go through `re_command` operations and transactions (ADR-0003): atomic, with exact undo and redo, and a log. Project files the editor or an agent edits in memory (graph files) are open documents in the World, changed by the `set_doc` operation, checked by a validator per file suffix, listed as unsaved by `project.status` and written back by the scene save (ADR-0044).
@@ -660,6 +670,7 @@ Recipes are data: a recipe runs only registered commands, up to the `edit` tier,
 | RE72xx | `re_input` |
 | RE74xx | `re_audio` |
 | RE76xx | `re_anim` |
+| RE77xx | `re_ui` (M4, ADR-0058) |
 | RE8000–8099 | `re_agent` |
 | RE8500–8599 | `re_mcp` |
 | RE8800–8899 | `re_editor` |
@@ -704,7 +715,7 @@ my-game/
   tests/goldens/<backend>/*.png
   .real/agent-policy.toml    committed
   .real/cache/  .real/agent/sessions/  .real/crash/  .real/types/   ignored
-  .real/data/  .real/out/  .real/editor/layout.json  .real/mcp-http.json      ignored (saved data, captures, the editor's dock layout, the HTTP MCP state)
+  .real/data/  .real/out/  .real/editor/layout.json  .real/mcp-http.json      ignored (saved data, captures, the editor's layout (dock, gizmo, camera, view and selection), the HTTP MCP state)
   .real/editor.lock  .real/editor.owner  .real/editor.sock                 ignored; the editor or a headless writer holds an OS lock on editor.lock and writes its pid and kind to editor.owner; the socket exists only while the editor runs
   AGENTS.md  CLAUDE.md       generated by `real agent init`
 ```
@@ -957,7 +968,7 @@ The default content is `real.toml`, `.luaurc`, `scenes/`, `prefabs/`, `materials
 
 ### Web builds
 
-`real build --target web` (ADR-0049) writes a folder a static server can host: `index.html`, `boot.js`, `wasi.js`, `real.js` (wasm-bindgen's glue), `real_bg.wasm` (the `re_web` runtime, built with `[profile.web]` and `wasm-opt -Oz`), `runtime.json`, `THIRD_PARTY_NOTICES.txt` (the web runtime's crates, then the game's own notices) and the same `game.rpak` as a desktop build. `runtime.json` names the engine, Luau, bytecode and compiler versions and the target; `--runtime DIR` checks it. An earlier web build is a valid runtime folder, and so are a release's `real-web-runtime` folder and one written by `real build --runtime-only --target web`. The page needs WebGPU or WebGL2 and wasm exnref exception handling, in a secure context (HTTPS or `localhost`). CI fails a runtime above 8 MB gzipped.
+`real build --target web` (ADR-0049) writes a folder a static server can host: `index.html`, `boot.js`, `wasi.js`, `real.js` (wasm-bindgen's glue), `real_bg.wasm` (the `re_web` runtime, built with `[profile.web]` and `wasm-opt -Oz`), `runtime.json`, `THIRD_PARTY_NOTICES.txt` (the web runtime's crates, then the game's own notices) and the same `game.rpak` as a desktop build. `runtime.json` names the engine, Luau, bytecode and compiler versions and the target; `--runtime DIR` checks it. An earlier web build is a valid runtime folder, and so are a release's `real-web-runtime` folder and one written by `real build --runtime-only --target web`. The page needs WebGPU or WebGL2 and wasm exnref exception handling, in a secure context (HTTPS or `localhost`). CI fails a runtime above 10 MB gzipped, and `build-web`'s job summary shows its size and margin.
 - **The page contract.** `boot({ archive = 'game.rpak', project, extra, onProgress })` checks the browser, loads the engine and hands it the game: the archive by default, or with `project` a project folder's loose files listed in its `files.json`; `extra` adds `[path, url]` files. `play(session, { gameId, onReport, connect, name })` starts the game in a canvas after a click; with `connect` (a server's `ws://host:port/`, or the page's `?connect=`), a Roblox-style game joins that server as a network client instead (ADR-0050's amendment for PR "web"), and a page cannot serve (`RE8911`). The engine reports through `globalThis.realEngine.report(kind, message)`, with the kinds `running`, `warning`, `problem` and `error`, and stores saved files through `globalThis.realEngine.persist(key, bytes)`, which never throws into wasm.
 - **Saved data.** `Data` and `Crash` are memory folders whose changes the page stores in an IndexedDB database named `real-engine:<id>`, under the keys `data/<path>` and `crash/<path>`; `<id>` is the archive's `[package] identifier` (or the project's name). They are loaded before the game starts, so compat saves (WP27, ADR-0048) last across page loads. When the browser refuses storage, saves stay in memory. Crash reports are written only by the desktop `real` binary's panic hook; in the browser a panic is `RE0622` on the console and the page.
 - WebGPU is used when the browser has an adapter, else WebGL2, chosen before the surface exists. `cargo xtask web-test` runs the CI checks: the island and the plaza built for the web, their replays from `game.rpak` in headless Chromium compared with the native hashes, the plaza's replays again with the browser as a lockstep client of `real run --package --server` on the same build, and the island's game page.

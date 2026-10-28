@@ -289,6 +289,12 @@ fn build_settings(
 }
 
 impl RagdollEntry {
+    /// The shape of the part whose body is `body`.
+    pub(crate) fn part_shape(&self, body: BodyId) -> Option<&Shape> {
+        let i = self.bodies.iter().position(|b| *b == body)?;
+        self.shapes.get(i)
+    }
+
     /// The settings with motor springs `scale` times the parts' frequencies.
     fn settings(&self, scale: f32) -> Result<RagdollSettings, String> {
         build_settings(

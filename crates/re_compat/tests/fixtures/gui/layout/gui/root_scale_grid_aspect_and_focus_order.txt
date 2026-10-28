@@ -1,0 +1,41 @@
+frame 0: 5 drawn, hovered none, sinks false, focus none
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#0 at (0.0, 36.0) size (100.0, 80.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#1 at (0.0, 236.0) size (600.0, 600.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/Frame at (0.0, 236.0) size (200.0, 100.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/TextBox#0 at (0.0, 136.0) size (20.0, 20.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1 at (40.0, 136.0) size (20.0, 20.0) clip (0.0, 0.0, 800.0, 600.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsoluteSize = (800.0, 564.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0.AbsoluteSize = (100.0, 80.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1.AbsolutePosition = (0.0, 200.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1.AbsoluteSize = (600.0, 600.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/UIGridLayout.AbsoluteContentSize = (100.0, 50.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/UIGridLayout.AbsoluteCellSize = (100.0, 50.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/UIGridLayout.AbsoluteCellCount = (1.0, 1.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/Frame.AbsolutePosition = (0.0, 200.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/Frame.AbsoluteSize = (200.0, 100.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1/Frame.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#0.AbsolutePosition = (0.0, 100.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#0.AbsoluteSize = (20.0, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#0.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#0.TextBounds = (45.74399948120117, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#0.TextFits = false
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1.AbsolutePosition = (40.0, 100.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1.AbsoluteSize = (20.0, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1.TextBounds = (45.74399948120117, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1.TextFits = false
+frame 1: 5 drawn, hovered none, sinks false, focus ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#0.Text = ""
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#0.CursorPosition = 1
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#0.CursorPosition = -1
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1.Text = ""
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1.CursorPosition = 1
+frame 2: 4 drawn, hovered none, sinks false, focus none
+  gone ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#0.TextBounds = (0.0, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1.TextBounds = (0.0, 20.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextBox#1.CursorPosition = -1

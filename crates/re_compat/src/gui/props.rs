@@ -7,61 +7,15 @@ use std::rc::Rc;
 use glam::Vec2;
 use re_reflect::{ComponentKey, RecordId, Value};
 use re_scene::{Entity, World};
+use re_ui::{Dim, Dim2};
 
 use crate::ClassRegistry;
 use crate::class::{ClassMarker, Storage, own_component_name};
 use crate::data::Status;
 use crate::instance::tree;
 
-/// A `UDim`: a fraction of a length plus pixels.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct UDim {
-    pub scale: f32,
-    pub offset: f32,
-}
-
-impl UDim {
-    pub fn of(self, length: f32) -> f32 {
-        self.scale * length + self.offset
-    }
-}
-
-/// A `UDim2`.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct UDim2 {
-    pub x: UDim,
-    pub y: UDim,
-}
-
-impl UDim2 {
-    pub fn of(self, size: Vec2) -> Vec2 {
-        Vec2::new(self.x.of(size.x), self.y.of(size.y))
-    }
-}
-
-/// An sRGB colour with alpha, channels 0 to 1 as scripts give them.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Rgba(pub [f32; 4]);
-
-impl Rgba {
-    pub const WHITE: Rgba = Rgba([1.0, 1.0, 1.0, 1.0]);
-
-    pub fn with_transparency(self, t: f32) -> Rgba {
-        let mut c = self.0;
-        c[3] *= (1.0 - t).clamp(0.0, 1.0);
-        Rgba(c)
-    }
-
-    pub fn mul(self, o: Rgba) -> Rgba {
-        let (a, b) = (self.0, o.0);
-        Rgba([a[0] * b[0], a[1] * b[1], a[2] * b[2], a[3] * b[3]])
-    }
-
-    pub fn egui(self) -> egui::Color32 {
-        let c = self.0.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
-        egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
-    }
-}
+/// The UI core's colour, which the compat renderer reads properties as too.
+pub(crate) use re_ui::Rgba;
 
 /// A fast hasher for the per-frame caches (the keys are small numbers and
 /// short names; nothing here faces untrusted input that could collide them
@@ -351,27 +305,20 @@ impl Props<'_> {
         }
     }
 
-    pub fn udim(&self, name: &'static str) -> UDim {
+    pub fn udim(&self, name: &'static str) -> Dim {
         self.get(name)
             .and_then(|v| fields(&v, "UDim"))
-            .map_or(UDim::default(), |f| UDim {
-                scale: f[0] as f32,
-                offset: f[1] as f32,
-            })
+            .map_or(Dim::ZERO, |f| Dim::new(f[0] as f32, f[1] as f32))
     }
 
-    pub fn udim2(&self, name: &'static str) -> UDim2 {
+    pub fn udim2(&self, name: &'static str) -> Dim2 {
         self.get(name)
             .and_then(|v| fields(&v, "UDim2"))
-            .map_or(UDim2::default(), |f| UDim2 {
-                x: UDim {
-                    scale: f[0] as f32,
-                    offset: f[1] as f32,
-                },
-                y: UDim {
-                    scale: f[2] as f32,
-                    offset: f[3] as f32,
-                },
+            .map_or(Dim2::ZERO, |f| {
+                Dim2::new(
+                    Dim::new(f[0] as f32, f[1] as f32),
+                    Dim::new(f[2] as f32, f[3] as f32),
+                )
             })
     }
 

@@ -17,6 +17,7 @@ use re_app::App;
 use crate::Panel;
 use crate::editor::{Action, Editor, Pending};
 use crate::layout::PanelId;
+use crate::selection::Selection;
 
 pub(crate) use palette::palette_action;
 
@@ -60,8 +61,8 @@ pub(crate) fn draw(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut 
     palette::palette(ed, ui.ctx(), app, actions);
 
     actions.extend(later);
-    if let Some(id) = select_now {
-        select(ed, Some(id));
+    if let Some(selection) = select_now {
+        select(ed, selection);
     }
 }
 
@@ -88,8 +89,9 @@ impl egui_dock::TabViewer for Tabs<'_> {
         let rect = ui.max_rect();
         let panel = match tab {
             PanelId::Viewport => {
+                // Its rectangle is its image's, set by the panel.
                 viewport::viewport(ed, ui, app, actions);
-                Panel::Viewport
+                return;
             }
             PanelId::Hierarchy => {
                 hierarchy::hierarchy(ed, ui, app.world(), actions);
@@ -135,9 +137,15 @@ impl egui_dock::TabViewer for Tabs<'_> {
     }
 }
 
-fn select(ed: &mut Editor, id: Option<String>) {
-    if ed.selected != id {
-        ed.pending = Pending::default();
+/// Applies a clicked selection. Input pending in the Inspector belongs to the
+/// entity it showed, so it is dropped when the active entity changes.
+fn select(ed: &mut Editor, selection: Selection) {
+    if ed.selection.active() != selection.active() {
+        // Where this frame's widgets were drawn stays true until the next.
+        ed.pending = Pending {
+            rects: std::mem::take(&mut ed.pending.rects),
+            ..Pending::default()
+        };
     }
-    ed.selected = id;
+    ed.selection = selection;
 }

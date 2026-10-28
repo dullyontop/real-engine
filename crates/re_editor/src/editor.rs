@@ -8,14 +8,23 @@ use re_app::App;
 use re_command::{CommandOutcome, Origin, PolicyCheck};
 use re_core::{Diagnostic, Severity};
 use re_reflect::{Doc, FieldType, Value};
+use re_scene::World;
 use serde_json::{Value as Json, json};
 
+use crate::camera::{EditorCamera, Navigation};
 use crate::gizmo::{Gizmo, GizmoSettings};
-use crate::layout::{self, PanelId};
+use crate::layout::{self, Layout, PanelId, PanelStates};
+use crate::overlay::{self, ViewSettings};
 use crate::panels;
+use crate::selection::Selection;
 
 /// The most console lines kept; older ones are dropped.
 const CONSOLE_LINES: usize = 2000;
+
+/// How long a change of the editor camera made without a pointer press (the
+/// wheel, a typed speed) waits before it is saved, in seconds: a zoom is
+/// saved once, not every frame.
+const CAMERA_SAVE_DELAY: f64 = 0.5;
 
 /// One of the editor's panels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -162,27 +171,48 @@ pub(crate) fn field_key(id: &str, component: &str, field: &str) -> String {
 /// is one undo step: an inspector field commits when its drag ends, when
 /// Enter is pressed or when it loses focus, never while it is being dragged.
 pub struct Editor {
-    pub(crate) selected: Option<String>,
+    /// The selected entities and the active one.
+    pub(crate) selection: Selection,
     pub(crate) console: Vec<ConsoleLine>,
     pub(crate) palette: Palette,
     pub(crate) pending: Pending,
     pub(crate) graph_new: HashMap<String, [String; 3]>,
-    pub(crate) select_next: Option<String>,
+    /// A selection clicked in the last frame, applied after this one.
+    pub(crate) select_next: Option<Selection>,
     pub(crate) later: Vec<Action>,
     pub(crate) rects: PanelRects,
     pub(crate) status: String,
     pub(crate) viewport_texture: Option<(egui::TextureId, [u32; 2])>,
     pub(crate) viewport_px: Option<[u32; 2]>,
     pub(crate) gizmo: Gizmo,
+    /// The camera the viewport draws from, once the editor has one: from the
+    /// layout, else where the game's camera is (first frame).
+    pub(crate) camera: Option<EditorCamera>,
+    /// What the pointer is doing to the camera.
+    pub(crate) nav: Navigation,
+    /// What the view shows.
+    pub(crate) view: ViewSettings,
     pub(crate) debug: crate::debugger::DebugPanel,
     pub(crate) canvas: crate::canvas::Canvas,
     pub(crate) dock: egui_dock::DockState<PanelId>,
+    /// Each panel's own view state, as read from the layout (kept and
+    /// written back).
+    panel_states: PanelStates,
     /// The project whose layout the dock shows, once it has been read.
     layout_root: Option<PathBuf>,
     /// The layout as last read or written.
     layout_saved: String,
     /// The gizmo settings as last read or written.
     gizmo_saved: GizmoSettings,
+    /// The view settings as last read or written.
+    view_saved: ViewSettings,
+    /// The selection as last read or written.
+    selection_saved: Selection,
+    /// The camera as last read or written.
+    camera_saved: Option<EditorCamera>,
+    /// When (egui time) the camera first differed from the saved one without
+    /// a pointer press; it is saved [`CAMERA_SAVE_DELAY`] after.
+    camera_since: Option<f64>,
     /// The dock as it was when a pointer button went down: the dock is saved
     /// only when a press changed it (or [`Editor::dock_mut`] was called),
     /// never because the window was resized. egui_dock clamps each split to
@@ -202,7 +232,7 @@ impl Default for Editor {
 impl std::fmt::Debug for Editor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Editor")
-            .field("selected", &self.selected)
+            .field("selection", &self.selection)
             .field("console", &self.console.len())
             .field("rects", &self.rects)
             .finish_non_exhaustive()
@@ -213,7 +243,7 @@ impl Editor {
     /// An editor with nothing selected and an empty console.
     pub fn new() -> Editor {
         Editor {
-            selected: None,
+            selection: Selection::new(),
             console: Vec::new(),
             palette: Palette {
                 args: "{}".to_string(),
@@ -228,26 +258,45 @@ impl Editor {
             viewport_texture: None,
             viewport_px: None,
             gizmo: Gizmo::default(),
+            camera: None,
+            nav: Navigation::default(),
+            view: ViewSettings::default(),
             debug: Default::default(),
             canvas: Default::default(),
             dock: layout::default_dock(),
+            panel_states: PanelStates::new(),
             layout_root: None,
             layout_saved: String::new(),
             gizmo_saved: GizmoSettings::default(),
+            view_saved: ViewSettings::default(),
+            selection_saved: Selection::new(),
+            camera_saved: None,
+            camera_since: None,
             layout_at_press: None,
             layout_dirty: false,
             log_seq: 0,
         }
     }
 
-    /// The selected entity's id.
+    /// The active entity's id: the one the Inspector shows (the one selected
+    /// last).
     pub fn selected(&self) -> Option<&str> {
-        self.selected.as_deref()
+        self.selection.active()
     }
 
-    /// Selects the entity with id `id` (or nothing).
+    /// The selected entities, with the active one.
+    pub fn selection(&self) -> &Selection {
+        &self.selection
+    }
+
+    /// Selects only the entity with id `id` (or nothing).
     pub fn select(&mut self, id: Option<&str>) {
-        self.selected = id.map(str::to_string);
+        self.selection = id.map(Selection::one).unwrap_or_default();
+    }
+
+    /// Selects `selection` (saved with the layout, as a click is).
+    pub fn set_selection(&mut self, selection: Selection) {
+        self.selection = selection;
     }
 
     /// Where each panel was drawn in the last frame.
@@ -324,12 +373,175 @@ impl Editor {
         self.gizmo.drag.is_some()
     }
 
-    /// Where the gizmo's `handle` on the selected entity was drawn in the
-    /// last frame (a point that picks it, in egui points), if it was shown.
+    /// Where the gizmo's `handle` on the selection was drawn in the last
+    /// frame (a point that picks it, in egui points), if it was shown.
     pub fn gizmo_handle(&self, app: &App, handle: crate::gizmo::Handle) -> Option<egui::Pos2> {
         let rect = self.rects.get(Panel::Viewport)?;
-        let id = self.selected.as_deref()?;
-        crate::gizmo::handle_point(app, rect, &self.gizmo.settings, id, handle)
+        let view = crate::camera::View::new(rect, self.view_camera(app));
+        crate::gizmo::handle_point(app, &view, &self.gizmo.settings, &self.selection, handle)
+    }
+
+    /// The editor camera, once the editor has one (from the project's layout,
+    /// else from the game's camera on the first frame).
+    pub fn camera(&self) -> Option<&EditorCamera> {
+        self.camera.as_ref()
+    }
+
+    /// Moves the editor camera (saved with the layout, as a move with the
+    /// pointer is), brought into range ([`EditorCamera::clamped`]).
+    pub fn set_camera(&mut self, camera: EditorCamera) {
+        self.camera = Some(camera.clamped());
+    }
+
+    /// What the view shows: overlays, and whether it looks through the
+    /// game's camera.
+    pub fn view_settings(&self) -> &ViewSettings {
+        &self.view
+    }
+
+    /// Sets what the view shows (saved with the layout).
+    pub fn set_view_settings(&mut self, view: ViewSettings) {
+        self.view = view;
+    }
+
+    /// The camera the viewport is drawn from, in world space: the editor
+    /// camera, or the game's when the view looks through it (or before the
+    /// editor has a camera).
+    pub(crate) fn view_camera(&self, app: &App) -> re_types::render::Camera {
+        match self.camera {
+            Some(camera) if !self.view.game_camera => camera.render_camera(glam::Vec3::ZERO),
+            _ => {
+                // The snapshot is relative to the render origin.
+                let mut camera = app.snapshot().camera;
+                camera.world.w_axis += app.render_origin().extend(0.0);
+                camera
+            }
+        }
+    }
+
+    /// Where the world point `at` was drawn in the viewport in the last frame,
+    /// in egui points, or `None` when it is behind the camera or the
+    /// viewport was not drawn.
+    pub fn screen_point(&self, app: &App, at: glam::Vec3) -> Option<egui::Pos2> {
+        let rect = self.rects.get(Panel::Viewport)?;
+        let view = crate::camera::View::new(rect, self.view_camera(app));
+        let p = view.screen?.project(at)?;
+        Some(egui::pos2(p.x, p.y))
+    }
+
+    /// Moves the game's active camera to where the editor camera is, as the
+    /// view menu's "Align game camera with view" does: one `scene.apply`
+    /// setting its `Transform`'s translation and rotation, so one undo step.
+    /// `None` (nothing is sent) when the scene has no active camera or the
+    /// view looks through it.
+    pub fn align_game_camera(
+        &mut self,
+        app: &mut App,
+        policy: &dyn PolicyCheck,
+    ) -> Option<CommandOutcome> {
+        match self.align_action(app)? {
+            Action::Command { name, args, .. } => Some(self.run(app, policy, &name, args, false)),
+            _ => None,
+        }
+    }
+
+    /// The edit [`Editor::align_game_camera`] sends: `set_field` ops on the
+    /// game camera's local `Transform` (through its parent's world
+    /// transform).
+    pub(crate) fn align_action(&self, app: &App) -> Option<Action> {
+        if self.view.game_camera {
+            return None;
+        }
+        let camera = self.camera?;
+        let world = app.world();
+        let id = overlay::game_camera_id(world)?;
+        let e = world.entity(&id).ok()?;
+        let parent = re_scene::hierarchy::parent(&world.ecs, e)
+            .and_then(|p| world.ecs.get::<re_scene::GlobalTransform>(p))
+            .map_or(glam::Affine3A::IDENTITY, |g| g.0);
+        let want = glam::Affine3A::from_rotation_translation(camera.rotation(), camera.eye());
+        let (_, r, t) = (parent.inverse() * want).to_scale_rotation_translation();
+        let r = r.normalize();
+        let op = |field: &str, value: Json| {
+            json!({
+                "op": "set_field",
+                "id": id,
+                "component": "Transform",
+                "field": field,
+                "value": value,
+            })
+        };
+        Some(command(
+            "scene.apply",
+            json!({
+                "label": format!("align {id} with the view"),
+                "ops": [
+                    op("translation", json!([t.x, t.y, t.z])),
+                    op("rotation", json!(r.to_array())),
+                ],
+            }),
+        ))
+    }
+
+    /// Deletes the selected entities and everything under them, as one
+    /// `scene.apply` of `despawn` ops for the topmost ones (one undo step),
+    /// as the Hierarchy's Delete button does, and selects nothing. `None`
+    /// (nothing is sent) when nothing selected exists.
+    pub fn delete_selection(
+        &mut self,
+        app: &mut App,
+        policy: &dyn PolicyCheck,
+    ) -> Option<CommandOutcome> {
+        match self.delete_action(app.world())? {
+            Action::Command { name, args, .. } => {
+                self.selection.clear();
+                Some(self.run(app, policy, &name, args, false))
+            }
+            _ => None,
+        }
+    }
+
+    /// The edit [`Editor::delete_selection`] sends.
+    pub(crate) fn delete_action(&self, world: &World) -> Option<Action> {
+        let ids = self.selection.topmost(world);
+        let label = match ids.as_slice() {
+            [] => return None,
+            [one] => format!("delete {one}"),
+            _ => format!("delete {} entities", ids.len()),
+        };
+        let ops: Vec<Json> = ids
+            .iter()
+            .map(|id| json!({ "op": "despawn", "id": id }))
+            .collect();
+        Some(command(
+            "scene.apply",
+            json!({ "label": label, "ops": ops }),
+        ))
+    }
+
+    /// Points the editor camera at the selection (F), or at everything
+    /// drawn when `everything` is set or nothing is selected (Shift+F): the
+    /// bounds of the draw items of the selected entities and the entities
+    /// under them, or a metre around an entity without any. The view stops
+    /// looking through the game's camera. Nothing happens when nothing is
+    /// drawn.
+    pub fn frame_selection(&mut self, app: &App, everything: bool) {
+        let ids = (!everything && !self.selection.is_empty()).then(|| self.selection.ids());
+        let Some(bounds) = overlay::bounds(app, ids) else {
+            return;
+        };
+        let aspect = self
+            .rects
+            .get(Panel::Viewport)
+            .filter(|r| r.height() > 0.0)
+            .map_or(16.0 / 9.0, |r| r.width() / r.height());
+        let mut camera = self
+            .camera
+            .filter(EditorCamera::is_finite)
+            .unwrap_or_else(|| initial_camera(app));
+        camera.frame(bounds, aspect);
+        self.camera = Some(camera);
+        self.view.game_camera = false;
     }
 
     /// Shows `debugger` in the debugger panel (`None`: no debugger). The
@@ -362,26 +574,36 @@ impl Editor {
     /// reported in the console as `RE8804` and replaced by the default
     /// layout when the layout next changes. [`Editor::ui`] does this on its
     /// first frame.
+    ///
+    /// The editor camera, the view settings and each panel's state are taken
+    /// from it. Its selection is taken when nothing is selected yet;
+    /// [`Editor::ui`] then drops it if the entity no longer exists.
     pub fn load_layout(&mut self, root: &Path) {
-        let default = || layout::Layout {
-            dock: layout::default_dock(),
-            gizmo: GizmoSettings::default(),
-            collapsed: layout::Collapsed::new(),
-        };
         let found = match layout::load(root) {
             Ok(Some(found)) => found,
-            Ok(None) => default(),
+            Ok(None) => Layout::new(),
             Err(d) => {
                 self.log_diagnostic(&d);
-                default()
+                Layout::new()
             }
         };
         self.dock = found.dock;
         self.gizmo.settings = found.gizmo;
         self.gizmo.drag = None;
         self.canvas.set_collapsed(found.collapsed);
+        self.camera = found.camera.map(EditorCamera::clamped);
+        self.nav = Navigation::default();
+        self.view = found.view;
+        if self.selection.is_empty() {
+            self.selection.clone_from(&found.selection);
+        }
+        self.panel_states = found.panels;
         self.layout_saved = self.layout_json();
         self.gizmo_saved = self.gizmo.settings;
+        self.view_saved = self.view;
+        self.selection_saved = found.selection;
+        self.camera_saved = self.camera;
+        self.camera_since = None;
         self.layout_at_press = None;
         self.layout_dirty = false;
         self.layout_root = Some(root.to_path_buf());
@@ -389,11 +611,40 @@ impl Editor {
 
     /// Writes the layout to the project's `.real/editor/layout.json` if the
     /// person changed it since it was read or last written: a drag in the
-    /// dock, a gizmo setting, or [`Editor::dock_mut`]. [`Editor::ui`] calls
-    /// it after each frame in which no pointer button is held; the windowed
-    /// editor calls it again on exit.
+    /// dock, a gizmo or view setting, the selection, the editor camera, or
+    /// [`Editor::dock_mut`]. [`Editor::ui`] calls it after each frame in
+    /// which no pointer button is held (a camera change made without a press
+    /// waits a moment); the windowed editor calls it again on exit.
     pub fn save_layout(&mut self) {
-        if self.gizmo.settings != self.gizmo_saved {
+        if self.camera != self.camera_saved {
+            self.layout_dirty = true;
+        }
+        self.write_layout();
+    }
+
+    /// [`Editor::save_layout`], except that a camera change made without a
+    /// press is written only once it is [`CAMERA_SAVE_DELAY`] old (`now`
+    /// being egui's time).
+    fn save_settled(&mut self, now: f64) {
+        if self.camera == self.camera_saved {
+            self.camera_since = None;
+        } else {
+            match self.camera_since {
+                Some(at) if now - at >= CAMERA_SAVE_DELAY || now < at => {
+                    self.layout_dirty = true;
+                }
+                Some(_) => {}
+                None => self.camera_since = Some(now),
+            }
+        }
+        self.write_layout();
+    }
+
+    fn write_layout(&mut self) {
+        if self.gizmo.settings != self.gizmo_saved
+            || self.view != self.view_saved
+            || self.selection != self.selection_saved
+        {
             self.layout_dirty = true;
         }
         if !std::mem::take(&mut self.layout_dirty) {
@@ -404,6 +655,10 @@ impl Editor {
         };
         let text = self.layout_json();
         self.gizmo_saved = self.gizmo.settings;
+        self.view_saved = self.view;
+        self.selection_saved.clone_from(&self.selection);
+        self.camera_saved = self.camera;
+        self.camera_since = None;
         if text == self.layout_saved {
             return;
         }
@@ -426,12 +681,21 @@ impl Editor {
     }
 
     fn layout_json(&self) -> String {
-        layout::to_json(&self.dock, &self.gizmo.settings, self.canvas.collapsed())
+        layout::to_json(&Layout {
+            dock: self.dock.clone(),
+            gizmo: self.gizmo.settings,
+            collapsed: self.canvas.collapsed().clone(),
+            camera: self.camera,
+            view: self.view,
+            selection: self.selection.clone(),
+            panels: self.panel_states.clone(),
+        })
     }
 
-    /// Notes dock changes made by a pointer press, after the frame is drawn.
+    /// Notes layout changes made by a pointer press, after the frame is
+    /// drawn, and saves what changed once no button is held.
     fn track_layout(&mut self, ui: &egui::Ui) {
-        let down = ui.input(|i| i.pointer.any_down());
+        let (down, now) = ui.input(|i| (i.pointer.any_down(), i.time));
         match (&self.layout_at_press, down) {
             (None, true) => {
                 self.layout_at_press = Some(self.layout_json());
@@ -445,7 +709,7 @@ impl Editor {
             _ => {}
         }
         if !down {
-            self.save_layout();
+            self.save_settled(now);
         }
     }
 
@@ -481,11 +745,20 @@ impl Editor {
             let root = app.project().to_path_buf();
             self.load_layout(&root);
         }
+        // Entities that no longer exist (an undo, a reload, a regeneration,
+        // a cell unloading) leave the selection.
+        let world = app.world();
+        self.selection.retain(|id| world.entity(id).is_ok());
+        if !self.camera.is_some_and(|c| c.is_finite()) {
+            // Not a change of the layout: it is written with the next one.
+            self.camera = Some(initial_camera(app));
+            self.camera_saved = self.camera;
+        }
         self.pull_log(app);
         self.rects = PanelRects::default();
         self.pending.rects.clear();
         let mut actions = Vec::new();
-        self.shortcuts(ui.ctx(), &mut actions);
+        self.shortcuts(ui.ctx(), app.world(), &mut actions);
         panels::draw(self, ui, app, &mut actions);
         // A field committed in the same frame as an Undo or Redo click (the
         // click took its focus) is applied first, so undo sees it.
@@ -499,7 +772,7 @@ impl Editor {
         self.track_layout(ui);
     }
 
-    fn shortcuts(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+    fn shortcuts(&mut self, ctx: &egui::Context, world: &World, actions: &mut Vec<Action>) {
         use egui::{Key, KeyboardShortcut, Modifiers};
         let palette = KeyboardShortcut::new(Modifiers::COMMAND, Key::P);
         if ctx.input_mut(|i| i.consume_shortcut(&palette)) {
@@ -512,7 +785,10 @@ impl Editor {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        crate::gizmo::shortcuts(&mut self.gizmo.settings, ctx);
+        // While the camera flies, W, E and the others move it.
+        if !self.nav.flying() {
+            crate::gizmo::shortcuts(&mut self.gizmo.settings, ctx);
+        }
         let redo = [
             KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z),
             KeyboardShortcut::new(Modifiers::COMMAND, Key::Y),
@@ -522,6 +798,14 @@ impl Editor {
             actions.push(command("redo", json!({})));
         } else if ctx.input_mut(|i| i.consume_shortcut(&undo)) {
             actions.push(command("undo", json!({})));
+        }
+        // Ctrl+Up selects the selection's parents, Ctrl+Down their children.
+        let up = KeyboardShortcut::new(Modifiers::COMMAND, Key::ArrowUp);
+        let down = KeyboardShortcut::new(Modifiers::COMMAND, Key::ArrowDown);
+        if ctx.input_mut(|i| i.consume_shortcut(&up)) {
+            self.select_next = Some(self.selection.parents(world));
+        } else if ctx.input_mut(|i| i.consume_shortcut(&down)) {
+            self.select_next = Some(self.selection.children(world));
         }
     }
 
@@ -704,6 +988,15 @@ impl Editor {
             self.log(LineKind::Info, line);
         }
     }
+}
+
+/// The editor camera a project starts with: where the game's camera is,
+/// else where the game is drawn from without one.
+fn initial_camera(app: &App) -> EditorCamera {
+    overlay::game_camera(app.world())
+        .map(|(world, fov)| EditorCamera::from_pose(world, fov))
+        .filter(EditorCamera::is_finite)
+        .unwrap_or_default()
 }
 
 pub(crate) fn command(name: &str, args: Json) -> Action {

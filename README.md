@@ -17,7 +17,7 @@ Real Engine is a proprietary 3D game engine written in Rust. It is built around 
 - `examples/valley` is a streamed world: you can walk it and drive a car along its road, and cells load ahead of you and unload behind (ADR-0042). Cells generate on worker threads, the terrain is drawn at levels of detail with regional erosion, and physics moves its origin with the player past 5 km.
 - `real build` packs a game into `game.rpak` with a runtime-only player, laid out as a Linux folder, a Windows folder or a macOS app with the game's icon and the third-party notices, and `real verify --package` checks that it plays like the project (ADR-0037). The release workflow attaches prebuilt runtimes to each version tag's release, so a game can be built without the engine's source; no version has been tagged yet.
 - `real build --target web` makes a folder any static server can host; the game runs in the browser with WebGPU or WebGL2, and saves last across page loads (ADR-0049).
-- The editor has dockable panels, a node canvas over graph files (every edit an undoable `graph.*` command), and translate, rotate and scale gizmos (W, E, R) that move entities live, one undo step per drag (ADR-0044). It also has a script debugger, served over DAP with `--debug`, that stops in native and compat scripts (ADR-0045).
+- The editor has dockable panels, a node canvas over graph files (every edit an undoable `graph.*` command), and translate, rotate and scale gizmos (W, E, R) that move one or several selected entities live, one undo step per drag (ADR-0044). It also has a script debugger, served over DAP with `--debug`, that stops in native and compat scripts (ADR-0045).
 - The HDR post chain and cascaded shadows, configured in `[render.post]` and `[render.shadows]`; shaders that reload during a development run; textures block-compressed at import; glTF skins and animation graphs (`*.animgraph.json`: blend spaces, layers, state machines and root motion, driven by the `anim` Luau library and the `animgraph.*` commands); vehicles and ragdolls on Jolt; audio buses, effects and snapshots.
 - Generator versions with `real migrate-graph`, `proc.bake`, structural overrides, node kinds written in Luau, and polygon booleans and roads with junctions as graph nodes.
 - Project templates (`real new DIR --template native|roblox|terrain`, `--set KEY=VALUE`, `--list-templates`; the format is in [templates/README.md](templates/README.md)), generator recipes, `real agent eval`, and MCP over streamable HTTP on localhost (`real mcp --http`).
@@ -47,7 +47,7 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 
 | Area | Crates |
 |---|---|
-| Toolchain | Rust stable; MSRV 1.95 (set by egui and bevy_ecs); edition 2024 |
+| Toolchain | Rust 1.99.1, pinned in `rust-toolchain.toml`; MSRV 1.95 (set by egui and bevy_ecs); edition 2024 |
 | Rendering | wgpu 30.0.1, winit 0.30.13, egui / egui-wgpu / egui-winit 0.36.2, glam 0.34.1 |
 | Entity core | bevy_ecs 0.20.0 (standalone, no bevy_reflect) with our own component registry |
 | Physics | oxijolt 1.1.0+jolt-5.6.0 (Jolt Physics 5.6.0), built from source |
@@ -75,7 +75,7 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 
 ## Building the workspace
 
-You need the current stable Rust toolchain (`rust-toolchain.toml` selects it; the MSRV is 1.95).
+You need Rust 1.99.1, which `rust-toolchain.toml` pins and rustup installs on first use (the MSRV is 1.95). The pin moves by PR after each stable Rust release: the PR sets `channel` to the new release and fixes whatever the new compiler and clippy ask for. Its run starts every check, and main's push after it saves new cargo caches, so between bumps no cache key changes with Rust (ADR-0023's amendment for WP31 PR "toolchain").
 
 ```sh
 export CARGO_BUILD_JOBS=2

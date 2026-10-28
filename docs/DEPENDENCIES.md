@@ -24,14 +24,14 @@ All versions below were checked against the crates.io index on 2026-10-14. On th
 
 | Item | Value |
 |---|---|
-| Toolchain file | `rust-toolchain.toml`: `channel = "stable"`, components `rustfmt`, `clippy` |
+| Toolchain file | `rust-toolchain.toml`: `channel = "1.99.1"`, profile `minimal`, components `rustfmt`, `clippy`; the pin moves by PR after each stable release (README, "Building the workspace") |
 | Workspace `rust-version` | `1.95` |
 | What sets the MSRV | `egui` / `egui-wgpu` / `egui-winit` 0.36.2, `egui_dock` 0.21.1 and `bevy_ecs` 0.20.0 need 1.95. The next highest are `egui-snarl` 0.12.0 and `puffin` 0.20.0 (1.92; puffin is optional), then `ordered-float` 5.5.0 (1.90, transitive), `uuid` 1.28.0 and `smol_str` 0.3.6 (1.89), and `oxijolt`, `mlua`, `rmcp` and `image` (1.88). |
 | Edition | 2024 |
-| Toolchains seen working | rustc 1.97.0 and 1.99.0 in the development containers. The render prototype declared `rust-version = "1.95"`; the core spike declares none. |
+| Toolchains seen working | rustc 1.97.0, 1.99.0 and 1.99.1 in the development containers; CI builds with the pinned 1.99.1. The render prototype declared `rust-version = "1.95"`; the core spike declares none. |
 | Dev profile | `debug = "line-tables-only"`. The render spike measured this as a large saving in link time and disk use. |
 
-The `msrv` CI job builds with exactly 1.95.0 (`rustup toolchain install 1.95.0 --profile minimal`), so that the MSRV stays honest. Everything else, locally and in CI, uses the current stable toolchain.
+The `msrv` CI job builds with exactly 1.95.0 (`rustup toolchain install 1.95.0 --profile minimal`), so that the MSRV stays honest. Everything else, locally and in CI, uses the release `rust-toolchain.toml` pins. In CI, `tools/ci/rust-toolchain.sh` installs it and removes the runner image's own toolchains, since the cargo cache's key hashes every installed toolchain's version.
 
 ## Runtime dependencies
 
@@ -152,7 +152,7 @@ Used only by `re_mcp`, a tooling crate, so the runtime-only binary does not link
 | cargo-deny | 0.20.2 | MIT OR Apache-2.0 | The `deny` CI job, which installs the release's static Linux build checked against its sha256 (`tools/ci/cargo-deny.sh`) | WP0: `cargo deny check` on this tree passes (advisories, bans, licenses, sources ok; `unmatched-skip` and `unused-wrapper` warnings only for crates not yet in the tree) | Verified |
 | wasi-sdk | 34 | Apache-2.0 WITH LLVM-exception | Clang, wasi-libc and the exception-enabled libc++ that build Luau and Jolt for `wasm32-unknown-unknown` (`tools/ci/wasi-sdk.sh`, sha256-pinned) | WP29 PR "toolchain" (#99) | Verified (Linux) |
 | wasm-bindgen-cli | 0.2.129 | MIT OR Apache-2.0 | Writes the browser build's JavaScript glue (`cargo install --locked`), matching the lockfile's wasm-bindgen | WP29 PR "toolchain" (#99) | Verified |
-| binaryen (`wasm-opt`) | 133 | Apache-2.0 | Shrinks the browser build to its 8 MB gzip budget (`tools/ci/binaryen.sh`, sha256 from the release's own file) | WP29 PR "runtime": 18.2 MB, 6.9 MB gzip, same `state_hash` | Verified (Linux) |
+| binaryen (`wasm-opt`) | 133 | Apache-2.0 | Shrinks the browser build to its 10 MB gzip budget (`tools/ci/binaryen.sh`, sha256 from the release's own file) | WP29 PR "runtime": 18.2 MB, 6.9 MB gzip, same `state_hash` | Verified (Linux) |
 | Node.js | 22 | MIT | Runs the wasm checks of `build-web` (`actions/setup-node`) | WP29 PRs "toolchain" and "runtime" | Verified |
 | Playwright (npm) | 1.56.1, with its Chromium | Apache-2.0 | `tools/web-test` only: drives headless Chromium with WebGPU in `build-web`. Pinned in `tools/web-test/package.json` and its lockfile (`npm ci`, `npx playwright install chromium`; the runner image has the libraries Chromium needs). Not part of any build of the engine. | WP29 PR "runtime" | Verified (Linux) |
 
@@ -162,11 +162,11 @@ These are tools, like cmake. The crates.io-only rule covers code dependencies. C
 
 | Asset | Version | License | Role | Source | Status |
 |---|---|---|---|---|---|
-| Montserrat, weights 400, 500, 700, 900 (latin subset, TTF) | `@fontsource/montserrat` 5.3.0 | OFL-1.1 | Compat UI substitute for geometric display families (ADR-0035) | npm package, WOFF 1.0 unpacked to TTF by `crates/re_compat/assets/fonts/tools/woff2ttf.py`; glyph data unchanged | Verified (WP15, #61) |
+| Montserrat, weights 400, 500, 700, 900 (latin subset, TTF) | `@fontsource/montserrat` 5.3.0 | OFL-1.1 | Compat UI substitute for geometric display families (ADR-0035) | npm package, WOFF 1.0 unpacked to TTF by `crates/re_ui/assets/fonts/tools/woff2ttf.py`; glyph data unchanged | Verified (WP15, #61) |
 | Source Sans 3, weights 400, 700 (latin subset, TTF) | `@fontsource/source-sans-3` 5.3.1 | OFL-1.1 | Compat UI default and substitute for sans families (ADR-0035) | as above | Verified (WP15, #61) |
 | Roboto Mono, weights 400, 700 (latin subset, TTF) | `@fontsource/roboto-mono` 5.3.0 | OFL-1.1 | Compat UI substitute for monospace families (ADR-0035) | as above | Verified (WP15, #61) |
 
-The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each family next to its `OFL-*.txt`. `substitutes.json` maps compat font families to them. They are files rather than crates, so the crates.io-only rule does not apply, and `cargo deny` does not see them; their licenses travel with them and go into the third-party notice.
+The files live in `crates/re_ui/assets/fonts/` (the UI core's, ADR-0058), about 307 KB in all, each family next to its `OFL-*.txt`. `crates/re_compat/assets/fonts/substitutes.json` maps compat font families to them. They are files rather than crates, so the crates.io-only rule does not apply, and `cargo deny` does not see them; their licenses travel with them and go into the third-party notice.
 
 ### Core, data and serialization
 

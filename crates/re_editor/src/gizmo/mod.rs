@@ -1,30 +1,40 @@
-//! Translate, rotate and scale gizmos in the viewport (ADR-0044).
+//! Translate, rotate and scale gizmos in the viewport (ADR-0044, and its
+//! amendment for WP42, §4).
 //!
-//! The gizmo works on the selected entity's world transform. While a handle
-//! is dragged the entity moves with it: the editor sends a `scene.apply` of
-//! `set_field` ops on the entity's local `Transform` (converted through its
-//! parent) whenever the drag changed, at most every [`LIVE_INTERVAL`]
-//! seconds, and once more on release. Every one carries the drag's own
-//! `coalesce` key, so the history merges them and the whole drag is one undo
-//! step; each lands in the log like any edit. Escape puts the entity back
-//! (undoing the drag's step). A generated entity's edit records an
-//! override, as every `set_field` on one does (ADR-0017).
+//! The gizmo works on the selection: it moves the topmost selected entities
+//! (one whose ancestor is also selected moves with that ancestor). It stands
+//! at the active entity's origin, or at the centre of the selection's bounds
+//! ([`GizmoPivot`]), and its local axes are the active entity's. A move adds
+//! the drag's offset to each entity; a rotation or a scale acts about the
+//! gizmo, and a scale multiplies each entity's own scale along its own axes.
+//!
+//! While a handle is dragged the entities move with it: the editor sends one
+//! `scene.apply` of `set_field` ops on every moved entity's local
+//! `Transform` (converted through its parent) whenever the drag changed, at
+//! most every [`LIVE_INTERVAL`] seconds, and once more on release. Every one
+//! carries the drag's own `coalesce` key, so the history merges them and the
+//! whole drag is one undo step however many entities move; each lands in the
+//! log like any edit. Escape puts them back (undoing the drag's step). A
+//! generated entity's edit records an override, as every `set_field` on one
+//! does (ADR-0017).
 //!
 //! The geometry, picking and drag maths are in the `math` module, without egui.
 
 pub(crate) mod math;
 
-use egui::{Color32, Pos2, Sense, Stroke};
+use egui::{Color32, Pos2, Stroke};
 use glam::{Affine3A, Quat, Vec2, Vec3};
 use re_app::App;
 use re_scene::hierarchy::parent;
 use re_scene::{GlobalTransform, Transform, World};
 use serde_json::{Value as Json, json};
 
-pub use math::{Delta, GizmoMode, GizmoSettings, Handle, Orientation};
+pub use math::{Delta, GizmoMode, GizmoPivot, GizmoSettings, Handle, Orientation};
 use math::{Drag, Frame, Screen};
 
+use crate::camera::View;
 use crate::editor::{Action, command};
+use crate::selection::Selection;
 
 /// The shortest time between two live edits of one drag, in seconds; every
 /// edit rewrites the scene file.
@@ -41,17 +51,17 @@ pub(crate) struct Gizmo {
     pub drags: u64,
 }
 
-/// A drag in progress on one entity.
+/// A drag in progress on the selection.
 #[derive(Clone, Debug)]
 pub(crate) struct Active {
     pub drag: Drag,
-    pub id: String,
-    /// The entity's world transform when the drag started.
+    /// The selection the drag started with; the drag ends if it changes.
+    pub selection: Selection,
+    /// The entities the drag moves, as they were when it started.
+    pub targets: Vec<Target>,
+    /// Where the gizmo stood when the drag started (the pivot, turned as the
+    /// active entity).
     pub world: Affine3A,
-    /// Its parent's world transform (identity for a root).
-    pub parent: Affine3A,
-    /// Its local `Transform` when the drag started: (scale, rotation, translation).
-    pub local: (Vec3, Quat, Vec3),
     /// The axes the drag uses.
     pub orientation: Orientation,
     /// The change so far.
@@ -61,6 +71,18 @@ pub(crate) struct Active {
     /// The change the last edit sent, and when (egui time), or `None`
     /// before the first.
     pub sent: Option<(Delta, f64)>,
+}
+
+/// One entity a drag moves, as it was when the drag started.
+#[derive(Clone, Debug)]
+pub(crate) struct Target {
+    pub id: String,
+    /// Its world transform.
+    pub world: Affine3A,
+    /// Its parent's world transform (identity for a root).
+    pub parent: Affine3A,
+    /// Its local `Transform`: (scale, rotation, translation).
+    pub local: (Vec3, Quat, Vec3),
     /// The fields the drag has set so far (translation, rotation, scale);
     /// once set, a field is sent with every later edit, so a handle dragged
     /// back to its start puts that field back too.
@@ -88,22 +110,57 @@ fn transforms(world: &World, id: &str) -> Option<(Affine3A, Affine3A, (Vec3, Qua
     Some((own, parent, local))
 }
 
-/// The screen of the viewport at `rect`, from the camera the game view was
-/// last drawn with.
-fn screen(app: &App, rect: egui::Rect) -> Option<Screen> {
-    let cam = app.snapshot().camera;
-    // The snapshot is relative to the render origin; the gizmo works in the
-    // world.
-    let mut world = cam.world;
-    world.w_axis += app.render_origin().extend(0.0);
-    Screen::new(
-        world,
-        cam.fov_y_radians,
-        cam.near,
-        cam.far,
-        Vec2::new(rect.min.x, rect.min.y),
-        Vec2::new(rect.width(), rect.height()),
-    )
+/// The entities the gizmo moves for `selection` (the topmost selected ones
+/// with a `Transform`) and where it stands: at the active entity's origin,
+/// or the centre of the selection's bounds, turned as the active entity (or
+/// the first one moved, when the active entity has no transform). `None`
+/// when nothing selected has a transform.
+fn gizmo_world(
+    app: &App,
+    selection: &Selection,
+    settings: &GizmoSettings,
+) -> Option<(Affine3A, Vec<Target>)> {
+    let world = app.world();
+    let targets: Vec<Target> = selection
+        .topmost(world)
+        .into_iter()
+        .filter_map(|id| {
+            let (world, parent, local) = transforms(world, &id)?;
+            Some(Target {
+                id,
+                world,
+                parent,
+                local,
+                fields: [false; 3],
+            })
+        })
+        .collect();
+    let first = targets.first()?.world;
+    let active = selection
+        .active()
+        .and_then(|id| transforms(world, id))
+        .map_or(first, |(w, _, _)| w);
+    let (_, rotation, origin) = active.to_scale_rotation_translation();
+    let pivot = match settings.pivot {
+        GizmoPivot::Active => origin,
+        GizmoPivot::Centre => {
+            let ids: Vec<String> = targets.iter().map(|t| t.id.clone()).collect();
+            crate::overlay::bounds(app, Some(&ids)).map_or_else(
+                || {
+                    targets
+                        .iter()
+                        .map(|t| Vec3::from(t.world.translation))
+                        .sum::<Vec3>()
+                        / targets.len() as f32
+                },
+                |b| b.center(),
+            )
+        }
+    };
+    Some((
+        Affine3A::from_rotation_translation(rotation.normalize(), pivot),
+        targets,
+    ))
 }
 
 fn pos(v: Vec2) -> Pos2 {
@@ -115,37 +172,41 @@ fn vec(p: Pos2) -> Vec2 {
 }
 
 impl Gizmo {
-    /// Draws the gizmo for the entity `selected` over the viewport at `rect`
-    /// and handles its drags, pushing the edits that move the entity.
+    /// Draws the gizmo for `selection` over the viewport `view` and handles
+    /// its drags (`response` is the viewport's), pushing the edits that move
+    /// the entities. While `navigating` (the pointer moves the camera), no
+    /// drag starts and no handle is lit.
+    #[allow(clippy::too_many_arguments)]
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
-        rect: egui::Rect,
+        response: &egui::Response,
+        view: &View,
         app: &App,
-        selected: Option<&str>,
+        selection: &Selection,
+        navigating: bool,
         actions: &mut Vec<Action>,
     ) {
-        let response = ui.interact(
-            rect,
-            ui.id().with("re_editor.gizmo"),
-            Sense::click_and_drag(),
-        );
         self.hovered = None;
-        let (Some(id), Some(screen)) = (selected, screen(app, rect)) else {
-            self.drag = None;
-            return;
-        };
-        let Some((world, parent, local)) = transforms(app.world(), id) else {
-            self.drag = None;
-            return;
-        };
-        if self.drag.as_ref().is_some_and(|a| a.id != id) {
+        if self
+            .drag
+            .as_ref()
+            .is_some_and(|a| a.selection != *selection)
+        {
             self.drag = None; // the selection changed under the drag
         }
+        let Some(screen) = view.screen else {
+            self.drag = None;
+            return;
+        };
+        let Some((world, targets)) = gizmo_world(app, selection, &self.settings) else {
+            self.drag = None;
+            return;
+        };
         let cursor = ui.input(|i| i.pointer.interact_pos()).map(vec);
 
-        // A drag in progress: follow the cursor and move the entity, finish
-        // on release, put it back on Escape.
+        // A drag in progress: follow the cursor and move the entities,
+        // finish on release, put them back on Escape.
         if let Some(active) = &mut self.drag {
             if let Some(c) = cursor {
                 active.delta = active.drag.delta(&screen, c, &self.settings);
@@ -163,7 +224,7 @@ impl Gizmo {
             {
                 actions.extend(edit(active, now));
             }
-        } else if let Some(c) = cursor {
+        } else if let Some(c) = cursor.filter(|_| !navigating) {
             let frame = Frame::new(
                 &screen,
                 &world,
@@ -182,17 +243,16 @@ impl Gizmo {
                     start,
                 };
                 self.drags += 1;
+                let first = &targets[0].id;
                 self.drag = Some(Active {
                     delta: drag.delta(&screen, c, &self.settings),
                     drag,
-                    id: id.to_string(),
+                    selection: selection.clone(),
+                    key: format!("gizmo:{first}:{}", self.drags),
+                    targets,
                     world,
-                    parent,
-                    local,
                     orientation: self.settings.orientation,
-                    key: format!("gizmo:{id}:{}", self.drags),
                     sent: None,
-                    fields: [false; 3],
                 });
             }
         }
@@ -210,22 +270,23 @@ impl Gizmo {
         };
         let frame = Frame::new(&screen, &shown, orientation, mode);
         let lit = active.or(self.hovered);
-        draw(ui.painter_at(rect), &screen, &frame, mode, lit);
+        draw(ui.painter_at(view.rect), &screen, &frame, mode, lit);
     }
 }
 
-/// A point over the viewport at `rect` where the gizmo on entity `id` picks
-/// `handle`, in egui points, or `None` when that handle is not shown (no
-/// such entity, behind the camera, or not a handle of this mode).
+/// A point over the viewport `view` where the gizmo on `selection` picks
+/// `handle`, in egui points, or `None` when that handle is not shown
+/// (nothing to move, behind the camera, or not a handle of this mode).
 pub(crate) fn handle_point(
     app: &App,
-    rect: egui::Rect,
+    view: &View,
     settings: &GizmoSettings,
-    id: &str,
+    selection: &Selection,
     handle: Handle,
 ) -> Option<Pos2> {
-    let screen = screen(app, rect)?;
-    let (world, _, _) = transforms(app.world(), id)?;
+    let screen = view.screen?;
+    let rect = view.rect;
+    let (world, _) = gizmo_world(app, selection, settings)?;
     let frame = Frame::new(&screen, &world, settings.orientation, settings.mode);
     let mut candidates = vec![frame.origin];
     for i in 0..3 {
@@ -245,26 +306,33 @@ pub(crate) fn handle_point(
         .map(pos)
 }
 
-/// The `scene.apply` that brings the entity to where the drag has it now,
-/// under the drag's coalesce key, or `None` when nothing changed since the
-/// last one (or, before the first, since the drag started).
+/// The `scene.apply` that brings the entities to where the drag has them
+/// now, under the drag's coalesce key, or `None` when nothing changed since
+/// the last one (or, before the first, since the drag started).
 pub(crate) fn edit(active: &mut Active, now: f64) -> Option<Action> {
     if active.sent.is_some_and(|(d, _)| d == active.delta)
         || (active.sent.is_none() && active.delta.is_identity())
     {
         return None;
     }
-    let (s0, r0, t0) = active.local;
-    let (s, r, t) = math::apply_local(active.local, &active.parent, &active.delta);
-    let changed = [
-        t.distance(t0) > 1e-6,
-        !math::same_rotation(r, r0),
-        s.distance(s0) > 1e-6,
-    ];
-    for (set, changed) in active.fields.iter_mut().zip(changed) {
-        *set |= changed;
+    let pivot = active.drag.frame.origin;
+    let axes = active.drag.frame.axes;
+    let mut ops = Vec::new();
+    for target in &mut active.targets {
+        let (s0, r0, t0) = target.local;
+        let at = Vec3::from(target.world.translation);
+        let (s, r, t) =
+            math::apply_about(target.local, &target.parent, at, &active.delta, pivot, axes);
+        let changed = [
+            t.distance(t0) > 1e-6,
+            !math::same_rotation(r, r0),
+            s.distance(s0) > 1e-6,
+        ];
+        for (set, changed) in target.fields.iter_mut().zip(changed) {
+            *set |= changed;
+        }
+        ops.extend(transform_ops(&target.id, target.fields, (s, r, t)));
     }
-    let ops = transform_ops(&active.id, active.fields, (s, r, t));
     if ops.is_empty() {
         return None;
     }
@@ -277,26 +345,41 @@ pub(crate) fn edit(active: &mut Active, now: f64) -> Option<Action> {
     Some(command(
         "scene.apply",
         json!({
-            "label": format!("{verb} {}", active.id),
+            "label": format!("{verb} {}", names(&active.targets)),
             "ops": ops,
             "coalesce": active.key,
         }),
     ))
 }
 
-/// What puts the entity back where a cancelled drag started: an undo of the
-/// drag's step while it is the latest, otherwise an edit setting the fields
-/// back (another writer's edit came between). `None` when the drag sent
-/// nothing.
+/// What the edit labels name: the one entity's id, or how many.
+fn names(targets: &[Target]) -> String {
+    match targets {
+        [one] => one.id.clone(),
+        _ => format!("{} entities", targets.len()),
+    }
+}
+
+/// What puts the entities back where a cancelled drag started: an undo of
+/// the drag's step while it is the latest, otherwise an edit setting the
+/// fields back (another writer's edit came between). `None` when the drag
+/// sent nothing.
 fn cancel(active: &Active, app: &App) -> Option<Action> {
     active.sent?;
     if app.history().undo_key() == Some(active.key.as_str()) {
         return Some(command("undo", json!({})));
     }
-    let ops = transform_ops(&active.id, active.fields, active.local);
+    let ops: Vec<Json> = active
+        .targets
+        .iter()
+        .flat_map(|t| transform_ops(&t.id, t.fields, t.local))
+        .collect();
     Some(command(
         "scene.apply",
-        json!({ "label": format!("cancel the drag of {}", active.id), "ops": ops }),
+        json!({
+            "label": format!("cancel the drag of {}", names(&active.targets)),
+            "ops": ops,
+        }),
     ))
 }
 
@@ -411,8 +494,8 @@ fn draw(
     }
 }
 
-/// The toolbar's gizmo controls: mode, orientation and snapping. Keys W, E
-/// and R pick the mode when no text field has the keyboard.
+/// The toolbar's gizmo controls: mode, orientation, pivot and snapping. Keys
+/// W, E and R pick the mode when no text field has the keyboard.
 pub(crate) fn toolbar(settings: &mut GizmoSettings, ui: &mut egui::Ui) {
     for (mode, label, key) in [
         (GizmoMode::Translate, "Move", "W"),
@@ -431,7 +514,7 @@ pub(crate) fn toolbar(settings: &mut GizmoSettings, ui: &mut egui::Ui) {
     if ui
         .selectable_label(local, if local { "Local" } else { "World" })
         .on_hover_text(
-            "Gizmo axes: the world's or the entity's own (scale always uses the entity's)",
+            "Gizmo axes: the world's or the active entity's own (scale always uses the entity's)",
         )
         .clicked()
     {
@@ -439,6 +522,20 @@ pub(crate) fn toolbar(settings: &mut GizmoSettings, ui: &mut egui::Ui) {
             Orientation::World
         } else {
             Orientation::Local
+        };
+    }
+    let centre = settings.pivot == GizmoPivot::Centre;
+    if ui
+        .selectable_label(centre, if centre { "Centre" } else { "Pivot" })
+        .on_hover_text(
+            "Where the gizmo stands for several entities: the active one's origin (Pivot) or the centre of their bounds (Centre)",
+        )
+        .clicked()
+    {
+        settings.pivot = if centre {
+            GizmoPivot::Active
+        } else {
+            GizmoPivot::Centre
         };
     }
     ui.checkbox(&mut settings.snap, "Snap")
