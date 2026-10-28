@@ -61,7 +61,9 @@ fn sample(keys: &[(f32, [f32; 3])], t: f32) -> [f32; 3] {
 /// The outline of a rounded rectangle, clockwise, with straight edges split
 /// so per-vertex colours follow a gradient.
 fn outline(min: Vec2, size: Vec2, r: f32) -> Vec<Vec2> {
-    let r = r.clamp(0.0, size.x.min(size.y) * 0.5);
+    // A negative size is normal (an offset larger than the parent, or a tween
+    // that overshoots zero), and `clamp` panics when its bounds cross.
+    let r = r.clamp(0.0, (size.x.min(size.y) * 0.5).max(0.0));
     let max = min + size;
     let mut pts = Vec::new();
     let edge = |a: Vec2, b: Vec2, pts: &mut Vec<Vec2>| {
@@ -349,6 +351,9 @@ impl<'a> Painter<'a> {
     /// A background coloured by a gradient: a fan of triangles from the
     /// centre whose vertices sample the colour and transparency keys.
     fn gradient(&mut self, it: &Item, g: &Gradient, bg: Rgba, corner: f32) {
+        if !(it.size.x > 0.0 && it.size.y > 0.0 && it.size.is_finite()) {
+            return;
+        }
         let r = g.rotation.to_radians();
         let dir = Vec2::new(libm::cosf(r), libm::sinf(r));
         let center = it.min + it.size * 0.5;
@@ -409,5 +414,75 @@ mod tests {
             o.iter()
                 .all(|p| p.x >= -1e-3 && p.x <= 100.001 && p.y >= -1e-3 && p.y <= 50.001)
         );
+    }
+
+    /// A size that works out negative (an offset larger than the parent, or a
+    /// tween that overshoots zero) or NaN is not an error: a rounded gradient
+    /// background on it paints nothing.
+    #[test]
+    fn gradients_on_empty_and_nan_sizes_paint_nothing() {
+        use crate::layout::{Layout, Root};
+        use crate::tree::{Dim, Dim2, Node};
+
+        let look = Look {
+            background: Rgba::WHITE,
+            corner: Some(Dim::px(8.0)),
+            gradient: Some(Gradient {
+                colors: vec![(0.0, [1.0; 3]), (1.0, [0.0; 3])],
+                transparency: Vec::new(),
+                offset: Vec2::ZERO,
+                rotation: 0.0,
+            }),
+            ..Look::default()
+        };
+        let mut tree = UiTree::new();
+        let sizes = [
+            Dim2::px(20.0, 20.0),
+            Dim2::new(Dim::new(1.0, -40.0), Dim::px(20.0)),
+            Dim2::px(f32::NAN, 20.0),
+        ];
+        let children = sizes
+            .map(|size| {
+                tree.add(Node {
+                    size,
+                    look: look.clone(),
+                    ..Node::default()
+                })
+            })
+            .to_vec();
+        let parent = tree.add(Node {
+            size: Dim2::px(30.0, 30.0),
+            children,
+            ..Node::default()
+        });
+        let root = Root {
+            node: tree.add(Node {
+                children: vec![parent],
+                ..Node::default()
+            }),
+            origin: Vec2::ZERO,
+            abs_origin: Vec2::ZERO,
+            size: Vec2::new(400.0, 300.0),
+            global_z: false,
+            clip: None,
+            input: true,
+        };
+        let ctx = egui::Context::default();
+        let mut items = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            items = Layout::new(&tree, ui.ctx()).root(&root);
+        });
+        output.textures_delta.clear();
+        assert_eq!(items.len(), 4, "the parent and its three frames are drawn");
+        let mut painter = Painter::new(&tree, Rect::EVERYTHING);
+        for it in &items {
+            painter.item(it, &Looks::default());
+        }
+        let meshes = painter
+            .finish()
+            .iter()
+            .filter(|s| matches!(s.shape, Shape::Mesh(_)))
+            .count();
+        assert_eq!(meshes, 1, "only the 20 by 20 frame has a gradient to paint");
     }
 }
