@@ -11,8 +11,11 @@
 //!   entity without a `Transform`.
 //! - Anything else is drawn where the world has it, and has no entry.
 //!
-//! [`DrawnPoses::compute`] fills the table once a frame at the start of
-//! `LateFrame`, after a propagation; it then answers until the next frame's.
+//! [`DrawnPoses::compute`] fills the table at the start of `LateFrame`, after
+//! a propagation, for the late-frame callbacks to read, and again in Sync
+//! after its propagation, so what those callbacks moved on a moving body is
+//! drawn in the same frame. That table then answers until the next frame's
+//! `LateFrame`: in `PreRender`, scripts read what is on screen.
 
 use glam::Affine3A;
 use re_scene::ecs::entity::EntityHashMap;

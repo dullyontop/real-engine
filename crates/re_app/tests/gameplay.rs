@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use glam::{Affine3A, Vec3};
+use glam::{Affine3A, Quat, Vec3};
 use re_app::{App, AppConfig};
 use re_reflect::Value;
 
@@ -17,6 +17,7 @@ const SCENE: &str = r#"{
         "RigidBody": { "kind": "Dynamic", "mass": 1.0 },
         "Transform": { "translation": [0.0, 30.0, 0.0] } } },
     { "id": "lid", "name": "Lid", "parent": "box", "components": {
+        "Light": {},
         "Transform": { "translation": [0.0, 0.5, 0.0] } } },
     { "id": "camera", "name": "Camera", "components": {
         "ScriptRef": { "path": "scripts/camera.luau" },
@@ -32,15 +33,46 @@ time.on_late_frame(function()
 end)
 "#;
 
-fn project(camera: &str) -> tempfile::TempDir {
+/// The box falling, with a camera rig on it that turns a tenth of a radian
+/// more in each frame's late-frame callbacks.
+const RIG_SCENE: &str = r#"{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    { "id": "box", "name": "Box", "components": {
+        "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] },
+        "RigidBody": { "kind": "Dynamic", "mass": 1.0 },
+        "Transform": { "translation": [0.0, 30.0, 0.0] } } },
+    { "id": "rig", "name": "Rig", "parent": "box", "components": {
+        "Camera": { "active": true },
+        "ScriptRef": { "path": "scripts/rig.luau" },
+        "Transform": { "translation": [0.0, 2.0, 4.0] } } }
+  ]
+}
+"#;
+
+const RIG: &str = r#"local n = 0
+time.on_late_frame(function()
+	n += 1
+	script.entity:set("Transform", "rotation", quat.from_euler(0, n * 0.1, 0))
+end)
+"#;
+
+fn project_with(scene: &str, scripts: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
     std::fs::create_dir_all(d.join("scenes")).unwrap();
     std::fs::create_dir_all(d.join("scripts")).unwrap();
     std::fs::write(d.join("real.toml"), "[project]\nname = \"gameplay\"\n").unwrap();
-    std::fs::write(d.join("scenes/main.scene.json"), SCENE).unwrap();
-    std::fs::write(d.join("scripts/camera.luau"), camera).unwrap();
+    std::fs::write(d.join("scenes/main.scene.json"), scene).unwrap();
+    for (name, source) in scripts {
+        std::fs::write(d.join("scripts").join(name), source).unwrap();
+    }
     dir
+}
+
+fn project(camera: &str) -> tempfile::TempDir {
+    project_with(SCENE, &[("camera.luau", camera)])
 }
 
 fn open(dir: &Path) -> App {
@@ -80,11 +112,35 @@ fn a_late_frame_camera_follows_where_the_body_is_drawn() {
         // The lid rides on the box: drawn with the box's correction.
         let lid = Vec3::from(drawn(&app, "lid").translation);
         assert!((lid - (at + Vec3::Y * 0.5)).length() < 1e-4, "{lid} {at}");
+        // So is the light on it.
+        let light = app.snapshot().lights[0].position;
+        assert!((light - lid).length() < 1e-4, "{light} {lid}");
         if (at - translation(&app, "box")).length() > 1e-4 {
             between += 1;
         }
     }
     assert!(between >= 5, "drawn between steps on {between} frames");
+    assert!(app.take_diagnostics().is_empty());
+}
+
+/// A camera rig riding on a moving body and turned in `time.on_late_frame`
+/// is drawn turned in the same frame, not one frame late: Sync takes the
+/// drawn poses again after the late frame's callbacks.
+#[test]
+fn a_rig_on_a_moving_body_turned_in_the_late_frame_is_drawn_turned() {
+    let dir = project_with(RIG_SCENE, &[("rig.luau", RIG)]);
+    let mut app = open(dir.path());
+    let frame_time = Duration::from_secs_f64(1.5 / 60.0);
+    for n in 1..=10 {
+        app.frame(frame_time);
+        let (_, body, _) = drawn(&app, "box").to_scale_rotation_translation();
+        let want = body * Quat::from_rotation_y((f64::from(n) * 0.1) as f32);
+        let (_, got, _) = app.snapshot().camera.world.to_scale_rotation_translation();
+        assert!(
+            got.dot(want).abs() > 1.0 - 1e-6,
+            "frame {n}: drawn at {got}, turned to {want}"
+        );
+    }
     assert!(app.take_diagnostics().is_empty());
 }
 

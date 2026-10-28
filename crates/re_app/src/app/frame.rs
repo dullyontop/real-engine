@@ -387,6 +387,10 @@ impl App {
     fn sync_phase(&mut self, f: u64) {
         let t = Instant::now();
         self.world.propagate();
+        // Late-frame callbacks may have moved what rides on a moving body (a
+        // camera rig turned on a vehicle): it is drawn where they left it.
+        self.drawn
+            .compute(&self.world, &self.physics_sync, self.alpha);
         if self.graphics.is_some()
             && (!self.pending.screenshots.is_empty()
                 || self.screenshots.iter().any(|r| r.frame == f))
