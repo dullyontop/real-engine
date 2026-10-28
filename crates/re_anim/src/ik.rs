@@ -66,6 +66,10 @@ pub fn two_bone(
     let lower = end - mid;
     let a = upper.length();
     let b = lower.length();
+    // Finite points far apart can still be an infinite distance apart.
+    if !(a.is_finite() && b.is_finite()) {
+        return (Quat::IDENTITY, Quat::IDENTITY);
+    }
     let to_target = target - root;
 
     // A zero-length bone: only aim the whole chain.
