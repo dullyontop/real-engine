@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use glam::{Quat, Vec3};
 use oxijolt::{
@@ -30,6 +30,7 @@ use crate::config::{LayerTable, PhysicsConfig};
 use crate::convert::{gq, grv, gv, jq, jv, rv, unit_rotation};
 use crate::jobs::JoltRayonJobs;
 use crate::parts::{PartGate, PartListener, PartsState};
+use crate::probe::Probe;
 use crate::ragdoll::{RagdollEntry, RagdollMotion, RagdollSaved, Settle};
 use crate::shapes;
 use crate::vehicle::VehicleEntry;
@@ -51,7 +52,7 @@ use crate::vehicle::VehicleEntry;
 /// poses bit for bit, whatever the number of worker threads.
 pub struct Physics {
     pub(crate) world: PhysicsWorld,
-    jobs: Arc<JoltRayonJobs>,
+    pub(crate) jobs: Arc<JoltRayonJobs>,
     pub(crate) config: PhysicsConfig,
     pub(crate) bodies: BTreeMap<EntityId, BodyEntry>,
     /// Body → entity, including bodies removed since the last step (see the module docs)
@@ -66,6 +67,15 @@ pub struct Physics {
     /// The driver input of vehicles removed during the current `apply`, so a
     /// vehicle added again in the same `apply` keeps it.
     pub(crate) dropped_inputs: BTreeMap<EntityId, VehicleInput>,
+    /// The linear and angular velocity of dynamic bodies removed during the
+    /// current `apply`, so a dynamic body added again for the same entity in the
+    /// same `apply` (a replaced body) keeps moving.
+    dropped_motion: BTreeMap<EntityId, (Vec3, Vec3)>,
+    /// Every object layer but the sensors' copies, for queries that leave sensors
+    /// out (see [`sensor_layer`]).
+    pub(crate) solid_layers: Vec<ObjectLayer>,
+    /// The private world of exact queries, made on first use (see [`crate::probe`]).
+    pub(crate) probe: Mutex<Option<Probe>>,
     pub(crate) gate: Arc<GroupGate>,
     pub(crate) state: StepState,
     pub(crate) removed: Vec<BodyId>,
@@ -85,7 +95,7 @@ pub struct Physics {
 }
 
 /// What the world knows about one body.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct BodyEntry {
     pub(crate) id: BodyId,
     pub(crate) kind: BodyKind,
@@ -95,11 +105,15 @@ pub(crate) struct BodyEntry {
     pub(crate) layer: Layer,
     /// `BodyDesc::center_of_mass_offset`, kept for `SetShape`.
     pub(crate) mass_offset: Vec3,
+    /// The body's Jolt shape, which the probe's copy of the body shares.
+    pub(crate) shape: Shape,
 }
 
 pub(crate) struct CharacterEntry {
     pub(crate) id: CharacterId,
     pub(crate) inner: Option<BodyId>,
+    /// The inner body's shape, which the probe's copy of it shares.
+    pub(crate) inner_shape: Option<Shape>,
     pub(crate) groups: GroupMask,
     step_height: f32,
     /// The cosine of the steepest ground the character stands still on: its max slope,
@@ -304,25 +318,57 @@ impl CharacterContactListener for GroupGate {
 }
 
 /// The Jolt object layer of `layer` for static bodies (`moving == false`) or for bodies
-/// that move.
+/// that move. Sensors have copies of these (see [`sensor_layer`]).
 pub(crate) fn object_layer(layer: Layer, moving: bool) -> ObjectLayer {
     ObjectLayer::new(u32::from(layer.0) * 2 + u32::from(moving))
 }
 
-fn collision_layers(table: &LayerTable) -> CollisionLayers {
-    let mut layers = CollisionLayers::new(2);
-    for _ in 0..table.count() {
-        layers.add_object_layer(BroadPhaseLayer::new(0));
-        layers.add_object_layer(BroadPhaseLayer::new(1));
+/// The Jolt object layer of a sensor on `layer` in a table of `count` layers: a copy
+/// of [`object_layer`]'s, after the table's other object layers, that collides as the
+/// original does. A query that leaves sensors out selects the other layers, so it
+/// never meets a sensor (`crate::query`).
+pub(crate) fn sensor_layer(layer: Layer, moving: bool, count: u16) -> ObjectLayer {
+    ObjectLayer::new(u32::from(count) * 2 + u32::from(layer.0) * 2 + u32::from(moving))
+}
+
+/// The object layer of a body on `layer`.
+fn body_layer(layer: Layer, moving: bool, sensor: bool, count: u16) -> ObjectLayer {
+    if sensor {
+        sensor_layer(layer, moving, count)
+    } else {
+        object_layer(layer, moving)
     }
-    for a in 0..table.count() {
-        for b in 0..table.count() {
+}
+
+/// Jolt's layers for `table`: for each layer, a static and a moving object layer
+/// (static ones in broad-phase tree 0, moving ones in tree 1), then the sensors'
+/// copies of them. A sensor's copy collides with whatever the original collides
+/// with, sensors included, so the copies change no contact.
+fn collision_layers(table: &LayerTable) -> CollisionLayers {
+    let count = table.count();
+    let mut layers = CollisionLayers::new(2);
+    for _copy in 0..2 {
+        for _ in 0..count {
+            layers.add_object_layer(BroadPhaseLayer::new(0));
+            layers.add_object_layer(BroadPhaseLayer::new(1));
+        }
+    }
+    let both = [false, true];
+    for a in 0..count {
+        for b in 0..count {
             let (la, lb) = (Layer(a), Layer(b));
-            if a <= b && table.moving_collides(la, lb) {
-                layers.enable_collision(object_layer(la, true), object_layer(lb, true));
-            }
-            if table.static_collides(la, lb) {
-                layers.enable_collision(object_layer(la, true), object_layer(lb, false));
+            for (sa, sb) in both.into_iter().flat_map(|sa| both.map(|sb| (sa, sb))) {
+                let (moving_a, moving_b, fixed_b) = (
+                    body_layer(la, true, sa, count),
+                    body_layer(lb, true, sb, count),
+                    body_layer(lb, false, sb, count),
+                );
+                if a <= b && table.moving_collides(la, lb) {
+                    layers.enable_collision(moving_a, moving_b);
+                }
+                if table.static_collides(la, lb) {
+                    layers.enable_collision(moving_a, fixed_b);
+                }
             }
         }
     }
@@ -393,6 +439,9 @@ impl Physics {
     /// [`TaskPool::global`]. Fails with `RE5001` if Jolt refuses the configuration.
     pub fn new(config: PhysicsConfig, pool: &'static TaskPool) -> Result<Physics, Diagnostic> {
         let jobs = Arc::new(JoltRayonJobs::new(pool));
+        let solid_layers = (0..u32::from(config.layers.count()) * 2)
+            .map(ObjectLayer::new)
+            .collect();
         let mut world = PhysicsWorld::new(
             WorldSettings::default()
                 .layers(collision_layers(&config.layers))
@@ -436,6 +485,9 @@ impl Physics {
             ragdolls: BTreeMap::new(),
             pending_ragdolls: BTreeMap::new(),
             dropped_inputs: BTreeMap::new(),
+            dropped_motion: BTreeMap::new(),
+            solid_layers,
+            probe: Mutex::new(None),
             gate,
             state: StepState::default(),
             removed: Vec::new(),
@@ -467,6 +519,19 @@ impl Physics {
             }
         }
         self.dropped_inputs.clear();
+        self.dropped_motion.clear();
+    }
+
+    /// The Jolt shape a query copies into the probe for `body` of `entity`: a body's,
+    /// a character's inner body's or a ragdoll part's.
+    pub(crate) fn query_shape(&self, body: BodyId, entity: EntityId) -> Option<&Shape> {
+        if let Some(entry) = self.bodies.get(&entity) {
+            return (entry.id == body).then_some(&entry.shape);
+        }
+        if let Some(ch) = self.characters.get(&entity) {
+            return ch.inner_shape.as_ref().filter(|_| ch.inner == Some(body));
+        }
+        self.ragdolls.get(&entity)?.part_shape(body)
     }
 
     fn apply_one(&mut self, cmd: PhysicsCmd) -> Result<(), Diagnostic> {
@@ -639,7 +704,7 @@ impl Physics {
             .with_hint("remove the existing body first, or send SetShape to change its shape"));
         }
         self.check_layer(id, desc.layer)?;
-        if desc.kind != BodyKind::Static && shapes::is_static_only(&desc.shape) {
+        if shapes::refuses(desc.kind, &desc.shape) {
             return Err(static_only(id, &desc.shape, desc.kind));
         }
         let rot = unit_rotation(desc.rot).ok_or_else(|| bad_rotation(id))?;
@@ -664,12 +729,22 @@ impl Physics {
         }
         let shape = with_mass_offset(id, built.shape, desc.kind, desc.center_of_mass_offset)?;
         let moving = desc.kind != BodyKind::Static;
-        let settings = match desc.kind {
+        let mut settings = match desc.kind {
             BodyKind::Static => BodySettings::new_static(),
             BodyKind::Dynamic => BodySettings::new_dynamic().mass(desc.mass),
+            // Jolt computes no mass for a mesh, and a kinematic body has motion
+            // properties: the description's mass stands in.
+            BodyKind::Kinematic if shapes::is_static_only(&desc.shape) => {
+                BodySettings::new_kinematic().mass(desc.mass)
+            }
             BodyKind::Kinematic => BodySettings::new_kinematic(),
         }
-        .object_layer(object_layer(desc.layer, moving))
+        .object_layer(body_layer(
+            desc.layer,
+            moving,
+            desc.sensor,
+            self.config.layers.count(),
+        ))
         .position(self.jolt_point(desc.pos))
         .rotation(jq(rot))
         .friction(desc.friction)
@@ -678,6 +753,14 @@ impl Physics {
         .angular_damping(desc.angular_damping)
         .sensor(desc.sensor)
         .user_data(id.to_bits());
+        // A dynamic body that replaces one removed in this `apply` moves on as it did.
+        if desc.kind == BodyKind::Dynamic
+            && let Some((linear, angular)) = self.dropped_motion.remove(&id)
+        {
+            settings = settings
+                .linear_velocity(jv(linear))
+                .angular_velocity(jv(angular));
+        }
         let body = self
             .world
             .create_body(&shape, &settings)
@@ -694,6 +777,7 @@ impl Physics {
                 sensor: desc.sensor,
                 layer: desc.layer,
                 mass_offset: desc.center_of_mass_offset,
+                shape,
             },
         );
         Ok(())
@@ -702,6 +786,12 @@ impl Physics {
     fn remove_body(&mut self, id: EntityId) -> Result<(), Diagnostic> {
         let entry = self.bodies.get(&id).ok_or_else(|| unknown(id, "body"))?;
         let body = entry.id;
+        if entry.kind == BodyKind::Dynamic
+            && let Ok(b) = self.world.body(body)
+        {
+            let motion = (gv(b.linear_velocity()), gv(b.angular_velocity()));
+            self.dropped_motion.insert(id, motion);
+        }
         // Jolt refuses to remove a vehicle's chassis: the vehicle goes with it.
         self.drop_vehicle(id);
         // Jolt refuses to remove a body a constraint holds: remove those constraints first.
@@ -912,7 +1002,7 @@ impl Physics {
                 }
             }
             PhysicsCmd::SetShape { shape, .. } => {
-                if desc.kind != BodyKind::Static && shapes::is_static_only(shape) {
+                if shapes::refuses(desc.kind, shape) {
                     Err(static_only(id, shape, desc.kind))
                 } else {
                     desc.shape = shape.clone();
@@ -978,10 +1068,11 @@ impl Physics {
         shape: &re_types::physics::ShapeDesc,
     ) -> Result<(), Diagnostic> {
         let entry = self.bodies.get(&id).ok_or_else(|| unknown(id, "body"))?;
-        if entry.kind != BodyKind::Static && shapes::is_static_only(shape) {
+        if shapes::refuses(entry.kind, shape) {
             return Err(static_only(id, shape, entry.kind));
         }
         let (body, kind, mass, offset) = (entry.id, entry.kind, entry.mass, entry.mass_offset);
+        let mesh = shapes::is_static_only(shape);
         let built = shapes::build(shape).map_err(|d| d.at(at(id)))?;
         if let Some(w) = built.warning {
             self.diagnostics.push(w.at(at(id)));
@@ -989,13 +1080,18 @@ impl Physics {
         let shape = with_mass_offset(id, built.shape, kind, offset)?;
         let (mass, activation) = match kind {
             BodyKind::Dynamic => (Some(mass), Activation::Activate),
-            BodyKind::Kinematic => (None, Activation::Activate),
+            // As in `add_body`: a kinematic mesh takes the description's mass.
+            BodyKind::Kinematic => (mesh.then_some(mass), Activation::Activate),
             BodyKind::Static => (None, Activation::DontActivate),
         };
         self.world
             .body_mut(body)
             .and_then(|mut b| b.set_shape(&shape, mass, activation))
-            .map_err(|e| body_invalid(id, e))
+            .map_err(|e| body_invalid(id, e))?;
+        if let Some(entry) = self.bodies.get_mut(&id) {
+            entry.shape = shape;
+        }
+        Ok(())
     }
 
     fn add_character(
@@ -1082,6 +1178,7 @@ impl Physics {
             CharacterEntry {
                 id: cid,
                 inner,
+                inner_shape: inner.and(inner_shape),
                 groups: desc.groups,
                 step_height: desc.step_height,
                 hold_cos: libm::cosf(desc.max_slope_deg.min(HOLD_MAX_SLOPE_DEG).to_radians()),
@@ -1091,17 +1188,21 @@ impl Physics {
         Ok(())
     }
 
-    /// Every object layer a moving body (or character) on `layer` collides with.
+    /// Every object layer a moving body (or character) on `layer` collides with,
+    /// sensors' copies included (a sensor does not stop a character; Jolt only
+    /// reports the contact).
     fn layers_seen_by(&self, layer: Layer) -> Vec<ObjectLayer> {
         let table = &self.config.layers;
         let mut out = Vec::new();
-        for other in 0..table.count() {
-            let other = Layer(other);
-            if table.static_collides(layer, other) {
-                out.push(object_layer(other, false));
-            }
-            if table.moving_collides(layer, other) {
-                out.push(object_layer(other, true));
+        for sensor in [false, true] {
+            for other in 0..table.count() {
+                let other = Layer(other);
+                if table.static_collides(layer, other) {
+                    out.push(body_layer(other, false, sensor, table.count()));
+                }
+                if table.moving_collides(layer, other) {
+                    out.push(body_layer(other, true, sensor, table.count()));
+                }
             }
         }
         out
@@ -1871,15 +1972,22 @@ fn wrong_kind(id: EntityId, what: &str, kind: BodyKind) -> Diagnostic {
 }
 
 fn static_only(id: EntityId, shape: &re_types::physics::ShapeDesc, kind: BodyKind) -> Diagnostic {
+    let kinds = if matches!(shape, re_types::physics::ShapeDesc::TriangleMesh { .. }) {
+        "static or kinematic"
+    } else {
+        "static"
+    };
     Diagnostic::error(
         codes::STATIC_ONLY_SHAPE,
         format!(
-            "a {} collider can only be used on a static body, not a {kind:?} one",
+            "a {} collider can only be used on a {kinds} body, not a {kind:?} one",
             shapes::kind_name(shape)
         ),
     )
     .at(at(id))
-    .with_hint("make the body static, or use a box, sphere, capsule or convex collider")
+    .with_hint(format!(
+        "make the body {kinds}, or use a box, sphere, capsule or convex collider"
+    ))
 }
 
 fn bad_rotation(id: EntityId) -> Diagnostic {
