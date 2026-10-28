@@ -665,11 +665,13 @@ fn an_agent_uses_luau_tools_resources_and_verify_diff(t: Transport) {
             json!({ "uri": "real://docs/ROADMAP.md" }),
         ),
     );
+    // Only the title: a change to docs/ alone runs no tests in CI (ADR-0023's
+    // amendment of 2026-10-28), so no test may depend on a document's wording.
     assert!(
         via_tool["data"]["text"]
             .as_str()
             .unwrap()
-            .contains("AI track")
+            .starts_with("# Roadmap")
     );
     let listed = s.request(13, "resources/list", json!({}));
     assert!(

@@ -41,6 +41,7 @@ jobs:
           - os: macos-latest
             backend: metal
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
       - name: Check the project
@@ -75,6 +76,7 @@ jobs:
   commit:
     needs: render
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:

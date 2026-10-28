@@ -1,15 +1,49 @@
 name: Linux setup
 description: >
   System packages from docs/DEPENDENCIES.md ("System packages"), the stable Rust
-  toolchain with rustfmt and clippy, and the cargo cache.
+  toolchain with rustfmt and clippy, and the cargo cache. The packages apt
+  downloads and the cargo cache are restored on every run and saved only on
+  main (ADR-0023's amendment of 2026-10-28), so PR runs never fill the
+  repository's 10 GB of caches.
+inputs:
+  cargo-cache:
+    description: >
+      A cargo cache key shared by the jobs that build exactly the same thing
+      (the release `real` on ubuntu-latest). Empty, the job has its own cache.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
+    - name: The key of the downloaded packages
+      id: apt-key
+      shell: bash
+      # The runner image (ImageOS, ImageVersion) and this file, for its package list.
+      run: |
+        list="$(sha256sum "$GITHUB_ACTION_PATH/action.yml" | cut -c1-16)"
+        echo "image=apt-${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
+        echo "key=apt-${ImageOS:-unknown}-${ImageVersion:-unknown}-$list" >> "$GITHUB_OUTPUT"
+    - name: Restore the downloaded packages
+      id: apt-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/real-engine/apt
+        key: ${{ steps.apt-key.outputs.key }}
+        restore-keys: ${{ steps.apt-key.outputs.image }}-
     - name: Install system packages
       shell: bash
+      # The runners' Ubuntu mirror sometimes serves a runner at 40-60 kB/s, which
+      # made this step take 12-20 minutes in a third of the jobs. apt fetches only
+      # the packages the cache lacks; autoclean then drops versions the mirror no
+      # longer has, so the cache does not grow.
       run: |
+        cache="$HOME/.cache/real-engine/apt"
+        mkdir -p "$cache"
+        if compgen -G "$cache/*.deb" > /dev/null; then
+          sudo cp "$cache"/*.deb /var/cache/apt/archives/
+        fi
         sudo apt-get update
-        sudo apt-get install -y \
+        sudo apt-get install -y -o APT::Keep-Downloaded-Packages=true \
           build-essential g++ cmake pkg-config \
           libvulkan-dev mesa-vulkan-drivers vulkan-tools \
           libegl1 libegl-mesa0 libgl1-mesa-dri libgles2 \
@@ -17,8 +51,22 @@ runs:
           libxcursor-dev libxrandr-dev libxi-dev libwayland-dev \
           libasound2-dev libudev-dev \
           xvfb
+        sudo apt-get autoclean -y > /dev/null
+        rm -f "$cache"/*.deb
+        if compgen -G "/var/cache/apt/archives/*.deb" > /dev/null; then
+          cp /var/cache/apt/archives/*.deb "$cache"/
+        fi
+    - name: Save the downloaded packages
+      if: github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.cache/real-engine/apt
+        key: ${{ steps.apt-key.outputs.key }}
     - name: Install the stable toolchain
       shell: bash
       run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
     - name: Cache cargo
       uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ inputs.cargo-cache }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}

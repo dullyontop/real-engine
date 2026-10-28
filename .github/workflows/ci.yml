@@ -1,27 +1,46 @@
 # CI for Real Engine (ADR-0023, docs/M1_PLAN.md WP0).
 #
-# Runs on every PR and on main, all on Ubuntu. Its 12 checks are required for
-# merge (ADR-0023 and its amendments):
+# All on Ubuntu. Its 12 checks are the merge rule (ADR-0023 and its amendments):
 # - fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke,
 #   verify-plaza (M2) and verify-valley (WP28);
 # - build-web (WP29 PR "portable");
 # - build-package: the packaged Linux games (ADR-0037, WP19 PR "bundles").
+# A private repository's CI minutes are billed, so the `changes` job picks the
+# checks a run needs (tools/ci/changes.sh; ADR-0023's amendment of 2026-10-28),
+# and a check it skips counts as passing:
+# - a draft PR runs nothing, and a PR that changes only documentation (docs/
+#   and the Markdown files at the root) runs fmt alone; any other PR runs
+#   every check, msrv and deny only as below;
+# - msrv and deny run when a build input changes (Cargo.lock, a Cargo.toml,
+#   rust-toolchain.toml, .cargo/, deny.toml, .github/, tools/ci/); deny also
+#   runs every day and msrv every Monday, on main;
+# - a push to main runs fmt, plus clippy, test and xtask (which save the
+#   cargo caches PRs restore) unless it changes only documentation, and every
+#   check when it changes a build input.
 # The Windows and macOS checks and d2 are in platforms.yml, which runs only
-# when started by hand (ADR-0023's amendment of 2026-10-27: a private
-# repository's CI minutes are billed, and those jobs were most of a run's).
+# when started by hand (ADR-0023's amendment of 2026-10-27).
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
-# actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7).
+# actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7); and on
+# 2026-10-28: actions/cache v6 (55cc8345, in .github/actions/linux-setup).
 
 name: CI
 
 on:
   pull_request:
+    # ready_for_review starts the first run of a PR opened as a draft.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
+  schedule:
+    # deny every day; on Mondays the weekly line, which tools/ci/changes.sh
+    # names, runs msrv as well.
+    - cron: "17 5 * * 0,2-6"
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -32,7 +51,33 @@ env:
   CARGO_BUILD_JOBS: 2
 
 jobs:
+  changes:
+    # Which checks this run needs (see the top of this file). A draft PR skips
+    # this job, and with it every check.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      fmt: ${{ steps.pick.outputs.fmt }}
+      code: ${{ steps.pick.outputs.code }}
+      full: ${{ steps.pick.outputs.full }}
+      msrv: ${{ steps.pick.outputs.msrv }}
+      deny: ${{ steps.pick.outputs.deny }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: tools/ci/changes.sh
+
   fmt:
+    needs: changes
+    if: needs.changes.outputs.fmt == 'true'
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -44,6 +89,9 @@ jobs:
           if [ -n "$bad" ]; then echo "CRLF line endings in:"; echo "$bad"; exit 1; fi
 
   clippy:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -51,6 +99,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     env:
       # Each test process records the compat members its scripts reach
@@ -86,6 +137,9 @@ jobs:
         run: cargo xtask members "$REAL_COMPAT_MEMBER_TRACE"
 
   msrv:
+    needs: changes
+    if: needs.changes.outputs.msrv == 'true'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -94,14 +148,21 @@ jobs:
       - run: cargo +1.95.0 build --workspace --all-targets --locked
 
   deny:
+    needs: changes
+    if: needs.changes.outputs.deny == 'true'
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install stable --profile minimal
-      - run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Install cargo-deny 0.20.2
+        run: tools/ci/cargo-deny.sh
       - run: cargo deny check
 
   xtask:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -109,10 +170,15 @@ jobs:
       - run: cargo xtask check
 
   verify-demo:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    timeout-minutes: 50
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
+        with:
+          cargo-cache: release
       - name: Install luau-lsp 1.70.1
         run: |
           curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
@@ -144,10 +210,15 @@ jobs:
           jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
 
   verify-plaza:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
+        with:
+          cargo-cache: release
       - name: Install luau-lsp 1.70.1
         run: |
           curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
@@ -194,10 +265,15 @@ jobs:
   verify-valley:
     # The M3 example (M3_PLAN WP28): a streamed world (ADR-0042). ADR-0023's
     # WP28 amendment makes it required.
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    timeout-minutes: 50
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
+        with:
+          cargo-cache: release
       - name: Install luau-lsp 1.70.1
         run: |
           curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
@@ -258,10 +334,15 @@ jobs:
           retention-days: 14
 
   xvfb-smoke:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
+        with:
+          cargo-cache: release
       - run: cargo build --locked --release -p re_cli
       - name: Windowed run under Xvfb (must print RUN OK)
         run: |
@@ -277,6 +358,9 @@ jobs:
     # runtime folder from `real build --runtime-only` then builds the plaza
     # with `--runtime`, as a release's does. build-package-windows and
     # build-package-macos, in platforms.yml, do the same on the other platforms.
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    timeout-minutes: 50
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -338,6 +422,9 @@ jobs:
   # state_hash must match native (ADR-0036, WP18 PR "d2").
   # actions/setup-node v7 (949feb24) verified with `git ls-remote` on 2026-10-20.
   build-web:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    timeout-minutes: 75
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -369,11 +456,14 @@ jobs:
           node --experimental-wasm-exnref tools/web-test/smoke.mjs target/web-test target/web-test/native.txt
       - name: Install binaryen 133
         run: tools/ci/binaryen.sh
+      # Without --with-deps: the runner image has every library Chromium needs,
+      # and the fonts and upgrades --with-deps adds came from the slow mirror
+      # (9 minutes for 25 MB; ADR-0023's amendment of 2026-10-28).
       - name: Install Playwright's Chromium
         working-directory: tools/web-test
         run: |
           npm ci --no-audit --no-fund
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
       # real build --target web for the island and the plaza (failing above the 8 MB
       # gzip budget), their replays from game.rpak in headless Chromium with WebGPU,
       # and the island's game page.
