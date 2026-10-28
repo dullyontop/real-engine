@@ -311,8 +311,10 @@ mod tests {
     }
 
     #[test]
-    // mlua's own `CallbackError` holds an `Arc<Error>`; this builds one the same way.
-    #[allow(clippy::arc_with_non_send_sync)]
+    #[expect(
+        clippy::arc_with_non_send_sync,
+        reason = "mlua's own `CallbackError` holds an `Arc<Error>`; this builds one the same way"
+    )]
     fn embedded_code_is_taken_and_line_comes_from_the_traceback() {
         let e = mlua::Error::CallbackError {
             traceback: "stack traceback:\n\t[C]: in function 'f'\n\tscripts/b.luau:2: in function <scripts/b.luau:1>".into(),

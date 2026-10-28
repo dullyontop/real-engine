@@ -11,6 +11,16 @@ edition = "2024"
 rust-version = "1.95"
 publish = false
 
+# Lints every member crate takes (`[lints] workspace = true`). `unsafe_code` is
+# denied: a module that needs unsafe code says why with an `#[expect]`, and each
+# unsafe block carries a `SAFETY:` comment. CI's clippy runs with `-D warnings`.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
+allow_attributes_without_reason = "warn"
+
 # Every third-party crate the engine may use, at the exact version recorded in
 # docs/DEPENDENCIES.md. Member crates write `foo.workspace = true`. Adding a crate
 # here needs an ADR in docs/DECISIONS.md and a row in docs/DEPENDENCIES.md.

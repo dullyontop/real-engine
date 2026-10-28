@@ -34,6 +34,13 @@ thread_local! {
     static COUNTER: Cell<u32> = const { Cell::new(0) };
 }
 
+/// # Safety
+/// Only Luau calls it, as the VM's interrupt callback, with the running
+/// thread.
+#[expect(
+    unsafe_code,
+    reason = "Luau's interrupt is a C callback, and raises its error through the C API"
+)]
 unsafe extern "C-unwind" fn interrupt(state: *mut ffi::lua_State, gc: c_int) {
     if gc >= 0 {
         return; // a GC safepoint: never raise from here
@@ -56,6 +63,10 @@ unsafe extern "C-unwind" fn interrupt(state: *mut ffi::lua_State, gc: c_int) {
 }
 
 /// Installs the interrupt on this VM's main state (it covers every coroutine).
+#[expect(
+    unsafe_code,
+    reason = "the interrupt is set in the VM's C callback table"
+)]
 pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
     // SAFETY: only the `interrupt` field of the VM's callbacks is written, with a
     // function of the right signature, while no Luau code runs.

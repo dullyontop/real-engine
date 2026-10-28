@@ -234,6 +234,10 @@ pub(crate) struct HostSlot {
 }
 
 /// Binds `host` to `lua` while `f` runs, so that engine functions can reach it.
+#[expect(
+    unsafe_code,
+    reason = "the bound host is kept as a pointer with its lifetime erased"
+)]
 pub(crate) fn bind<R>(lua: &Lua, host: &mut dyn ScriptHost, f: impl FnOnce() -> R) -> R {
     struct Unbind<'a>(&'a Lua, Option<NonNull<dyn ScriptHost + 'static>>);
     impl Drop for Unbind<'_> {
@@ -265,6 +269,10 @@ pub(crate) fn bind<R>(lua: &Lua, host: &mut dyn ScriptHost, f: impl FnOnce() -> 
 /// Runs `f` with the bound host. Fails when no host is bound (a script called an
 /// engine function outside an entry point, which cannot happen through the public
 /// API) or when the host is already borrowed further up the stack.
+#[expect(
+    unsafe_code,
+    reason = "the bound host is reached through the pointer `bind` stored"
+)]
 pub fn with_host<R>(
     lua: &Lua,
     f: impl FnOnce(&mut dyn ScriptHost) -> mlua::Result<R>,

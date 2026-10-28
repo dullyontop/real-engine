@@ -1328,7 +1328,10 @@ impl Streamer {
 
     /// Applies cell `k`'s generated content and unstashes its authored
     /// roots; returns the entities spawned.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the cell, its outputs and the step's reports, each borrowed separately"
+    )]
     fn load(
         &mut self,
         world: &mut World,

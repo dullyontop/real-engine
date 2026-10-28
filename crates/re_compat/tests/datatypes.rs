@@ -5,7 +5,10 @@
 //! Every test is inside `mod datatypes`, so `cargo test -p re_compat
 //! datatypes` selects them.
 
-#[allow(clippy::needless_range_loop)] // Matrix code reads best with indices.
+#[expect(
+    clippy::needless_range_loop,
+    reason = "matrix code reads best with indices"
+)]
 mod datatypes {
     use mlua::{Lua, Value as LuaValue};
     use re_compat::datatypes::{self, CFrame, Random};

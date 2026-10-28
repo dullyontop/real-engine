@@ -352,6 +352,10 @@ fn errors(diagnostics: &[re_core::Diagnostic]) -> Vec<String> {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[expect(
+    unsafe_code,
+    reason = "the module runs the C++ static constructors itself, once"
+)]
 mod wasm {
     use wasm_bindgen::prelude::*;
 
@@ -387,6 +391,8 @@ mod wasm {
     pub fn init() {
         static ONCE: std::sync::Once = std::sync::Once::new();
         ONCE.call_once(|| {
+            // SAFETY: wasm-ld exports `__wasm_call_ctors` for a module that runs
+            // its constructors itself; `ONCE` runs them once, before any C++ code.
             unsafe { __wasm_call_ctors() };
             std::panic::set_hook(Box::new(|info| {
                 let message = format!("{} panic: {info}", re_app::codes::WEB_PANIC);

@@ -368,7 +368,10 @@ impl<'a> Layout<'a> {
     /// (local pixels), recording the parent's arrangement in its visit
     /// `visit`. Returns the extent of what was placed, from the content
     /// origin, for automatic sizes. Without a visit it measures only.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the layout state passed down the tree"
+    )]
     fn children(
         &mut self,
         parent: NodeId,

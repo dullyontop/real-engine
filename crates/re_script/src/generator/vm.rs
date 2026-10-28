@@ -46,6 +46,13 @@ thread_local! {
     static STOPPED: Cell<Stop> = const { Cell::new(Stop::None) };
 }
 
+/// # Safety
+/// Only Luau calls it, as the VM's interrupt callback, with the running
+/// thread.
+#[expect(
+    unsafe_code,
+    reason = "Luau's interrupt is a C callback, and raises its error through the C API"
+)]
 unsafe extern "C-unwind" fn interrupt(state: *mut ffi::lua_State, gc: c_int) {
     if gc >= 0 {
         return; // a GC safepoint: never raise from here, and never count it
@@ -125,6 +132,10 @@ pub(crate) fn push_log(log: &Log, line: &[u8]) {
 }
 
 /// A fresh generator VM. `log` receives `print` output.
+#[expect(
+    unsafe_code,
+    reason = "the interrupt is set in the VM's C callback table"
+)]
 pub(crate) fn create(scripts: Arc<Scripts>, memory_mb: usize, log: Log) -> mlua::Result<Lua> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
     lua.set_compiler(crate::compile::compiler());

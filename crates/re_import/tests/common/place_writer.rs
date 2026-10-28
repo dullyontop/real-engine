@@ -2,7 +2,7 @@
 //! same format facts the readers follow (ADR-0048 §4). It writes what the
 //! tests need, every value type included, so no sample file is committed.
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "test helpers, not all of them used by every test")]
 
 use std::fmt::Write as _;
 

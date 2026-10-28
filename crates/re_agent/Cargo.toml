@@ -27,3 +27,6 @@ tempfile.workspace = true
 insta.workspace = true
 glam.workspace = true
 indexmap.workspace = true
+
+[lints]
+workspace = true

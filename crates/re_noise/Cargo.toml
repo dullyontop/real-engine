@@ -9,3 +9,6 @@ publish.workspace = true
 # No dependencies at all: this crate must stay bit-identical on every platform
 # (see the determinism rules in src/lib.rs). `cargo xtask check-graph` enforces it.
 [dependencies]
+
+[lints]
+workspace = true

@@ -652,7 +652,7 @@ macro_rules! field_enum {
     ($(#[doc = $doc:literal])* $vis:vis enum $name:ident { $first:ident $(, $rest:ident)* $(,)? }) => {
         $(#[doc = $doc])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-        #[allow(missing_docs)]
+        #[allow(missing_docs, reason = "the caller names the variants")]
         $vis enum $name { #[default] $first, $($rest),* }
 
         impl $name {

@@ -96,7 +96,13 @@ fn protocol_error(message: impl Into<String>) -> Diagnostic {
     )
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(
+    not(unix),
+    allow(
+        dead_code,
+        reason = "only the Unix socket client reports socket errors"
+    )
+)]
 fn socket_error(socket: &Path, message: impl Into<String>) -> Diagnostic {
     Diagnostic::error(codes::SOCKET_IO, message)
         .at(Location::file(socket.display().to_string()))

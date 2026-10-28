@@ -176,7 +176,10 @@ impl Gizmo {
     /// its drags (`response` is the viewport's), pushing the edits that move
     /// the entities. While `navigating` (the pointer moves the camera), no
     /// drag starts and no handle is lit.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the viewport and its response, the app, the selection and the edits it pushes"
+    )]
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,

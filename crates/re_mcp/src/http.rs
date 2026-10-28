@@ -391,6 +391,13 @@ pub async fn serve_http_async(
 /// means "stop". A terminal is not watched (reading it from a background
 /// job would stop the process), nor is a file such as `/dev/null` (it ends
 /// at once); those servers run until they are interrupted.
+#[cfg_attr(
+    windows,
+    expect(
+        unsafe_code,
+        reason = "Windows is asked through GetFileType, saving a dependency"
+    )
+)]
 pub fn stdin_is_a_pipe() -> bool {
     #[cfg(unix)]
     {

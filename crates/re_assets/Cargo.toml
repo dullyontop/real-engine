@@ -37,3 +37,6 @@ texture-encode = ["dep:block_compression"]
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[lints]
+workspace = true

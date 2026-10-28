@@ -381,7 +381,7 @@ fn fail(d: Diagnostic) -> ExitCode {
 }
 
 fn open(project: &Path) -> Result<App, Diagnostic> {
-    #[allow(unused_mut)]
+    #[allow(unused_mut, reason = "only the `tooling` feature adds a verify stage")]
     let mut app = App::open(project, AppConfig::load(project)?)?;
     #[cfg(feature = "tooling")]
     app.add_verify_stage(std::sync::Arc::new(tooling::check::ScanStage));

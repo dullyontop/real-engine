@@ -26,3 +26,6 @@ pollster.workspace = true
 re_compat.workspace = true
 re_import.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

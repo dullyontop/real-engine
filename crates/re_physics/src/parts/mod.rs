@@ -584,7 +584,10 @@ fn assembly_inertia(parts: &[PartDesc], com: Vec3) -> Mat3 {
 }
 
 fn clamp_mass(m: f32) -> f32 {
-    #[allow(clippy::unnecessary_cast)]
+    #[allow(
+        clippy::unnecessary_cast,
+        reason = "`Real` is f64 when oxijolt's `double-precision` feature is on"
+    )]
     let (lo, hi) = (
         oxijolt::limits::MIN_MASS as f32,
         oxijolt::limits::MAX_MASS as f32,

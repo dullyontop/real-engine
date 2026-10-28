@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, reason = "test helpers, not all of them used by every test")]
 //! Shared by the layout tests: a context with the bundled fonts, every value
 //! a layout gives written out exactly, and the committed files those values
 //! are compared with (`tests/fixtures/layout/`).

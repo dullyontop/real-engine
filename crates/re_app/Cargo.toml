@@ -44,3 +44,6 @@ wasm-bindgen-futures.workspace = true
 [dev-dependencies]
 re_import.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

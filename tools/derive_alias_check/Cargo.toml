@@ -10,3 +10,6 @@ publish.workspace = true
 [dependencies]
 re_reflect.workspace = true
 re_scene.workspace = true
+
+[lints]
+workspace = true

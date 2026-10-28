@@ -816,7 +816,10 @@ fn normalized(
 
 /// Rebuilds every part from scratch and fails when the frame's parts differ
 /// ([`VERIFY_ENV`], [`verify_every`]).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the frame's state that the rebuild is compared with"
+)]
 fn verify(
     s: &Scope,
     hub: &Hub,

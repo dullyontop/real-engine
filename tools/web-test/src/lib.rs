@@ -181,6 +181,10 @@ pub fn report() -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[expect(
+    unsafe_code,
+    reason = "the module runs the C++ static constructors itself, once"
+)]
 mod wasm {
     use wasm_bindgen::prelude::*;
 
@@ -193,6 +197,8 @@ mod wasm {
     #[wasm_bindgen]
     pub fn init() {
         static ONCE: std::sync::Once = std::sync::Once::new();
+        // SAFETY: wasm-ld exports `__wasm_call_ctors` for a module that runs its
+        // constructors itself; `ONCE` runs them once, before any C++ code.
         ONCE.call_once(|| unsafe { __wasm_call_ctors() });
     }
 

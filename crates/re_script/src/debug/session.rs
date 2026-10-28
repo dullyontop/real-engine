@@ -7,6 +7,11 @@
 //! A session never holds its borrow of the map across a call out (the
 //! client's lock, a [`Parking`] call, a wait).
 
+#![expect(
+    unsafe_code,
+    reason = "breakpoints, hooks and stops go through Luau's C API (ADR-0045)"
+)]
+
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::os::raw::c_int;
@@ -421,6 +426,10 @@ unsafe fn patch(l: *mut ffi::lua_State, r: c_int, line: i32, on: bool) -> i32 {
 }
 
 /// Removes the user breakpoints and places `bps` instead.
+///
+/// # Safety
+/// As [`patch`], for every chunk `s` holds: `l` belongs to the VM that holds
+/// them, with room for one more slot.
 unsafe fn apply_breakpoints(
     l: *mut ffi::lua_State,
     s: &mut Session,
@@ -458,6 +467,10 @@ unsafe fn apply_breakpoints(
 
 /// Patches every line of the function on top of `l`'s stack (and of every
 /// function nested in it) with a temporary breakpoint; pops the function.
+///
+/// # Safety
+/// A function is on top of `l`'s stack, and `l` belongs to the VM whose
+/// chunks `s` holds, with room for one more slot.
 unsafe fn patch_all_lines(l: *mut ffi::lua_State, s: &mut Session, from: i32) {
     // SAFETY: the function on top is referenced (and popped) so it can be
     // patched again and cleared later.
@@ -477,6 +490,10 @@ unsafe fn patch_all_lines(l: *mut ffi::lua_State, s: &mut Session, from: i32) {
     }
 }
 
+/// Patches every line of every chunk `s` holds with a temporary breakpoint.
+///
+/// # Safety
+/// `l` belongs to the VM whose chunks `s` holds.
 unsafe fn patch_every_chunk(l: *mut ffi::lua_State, s: &mut Session) {
     // SAFETY: as in `patch_all_lines`.
     unsafe {
@@ -489,6 +506,12 @@ unsafe fn patch_every_chunk(l: *mut ffi::lua_State, s: &mut Session) {
     }
 }
 
+/// Clears the temporary breakpoints and releases their references, then puts
+/// back the user breakpoints they removed.
+///
+/// # Safety
+/// `l` belongs to the VM whose chunks and references `s` holds, with room
+/// for one more slot.
 unsafe fn clear_temp(l: *mut ffi::lua_State, s: &mut Session) {
     // SAFETY: as in `patch`; each temporary reference is released once.
     unsafe {
@@ -511,6 +534,10 @@ unsafe fn clear_temp(l: *mut ffi::lua_State, s: &mut Session) {
 }
 
 /// The closure running at `level` of `thread`, as an identity.
+///
+/// # Safety
+/// `thread` is a thread of a live VM, stopped (inside a debug callback, or
+/// suspended), on the VM's own OS thread.
 unsafe fn func_at(thread: *mut ffi::lua_State, level: c_int) -> usize {
     // SAFETY: "f" pushes the closure, which is popped.
     unsafe {
@@ -529,6 +556,11 @@ unsafe fn func_at(thread: *mut ffi::lua_State, level: c_int) -> usize {
 /// Arms `how` from the top frame of `thread`, patching through `l` (the
 /// thread itself in a synchronous stop, else the main state, so nothing is
 /// left on a suspended thread's stack).
+///
+/// # Safety
+/// `l` and `thread` belong to the VM whose chunks `s` holds; `thread` is
+/// stopped as for [`func_at`], and `l` is `thread` itself or the VM's main
+/// thread.
 unsafe fn arm_step(
     l: *mut ffi::lua_State,
     thread: *mut ffi::lua_State,
@@ -675,6 +707,9 @@ unsafe fn stop(
     }
 }
 
+/// # Safety
+/// Only Luau calls it, as the VM's debug callback, with the running thread
+/// and its filled debug record.
 unsafe extern "C-unwind" fn on_break(state: *mut ffi::lua_State, ar: *mut ffi::lua_Debug) {
     // SAFETY: Luau calls this with the running thread and a filled `ar`;
     // every read below is of that thread.
@@ -754,6 +789,9 @@ unsafe extern "C-unwind" fn on_break(state: *mut ffi::lua_State, ar: *mut ffi::l
 
 /// `debugstep`: runs before each instruction of a thread in single-step mode
 /// (step into from a parked stop).
+/// # Safety
+/// Only Luau calls it, as the VM's debug callback, with the running thread
+/// and its filled debug record.
 unsafe extern "C-unwind" fn on_step(state: *mut ffi::lua_State, ar: *mut ffi::lua_Debug) {
     // SAFETY: as in `on_break`.
     unsafe {

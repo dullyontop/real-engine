@@ -20,3 +20,6 @@ schemars = { workspace = true, optional = true }
 # `ReplayDoc` and their parts), so `real schema` generates `graph.schema.json` and
 # `replay.schema.json` from the frozen types instead of hand-written copies.
 schemars = ["dep:schemars"]
+
+[lints]
+workspace = true

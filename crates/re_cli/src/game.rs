@@ -169,6 +169,7 @@ pub fn open_app(opened: &Package, headless: bool) -> Result<App, Diagnostic> {
 /// attach to the parent's, so `--version` and the rest print there. A parent
 /// that pipes the output (CI, `real verify --package`) gets it either way.
 #[cfg(windows)]
+#[expect(unsafe_code, reason = "AttachConsole is a Windows API call")]
 fn attach_console() {
     // SAFETY: AttachConsole has no preconditions; failure (no parent console)
     // is harmless.

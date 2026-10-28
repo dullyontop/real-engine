@@ -1,7 +1,7 @@
 //! The sample runner's context and step registry. Each work package that adds
 //! steps owns one module here and adds one line to [`step`].
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "test helpers, not all of them used by every test")]
 
 pub mod app;
 pub mod datatypes;

@@ -23,3 +23,6 @@ thiserror.workspace = true
 # re_command (dev-dependencies do not count for `cargo xtask check-graph`).
 [dev-dependencies]
 re_command.workspace = true
+
+[lints]
+workspace = true

@@ -2,6 +2,11 @@
 //! (ADR-0045): raw stack and table access only, so `__tostring`, `__index`
 //! and `__iter` are never called while paused.
 
+#![expect(
+    unsafe_code,
+    reason = "a stopped thread is read through Luau's C API (ADR-0045)"
+)]
+
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
@@ -223,6 +228,10 @@ unsafe fn expand(l: *mut ffi::lua_State, idx: c_int, arena: &mut Arena, depth: u
 
 /// A table key as a debugger shows it: `name` for an identifier string,
 /// `[1]` or `["a b"]` otherwise.
+///
+/// # Safety
+/// As [`describe`]: `idx` is a valid index of `l`, which has room for 2
+/// more slots.
 unsafe fn key_name(l: *mut ffi::lua_State, idx: c_int) -> String {
     // SAFETY: `idx` is valid; `lua_tolstring` is only called on a string, so
     // it never converts (and so never changes) the key in place.
@@ -238,6 +247,11 @@ unsafe fn key_name(l: *mut ffi::lua_State, idx: c_int) -> String {
     }
 }
 
+/// The string at `idx`, decoded lossily.
+///
+/// # Safety
+/// The value at `idx` of `l` is a string (a number would be converted in
+/// place).
 unsafe fn string(l: *mut ffi::lua_State, idx: c_int) -> String {
     // SAFETY: the value at `idx` is a string; Luau returns its bytes and length.
     unsafe {
@@ -321,6 +335,9 @@ pub(super) unsafe fn describe(l: *mut ffi::lua_State, idx: c_int) -> (String, St
 }
 
 /// The `__type` (Luau's `typeof`) or `__name` of a userdata's metatable, read raw.
+///
+/// # Safety
+/// `idx` is a valid index of `l`, which has room for 2 more slots.
 unsafe fn userdata_type(l: *mut ffi::lua_State, idx: c_int) -> Option<String> {
     // SAFETY: the metatable and the field are pushed and popped again.
     unsafe {

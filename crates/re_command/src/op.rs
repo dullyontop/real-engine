@@ -355,7 +355,7 @@ fn edit_json(
 
 /// The schema of one `restore.generated` entry ([`GeneratedDoc`]).
 #[derive(JsonSchema)]
-#[allow(dead_code)]
+#[expect(dead_code, reason = "only its JSON schema is used")]
 struct GeneratedDocSchema {
     /// The procedural source's id.
     source: String,

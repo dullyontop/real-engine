@@ -432,7 +432,6 @@ fn overlaps(a: ChunkKey, b: ChunkKey) -> bool {
     (fine.x >> d) == coarse.x && (fine.z >> d) == coarse.z
 }
 
-#[allow(clippy::too_many_arguments)]
 fn issue(
     pool: &TaskPool,
     evaluator: Arc<Evaluator>,
@@ -493,7 +492,6 @@ fn issue(
 /// kept under whatever happened to be drawn before. Drawn chunks whose
 /// stitched edges changed are meshed again, within [`RESTITCH_BUDGET_MS`] of
 /// `budget` (the step's start), or all of them without one.
-#[allow(clippy::too_many_arguments)]
 fn swap(
     view: &mut TerrainView,
     st: &mut SourceTerrain,

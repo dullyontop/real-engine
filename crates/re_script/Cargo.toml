@@ -32,3 +32,6 @@ jit = ["mlua/luau-jit"]
 [dev-dependencies]
 insta.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

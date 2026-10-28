@@ -1,6 +1,6 @@
 //! Helpers shared by the GPU tests: device creation, test meshes and scenes,
 //! golden-image checks, and the pixel checks ported from the render prototype.
-#![allow(dead_code)] // each test binary uses a different subset
+#![allow(dead_code, reason = "each test binary uses a different subset")]
 
 use std::path::PathBuf;
 use std::time::Duration;

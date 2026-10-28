@@ -2,7 +2,7 @@
 //! shared by the `re_scene` and `re_command` integration tests (the latter
 //! include this file with `#[path]`).
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "test helpers, not all of them used by every test")]
 
 use std::sync::Arc;
 
