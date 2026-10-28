@@ -381,7 +381,7 @@ cargo test --locked -p re_app
 **Acceptance:**
 ```sh
 cargo test --locked -p re_ui
-cargo test --locked -p re_compat gui
+cargo test --locked -p re_compat --test gui
 ```
 - Goldens for each component at two resolutions; a gamepad moves through a menu and presses a button in a replay; the compat GUI's goldens are unchanged; the web build stays within its budget.
 
