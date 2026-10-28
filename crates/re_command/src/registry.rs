@@ -99,6 +99,235 @@ pub struct CommandSpec {
     /// `None` means the data is not described.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Json>,
+    /// The arguments that name files, and what the command does with them
+    /// (ADR-0020's amendment for WP44). [`CommandRegistry::register`] reads
+    /// them from the input schema's `x-real-path` keywords when a spec
+    /// declares none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<PathArg>,
+}
+
+/// What a command does with a file an argument names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PathAccess {
+    /// Reads it. A policy does not check reads (ADR-0026).
+    Read,
+    /// Creates, replaces or deletes it, or opens it as a document that the
+    /// project save writes.
+    Write,
+    /// Writes an image the caller asked for (a screenshot).
+    Output,
+}
+
+impl PathAccess {
+    /// The access an `x-real-path` value names. Anything other than
+    /// `"read"` or `"output"` is [`PathAccess::Write`], so a mistyped
+    /// declaration fails closed.
+    pub fn from_keyword(value: &Json) -> PathAccess {
+        match value.as_str() {
+            Some("read") => PathAccess::Read,
+            Some("output") => PathAccess::Output,
+            _ => PathAccess::Write,
+        }
+    }
+}
+
+/// An argument that names a file: where it is in the arguments, and what the
+/// command does with it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PathArg {
+    /// A JSON pointer into the arguments (RFC 6901), in which a `*` token
+    /// stands for every element of an array or member of an object
+    /// (`/path`, `/ops/*/doc`), and a final `**` for every string below
+    /// (a path inside a recursive type; see [`declared_paths`]).
+    pub pointer: String,
+    /// What the command does with the file.
+    pub access: PathAccess,
+}
+
+impl PathArg {
+    /// The paths this argument holds in `args`: the string at each place
+    /// the pointer reaches, or each string of an array found there (a final
+    /// `**` token reaches every string below). Anything else (an absent
+    /// argument, `null`, a number) holds none.
+    pub fn values<'a>(&self, args: &'a Json) -> Vec<&'a str> {
+        fn every<'a>(value: &'a Json, out: &mut Vec<&'a str>) {
+            match value {
+                Json::String(s) => out.push(s),
+                Json::Array(items) => items.iter().for_each(|v| every(v, out)),
+                Json::Object(map) => map.values().for_each(|v| every(v, out)),
+                _ => {}
+            }
+        }
+        fn collect<'a>(value: &'a Json, tokens: &[String], out: &mut Vec<&'a str>) {
+            match tokens.split_first() {
+                None => match value {
+                    Json::String(s) => out.push(s),
+                    Json::Array(items) => out.extend(items.iter().filter_map(Json::as_str)),
+                    _ => {}
+                },
+                Some((token, _)) if token == "**" => every(value, out),
+                Some((token, rest)) if token == "*" => match value {
+                    Json::Array(items) => items.iter().for_each(|v| collect(v, rest, out)),
+                    Json::Object(map) => map.values().for_each(|v| collect(v, rest, out)),
+                    _ => {}
+                },
+                Some((token, rest)) => match value {
+                    Json::Object(map) => {
+                        if let Some(v) = map.get(token) {
+                            collect(v, rest, out);
+                        }
+                    }
+                    Json::Array(items) => {
+                        if let Some(v) = token.parse::<usize>().ok().and_then(|i| items.get(i)) {
+                            collect(v, rest, out);
+                        }
+                    }
+                    _ => {}
+                },
+            }
+        }
+        let tokens: Vec<String> = self
+            .pointer
+            .split('/')
+            .skip(1)
+            .map(|t| t.replace("~1", "/").replace("~0", "~"))
+            .collect();
+        let mut out = Vec::new();
+        collect(args, &tokens, &mut out);
+        out
+    }
+}
+
+/// The path arguments an input schema declares with `x-real-path`
+/// keywords (`"read"`, `"write"` or `"output"`): the walk follows
+/// `properties`, array `items` and `prefixItems`, object
+/// `additionalProperties` (as `*`), `$ref`s into the schema's `$defs`, and
+/// the branches of `oneOf`, `anyOf` and `allOf`.
+///
+/// A pointer cannot spell every depth of a recursive type, so where a
+/// `$ref` leads back into a type that declares paths, the walk declares
+/// every string below that point (`/tree/children/**`) with the strictest
+/// access found there: a policy then checks more strings than it must,
+/// never fewer.
+pub fn declared_paths(schema: &Json) -> Vec<PathArg> {
+    fn escape(key: &str) -> String {
+        key.replace('~', "~0").replace('/', "~1")
+    }
+    fn resolve<'a>(root: &'a Json, target: &str) -> Option<&'a Json> {
+        target.strip_prefix('#').and_then(|p| root.pointer(p))
+    }
+    /// The schemas a schema contains, with the pointer token each adds.
+    fn children(obj: &serde_json::Map<String, Json>) -> Vec<(Option<String>, &Json)> {
+        let mut out = Vec::new();
+        if let Some(props) = obj.get("properties").and_then(Json::as_object) {
+            out.extend(props.iter().map(|(k, v)| (Some(escape(k)), v)));
+        }
+        for key in ["items", "additionalProperties"] {
+            if let Some(v) = obj.get(key) {
+                out.push((Some("*".to_string()), v));
+            }
+        }
+        if let Some(items) = obj.get("prefixItems").and_then(Json::as_array) {
+            out.extend(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| (Some(i.to_string()), v)),
+            );
+        }
+        for key in ["oneOf", "anyOf", "allOf"] {
+            out.extend(
+                obj.get(key)
+                    .and_then(Json::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|v| (None, v)),
+            );
+        }
+        out
+    }
+    /// The accesses declared anywhere in `schema`.
+    fn accesses(schema: &Json, root: &Json, refs: &mut Vec<String>, out: &mut Vec<PathAccess>) {
+        let Some(obj) = schema.as_object() else {
+            return;
+        };
+        if let Some(value) = obj.get("x-real-path") {
+            out.push(PathAccess::from_keyword(value));
+        }
+        if let Some(target) = obj.get("$ref").and_then(Json::as_str)
+            && !refs.iter().any(|r| r == target)
+            && let Some(found) = resolve(root, target)
+        {
+            refs.push(target.to_string());
+            accesses(found, root, refs, out);
+            refs.pop();
+        }
+        for (_, child) in children(obj) {
+            accesses(child, root, refs, out);
+        }
+    }
+    fn push(out: &mut Vec<PathArg>, arg: PathArg) {
+        if !out.contains(&arg) {
+            out.push(arg);
+        }
+    }
+    fn walk(
+        schema: &Json,
+        root: &Json,
+        pointer: &str,
+        refs: &mut Vec<String>,
+        out: &mut Vec<PathArg>,
+    ) {
+        let Some(obj) = schema.as_object() else {
+            return;
+        };
+        if let Some(value) = obj.get("x-real-path") {
+            let access = PathAccess::from_keyword(value);
+            push(
+                out,
+                PathArg {
+                    pointer: pointer.to_string(),
+                    access,
+                },
+            );
+        }
+        if let Some(target) = obj.get("$ref").and_then(Json::as_str)
+            && let Some(found) = resolve(root, target)
+        {
+            if refs.iter().any(|r| r == target) {
+                // Back into a type being walked: every string below.
+                let mut found_accesses = Vec::new();
+                accesses(found, root, &mut Vec::new(), &mut found_accesses);
+                let strictest = [PathAccess::Write, PathAccess::Output, PathAccess::Read]
+                    .into_iter()
+                    .find(|a| found_accesses.contains(a));
+                if let Some(access) = strictest {
+                    push(
+                        out,
+                        PathArg {
+                            pointer: format!("{pointer}/**"),
+                            access,
+                        },
+                    );
+                }
+            } else {
+                refs.push(target.to_string());
+                walk(found, root, pointer, refs, out);
+                refs.pop();
+            }
+        }
+        for (token, child) in children(obj) {
+            match token {
+                Some(token) => walk(child, root, &format!("{pointer}/{token}"), refs, out),
+                None => walk(child, root, pointer, refs, out),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(schema, schema, "", &mut Vec::new(), &mut out);
+    out
 }
 
 /// The result of a dispatch.
@@ -133,8 +362,19 @@ impl CommandOutcome {
 /// the agent policy (tiers, path scopes, budgets). A dry run needs only the
 /// `read` tier.
 pub trait PolicyCheck {
-    /// `Ok` to allow the call, or a diagnostic saying why it is refused.
+    /// `Ok` to allow the call, or a diagnostic saying why it is refused. The
+    /// call's declared paths are in [`CommandSpec::paths`].
     fn check(&self, spec: &CommandSpec, args: &Json, dry_run: bool) -> Result<(), Diagnostic>;
+
+    /// `Ok` to let `command` write the project file `path`, one that no
+    /// argument names (a default destination, a file derived from the
+    /// arguments); handlers ask through [`Call::check_write`]. Allows
+    /// everything unless a policy says otherwise; a policy that wraps
+    /// another passes it on.
+    fn check_write(&self, command: &str, path: &str) -> Result<(), Diagnostic> {
+        let _ = (command, path);
+        Ok(())
+    }
 }
 
 /// A policy that allows everything (tests, the CLI run by a person).
@@ -148,19 +388,31 @@ impl PolicyCheck for AllowAll {
 }
 
 /// The state of one dispatch, handed to the handler.
-pub struct Call {
+pub struct Call<'a> {
     name: String,
     dry_run: bool,
     origin: Origin,
     changes: Vec<Op>,
     diagnostics: Vec<Diagnostic>,
     specs: Arc<[CommandSpec]>,
+    policy: &'a dyn PolicyCheck,
 }
 
-impl Call {
+impl Call<'_> {
     /// The command's name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Asks the policy the call was dispatched with whether the command may
+    /// write `path`, a project file that no argument names (the policy
+    /// checks declared paths before the handler runs). Call it before
+    /// writing; a dry run writes nothing, so it allows everything then.
+    pub fn check_write(&self, path: &str) -> Result<(), Diagnostic> {
+        if self.dry_run {
+            return Ok(());
+        }
+        self.policy.check_write(&self.name, path)
     }
 
     /// True for a dry run: [`Call::transact`] then rolls back, and handlers
@@ -289,8 +541,13 @@ impl<C: EditTarget> CommandRegistry<C> {
         }
     }
 
-    /// Registers (or replaces) a command with a raw handler.
-    pub fn register(&mut self, spec: CommandSpec, handler: Handler<C>) {
+    /// Registers (or replaces) a command with a raw handler. A spec that
+    /// declares no [`paths`](CommandSpec::paths) gets those its input schema
+    /// declares ([`declared_paths`]).
+    pub fn register(&mut self, mut spec: CommandSpec, handler: Handler<C>) {
+        if spec.paths.is_empty() {
+            spec.paths = declared_paths(&spec.input_schema);
+        }
         self.commands.insert(spec.name.clone(), (spec, handler));
         self.specs = self.commands.values().map(|(s, _)| s.clone()).collect();
     }
@@ -316,6 +573,7 @@ impl<C: EditTarget> CommandRegistry<C> {
             input_schema: input_schema::<A>(tier),
             annotations: CommandAnnotations::for_tier(tier, idempotent),
             output_schema: None,
+            paths: Vec::new(),
         };
         let command = name.to_string();
         let handler: Handler<C> = Arc::new(move |target, args, call| {
@@ -438,6 +696,7 @@ impl<C: EditTarget> CommandRegistry<C> {
             changes: Vec::new(),
             diagnostics: Vec::new(),
             specs: self.specs.clone(),
+            policy,
         };
         match handler(target, &args, &mut call) {
             Ok(data) => CommandOutcome {
