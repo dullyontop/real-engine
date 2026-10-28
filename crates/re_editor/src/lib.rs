@@ -58,6 +58,7 @@ pub mod layout;
 mod panels;
 mod socket;
 mod view;
+mod widgets;
 mod windowed;
 
 pub use canvas::CanvasSpot;

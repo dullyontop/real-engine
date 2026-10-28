@@ -37,7 +37,7 @@ These are open questions or owner-set values. The plan goes ahead with the defau
 | Web runtime size | **Raise the budget from 8 MB to 10 MB gzip** (an ADR-0049 amendment), since the runtime ended M3 with about 7 KB to spare and every M4 runtime feature adds to it; no runtime variants in M4. | Owner |
 | Rust toolchain | **Pinned** in `rust-toolchain.toml` to an exact stable release, bumped by a PR after each release, so the cargo caches stay valid between bumps; the MSRV stays 1.95. | Plan (WP31) |
 | Platforms | **Linux x86_64, Windows x86_64, macOS arm64 and the browser** (Chromium required; Firefox and Safari reported). macOS x86_64 is dropped from the claims, since nothing builds or tests it. No mobile or consoles in M4. | Owner |
-| Windows and macOS in CI | **On every PR that changes code, while the repository is public**: the maintainer moves `build-windows`, `build-macos`, their package jobs and `d2` back into `ci.yml` at the start of M4. If the repository goes private again, they return to `platforms.yml`, run by hand (ADR-0023's amendment of 2026-10-27). | Plan |
+| Windows and macOS in CI | **On every PR that changes code, while the repository is public**: from the maintainer's first M4 PR, `ci.yml` calls `platforms.yml` (`build-windows`, `build-macos`, their package jobs and `d2`) in every run that starts its release checks. If the repository goes private again, `ci.yml` skips the call and `platforms.yml` runs by hand (ADR-0023's amendment of 2026-10-27). | Plan |
 | Navigation | **A spike and an ADR only** (WP34's stretch); navmeshes are built in M5. | Owner |
 | Generated vegetation and props | **Render-only instance sets**, outside `state_hash` and with colliders from batched static bodies, not one entity per instance (ADR-0052). Promoting an instance to an entity for gameplay is later work. | Plan |
 | GraphDoc v2 | **Stays JSON**, migrated by `real migrate-graph`. | Plan |
@@ -147,12 +147,12 @@ Changes to `re_types` stay maintainer-reviewed frozen-contract changes, as in M3
 **Build, PR "version"** (ADR-0068):
 - The workspace version is `0.4.0-dev` during M4 and `0.4.0` at its tag; the minor number follows the milestone.
 - A build id (the commit and its date, and whether the tree was clean) in `real --version`, the runtime's `--version`, `runtime.json`, crash reports and the notices file.
-- `release.yml` refuses a tag that does not match the workspace version, writes `SHA256SUMS` for its assets, drafts the release notes from the merged PRs' titles, creates the GitHub release as a draft (a published release's assets would be public while the repository is), and its Windows and macOS jobs restore the cargo caches.
+- `release.yml` refuses a tag that does not match the workspace version, writes `SHA256SUMS` for its assets, drafts the release notes from the merged PRs' titles, creates the GitHub release as a draft (a published release's assets would be public while the repository is), uploads its runtimes as workflow artifacts only while the repository is private (anyone signed in to GitHub can download a public repository's artifacts), and its Windows and macOS jobs restore the cargo caches.
 - A release checklist (`docs/RELEASING.md`), with a full run of the Windows and macOS checks.
 
 **Build, PR "web budget":** the ADR-0049 amendment for the budget the owner chooses (by default 10 MB gzip), and `build-web` prints the runtime's size and its margin in the job summary.
 
-**Build, PR "platforms":** `d2-run` folded into the Windows and macOS build jobs, so a run builds each platform once, in `ci.yml` and in `platforms.yml` alike (`platforms.yml` stays for a private repository and for tags); macOS x86_64 dropped from the documents' platform claims.
+**Build, PR "platforms":** `d2-run` folded into the Windows and macOS build jobs of `platforms.yml`, so a run builds each platform once, whether `ci.yml` calls it or it runs by hand; macOS x86_64 dropped from the documents' platform claims.
 
 **Build, PR "tag"** (at the end of M4, after WP48): the version set to 0.4.0, the tag `v0.4.0`, and the release workflow's run checked: the desktop and web runtimes, `real` itself for the three platforms (the tools and the editor, embedding the user guide of WP44 rather than the internal design documents), and `SHA256SUMS`. The release stays a draft until the owner decides how the engine is distributed.
 

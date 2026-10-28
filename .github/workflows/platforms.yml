@@ -1,9 +1,15 @@
-# The Windows and macOS checks and D2 for Real Engine (ADR-0023's amendment of
-# 2026-10-27). The owner chose a private repository, whose Actions minutes
-# GitHub bills past the account's monthly allowance, and these jobs were most
-# of a full CI run's cost: a macOS minute costs about ten times a Linux one.
-# CI (ci.yml) runs the Linux checks on every PR and on main. This workflow
-# runs the rest, only when started by hand:
+# The Windows and macOS checks and D2 for Real Engine. While the repository is
+# public, GitHub's hosted runners are free, and ci.yml's `platforms` job runs
+# this workflow (workflow_call) in every run that starts its release checks:
+# every PR that changes more than documentation, and a push to main that
+# changes a build input (ADR-0023's amendment for the public repository). Its
+# checks show as `platforms / <job>` and are part of the merge rule.
+#
+# A private repository's Actions minutes are billed past the account's monthly
+# allowance, and these jobs were most of a full run's cost: a macOS minute
+# costs about ten times a Linux one. So while the repository is private, the
+# `platforms` job skips itself, and this workflow runs only when started by
+# hand (ADR-0023's amendment of 2026-10-27):
 # - on main before a version tag (release.yml);
 # - on a PR's branch, when the PR changes code for one platform (cfg(windows)
 #   or cfg(target_os = "macos"), the bundles, DX12 or Metal, a C++ build under
@@ -18,16 +24,21 @@
 # since WP28's #175, the town since WP48's first PR). build-package-windows
 # and build-package-macos build and check the packaged games (ADR-0037, WP19
 # PR "bundles"). d2-run and d2 check that every replay's state_hash agrees on
-# the three platforms (ADR-0036, WP18 PR "d2").
-# Action majors as in ci.yml.
+# the three platforms (ADR-0036, WP18 PR "d2"). The cargo caches are saved
+# only on main, as linux-setup's are, so PR runs restore main's (ADR-0023's
+# amendment of 2026-10-28). Action majors as in ci.yml.
 
 name: Platforms
 
 on:
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: platforms-${{ github.ref }}
+  # Called from ci.yml, the github context is the caller's. The event name
+  # keeps a run started by hand on main from cancelling a push's, and the
+  # caller's own group never matches this one.
+  group: platforms-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -51,6 +62,8 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --locked --release -p re_cli
       - name: real build the island, the plaza, the valley and the town
         shell: bash
@@ -103,6 +116,8 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --locked --release -p re_cli
       - name: real build the island, the plaza, the valley and the town
         run: |
@@ -144,6 +159,8 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install luau-lsp 1.70.1
         shell: bash
         run: |
@@ -214,6 +231,8 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install luau-lsp 1.70.1
         run: |
           curl -fsSL -o "$RUNNER_TEMP/luau-lsp.zip" https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-macos.zip
@@ -292,6 +311,8 @@ jobs:
         run: rustup toolchain install stable --profile minimal
       - if: runner.os != 'Linux'
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: State hashes of every replay
         shell: bash
         run: |

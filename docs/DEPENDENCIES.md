@@ -295,7 +295,7 @@ apt-get install -y \
 
 ### macOS
 
-Xcode command line tools and `cmake` (Homebrew). wgpu uses Metal. The Platforms workflow's `build-macos` (`macos-latest`, Apple silicon) runs the whole test suite, the GPU crates on Metal, then `real verify` on the island, the plaza and the valley, goldens included (ADR-0023's amendment for WP18 PR "blocking", #87). `build-package-macos` builds and checks the app bundle, and `d2-run` produces the macOS replay hashes that the `d2` job compares with Linux and Windows (ADR-0036). The workflow runs when started by hand, before a release and for changes that touch one platform (ADR-0023's amendment of 2026-10-27).
+Xcode command line tools and `cmake` (Homebrew). wgpu uses Metal. The Platforms workflow's `build-macos` (`macos-latest`, Apple silicon) runs the whole test suite, the GPU crates on Metal, then `real verify` on the island, the plaza and the valley, goldens included (ADR-0023's amendment for WP18 PR "blocking", #87). `build-package-macos` builds and checks the app bundle, and `d2-run` produces the macOS replay hashes that the `d2` job compares with Linux and Windows (ADR-0036). CI runs the workflow on every PR that changes more than documentation while the repository is public; while it is private, the workflow is started by hand, before a release and for changes that touch one platform (ADR-0023's amendment of 2026-10-27 and its amendment for the public repository).
 
 ### Windows
 

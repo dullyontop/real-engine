@@ -1,4 +1,4 @@
-<!-- One PR belongs to one work package (docs/M1_PLAN.md, docs/M2_PLAN.md, docs/M3_PLAN.md). -->
+<!-- One PR belongs to one work package (docs/M1_PLAN.md, docs/M2_PLAN.md, docs/M3_PLAN.md, docs/M4_PLAN.md). -->
 
 ## Work package
 
