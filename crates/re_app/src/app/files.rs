@@ -57,6 +57,26 @@ impl App {
         std::mem::take(&mut self.changed_scripts)
     }
 
+    /// Starts (`true`) or stops keeping the file changes
+    /// [`App::apply_file_changes`] applies, the watcher's and those commands
+    /// make, for [`App::take_file_changes`]: the editor's asset index follows
+    /// the project's files with them (ADR-0064 §7). Off by default, so that
+    /// nothing piles up when nobody takes them.
+    pub fn keep_file_changes(&mut self, keep: bool) {
+        if keep != self.kept_file_changes.is_some() {
+            self.kept_file_changes = keep.then(Vec::new);
+        }
+    }
+
+    /// The file changes applied since the last call, in order; none unless
+    /// [`App::keep_file_changes`] is on.
+    pub fn take_file_changes(&mut self) -> Vec<re_assets::AssetChange> {
+        self.kept_file_changes
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
     pub(super) fn poll_files(&mut self) {
         if let Some(watcher) = &self.watcher {
             let changes = watcher.poll();
@@ -79,8 +99,12 @@ impl App {
     /// it, and rebuilds the shaders of changed shader files
     /// ([`crate::shaders`]). Returns the problems re-imports and rebuilds
     /// reported (the last good version of each stays loaded); they are also in
-    /// the app's diagnostics.
+    /// the app's diagnostics. While [`App::keep_file_changes`] is on, the
+    /// changes are kept for [`App::take_file_changes`].
     pub fn apply_file_changes(&mut self, changes: &[re_assets::AssetChange]) -> Vec<Diagnostic> {
+        if let Some(kept) = &mut self.kept_file_changes {
+            kept.extend_from_slice(changes);
+        }
         let (report, stale) = self.media.apply_changes(changes);
         let mut problems = report.problems.clone();
         for key in &stale {

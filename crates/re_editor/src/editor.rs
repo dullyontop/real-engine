@@ -198,6 +198,8 @@ pub struct Editor {
     pub(crate) debug: crate::debugger::DebugPanel,
     pub(crate) canvas: crate::canvas::Canvas,
     pub(crate) material: crate::panels::MaterialPanel,
+    /// The project's files by kind ([`crate::assets`]).
+    pub(crate) assets: crate::assets::AssetIndex,
     pub(crate) dock: egui_dock::DockState<PanelId>,
     /// Each panel's own view state, as read from the layout (kept and
     /// written back).
@@ -268,6 +270,7 @@ impl Editor {
             debug: Default::default(),
             canvas: Default::default(),
             material: Default::default(),
+            assets: Default::default(),
             dock: layout::default_dock(),
             panel_states: PanelStates::new(),
             layout_root: None,
@@ -326,6 +329,21 @@ impl Editor {
             .rects
             .get(&row_key(id))
             .and_then(|r| r.first().copied())
+    }
+
+    /// The project's files by kind, as the Assets panel and the asset
+    /// pickers list them. It is built on a worker thread from the first
+    /// frame and kept current from the App's file changes; see
+    /// [`Editor::wait_for_assets`].
+    pub fn assets(&self) -> &crate::assets::AssetIndex {
+        &self.assets
+    }
+
+    /// Waits until the asset index has taken in every file change the App
+    /// applied so far (starting it on `app`'s project if it has not
+    /// started).
+    pub fn wait_for_assets(&mut self, app: &mut App) {
+        self.assets.wait(app);
     }
 
     /// The console's lines, oldest first.
@@ -759,6 +777,7 @@ impl Editor {
             self.camera = Some(initial_camera(app));
             self.camera_saved = self.camera;
         }
+        self.assets.poll(app);
         self.pull_log(app);
         self.rects = PanelRects::default();
         self.pending.rects.clear();

@@ -14,6 +14,7 @@ re_reflect.workspace = true
 re_scene.workspace = true
 re_command.workspace = true
 re_app.workspace = true
+re_assets.workspace = true
 re_agent.workspace = true
 re_render.workspace = true
 re_script.workspace = true

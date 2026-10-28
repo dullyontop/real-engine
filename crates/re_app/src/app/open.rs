@@ -144,6 +144,7 @@ impl App {
             shaders: Default::default(),
             shader_watcher: None,
             changed_scripts: Vec::new(),
+            kept_file_changes: None,
             anim_sync: AnimSync::new(),
             skin_sync: SkinSync::new(),
             ragdoll_sync: RagdollSync::new(),

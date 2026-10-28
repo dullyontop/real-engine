@@ -315,6 +315,50 @@ fn asset_import_copies_with_a_sidecar_and_refuses_to_overwrite() {
 }
 
 #[test]
+fn the_file_changes_applied_are_kept_while_asked_for() {
+    use re_assets::AssetChange;
+
+    let dir = project(SCENE);
+    let src = tempfile::tempdir().unwrap();
+    std::fs::write(src.path().join("door.glb"), door_glb()).unwrap();
+    let mut app = open(dir.path());
+    let red = AssetChange::Modified("materials/red.material.json".into());
+    app.apply_file_changes(std::slice::from_ref(&red));
+    assert_eq!(app.take_file_changes(), [], "not kept unless asked");
+
+    app.keep_file_changes(true);
+    app.apply_file_changes(std::slice::from_ref(&red));
+    // A command's change too: asset.import says what it copied.
+    let out = app.dispatch(
+        "asset.import",
+        serde_json::json!({ "source": src.path().join("door.glb").display().to_string() }),
+        false,
+        &re_command::AllowAll,
+        re_command::Origin::User,
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    assert_eq!(
+        app.take_file_changes(),
+        [red.clone(), AssetChange::Modified("assets/door.glb".into())]
+    );
+    assert_eq!(app.take_file_changes(), [], "taken");
+
+    app.keep_file_changes(true);
+    app.apply_file_changes(std::slice::from_ref(&red));
+    app.keep_file_changes(true);
+    assert_eq!(
+        app.take_file_changes(),
+        std::slice::from_ref(&red),
+        "asking again keeps them"
+    );
+    app.apply_file_changes(std::slice::from_ref(&red));
+    app.keep_file_changes(false);
+    assert_eq!(app.take_file_changes(), [], "stopping drops them");
+    app.apply_file_changes(std::slice::from_ref(&red));
+    assert_eq!(app.take_file_changes(), []);
+}
+
+#[test]
 fn the_goldens_stage_reports_missing_images_then_matches_written_ones() {
     let dir = project(SCENE);
     std::fs::create_dir_all(dir.path().join("tests/replays")).unwrap();

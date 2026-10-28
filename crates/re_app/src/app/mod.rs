@@ -168,6 +168,9 @@ pub struct App {
     /// Watches the engine shader directory ([`App::watch_engine_shaders`]).
     shader_watcher: Option<AssetWatcher>,
     changed_scripts: Vec<String>,
+    /// The file changes applied since [`App::take_file_changes`] last took
+    /// them, while [`App::keep_file_changes`] is on.
+    kept_file_changes: Option<Vec<re_assets::AssetChange>>,
 
     anim_sync: AnimSync,
     skin_sync: SkinSync,
@@ -422,6 +425,13 @@ impl App {
     /// effects and volume (ADR-0041).
     pub fn bus_levels(&self) -> &[BusLevel] {
         &self.bus_levels
+    }
+
+    /// Meshes, materials and clips by asset string, to read: what the asset
+    /// server holds and which loads failed (the editor's asset index shows
+    /// them, ADR-0064 §7).
+    pub fn media(&self) -> &Media {
+        &self.media
     }
 
     /// Meshes, materials and clips by asset string.

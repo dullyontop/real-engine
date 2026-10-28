@@ -3995,6 +3995,7 @@ dependencies = [
  "mlua",
  "re_agent",
  "re_app",
+ "re_assets",
  "re_command",
  "re_core",
  "re_proc",

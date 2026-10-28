@@ -71,6 +71,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod assets;
 pub mod camera;
 mod canvas;
 pub mod codes;
@@ -88,6 +89,7 @@ mod view;
 mod widgets;
 mod windowed;
 
+pub use assets::{AssetFile, AssetIndex, AssetKind, ImportState};
 pub use canvas::CanvasSpot;
 pub use editor::{ConsoleLine, Editor, LineKind, Panel, PanelRects};
 pub use headless::HeadlessEditor;

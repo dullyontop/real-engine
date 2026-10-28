@@ -107,6 +107,18 @@ impl Media {
         &mut self.server
     }
 
+    /// The asset server, to read.
+    pub fn asset_server(&self) -> &AssetServer {
+        &self.server
+    }
+
+    /// Why the last load of `asset` (as scenes name it: a path, or
+    /// `<model>#<name>`) failed. A file change forgets every failure, so the
+    /// next use tries again.
+    pub fn failure(&self, asset: &str) -> Option<&Diagnostic> {
+        self.failed.get(asset)
+    }
+
     /// Registers a procedurally generated mesh under its `derived:` name.
     pub fn insert_derived_mesh(&mut self, name: impl Into<String>, mesh: Arc<MeshData>) {
         let name = name.into();

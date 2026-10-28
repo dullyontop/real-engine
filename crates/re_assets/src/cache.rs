@@ -128,9 +128,12 @@ impl ProcessedCache {
 
     /// True when an entry exists for `key` (it may still fail to decode).
     pub fn contains(&self, key: &blake3::Hash) -> bool {
-        self.dir
-            .read(&Self::entry_path(key))
-            .is_ok_and(|b| b.is_some())
+        let entry = Self::entry_path(key);
+        match self.dir.path() {
+            // Without reading it: a model's entry can be large.
+            Some(dir) => dir.join(&entry).is_file(),
+            None => self.dir.read(&entry).is_ok_and(|b| b.is_some()),
+        }
     }
 
     /// The value stored under `key`, if there is a readable one. Does not count
