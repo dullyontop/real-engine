@@ -157,6 +157,16 @@ impl Renderer {
             if !top {
                 let opaque = &frame.batches[..frame.opaque_batches];
                 self.draw_batches(&mut pass, frame, opaque, 1, None, &mask(0));
+                // The opaque instance sets hide occluded highlights too.
+                self.sets.draw(
+                    &mut pass,
+                    &frame.sets,
+                    &frame.sets.runs[..frame.sets.opaque_runs],
+                    &self.meshes,
+                    None,
+                    1,
+                    &|_| &self.sets.mask_pipeline,
+                );
             }
             self.draw_batches(&mut pass, frame, highlighted, 1, None, &mask(1));
         }

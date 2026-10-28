@@ -53,6 +53,14 @@ impl<T> Slots<T> {
             .and_then(|e| e.value.as_ref())
     }
 
+    /// The value at `index`, to change, if it is live and still at `generation`.
+    pub fn get_mut(&mut self, index: u32, generation: u32) -> Option<&mut T> {
+        self.entries
+            .get_mut(index as usize)
+            .filter(|e| e.generation == generation)
+            .and_then(|e| e.value.as_mut())
+    }
+
     /// Removes and returns the value at `index` if it is live and at `generation`.
     pub fn remove(&mut self, index: u32, generation: u32) -> Option<T> {
         let entry = self
@@ -101,6 +109,9 @@ mod tests {
         assert_ne!(gc, ga, "with a new generation");
         assert_eq!(slots.get(a, ga), None);
         assert_eq!(slots.get(c, gc), Some(&"c"));
+        assert_eq!(slots.get_mut(a, ga), None);
+        *slots.get_mut(c, gc).unwrap() = "d";
+        assert_eq!(slots.get(c, gc), Some(&"d"));
         assert_eq!(slots.get(b, gb), Some(&"b"));
         assert_eq!(slots.get(99, 0), None);
         assert_eq!(slots.len(), 2);
