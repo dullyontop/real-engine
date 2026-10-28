@@ -53,7 +53,9 @@ jobs:
             echo "::error::$PROJECT is not a project folder under examples/"
             exit 1
           fi
-      - run: rustup toolchain install stable --profile minimal
+      - name: Install the pinned toolchain
+        shell: bash
+        run: bash tools/ci/rust-toolchain.sh
       - uses: Swatinem/rust-cache@v2
       - name: Render the ${{ matrix.backend }} goldens
         shell: bash

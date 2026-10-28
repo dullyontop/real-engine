@@ -37,3 +37,13 @@ pub const INVALID_GRAPH: Code = Code::new("RE7407");
 /// A command or snapshot names a bus, send or snapshot the graph does not have
 /// (a warning, given once per name).
 pub const UNKNOWN_BUS: Code = Code::new("RE7408");
+
+/// A sound control command (`SoundControl`, `SourceControl`) has a fade that
+/// is negative, not finite or longer than an hour, or a seek time that is
+/// negative or not finite.
+pub const INVALID_SOUND_CONTROL: Code = Code::new("RE7411");
+
+/// A spatial sound's settings (`SetSourceSpatial`) are invalid: distances out
+/// of order, negative or not finite, an inverse curve from 0 m, or a doppler
+/// that is negative or not finite.
+pub const INVALID_SPATIAL: Code = Code::new("RE7412");

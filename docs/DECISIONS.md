@@ -220,6 +220,27 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 - `PhysicsSettings` and a centre-of-mass getter are not exposed by oxijolt 1.1.0. Features that need them wait for an upstream release.
 - oxijolt never calls `JPH_Shutdown`. This is harmless at process exit, and we document it.
 
+**Amendment (M4, WP34 PR "correctness"; accepted by the maintainer, 2026-10-28).** Queries past sensors and rejected bodies, and bodies that keep their motion.
+- Each `Layer` is two Jolt object layers (`layer × 2 + moving`), and sensors use copies of them numbered after all of them (`count × 2 + layer × 2 + moving`) with the same collision rules, so contacts and poses are as before. A query that leaves sensors out passes only the solid object layers; a character's filter includes the copies.
+- A cast steps past a rejected hit by excluding that body and casting again from the hit. When it starts inside two rejected bodies, or after 64 rejected hits, the probe answers it: the accepted bodies along the rest of the path (a capsule as wide as the cast reaches plus 0.1 m, in pieces of at most 50 m) are copied as static bodies into a private Jolt world that is never stepped (made on first use, at most 1024 copies at a time), cast against there and removed.
+- A dynamic body removed and added again in one `apply` keeps its linear and angular velocity. The sync sends `SetShape` when only a body's shape changed (not on a vehicle's chassis), and replaces the body otherwise.
+- Mesh colliders are allowed on kinematic bodies, which take their mass from the description; `RE5003` is a mesh on a dynamic body or a heightfield on a moving one. `PerfReport::physics_step` includes the compat server's parts and characters.
+
+**Amendment (M4, WP34 PR "queries"; accepted by the maintainer, 2026-10-28).** Script queries, body control, and how hard bodies met; the contract "Physics for gameplay: the query and contact payloads".
+- `QueryOptions { groups, exclude, sensors }` (serde defaults) and `QueryFilter<'a> { groups, exclude: &'a [EntityId], sensors }`: every excluded entity is stepped past like a group mismatch. `Physics::overlap` (box, sphere, capsule, convex) and `Physics::raycast_all` (one hit per entity, sorted by distance then entity, at most 256, through the probe) join `raycast` and `shape_cast`.
+- Luau: `physics.shape_cast`, `physics.overlap` and `physics.raycast_all`; every query takes an options table `{ mask, exclude, sensors, rotation }` (`raycast` also a number, as the mask). `HostServices` gains provided `query_ray`, `query_ray_all`, `query_shape_cast` and `query_overlap` (default: no hit).
+- `PhysicsCmd` gains `Wake`, `SetAngularVelocity`, `ApplyImpulseAt`, `ApplyAngularImpulse`, `AddForce { at }`, `AddTorque` and `Sleep`, ranked 20 to 26 after every earlier kind; `Sleep` comes last, zeroes the velocities and drops the step's forces. Luau: `physics.set_angular_velocity`, `impulse_at`, `angular_impulse`, `add_force`, `add_torque`, `wake`, `sleep` and `awake`, through provided `HostServices` methods (default: unavailable). Forces act on the next step only; all need a dynamic body (`RE5010`), `wake` and `sleep` also a kinematic one.
+- `ContactEvent::Begin` gains `impulse` (Jolt's estimate of the normal impulse, summed over the pair's new contacts) and `speed` (the centres of mass' approach speed along the normal, recovered from the estimate), 0 for sensors; Luau's contact `info` has both. `EventSettings::collision_estimates` is on; it changes no simulated value.
+
+**Amendment (M4, WP34 PR "triggers"; accepted by the maintainer, 2026-10-28).** Triggers that survive sleep.
+- A `Trigger` on a collider entity makes its body a sensor (`BodyDesc::trigger`) whose contents are tracked per body in sorted maps. A contact that begins enters; one that ends while both bodies sleep leaves the pair dormant, and a dormant pair that Jolt has not reported again three steps after a wake leaves. When a trigger is added, replaced, reshaped or moved by a command, an exact overlap of its shape settles the sleeping bodies. A removed body leaves; a body replaced in one `apply` keeps its pairs. An entity is inside while any of its bodies is (inner bodies, ragdoll parts).
+- `TriggerEvent { trigger, other, entered, point, normal }` from `Physics::trigger_events()`, sorted, exits first; `Physics::inside`. Luau: `physics.on_touch` and the new `physics.on_touch_end` fire on a trigger pair's enter and exit, and on other pairs' contact begin and end; `physics.inside`. The maps are in `PhysicsSnapshot` and not in `state_hash`.
+
+**Amendment (M4, WP34 PR "settings"; accepted by the maintainer, 2026-10-28).** Body, character and project settings.
+- `RigidBody` and `BodyDesc` gain `continuous_collision`, `gravity_factor`, `can_sleep`, `lock_position_x/y/z`, `lock_rotation_x/y/z` (world axes; not all three positions, and no joints or vehicles on a locked body) and `initial_velocity` and `initial_angular_velocity` (creation only), with defaults that keep today's behaviour and serialised forms.
+- `CharacterController` and `CharacterDesc` gain `jump_speed` (5 m/s) and `up` (+Y; gravity along −up); `PhysicsConfig::character_jump_speed` is gone.
+- `real.toml` `[physics]`: `max_bodies`, `max_body_pairs`, `max_contact_constraints`, `layers` (up to 32 names) and `[[physics.rule]] { a, b, moving, static }` applied in order over "everything collides". Without `layers` the table is the standard one. Errors are `RE0501`. Luau `physics.layer(name)`.
+
 ## ADR-0009: Fixed-step simulation phases in Roblox order
 
 **Status:** Accepted
@@ -497,6 +518,13 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - The diff is the regeneration contract. M1 tests include regenerating with a new seed during play while a script holds a handle and some items have been collected.
 - Not in M1: baking, structural overrides other than deletion (adding under a generated node), generator versioning, and asynchronous generation. Prefabs are instantiated through the same fragment model (`PrefabFile::instantiate`).
 
+**Amendment (M4, WP39 PR "async editor"; accepted by the maintainer, 2026-10-28).** In the editor's edit mode, whole `graph` sources regenerate in the background:
+- The `graph` generator is `prepare` (on the main thread: the document with overrides, seed, fingerprint, stamp and budget), `Evaluator::evaluate` and `finish` (on the main thread: fragment assembly with prefab expansion, the entity budget, derived assets, the report). Synchronous runs call the three in a row, unchanged.
+- The editor's `Regenerator` (`re_app::procedural`) evaluates on the pool, one job per source with a cancel flag, at most `pool threads − 1` at once; a newer edit cancels the running job. Finished jobs are applied at the next edit frame when the source's current fingerprint still equals the job's prepare-time one: `finish`, then `World::apply_generated`, which records the fingerprint computed after `finish` (it covers the prefabs the new output expanded, ADR-0060 §7, as `World::run_generator` does), and a failed job records it too, so it does not run again until an input changes; meanwhile the last good output stays, and a failed job leaves it. `re_scene`'s `Generators::set_deferred` makes `regenerate_changed` leave `graph` sources to the editor; forks do not defer.
+- Background jobs have `graph.generate`'s budget by default (10 s, 100,000 entities; `[proc] editor_ms`, `editor_entities`), failing with `RE4016`.
+- The editor completes every job before serving agents' requests and before Play; `graph.regenerate` and `graph.generate` stay synchronous; WP43's previews wait for their source's job and share its cancellation.
+- Play, `real run`, `real verify`, replays and the D2 harness stay synchronous. Regeneration during play beyond seed changes is left to M5, which needs results applied at ticks computed from simulation state, a script API for parameters and completion, and an apply that costs in proportion to the change.
+
 ## ADR-0018: Determinism: D1 harness in M1, D2 deferred
 
 **Status:** Accepted. The amendment at the end records what the code at the end of M3 does differently.
@@ -596,6 +624,21 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - The default scopes gain `anims/**`, and a screenshot path must end in `.png` for every caller (`RE0516`).
 - A test walks every command of the agent-facing registry, as calls and as dry runs, with arguments aimed at protected files and their other spellings: under a read-only policy no file changes outside `.real/out/`, `.real/agent/` and `.real/cache/`; under narrowed scopes nothing changes outside them, those folders and the entry scene; under a wide policy protected, denied and outside files never change. It fails on a command it has no arguments for.
 - As built, the budgeted operations write under `.real/out/`, not `.real/agent/` (above, and ADR-0026 answer 6): `play.run`'s capture goes to `.real/out/play/`, and `graph.generate` returns a report and no image.
+
+**Amendment (M4, WP44 PR "windows pipe"; accepted by the maintainer, 2026-10-28).** One writer on Windows too. The editor socket was a Unix socket only, so on Windows `real do` and `real mcp` were refused while the editor was open (`RE8004`, then `RE8003`). From this amendment:
+- On Windows the editor serves a named pipe, `\\.\pipe\real-editor-` followed by 32 hex digits from the OS random generator, new each time the editor binds, and writes its name into `.real/editor.owner` as `"pipe"` (written and renamed while the lock is held). Unix keeps `.real/editor.sock`.
+- Each instance has a protected DACL that grants access to the current user's SID only, refuses remote clients (`PIPE_REJECT_REMOTE_CLIENTS`), and the first is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`, so a taken name fails the bind with `RE8005`.
+- A client opens the pipe with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION` and checks `GetNamedPipeServerProcessId` against the owner's pid; another server is `RE8005`. While the pipe is busy or not yet named, it retries for 2 seconds.
+- The pipe carries the same newline-delimited JSON as the socket ("over a Unix socket, or on Windows a named pipe"). `LockState::Editor` carries an endpoint, a socket path or a pipe name. `RE8004` is no longer emitted and its page says so; `RE8005`'s page covers the pipe's cases.
+- The code is `re_agent::remote::windows`, the only unsafe module of `re_agent`, on `windows-sys` 0.61.2 (already locked; new features of an existing Windows-only dependency). The editor-socket tests run on every platform, with Windows-only tests for a squatted name, a wrong server pid and the DACL.
+
+**Amendment (M4, WP44 PR "agents"; accepted by the maintainer, 2026-10-28).** Agent calls in the editor. The editor applied an agent's calls under its own policy, which allows everything, as soon as they arrived: only `real mcp`'s own check stood between an agent and the project, and `Call::check_write` inside the editor never saw the agent policy. From this amendment:
+- For a socket call with origin `agent`, the editor dispatches under the agent policy (`.real/agent-policy.toml`, loaded per call) and its own together. Calls with origin `user` (`real do`) stay under the editor's policy.
+- The policy's `[editor]` table says which agent calls wait for the person: `approve = "edit"` (edit and destructive calls; the default), `"destructive"` or `"none"`, and `approve_timeout_s` (default 300). Read-tier calls and dry runs never wait; without an editor nobody is asked.
+- A waiting call is dry-run first, and a failed dry run fails the call. Otherwise a card above the viewport shows the client (from `initialize`'s `clientInfo`), the command, its arguments and the dry run's changes, with the touched entities outlined, and offers Apply, Apply all from this client (per MCP session, at or below the call's tier, until the session ends or the person revokes it in the Agent strip) and Refuse. Cards come one at a time, in order. An approved call is one undo step, labelled with the client.
+- A refused call returns `RE8030`, an unanswered one `RE8031` after the timeout. A call the client cancels (MCP's `notifications/cancelled`, passed on as a cancel line) or whose connection closes is withdrawn and never applies. While a call waits, `real mcp` sends progress notifications when the request has a progress token. The socket's request line gains optional `session` and `client` fields, and the protocol gains the cancel line `{"id": N, "cancel": true}`.
+- During play, `RE0652` refuses agent edits first. The editor's window serves the socket only through the approvals module; `EditorSocket::serve_pending` stays the tests' path.
+- Approval guards the engine's commands. It is not a sandbox for agents with their own shell (ADR-0020: no shell tier).
 
 ## ADR-0021: Profiling: our own `profile_scope!` over puffin or Tracy
 
@@ -716,6 +759,19 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - The Windows and macOS jobs' cargo caches (`Swatinem/rust-cache`) are saved only on main, as `linux-setup`'s are since the amendment of 2026-10-28, so PR runs restore main's and never crowd them out of the repository's 10 GB. Main saves them in the runs that call `platforms.yml`, when a push changes a build input. They hold only dependencies, so they stay useful until the dependencies or the toolchain change; after a new stable Rust, PR runs build the dependencies on these platforms too until main's next such push, or until WP31 pins the toolchain.
 - The rest of the amendment of 2026-10-28 stays: draft and documentation-only PRs still save runner time, and should the repository go private again, its bill stays low.
 - Anyone signed in to GitHub can download a public repository's workflow artifacts. CI uploads reports, logs, golden output and notices, never a built game or runtime. `release.yml` uploads runtimes, and on a tag publishes a release with them, so it is not run while the repository is public: built binaries are published only once the owner decides how the engine is distributed. WP31's PR "version" makes its releases drafts and uploads its runtimes as workflow artifacts only while the repository is private.
+
+**Amendment (M4, WP31 PR "toolchain"; accepted by the maintainer, 2026-10-28).** `rust-toolchain.toml` pins the stable release CI uses, `channel = "1.99.1"` (profile `minimal`, with `rustfmt` and `clippy`), so a new Rust release no longer changes every cargo cache key at once (the gap the amendment of 2026-10-28 names). The pin moves only by PR, after each stable release: the PR changes `channel` and fixes what the new compiler and clippy ask for; it changes a build input, so its run starts every check, and main's push after it saves new caches. The README says how. rust-cache's key hashes `rustc -vV` of every installed toolchain, not only the one a job uses (`getRustVersions` in rust-cache v2), and the runner images ship their own stable, so each job installs the pin with `tools/ci/rust-toolchain.sh`, which also makes it the default and uninstalls every other toolchain; then no key changes with Rust or with the runner image between bumps. `linux-setup`, the Windows and macOS jobs of `platforms.yml`, `release.yml` and `goldens.yml` run it; `fmt`, `deny` and `platforms.yml`'s `d2`, which keep no cargo cache, only install the pin. `msrv` keeps 1.95.0, installed by name, and the workspace's `rust-version` stays 1.95.
+
+**Amendment (M4, WP31 PR "one build"; accepted by the maintainer, 2026-10-28).** Release `real` is built once a run on ubuntu-latest, and builds use every core. WP31's spike measured the choices on 2026-10-28 (run 40624060464, every cache cold):
+- One job, `verify`, replaces `verify-demo`, `verify-plaza`, `verify-valley` and `xvfb-smoke`. It builds `real` and runs their checks in their order, the island's, the plaza's, the valley's and the town's. Each check is its own step that runs whenever the build passed, so one failing example hides no other. It uploads the reports and the goldens' output, never the binary. In the spike it took 15.9 job-minutes. A job that built `real` and passed it to four jobs through a cache entry of the run took 22.2 job-minutes and 24.8 minutes of wall time, its four jobs waiting 5.8–9.2 minutes for runners. An artifact is not an option while the repository is public, and a cache entry would have to be deleted after every run, since any later run can restore one that main saved.
+- `CARGO_BUILD_JOBS` goes from every workflow, so cargo uses every core: 4 on a public runner, 2 on a private one.
+- `[profile.dev.package."*"] opt-level = 2` in the root `Cargo.toml` optimises every dependency in development and test builds, Luau's C++ included. The workspace's own crates stay at opt-level 0, with debug assertions. Every test passed with it, those that compare committed state hashes, goldens and poses included. On one runner the GPU crates' test binaries ran in 257 s against 443 s (re_cli's `mcp_e2e` 136 against 247). A cold build of every test target takes 8.1 minutes on 4 cores, paid after a lockfile, toolchain or profile change and then cached on main.
+- rust-cache does not hash a virtual workspace's root `Cargo.toml`, where the profiles are. So the `cargo-cache` action gives every job's cache a `prefix-key` with a hash of the root manifest's `[profile.*]` tables (`tools/ci/cargo-key.sh`), and a profile change starts every cache afresh.
+- The 250,000-part incremental-render test stays in the debug suites, rather than moving to a release job as M4_PLAN proposed. With optimised dependencies its whole test binary runs in 27 s there, while in release it cost 4.0 minutes, most of it building `re_compat`'s tests and their dependencies.
+- re_script's budget test counts the budget's trips (`re_script::budget_trips`) instead of timing the runaway loops.
+- A PR run's Linux checks took 111.5 job-minutes before this amendment, and a push to main that changes code 29.3 (PR #190's run).
+
+**Amendment (M4, WP31 PR "platforms"; accepted by the maintainer, 2026-10-28).** `d2-run` goes, and each platform's D2 report is written by a job that already builds release `real` there. `build-package-windows` and `build-package-macos` run `cargo xtask d2` after their build and upload `d2-Windows` and `d2-macOS`. When `ci.yml` calls `platforms.yml`, `verify` writes `d2-Linux`, and a `d2` job in `ci.yml`, after `verify` and `platforms`, compares the three with `--require linux-x86_64,windows-x86_64,macos-aarch64`; its check is `d2`, in place of `platforms / d2`. When `platforms.yml` runs by hand, its own `d2-linux` job writes the Linux report and its own `d2` compares; both skip themselves when `ci.yml` calls it. Each platform then builds release `real` twice a run for its checks (Linux in `verify` and in `build-package` on ubuntu-22.04; Windows and macOS in their build and package jobs), and `build-web` once more for the browser. macOS x86_64 leaves the platform claims: ARCHITECTURE.md's packaging section and ADR-0037's as-built text name arm64 only, since nothing builds or tests x86_64 macOS.
 
 ## ADR-0024: Validation suite contract for external script corpora
 
@@ -2015,6 +2071,13 @@ PR "async" measures these on the walk; if a budget cannot be met, the PR changes
 - *Stitched seams*, "a chunk's mesh is rebuilt off-thread when its pattern changes (indices only ...)": a chunk's job on the pool meshes it with the stitching selected when the job started. When the stitching of a drawn chunk changes later, `re_proc::stream` meshes it again on the main thread during the streaming step, in full (vertices, normals and indices, through `re_geom::terrain::chunk_mesh`), from the heights its job kept. That work has a budget of 2 ms of wall time per step (`RESTITCH_BUDGET_MS`), and the chunks left over wait for a later step.
 - *Hydraulic erosion*, "Tiles are cached on disk by key": eroded tiles are not written to disk. `terrain.erode` (`crates/re_proc/src/nodes/erode.rs`) keeps them in a process-wide memory cache of 256 tiles, which drops the oldest tile first when it is full.
 
+**Amendment (M4, WP39 PR "erosion cache"; accepted by the maintainer, 2026-10-28).** Evidence: the procedural audit (§4.1, items 5 and 11) and WP39's spike (`research/m4/wp39/erosion-spike/`).
+- **Eroded tiles live in the evaluator.** `terrain.erode` keeps them in the evaluator's shared store, with one slot per key, so a tile being eroded is waited for, never eroded twice. Entries go least recently used first and count against the evaluator's memory budget. `NodeCtx::shared_output` adds a disk tier: memory, then `.real/cache/proc/<key>.bin`, then the erosion, whose tile is written to disk under `[proc] disk_cache_mb`. This replaces the process-wide cache of 256 tiles, and "Tiles are cached on disk by key" is now true.
+- **A tile's key** hashes the node seed, the tile, the erosion parameters and the cache key of the input over the tile (`NodeCtx::upstream_key`), so a hit evaluates neither the input nor the erosion. Tiles keep their values, so no output changes. The key's tag string (`re_proc terrain.erode tile v2`) is the tiles' version: any change to how a tile erodes (the erosion, the seed fork, the window or the apron) changes it.
+- **Accounting.** The `Streamer` counts, for each tile, the loaded cells and collision chunks whose windows need it, from the windows alone, and `Streamer::memory_bytes` adds 412,164 bytes for each tile with a count. Step 3's eviction counts them too: evicting a cell takes off only the tiles that no other loaded cell or collision chunk needs, and the radius shrinks only when cells and tiles together exceed `memory_mb`. So eviction stays deterministic, and the number reported is the number that decides. Resident tiles are reported, not counted.
+- **`terrain.erode@2`** erodes a whole field in parallel: droplets are grouped by blocks of side `max(2(steps + 2) + 1, 64)` coloured 2 × 2; colours run in order, and blocks of one colour in parallel on private grown copies. The result does not depend on the thread count. 513² takes 110 ms on four threads against about 370 ms. Version 1 keeps its sequential output, and streamed erosion is the same in both versions.
+- **`RE4304` reaches commands and agents.** When `World::entity` finds no entity, it asks `re_scene`'s unknown-id hook (a plain `fn`, which `World::fork` keeps). The hook `re_proc::stream` installs reads the `Streamer` and gives `RE4304` for an id in an unloaded cell, which `entity` returns in `SceneError::Unresolved` with its code, hint and location; otherwise it is `RE1200` as before. Scripts' `world.get` still returns nil. `real verify` and `real run --json` report streaming waits and late cells (not gated). `PerfReport` gains a streaming row (`step`, waits, late cells, loads, jobs, memory and tiles).
+
 ## ADR-0043: Procedural workflow: generator versions, bake, structural overrides, Luau generators, polygon booleans and roads
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP24). Built in WP24 PRs "versioning" (#93), "bake" (#105), "luau" (#125), "overrides" (#136), "booleans and roads" (#142) and "streamed roads" (#159), with the changes in the amendments at the end. Evidence: two probes in `research/m3/wp24/` (sources and output): `luau-node-bench` (mlua 0.12.2, Luau 0.740, the workspace's pins) and `overlay-probe` (i_overlay 9.1.0 and earcut 0.4.11). Measured on one core of the reference container (Intel Xeon @ 2.80 GHz).
@@ -2238,6 +2301,14 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 - *4. Luau generators*, "`ctx` gives the node's seed and a deterministic generator over it (re_noise's `Pcg32`), the recorded version, the field size and cell": the `ctx` table holds `node` (the node's id), `version`, `seed`, `rng` (a `Pcg32`) and `log`, and nothing about fields. Each field input carries its own `n`, `spacing`, `offset` and `samples` (`crates/re_script/src/generator/marshal.rs`).
 - *6. Diagnostics*: also `RE4023`, a refused `proc.move`, `proc.replace`, `proc.insert` or `proc.clear_structure` (not a generated entity or a procedural source, a streamed source, a parent outside the source's output, a cycle, or a replacement that does not turn into entities).
 
+**Amendment (M4, WP40 PR "luau kinds"; accepted by the maintainer, 2026-10-28).** Luau kinds v2 (ADR-0061 drafted beside it).
+- **Helpers** under `proc`, in Rust (`re_script/src/generator/helpers.rs`) and declared in `generator.d.luau`: `proc.noise` (`perlin`, `simplex`, `cellular`, `fbm`, `ridged`, `warp`, `warped`; 2D or 3D; `re_noise` in f32), `proc.field` (`height` and `normal` on the field's triangles, `sample` and `gradient` bilinear, `get`, `set`, `position`, `new`, `like`, `window`), `proc.points` (`count`, `get`, `attribute`, and a builder), `proc.poly` (`area`, `contains`, `bounds`, `centroid`, `boolean`, `union`, `offset`, `stroke`, `triangulate`, `length`, `along`; `re_geom::polygon` at its 1 mm grid), `proc.mesh` (a builder: `frame`, `transform`, `vertex`, `triangle`, `face`, `box`, `append`, `finish`) and `proc.curve.sample`. Helpers whose work grows with their input charge the safepoint budget one unit per point, vertex or sample.
+- **An implementation hash per kind:** `blake3("re_script luau kind v1", CONTEXT_VERSION, and for its declaring file and every module its declaration loads, in path order: path and bytecode compiled with compile::compiler())`. A `require` in `eval` or `migrate` of any other module is `RE3150`. `CONTEXT_VERSION` is `"re_script luau nodes v3"`. Editing a script regenerates only the sources whose kinds load it.
+- **Fragment meshes are named by content** (`blake3("re_script luau mesh v2", the mesh's counts and bytes)`), so equal meshes are one derived asset across items, nodes and sources, kept while any live output names it; a kind's `mesh` output keeps its node key.
+- **Prefab items:** `{ key, …, prefab = <a file param's value> }`, instantiated under the item as `points.instance` does; any other path is `RE3151`, an unreadable prefab `RE4014`. Editing a prefab regenerates every source whose last output expanded it, however its name was chosen (ADR-0060 §7).
+- **Streaming:** `streaming = "pointwise"` (field outputs only) or `"cell"` (points, meshes or fragments), with `ctx.domain` (`origin`, `n`, `spacing`, `min`, `max`; nil when not streamed), field inputs that carry `origin`, `ctx:owns(x, z)`, and outputs over the window (`RE4103` otherwise).
+- **ADR-0061 at the boundary:** `outputs = { { name, type, doc } }` with `eval` returning a table by name; `scalar` as a number, `curve` as `{ {x, y} }`, point `attributes` as typed buffers; `proc.param.vec2`, `color`, `file` and `curve`, checked by the same code as graph params; `polymesh` (ADR-0062) stays out of Luau in M4 (`RE4100`).
+
 ## ADR-0044: Editor node canvas, docking and gizmos: egui-snarl, egui_dock and our own gizmos; graph files become open documents edited by `graph.*` commands
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP25). Built in WP25 PRs "gizmos and docking" (#91) and "canvas" (#123), with open documents in the entity core (#113) and live gizmo drags (#140), as the amendments at the end record. The maintainer chose our own gizmos over transform-gizmo-egui (below).
@@ -2324,6 +2395,24 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 - *Delete, copy and paste.* Delete is one `scene.apply` of `despawn` ops. Copy writes JSON text to the system clipboard (egui-winit's): `{"format": "real-engine/entities", "version": 1, "subtrees": [{"world", "entities": [EntityDoc, ...]}]}`. Paste is one `scene.apply` of `restore` ops with fresh ids (the original's trailing number moved to the next free one, or `World::new_id`), references inside the pasted set remapped and others kept when their entity exists, and roots placed under the active entity's parent with their world transforms kept. Generated entities that name a derived asset are left out with a note naming `proc.bake`. Duplicate (Ctrl+D) pastes in place without the clipboard.
 - *The Hierarchy* renames (`rename`), edits notes (`set_note`), searches by name, id or component, reparents by drag (`entity.reparent`, or `proc.move` within a generated entity's own source) and has a context menu whose procedural entries are WP43's.
 - *Ownership in `re_editor`.* `panels.rs` is split into a module per panel; WP43 owns `panels/procedural.rs` and `src/widgets.rs` (the field widgets), and WP42 the rest.
+
+**Amendment (M4, WP39 PR "inspect"; accepted by the maintainer, 2026-10-28).** Inspection, with WP43's amendment (previews), which reads it:
+- `re_proc::inspect(evaluator, request)` evaluates one node of a document (a source's graph or built graph with its overrides) and only the nodes it depends on, through the shared caches, in its own evaluation tick, for an optional seed and, for a streamed source, a cell or window. It returns the node's output, its statistics, its report row and the part's report, honours a cancel flag and a deadline, and may be called from any thread but the pool's workers (`RE4032` unknown node; `RE4033` a streamed source without a cell or window on its grid). `EvalReport` carries `doc_hash`, the canonical hash without layout of the evaluated document with overrides.
+- `re_proc::Stats` has one variant per port type (fields: size, spacing, origin, extent, min, max, mean, non-finite count; points: count, bounds, prefabs, attributes; meshes: vertices, triangles, bounds, material; shapes and paths: counts, vertices or points, area or length, bounds; fragments: entities by kind and assets).
+- Images are CPU code in `re_proc` (`re_proc::image`): a heat map with one fixed ramp over the field's range, top-down drawings of points, shapes and paths (also as SVG), and a mesh thumbnail from a small rasteriser (fixed three-quarter orthographic view, flat shading, depth buffer, no materials), at most 1024 pixels on a side. The canvas and `graph.inspect` call the same functions, so agents and people see the same pixels, also headless.
+- `graph.inspect {source | graph, node, seed?, cell?, window?, format?, size?}` returns the statistics, report row and logs with a PNG (encoded with `png` 0.18.1, which `re_proc` now uses) or SVG in base64 (`RE4034` for a format the type cannot take); it is in `re_proc`'s `inspect` feature, on in tool builds and the editor, off in the packaged game and the web runtime. The `Streamer` keeps each streamed source's last 16 cell reports, which `graph.report` returns.
+- Nodes can warn while they run (`NodeCtx::warn(code, message)`, at most 16 kept per node): the warnings go on the node's report row, are cached with the output (after it in the disk entry, so older entries read as none) and are reported again on cache hits.
+- `real graph eval` also takes a builder script or `--source <id>`, uses the project's disk cache unless `--no-cache`, and writes `--png` or `--out` per node (`--node` for one node).
+- Parameters bounded by `validate` carry `minimum` and `maximum` in the schema, material and prefab parameters `x-real-asset`, and a registry test keeps schema and `validate` together. `graph.set_param` and `graph.set_default` take an optional `coalesce` key that merges consecutive edits into one undo step.
+
+**Amendment (M4, WP43 PRs "parameters", "previews" and "builder graphs"; accepted by the maintainer, 2026-10-28).** Parameters, previews and builder graphs on the node canvas, with WP39's amendment (inspection) and after WP42's (editor state, picking):
+- `re_editor::widgets` maps a JSON Schema property to a widget: checkbox, drag or slider (both bounds), combo for a `oneOf` of constants, vector drags, a colour picker (`"x-real-widget": "colour"`), an asset picker (`"x-real-asset": "<kind>"`, ADR-0064's kinds), map and list editors, and JSON text otherwise (`RE8850`). `float` values are sent as their shortest `f32` decimal. `re_proc`'s parameter schemas gain defaults for every property (`Serialize` on every parameter type, WP39 PR "hygiene"), and `minimum` and `maximum` (`schemars(range)`) wherever `validate` bounds a value and the asset keywords (WP39 PR "inspect"), with a test that every property has a default and the bounds agree with `validate`.
+- A node's body edits its parameters through `graph.set_default`, one undo step per finished edit (a choice, Enter, a released drag; a drag sends at most every 200 ms under one `coalesce` key); defaults are shown dimmed; a parameter the shown source overrides carries a marker and "Remove override". Graph params (ADR-0061) get the same widgets. The Procedural panel's overrides use typed widgets, a node-and-parameter picker replaces its text boxes, and a seed scrubber sends one `graph.regenerate` per release.
+- Badges from the last `EvalReport`: time with a bar, cache state, output size, diagnostics and logs; dimmed while the report's `doc_hash` or seed differs from the shown document's.
+- Previews of chosen nodes are made on one editor worker thread with `re_proc::inspect` and WP39's RGBA8 image functions (heat map, scatter, outlines, CPU mesh thumbnail), never on the main thread, at 128 or 256 pixels, at most 64 kept (16 MiB), cancelled when their key changes and waiting for the source's regeneration job; they are the pixels `graph.inspect` encodes. Seed thumbnails preview the source's thumbnail node for nearby and recent seeds at the lowest priority.
+- Builder sources are listed and drawn read-only (`RE8852`), with "open script" and "convert to a graph file": `proc.convert_builder` creates the graph file through ADR-0064's document lifecycle and points the source at it in one undo step (`RE4090`, `RE4091`).
+- Field-override markers in the Inspector, drawn by `widgets::field_row`, with `proc.revert` (clears an entity's field overrides, or a deletion override, and puts back what the source generates, read from the source's fragment computed without applying it, in one transaction; `RE4092`, `RE4093`); `prefab.revert` and `prefab.apply` for linked instances (WP38). The Hierarchy's context menu adds `proc.replace`, `proc.insert`, `proc.revert`, `proc.clear_structure` and `proc.bake`. `path.spline` points are handles in the viewport, drawn through `panels::procedural::viewport_overlay` (WP42's PR "camera"), one undo step per drag.
+- The canvas's view state is `panels.canvas` in `layout.json` version 2.
 
 ## ADR-0045: The script debugger: Luau's own breakpoints, stepping on temporary breakpoints, pausing by yield
 
@@ -2514,6 +2603,16 @@ What was checked for this ADR (2026-10-15, on `main` at 69ed909):
 - §1, "A check that names a non-read command is refused when the file loads (`RE8019`)": no file is checked for this when it loads; each kind is checked when it is used. Templates were not checked at all until #177, so `real new --check` ran whatever command a check named; since #177 `re_agent::templates::check_template` refuses a check whose command is not a read-tier command of the project with `RE8019`, before any check runs. When a recipe has such a check, `re_agent::templates::apply_recipe` refuses it with `RE8022` before any step runs; when an evaluation task has one, `real agent eval` refuses it with `RE8025` at the start of each run, which fails that run (`crates/re_cli/src/tooling/agent.rs`).
 - §2, "use `examples/island`, and the plaza once it is in `examples/`": there are two suites, `starter` (on the `native` and `terrain` templates) and `island` (on `examples/island`). No suite uses the plaza, although `examples/plaza` exists.
 - §2, the `reference` driver "runs in CI", and the Consequences' "keeps every built-in task solvable in CI": CI runs only the `starter` suite, over both transports, through `the_starter_eval_suite_passes` in `crates/re_cli/tests/mcp_e2e.rs`. Nothing in CI runs the `island` suite.
+
+**Amendment (M4, WP44 PRs "honesty", "eyes", "evals" and "agents"; accepted by the maintainer, 2026-10-28).** Evaluations that measure the workflows that matter, and eyes for agents. The checks compared numbers exactly or as text (`taller-hills` passed on the substring `"32"`), only the `starter` suite ran in CI, agents saw only the game camera's last frame, `graph.generate` returned no image although the documents said so, and `AGENTS.md` went stale unnoticed. From this amendment:
+- **Numeric checks** (PR "honesty"): `near` with a required `tolerance`, and `at_least` with `at_most` together as a range; a number check on a non-number fails and names what it found.
+- **Visual checks** (evaluation tasks only): `screenshot = { view, width, height }` with `changed = true|false` (against the same view before the run) or `golden = "PATH"` (`PATH.<backend>.png`, written by `real agent eval --update-goldens` with the reference driver), optionally in a `region`, compared with `re_render::imgdiff` at the project's golden tolerances. Their views are cameras or poses. They need an adapter and are never skipped.
+- **Gameplay checks**: `play.run` gains `watch` (up to 16 `{ entity, component, pointer? }`), `every` (default 10 frames, at most 1,000 samples) and `captures` (up to 8 `{ frame, view?, width?, height? }` under `.real/out/play/`, each checked with `Call::check_write`), and returns `watches` (`samples`, `first`, `last`, and `min`/`max` for numbers) and `captures`. Tasks check them, and `test.run`, as ordinary read-tier command checks.
+- **Views**: `screenshot` (and WP42's `pick`) take `re_app::view::ViewArgs`: `{ camera }`, `{ position, target, fov_deg? }` or `{ frame, from? }` (the editor's focus bounds), with `width` and `height` of 16 to 2048. A view replaces the snapshot's camera, never draws editor overlays and does not move streaming.
+- **Previews**: `graph.generate` gains `preview` (`true` or `{ node?, size? }`): the thumbnail node's (or `node`'s) image for the seed and parameters tried, drawn by `re_proc::inspect`'s functions from the output already evaluated, in the `inspect` feature only.
+- **MCP**: up to 8 images per result (top-level `.png` paths, `captures[].path`, and `{ format: "png", data }` objects, whose `data` the MCP result replaces with a placeholder); built-in prompts from `crates/re_agent/prompts/*.toml`; `tools.listChanged`, with the Luau tools reloaded when `scripts/tools/commands/` changes (a 2-second scan, `CommandRegistry::unregister`).
+- **`AGENTS.md`**: `real new` writes it and `CLAUDE.md` (not the policy). It holds the fixed guide and the project's facts (kind, scenes, sources, Luau tools, tests, what the policy grants), points at the guide's reference for the commands, and `real check` warns `RE8032` when it is stale. A test keeps the examples' copies current.
+- **Suites**: `procedural`, `gameplay` and `roblox-import` join `starter` and `island`, with reference solutions, and CI runs all of them with the reference driver in the `re_cli` tests on every platform. Suites stay folders in the repository.
 
 ## ADR-0047: Block-compressed textures with block_compression 0.10.1, encoded at import
 
@@ -2970,6 +3069,8 @@ WP30 has to put a real transport under that seam, so the same game runs as one s
 - §3, "Component types travel as `u16` ids from a table the server sends in Welcome": they travel as `u32` name numbers, and `Welcome` carries no table. Any `re_compat::net::wire::Frame` lists in `names` the names it numbers for the first time (component, record and enum variant names), once per direction.
 - The amendment for #90 and #117, where a send past `max_backlog` is refused with `RE8908` "instead of closing the connection": only `re_net::Endpoint::send` keeps the connection open. `re_compat::net::session` closes it when a frame cannot be sent: the server disconnects that player with an `RE8906` warning, and a client ends its session with an `RE8908` error.
 
+**Amendment (maintainer, 2026-10-28: encryption).** ADR-0067 replaces the Consequences' bullet on unencrypted traffic. From WP46's PR "secure", every connection is encrypted and authenticated, over UDP and WebSockets alike; without a join code, anyone who can reach the server's port can join.
+
 ## ADR-0051: Native environment, spot lights, shadow flags and effects
 
 **Status:** Accepted (maintainer, 2026-10-28; drafted by WP32), for WP32 PRs "environment" (§1–§6) and "effects" (§7–§8). It changes ARCHITECTURE §3's lighting convention ("the ambient light … is a renderer setting … `RenderSnapshot` has no ambient field"). The contract in §1–§5 is frozen at PR "environment" (M4 plan, "Cross-WP contracts"); WP33 (atmosphere, ADR-0054), WP43 (inspector), WP47 (compat lighting and effect classes) and WP48 consume it.
@@ -3160,6 +3261,793 @@ component! {
 - New goldens in `re_render` (Vulkan and GL): native fog and sky, spot lights in a scene with sun shadows and per-entity shadow flags (M4 has no local-light shadows, so "spot lights with shadows" in WP32's acceptance means this), and particles; compat's goldens and the valley's do not change. A test checks that a compat frame's environment and spot lights reach the renderer's uniform with the values they had through extras.
 - The `real new` templates can turn the sky on in `[render.environment]` (WP44's choice).
 - ARCHITECTURE §3 (lighting convention: ambient is snapshot data), §4 (the new components), §7 (`RE0700`–`RE0719` for WP32) and §8 (`[render.environment]`, `msaa`, `shadow_map_size`, `effect_budget`) change through the maintainer.
+
+## ADR-0052: Instance sets: placements uploaded once per cell, culled by cluster, one draw per part and run of clusters, and compound colliders near the focus
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP33), for three WP33 PRs: "instances" (§1, §2, §6 and the renderer half of §7: the contract, the drawing and the forest example), "render only" (§3 and §4 with §7's `re_proc` and `re_app` tests: the node's render-only mode in WP39's paths, which WP39 reviews, and the sets in the world) and "instance colliders" (§5). PR "instances" follows WP32's PR "split". PR "render only" follows "instances" and WP38's PR that adds `World::resolve_prefab` (§4 reads prefabs only through it). PR "instance colliders" follows the acceptance of ADR-0056 and WP34's PR "compounds"; §5 follows ADR-0056's draft of 2026-10-28 (library compounds and their limits, §3 to §6 there) and changes with it if its review does. WP39 reviewed §3 and §4 (research/m4/adr/reviews/wp39-on-adr-0052-0053.md), and its points are folded in. Each PR opens after WP31's #193 and reports `build-web`'s gzipped size before and after, measured as CI measures it (ADR-0049's amendment). It defines the cross-WP contract "Instance sets" of the M4 plan: `InstanceSet` in the render snapshot, frozen at PR "instances", and the `Instances` output that fills it, frozen at PR "render only"; WP39, WP41, WP42 (picking) and WP48 consume it. The colliders build on ADR-0056's compound shape, as agreed with WP34. Evidence: WP33's phase-0 spike, research bundle `m4/wp33/forest/` (both harnesses, the prototype as a diff against `main`, and every run's JSON).
+
+**Context.** Checked on `main` at 2a3724c:
+- **Scattered content is entities.** `points.instance` "places a prefab file at each point: one entity `<node>/<point id>` per point, with the prefab's entities under it" (`re_proc/src/nodes/points.rs`). The valley's tree prefab is a bark cube with a box `Collider` and a leaf sphere, so each tree is three entities, two draw items and one static body. Streaming applies at most `[stream] apply_entities` (400) entities a tick, so a cell of 2,600 trees (7,800 entities) takes 20 ticks, and every one of them is in `state_hash` and in the stream's memory estimate.
+- **The renderer's work grows with every item, every frame.** `re_app`'s sync makes one `DrawItem` per drawn entity each frame, and `Renderer::draw_frame` resolves each item's handles, moves its bounds into the world, tests it against the frustum and against each cascade, sorts, and packs a 128-byte `InstanceRaw` (with an inverted normal matrix) for every drawn instance and every cascade instance, uploaded each frame. Runs of one mesh and material become one instanced draw, but nothing is kept between frames.
+- **Streamed geometry sits at its corner** (ADR-0042's amendment for PR "floating origin"): a cell's meshes are local to its window's corner, and the snapshot places them with a translation that is exact in f32 within 16 km. Cells are 256 m by default. Terrain collision chunks are generated entities within `physics_radius` (256 m) of a focus, requested and removed at ticks computed from simulation state, and applied within `apply_chunks` (8) a tick.
+- **ADR-0038's render-thread threshold** is `render_submit` at least 4 ms mean *and* at least 25% of the frame's CPU time; the valley's drive replay measured 3.41 ms and 20.5%.
+- **WebGL2** has no base instance, no compute and no storage buffers, and 16 vertex attributes; draw items use 12 (mesh 0–3, instance 4–11). After WP32's PR "materials" the forward pass binds six sampled textures and two samplers (ADR-0038's amendment).
+- `re_types` depends only on glam, serde and serde_json (`cargo xtask check-graph`), so contract types cannot derive `bytemuck::Pod`.
+- **Already agreed elsewhere.** ADR-0051 §4 applies the `Shadows` component "from WP33, [to] its instance sets". ADR-0044's amendment for WP42 names an instance of a set `<source>/<key>` "through ADR-0052's per-set source and point ids (the pass draws each set whole)". WP38 asks that prefabs be read through `World::resolve_prefab` (ADR-0060), so nested prefabs and variants draw as their entities would.
+
+**Spike** (WP33 phase 0, on lavapipe: llvmpipe, LLVM 20.1.2, Mesa 25.2.8, in the 4-vCPU reference container; 1280×720, sun shadows in four cascades, the valley's post chain). The prototype kept each set's placements on the GPU as 32-byte records, culled per cluster, and drew one instanced draw per part and run of consecutive visible clusters. Render CPU is the thread CPU time (`CLOCK_THREAD_CPUTIME_ID`) of the renderer's draw.
+
+*The forest benchmark:* the valley's tree (a bark cube and a leaf sphere: two parts) at one tree per 30 m² on a flat ground, the camera driving through the forest at 15 m/s, the area split into 8 × 8 cells with one set per cell. Render CPU per frame, ms (mean):
+
+| Trees | Draw items | Sets, one cluster per set | Sets, 32 m clusters | Sets, 64 m clusters |
+|---|---|---|---|---|
+| 1,000 | 2.47 | 0.93 | 0.92 | 0.79 |
+| 10,000 | 15.9 | 1.03 | 1.20 | 1.00 |
+| 30,000 | 140 | 0.96 | 1.26 | 1.01 |
+| 100,000 | 534 | 1.23 | 1.57 | 1.37 |
+| 300,000 | 1,455 | 1.59 | 2.37 | 1.90 |
+
+- At 100,000 trees the item path spent 501 ms on items (123 collecting, 203 resolving and bounding, 25 sorting, 151 packing) and 32 ms on cascades, and uploaded up to 21.1 MB of instances a frame (59.6 MB at 300,000). The sets' 1.2 to 1.6 ms is work per set and per cluster, with nothing per tree.
+- Draws and instances at 100,000 trees (200,000 part-instances in all):
+
+| | Draw items | One cluster per set | 32 m clusters | 64 m clusters |
+|---|---|---|---|---|
+| Scene draws (shadow draws) | 3 (by run; not counted) | 105 (39) | 180 (98) | 125 (58) |
+| Part-instances drawn | 147,837 | 176,666 | 152,542 | 156,810 |
+| Shadow instances | 17,120 | 60,760 | 22,120 | 26,569 |
+| Scene triangles | 57.8 M | 69.0 M | 59.7 M | 61.3 M |
+
+  Clusters bring the drawn instances within 3 to 6% of culling each item, and cut the shadow instances 2.3 to 2.7 times against one cluster per set. 64 m clusters make 55 fewer scene draws than 32 m ones for 4,449 more shadow instances.
+- *A fixed area with more and more trees* (a 1,732 m square, 300 m draw distance, 32 m clusters): 1.15, 1.12, 1.15 and 1.15 ms at 10,000, 100,000, 300,000 and 1,000,000 trees, always 33 scene draws and 62 to 67 shadow draws. The item path took 1,778 ms at 300,000 trees there. Placements take 32 bytes each on the GPU (32 MB for a million). Uploading the 64 sets, clustering included, took 11.7 ms at 100,000 trees and 115 ms at a million, once.
+- *The valley:* `examples/valley`'s drive replay, frames 120 to 180, with 2,600 extra trees on the terrain of every 256 m cell within 896 m of the camera (93,258 trees in 36 sets, 32 m clusters):
+
+| | No extra trees | Sets, 600 m draw distance | Sets, no limit | Draw items |
+|---|---|---|---|---|
+| Drawing, render CPU (ms) | 5.40 | 7.45 | 6.45 | 92.2 |
+| Share of the frame's CPU | 18.2% | 22.0% | 21.4% | 77.4% |
+| Keeping the forest in the snapshot (ms a frame) | — | 0.39 | 0.92 | 12.9 |
+| Scene draws | 92 | 168 | 140 | 83 |
+| Draw items drawn | 2,433 | 2,438 | 2,426 | 45,302 |
+| Set part-instances drawn | — | 30,836 | 50,665 | — |
+| Shadow instances, all | 460 | 53,819 | 54,137 | 37,187 |
+| Scene triangles | 1.04 M | 13.5 M | 21.0 M | 17.7 M |
+
+  The rest of the frame (`App::frame`) took 23.6 to 26.9 ms in all four runs, which is run-to-run noise: the extra trees are not in the world. With sets the valley stays under ADR-0038's 25% share. As draw items, which are still cheaper than today's three entities per tree (the harness builds no entities), it crosses both limits. The harness made each new cell's set on the main thread, 2.0 ms a cell; in the engine a worker makes the placements and the main thread uploads 83 KB.
+- *The GPU.* lavapipe shades vertices on the CPU. There a set's draws took 1.27 times as long as the same trees as draw items without shadows (30,000 trees: 3.42 s against 2.69 s a frame), and 1.9 times as long with shadows at 100,000 (20.9 s against 10.9 s), because a cluster is culled whole (more shadow instances, above) and the vertex shader applies the part's matrix and a quaternion. No hardware GPU was available; see Consequences.
+
+**Decision.**
+
+*§1. The contract.* In `re_types::render`, maintainer-reviewed, with `RenderSnapshot` gaining `instance_sets: Vec<InstanceSet>` (serde default), so older snapshots and the agents' snapshot JSON still read:
+```rust
+handle!(
+    /// An instance set's placements, uploaded once (`Renderer::upload_instance_set`).
+    InstanceSetHandle
+);
+
+/// Where one copy of a set's parts stands. 32 bytes, the layout the GPU reads.
+#[repr(C)]
+pub struct Placement {
+    /// The copy's root, in metres from the set's origin.
+    pub position: [f32; 3],
+    /// Its uniform scale.
+    pub scale: f32,
+    /// Its rotation, a unit quaternion (x, y, z, w) as snorm16: round(v × 32767).
+    pub rotation: [i16; 4],
+    /// Linear RGB multiplied into its base colour, as unorm8 (255 is 1); the fourth byte is
+    /// reserved (255).
+    pub tint: [u8; 4],
+    /// The scatter point it stands on, stable within its node: the copy is `<node>/<id>`.
+    pub id: u32,
+}
+
+/// Neighbouring placements, culled, drawn and given colliders together. A set's clusters
+/// cover its placements in order: the first cluster holds the first `count` placements.
+pub struct InstanceCluster {
+    /// How many placements.
+    pub count: u32,
+    /// The box around their roots, from the set's origin.
+    pub bounds: Aabb,
+    /// Their largest scale.
+    pub max_scale: f32,
+}
+
+/// An instance set drawn this frame.
+pub struct InstanceSet {
+    /// The entity it comes from, its procedural source (picking, debugging, flags).
+    pub entity: EntityId,
+    /// The uploaded placements.
+    pub set: InstanceSetHandle,
+    /// From the set's space to the render origin's (ADR-0042's amendment): a streamed
+    /// cell's set is a translation to the cell's corner.
+    pub transform: Mat4,
+    /// The meshes drawn at every placement.
+    pub parts: Vec<InstancePart>,
+    /// `CAST_SHADOWS` and `RECEIVE_SHADOWS` from the source's `Shadows`, combined with each
+    /// part's (both must allow it), and `SELECTED`.
+    pub flags: DrawFlags,
+}
+
+/// One mesh drawn at every placement of a set.
+pub struct InstancePart {
+    /// The uploaded mesh.
+    pub mesh: MeshHandle,
+    /// The uploaded material.
+    pub material: MaterialHandle,
+    /// From a placement's root to the part: its prefab entity's transform under the prefab's root.
+    pub transform: Mat4,
+    /// The prefab entity's own `Shadows`.
+    pub flags: DrawFlags,
+    /// Drawn for clusters whose nearest point lies at least this far from the camera, in metres.
+    pub min_distance: f32,
+    /// And nearer than this (0: no limit but the camera's `far`).
+    pub max_distance: f32,
+}
+```
+- A set holds the placements of one prefab in one cell, and its parts share them. The plan says one set per cell and (mesh, material); sharing halves the memory of the valley's two-part tree, and each part is still one draw per run.
+- `Placement` is the GPU layout, so `re_render` converts a slice field by field once, at upload. The id costs nothing: the other fields take 28 bytes, padded to 32 anyway.
+- Placements and clusters are not snapshot data. They are uploaded once and named by handle, so a frame's snapshot grows with the number of sets, not of instances.
+- Distance ranges give the stretch's level-of-detail chains a place without a contract change: a chain is parts with consecutive ranges, chosen per cluster.
+
+*§2. Drawing.* In `re_render/src/instances/` (WP33's), through WP32's prepared-frame seam:
+- `Renderer::upload_instance_set(&[Placement], &[InstanceCluster]) -> Result<InstanceSetHandle, Diagnostic>` and `Renderer::release_instance_set`. A set is one vertex buffer. Upload refuses a malformed set with `RE6100` (clusters whose counts do not add up to the placements, an empty cluster, a position, scale or bound that is not finite, a zero rotation), and a set larger than the device's largest buffer with `RE6101` (8,388,608 placements under WebGL2's 256 MiB). A released or never-issued set handle is `RE6104`, in `release_instance_set` and in a frame, as `RE6010` to `RE6012` are for meshes, textures and materials. An empty `Instances` makes no set. `RenderStats` gains `instance_sets` (count and GPU bytes).
+- Each frame, for each set and part: each cluster's box is grown by the part's reach (the farthest corner of the mesh's bounds from the root, times the cluster's `max_scale`) and moved by the set's transform; these boxes are kept while the transform and parts stay the same. The set is tested whole, then each cluster against the frustum (which `Camera.far` still closes on the CPU, ADR-0038's amendment), against the part's distance range, and, for casting parts, against each cascade's light-space box. Consecutive passing clusters make a run, and each run is one draw of that part: the placement buffer is bound at the run's offset and drawn from instance 0, so no base instance is needed and WebGL2 works. Nothing is done per placement on the CPU.
+- Each (set, part) pair has one 256-byte entry at a dynamic offset in a per-frame uniform buffer: the set's matrix, the part's matrix, both normal matrices and the flags. The vertex shader reads the mesh's four attributes and three of the placement's (position with scale, rotation, tint: seven of WebGL2's 16) and computes `set × (root + rotate(q, scale × part × v))`, with normals through both normal matrices and the quaternion, so a non-uniform scale in the part or the set shades correctly. Set pipelines are variants of the forward, shadow and highlight-mask pipelines and of WP42's id pass, written in `shaders/instances.wgsl`, which each entry point includes as `skin.wgsl` is included today. They use the `post` module's reversed-Z compare and clear (ADR-0038's amendment) and bind materials as items do, so WebGL2's texture and sampler budget is unchanged; WP32's test of every pipeline under `downlevel_webgl2` limits covers them.
+- Opaque and alpha-tested parts are drawn after the opaque items. Blended parts are drawn after the blended items, run by run from the farthest cluster to the nearest, not per instance, so foliage should use alpha testing (`AlphaMode::Mask`).
+- A set or part with a stale handle is skipped, counted in `items_skipped` and warned about once per handle, as items are.
+- Statistics: `draw_calls`, `shadow_draw_calls`, `triangles` and `shadow_casters` count set draws and their instances. `FrameStats` gains `instance_sets` (sets with a cluster drawn), `set_instances` (part-instances drawn in the scene pass), `set_clusters` and `set_clusters_culled`, which `PerfReport.renderer.per_frame` reports (ADR-0022's amendment for WP32).
+- **Clusters are 64 m by default.** One cluster per set draws 2.3 times the shadow instances. 32 m clusters save 17% of 64 m's shadow instances at 44% more scene draws.
+- **No compute culling in M4.** The plan makes it optional on WebGPU and native. What it adds is culling each instance inside visible clusters (3 to 6% of the drawn instances in the spike, plus the shadow instances above), which only a hardware GPU can weigh against its cost, and WebGL2 would still need this path. It is revisited with a hardware measurement (Consequences).
+
+*§3. Producing sets: `points.instance` without entities.* In `re_proc` (WP39 reviews):
+- `points.instance` gains `render_only` (false). With it the node makes no entity: its fragment carries one `Instances` per prefab it places (its `prefab`, then each of `prefabs`, deduplicated by path as the node already loads each path once; a prefab no point picked makes no `Instances`, so no empty set reaches `RE6100`), through a new `Fragment.instances: Vec<Arc<Instances>>`, which `fragment.merge` concatenates:
+```rust
+/// The placements of one prefab by a render-only `points.instance` node (ADR-0052).
+pub struct Instances {
+    /// The node's id: the copy at point `id` is `<node>/<id>`, the key its entity would have had.
+    pub node: String,
+    /// The prefab, as the node's parameters name it.
+    pub prefab: String,
+    /// In cluster order: from the window's corner when streamed (ADR-0042), else in the
+    /// source's space.
+    pub placements: Vec<Placement>,
+    /// Their clusters.
+    pub clusters: Vec<InstanceCluster>,
+}
+```
+- Both modes call one function for a point's translation, rotation and scale: the point's position plus (0, `offset_y`, 0), its yaw (`random01(id, 3)`), the alignment to the normal and the scale (`random01(id, 4)`), and what WP39's PR "scatter" adds (headings, and scale and rotation from point attributes). So turning `render_only` on keeps every tree where it was, and the two modes cannot drift apart. In a streamed cell `random01` draws from the window's seed (ADR-0042) in both modes. New parameters, read only with `render_only`: `tint_min` and `tint_max` (linear RGB, both white), mixed per point by `random01(id, 5)`; `draw_distance` (0: no limit), which becomes each part's `max_distance`; and `cluster` (64 m, from 8 to 256 m).
+- Clusters are squares of `cluster` metres on X and Z, aligned to the window's corner (to the source's origin when it does not stream), in rows by z and then x (a row runs along +x), each with its placements in point order. A square with no placement makes no cluster. The node builds them on the worker, so the GPU buffer, the CPU copy, picking and colliders all share one order.
+- `Output::size` counts 32 bytes per placement and 32 per cluster. Fragments stay out of the disk cache, as now.
+- Overrides (ADR-0017) name entities, so none reaches an instance; turning `render_only` on orphans any overrides of the node's copies, and the generator's `RE4010` reports them. Editing one copy means turning `render_only` off for its node until instances can be promoted to entities, which the plan leaves for later.
+
+*§4. Sets in the world.*
+- An `InstanceView` resource in `re_proc`, beside `TerrainView`, holds the loaded sets by source, cell, node and prefab. Each has its source entity, its transform (the cell's corner; for a source that does not stream, the source's transform), the `Arc<Instances>`, and its prefab's parts. A cell's sets enter at the tick its last entities apply (a cell can take several ticks under `apply_entities`), so its sets and its entities appear together, and leave when it unloads; a non-streamed source's sets are replaced when it regenerates. They are view data like the terrain view: not saved, not in `state_hash`, and identical on any machine, since cells apply at deterministic ticks. A cell's accounted memory (ADR-0042) adds 64 bytes per placement (its CPU and GPU copies) and 32 per cluster.
+- **Prefabs** are resolved once per prefab and world through `World::resolve_prefab` (WP38, ADR-0060), never from `PrefabFile`, so nested prefabs and variants draw as their entities would. Each resolved entity with a `MeshRef` becomes a part: its mesh, its `MaterialRef` (or the default material), its transform composed up to the prefab's root, and its `Shadows`; one whose `Visible` is off is left out. Colliders are taken from `Collider` (§5). Everything else in a prefab (scripts, lights, sounds, moving bodies, skinned meshes, animation) has no meaning for a copy that is not an entity: it is ignored with one warning per prefab naming the components, and a prefab with no mesh warns that it draws nothing. These warnings, and §5's, use `RE4040` to `RE4044`, which WP39 grants from `re_proc`'s range, each with an explain page and a `DIAGNOSTICS` row in `re_proc/src/lib.rs`.
+- `re_app`'s render sync (WP32's path, maintainer-reviewed) uploads a set's placements the first frame it sees the set and releases them when it leaves the view, lists the parts' meshes and materials in `referenced_assets`, and pushes one `InstanceSet` per set each frame. The source's `Visible` hides its sets and its `Shadows` gives their flags (ADR-0051 §4). The sync's work is per set.
+
+*§5. Colliders: one compound body per cluster near a focus* (PR "instance colliders"). Agreed with WP34, on ADR-0056's library compounds (§3 there): a body's pieces are registered with `ShapeLibrary::insert_compound(source, Arc<CompoundData>)`, where `CompoundData { shapes: Vec<ShapeDesc>, pieces: Vec<CompoundPiece { pos, rot, scale, shape }> }` is in the collider's frame, under a `derived:` key: the prefab's colliders are the shared `shapes`, and each placement's pieces name them with the placement's uniform scale (`re_physics` builds each shape once and wraps it in a `ScaledShape` per distinct scale), and a `Collider` of shape `ColliderShape::Compound` with that source is one body. A collider with no owner is a static body of its own (ADR-0056 §1), so the cluster's body is static.
+- At each placement of a cluster, the prefab's solid colliders on entities without a moving body (box, sphere, capsule, convex hull, ADR-0056's cylinder and tapered shapes, and triangle meshes, which a static compound may hold) become pieces of one static body: an entity with `Transform` at the set's origin and a `Collider` of shape `Compound` whose source is a derived compound. Its pieces are in placement order, and within a placement in the prefab's collider order (Jolt builds the compound's tree from that order, and replays hash it); a shape keeps the prefab collider's own scale, as the physics sync scales entity colliders, and a piece adds the placement's. Heightfield, plane (which cannot be scaled), sensor and trigger colliders are left out with a warning: a copy that is not an entity has no trigger to report. Pieces whose layer or groups differ go to separate bodies, and a body is split before it passes ADR-0056's limits (`RE5020`: 4,096 pieces and 4,096 shapes, bounds within 2 km, sub-shape ids within 32 bits counting a mesh piece's triangles), so a cluster never loses its collision to a refusal.
+- A cluster gets its bodies when its bounds come within `[stream] physics_radius` of a focus and loses them when every focus is farther than `physics_radius + unload_margin`, by the rules of terrain collision chunks: requested at ticks computed from simulation state, applied `delay_ticks` later in key order within `apply_chunks`, and waited for under `Lateness::Wait`. They share `apply_chunks` with the terrain collision chunks: within a tick the due terrain chunks apply first, then the due cluster bodies, each in key order, and whatever the budget leaves waits for the next tick, so trees never make the ground late. The order follows from the requests, so from simulation state, and the same bodies exist at the same ticks on every machine; they are in `state_hash`. Their keys are `<cell>/<node>/colliders/<prefab>_<cluster>_<body>`, under the cell's root, so they unload with it. A source that does not stream has no focus rule: every cluster gets its bodies when the source regenerates.
+- A body's pieces are built once, per placement of its cluster, on the main thread when it applies (about 160 at the valley's density). Nothing is done per frame. WP34's spike measured 136 placements at scales 0.6 to 1.4: a shared hull builds in 0.07 ms, a 512-triangle mesh in 8.0 ms (Jolt checks every triangle under each new scale). If mesh colliders on scattered props make that a hitch, the node can bucket their placements' scales, which needs no contract change.
+- A ray hit or contact on such a body names the body's entity, and its `ColliderRef.child` (ADR-0056 §6) the piece. Each body keeps the placement every piece stands on, so a hit names the instance as picking does (`<source>/<cell>/<node>/<id>`).
+- Until PR "instance colliders" merges, the node's documentation says that render-only copies do not collide.
+
+*§6. Picking and the editor* (ADR-0044's amendment for WP42):
+- The id pass draws each visible set whole, culled per set only, so `instance_index` is the placement's index in the set. Its set pipeline comes with whichever of PR "instances" and WP42's PR "picking" lands second. The pick table gives each set a range of ids, and a hit resolves through the set's `Instances` to the point's id, naming `<source>/<cell>/<node>/<id>`: the key the copy's entity would have had.
+- `SELECTED` on an `InstanceSet` highlights the whole set. The editor highlights a single copy by drawing it as an extra `DrawItem` with `SELECTED`, which needs no contract change.
+
+*§7. Acceptance.* PR "instances":
+- `cargo run --release --locked -p re_render --example forest -- --instances 100000 --json`, the benchmark above, kept with `--mode items|sets`, `--cluster`, `--area` and `--max-distance`. In the reference container, `render_submit` must average under 4 ms at 100,000 trees, which keeps the forest under ADR-0038's threshold (1.37 ms in the spike). On the fixed 1,732 m area with a 300 m draw distance, the mean at 1,000,000 trees must stay within 1.25 times the mean at 10,000 (1.15 and 1.15 ms in the spike).
+- `cargo test -p re_render` adds: a structural test that sets of 1,000 and 100,000 placements over the same clusters give the same draws and test the same clusters; tests of culling, runs, distance ranges and statistics; `RE6100`, `RE6101` and `RE6104`; and goldens on Vulkan and GL of a small forest with shadows, drawn as a set and as the same trees as draw items, which must match within the golden tolerance (rotations are snorm16).
+- PR "render only": `re_proc` tests (WP39 reviews): render-only placements equal the entity mode's transforms (rotations to snorm16 precision), clusters cover them in order (rows by z then x, no empty cluster), streamed placements are local to the corner, keys match, prefabs named twice make one set and unpicked ones none, and orphaned overrides give `RE4010`. `re_app` tests: a streamed source's sets come and go with its cells, and picking names an instance.
+- PR "instance colliders": tests that the bodies appear at the same ticks, after the terrain chunks due in the same tick, and give the same `state_hash` in two runs and in a replay.
+
+**Alternatives.**
+- **Keep one entity per instance and speed up the item path.** Draws are already instanced by run. The cost is per item and per frame (534 ms at 100,000 trees; collecting and resolving alone took 326 ms), plus each entity's share of the apply budget, the sync and `state_hash`.
+- **Retained placements culled one by one on the CPU.** The cost grows with the number of instances, which the plan's acceptance rules out.
+- **Compute culling with indirect draws everywhere.** WebGL2 has neither; it stays optional (§2).
+- **One cluster per cell,** as the plan's wording allows. 2.3 to 2.7 times the shadow instances (Spike).
+- **Clustering in the renderer at upload,** as the prototype did. The renderer reorders the placements, so the GPU buffer and the CPU copy disagree, and picking and colliders would need a map back; the producer clusters instead.
+- **A 48- or 64-byte affine placement.** Fewer vertex shader operations than a quaternion and a part matrix (lavapipe's GPU time above) at 1.5 or 2 times the memory. Revisited with a hardware GPU.
+- **Merging each cell's copies into one mesh,** as compat's static cells do (ADR-0031). No per-instance work at all, but one copy of every vertex per instance: the valley's 93,258 extra trees would take about 2.0 GB of mesh.
+- **One static body per tree near the focus.** About 10,000 bodies, and entities, within 256 m at the valley's density, where compounds per cluster give about 64.
+- **Colliders as part of each loaded cell's content.** Simpler, but they would reach out to `radius_ahead` (1,280 m): about nine times as many bodies as near the focus.
+- **A static triangle mesh per cluster as its collider,** which today's `ShapeDesc` allows. Tessellated capsule trunks cost about 1.8 MB of mesh per cluster; it was the fallback had ADR-0056 no compound shape.
+
+**Consequences.**
+- `re_types` (maintainer-reviewed, PR "instances"): `InstanceSetHandle`, `Placement`, `InstanceCluster`, `InstanceSet`, `InstancePart`, and `RenderSnapshot.instance_sets` with a serde default.
+- `re_render` (WP33, PR "instances"): `src/instances/`, `shaders/instances.wgsl` and its entry points, `upload_instance_set` and `release_instance_set`, the new `FrameStats` and `RenderStats` fields, `RE6100`, `RE6101` and `RE6104` with explain pages, and `examples/forest.rs`.
+- `re_proc` (WP39 reviews): in PR "render only", `points.instance`'s render-only parameters, `Fragment.instances`, `Instances`, `InstanceView`, the memory accounting and `RE4040` to `RE4044` (granted by WP39); in PR "instance colliders", the collider bodies beside terrain collision chunks.
+- `re_app` (WP32 and the maintainer review, PR "render only"): the render sync of sets, with their upload and release.
+- Physics: nothing beyond ADR-0056's compound shape (WP34's PR "compounds").
+- Projects do not change until a graph turns `render_only` on: the valley keeps its entity trees, replays and goldens. WP48 turns it on for the town's trees and props, and since lavapipe drew sets 1.3 to 1.9 times slower than the same trees as items (Spike), that PR gives the town's frame time before and after.
+- ARCHITECTURE §3 (instance sets in the snapshot and their upload), §5 (the node's render-only mode) and §7 (`RE6100`–`RE6199` for WP33) change through the maintainer.
+- **Owed: a hardware GPU measurement.** lavapipe cannot say what the vertex shader and per-cluster culling cost on a real GPU. When one is available (a developer's machine or a GPU runner), the forest example runs there with `--mode items` and `--mode sets` at 64 m and 32 m clusters, and the numbers are added here; they decide whether §2's compute culling or a 48-byte placement is worth building.
+
+## ADR-0053: Terrain materials: up to eight layers in two texture arrays, splat weights per vertex from `terrain.layers`, height blending, side projections on steep slopes and macro variation
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP33 with WP39), for WP33 PR "terrain material" and WP39 PRs "terrain uvs" (§3) and "layers" (§2). PR "terrain material" follows WP32's PR "split" and WP39's PRs "terrain uvs" and "layers"; each code PR opens after WP31's #193 and reports `build-web`'s gzipped size before and after, measured as CI measures it (ADR-0049's amendment). It defines the cross-WP contract "Terrain materials" of the M4 plan, the layered terrain material and its splat-weight data on terrain meshes and chunks (`crates/re_assets/src/material.rs`, `crates/re_types/src/mesh.rs`), frozen at PR "terrain material"; WP39 (`terrain.layers`) and WP48 consume it. WP39 reviewed §1 to §3 (research/m4/adr/reviews/wp39-on-adr-0052-0053.md), and its points are folded in. Evidence: WP33's phase-0 spike 2, research bundle `m4/wp33/gpu/` (the crate, its scripts, every report, images and contact sheets).
+
+**Context.** Checked on `main` at 046043d:
+- **Terrain is drawn with an ordinary material.** Streamed terrain is `TerrainView`'s level-of-detail chunks (ADR-0042: 65 × 65 samples, a quadtree whose neighbours differ by one level, a fine edge stitched onto the coarse one's vertices, meshes local to their corner, which lies at `y` = 0); `re_app`'s render sync draws each as a `DrawItem` with the source's material file and the source's `EntityId`. A non-streamed `terrain.mesh` is a derived mesh on an entity. Either way the material is one `MaterialDesc`: a base colour and texture slots sampled at the mesh's UVs. The valley's ground is `materials/grass.material.json`, a flat green with no texture.
+- **Chunk UVs run from 0 to 1 across each chunk** (`re_geom::terrain::chunk_mesh`; rendering audit B6), so texture density halves at every LOD border. WP39's PR "terrain uvs" gives them metres.
+- **A vertex is 48 bytes** (`re_types::mesh::Vertex`: position, normal, UV, an RGBA `f32` colour, which terrain leaves white). Per-vertex side data already has a pattern: `SkinWeights`, uploaded with `Renderer::upload_skinned_mesh` and validated with `RE6014`.
+- **Textures are 2D only.** `TextureData` is RGBA8 or BC7/BC5 with its mip chain (ADR-0047); `upload_texture` decodes BC on the CPU (`bcdec_rs`) when the adapter lacks it. There are no array textures. Material files (`re_assets::material`) name textures by path, and `re_app` uploads each and gives the material its handles by slot (`gfx.rs`).
+- **WebGL2's budget.** After WP32's PR "materials" the forward pass binds six sampled textures and two samplers of the 16 and 16 allowed, GL counting texture and sampler pairs, and a test builds every pipeline under `Limits::downlevel_webgl2_defaults()` (ADR-0038's amendment for WP32, §4–§5). Draw items use 12 of 16 vertex attributes, skinned items 14.
+- **wgpu's GL backend turns a square texture with 6, 12, 18 … layers into a cube map** at creation, whatever view is made later (spike, below).
+- **The rendering audit's R5** asks for world-anchored UVs, N layers in arrays with albedo, roughness and normals, BC with the CPU fallback, splat weights per vertex or per chunk, height blending, macro variation and distance blending, and names the risks: shader permutations, WebGL2's limits, 4× memory on the CPU fallback, and determinism of the weights.
+
+**Spike** (WP33 phase 0, spike 2; lavapipe: llvmpipe, LLVM 20.1.2, Mesa 25.2.8, in the 4-vCPU reference container; WebGL2: Chromium over ANGLE on SwiftShader. 1280×720, ms per frame for the terrain pass alone, best of three batches; round 3, with round 2 in brackets.) A 1 km heightfield of 257² vertices 4 m apart (131,072 triangles) with hills, mountains and a 38 m cliff; eight procedural layers of 1024² in two arrays, albedo with roughness and normal with height (89.5 MB as RGBA8 with mips, 22.4 MB as BC7); weights from height, slope and noise.
+
+| Variant | Overview, lavapipe | Overview, WebGL2 | Cliff, lavapipe | Cliff, WebGL2 |
+|---|---|---|---|---|
+| 0: one texture set, planar (the engine today) | 85 (85) | 183 (177) | 30 (27) | 141 (115) |
+| 1: four layers in arrays, planar | 122 (119) | 286 (258) | 51 (41) | 165 (169) |
+| 2: eight layers, planar, all sampled | 185 (203) | 400 (428) | 71 (72) | 280 (257) |
+| 3: eight layers, planar, only those with weight | 114 (115) | 442 (428) | 41 (31) | 192 (189) |
+| 4: four layers, triplanar everywhere | 270 (261) | 552 (532) | 102 (98) | 302 (272) |
+| 5: four layers, biplanar | 257 (236) | 1356 (1106) | 91 (85) | 590 (556) |
+| 6: four layers, side projections where steep | 218 (179) | 563 (590) | 120 (117) | 690 (648) |
+| **7: §5's material** (eight layers with weight, height blending, side projections where steep, macro variation) | **198 (178)** | **774 (757)** | **81 (81)** | **503 (478)** |
+| 7 with 8× anisotropic filtering | 228 (200) | 1901 (1804) | 95 (77) | 1566 (1546) |
+| 8: 7 with weights from a 513² weight texture | 229 (207) | 902 (760) | 97 (89) | 638 (482) |
+| 9: 7 in 16 chunks, sampling only the layers its chunk uses and side projections only in steep chunks (uniform branches) | 267 | 779 | 131 | 595 |
+| 10: 9 with the four heaviest layers per pixel instead (no branch) | 266 | 671 | 110 | 491 |
+| 11: 10 without side projections | 179 | 547 | 63 | 255 |
+
+- §5's material costs 2.1 to 2.7 times today's single texture set on lavapipe and 3.6 to 4.3 times on WebGL2. Neither software rasteriser stands for a GPU: lavapipe gains from per-pixel branches (3 costs 0.6 times 2), apparently skipping blocks of pixels that all take the same way, while SwiftShader gains nothing from them (3 costs what 2 does, 6 more than 4) and pays heavily for explicit gradients (5) and anisotropy (2.5 to 3.1 times).
+- The two shapes that never branch per pixel do not win: chunk masks (9) cost 1.3 to 1.6 times variant 7 on lavapipe and the same or more on WebGL2, because chunks used 3 to 8 layers (5.4 on average) and 12 of 16 were steep somewhere; the four heaviest layers (10) cost 1.35 times on lavapipe and 0.87 to 0.98 times on WebGL2. Variants 7 and 9 draw the same image and 10 nearly so (it drops a fifth layer where five overlap); without side projections (11) the cliff's texture stretches into streaks.
+- Weights per vertex cost 8 bytes a vertex and nothing to sample; a weight texture (8) costs as much or more, a texture and sampler pair, and stitching of its own.
+- **Six-layer arrays.** Arrays with six square layers, tinted red and drawn before any other array, came out flat grey on llvmpipe GL and on WebGL2 (means 196.9/204.0/210.9 and 197.0/204.1/211.0) and red on Vulkan (176.6/147.0/155.6); drawn after another array, GL sampled that array's stale binding. No backend reported an error.
+- Compiling twelve variants took 391 ms on lavapipe and 593 ms on WebGL2. No GPU errors on either backend.
+
+**Decision.**
+
+*§1. The contract* (maintainer-reviewed `re_types` changes, every field defaulted):
+```rust
+// re_types::mesh
+/// Splat weights for a terrain `MeshData`: up to eight layers per vertex (ADR-0053).
+/// One entry per vertex; unorm8 (255 is 1.0); each vertex's weights sum to 255.
+/// Weight i belongs to layer i of the terrain material the mesh is drawn with.
+pub struct SplatWeights { pub weights: Vec<[u8; 8]> }
+impl SplatWeights {
+    pub fn is_well_formed(&self, mesh: &MeshData) -> bool; /* one per vertex, sums of 255 */
+    /// §2's quantisation, the one implementation `terrain.layers`, the renderer's tests and
+    /// WP43's painting share.
+    pub fn quantize(v: [f32; 8]) -> [u8; 8];
+}
+/// Terrain UVs are metres, each mesh's offset by its corner wrapped to this period (§3).
+pub const TERRAIN_UV_PERIOD: f32 = 1024.0;
+
+// re_types::render
+pub struct TextureData { /* … */ #[serde(default = "one")] pub layers: u32 }  // 1: a 2D texture
+pub struct MaterialDesc { /* … */ #[serde(default)] pub terrain: Option<TerrainMaterial> }
+pub struct TerrainMaterial {
+    /// One per layer, 1 to 8, in the order of the weights.
+    pub layers: Vec<TerrainLayer>,
+    /// Every layer's albedo (sRGB RGB) and perceptual roughness (A): an array texture.
+    pub albedo_roughness: Option<TextureRef>,
+    /// Every layer's tangent-space normal (RG) and height (B), in the same layer order.
+    pub normal_height: Option<TextureRef>,
+    /// Large-scale brightness variation (R); without one, a built-in tileable noise.
+    pub macro_texture: Option<TextureRef>,
+    pub macro_repeats: u32,       // 4: repeats per TERRAIN_UV_PERIOD (256 m)
+    pub macro_strength: f32,      // 0.3: albedo × (1 + strength × (2 × macro − 1))
+    pub steep_degrees: f32,       // 40: side projections fade in from this slope …
+    pub steep_blend_degrees: f32, // 10: … over this many degrees
+    pub height_contrast: f32,     // 4, from 0 to 16: 0 blends by weight alone; higher lets the higher layer win its borders
+}
+pub struct TerrainLayer {
+    pub tint: [f32; 3],           // [1, 1, 1]: multiplies the albedo (is the albedo without arrays)
+    pub roughness: f32,           // 1.0: multiplies the roughness (is the roughness without arrays)
+    pub repeats: u32,             // 256: texture repeats per TERRAIN_UV_PERIOD (4 m)
+    pub normal_strength: f32,     // 1.0
+    pub height_offset: f32,       // 0.0: raises the layer in height blending
+}
+// Layer i's share of a pixel is w_i × (max(h_i + height_offset_i, 0) + 0.05)^height_contrast,
+// normalised: continuous in the weights, so a layer of weight 0 contributes nothing, and
+// never NaN, since the base is at least 0.05 whatever the offset.
+```
+- An array texture is a `TextureData` with `layers` > 1 whose `pixels` and `levels` hold every layer of a level, layer after layer; `is_well_formed` checks the lengths. `upload_texture` makes a 2D array of it, BC or RGBA8 like any texture, with ADR-0047's CPU fallback layer by layer.
+- With `terrain` set, the rest of the material is ignored except `double_sided`; a terrain material is opaque. `MaterialDesc::textures()` lists the terrain's three textures after WP32's five slots, so `is_resolved` and `re_app`'s slot mapping cover them.
+- `repeats` rather than metres, so that the period of §3 is a whole number of repeats of every layer and the wrap never shows; material files give metres (§4).
+- **Cached encodings.** `TextureData` is stored with postcard in the processed cache and in packages (ADR-0037), where serde defaults do not keep old entries readable. PR "terrain material" therefore bumps `re_assets::CACHE_FORMAT_VERSION`, with a test that an entry written before the change is a miss and is rebuilt, never an error. `MaterialDesc.terrain` needs no bump of its own: the glTF entry keeps its materials as JSON, material files are read from source, and §4's arrays are `TextureData` entries. The snapshot's new fields are JSON for agents, where the defaults keep old data readable.
+
+*§2. Splat weights from `terrain.layers`* (WP39, PR "layers"; WP33 reviews the shape):
+- `terrain.layers` makes a `Layers` value: for each sample of its domain, up to eight weights, from height, slope, curvature and erosion's flow and deposit, with masks from shapes and roads, in the order of its layer list. Its parameters and checks are WP39's, with codes from WP39's range (more than eight layers is one).
+- Weights follow ADR-0042's rules for fields: a function of the global sample position only, computed with `re_noise`'s arithmetic, so every window, chunk and LOD level agrees on shared samples bit for bit. Derivatives (slope, curvature) use a fixed stencil at the source's finest spacing (`TerrainGrid::base_spacing`, from heights at p ± h), whatever the chunk's level: taken at each level's own spacing, as chunk normals are, they would differ across every LOD border and put a seam in the blend there. Level-0 chunks have those samples in their apron; coarser chunks evaluate the height on four shifted windows of their own size (WP39's cost).
+- `terrain.mesh` and `terrain.chunks` (the versions after PR "terrain uvs", or new ones where ADR-0043's rules ask for them) take an optional `layers` input and attach `SplatWeights` to the meshes they make: a `re_proc` mesh value carries `splat: Option<Arc<SplatWeights>>`. Streamed chunks give theirs through a new `ViewChunk::weights()`; a non-streamed `terrain.mesh` registers its weights with its derived mesh, so `GraphStore` gives them out by the mesh's `derived:` name. `material.assign` and `mesh.transform` keep the weights; `mesh.merge` keeps them only when every input has them, and otherwise drops them with a warning. Re-stitching a chunk changes only its triangles, so its weights stay. `TerrainView::bytes` and the stream's accounting count 8 bytes a vertex: 33.8 KB per 65² chunk, 8.9 MB at ADR-0042's peak of 264 chunks (against 76 MiB of mesh). The new field changes how `re_proc`'s disk cache encodes mesh values (postcard), so PR "layers" bumps that cache's `FORMAT_VERSION` with the same kind of test, and stores `Layers` values as a new `Stored` variant after the others.
+- **Quantisation**, the same everywhere (`SplatWeights::quantize`): with `v` the eight weights clamped with `max(v, 0)`, which also turns a NaN into 0, and `s` their sum, a vertex whose `s` is 0 or not finite gets 255 on layer 0; otherwise each layer gets `floor(255 × v / s)`, and the remainder goes one by one to the largest fractional parts, ties to the lower layer.
+- **Stitched LOD edges need nothing more**: a fine edge stitched to a coarse neighbour is made of the coarse edge's vertices (ADR-0042), whose weights are the coarse chunk's by the rule above, so the two sides interpolate the same values.
+
+*§3. UVs* (WP39, PR "terrain uvs"). Heightfield and chunk meshes (`terrain.mesh@4`, `terrain.chunks@2`, and streamed cell windows, which take the same rule from their window's corner) get UVs in metres from the global sample index, u along +x and v along +z, both increasing (the orientation of today's 0-to-1 UVs, with `Vertex.uv`'s top-left origin), offset per mesh: `uv = corner.rem_euclid(TERRAIN_UV_PERIOD) + local offset`, the wrap taken in `f64`, so a negative corner lands in [0, 1024), then converted to `f32`. That is exact for streamed meshes: their corners are multiples of 1/1024 m within 16 km, and offsets `i × spacing` with `i ≤ 64` are exact too (ADR-0042). A non-streamed mesh's corner is its heightfield's offset (sample (0, 0)); its spacing need not be a multiple of 1/1024 m, but it has no neighbour to meet. The older versions (`terrain.mesh@3`, `terrain.chunks@1`) keep their 0-to-1 UVs, so materials already on terrain do not move. Within a mesh UVs are continuous; between meshes they differ by a multiple of 1,024 m, which every layer and the macro texture repeat a whole number of times, so the textures meet seamlessly; UVs stay below 1,024 m plus the mesh's size, where `f32` resolves a 4 m layer of 1,024 texels to 0.03 of a texel on the 64 m chunks near a focus (unwrapped, 16 km out, to half a texel). WP39's continuity tests compare UVs modulo the period. The side projections (§5) use `(uv.y, y)` and `(uv.x, y)` with the vertex's model-space height, which chunks keep since their corners lie at `y = 0`.
+
+*§4. Material files* (`re_assets`, maintainer-reviewed). A material file may have a `terrain` block; the other keys then keep their meaning only for `double_sided`:
+```json
+{
+  "terrain": {
+    "size": 1024,
+    "layers": [
+      { "albedo": "assets/terrain/grass.png", "normal": "assets/terrain/grass_n.png", "tile": 4.0 },
+      { "albedo": "assets/terrain/rock.png", "roughness": "assets/terrain/rock_r.png",
+        "normal": "assets/terrain/rock_n.png", "height": "assets/terrain/rock_h.png", "tile": 6.0 },
+      { "tint": [0.36, 0.52, 0.22], "roughness": 0.92 }
+    ],
+    "macro": "assets/terrain/macro.png", "macro_tile": 256.0, "macro_strength": 0.3,
+    "steep_degrees": 40.0, "height_contrast": 4.0
+  }
+}
+```
+- Per layer: `albedo` (an image, sRGB), `roughness` (an image's red channel, or a number; default 1 with an image, 0.8 without), `normal` (a tangent-space normal map), `height` (an image's red channel; without one, the albedo's luminance), `tint`, `tile` (metres per repeat; `repeats = max(1, round(1024 / tile))`), `normal_strength`, `height_offset`. A layer with no images is solid: its `tint` and `roughness`, a flat normal and a middle height. One to eight layers; values out of range are `RE7012`, missing images `RE7011`, as for other material keys.
+- **Import packs two arrays**: albedo with roughness, and normal with height, every layer resampled to `size` (a power of two from 4 to 2048, default 1024; 4 when no layer has an image), with mips, then encoded as BC7 sRGB and BC7 linear by ADR-0047's encoder when `texture_compression = "bc"` (BC5 has no room for height), RGBA8 otherwise. The arrays are cached like imported textures, keyed by the block and every image's content, stored processed in packages (ADR-0037), and listed by `real build`'s `uncompressed_textures` when they stay RGBA8. `LoadedMaterial` returns them, and the macro image, as more texture slots; `re_app` uploads them as it uploads any material texture.
+- Memory at the default size: 22.4 MB for eight layers as BC7 with mips, 89.5 MB as RGBA8 (also what ADR-0047's CPU fallback makes of BC on an adapter without it).
+
+*§5. Drawing* (`re_render/src/terrain/`, WP33's):
+- `Renderer::upload_terrain_mesh(&MeshData, &SplatWeights) -> Result<MeshHandle, Diagnostic>` keeps the weights in a second vertex buffer (two `Unorm8x4` attributes, 14 of 16 with an item's instance data); malformed weights are `RE6014`, as skin weights are. A draw item whose material has `terrain` is drawn by the terrain pipeline, in the opaque pass with the rest; a mesh uploaded without weights draws its first layer. The shadow, id and highlight passes draw terrain with their position-only pipelines, unchanged.
+- **The shader** is spike variant 7: the three projections' UV gradients are taken first, in uniform control flow; then for each layer whose interpolated weight is above 1/255 it samples the top projection, and where the slope exceeds `steep_degrees` also the two side projections, blended by the normal's sharpened components faded in over `steep_blend_degrees`, so a pixel looks the same whichever chunk it is in. Samples inside these per-pixel branches use the explicit gradients (WGSL's uniformity rules). Normals combine by whiteout blending; layers blend by height as §1's formula says (the spike used an additive form, `height + weight` within a depth, which lets a high layer show where its weight is 0; the product does not and costs the same); the macro texture varies the albedo; then the forward pass's lighting: sun with shadows, point and spot lights, ambient or ADR-0054's image-based light, fog or aerial perspective.
+- The choice of variant 7 is internal to the renderer: no contract or file depends on it, so a hardware GPU measurement (owed) can move it to variant 10 without an ADR.
+- **Bindings**: the frame group as the forward pass, then the terrain group with a 272-byte material uniform (eight layers of two `vec4`s, and the globals), the two arrays, the macro texture and the material sampler (WP32's, 16× anisotropic where the adapter has it). With the shadow map that is four sampled textures and two samplers, leaving room for ADR-0054's environment and aerial perspective under WebGL2's 16; the WebGL2-limits test covers the terrain pipelines.
+- **Arrays never get a multiple of six layers on any backend**: `upload_texture` adds one blank layer to an array of 6, 12, 18 … square layers, which the shader never indexes. (Eight layers need no padding; six do.)
+- `RE6102` (warning, once per session and material): a terrain mesh's weights name a layer its material does not have (those weights are dropped and the rest renormalised in the shader; a pixel left with no weight draws layer 0, as a mesh uploaded without weights does), or a terrain material is drawn by a skinned item or an instance part, which is skipped and counted in `items_skipped`. Malformed arrays are `RE6015` and terrain values out of range (no layers, more than eight, non-finite numbers) `RE6016`, as for other textures and materials; their explain pages gain these cases.
+
+*§6. Acceptance of PR "terrain material".*
+- Goldens on lavapipe and GL: a test terrain with all eight layers, a cliff and a road mask, from an overview and at the cliff's foot, with weights made by `terrain.layers`; and one with six layers, which checks the padding on GL.
+- Tests: quantisation (sums, ties, the all-zero vertex, NaN and infinity) and its determinism across windows, and weights identical on both sides of a stitched edge (in WP39's PR "layers"); UV continuity modulo the period across chunk and LOD borders (in WP39's PR "terrain uvs"); array upload with BC and with the CPU fallback; the WebGL2-limits test for the terrain pipelines; `RE6102`, with a pixel whose weights were all dropped drawing layer 0; a negative `height_offset` never making a NaN; and a cache entry written before `layers` existed being a miss that is rebuilt.
+- The valley's ground moves to a terrain material in the same PR, with its goldens re-recorded under the `MESA_VERSION` rules, and stays under ADR-0038's thresholds in its drive replay.
+
+**Alternatives.**
+- **A weight texture per chunk** (variant 8). Sharper roads at coarse LODs, but it costs as much or more, takes a texture and sampler pair under WebGL2's limits, and needs a stitching of its own at LOD borders, which vertices get for free. Rejected.
+- **Layer masks per chunk with uniform branches** (variant 9). Samples with implicit derivatives everywhere, but terrain chunks use most layers and are steep somewhere, so it samples more: 1.3 to 1.6 times variant 7 on lavapipe. Rejected.
+- **The four heaviest layers per pixel** (variant 10). A fixed cost and no branches; 1.35 times variant 7 on lavapipe and up to 13% faster on WebGL2's software path. Kept as the first thing to try once a hardware GPU is measured.
+- **Biplanar mapping** (variant 5). Fewer samples, but the slowest on WebGL2. **Triplanar everywhere** (variant 4) samples three times as much on flat ground. **No side projections** (variant 11) stretches cliffs. Rejected.
+- **Four layer indices and weights per vertex.** Half the weight data, but a triangle whose vertices name different layers cannot interpolate them. Rejected.
+- **One pass per four layers, blended** (as Unity's terrain adds passes). Multiplies draws and overdraw. Rejected.
+- **BC5 normal maps**, ADR-0047's choice for ordinary materials: two channels leave no room for height, which would need a third array. BC7 carries normal and height in one.
+- **UVs in metres without a wrap.** Simplest, but 16 km out a 4 m tile of 1,024 texels resolves to half a texel. **Wrapping per layer in the shader** would put a seam wherever a mesh straddles a wrap. Rejected for the period of §3.
+- **A virtual texture** (Frostbite's procedural virtual texturing): the best quality at distance, but it needs feedback and compute, which WebGL2 lacks, and is far larger than M4's scope.
+- **Hand-painted weights** are WP43's stretch; a painting node would make the same `Layers` value.
+
+**Consequences.**
+- `re_types` (maintainer): `TERRAIN_UV_PERIOD` in WP39's PR "terrain uvs", `SplatWeights` with `is_well_formed` and `quantize` in WP39's PR "layers", and `TextureData.layers`, `MaterialDesc.terrain`, `TerrainMaterial` and `TerrainLayer` in WP33's PR "terrain material". `re_assets` (maintainer): the `terrain` block of material files, the array import and the `CACHE_FORMAT_VERSION` bump. `re_render` (WP33): `upload_terrain_mesh`, array textures, the terrain pipelines, `RE6102` and its explain page. `re_proc` and `re_geom` (WP39): the `Layers` value, `terrain.layers`, metre UVs, weights on `terrain.mesh` and `terrain.chunks` meshes, and the disk cache's version bump. `re_app` (maintainer, and WP39 for `procedural.rs`): terrain meshes and chunks with weights go through `upload_terrain_mesh` (`gfx.rs` and `media.rs`, plus the two calls in WP39's `procedural.rs`; a small PR, or WP39 makes the calls in "layers" if `Media`'s method exists by then).
+- The ground costs about twice as much GPU time on lavapipe and four times on WebGL2's software path as today's single texture set; a hardware GPU's figure is owed. CI renders only its captured frames, so its cost is a few goldens.
+- Terrain weights add 8 bytes a vertex; eight 1024² layers add 22.4 MB of BC7 (89.5 MB where BC is decoded on the CPU, such as browsers without BC).
+- Coarse chunks point-sample fine-scale slope (§2), so distant terrain can look busier than a filtered weight map would: the price of exact seams.
+- A layer could later carry a physics surface (ADR-0056 §7), so that terrain collision chunks take each cell's surface from its dominant layer. Nothing in M4 needs it, and a defaulted `TerrainLayer` field can add it without a contract change.
+- Existing projects and their goldens do not change until they use a `terrain` block; the valley's do in PR "terrain material", and the town's ground uses one (WP48).
+- ARCHITECTURE §3 (terrain drawing) and the material-file reference in `docs/` change through the maintainer; `schemas/material.schema.json` is regenerated.
+
+## ADR-0054: The atmosphere and image-based lighting: Hillaire's lookup tables in fragment passes, aerial perspective and lit height fog, and an environment cube of the sky rebuilt when the sun moves
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP33), for WP33 PRs "atmosphere" (§1–§5) and "ibl" (§6–§7). PR "atmosphere" follows WP32's PRs "split" and "environment" (ADR-0051's contract, which it extends), and PR "ibl" follows "atmosphere"; each opens after WP31's #193 and reports `build-web`'s gzipped size before and after, measured as CI measures it (ADR-0049's amendment). It extends ADR-0051's `Environment`, in the render snapshot, the `Environment` component and `[render.environment]`, through new defaulted fields, as ADR-0051 §1 foresaw; the gradient sky, linear fog and hemisphere ambient stay as they are and remain the defaults. WP47 (compat's `Sky` and `Lighting`), WP43 (the inspector) and WP48 (the town at dusk) consume it. Evidence: WP33's phase-0 spike 3, research bundle `m4/wp33/gpu/` (the crate, its scripts, every report, sky and scene images and contact sheets).
+
+**Context.** Checked on `main` at 046043d, with ADR-0051 (accepted):
+- **The sky is a gradient and the fog is linear, both unlit.** `sky.wgsl` draws the gradient first over the whole target, with a sun disc and glow towards a given direction; `forward.wgsl` mixes a fog colour in by distance. Neither changes with the sun's height, and exposure does not change their colours. ADR-0051 moves them, with the hemisphere ambient (`ambient_sky`, `ambient_ground`, in lux), into `RenderSnapshot.environment` and a native `Environment` component, off by default.
+- **Units.** A directional light's intensity is its illuminance in lux; exposure multiplies lit colour (`RenderSnapshot.post.exposure`; a physically lit scene of 100,000 lux wants about 1e-5). The valley's sun is 1.2 at exposure 1.
+- **The forward pass** lights with the sun (four shadow cascades), 16 point and 16 spot lights, and the hemisphere ambient, whose specular part is the hemisphere looked up along the reflection; after WP32's PR "materials" it binds six sampled textures and two samplers of WebGL2's 16 and 16, an occlusion texture darkens ambient light only, and a test builds every pipeline under `downlevel_webgl2_defaults()`. The scene target is `Rgba16Float`.
+- **Headless runs draw only the frames they capture** (`real verify`, replays, `App::screenshot`), so a per-frame GPU cost in CI is paid per golden, not per simulated frame.
+- **Compat** maps `Lighting` (ambient, outdoor ambient, fog, exposure compensation) onto the environment; its `Sky` class (six skybox faces, sun and moon) has no native counterpart, and `Lighting.EnvironmentDiffuseScale` and `EnvironmentSpecularScale` have nothing to scale.
+- **The rendering audit's R6** asks for a LUT sky in fragment passes, aerial perspective and exponential height fog as the defaults, an environment cubemap when the sun moves with a GGX prefilter and SH or a small irradiance map, the hemisphere as a fallback, compat's skybox as a cubemap and optional auto exposure, and names the risks: every lit golden changes, CI's cost, consistent units, and float targets on WebGL2.
+
+**Spike** (WP33 phase 0, spike 3; lavapipe: llvmpipe, LLVM 20.1.2, Mesa 25.2.8, in the 4-vCPU reference container; WebGL2: Chromium over ANGLE on SwiftShader. 1280×720, ms, best of three batches.) The atmosphere of Hillaire's 2020 paper with Earth's constants, every pass a fragment pass: transmittance 256×64, multiple scattering 32×32, sky view 192×108, aerial perspective as 32 slices of 32² in a 256×128 atlas, quadratic in distance out to 8 km (1,091,656 bytes in all as `Rgba16Float`); the environment as a 64² cube of the sky with 7 mips, a GGX prefilter into 5 levels of 64 samples, and nine SH coefficients in a 9×1 texture.
+
+| Pass | lavapipe | WebGL2 |
+|---|---|---|
+| Transmittance | 1.9 | 7.6 |
+| Multiple scattering | 41.1 | 56.6 |
+| Sky view | 7.2 | 56.0 |
+| Aerial perspective | 13.6 | 78.9 |
+| Sky view, aerial perspective and the LUT sky, one frame | 30.2 | 257.5 |
+| Gradient sky, full screen (today) | 4.6 | 46.0 |
+| Preetham's analytic sky, full screen | 6.6 | 66.9 |
+| LUT sky, full screen | 9.7 | 103.9 |
+| Environment: cube, mips, prefilter, SH | 2.5, 10.7, 46.2, 1.7 (64.2 together) | 3.7, 3.3, 100.4, 6.0 (101.2) |
+
+On the terrain of spike 2 at dusk (four layers; two rounds): linear fog 132 and 122 on lavapipe, 268 and 273 on WebGL2; exponential height fog 119 and 106, 269 and 319; aerial perspective 115 and 144, 324 and 328; aerial perspective with IBL 160 and 166, 454 and 547; ADR-0053's full material with both 231 and 267, 939 and 1064; today's single texture set with linear fog 67 and 78, 182 and 177.
+
+- **The LUT sky is right** at sun elevations of 45°, 10°, 2° and −2° (twilight). **Preetham's washes out at 45°** and at 2° and −2° turns into a bright yellow column over a yellow ground, outside what it was fitted for. The gradient does not change with the sun. Below the horizon the LUT sky is black, because the sky-view table holds only the light scattered in front of the ground.
+- The terrain under the LUT sky with aerial perspective and IBL keeps its colours by day and reddens and darkens at dusk and sunset; today's gradient and linear fog look the same at every sun angle.
+- Every format the atmosphere needs renders and filters on WebGL2 (`Rgba16Float`, also `Rgba32Float` and `Rg11b10Ufloat`). No GPU errors on either backend. A cube made from six square layers works on GL, which makes exactly that a cube map (ADR-0053's spike).
+
+**Decision.**
+
+*§1. The contract* (maintainer-reviewed `re_types` changes, every field defaulted, so a snapshot without them draws what it drew before):
+```rust
+pub struct Environment {
+    // ADR-0051: ambient_sky, ambient_ground, sky: Option<Sky>, fog: Option<Fog>
+    /// A sky lit by the frame's sun, with aerial perspective (§2). Drawn instead of `sky`;
+    /// its aerial perspective replaces `fog`.
+    pub atmosphere: Option<Atmosphere>,       // None
+    /// Exponential height fog, lit by the sun and the sky (§3).
+    pub height_fog: Option<HeightFog>,        // None
+    /// Ambient light from the sky, image-based (§6), instead of the hemisphere.
+    pub sky_light: Option<SkyLight>,          // None
+    /// A cube texture drawn as the sky instead of the gradient or the atmosphere (§7).
+    pub sky_texture: Option<TextureHandle>,   // None
+}
+pub struct Atmosphere {
+    pub haze: f32,                     // 1.0: multiplies the aerosol (Mie) density; 1 is a clear day
+    pub aerial_distance_scale: f32,    // 1.0: multiplies distances for aerial perspective; 1 is physical
+    pub ground_albedo: [f32; 3],       // [0.3, 0.3, 0.3]: the ground below the horizon and in multiple scattering
+    pub sun_angular_radius_deg: f32,   // 0.2665
+}
+pub struct HeightFog {
+    pub density: f32,      // 0.002: extinction per metre at `base_height`
+    pub falloff: f32,      // 0.05: per metre; the density halves every ln 2 / falloff metres up
+    pub base_height: f32,  // 0.0 m
+    pub albedo: [f32; 3],  // [0.9, 0.9, 0.9]: lit by the sun and the sky
+    pub start: f32,        // 0.0 m: no fog nearer than this
+    pub max_opacity: f32,  // 1.0
+}
+pub struct SkyLight { pub diffuse: f32 /* 1.0 */, pub specular: f32 /* 1.0 */ }
+
+pub struct TextureData { /* … ADR-0053's layers … */ #[serde(default)] pub cube: bool }
+```
+- Earth's Rayleigh, Mie and ozone coefficients and radii (the spike's) are the renderer's constants; `haze` covers what a scene needs to change, and a later ADR can add defaulted fields.
+- A cube texture is a `TextureData` with `cube` set, six square layers in the order +X, −X, +Y, −Y, +Z, −Z (wgpu's); anything else is `RE6015`. `upload_texture` makes it a cube, so ADR-0053's padding of six-layer arrays does not apply.
+- **Cached encodings.** `TextureData.cube` changes how `TextureData` encodes in the processed cache and in packages (postcard, ADR-0037), where serde defaults do not keep old entries readable, so PR "ibl" bumps `re_assets::CACHE_FORMAT_VERSION` again (after ADR-0053's bump), with a test that an entry written before the change is a miss and is rebuilt, never an error. The snapshot's new `Environment` fields are JSON for agents, where the defaults keep old data readable.
+
+*§2. The atmosphere* (`re_render/src/atmosphere/`, WP33's; PR "atmosphere"):
+- **Lit by the frame's sun**: the directional light the renderer draws (the first with shadows, else the first; ADR-0051 §3). Every table is built for a sun of illuminance 1 and multiplied by the light's colour, intensity and the frame's exposure, so the sky, its aerial perspective and the lit scene stay in proportion in any units: lux with an exposure of 1e-5, or the valley's 1.2 at exposure 1. Without a directional light the sky is black, as an unlit scene is.
+- **The sun's light is dimmed by the air**: with the atmosphere on, the directional light's intensity is its illuminance above the atmosphere, and the forward pass lights with it times the transmittance from the camera's height towards the sun, computed on the CPU each frame by the same integral as the transmittance table, so direct light reddens at sunset with the sky.
+- **Tables, all fragment passes** (WebGL2 has no compute): transmittance 256×64 and multiple scattering 32×32 when the atmosphere's fields change (or the device is new); sky view 192×108 when the sun's direction or the camera's height changes; aerial perspective, 32 slices of 32² in a 256×128 atlas out to 8 km (times `aerial_distance_scale`), when the view or the sun changes. A change is any difference in those inputs, so a frame's tables depend only on that frame, and a window and a capture of the same frame draw the same sky. 1.1 MB of `Rgba16Float` in all.
+- **The sky** is drawn after the opaque items, where the depth is still clear (ADR-0038's reversed Z), from the sky-view table, with the sun's disc (physical radiance; `sun_disc` 0 in the component hides it) and, below the horizon, the ground: its albedo lit by the transmitted sun and the sky's ambient, dimmed and scattered over the distance to it, so the lower half is never black. It leaves alpha 0, as the gradient does, so sun rays still find the sky. The gradient is drawn only when neither the atmosphere nor a `sky_texture` draws the sky: it cost 4.6 ms on lavapipe and 46 ms on WebGL2's software path for pixels the LUT sky then covers, and nothing needs it underneath, since the LUT sky covers every pixel the depth leaves clear, the ground below the horizon included, and draws its own sun disc, and a sky texture covers every direction. ADR-0051's goldens have neither, so they do not move.
+- **Aerial perspective** replaces linear fog in every pass that applies fog today (forward, skinned, instances, terrain, unlit materials): the surface's light times the transmittance plus the in-scattered light, from two samples of the atlas at the pixel and its distance. With the atmosphere on, `fog` is ignored.
+- No moon, stars or clouds in M4.
+
+*§3. Height fog* (PR "atmosphere"). Density `density × exp(−falloff × (y − base_height))`, integrated in closed form along the view ray from `start` to the surface (or to the sky's 8 km); its in-scattered light is the fog's `albedo` times the sun's transmitted light with a Henyey-Greenstein phase (g = 0.6) plus the sky's ambient (the SH irradiance of §6 when there is one, else the hemisphere), clamped to `max_opacity`. It applies with or without the atmosphere, after aerial perspective, and to the sky itself above `start`. It costs about what linear fog does (spike).
+
+*§4. The component and the project's keys.* ADR-0051's `Environment` component and `[render.environment]` gain, with the same names in both:
+```rust
+pub atmosphere: bool = false,                    // §2
+pub haze: f32 = 1.0,
+pub aerial_distance_scale: f32 = 1.0,
+pub ground_albedo: Color = (0.3, 0.3, 0.3),
+pub height_fog: bool = false,                    // §3
+pub height_fog_density: f32 = 0.002,
+pub height_fog_falloff: f32 = 0.05,
+pub height_fog_base: f32 = 0.0,
+pub height_fog_start: f32 = 0.0,
+pub height_fog_albedo: Color = (0.9, 0.9, 0.9),
+pub height_fog_max_opacity: f32 = 1.0,
+pub sky_light: bool = false,                     // §6
+pub sky_light_diffuse: f32 = 1.0,
+pub sky_light_specular: f32 = 1.0,
+```
+- Sync makes values safe as ADR-0051 §3 does (non-finite values take the default; `haze`, `aerial_distance_scale` and the fog's numbers are clamped to 0 or more, `ground_albedo` and `albedo` to 0 to 1, `max_opacity` to 0 to 1). Out-of-range keys in `real.toml` are `RE0501`.
+- Every field is a bool, number or colour, so WP43's inspector edits them as they are.
+- **What "the defaults" means** (the maintainer's reading of the plan). Aerial perspective and height fog are what a scene gets in place of linear fog when it turns the atmosphere on. The component's own defaults stay off, so no existing project or golden changes; `real new`'s templates and the valley turn the atmosphere and the height fog on in PR "atmosphere" (the templates through their owner's review), and WP48 turns them on in the town.
+
+*§5. Codes and statistics.* `RE6103` (warning, once per session): an environment's `sky_texture` is not a cube; the gradient or the atmosphere is drawn instead. `FrameStats` (and so `PerfReport.renderer.per_frame`, ADR-0022's amendment for WP32) gains `atmosphere_tables` and `environment_rebuilds`, the table and environment passes the frame ran, so a test can see that a still frame builds nothing.
+
+*§6. Image-based lighting* (PR "ibl"):
+- **The environment cube**: 64² per face with 7 mips, drawn from the sky (the atmosphere without its sun disc and with the ground below, the `sky_texture`, or the gradient), then prefiltered for GGX specular into 5 levels of 64 samples (roughness 0 to 1), and reduced to nine SH coefficients for diffuse light in a 9×1 texture. 0.5 MB.
+- **Rebuilt when its inputs change**: the sun's direction rounded to 0.25° of azimuth and elevation, the camera's height rounded to 100 m, the atmosphere's fields, or the sky texture. It is built for the rounded values, so it depends only on the frame, and a window and a capture agree. A rebuild costs 64 ms on lavapipe and 101 ms on WebGL2's software path; a sun crossing the sky in 24 minutes rebuilds once a second.
+- **Lighting**: with `sky_light` set, the ambient term becomes `albedo × SH irradiance × diffuse` plus `prefiltered radiance along the reflection at the roughness's level × the analytic environment BRDF × specular` (no BRDF table, so no texture), both darkened by the material's occlusion (WP32). Unlit skies (the gradient, a sky texture) are taken as radiance of their colour divided by the exposure, so their light looks as bright as they do. Without `sky_light` the hemisphere stays, ambient and specular as now.
+- **Bindings**: the forward pass adds the aerial-perspective atlas, the specular cube and the SH texture (read with `textureLoad`) and one clamping sampler: nine sampled textures and three samplers, nine texture–sampler pairs on GL; the terrain pass seven. The WebGL2-limits test covers every pipeline.
+
+*§7. Compat's skybox* (PR "ibl", with WP47). A `sky_texture` is drawn as the sky (unlit, as compat's skybox looks) and lights the scene through §6 when `sky_light` is set. WP47 maps `Sky`'s six faces onto one cube (faces resampled to the largest face's size) and `Lighting.EnvironmentDiffuseScale` and `EnvironmentSpecularScale` onto `sky_light`; that closes compat's Sky and Lighting partials. Native scenes get no skybox field in M4.
+
+*§8. Acceptance.*
+- Goldens on lavapipe and GL: the atmosphere at sun elevations of 45°, 10° and 2° over terrain with aerial perspective (and one at −2°), height fog alone, IBL on spheres of metalness 1 and roughness 0, 0.25, 0.5, 0.75 and 1 under the atmosphere and under a sky texture, and a compat place with a skybox (with WP47).
+- Tests: the CPU transmittance against the table's, within 1%; a still frame builds no table and no environment (`FrameStats`); the gradient is not drawn under the atmosphere or a sky texture; the 0.25° rounding; the WebGL2-limits test; `RE6103`; and a cache entry written before `cube` existed is a miss that is rebuilt (PR "ibl").
+- The valley and `real new`'s templates turn the atmosphere and height fog on in PR "atmosphere" and the sky light in PR "ibl"; the valley's goldens are re-recorded under the `MESA_VERSION` rules each time, and it stays under ADR-0038's thresholds in its drive replay.
+
+**Alternatives.**
+- **Preetham's or Hosek-Wilkie's analytic sky.** One pass, no tables, but the spike's Preetham is wrong at low sun (where dusk scenes live) and neither gives aerial perspective or a ground. Rejected.
+- **Bruneton's precomputed 4D scattering.** Accurate from space too, but 3D and 4D tables (MBs, many passes) built with compute or many slices, and no better than Hillaire's from the ground. Rejected.
+- **Ray-marching the sky per pixel each frame.** No tables, but 30 to 40 samples a pixel; the sky-view table is cheaper at any resolution.
+- **Aerial perspective approximated from the sky-view table** (the sky's colour along the ray, scaled by the transmittance to the surface). No per-frame atlas, but wrong over short distances and at dusk; kept in mind for software rendering if the atlas's 14 to 79 ms matter there.
+- **Building the environment every frame**, or **spreading it over frames**. The first costs 64 ms a frame on lavapipe; the second makes a window's image depend on how many frames have passed, which a capture cannot repeat. Rounding the sun keeps both cost and determinism.
+- **An irradiance cube instead of SH**: nine coefficients are smaller and enough for diffuse light. **A BRDF lookup table**: one more texture where the analytic fit is close.
+- **Auto exposure** stays a WP33 stretch: it makes an image depend on earlier frames, which goldens must pin.
+
+**Consequences.**
+- `re_types` (maintainer): `Environment.atmosphere`, `height_fog`, `sky_light`, `sky_texture`, the three structs, `TextureData.cube`; `re_assets` (maintainer): the `CACHE_FORMAT_VERSION` bump in PR "ibl". `re_scene` and `re_app` (maintainer): the component's and `[render.environment]`'s new fields and their sync. `re_render` (WP33): the atmosphere and environment passes, aerial perspective and height fog in every lit pass, the IBL term, `RE6103` and its explain page, two `FrameStats` counters. `compat_view` (WP47): the skybox and the scales.
+- A frame with the atmosphere and a moving camera costs about 30 ms more on lavapipe and 260 ms more on WebGL2's software path (a GPU's figure is owed); a still camera costs only the sky's draw. Captures pay it per golden.
+- Goldens move only where a scene turns these on: the valley's in PRs "atmosphere" and "ibl", the templates' where they have any, the town's (WP48), and compat places with skyboxes (WP47).
+- ARCHITECTURE §3 (lighting: the atmosphere's units and the sun's transmittance) and §8 (`[render.environment]`) change through the maintainer; `schemas/` is regenerated.
+
+## ADR-0056: Compound bodies and physics materials: child colliders join the moving body above them, library compounds, cylinders, tapered shapes and planes, surfaces per collider and per triangle combined by compat's rule, and the collider and surface touched in contacts and hits
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP34), for WP34's PRs "compounds" (§1 to §6, §10 and the parts of §11 that name colliders) and "materials" (§7 to §9 and the parts of §11 that name surfaces). It amends M1's mapping rule "a `Collider` without a `RigidBody` is a `Static` body" (docs/M1_PLAN.md, WP0's component notes) and extends the M4 contract "Physics for gameplay" (`crates/re_types/src/physics.rs`, `crates/re_scene/src/components.rs`): the types of §2, §6 and §10 are frozen at PR "compounds", those of §7 at PR "materials". Evidence: the code at `046043d`; the compound and materials spike (`research/m4/wp34/compound-spike/README.md`: oxijolt 1.1.0 and Jolt 5.6.0 with the engine's features and patched `oxijolt-sys`, run twice on 2026-10-28); oxijolt 1.1.0's source as the lockfile pins it; the physics and entity audit (`research/m4/audit/physics-entity.md` §1.2, §4.1 item 3, §5 candidate 6); the sample game's F11; the accepted ADR-0008 amendment (WP34), whose §6 already counts a compound's children among its entity's bodies.
+
+**Context.**
+- **One shape per entity** (F11). `Collider` is one shape, and `sync/physics.rs` makes each `Collider` entity its own body, so a truck's cab and cargo box cannot be one body of two boxes. The only workaround is one convex hull.
+- **A child collider is a teleported static body** (audit §1.2 and §4.1 item 3). A `Collider` without a `RigidBody` is static even under a dynamic body, so the sync moves it with `SetTransform` every step. It pushes nothing it meets, a character collides with a collider it carries, and a static body moved every step costs a broad-phase update each time.
+- **Compounds in oxijolt.**
+  - `Shape::new_compound(&[CompoundChild { shape, position, rotation, user_data: u32 }])` builds a `StaticCompoundShape` (a `MutableCompoundShape` for one child).
+  - Children may be any shape, compounds included, within Jolt's 32-bit sub-shape ids and 2^20 expanded sub-shapes. Each child's position, and the compound's bounds around its centre of mass, must stay within 2 km (`MAX_SHAPE_EXTENT`).
+  - Shapes are reference-counted, so one shape can be many children. `Shape::new_scaled` wraps a shape in a scale; oxijolt checks every triangle of a mesh under each new scale.
+  - Jolt computes the mass properties from the children at uniform density.
+  - Every query result names the child: `compound_child: Option<CompoundSubShape { index, user_data }>` on `RayCastHit` and `ShapeCastHit`, `PhysicsWorld::compound_sub_shape(body, sub)`, `Shape::compound_sub_shape(sub)` and `CharacterRef::ground_compound_child`. Compat's assemblies already decode their contacts this way (`parts/listener.rs`, `GateBody::child`).
+  - `set_shape` keeps a body's motion. It is refused for a body that a character, vehicle, ragdoll or constraint holds, and for a dynamic body holding forces added since the last step.
+- **Shapes not exposed natively** (audit §1.2).
+  - oxijolt has `new_cylinder`.
+  - It has `new_tapered_capsule(half_height, top_radius, bottom_radius)`. The radii may differ by at most `2 × half_height × (1 − 2⁻²¹)`; beyond that one end sphere contains the other.
+  - It has `new_tapered_cylinder`, whose radii must differ; a radius of 0 makes a cone.
+  - It has `new_plane(normal, constant, half_extent)`: a square plate, solid behind. A plane is for static bodies only, cannot be scaled or used as a query shape, and gets no contacts with meshes, heightfields or other planes.
+  - Compat's parts already use the cylinder.
+- **Friction and restitution.**
+  - `BodyDesc` has one friction and one restitution, which Jolt combines as √(f₁·f₂) and max(r₁, r₂).
+  - Compat's parts combine theirs as weighted means in a contact listener (`PartGate::combine`), and only when both sides are parts.
+  - A friction set by a listener acts exactly as Jolt's own (Measured).
+- **Materials in oxijolt.**
+  - `PhysicsMaterial::new(user_data: u64)` carries user data only.
+  - A mesh takes 1 to 32 materials with one index per triangle, and a heightfield 1 to 256 with one per cell. A box, sphere, capsule, cylinder, hull or plane takes one; the tapered shapes take none.
+  - A contact's manifold reports both sides' materials (`ContactManifold::materials: [Option<u64>; 2]`), in the listener and in contact events.
+  - Nothing else reports them. `RayCastHit`, `ShapeCastHit`, a character's ground and a wheel's contact give a sub-shape id and no material, and the lookup is crate-private (`material::shape_material`).
+- **Surfaces for gameplay.** Footsteps and tyre sounds need to know what is underfoot, and impacts need to know which part was hit. Today contacts, hits and a character's ground name only entities.
+- **Measured** (the spike; 60 Hz, 4 workers unless stated).
+  - **Building a compound** of n hull children takes 0.013 ms for 64, 0.13 ms for 512, 1.13 ms for 4,096 and 5.8 ms for 16,384. Stepping 100 boxes on it and casting 1,000 rays costs the same as on n separate bodies, within noise.
+  - **The body's origin.** A compound body's position stays its origin when its children are offset; Jolt moves only its centre of mass.
+  - **Materials in contacts.** A box on each half of a two-material mesh, and of a two-material heightfield, reports `[Some(11), None]` and `[Some(22), None]`. A ray hit on them reports no material, while hits on a compound's children report their user data.
+  - **New shapes.** A cylinder, a tapered capsule and a cone each come to rest on a plane and sleep. A plane on a dynamic or kinematic body is refused.
+  - **Combined friction.** A box sliding down a 20° slope for 1 s, with no damping, gains exactly Coulomb's speed `g (sin θ − μ cos θ)` for each combined value. That holds for Jolt's own √ (μ 0.1581, 1.8977 m/s) and for a listener's weighted means with weights 1 (μ 0.2750, 0.8202 m/s) and 9 (μ 0.0950, 2.4795 m/s).
+  - **Determinism.** A two-box truck and 50 compounds of six rotated hulls give the same digest over 300 steps with 1, 2 and 4 workers, and in two processes.
+- **The examples.** The island, plaza, valley and town have no collider under a moving body, a character or a ragdoll. Nothing produces per-triangle materials yet.
+
+**Decision.**
+
+**§1 Which colliders form one body (PR "compounds").**
+- **The owner.** For each enabled `Collider`, `re_app` walks up from its entity, itself included, to the first entity with a `RigidBody`, a `CharacterController`, a `Ragdoll` or a `VehicleWheel`. That entity is the collider's owner.
+  - **A collider beside a character.** A `Collider` on the same entity as a `CharacterController` stays ignored, as today: `wanted` lets the character win, and the character's capsule is its shape. Colliders below that entity have the character as their owner.
+  - **Kept up to date in O(changed).** The sync keeps each collider's owner. An entity gaining or losing a `RigidBody`, `CharacterController`, `Ragdoll`, `VehicleWheel` or `Collider`, and a reparent, can change the owner of every collider below it, so the sync walks only the subtrees under such changes, from PR "sync"'s change ticks and removals. A step without them walks nothing, so PR "sync"'s cost per step holds. PR "compounds" reports the valley's Physics phase before and after, as PR "sync" does.
+- **What the owner decides.**
+  - **No owner.** The collider is a static body of its own, as today.
+  - **A dynamic or kinematic `RigidBody`.** A solid collider joins the owner's body as a child of its compound shape. A solid collider is one that is not a sensor, not a `Trigger`, not a plane and not a heightfield. A mesh joins a kinematic owner but not a dynamic one, since Jolt gives a mesh no mass: under a dynamic owner it is a follower (below), with §5's warning. The owner's own collider still goes to `re_physics` as today, so a mesh on a dynamic body stays `RE5003`.
+  - **A static `RigidBody`.** The owner's own collider is its body, as today. Every collider below it is a static body of its own, as today. A static compound gains nothing in Jolt, and it would cost a rebuild at every edit and stream event of a level and bring §4's limits, which could drop a whole level's collision (Measured, Alternatives).
+  - **Followers.** These colliders are followers:
+    - a sensor or `Trigger` under a moving `RigidBody`, and a mesh under a dynamic one;
+    - any collider whose owner is a `CharacterController`, a `Ragdoll` or a `VehicleWheel`, except a plane or a heightfield.
+
+    A follower is a kinematic body of its own. How it moves depends on how its pose changed:
+    - When its owner moved by simulation or by a kinematic target, the sync gives the follower its entity's new world pose as its kinematic target. So it pushes what it meets and trails its owner by one step.
+    - When its owner was teleported (`SetTransform`, from a script or an edit), or its own `Transform` or an ancestor's below the owner was written, the follower is teleported to its new pose with `SetTransform` too. So it never sweeps across the distance in one step.
+
+    A follower never meets what it follows: the owner's body, the owner's character and its inner body, the owner's ragdoll, for a wheel's collider the vehicle's chassis, and the owner's other followers. The contact listener (§8) rejects those pairs, and a character ignores its own followers through `GroupGate`'s owners, as it does its ragdoll. Held weapons, hitboxes and a car's trigger zones are followers. What a follower can meet is a known limit (Consequences): Jolt never pairs a kinematic body with a static one, so a follower finds moving bodies only. `pull` never writes a follower's `Transform`.
+  - **Planes and heightfields.** A plane or a heightfield under any owner but a static `RigidBody` stays a static body that follows its entity, as a heightfield does today, since neither shape can move. §5 warns about it. Every collider so ends up in some body: none is dropped.
+  - **Library compounds (§3)** are classified by their most restrictive piece: one with a plane piece is a plane, and otherwise one with a mesh piece is a mesh. So under a dynamic owner a compound with a mesh piece follows, and under a moving owner one with a plane piece stays a static body that follows its entity, each with §5's warning, and the owner's body is still built. On a body's own collider, the same rule makes it `RE5003` on a body that its most restrictive piece is not allowed on.
+- **The body.**
+  - **When it exists.** A moving `RigidBody` has a body when its own `Collider`, or at least one child, joins it.
+  - **Its shape.** When no child joins, the shape is the owner's own collider's shape, as today, so such a body does not change. Otherwise it is a compound: the owner's own collider first, at the origin, then the children by entity id. Each child sits at its rotation and translation relative to the owner, and its shape is scaled by its own world scale under today's rules.
+  - **Disabled colliders.** A `Collider` with `enabled = false` is left out. On the owner, it leaves out the owner's own collider but not the children.
+  - **Settings.** Kind, mass, damping, the centre-of-mass offset and the settings of the ADR-0008 amendment §7 come from the owner's `RigidBody`.
+  - **Mass.** `mass` is the whole compound's. Jolt places the centre of mass by the children's volumes (uniform density), and `center_of_mass_offset` moves it from there. A kinematic compound with a mesh child takes the description's mass, as a kinematic mesh does today.
+  - **Layer and groups.** These come from the owner's own collider, or from the first child when the owner has none. A child whose layer or groups differ takes the body's, with §5's warning. A compound is never a sensor, since only solid colliders join one.
+  - **A sensor owner.** If the owner's own collider is a sensor or a `Trigger`, the body is that collider alone, as today, and the colliders below it become followers. §5 warns about it; the fix is to put the sensor on a child entity.
+- **Changes.**
+  - **What rebuilds the compound:** adding, removing, enabling, disabling, moving or reshaping a child, a change to a child's `PhysicsMaterial` (§7), or reparenting a collider in or out. The sync then sends `SetShape`, which keeps the body's motion and contacts (PR "correctness"). `SetShape` (rank 6) applies before the step's forces (ranks 20 to 26, the ADR-0008 amendment §4), and Jolt clears forces after each step, so oxijolt's refusal of a new shape for a dynamic body holding forces cannot happen.
+  - **Bodies that are replaced instead:** a vehicle's chassis, and a body that a joint holds, because oxijolt refuses them a new shape. A replaced body keeps its motion (PR "correctness") and its joints (ADR-0055, whose PR "joints" re-adds them).
+  - **A child that gets its own `RigidBody`** leaves its ancestor's compound and becomes a body. The colliders below it then join it.
+
+**§2 The compound in the contract.**
+- **`ShapeDesc::Compound`.** `re_types::physics::ShapeDesc` gains `Compound { shapes: Vec<ShapeDesc>, children: Vec<CompoundChildDesc> }`, with `CompoundChildDesc { pos: Vec3, rot: Quat, scale: f32, shape: u32, entity: Option<EntityId>, index: Option<u32> }`:
+  - `shapes` are the compound's distinct shapes, each any shape except a compound or a heightfield. Several children may name one.
+  - `pos` and `rot` place the child in the body's frame.
+  - `scale` scales the child's shape uniformly (serde default 1, left out when 1). A uniform scale is exact for every shape. A plane child cannot be scaled.
+  - `shape` is the child's entry in `shapes`.
+  - `entity` is the collider entity this child is, or `None` for the entity that holds the compound (§3).
+  - `index` is which child of a library compound this is (§3), or `None` when the child is a whole collider.
+- **`BodyDesc::owner`.** `BodyDesc` gains `owner: Option<EntityId>` (serde default `None`): for a follower, the entity whose bodies, character, ragdoll and other followers it never meets.
+- **Building it.** `re_physics` builds each entry of `shapes` once and adds it to the compound for every child that names it, inside a `ScaledShape` when the child's scale is not 1 (one per distinct shape and scale), with `Shape::new_compound`. So a hull or mesh that 136 placements share is built and held once. Each child's user data is its place in `children`, which maps a hit back to its `CompoundChildDesc`.
+- **Measured** (the spike's "shared" section). One shape as 136 children, each with its own uniform scale, builds in 0.07 ms for a hull and 8.0 ms for a 512-triangle mesh, against 0.8 ms and 30.7 ms for 136 copies built from scaled points. Rays down each placement name its child and agree with the copies within 3 × 10⁻⁶ m, and a dynamic compound of one 1 m box at scales 1 and 2 weighs 9,000 kg at density 1,000, so a scaled child's mass is exact.
+
+**§3 Library compounds.**
+- **The source.** `ColliderShape::Compound` reads its children from the `ShapeLibrary` by `source`, as `Convex`, `Mesh` and `Heightfield` do.
+- **Registering one.** `ShapeLibrary::insert_compound(source, Arc<CompoundData>)` takes `CompoundData { shapes: Vec<ShapeDesc>, pieces: Vec<CompoundPiece { pos, rot, scale, shape }> }`, in the collider's local frame, with §2's meanings: `scale` is a uniform scale (default 1) and `shape` an entry of `shapes`. The sync's fingerprint hashes each shape's content once, as it does a mesh's, and each piece's pose, scale and entry. WP33's instance sets (ADR-0052) can make a set's colliders one body this way, under a `derived:` key, with one shape per prefab collider and one piece per placement.
+- **On a body's own collider,** a library compound is the body's shape. Its shapes are the body's `shapes`, and each piece becomes a child with `entity: None` and `index: Some(i)`.
+- **On a child collider,** it is flattened into its body's compound. Its shapes are added to the body's `shapes`, and each piece becomes a child with `entity: Some(collider)` and `index: Some(i)`. Only one level is allowed: no compound inside a library compound.
+- **Scale.** A uniform entity scale multiplies each piece's position and scale, so the shapes stay shared and the result is exact. A non-uniform one moves each piece by the scale per axis and gives the piece its own copy of its shape, scaled by today's single-shape rules in the piece's own axes. That is exact when the piece is aligned with the axes.
+
+**§4 Limits (`RE5020`).**
+- **`RE5020`** is a new code with an explain page. `re_physics` refuses with it:
+  - a compound with no children, more than 4,096 children or more than 4,096 shapes;
+  - a shape that is itself a compound or a heightfield;
+  - a child whose `shape` names no entry, whose `scale` is not finite and greater than 0, or that scales a plane;
+  - bounds beyond 2 km of the compound's centre of mass;
+  - more sub-shapes than Jolt's 32-bit ids can name (a mesh child's triangles count);
+  - a compound that Jolt refuses.
+
+  The body is then not created, or keeps its old shape for `SetShape`, as for any other refused shape.
+- **`RE5003`.** A mesh child needs a static or kinematic body, and a plane child a static one. `RE5003` refuses other cases, and its explain page gains them.
+- **Why 4,096.** A rebuild of 4,096 children costs about 1.1 ms (Measured), which a change may cost once but a step should not.
+
+**§5 Warnings in the sync.**
+- `re_app` warns once per body when a collider under a body does not join it as written:
+  - a child's layer or groups differ from the body's;
+  - a body whose own collider is a sensor or a `Trigger` has colliders below it;
+  - a mesh under a dynamic body follows it instead of joining it (§1);
+  - a plane or a heightfield under any owner but a static `RigidBody` stays a static body that follows its entity (§1);
+  - a library compound with a mesh or plane piece follows, or stays static, by its most restrictive piece (§1).
+- The warning is `RE0720`, with an explain page. The maintainer granted WP34 `re_app`'s `RE0720` to `RE0739` (ADR-0051 took `RE0700` to `RE0719` for WP32), so the sync's later warnings (joints, materials) need no new ask. PR "compounds" adds the range to ARCHITECTURE §7's note on `re_app`'s codes, for the maintainer's review.
+
+**§6 Which collider was touched.**
+- **The type.** `re_types::physics::ColliderRef { collider: EntityId, child: Option<u32>, surface: SurfaceTag }` (`Copy`) holds:
+  - the collider entity touched: the body's own for a single-shape body, a child's for a compound, the holder for a library compound;
+  - which piece of a library compound it is, if any;
+  - its surface (§9), `SurfaceTag::NONE` until PR "materials".
+- **Where it appears.** Every field below is an `Option<ColliderRef>` with serde default `None`, as `EntityId` has no default. `re_physics` fills it for every native body, so `None` is left only for data written before this ADR.
+  - `ContactEvent::Begin` gains `collider_a` and `collider_b`, from the contact whose point and normal the event reports, swapped with the entities. Events stay one per body pair (Alternatives).
+  - `RayHit` gains `collider`. This covers rays, every-hit rays and shape casts, including answers from the ADR-0008 amendment's probe, whose copies share the bodies' shapes.
+  - `CharacterState` gains `ground_collider`, beside `ground_entity`.
+  - `WheelState` gains `contact_collider`, beside `contact`.
+  - `TriggerEvent` (amendment §6) gains `collider`: the collider whose contact made the other enter, or the one the overlap check found. An exit names the other entity itself, with no child. Under amendment §6, a compound's entity is inside a trigger while any of its children is, and this field names which child entered (F11).
+- **How the child is found.** `re_physics` finds the child from the sub-shape id:
+  - for contacts, the manifold's, decoded once for each new body pair in a step;
+  - for hits, `compound_child`;
+  - for a character's ground and a wheel's contact, `PhysicsWorld::compound_sub_shape`.
+- **After a `SetShape`.** A character keeps the sub-shape ids it read from a body's old shape until its next update, and oxijolt decodes an old id that falls in range as an arbitrary valid child (the child count can also cross a power of two, which moves the bits). So `re_physics` records the step of each body's last `SetShape`, and a character's ground or a wheel's contact on a body reshaped since that character's or vehicle's last update resolves to the body's own collider (no child). A character updates in every step; a vehicle whose chassis sleeps does not, so its wheels keep resolving that way until it wakes.
+- **Out of range.** A child index beyond the body's current children also resolves to the body's own collider.
+
+**§7 Materials (PR "materials").**
+- **The component.** `re_scene::PhysicsMaterial` has these fields:
+  - `friction: f32 = 0.5`;
+  - `restitution: f32 = 0.0`;
+  - `friction_weight: f32 = 1.0`;
+  - `restitution_weight: f32 = 1.0`;
+  - `surface: String = ""`, the tag.
+
+  On a collider's entity, it is that collider's surface. On a body's owner, it is the surface of the owner's own collider and of each child that has none. It replaces `RigidBody.friction` and `restitution` for those colliders. A follower, and a collider that is a static body of its own, uses only its own `PhysicsMaterial`.
+- **The contract.**
+  - **`Surface`.** `re_types::physics::Surface { friction, restitution, friction_weight, restitution_weight, tag: String }`. Friction is 0 to 1000 (oxijolt's limit), restitution 0 to 1, each weight 0 to 100 (compat's), and the tag at most 64 bytes. Other values are `RE5007`.
+  - **Body and child surfaces.** `BodyDesc` gains `surface: Option<Surface>`, the own collider's. `CompoundChildDesc` gains `surface: Option<Surface>`, where `None` means the body's. Both default to `None`.
+  - **Jolt values.** A body with a surface also takes its friction and restitution as its Jolt values, which vehicles' wheels read.
+- **Per element.**
+  - **Mesh and heightfield fields.** `ShapeDesc::TriangleMesh` and `Heightfield` gain `surfaces: Vec<Surface>` and an index list: `triangle_surfaces: Vec<u8>`, one per triangle, or `cell_surfaces: Vec<u8>`, one per cell ((n − 1)², row by row). All default to empty, which means the collider's own surface everywhere.
+  - **Limits.** A mesh holds at most 32 surfaces and a heightfield 256, Jolt's limits. A list of another length, or an index with no surface, is `RE5002`.
+  - **How they reach the sync.** They come through the `ShapeLibrary`: `ShapeLibrary::insert_surfaces(source, Arc<ElementSurfaces { surfaces, indices }>)`, beside a mesh or heightfield of that source, which the fingerprint covers.
+- **Producers.** Nothing in M4 has to fill them.
+  - **Terrain** could: ADR-0053's layers could carry a surface (a tag, and friction if the layer wants it), and the procedural output would then give each heightfield cell its dominant layer: the largest mean weight over its four corners, the lower layer on a tie.
+  - **Who decides.** That is WP33's and WP39's decision (ADR-0053). This ADR fixes only the physics side.
+  - **glTF meshes** get no surfaces in M4.
+
+**§8 How two surfaces combine.**
+- **Each side's surface,** in order:
+  1. a compat part's own values, as today;
+  2. the Jolt material of the triangle or cell touched;
+  3. the touched child's surface;
+  4. the body's own surface;
+  5. otherwise, the body's `friction` and `restitution` with weight 1, from the gate's table below.
+- **When Jolt's rule stands.** Jolt's own combine stands when neither side has a surface from §7 and the two are not both parts. So a world without materials, and every compat place, simulates bit for bit as today.
+- **Otherwise compat's rule applies.** Friction is `(f₁w₁ + f₂w₂) / (w₁ + w₂)`, clamped to 0 to 1000. Restitution is the same weighted mean of the restitutions and their weights, clamped to 0 to 1. With both weights 0, each is the plain mean.
+- **One listener.**
+  - **Shared.** Compat's `PartGate` becomes the one contact listener for parts and native bodies.
+  - **Entries.** Every native body that has a surface, on itself, a child or an element, or that is a follower, registers an entry. The entry holds its compound's `Arc<Shape>` (to decode sub-shape ids) and its surfaces' ids. A follower's entry also names the bodies of what it follows (§1), and the listener rejects pairs with them.
+  - **Values of bodies without an entry.** The listener cannot read a body's own friction or restitution: oxijolt's `ContactManifold` carries the bodies, sub-shapes and materials, and `ContactSettings` only Jolt's combined values, from which `max(r₁, r₂)` cannot be undone. So the gate keeps a table of every native body's `friction` and `restitution` by Jolt body id, from its `BodyDesc`, updated between steps as bodies are added, replaced and removed. The fifth source reads it.
+  - **Early out.** A flag skips the lookup while no native body has an entry.
+  - **Locking.** Jolt calls the listener on worker threads, so entries change only between steps, under the write lock compat uses.
+- **Element materials.** Meshes and heightfields are built with one Jolt material per surface, whose user data is the world's id for that surface. So the listener reads the touched element's surface from the manifold.
+- **Ids.**
+  - **Surfaces.** The physics world interns surfaces by value, with `u32` ids, in the order `apply` meets them. `apply` is sorted, so the order is the same on every platform.
+  - **Tags.** Tags are interned the same way as `SurfaceTag(u16)`, with `SurfaceTag::NONE` (0) for `""`. `Physics::surface_name(tag) -> &str` gives the name.
+  - **Freed when unused.** Each surface and tag counts the bodies, children and elements that use it. At the end of each `apply`, those no longer used are freed, and new ones take the lowest free id. So a script that sets a friction every frame (rain, ice) does not grow the tables. More than 65,535 tags in use at once is `RE5021` (a new code with an explain page): the surface then has no tag, with a warning.
+  - **Not hashed or saved.** Neither id is in `state_hash` or `PhysicsSnapshot`. They decide only friction, restitution and events, whose effects `state_hash` covers, so reusing ids stays deterministic.
+  - **Ids stay in the process.** A tag id is valid until the next `apply`. Scripts get names (§11), and saves, replays, the network and JSON for agents carry the name, never the id.
+
+**§9 The surface touched.**
+- **Contacts.** `ColliderRef::surface` is the touched surface's tag. For a contact it is the manifold's material when the element has one.
+- **Hits, ground and wheels,** which give no material, resolve it in this order:
+  1. the child, from its index;
+  2. within it, a heightfield's cell from the local point: column `floor((x − offset.x) / spacing)` and row `floor((z − offset.z) / spacing)`, each clamped to the grid;
+  3. or a mesh's triangle from the point: the nearest of the triangles that a uniform grid lists there, the lowest index on a tie. The grid is built on first use, once for each mesh that has surfaces, however many children share it; the point is first taken into the child's frame and divided by its scale.
+  4. otherwise, the child's or the body's own surface.
+- **Determinism.** Each is a pure function of the hit, so it is deterministic.
+
+**§10 Shapes.**
+- **New shapes.** `ShapeDesc` gains:
+  - `Cylinder { half_height, radius }`;
+  - `TaperedCapsule { half_height, top_radius, bottom_radius }`;
+  - `TaperedCylinder { half_height, top_radius, bottom_radius }`, where a radius of 0 makes a cone;
+  - `Plane { half_extent }`: normal along local +Y through the origin, solid below, a square of `2 × half_extent`.
+
+  The first three run along local Y, centred on the origin.
+- **The `Collider` component.** `ColliderShape` gains `Cylinder`, `TaperedCapsule`, `TaperedCylinder`, `Plane` and `Compound`. `Collider` gains `bottom_radius: f32 = 0.25`, and `radius` is the top radius of the tapered shapes. A plane's half extent is the larger of `half_extents.x` and `half_extents.z`, times the entity's largest scale.
+- **Edge cases.**
+  - Equal radii build a plain capsule or cylinder.
+  - A tapered capsule whose radii differ by more than oxijolt allows is `RE5002`, and so is a tapered cylinder with both radii 0.
+  - A plane is for static bodies only (`RE5003` on others), and cannot be cast or overlapped (`RE5016`, as for a mesh).
+- **Scale.** The cylinder and the tapered shapes scale their radii by the larger of the X and Z scales and their half height by Y, as the capsule does today.
+
+**§11 Scripts.**
+- **`physics.on_contact`.** Its `info` gains `collider_a` and `collider_b` (entities), and `surface_a` and `surface_b` (tags, `""` for none).
+- **`physics.on_touch(e, f)`.** Each side gets its own `info`, with:
+  - `collider`: e's collider that touched;
+  - `other_collider`;
+  - `surface`: the other's, which is what e touched;
+  - `own_surface`.
+
+  The point, normal, sensor flag, impulse and speed stay as today.
+- **Hits, characters and wheels.**
+  - The hits of `raycast`, `raycast_all` and `shape_cast` gain `collider` and `surface`.
+  - `physics.character(e)` gains `ground_collider` and `ground_surface`.
+  - Each wheel of `physics.vehicle(e)` gains `contact_collider` and `contact_surface`.
+- **`physics.body(e) -> Entity?`** gives the entity whose body e's collider is in: e itself when e has a body or a character of its own (followers included), its owner when e is a child of a compound, or nil.
+- **Calls that take bodies.** These calls take bodies: `on_touch`, `on_touch_end`, `inside`, `impulse`, `set_velocity` and the ADR-0008 amendment's calls. Given a collider that is a child, they raise `RE3006` naming its body.
+- **Host methods.** Tags reach scripts as strings through a provided `HostServices::surface_name` (default `""`). `physics.body` uses a provided `HostServices::body_of` (default nil). The maintainer reviews both, as with ADR-0057 §12's.
+
+**§12 Tests.**
+- **PR "compounds".**
+  - **Truck.** A two-box truck under a dynamic `RigidBody` rests on the ground as one body. A ray at each box names that child's entity, and the Begin of its landing names the child that touched.
+  - **Mass.** Two equal boxes 2 m apart put the centre of mass midway, `center_of_mass_offset` moves it, and the total mass is `RigidBody.mass`, read from the velocity an impulse gives.
+  - **Changes.** Moving, resizing, disabling and removing a child sends `SetShape`, and the body keeps its velocity. A chassis is replaced instead, and keeps its motion.
+  - **Separate bodies.** A child with its own `RigidBody` is a separate body. A collider reparented in and out joins and leaves. A static `RigidBody`'s child colliders are separate static bodies.
+  - **Followers.** A sensor child under a dynamic body follows it, entering and leaving a crate it passes, and never touching its own body. A collider a character holds pushes a crate and never blocks its character. A sensor and a solid follower of one owner never report each other. A teleported owner teleports its followers, which push nothing on the way.
+  - **Stale ids.** A character standing on a compound reads its ground as the body's own collider between a `SetShape` and its next step, and as the right child after it.
+  - **Limits.** A library compound of 4,096 children is built, and 4,097 children is `RE5020`. So are a heightfield child, a nested compound, a child naming no shape and a zero scale. A mesh child on a dynamic body is `RE5003`. A library compound with a mesh piece under a dynamic owner follows it, with `RE0720`.
+  - **Shared shapes.** A library compound of one hull and one mesh shared by 136 pieces at different uniform scales, on a static body: each Jolt shape is built once, a ray at each piece names it, and the heights match copies scaled point by point.
+  - **Shapes.** The cylinder, tapered capsule, cone and plane each rest as Jolt's own shape does. A plane on a dynamic body is `RE5003`, and a tapered cylinder with both radii 0 is `RE5002`.
+  - **Cost.** The valley's Physics phase before and after, with the owner walk idle in steps without hierarchy changes.
+  - **Warnings and scripts.** §5's warnings fire. The Luau fields of §11 that name colliders, `physics.body` and `RE3006` for `on_touch` on a child are tested.
+- **PR "materials".**
+  - **Friction.** A box with a `PhysicsMaterial` slides down a slope at Coulomb's speed for the weighted friction (within 10⁻³ m/s), with weights 1 and 9, as in the spike.
+  - **Restitution.** A ball bounces to the height its weighted restitution gives.
+  - **The other side's own values.** A box with a `PhysicsMaterial` on a floor without one slides at the weighted mean of its surface and the floor's `RigidBody.friction` (the gate's table).
+  - **Interning.** A script that sets a new friction every frame for 10,000 frames leaves the surface table at its starting size, and a freed id is reused lowest first. Tags beyond 65,535 in use are `RE5021`.
+  - **No materials.** A world without materials keeps every pose and velocity bit for bit.
+  - **Elements.** On each half of a two-surface heightfield and of a two-surface mesh:
+    - boxes slide at that half's friction;
+    - contacts, rays and shape casts give that half's tag;
+    - a character standing there reports it as `ground_surface`;
+    - a wheel reports it as `contact_surface`.
+  - **Tags.** A tag's name round-trips through `Physics::surface_name` and reaches scripts as a string.
+- **Both PRs.**
+  - A scene of compounds, followers and surfaces gives the same digest with 1, 2 and 4 workers.
+  - `cargo xtask d2` on the island, the plaza, the valley and the town gives the same `state_hash` at every checkpoint on `main` and on the branch.
+
+**§13 Ownership and reviews.**
+- **The contract.** The `re_types` types (§2, §6, §7, §10) and the `re_scene` changes (`Collider`, `ColliderShape`, `PhysicsMaterial`, with the regenerated schemas) go through maintainer-reviewed PRs. So do the provided `HostServices` methods.
+- **Other threads' reviews.**
+  - WP35 reviews the script runtime's change to `push_contacts` (each side's `info`).
+  - WP47 reviews the shared listener (§8), which changes nothing for parts.
+  - WP33 reviews §3, which it asked for.
+- **The rest is WP34's:** `sync/physics.rs`, `re_physics` and the `physics` library.
+- **Debug outlines.** WP35's outlines (ADR-0057 §9) draw a compound from the `ShapeDesc` that PR "sync"'s new `pub fn` returns for the owner.
+
+**Alternatives.**
+- **Weighted means for every pair.** This would be one rule everywhere, but it changes every scene. A crate of friction 0.7 on ground of 0.5 would go from 0.592 to 0.6, a ball of restitution 0.8 on the ground from a bounce of 0.8 to 0.4, and every replay's hash would change. Jolt's combine is a sound default, so the weights apply only where someone asked for a surface.
+- **Combine modes per material** (Unity's and Unreal's average, minimum, multiply and maximum). These are more knobs and a second rule beside compat's. Compat's weights already cover the common cases: weight 0 lets the other side decide, and a large weight dominates.
+- **Splitting a multi-surface mesh into one compound child per surface.** This needs no triangle lookup for hits. But it puts seams between children, where Jolt's internal edge removal (which works within one mesh) does not reach, so sliding and rolling bodies bump. Jolt's per-triangle materials are exact for contacts, and the grid is needed only for hits.
+- **Events per collider pair** (Unity's messages per collider pair; Godot's `body_shape_entered` beside `body_entered`). A body landing on two children would start two touches, `on_touch(truck)` would fire twice, and a compound on a compound could raise one event for each of up to n × m pairs. Body-pair events that name the first contact's colliders answer F11's "which part", footsteps and impact sounds. A per-collider stream can come later beside them, as Godot has both.
+- **Static `RigidBody`s absorbing their children** (the plan's literal "nearest ancestor body").
+  - **No gain.** Static bodies never move, and a static compound costs the same to step and to query (Measured).
+  - **Rebuilds.** Every edit or stream event under a level root with a `RigidBody` would rebuild the whole compound, 1.1 ms per 4,096 children.
+  - **Limits.** §4's limits would refuse a large level's collision outright, and a terrain heightfield could not be a child.
+- **Per-child sensors** through the listener (compat makes non-colliding parts into sensor contacts with `set_is_sensor`). This avoids followers and their one-step lag. But Jolt would count the sensor's volume in the body's mass, centre of mass and inertia; rays and shape casts would hit it as part of a solid body; and characters would collide with it, unless every query and the character listener filtered sub-shapes.
+- **`MutableCompoundShape` for children that move.** It moves children without a rebuild. But rebuilds cost 0.013 ms for 64 children and happen only on a change, and an animated part is better as a body of its own with a joint (ADR-0055), so no mutable compound was measured.
+- **A project table of surfaces** (`[physics.surfaces]` in `real.toml`, like Unreal's surface types). It would check tags and share values. But prefabs already share materials, and a second place to look is not needed until projects ask for one.
+- **Each child's shape inline** (the first draft). Simpler, but an instance set's cluster would hold a scaled copy of a prefab's hull or mesh for every placement, about 136 at the valley's density, and building the copies costs 4 to 12 times as much (Measured, §2).
+- **Commands for children** (`AddChild`, `RemoveChild`). A compound is a shape, and `SetShape` already carries changes, so new commands would only add state to keep consistent.
+
+**Consequences.**
+- **Unchanged scenes.** Scenes without a collider under a moving body, a character, a ragdoll or a wheel, and without materials, simulate as before. Both PRs check the four replays' hashes against `main`.
+- **A new meaning for child colliders.** A collider under a moving body joins it or follows it, instead of being a static body teleported every step. Scenes that relied on the old behaviour change; none of the examples does. M1's rule becomes: a `Collider` with no `RigidBody`, `CharacterController`, `Ragdoll` or `VehicleWheel` at or above it is a static body. The `RigidBody` and `Collider` docs, and the sync's module docs, say so.
+- **Payload changes.** Contacts, hits, a character's ground, wheels and trigger events gain a `ColliderRef`, which changes the frozen contract "Physics for gameplay". The changes are additive, with serde defaults.
+- **Costs.**
+  - A compound decode for each new body pair with a compound in a step.
+  - A listener lookup for each contact of a body with an entry, or a flag check otherwise.
+  - An O(1) resolution for each hit on a compound or heightfield, and a grid lookup for each hit on a mesh with surfaces.
+  - A compound rebuild on each change of a child.
+- **Known limits.**
+  - Tyre grip still combines Jolt's way with the ground body's single friction (ADR-0040; per-surface grip is the plan's stretch item).
+  - Characters do not slide on low friction, since `CharacterVirtual` ignores it. Scripts can read `ground_surface` and change how a character moves.
+  - Followers trail their owner by one step: 0.5 m at 30 m/s and 60 Hz.
+  - **Followers meet moving bodies only.** Jolt pairs a kinematic body with a static one only under `mCollideKinematicVsNonDynamic`, which oxijolt 1.1.0 does not expose (`body/structure.rs`). So a follower sensor finds dynamic and kinematic bodies, characters' inner bodies included, but never a static body. A solid follower (a held weapon, a hitbox) reports no contact with static bodies, though a static trigger still finds it. A zone that must find static items belongs on the items (a static `Trigger` finds the follower or the character), or a script uses `physics.overlap`. Today's teleported static sensors find no static bodies either, so nothing regresses.
+  - **Edges between surfaces.** At an edge between triangles of two surfaces, the grid's nearest triangle (§9, the lowest index on a tie) can differ from the triangle a contact reports, so a hit and a contact there may name different surfaces. Both are deterministic.
+  - A child whose own pose changes every step rebuilds its body's shape every step.
+- **Joints (ADR-0055)** must re-add joints on a replaced body, which §1 relies on. A joint naming a child collider attaches to that child's body.
+- **Footsteps.** WP45's animation markers reach scripts, which choose a sound from `ground_surface` (§11). That needs no contract between WP34 and WP45; WP48's town is where the two meet.
+
+| Item | PR | Owner of the file |
+|---|---|---|
+| §1 owners and followers, §3 library compounds, §5 warnings | "compounds" | WP34 (`sync/physics.rs`) |
+| `ShapeDesc::Compound`, `CompoundChildDesc`, `BodyDesc::owner`, `ColliderRef` and `SurfaceTag` (always `NONE` until "materials"), the new shapes and payload fields | "compounds" | maintainer review (`re_types`) |
+| `ColliderShape` variants, `Collider::bottom_radius` | "compounds" | maintainer review (`re_scene`) |
+| `RE5020`, `RE5003`'s page, compounds in `re_physics` | "compounds" | WP34 |
+| `RE0720` (of `RE0720` to `RE0739`, granted) and ARCHITECTURE §7's note | "compounds" | WP34; the maintainer reviews the note |
+| `PhysicsMaterial` | "materials" | maintainer review (`re_scene`) |
+| `Surface`, the surface fields of `BodyDesc` and `CompoundChildDesc`, per-element surfaces | "materials" | maintainer review (`re_types`) |
+| The shared listener, interning and freeing, `RE5021`, surface resolution | "materials" | WP34, WP47 reviews the listener |
+| `HostServices::body_of` and `surface_name` | "compounds", "materials" | maintainer review (`re_types/src/host.rs`) |
+| Luau fields, `physics.body` | both | WP34; WP35 reviews `push_contacts` |
 
 ## ADR-0057: The gameplay scripting API: typed events, prefabs at run time, the cursor and raw input, the late frame and time scale, and recorded replays
 
@@ -3492,6 +4380,166 @@ A fixture project, `crates/re_app/tests/projects/gameplay/`, calls every new fun
   - F23: bulk reads.
   - The plan's stretch: a camera rig and Luau state machine and tween modules.
 
+**Amendment (M4, WP36 PR "luau"; accepted by the maintainer, 2026-10-28).** The UI's events join §7's table: PreRender's settle also delivers the `ui` events (`ui.clicked`, `ui.changed`, `ui.submitted`, `ui.back` and `ui.focus_changed`) raised in the same frame's Input, where the UI routes input (ADR-0058 part 5).
+
+## ADR-0058: Native UI on one core: `re_ui` lays out and paints plain node trees for native UI and the compat GUI, with UI components in the scene, input routed ahead of the action filter and recorded in replays, and a `ui` library
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP36), for WP36's PRs "core", "input", "components", "luau" and "screens" (part 11). It rests on a spike whose patch, numbers and images are in `research/m4/wp36/` (its `README.md` gives the method). It builds on ADR-0057 (engine events, `LateFrame`, `ReplayDoc` version 2), WP37's ADR-0030 amendment (the action filter that takes the actions the UI blocks) and ADR-0059 (the `settings` library the settings screen binds to).
+
+**Context.** WP36 must let a native game build its menus, HUD, settings screens and dialogs from UI components and Luau, with keyboard and gamepad focus and text input, and run the compat GUI on the same core (M4_PLAN, WP36). What the engine does today, read from `main` at c4c81ae:
+
+- **Native games have one HUD style.** `HudText { text, anchor, size, color }` (`re_scene`; `color` came with #191) is drawn by `re_app/src/hud.rs` as one non-interactable egui `Area` per anchor: a black panel (alpha 150, 6-point corners, 10 by 6 points of padding, 16 points from the edges) with one label per line in egui's default font (ADR-0019). egui runs twice a frame so that a captured frame has it. The `ui` library has only `ui.set_text` (`re_script/src/api/libs.rs`). There is no layout, image, button, bar, focus or text input (sample-game finding F1, gameplay audit §3.1); the town fits its title, job list and results into the seven anchors.
+- **The compat GUI is a full 2D UI, but only for Instances.** `re_compat/src/gui/` (3,480 lines) lays out `ScreenGui`, `BillboardGui` and `SurfaceGui` trees by Roblox's rules (scale-plus-offset sizes, anchor points, padding, list and grid layouts, size and aspect constraints, automatic size, `UIScale`, rotation, clipping, `ZIndex`, scrolling frames), measures text with egui over the three bundled families (ADR-0035), paints egui shapes that `re_render`'s UI pass draws (`UiFrame`, `paint_ui`), and routes pointer, text box and gamepad selection input. Its layout and painter read properties through the compat class layer, so native games cannot use it. The gameplay audit (§3.4) weighed three ways to give native games a UI and recommended retained UI components on a core shared with compat, after a spike; this ADR does that.
+- **The compat GUI gets no input in the app.** `App::compat_render` passes `GuiInput::default()` (gameplay audit B3), and it runs only when the app has graphics, so a headless run never lays the GUI out. WP47's PR "gui input" feeds it through `crates/re_app/src/compat.rs`, adding typed text to `RawInput` and `RawInputFrame`; WP36's PR "input" then moves it onto the shared routing. Today `RawInput` (`re_input`) records presses and releases, so key repeats and typed text are lost, and `RawInputFrame` (`re_types/src/input.rs`) has no text.
+- **The frame** (ADR-0057 §7): Input (actions from the action map, or injected from a replay, which skips the map) → PreRender → fixed steps → LateFrame → Sync (propagate, render build, HUD collect, the compat GUI step) → Render → EndFrame. Engine events are raised into each context and delivered at its next settle, and `ui` is an engine namespace (§1, §2). UI tweens use unscaled time (§7). `ui.set_text` writes `HudText` in the same frame, a rule PR "luau" keeps (§11, B4). `debug.text` is drawn by the HUD (§9). `ReplayDoc` version 2 records the viewport and leaves a row for UI input to the PR that adds it (§10).
+- **Neighbours.** WP37's ADR-0030 amendment runs a context filter after the frame's actions are made, live or replayed, that "also takes a per-frame set of actions that the UI blocks while it has focus", and latches a button that turns on while held. ADR-0059 §8 is the `settings` library. ADR-0063 §3 (accepted) feeds the editor's play view input into the play app's `RawInput` while the game has focus, and draws the play app at the view's size and pixels per point. ADR-0064 part 9 (WP43) adds asset field hints for the inspector. WP31's ADR-0049 amendment (accepted) raises the web budget from 8 MB to 10 MB gzipped in WP31's PR "web budget", which leaves about 2 MB for all of M4; until then `build-web` has a few KB left.
+- **Ownership** (M4_PLAN). `crates/re_ui/` (new), `re_app/src/hud.rs` and the `ui` library are WP36's; `re_compat/src/gui/` passes from WP47 to WP36 at PR "core", which WP47 reviews; the UI components go into `re_scene` through maintainer-reviewed PRs. The contract "The UI core" (re_ui's layout, text, draw lists, input routing and focus, and the native components) freezes at PR "core" and PR "components", for WP37 (loading and settings screens), WP43 (inspector), WP47 (compat GUI) and WP48.
+- **APIs checked.** egui 0.36.2 (pinned): `Context::fonts_mut(|f| f.layout_job(job))` lays text out into a `Galley`; the galley cache keeps the galleys used in the last pass (`GalleyCache::flush_cache`), so unchanged text is not laid out again; shapes are `ClippedShape`s, which `UiFrame::from_output` tessellates. winit 0.30.13: `KeyEvent::text`, which the browser backend also fills (from `Key::Character`); `WindowEvent::Ime(Ime::Commit(String))`; `Window::set_ime_allowed`, a no-op in the browser. glam 0.34.1 with `libm` (ADR-0036). `re_render`: `Renderer::register_ui_texture`. `re_anim`: `Tween` and `Easing`, with snake-case easing names.
+- **The spike** (`research/m4/wp36/`). The plan asked for one path of the compat GUI behind a crate boundary, a native panel drawn with it, and the compat goldens unchanged. The spike moved the whole path.
+  - A new crate `re_ui` (egui, glam and libm; 2,064 lines) holds a plain node tree, layout, text, painting and the fonts. `re_compat/src/gui/` (now 2,402 lines) builds that tree from the Instance tree each frame (`build.rs`, 406 lines), lays it out and paints it with `re_ui`, writes the read-only properties back from the layout in the order the old layout wrote them, and keeps its input, events, surfaces, viewports, billboard projection and font family table. `core.patch` (31 files, +2,633 and −1,111 lines, the fonts as renames) touches no other crate's code and applies cleanly on c4c81ae. `re_cli`'s third-party notices tests pass with the fonts under re_ui, since the notices take the licence files under every engine crate's `assets/`.
+  - **Compat output is unchanged, exactly.** With every GUI property write logged and every frame through the tests' `Place::gui` dumped in full (drawn count, hover, focus, every shape, surfaces, viewports and writes), `tests/gui.rs` and `tests/render.rs` give 94 frames and 360 writes that are byte-identical before and after, on Vulkan (lavapipe) and on GL (llvmpipe). The 14 images those tests write are byte-identical to the baseline's, so every golden passes with no difference at all, and `tests/surfaces.rs` passes on both backends. fmt and clippy (`-D warnings`) are clean.
+  - **A native panel.** `re_ui/tests/native_panel.rs` builds a tree in Rust, with no Instance or VM: a panel centred by its anchor, held between 360 and 460 points wide, as tall as its content and scaled by 0.7 on a short screen, rounded and outlined, with a Montserrat title, wrapped body text, a texture image with a caption, a bar, three buttons (one hovered) and a clipped list scrolled by one row. It paints through `re_render` at 480x320 and 1280x720 on both backends (`native_panel_*.png`), and a second test checks its layout without a GPU.
+  - **Cost** (release build, 1280x720, 8, 32 and 64 scrolling panels of 25 rows, each row a rounded, outlined frame with a wrapped label and an image; the old and new binaries run alternately, three times each). The compat GUI step took 3.8–4.5 ms before and 2.6–4.2 ms after at 608 drawn elements, 25–28 and 21–23 ms at 2,432, and 61–62 and 44–46 ms at 4,864: on average 17%, 17% and 27% less, mostly because the build reads each property once where the old layout and painter each read it through the Instance cache. `re_ui` alone (build, layout and paint of the same scene) takes 0.29, 1.6 and 5.2 ms, about a tenth of the compat step; the rest is compat's property access, events and input.
+
+**Decision.**
+
+*1. The crate `re_ui`.* A runtime crate with no engine dependency: egui (already in every runtime, for compat and the HUD), glam and libm, and from PR "components" serde and serde_json, with schemars behind an optional feature as in `re_types`. No new third-party crate. `cargo xtask check-graph` gets the rule "re_ui depends on no engine crate". It holds what every UI host shares:
+- `tree`: `UiTree`, a frame's plain `Node`s, each carrying the host's `key` (an entity's bits) and no class or script behind it. A host builds one tree a frame.
+- `layout`: `Layout::root(&Root)` places one root (its screen origin, size and clip, whether z order spans the root, whether it takes input) and returns the drawn `Item`s in drawing order. `take_visits()` returns, for each node in placement order, what a host may report back: position and size, rotation, text bounds and whether the text fits, a scroll canvas and its clamped position, a list's content size and a grid's cells.
+- `text`: `TextStyle` and text layout over egui's fonts: fixed, wrapped, scaled-to-fit and truncated text, line height, alignment, an outline, and rich text (`<b>`, `<font color>` and the XML escapes; PR "components" adds `<font size>`, which compat gains too).
+- `paint`: `Painter` turns items into egui `ClippedShape`s: fills with rounded corners, borders and strokes, gradients as meshes, text with its outline, images (a texture the host registered, or a flat placeholder), scroll bars, the caret and the focus outline. This is the draw list that `re_render`'s UI pass paints; `re_render` does not change.
+- `fonts`: the three bundled families of ADR-0035, now under `crates/re_ui/assets/fonts/` with their licences, README and conversion script, installed into an egui context as one family per family and weight. Compat keeps `substitutes.json`, which maps the families scripts name onto these three.
+- Added later: `input` (routing, focus, navigation and text editing, part 5) in PR "input"; `project` (compat's billboard projection, moved, for world roots of both kinds) and the theme (part 7) in PR "components".
+- **Units.** Layout is in points: the viewport in physical pixels over the pixels per point, as compat does now.
+- **Determinism.** Layout is f32 arithmetic with glam on libm, and text is measured by egui's pure-Rust text stack over bundled fonts, so a layout should be the same on every platform. PR "core" checks it: a test lays out the compat GUI's test scenes and the native panel and compares every item's rectangle and clip, and every write, with committed values, exactly. It runs in the Windows and macOS checks, and it also catches changes too small for an image golden's tolerance.
+- **Diagnostics.** `RE7700`–`RE7799`, each with an explain page (ARCHITECTURE §7, `tools/xtask/src/explain.rs`). The core reports none; themes and the library do (parts 7 and 8).
+
+*2. One set of layout rules: compat's.* The rules that compat's goldens encode become the engine's, for native UI too:
+- A node's size is a fraction of its parent's content box (the parent less its padding) plus points, per axis. Its position puts its anchor point (a fraction of its own size) at a fraction of the content box plus points.
+- Then, in order: an aspect ratio (fit inside, or follow a dominant axis), size limits, and automatic size (grow to fit the children and the text, per axis).
+- A parent may arrange its children instead: in a row or column (alignment, a gap, sorted by order and then child order, or by name) or a grid (cell size, gap, the most cells in a line, a start corner, a cell aspect).
+- A scale scales a node and its subtree about its anchor point. A rotation turns only the drawing, about the centre, and a turned item is not clipped.
+- Siblings draw by z and then child order, or across the whole root when the root says so. A clipping node clips its subtree. A scrolling node lays its children out on a canvas (fixed, or grown to fit) and clamps its scroll position to it.
+- A change that moves compat's goldens or the layout test's values is a compat behaviour change and needs WP47's review. A native-only feature is added only where it changes nothing for compat.
+
+*3. Painting.* One egui pass a frame draws, back to front: native world roots (far to near), the compat GUI, native screen roots (by `UiRoot.order`, then stable id), then the HUD and debug text (part 8). re_ui paints shapes directly rather than egui areas, so the HUD's second pass goes. The editor draws its panels around the game view as now. An image is a texture the host registered for the UI pass (`Renderer::register_ui_texture`): compat's as now, and a native `UiImage`'s texture asset loaded through `re_assets` and registered once by the graphics side (`gfx.rs`, WP32's: a small PR that WP32 reviews). A headless run registers none, which changes no layout.
+
+*4. Compat on the core (PR "core").* PR "core" is the spike's `core.patch` brought up to date: the crate, the fonts moved, compat's `gui/` rebuilt on it with every golden and every write unchanged, the layout test of part 1, and the native panel as goldens at two resolutions on each backend. WP47 reviews it. WP47's PR "gui input" changes the input half of compat's `gui/mod.rs`, which the spike left alone except where an item names its entity, so whichever of the two lands second rebases with little conflict. PR "core" changes nothing in `re_app`, so it does not wait for the `App` split. The spike's write log and frame dumps stay out of the repository.
+
+*5. Input routing (PR "input").*
+- **When.** In the Input phase, in every driver (window, editor play, browser, headless), after the frame's actions are made (from the bindings, or from a replay) and before WP37's context filter. Routing reads the frame's raw input (the pointer, mouse buttons, wheel, keys, pad buttons and left stick), what was typed, and the items laid out at the end of the last frame, which are what the player saw. Its state (hover, the press it owns, the focused node, the text input being edited) is App state, not world state.
+- **Pointer.** The topmost drawn node under the pointer that takes input (an enabled button, a text input, a scroll node for the wheel, or a node that blocks) is hovered. A press on it belongs to the UI, and a release over the same node clicks it. The wheel scrolls the innermost scroll node under the pointer. While a game has the cursor locked (ADR-0057 §5), the pointer routes nothing.
+- **Focus and navigation.** A root that takes focus (`UiRoot.focus`, as a menu does) focuses its first focusable node when it is shown, or the node `ui.focus` names. When several are shown, the one drawn on top has focus. Arrow keys, the d-pad and the left stick move focus in that direction, repeating after 0.4 s and then every 0.12 s, to the node with the smallest distance along the direction plus twice the distance across it (compat's rule today). Tab and Shift+Tab move in tree order. Enter, Space and the pad's South button click the focused node. Escape and East raise `ui.back`, or stop editing a text input. Using the mouse hides the focus outline and keeps the focus.
+- **Text input.** A text input that is clicked, or clicked through navigation, takes the keyboard: typed text is appended (up to `max_length`), Backspace removes the last character, Enter submits and stops editing, and Escape or a click elsewhere stops editing. No caret movement, selection or clipboard in M4. IME is allowed only while a text input is being edited (`set_ime_allowed`), and its commits are typed text. Text inputs read what was typed each frame, in order: the text of each key press and repeat (`KeyEvent::text`, control characters dropped), IME commits, and presses and repeats of Backspace, Enter and Escape. WP47's PR "gui input" adds this for compat's text boxes, as `RawInputFrame.text: Vec<TextInput>` (`Text(String)`, `Backspace`, `Enter`, `Escape`, and the caret keys `Left`, `Right`, `Home`, `End` and `Delete`, which M4's text inputs ignore), filled by `RawInput` (WP37 reviews) in the order typed, repeats included (agreed with WP47); native text inputs read the same field. The browser gets typed text but no IME.
+- **What the UI takes from the game.** Each frame the routing gives WP37's filter the actions it blocks: while a text input is being edited, every action bound to a key; while a root that takes focus is shown, every action bound to a navigation input (the arrows, Tab, Enter, Space, Escape, the d-pad, South, East and the left stick); while the UI owns a mouse press, every action bound to that button, until its release; and in a frame whose wheel scrolled a node, every action bound to the wheel. A blocked action reads idle, and the filter's latch keeps a button idle until it is released, so the Enter that closes a menu does not also jump. A pause menu therefore closes itself on `ui.back`, since the action that opened it is blocked while it shows.
+- **Events** reach scripts as engine events (part 8). They are raised in the Input phase and delivered at the end of the same frame's PreRender. This adds to ADR-0057 §7's table: PreRender's settle delivers the `ui` events raised in this frame's Input.
+- **Compat** moves onto the same routing. Hover, press and click, `TextBox` focus and typing, the wheel and `GuiService.SelectedObject` come from it, and compat raises its events from them as `gui/mod.rs` does today: `MouseEnter`, `MouseLeave` and `MouseMoved` with x and y (`MouseMoved` every frame the pointer is over an element), `MouseButton1Down`, `MouseButton1Up`, `MouseButton1Click`, `MouseButton2Down`, `MouseButton2Up` and `MouseButton2Click` with positions, `Activated` (only while the button is `Active`, as in the original, which WP47's "gui input" brings), `Focused`, and `FocusLost` with `enterPressed`; it writes a `TextBox`'s `Text` and `CursorPosition`, a scrolling frame's `CanvasPosition` and `GuiService.SelectedObject`. PR "input" replaces WP47's feed with it (WP47 reviews), and the compat GUI's layout moves to Sync in every driver, as native layout is (part 6).
+- **`gameProcessedEvent` follows the routing,** as in the original (agreed with WP47, whose file `re_compat/src/input/mod.rs` says it is false today because no text box takes focus). It is true for:
+  - key input when a `TextBox` had the focus at any point of the frame's routing, so the Enter that submits a box, and keys typed in the frame whose click focused one, count;
+  - a press sunk by the topmost element under the pointer that takes input (a `TextBox`, a `GuiButton` or an `Active` element; a label or a frame that is not `Active` sinks nothing), and that press's release;
+  - wheel input over a scrolling frame that takes it;
+  - the pad's `ButtonA` while `GuiService.SelectedObject` is set (it clicks the selection), and the pad moves that change the selection, so A on a button does not also jump.
+  Processed input is not offered to `ContextActionService`'s actions and raises no `JumpRequest`, as when chat takes a key; `UserInputService`'s events still fire, with `true`. The routing runs before compat's input frame fires `InputBegan`, `InputChanged` and `InputEnded`, so the flag is known when they fire, and typing "e" into a `TextBox` does not also fire a game's "press E" handler. WP47's "gui input" does the key half first, on today's routing: keys are processed while a box has the focus the GUI step left the frame before, with `GetFocusedTextBox` and the `PlayerModule`'s jump off while typing. PR "input" moves it onto the routing in the same frame and adds the press, release, wheel and pad cases. Playback takes the flag from the rows (part 6).
+
+*6. Replays.*
+- **Recorded: what the routing decided,** as replays record actions rather than keys (ADR-0030). `ReplayDoc` version 2 gains an optional `ui` list, the row ADR-0057 §10 leaves to WP36: rows `{ frame, kind, … }` in the order the routing made them, only in frames where something happened.
+- **Only the routing's decisions:** what it decided from input, and the focus it gives a root when the root is shown. Never what a script did (`ui.focus`, setting `scroll_x`, compat's `CaptureFocus` and `ReleaseFocus`, or a script's write of `CanvasPosition`, `Text` or `SelectedObject`): playback runs the scripts again, so a recorded copy would apply the change twice and raise `ui.focus_changed` or `Focused` twice.
+- **The kinds.** For both native and compat nodes: `hover` (the hovered nodes when they change: native, the one under the pointer, for its look; compat, every element under it, topmost first), `button` (a node, `1` or `2`, down or up, and `click` when a release clicks it), `activate` (a node clicked by Enter, Space or the pad's South button, or compat's pad select), `focus` (a node or none, and compat's `enter`: the keyboard focus the routing moved), `text` (a node, its new text and compat's `cursor`: typing), `scroll` (a node and `[x, y]`: the wheel) and `ppp` (the pixels per point, when it changes).
+  - Native only: `edit` (the text input being edited, or none), `submit` (a node: Enter in a text input), `back` (a root: `ui.back`) and `blocked` (the actions handed to WP37's filter, when they change). Playback raises `ui.clicked` from a click or an `activate`, `ui.changed` from `text`, `ui.submitted` from `submit` and `ui.focus_changed` from `focus`.
+  - Compat only (agreed with WP47): `pointer` (`[x, y]` as the events carry it, GUI pixels or a surface's canvas pixels rounded as now, when it changes in a frame that raises an event carrying it), `select` (a node: `GuiService.SelectedObject` set by navigation) and `took` (`MouseButton1`, `MouseButton2`, `MouseWheel`, `ButtonA`, or a pad move that changed the selection: an input the GUI took that frame). Playback applies a frame's rows in recorded order where the step routes now, after it has taken the scripts' `CaptureFocus` and `ReleaseFocus` requests, so signals fire in live order (a `text` row's `Text` before the `FocusLost(true)` of the Enter that submits). It derives `MouseEnter`, `MouseLeave` and `MouseMoved` from `hover` and `pointer` as the step does now; raises `MouseButtonNDown` or `MouseButtonNUp` from `button`, then on a click `MouseButtonNClick` and, for button 1, `Activated` if the button is `Active` then, as live does, and the same click from `activate`; raises `FocusLost(enterPressed)` and `Focused` from `focus`, with the writes focusing makes today; writes `Text` and `CursorPosition` from `text`, `CanvasPosition` from `scroll` and `SelectedObject` from `select`; and gives `gameProcessedEvent` from `took` and, for keys, from the focus at any point of the frame's rows. A replay without `ui` rows plays exactly as now (the plaza's hashes are WP47's acceptance).
+- **Nodes.** A native node is named by its stable id (ADR-0005; nodes spawned at run time get WP38's session-seeded ids). A compat node is named by the container it is under and its path from there, `{ "in": "player" | "core" | "world", "path": [[name, index], …] }`: `player` is the local player's `PlayerGui`, `core` the client-only `CoreGui` (WP47's hotbar and nameplates, drawn above every `PlayerGui` screen) and `world` the `Workspace` (billboards and surfaces on parts), and each step of the path is a name with its index among same-named siblings in child order (agreed with WP47). The path is a list, not one joined string, since a name may hold any character; the container is on each node rather than on the row, since a `hover` row can list a `CoreGui` slot and the `PlayerGui` frame under it; and `PlayerGui` copies are remade on respawn, so entity ids would not do.
+- **Playback skips the routing.** At the same point of the Input phase it applies the rows: hover, focus, text and scroll positions set, events raised, and the blocked actions handed to the filter. So a replay plays the same however the UI's layout, theme or fonts change later, and the same on every platform, as actions do.
+- **Layout runs in every driver,** headless included, at Sync, at the run's viewport (recorded by ADR-0057 §10) and pixels per point (recorded above; 1 in a headless run without a replay). So `ui.rect` reads the same in a window and in `real verify`. Layout results are never written into native components, so the window's size never changes `state_hash`. Compat replays keep their hashes unless a client script sends a layout value to the server; any that changes is re-recorded in PR "input" with the reason, which WP47 reviews.
+
+*7. Components, styles and themes (PR "components").*
+- **The components** are in `re_scene` (maintainer-reviewed) and reflected (ADR-0032), so scene and prefab files, commands, the inspector (WP43), agents and `state_hash` handle them as they handle any component. The field types are the closed set, which has no 2D vector, so axes are pairs of `f32` fields. Colours are `Color`, linear like every native colour, and converted to sRGB for the core. Points are logical pixels.
+  - `UiRoot`: `space` (`Screen`, `World`), `order: i32`, `focus: bool` (takes focus and navigation while shown), `input: bool = true` (false lets the pointer pass through, as for a HUD), `reference_height: f32` (0: a unit is a point; otherwise the root's units scale so that the viewport is this many units high), `theme: String` (empty: the project's). For `World` only: `world_height: f32` (the metres the root's height spans), `offset: Vec3` and `max_distance: f32` (0: no limit).
+  - `UiNode`: `x`, `y`, `x_scale`, `y_scale`, `width`, `height`, `width_scale`, `height_scale`, `anchor_x`, `anchor_y`, `auto_size` (`None`, `Width`, `Height`, `Both`), `padding_left`, `padding_top`, `padding_right`, `padding_bottom`, `min_width`, `min_height`, `max_width`, `max_height` (0: none), `aspect: f32` (0: none), `layout` (`None`, `Row`, `Column`, `Grid`), `gap`, `align_x` and `align_y` (`Start`, `Center`, `End`), `cell_width`, `cell_height`, `max_cells: i32`, `order: i32`, `z: i32`, `visible: bool = true`, `clip: bool`, `scale: f32 = 1`, `rotation_deg: f32`, `opacity: f32 = 1` and `style: String`. A node's children are the entity's children that have a `UiNode`, in child order. `opacity` multiplies the alpha of the node and everything under it (re_ui's `Node` gains the same factor, applied as it paints); no style sets it, so a fade works on any node, styled or not.
+  - `UiPanel`: `color` (alpha 0: no fill), `corner: f32`, `outline: f32`, `outline_color`, `gradient` (the far end's colour; alpha 0: none) and `gradient_angle_deg: f32`.
+  - `UiText`: `text`, `font` (`Sans`, `Display`, `Mono`: Source Sans 3, Montserrat, Roboto Mono), `weight: i32 = 400`, `size: f32 = 18`, `color`, `align_x`, `align_y`, `wrap: bool`, `fit: bool`, `truncate: bool`, `rich: bool`, `line_height: f32 = 1` and `outline_color` (alpha 0: none).
+  - `UiImage`: `image: String` (a texture asset, with ADR-0064's `texture` field hint) and `tint`.
+  - `UiButton`: `enabled: bool = true` and `auto_color: bool = true` (darkens on hover and press when the style gives no state colours).
+  - `UiBar`: `value: f32` (0 to 1), `direction` (`Right`, `Left`, `Up`, `Down`) and `color`.
+  - `UiScroll`: `scroll_x` and `scroll_y` (set by scripts and by the wheel; layout clamps them without writing back), `content_width` and `content_height` (0: grows to fit), `bar: f32 = 6` and `bar_color`.
+  - `UiTextInput`: `placeholder: String`, `max_length: i32` (0: none) and `clear_on_focus: bool`. Its text is the node's `UiText.text`. The plan's list does not name it, but the goal's text input needs it.
+- **Styles and themes.** A theme is a JSON file (`*.theme.json`, described by `schemas/theme.schema.json`) of named styles. A style sets any of the visual fields of `UiPanel`, `UiText`, `UiBar` and `UiScroll`, may extend another (`base`), and has state variants (`hover`, `pressed`, `focused`, `disabled`), each a partial style. `UiNode.style` names one. A node's look is its components' fields, then its style's fields over them, then the variant for its state: the style wins for the fields it sets. The engine ships a default theme (dark, Montserrat headings, Source Sans 3 text) with the styles `panel`, `title`, `heading`, `body`, `button`, `button.primary`, `bar`, `input`, `list` and `row`. A project's `[ui] theme` file extends or replaces them by name, and `UiRoot.theme` overrides the project's theme for one root.
+- **Theme codes.** A theme that does not parse or fails its schema is `RE7700` at load (the editor keeps the last good one). A style the theme lacks is `RE7701`, a warning once per name. In development runs, a component field that differs from its default while the node's style sets it is `RE7702`, a warning once per node and field, since the value does not show. So is a `ui.tween` goal or a `ui.bind` field that the node's style sets, at the call and whatever its value (part 8).
+- **World roots** are billboards. The root's own size, in points, is drawn so that its height spans `world_height` metres at the entity's position plus `offset`, projected by the frame's camera. They draw over the scene with no depth test in M4, far to near, and are skipped behind the camera or beyond `max_distance`.
+- **The host.** `re_app` builds the frame's tree from the components at Sync, lays it out, keeps the items for the next frame's routing, and paints when it has graphics, in a `crates/re_app/src/ui/` module that today's `hud.rs` moves into.
+- **Tests.** Goldens for each component at two resolutions on both backends.
+
+*8. The `ui` library (PR "luau").* Nodes are entities. Declarations as they will appear in `engine.d.luau`:
+
+  ```luau
+  type UiSpec = { name: string?, style: string?, root: { [string]: any }?, node: { [string]: any }?,
+      panel: { [string]: any }?, text: { [string]: any }?, image: { [string]: any }?,
+      button: { [string]: any }?, bar: { [string]: any }?, scroll: { [string]: any }?,
+      input: { [string]: any }? }
+  ui.create: (parent: Entity?, spec: UiSpec) -> Entity
+  ui.find: (from: Entity, path: string) -> Entity?            -- child names joined by "/"
+  ui.show: (node: Entity) -> ()
+  ui.hide: (node: Entity) -> ()
+  ui.visible: (node: Entity) -> boolean
+  ui.set_text: (node: Entity, text: string) -> ()            -- a UiText or a HudText
+  ui.text: (node: Entity) -> string
+  ui.focus: (node: Entity?) -> ()
+  ui.focused: () -> Entity?
+  ui.rect: (node: Entity) -> { x: number, y: number, w: number, h: number }?  -- window pixels, last layout
+  ui.on_click: (node: Entity, f: () -> ()) -> Connection
+  ui.on_change: (node: Entity, f: (text: string) -> ()) -> Connection
+  ui.on_submit: (node: Entity, f: (text: string) -> ()) -> Connection
+  ui.bind: (node: Entity, field: string, f: () -> any) -> Connection
+  ui.tween: (node: Entity, goals: { [string]: any }, seconds: number, easing: string?) -> Tween
+  ui.clicked: Event<{ node: Entity }>
+  ui.changed: Event<{ node: Entity, text: string }>
+  ui.submitted: Event<{ node: Entity, text: string }>
+  ui.back: Event<{ root: Entity }>
+  ui.focus_changed: Event<{ node: Entity? }>
+  ```
+
+- `ui.create` spawns a runtime entity (with a fresh stable id) under `parent`, with a `UiNode` and the components its spec names (`panel` is `UiPanel`, and so on). `world.spawn` and prefabs (`world.instantiate`) make nodes as well.
+- `on_click`, `on_change` and `on_submit` connect to the engine events, filtered to one node.
+- `ui.bind` runs `f` every frame after LateFrame's settle (ADR-0057 §7), so that it sees this frame's simulation and what `time.on_late_frame` callbacks and their events did, and sets the field (`"UiBar.value"`, `"UiText.text"`) before layout, until it is disconnected or the node is gone. Each call is synchronous and budgeted (`scheduler::call_budgeted`), with no thread of its own, so two hundred bound labels do not make twelve thousand threads a second: a yield in one is `RE3005`, and what one queues is delivered at the next settle. A speed bar needs no per-frame script.
+- `ui.tween` moves numeric and colour fields on unscaled frame time in LateFrame, so a pause menu animates at a time scale of 0. A fade tweens `UiNode.opacity`, which works on a styled node, where a tween of a colour the style sets would not show. A `Tween` has `cancel()` and `wait()`, and easings take `re_anim`'s names (`linear`, `quad_in_out`, `back_out` and the rest). `re_app`'s host runs tweens with `re_anim`. `re_script` reaches the host through `ScriptHost::ui() -> Option<&mut dyn UiAccess>` (the UI state is the App's, so it is lent as `services()` is, never held across a `world()` call); the trait and its types live in `re_script`, so `re_script` depends on neither `re_ui` nor a subsystem (ADR-0006), and a context without a UI host answers `RE3015`.
+- Wrong arguments raise at the caller's line with `re_script`'s existing codes. A bound field or tween goal that is not a UI component's field of the right type is `RE7703`; one that the node's style sets is `RE7702` at the call (part 7). The PR updates the `engine.d.luau` snapshot and `re_script_check`'s gap scan for the new members (ADR-0057 §12).
+- **`HudText` stays,** so existing projects still run. Each one is drawn as a text node in a HUD root the engine keeps, with today's look (re_ui's text gains egui's default family for it). WP35's PR "correctness" makes `ui.set_text` write `HudText.text` through the World at the call (B4); PR "luau" ports that binding to `UiText` too. Debug text (ADR-0057 §9) moves with the HUD. The goldens of the island, the valley and the town show HUD text; any that moves past its tolerance is re-recorded in this PR with the reason, reviewed by its owner.
+
+*9. Screens (PR "screens").* A title menu, a pause menu, a settings screen (bound to ADR-0059 §8's `settings` library and the ADR-0030 amendment's rebinding calls) and a results screen, each a prefab with a Luau module that wires its events, in the default theme. They live in `crates/re_ui/screens/`; `real new`'s templates copy them (WP44), and the town uses them (WP48's "menus and saves"). Each has goldens at two resolutions, and a replay walks the pause menu with a gamepad and presses a button.
+
+*10. Where the code goes, and what other owners are asked for.*
+- **WP36's:** `crates/re_ui/` (with the default theme and the screens); `re_compat/src/gui/` from PR "core"; `crates/re_app/src/ui/` (new, in place of `hud.rs`), called from `app/frame.rs` in Input (routing), LateFrame (binds and tweens) and Sync (build and layout), and from `App::draw_into` (painting); and `crates/re_script/src/api/ui.rs` (new: the `ui` library leaves `libs.rs`).
+- **Small PRs that others review:** `ScriptHost::ui()` and the line that installs the library (WP35); in `re_input` (WP37), `ActionMap::actions_using` over a `#[non_exhaustive]` `InputUse` (a button, a stick, mouse motion; a composite axis counts as its four buttons), which the routing uses to find the actions to block and to which WP37's "rebinding" adds the wheel and the triggers; the action filter's first part, `ActionFilter::apply(frame, off)` with the amendment's held-button latch and `reset()` (called by `world.restart()`), applied after the recorder has recorded the frame, which WP37's "rebinding" extends by joining the actions of disabled contexts to `off`; and typed text in `RawInput` if WP47's "gui input" has not added it; UI textures in `gfx.rs` (WP32); and the switch of `crates/re_app/src/compat.rs` onto the routing (WP47).
+- **Maintainer-reviewed:** the `ui` row of `ReplayDoc` version 2 (`re_types`); the UI components in `re_scene/src/components.rs`, with the scene and prefab schemas regenerated; `schemas/theme.schema.json` with its line in `re_cli/src/schema.rs`; and `[ui] theme` in `real.toml`.
+- **Doc changes requested,** in PR "core": the root `Cargo.toml` (`re_ui` in `[workspace.dependencies]`), `Cargo.lock` and `re_compat/Cargo.toml` (`re_ui` as a dependency), which the PR carries so that it builds; ARCHITECTURE §2 (re_ui in the crate graph) and §7 (`RE77xx`); `tools/xtask/src/graph.rs` (re_ui's rule) and `explain.rs`; the font paths in ADR-0035 and `docs/DEPENDENCIES.md`, now `crates/re_ui/assets/fonts/`; and the "(the compat fonts)" comment in `re_cli`'s notices, whose rule still finds the fonts under re_ui's `assets/`. In later PRs: ARCHITECTURE §4 (the `ui` library) and §8 (`[ui]`, the theme file and the replay's `ui` rows).
+
+*11. The PRs,* each with its goldens and the layout test, in this order unless a dependency is late:
+1. **"core"** (parts 1, 2 and 4), after WP31's #193 (the 10 MB budget) merges: built as CI builds it, the web runtime grows by 4,085 bytes gzipped (7,999,541 to 8,003,626), and main has 459 bytes left under 8 MB. The contract's core freezes here.
+2. **"input"** (parts 5 and 6), after the `App` split, WP47's "gui input" and WP35's "record" (version 2). It brings the action filter's first part, so it does not wait for WP37's "rebinding" (agreed with WP37). It routes the compat GUI, and native roots once "components" has merged; if its dependencies are late, "components" goes first.
+3. **"components"** (parts 3 and 7), after the `App` split. The components freeze here.
+4. **"luau"** (part 8), after "components" and "input", and WP35's "correctness" (`LateFrame`, the same-frame `ui.set_text`), "world" (event handles and their queue) and "events" (raising engine events).
+5. **"screens"** (part 9), after "luau", WP38's "prefabs", WP35's "spawn", and WP37's "settings" and "rebinding".
+
+*12. Not in M4.* Layout beyond compat's model (no flexible grow and shrink); text editing beyond appending, deleting and submitting; the clipboard; rich text beyond bold, colour and size; fonts for non-Latin scripts and string tables (`loc.t`), both stretch, as is a UI scale setting (a factor on every screen root, kept in the settings); native UI on surfaces in the world, and depth-tested world UI; accessibility beyond focus navigation; and a UI design canvas (the inspector and prefabs do that job).
+
+**Alternatives.**
+- *Immediate-mode Luau over egui* (`ui.window` and `ui.button` each frame; the gameplay audit's option B). Quick to build, but it looks like egui, costs Luau every frame, cannot be edited in the inspector or by commands and agents, and its input cannot replay as data.
+- *egui's own widgets as the game UI, styled.* egui sizes areas from the last frame, which is finding F30's wrapped HUD, and its widgets are not data in the scene.
+- *A layout crate such as taffy (flexbox and grid).* A second set of rules beside compat's, so two UI paths and two sets of goldens, plus a new dependency with its ADR and web size. Compat's scale-plus-offset sizes, anchors and automatic size do not map onto flexbox exactly.
+- *Text outside egui* (cosmic-text, or our own shaping). A second text stack in the runtime, and compat's text goldens would move.
+- *Native UI as compat Instances.* Native games have no Instance tree or compat VM, and components are how the editor, commands and agents edit everything else.
+- *The UI consuming raw keys before the action map.* Playback injects actions and never sees keys, so a replay would not block what the run blocked. WP37's filter on actions works the same in both.
+- *Recording raw pointer and keys only, and routing again in playback.* A replay would break when a button moved or a font changed, and D2 would depend on layouts matching to the point. Recording what was routed is what the action map does already.
+- *Components win over styles where set.* The closed field types have no optional number (ADR-0032), so every visual field would need a sentinel for "not set". Styles winning keeps every value explicit, and `RE7702` covers the surprise.
+- *The fonts staying in compat.* re_ui would then depend on compat, inverting the layers.
+
+**Consequences.**
+- One UI path: compat and native share layout, text, fonts and painting; compat's goldens and the layout test guard the core, and a fix to one is a fix to both. Compat's GUI step is already faster (17 to 27% in the spike's bench).
+- Native games get menus, HUDs, settings screens and dialogs as scene data: edited in the inspector, set by scripts and agents, recorded in replays, and laid out the same headless as in a window. A game's UI of a few hundred nodes costs well under a millisecond a frame, and headless runs now pay that too.
+- The compat GUI's input works in the app, through the same routing, and replays.
+- The web runtime: PR "core" moves code between crates and adds the plain tree compat now builds each frame, 4,085 bytes gzipped as CI measures it, so it waits for the 10 MB budget; every later PR reports its growth (ADR-0049 amendment).
+- egui 0.37, when the maintainer moves to it, touches re_ui's text and painting; compat's goldens, the native goldens and the layout test catch any change.
+- Other WPs: WP47 reviews PR "core", and its "gui input" lands before PR "input" and brings typed text; WP37 takes the blocked actions in its filter; WP35 reviews `ScriptHost::ui()`; WP32 reviews the UI texture registration; WP43's inspector shows the components as it shows any, with a picker on `UiImage.image`; WP44's templates copy the screens and its guide documents the library; WP48's town uses the screens.
+
 ## ADR-0059: Scenes, saves and settings: a named scene list, additive loading with kept entities, save slots and user settings in the data folder, all repeatable in verify runs and replays
 
 **Status:** Accepted (maintainer, 2026-10-28; drafted by WP37), for WP37 PRs "scenes", "saves" and "settings". The input half of WP37 (rebinding, contexts, one-dimensional axes) is ADR-0030's amendment for WP37 PR "rebinding", which this ADR's settings rely on for key bindings.
@@ -3724,6 +4772,635 @@ declare scene: {
 - The `data/seed/` folder now seeds native saves (`data/seed/saves/`) and settings (`data/seed/settings.json`) as well as compat's data; the two never share a path.
 - Stretch work stays possible on this design: saving physics state with WP34 adds a section to the save envelope under a new envelope version, and touch sticks in the browser are another input source in the amendment's terms.
 
+## ADR-0060: Prefabs v2 (nesting, variants and linked instances), change signals for scripts, and a bounded history
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP38). It covers the four WP38 PRs after PR "ids" (whose ADR-0036 amendment is accepted): "prefabs" and "instances" (§1 to §8), "signals" (§9) and "history" (§10). It builds on ADR-0017 (fragments, keys and overrides), ADR-0043 §3 (structural overrides), ADR-0044 (open documents) and ADR-0003 (operations). Points of contact agreed on 2026-10-28: WP35 (ADR-0057 §2 and §4: `World::instantiate` and the delivery of change signals), WP37 (ADR-0059 §4: `World::check_scene`), WP43 (ADR-0064: `World::load_prefab`, `World::save_prefab`, `validate_doc`, open documents read first, the `PrefabInstance.prefab` hint). Code references are to main at `c4c81ae`.
+
+**Context.**
+- **Prefab files today.** A prefab is a scene document with `"format": "real-engine/prefab"` and the scene's `version` (1) (`crates/re_scene/src/prefab.rs:49`). `PrefabFile::instantiate(registry, key_prefix)` turns it into a fragment keyed `<prefix>/<prefab entity id>`, and refuses any entity field that is not null: "entity references are not supported in prefabs" (`prefab.rs:73`). A prefab cannot contain another prefab, and there are no variants.
+- **Every use copies.** Prefabs are used by `points.instance` (`crates/re_proc/src/nodes/points.rs:240`, expanded at `crates/re_proc/src/eval.rs:1238`, which parents the prefab's roots under the item), by structural replacements and inserts (ADR-0043 §3; `crates/re_scene/src/structure.rs:253`, which needs one root and keys the rest `<key>/~<id>`), and by `real verify`, which instantiates each prefab once (`crates/re_app/src/verify.rs:265`). Nothing links what was placed to its file. A hand-authored scene cannot place a prefab at all, a game script cannot spawn one (sample finding F5), and a Luau fragment cannot place one (F6).
+- **Fingerprints.** A source's fingerprint hashes its generator, seed, version, structural overrides, parameters and the generator's `fingerprint_extra` (`crates/re_scene/src/procedural.rs:789`); the graph generator's extra is the graph document's hash and its version stamp (`crates/re_proc/src/generator.rs:340`). Prefab contents are in no fingerprint, so the App regenerates every procedural source when any `.prefab.json` changes (`crates/re_app/src/app.rs:2168`, `:2218`). A node's cache key does hash the bytes of the files the node names (`eval.rs:1003`), so `points.instance` re-runs when its own prefab changes; a nested file would be in no key.
+- **References at load.** `World::load` spawns in passes (`crates/re_scene/src/scene.rs:387`): ids, names, parents and overrides; then components, with entity references resolved among the ids that exist; then the generated entries of a snapshot, whose source must carry `Procedural` (`scene.rs:493`). Generated entities appear only at the next `regenerate_changed`, so an authored reference to one fails at load. Entity references are top-level fields: `re_reflect` has no entity inside a list, map or record.
+- **Overrides** (ADR-0017, ADR-0043 §3) live on the source in `Overrides`, by key: field, deletion, move, replacement, insert. `target` is required (`procedural.rs:239`). Keys with a segment starting with `+` or `~` are reserved for structural overrides, and generator output may not use them (`procedural.rs:969`). Field overrides are applied to the prepared values before anything is spawned; every survivor then gets every field written (`procedural.rs:1291`), whether or not it changed. `set_field` on a generated entity records an override on its source (`crates/re_command/src/op.rs:623`), despawning one records a deletion (`op.rs:533`), and `set_override` only stores (`op.rs:644`). `proc.move`, `proc.replace` and `proc.insert` accept only a `Procedural` source (`crates/re_proc/src/structure.rs:103`).
+- **Undo.** `Despawn`'s inverse is `Restore` with a `Snapshot` (`entities`, `generated`, `fresh`; `scene.rs:105`), which brings a subtree back exactly, generated entities included.
+- **Scripts.** `world.query(...)` walks every archetype and sorts on every call (`crates/re_script/src/api/world.rs:82`). Native scripts have no change signals. Compat's `Changed` uses ECS change ticks to find candidates and compares property values to confirm them (`crates/re_compat/src/signal/events.rs:532`). `re_scene` keeps tags indexed (`TagIndex`, `tags.rs`), but scripts have no `world.tagged`. ADR-0057 (accepted) fixes how engine events reach scripts: queued with `task.defer` threads and typed events, delivered at the next settle in the order raised (§2), and it builds `world.instantiate` on WP38's `World::instantiate` (§4).
+- **History.** `History` keeps every undo step, redo step and log entry for the whole session (`crates/re_command/src/history.rs:217`), and numbers log entries by the log's length (`history.rs:447`). The App makes `History::default()` (`app.rs:329`, `:3064`); the editor's console reads the log by sequence number (`crates/re_editor/src/editor.rs:657`), and agents with `log_since_jsonl`.
+
+**Decision.**
+
+**§1 The prefab file, version 2.**
+- **Format.** The same document as version 1 (`$schema`, `format`, `script_components`, `entities`, each entity an `EntityDoc` with its `overrides`), with `"version": 2`. `PREFAB_VERSION` is 2: `PrefabFile::from_json` reads 1 and 2, and `World::save_prefab` writes 2. A version 1 file is a version 2 file without instances or references, so nothing is migrated; the number only makes an M3 build refuse a file it would misread. Scene files stay at version 1: they gain a component, not a shape. The generated `schemas/prefab.schema.json` takes `version` 1 or 2 (`crates/re_cli/src/schema.rs:16`).
+- **`PrefabInstance { prefab: String }`**, a new built-in component registered by `re_scene`: the project path of a prefab file, with the `prefab` field hint (ADR-0064 §9). The path must pass `ProjectPath`'s checks (`re_core::files::ProjectPath::new`: relative, `/`-separated, no empty, `.` or `..` segment, no backslash or NUL); one that does not is refused with `RE1212` by `validate_doc`, by resolution and wherever an instance spawns, before any file is read. An entity that carries it is an **instance** of that prefab, and its `overrides` are the instance's overrides (§2, §4).
+- **Nesting.** A non-root entity of a prefab that carries `PrefabInstance` is a nested instance.
+- **Variants.** A variant is a prefab whose root is an instance of its base, with overrides on that root. It may add authored entities under its root or under any of its authored entities. There is no separate `base` field.
+- **Rules.** A version 2 prefab keeps these, with the codes of §11:
+  1. ids are valid authored ids (no `/`) and unique in the file; parents come earlier in the file;
+  2. one root: a prefab used as an instance (in a scene, nested, as a variant's base, by `World::instantiate`) has exactly one entity without a parent (`RE1214`). A fragment item (`points.instance`) may still use a file with several roots, as now;
+  3. no `Procedural` on any entity in M4 (`RE1215`; Alternatives);
+  4. no cycle: a prefab may not reach itself through nesting or bases (`RE1213`);
+  5. entity fields name entities of the prefab (§5; `RE1216`);
+  6. only instances carry overrides, and the overrides are well formed. This rule is checked in version 2 files; a version 1 file's entity overrides are ignored, as `PrefabFile::instantiate` ignores them today (§7).
+- **The validator.** `re_scene::prefab::validate_doc(&serde_json::Value) -> Result<(), String>` checks the format, the version, the `PrefabInstance` paths and rules 1, 2, 3, 5 and 6 within the file. It is pure (it reads no other file and needs no registry), so WP43 registers it for `*.prefab.json` documents. Cycles, other files' keys and unknown components are checked by resolution (§3), and reported where the prefab is used and by `real verify`.
+
+**§2 Keys.**
+- The entities of an instance are keyed (ADR-0017's `StableKey`) by where they come from in the prefab:
+  - the prefab's root is the instance itself, which has no key. In files, an override of the root is written without `target`; inside the engine its target is `""`;
+  - an authored entity of the prefab is keyed by its id: `bulb`;
+  - the entities of a nested instance `n` are keyed `n/<their key in n's prefab>`: `post/cap`. The nested root is `n`;
+  - a variant's base entities keep the base's keys (the root instance adds no segment), and the variant's own entities are keyed by their ids. So an override written against a base also fits each of its variants' instances. A variant id equal to a base key is refused (`RE1217`);
+  - the inserts and replacements of a prefab's own structural overrides keep ADR-0043's keys under the instance that holds them: `post/+lamp` for an insert, `post/cap/~bulb` under a replacement.
+- An instance's entity in a scene has the generated id `<instance id>/<key>` (ADR-0017): `door_1/hinge`, `door_1/post/cap`. Instance ids are authored, so the first `/` always ends the instance's id.
+- Keys are ids. Changing an entity's id in a prefab file changes its key, and the overrides on it become orphans: kept, and reported (`RE1209`), as ADR-0017's are.
+- In a prefab's own document, as `World::load_prefab` shows it, ids map to keys this way: the root's id to the root; `<root id>/<k>` (a variant's base entity) to `k`; an authored id to itself; `<n>/<k>` to `n/<k>`.
+
+**§3 Resolution and the prefab library.**
+- **`ResolvedPrefab`.** `World::resolve_prefab(path) -> Result<Arc<ResolvedPrefab>, SceneError>` flattens a prefab into `{ path, nodes: SceneFragment, closure: Vec<(String, [u8; 32])>, hash: [u8; 32], depth: u32, warnings: Vec<Diagnostic> }`:
+  - `nodes` holds every entity of the flattened prefab: the file's entities in file order, each keyed by §2 with a root keyed by its id, parents by key (a root has none). The entities a nested instance or a variant's base brings come right after the entity that holds them (the nested root, or the variant's root), in their own resolution's order;
+  - a variant's root node has its base root's components, with the root's overrides applied, plus the components authored on the variant's root, which replace those of the same name; a nested root likewise has its prefab root's components under its own authored ones, and keeps `PrefabInstance` (§4);
+  - `closure` lists every file read, itself first, each with the blake3 hash of the bytes read, and `hash` hashes the closure; `depth` is the limit's measure below;
+  - `warnings` lists the overrides inside the prefab that did not apply (a variant's override whose target its base no longer has), with `RE1209` naming the prefab file.
+- **Uses.** Every reader takes the same flattened nodes and places them one of three ways:
+  - **as an instance** (one root, `RE1214`): the root node's components except `Transform` are the linked components, and its name is the instance's name when none is given; every other node is the instance's output with its key unchanged, a parent key naming the root becoming none (under the instance);
+  - **as a fragment item** (`points.instance`, WP40's Luau items; several roots allowed): every node is re-keyed `<item key>/<key>` (`rekey_fragment`, §5), and the roots are parented under the item;
+  - **as a replacement or an insert** (ADR-0043 §3; one root): the root takes the override's key and every other node is keyed `<key>/~<its key>`, as `structure.rs:253` keys them today.
+- **Steps.** Check the path (§1). Read the file: the World's open document when it is open (ADR-0044), else the file through `SceneFiles`. Declare its script components. For a variant, resolve the base and apply the root's overrides to its nodes, as a source's overrides are applied to its output (field and deletion overrides on values, structural ones with `structure::apply_structure`; an override without target applies to the root). Add the file's authored entities in file order. Expand each nested instance from its own resolution, with its overrides applied and its keys prefixed `n/`. Turn entity references into keys (§5).
+- **Limits.** Nesting multiplies sizes (ten levels of ten instances each is ten billion entities), so resolution is bounded: a file an agent wrote, or a mistake, can neither overflow the stack nor hang the editor. Both limits are constants in `re_scene::prefab`:
+  - **depth** (`MAX_PREFAB_DEPTH`, 32): a prefab's depth is 1 plus the greatest depth of its base and its nested instances' prefabs. A deeper prefab is refused with `RE1219`, naming the chain of files. Resolution follows one chain of files at a time and stops as soon as the chain would pass the limit, so it never recurses deeper, whatever the library already holds; a file that is already on the chain is a cycle (`RE1213`);
+  - **size** (`MAX_PREFAB_ENTITIES`, 100,000): the nodes of one resolution, counting those its nested instances and its base bring. More are refused with `RE1220`, naming the prefab and the count. The count is checked before a nested resolution's or the base's nodes are copied in, so nothing is allocated for the rest. Nested resolutions come from the library, so a prefab used many times is resolved once.
+  - A graph's expansion also checks the source's `max_entities` budget (re_proc's `Budget`) before it copies a prefab's nodes into the fragment, instead of only after the whole fragment is built (re_proc, WP39 reviews).
+- **The library.** A `PrefabLibrary` resource caches resolutions by path, behind a lock, so that fingerprints, which read the World, can ask for hashes. `World::prefab_files_changed(&[String])` drops every entry whose closure holds one of the paths, and marks the instances that use them (§4). An open document is checked by its revision (bumped by every change, opening included; ADR-0044), so a `set_doc` on an open prefab, or opening or closing one, has the same effect at the next `regenerate_changed`. `World::prefab_hash(path) -> Option<[u8; 32]>` gives a closure's hash, resolving it if needed. The library is a cache: `World::fork` does not copy it, and a fork resolves again from the same open documents and files.
+
+**§4 Linked instances.**
+- **What an instance is.** An authored entity (not `Generated`) with `PrefabInstance`. It is the prefab's root:
+  - its **linked components** are the resolved root node's components except `Transform`, and except any component authored on the instance, which replaces a linked one of the same name. They are set from the prefab, with the instance's root overrides applied;
+  - its `Transform`, name, note, parent, sibling index and authored components are its own. So refreshing a prefab never moves a placed instance;
+  - the prefab's other entities are the instance's **output**: `Generated { source: instance, key }`, with ids `<instance id>/<key>`, under the instance in the prefab's order, after the instance's authored children (`order_generated_children`, as for a source);
+  - its `Overrides` hold the edits made to it, by key, applied as a source's are; orphans are kept and reported (`RE1209`).
+- **Refresh.** `World::refresh_instance(entity) -> Result<RegenReport, SceneError>` applies the resolved prefab with ADR-0017's diff: survivors keep their `Entity`, new keys spawn, vanished keys despawn. A refresh that changes nothing changes no value. A runtime `PrefabLink` component on the instance records which components are linked and the fingerprint of the last refresh (the prefab path, the overrides and the closure's hash).
+- **When it refreshes.** `World::regenerate_changed` refreshes instances in stable-id order, before it runs procedural sources. A candidate is an instance whose `PrefabInstance` or `Overrides` was written since its last refresh (ECS change ticks), or whose closure changed (§3). It is refreshed when its fingerprint differs from `PrefabLink`'s. An entity that lost `PrefabInstance` but keeps a `PrefabLink` loses its output and its linked components, as a source that lost `Procedural` loses its output; adding the component back brings the same ids back.
+- **Expanded at once.** Spawning an instance whose output is not spawned with it expands it in the same call: `World::load`, `World::spawn_docs`, the `entity.spawn` operation and `World::instantiate`. Its entities exist when the call returns, and references into them resolve (§5). A restore (undo) brings back the snapshot's output instead of expanding again: `Snapshot` and `Op::Restore` gain an optional `linked` list (each instance's id and linked component names), left out when empty, so logs without it read as before. An instance whose prefab cannot be resolved loads without its output and is reported with the resolution's code (`RE1212`, or `RE1213` to `RE1220`); a reference into its output then fails the load as a reference to any missing id does. `World::instantiate` and `entity.spawn` refuse such an instance instead.
+- **Saving.** `World::save` writes an instance as its `PrefabInstance`, its own `Transform`, its authored components and its overrides; neither its linked components nor its output are written. A canonical scene round-trips byte for byte, and an edit of the prefab reaches every scene that places it.
+- **Hash and fork.** `state_hash` covers what the instance is in the game: `PrefabInstance`, the linked values and the output are hashed like any entity. `PrefabLink` is not hashed, and `World::fork` copies it, so a play copy refreshes nothing that is up to date.
+- **Nested roots in an output.** The root of a nested instance keeps its `PrefabInstance` as a marker (the Inspector shows its prefab; WP43's "Open prefab"), but an output entity is never refreshed on its own: instances are `With<PrefabInstance>, Without<Generated>`. Setting `PrefabInstance` on a generated entity is refused (`RE2012`); a replaced override swaps a nested prefab.
+- **Edits** (operations, PR "instances"):
+  - `set_field` on a linked component of an instance sets the value and records an override without target on the instance, as `set_field` on an output entity records one on its source (the instance) today;
+  - `remove_component` of a linked component is refused (`RE2009`, hint: change the prefab, or unpack the instance). `add_component` adds an authored component;
+  - output entities are edited as generated entities are: deleting one records a deletion, renaming or re-parenting one is refused, and `proc.move`, `proc.replace` and `proc.insert` accept an instance as their source (re_proc's `source_entity`, WP39 reviews).
+- **At run time.** `World::instantiate` makes linked instances (ADR-0057 §4). A game script's writes to linked values or output entities are values, not edits, so they record no override: a live run that reloads a changed prefab refreshes its instances and resets those values, as a regeneration resets a source's output today. Replays and recording runs reload nothing (ADR-0057 §10). `World::despawn_runtime` suppresses an output entity by key, as it does for a source's.
+
+**§5 Entity references.**
+- **Inside a prefab.** An entity field names an entity of the same prefab: an id of the file, or a document id of an entity inside a nested instance (`post/cap`) or, in a variant, inside its base (`<root id>/<k>`) (§2's mapping). Resolution turns each into a key. A reference to anything outside the prefab is refused (`RE1216`): a prefab is placed in many scenes.
+- **In fragments.** ADR-0017's fragments gain one rule: an entity field of a node may hold the key of another node of the same output, as a string. `apply_output` resolves it to that node's entity once the output is spawned; a key that is not in the output (deleted, suppressed or unknown) becomes null, with `RE1209`. Whatever re-keys a fragment (a fragment item's prefix, a replacement's `~`, WP40's subgraph and `points.copy` prefixes in ADR-0061 §7) re-keys these strings with the nodes, through one function: `re_scene::procedural::rekey_fragment(&mut SceneFragment, &Registry, &dyn Fn(&str) -> String)` rewrites every node's key and parent key and every key string in an entity field, which it finds through the registry's schemas (a top-level field of type entity holding a string). A string that names no node of the fragment is left as it is. The lookup is public too, `re_scene::procedural::entity_refs_mut<'a>(node: &'a mut GenNode, registry: &Registry) -> Vec<&'a mut String>` (components the registry does not know are skipped), so WP40's per-item rewrite in `to_scene_fragment` shares it. Generators can use the rule too; `GenNode` does not change.
+- **Overrides.** An entity value in an instance's override is a scene reference (an id, as in a scene file). It is resolved after the output exists, so it may name the instance's own output (`door_1/hinge`), another instance's output or any authored entity.
+- **Into an instance.** A scene's reference to `door_1/hinge` resolves at load: instances expand after the first pass, before components are inserted (§4), and entity values in overrides are resolved once every instance of the load has expanded, whatever the order of the file.
+
+**§6 The World API** (`re_scene`, in `prefab.rs` and a new `instance.rs`):
+```rust
+#[derive(Clone, Debug, Default)]
+pub struct Instantiate {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub parent: Option<Entity>,
+    pub index: Option<usize>,
+    pub translation: Option<Vec3>,
+    pub rotation: Option<Quat>,
+    pub scale: Option<Vec3>,
+    pub overrides: Vec<OverrideDoc>,
+}
+
+impl World {
+    pub fn instantiate(&mut self, prefab: &str, opts: Instantiate) -> Result<Entity, SceneError>;
+    pub fn refresh_instance(&mut self, instance: Entity) -> Result<RegenReport, SceneError>;
+    pub fn resolve_prefab(&self, path: &str) -> Result<Arc<ResolvedPrefab>, SceneError>;
+    pub fn prefab_hash(&self, path: &str) -> Option<[u8; 32]>;
+    pub fn prefab_files_changed(&mut self, paths: &[String]);
+    pub fn load_prefab(&mut self, prefab: &PrefabFile) -> Result<Vec<Entity>, SceneError>;
+    pub fn save_prefab(&mut self, opts: SaveOptions) -> PrefabFile;
+    pub fn check_scene(
+        &mut self,
+        scene: &SceneDoc,
+        existing: Option<&BTreeSet<String>>,
+    ) -> Result<(), SceneError>;
+}
+```
+- **`instantiate`** resolves the prefab and checks everything before it spawns anything. It refuses when the root's id or any id the instance implies (`<root id>/<key>`) is taken, when an override names a key, component or field the prefab does not have, or when the parent does not exist. Then it spawns the root under `parent` at `index` (last when left out), with `id` (else one from the session's `IdGen`, ADR-0036 amendment), `name` (else the prefab root's), `PrefabInstance`, a `Transform` that is the prefab root's with the given parts replaced, and the overrides, and expands it. It returns the root. On any error nothing is spawned.
+- **`load_prefab` and `save_prefab`** hold a prefab file as a World for editing (ADR-0064). Its entities spawn with their ids; its instances (a variant's root, nested ones) expand as in a scene, so their entities are generated ones, `<instance id>/<key>`. `save_prefab` writes the authored entities, the instances and their overrides, at version 2, byte for byte for a canonical file. So editing a variant's base entity records an override on the variant's root.
+- **`check_scene`** (for WP37's loader, ADR-0059 §4) makes every check `World::load` makes (format, version, ids, parents, components and fields, the passes before spawning), plus each instance's prefab and the ids it implies. It spawns nothing, and it takes `&mut self` because it declares the file's script components, as `load` does.
+  - `existing` says which of the World's ids exist for the check. With `None`, every id the World has does (a scene added beside the loaded ones). With `Some(ids)`, only those do (a switch passes the ids of the kept subtrees, while the old scene, despawned only after the check passes, neither clashes nor resolves).
+  - References resolve among the document's ids, the ids its instances imply and the existing ids, which resolve to the World's entities. A document id, or an id an instance implies, that is an existing id is refused as a duplicate.
+  - WP37's loader removes the entities that kept ones stand in for, with their subtrees, from the document before calling it; a stood-in instance's implied ids are then among the existing ones, from the kept entity's subtree.
+- **`PrefabFile::instantiate`** stays, for a file without instances or references (version 1 behaviour), and refuses one that has them with `RE1212` and a hint to resolve it; its callers move to resolution (§7).
+
+**§7 Fingerprints: an edit regenerates what uses it, and only that.**
+- **Procedural sources.** `procedural::fingerprint` adds the closure hash of each prefab named by the source's replacements and inserts (re_scene).
+- **Graphs.** Fragment items with a prefab are expanded through resolution (§3's fragment-item use) in `to_scene_fragment` (`eval.rs:1238`) instead of `PrefabFile::instantiate`, so nesting and variants work in graphs. The item's path is resolved through the library, so an open document is seen first. The node cache stays right: a `points.instance` key hashes the bytes of the file it names, as now, and nested files are read at expansion, outside the cache. Expansion is part of assembling the fragment on the main thread, at apply time, and never runs in a node job, so evaluation never needs the World (agreed with WP39, whose off-thread regeneration moves only evaluation to the pool). WP40's Luau fragment items (F6) use the same expansion.
+- **Prefabs named at evaluation** (agreed with WP40; ADR-0061 §9 and WP40's ADR-0043 amendment §4 point here). A node's parameter, a graph parameter (`$param`), a point's tag that `points.copy` maps onto a kind's file parameter, or a Luau kind's prefab item can name a prefab, so the document alone does not say which prefabs an output uses. The rule: editing a prefab regenerates every source whose last output expanded it, however it was named.
+  - Expansion records, per source in the `GraphStore`, the paths of the prefabs the output expanded (the items' prefabs; their closure hashes cover nesting and bases), replacing the source's previous set each time its output is assembled. The store's clone copies the sets with the documents, so a play copy regenerates nothing that is up to date.
+  - The graph generator's `fingerprint_extra` adds `World::prefab_hash` of every prefab in the source's set, besides those its nodes name (`points.instance`'s `prefab` and `prefabs`). An edit changes the closure's hash, so the fingerprint changes and the source regenerates. A prefab that the next output uses for the first time can only come in through a change that already moves the fingerprint: the document, the parameters, the seed or a kind's implementation (the version stamp).
+  - `World::run_generator` stores the fingerprint as it is after the run, not before (re_scene; the maintainer reviews). Otherwise a run that changes the set, which every first generation of a source that expands a prefab does, would differ at the next `regenerate_changed` and run a second time. Nothing else a fingerprint reads changes during a run (WP40 checked the graph generator's inputs, ADR-0061's included).
+  - A streamed source's loaded cells are expanded too (`stream::finish`): each cell records its own set, and the manager's staleness check adds their hashes, so an edit also reloads the loaded cells that used the prefab (WP39 reviews).
+- **Today's prefabs give today's outputs.** A version 1 prefab (without instances or references, as every prefab in the repository is) resolves to the nodes `PrefabFile::instantiate` gives today: the same keys, order, names, parents and values (its entity overrides ignored, §1). §3's fragment-item and replacement uses place them exactly as `to_scene_fragment` and `structure.rs` place `instantiate`'s output today (instances are new). So every output made from today's prefabs is unchanged, and the examples' replays and goldens keep their `state_hash`. PR "prefabs" checks it: a test compares the two paths on every prefab in the repository, and `real verify` on every example and `cargo xtask d2` give the same hashes before and after. If any output changes after all, the PR lists the replays and goldens it re-records, with each hash before and after.
+- **The App.** `App::apply_file_changes` calls `world.prefab_files_changed(&paths)` instead of regenerating every source (after the maintainer's split, in its files module; the maintainer reviews). Editing a prefab then regenerates the sources whose fingerprints changed and refreshes the instances that use it, and nothing else.
+- **`real verify`** checks each prefab through resolution (paths, cycles, roots, references, components and the limits) instead of `PrefabFile::instantiate` (`verify.rs:265`; the maintainer reviews).
+- **The re_proc parts** of this section (the expansion, the recorded sets and `fingerprint_extra`, the cells' sets and the early budget check of §3) go in one small WP38 PR based on WP39's PR "hygiene", which WP39 reviews. Its tests include WP40's: a fragment item that names a prefab through a parameter value, an edit of that prefab (a file change, and a `set_doc` on its open document), and the source regenerating exactly once with the edited prefab's content in its output, so a node cache keyed without that content would fail it.
+
+**§8 Commands** (`re_command`; the prefab commands are WP38's):
+- **No new operation.** `entity.spawn` (`Op::Spawn`) gains an optional `overrides` (the `EntityDoc` list), so an instance spawns with its overrides in one operation. Its inverse stays the despawn of the root, which takes the output with it. The operation set stays closed (ADR-0003).
+- **`prefab.instantiate {prefab, id?, name?, parent?, index?, translation?, rotation?, scale?, overrides?}`** checks what `World::instantiate` checks, then applies one `entity.spawn`, and returns `{id, spawned}`. It is one undo step, and the log records the spawn with its id. Undo restores the world exactly, and redo makes the same ids.
+- **`prefab.revert {id, target?, component?, field?}`** removes the instance's overrides that match (all of them by default; `target: ""` for the root's) as `set_override` operations. The instance refreshes at the next `regenerate_changed`.
+- **`prefab.apply {id, target?, component?, field?}`** writes the matching field and deletion overrides into the prefab's document and removes them from the instance, in one transaction. The document is opened from its file when it is not open, as WP43's commands open theirs, and is written with one whole-document `set_doc`, which its validator checks.
+  - Each override lands in the file the instance names. One on an authored entity sets that entity's field. One whose key comes from a nested instance or from the base becomes an override on that nested instance, or on the variant's root. A deletion removes an authored entity, or becomes a deletion override there.
+  - Structural overrides, and entity values naming entities outside the prefab, are not applied: they stay on the instance and are listed in the result (`RE2010`).
+  - Every other instance of the prefab refreshes at the next `regenerate_changed`.
+- **`prefab.unpack {id, completely?}`** turns an instance into authored entities, as `proc.bake` turns a source's output. Its output entities take bake's ids (`<instance id>.<key with / as .>`, then `~2` on a clash), references to them are remapped, its linked components become authored, its overrides go (their values are in the entities), and `PrefabInstance` is removed. Nested instances stay linked instances unless `completely` is true. It is one transaction (despawns, spawns and field writes).
+
+**§9 Change signals, cached queries and `world.tagged`** (PR "signals").
+- **The Luau API**, in the `world` library (re_script; WP38's cross-owner PR, which WP35 reviews):
+  - `world.on_added(component, f(e: Entity)) -> Connection`;
+  - `world.on_removed(component, f(e: Entity, id: string)) -> Connection`;
+  - `world.on_changed(component, f(e: Entity)) -> Connection`;
+  - `world.cached_query(...components) -> Query`, whose `q:entities() -> { Entity }` is the list `world.query` gives, as a frozen table shared until the membership changes;
+  - `world.tagged(tag) -> { Entity }`, from the `TagIndex`, in `world.query`'s order (by stable id, then the entities without one).
+  - In every handler, `e` may no longer be alive by delivery (always so after a despawn); `id` names it all the same.
+- **Detection** (a new `re_scene` module, `watch.rs`, the maintainer reviews). The World watches only components that have connections, so nothing costs anything until a script connects. `World::watch(component) -> Tick` starts watching (or adds a connection to a watch) and returns the tick the connection starts at; `World::take_changes() -> Vec<ComponentChange>` returns `{ component, kind: Removed | Added | Changed, entity, id, tick }`.
+  - Added and removed come from lifecycle observers on the watched components (despawns included). Changed comes from ECS change ticks since the last take, confirmed by comparing the reflected values with the last take's, as compat's `Changed` does; the first connection to a component records the current values. So writing an unchanged value is no change, and nor is a value changed and changed back; this matters because `apply_output` writes every field of every survivor.
+  - Within one take: added then removed is neither; removed then added is removed, then added; added and changed is added; changed then removed is removed.
+  - The order is fixed: by component name, then removed, added, changed, then by stable id. Entities without a stable id are not reported.
+  - Each change carries the change tick it was made at. `watch` increments the World's change tick, and so does each take (as compat does), so a change made after a connection, or after a take, is newer than it.
+  - A watch ends at the first take after its last connection goes: its observers and recorded values are dropped.
+- **Who gets a change.** A connection gets only the changes made after it is made: a change is raised into the connections older than it. So `for _, e in world.query(c) do setup(e) end; world.on_added(c, setup)` sets up each entity once, whenever it was added (WP35's review).
+- **Detection points.** Each phase that runs native scripts (PreRender; PreSimulation and PostSimulation of each step; and LateFrame, ADR-0057 §7; PreAnimation runs only compat scripts) takes the changes in `run_phase`, after newly attached scripts start and just before the phase's callbacks, where WP35 queues engine events too. Each change is raised into every context with connections for its component, `game` first, through WP35's entry point for engine-raised deliveries (its PR "events"), queued with `task.defer` threads and typed events, and delivered at that phase's settle, after its callbacks, in the order raised (ADR-0057 §2). Engine-raised deliveries do not count towards `MAX_DEFERS_PER_DRAIN` (`RE3014`); only what scripts queue does.
+  - A handler's own writes are seen at the next point, so a handler that writes what it watches runs once per point, never in a loop.
+- **Cached queries** take their membership from the same observers, at the moment of the change: a handle rebuilds its list only after an entity gained or lost one of its components, so `q:entities()` equals `world.query(...)` even right after a spawn, despawn, add or remove in the same callback (a test in PR "signals").
+- **Cost.** One observer per watched component and event, and at each point a pass over the entities that have a component watched by `on_changed`. Each delivery runs in a Luau thread of its own, as every signal callback does. PR "signals" measures `on_changed("Transform")` over 10,000 entities and reports it; if threads dominate, WP35 can reuse threads for handlers that return without yielding.
+
+**§10 A bounded history** (PR "history").
+- **`[history]` in `real.toml`**: `undo_steps` (default 1000) and `log_entries` (default 10,000), each at least 1. `AppConfig` gains it (`crates/re_app/src/config.rs`; the maintainer reviews), and the App makes its `History` with `History::with_limits` (after the split). `History::default()` uses the defaults.
+- **Undo** keeps the newest `undo_steps` steps; a coalesced run is one step. The oldest step is dropped when a new one is pushed. Redo is unchanged: it never holds more than the undo it came from.
+- **The log** keeps at least the newest `log_entries` entries, dropping the oldest in batches of a quarter of the limit, so `History::log()` stays a slice.
+- **Sequence numbers** come from a counter instead of the log's length, so entries keep their numbers when older ones go. `History::first_seq()` gives the oldest kept. `last_seq` and `log_since_jsonl` are unchanged, so the editor's console and agents' polling keep working, and a reader whose last number is below `first_seq() - 1` can tell it missed entries.
+
+**§11 Diagnostic codes.** Each gets an explain page.
+- `re_command` (WP38's `RE2009`–`RE2049`): `RE2009` a linked component cannot be removed; `RE2010` an override that `prefab.apply` left on the instance; `RE2011` not a prefab instance; `RE2012` `PrefabInstance` set on a generated entity.
+- `re_scene` (WP38's `RE1212`–`RE1239`, granted by the maintainer): `RE1212` a prefab cannot be read or resolved (a path that fails `ProjectPath`'s checks, missing, not UTF-8, not valid, wrong format or version); `RE1213` a prefab cycle; `RE1214` a prefab without exactly one root; `RE1215` `Procedural` inside a prefab; `RE1216` a reference outside the prefab; `RE1217` a key clash; `RE1218` an override at instantiation naming a key, component or field the prefab does not have; `RE1219` nesting and bases deeper than `MAX_PREFAB_DEPTH` (32); `RE1220` a resolution over `MAX_PREFAB_ENTITIES` (100,000). A taken id stays `RE1201`, and an override not applied `RE1209`.
+
+**§12 Where the code goes.**
+- **PR "prefabs"**: §1 to §3 (the limits included), §5, §6, §7 and `prefab.instantiate` with `entity.spawn`'s overrides; instances are linked from this PR on, as ADR-0057 §4 needs, so it also expands, refreshes, saves and restores them. It shows that today's prefabs give today's outputs (§7). The re_proc parts of §7 go in a small PR that WP39 reviews.
+- **PR "instances"**: §4's edits through operations, `proc.*` on instances, `prefab.revert`, `prefab.apply`, `prefab.unpack` and the plan's acceptance tests (a nested variant's override survives an edit of its base).
+- **PR "signals"**: §9. **PR "history"**: §10.
+- WP38 owns `prefab.rs`, `ids.rs`, the new `instance.rs` and `watch.rs` and the prefab commands. The changes to other `re_scene` and `re_command` files (components, scene passes, `apply_output`, `fingerprint`, `regenerate_changed` and `run_generator`, `fork`, `op.rs`, `history.rs`) are WP0 code in maintainer-reviewed PRs; the re_app, re_cli and schema changes are maintainer-reviewed too.
+
+**Alternatives.**
+- **A container per instance**, holding the prefab's root as a generated child. Every placement would have an extra entity, scripts would find the root one level down, and a script that despawns the root would leave the container behind. Rejected: the instance is the root.
+- **Copies with a provenance record**, as today. Edits of a prefab would never reach what was placed, which the plan asks for. Rejected.
+- **Overrides as a diff of values**, computed at save against the prefab. An override is an edit someone made; a diff turns every prefab edit that happens to match an instance's value into an instance edit, and ADR-0017's records already have their tools. Rejected.
+- **A `base` field for variants.** A variant would have two ways to say what its root is. The root instance reuses instances, keys and overrides. Rejected.
+- **Root overrides targeted by the root's id.** Renaming the root in its file would orphan every root override. The root has no key. Rejected.
+- **Nested instances as instances of their own at run time,** each with its own `Overrides`. Overrides on a nested entity would be split between two entities, and an outer prefab's overrides on inner entities need one place. Flattening gives one source per placed instance. Rejected.
+- **Regenerating every source when any prefab changes**, as the App does today. It costs every source's generation for each edit, which WP43's prefab editing makes frequent. Rejected.
+- **Prefab dependencies kept on the source by `re_scene`**, with `prefab_files_changed` marking the sources that list a changed file. It needs a second path for open documents and for restored sources, while a fingerprint rule covers files, open documents, forks and restores the same way. Rejected, with WP40.
+- **Checking every instance's fingerprint every frame.** Hashing the overrides of every instance every frame, for nothing. Change ticks select the candidates. Rejected.
+- **Procedural sources inside prefabs.** An instance's output would hold a source whose output another regeneration owns, and overrides would nest two levels. No M4 consumer needs it. Deferred.
+- **A `refs` field on `GenNode`** instead of keys in entity fields. `GenNode` is a contract every generator uses; strings in entity fields stay inside `apply_output`. Rejected.
+- **A new `Op::Instantiate`.** The set of operations is closed (ADR-0003), and a spawn of an entity with `PrefabInstance` and overrides is the same thing, with the despawn as its inverse already. Rejected.
+- **Signals called from ECS hooks, at the write.** Hooks run inside ECS mutations, where Luau cannot run, and the order would follow internal write order. ADR-0057's deferred delivery holds. Rejected.
+- **Change ticks alone for `on_changed`.** Engine code writes values that do not change (`apply_output` writes every field of every survivor), so scripts would see changes that are not. Rejected.
+- **A history bounded in bytes.** An operation's size is known only by serialising it; counts are cheap and predictable. Rejected for M4.
+
+**Consequences.**
+- Prefabs are placed in hand-authored scenes as linked instances. A prefab edit reaches every scene, play copy and live run at the next `regenerate_changed`, and per-instance overrides survive it (orphans are reported).
+- Nested prefabs and variants work everywhere a prefab is read: instances, `World::instantiate`, `points.instance`, structural replacements and inserts, WP40's fragment items, WP33's render-only `points.instance` (which reads prefabs through resolution) and `real verify`. Together with WP35's `world.instantiate` and WP40's fragment items, F5 and F6 are closed.
+- Editing a prefab regenerates only what uses it, and everything that does: instances, sources that name it in their overrides or nodes, sources whose last output expanded it however it was named, and the loaded cells that used it.
+- Resolution is bounded (32 levels of nesting and bases, 100,000 entities), so no prefab file can overflow the stack or hang the editor.
+- Today's prefabs give today's outputs, so no replay or golden changes because of this ADR.
+- Prefab files are version 2, and an M3 build refuses them. Scene files stay version 1 and gain `PrefabInstance` and root overrides written without `target`. The generated schemas change with them.
+- The operation schema gains `entity.spawn`'s `overrides` and `restore`'s `linked`, both optional, so earlier logs and replays read as before.
+- Loading expands instances in the call. PR "prefabs" measures 1,000 instances of a 20-entity prefab and reports it.
+- An instance's root `Transform` is its own: moving a prefab's root in its file does not move placed instances (WP43's banner says so).
+- Changing an entity's id inside a prefab orphans the overrides on it, as in ADR-0017.
+- Scripts get change signals and cached queries in a fixed order, at no cost without connections.
+- A long editor session's history stops growing. An agent that falls more than `log_entries` behind loses old entries, and can tell.
+
+## ADR-0061: GraphDoc v2: graph params, declared inputs and outputs, graph kinds, nodes with several outputs, and point attributes
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP40; review in `research/m4/adr/reviews/wp40-adr-0061-and-0043-luau-kinds.md`). It amends ADR-0015 (a node kind may have several outputs, and may be a graph), ADR-0016 (graph files reach format version 2), ADR-0017 (StableKeys inside graph kinds and copies) and ADR-0043 §1 (`real migrate-graph` also upgrades the format). The Luau side is the ADR-0043 §4 amendment drafted beside it (`ADR-0043-amendment-wp40-luau-kinds-v2.md`). Its code is WP40's PRs "params", "subgraphs", "attributes", "copy" and "luau kinds", in that order (§12). The contract "GraphDoc v2" (M4_PLAN, "Cross-WP contracts") is §1 to §9 here and freezes at PR "params".
+
+**Context.** Facts in the code at `c4c81ae`:
+- **The document.** `re_types::graph::GraphDoc` is `{ format: "real-engine/graph", version: 1, name, seed, nodes, edges, layout? }` with `deny_unknown_fields`; a node is `{ id, kind, version, params }` and an edge `{ from: [node, port], to: [node, port] }`. `GraphDoc::validate` checks the format, `1 ..= VERSION`, unique ids and that edges name existing nodes. Node ids are not checked there; the `graph.*` commands keep them to `[A-Za-z0-9_-]+` (`re_proc/src/edit.rs`).
+- **One output per kind.** `NodeDef.output: PortType`; the port is named after its type (`field`, `mesh`, `points`, `fragment`, `shapes`, `path`) and `out` aliases it (`OUT_ALIAS`). `ProcGraph::validate` refuses an edge from any other port (`RE4002`). 28 Rust kinds register with `NodeSpec { output: PortType::… }`; a Luau kind declares one `output`. WP39's PR "layers" needs erosion to export flow and deposit beside its field.
+- **No interface.** A graph has no parameters of its own. Per-source tuning is `GraphSource.params`, the text `{"<node id>": {"<param>": value}}`, written by `graph.set_param { source, node, param, value }`; the editor's Procedural panel edits it as free JSON per node, and the template recipe `terrain-shape` sets `height.height` and `height.scale` by node id. So an agent, a recipe or a designer must know a graph's node ids and parameter names to tune it, and a rename inside the graph orphans every override. Builders hold their constants in Luau locals (the town's builder: rows, columns, spacing and ground level).
+- **No reuse.** A graph cannot use another graph. Reuse today is a Luau builder loop (the town makes one `project.street` node per street) or copying nodes by hand.
+- **Points** are `{ id: u32, position, normal, tag }` and nothing else; `points.instance` takes a random yaw and a random scale per point id, and a prefab per tag.
+- **Keys and seeds.** A node's key hashes its kind, recorded version, **id**, canonical params, its inputs' keys, its seed (when `uses_seed`), its files' contents, its implementation hash and its domain (`re_proc/src/eval.rs`, `node_key`). Its seed is `Pcg32::from_seed(graph seed).fork(hash64(id)).next_u64()`. The id is in the key because outputs carry it: fragment items are keyed `<node id>/<local key>` (ADR-0017), and a mesh's derived asset is named after its node's key (`MeshValue.asset = ctx.key`).
+- **Output assembly.** A source's fragment is every sink (a node no edge leaves) in document order: a fragment as it is, a mesh as one entity `<node>/mesh`; fields, points, shapes and paths add nothing (`Evaluation::fragment`, `sink_fragment_in`).
+- **Streaming** works on the document: `stream::source::prepare` applies overrides, refuses `whole` nodes, runs `check_streaming(doc, registry)` and splits a `terrain.chunks` graph (`split_terrain`), all by node id and kind.
+- **Elsewhere.** Houdini's digital assets, Blender's node groups and Unreal's PCG subgraphs agree on the shape of this feature: an interface of typed parameters separate from the inner nodes, explicit group input and output nodes, attributes as columns on points, and a "copy to points" that runs a subgraph per point with the point's attributes. This ADR follows them where they fit ADR-0015's keys and ADR-0017's StableKeys.
+
+**Decision.**
+
+*1. The document, version 2.*
+- `GraphDoc::VERSION` becomes 2, and the engine reads versions 1 and 2. A document is written at the lowest version that holds it: version 1 unless it uses something below, which needs version 2. Builders, the `graph.*` commands and `ProcGraph::to_doc` keep writing version 1 until a param, a port, a `kind` block, a `$in` or `$out` edge or a `$param` reference is added; the edit that adds the first one raises the version, and nothing lowers it. `real migrate-graph` writes version 2 (§10). A version 1 document means exactly what it means today and evaluates to the same keys and output; one that carries any of these is `RE4000`.
+- Four optional top-level fields, written in this order between `seed` and `nodes`, each left out when empty:
+  - `kind`: makes the file a node kind (§6);
+  - `params`: the graph's typed parameters (§2);
+  - `inputs` and `outputs`: its declared ports (§4).
+- Two reserved node names, `$in` and `$out`, appear only in edges: `["$in", "<input>"]` as an edge's `from`, `["$out", "<output>"]` as its `to`. `layout` may hold positions for them.
+- In a version 2 document node ids match `[A-Za-z0-9_-]+`, the rule the `graph.*` commands already apply (`GraphDoc::validate`, `RE4000`): `/` is reserved for the ids of expanded graph kinds (§7), and `$` for the two port nodes and the `$graph` key (§3). A version 1 document keeps any id it has, except one starting with `$` (`RE4000`); no graph in the repository has one, and the commands never allowed it. `real migrate-graph` reports an id that version 2 cannot carry and writes nothing. A graph whose expanded ids (§7) collide is `RE4000`.
+- A node param whose whole value is `{"$param": "<name>"}` is bound to a graph param (§2). Nothing else in a node's params changes.
+- Example: a kind graph that makes a painted post.
+
+```json
+{
+  "format": "real-engine/graph",
+  "version": 2,
+  "name": "post",
+  "seed": 0,
+  "kind": { "name": "project.post", "version": 1, "doc": "A painted post, centred on the origin." },
+  "params": [
+    { "name": "height", "type": "number", "default": 4, "min": 2, "max": 12, "doc": "Height of the post, in metres." },
+    { "name": "material", "type": "file", "default": "materials/iron.material.json", "extensions": [".material.json"], "doc": "The post's material." }
+  ],
+  "outputs": [ { "name": "post", "type": "fragment", "doc": "The post's entity." } ],
+  "nodes": [
+    { "id": "pole", "kind": "mesh.primitive", "version": 1, "params": { "shape": "cylinder", "radius": 0.08, "height": { "$param": "height" } } },
+    { "id": "painted", "kind": "material.assign", "version": 1, "params": { "material": { "$param": "material" } } },
+    { "id": "out", "kind": "fragment.merge", "version": 1, "params": {} }
+  ],
+  "edges": [
+    { "from": ["pole", "mesh"], "to": ["painted", "mesh"] },
+    { "from": ["painted", "mesh"], "to": ["out", "pole"] },
+    { "from": ["out", "fragment"], "to": ["$out", "post"] }
+  ]
+}
+```
+
+*2. Graph params.*
+- A declaration is `{ name, type, default?, min?, max?, values?, extensions?, doc? }`, in a list whose order is the order the inspector shows. A name is letters, digits and `_`, starts with a letter and is at most 64 bytes; names are unique.
+- The types and their JSON values:
+
+| `type` | Value | Extra fields |
+|---|---|---|
+| `number` | a finite number | `min`, `max` (inclusive) |
+| `integer` | a whole number, at most 2^53 in size | `min`, `max` |
+| `bool` | `true` or `false` | |
+| `string` | a string | |
+| `enum` | one of `values` | `values`: one or more distinct strings |
+| `vec2` | `[x, y]` | |
+| `vec3` | `[x, y, z]` | |
+| `color` | `[r, g, b]` or `[r, g, b, a]`, linear, as `re_reflect` reads colours | |
+| `file` | a project path, or `""` for none | `extensions`: the endings it accepts, as `[".prefab.json"]` |
+| `curve` | `[[x, y], …]`: 2 to 256 points with `x` strictly increasing; linear between them, flat outside | |
+
+- `default` must be a valid value. It is required in a graph without a `kind` block, so a source always has a value; in a kind graph a param without a default must be set by every instance (the kind's params schema lists it under `required`). `min > max`, a default outside the range, an `enum` without values and a malformed declaration are `RE4200`.
+- **Binding.** `{"$param": "<name>"}` as the whole value of a node param binds it. Before a node is migrated, checked or keyed, every reference is replaced by the param's value: the source's value (§3) or the instance's (§7), else the default. So a bound node has exactly the key it would have with that value written in, and binding an existing literal to a param whose default is that literal changes no key, no output and no D2 hash. A bound value migrates like a literal. When `real migrate-graph` upgrades a node with bound params, it migrates them with the graph params' defaults in place and keeps each reference where its param still holds that value (a graph kind's declarative `rename` moves the reference with the param); a step that drops or changes a bound value fails the file with `RE4020` naming the binding, so it is unbound or rebound by hand.
+- A reference to an undeclared param is `RE4201` (with a suggestion). A reference anywhere other than the whole value of a node param (inside a list or an object, in a per-source override, in a kind migration's `set`) is `RE4204`; in a version 1 document it is `RE4000` (§1).
+- **Checked when the graph loads.** Each bound node is checked with its param's default, `min`, `max` and every `enum` value substituted in turn; a refusal is `RE4203` ("graph param `height` allows 0 to 400, but `pole.height` refuses 0: …"), so a value the inspector offers never fails at regeneration.
+- Graph params bind node params only. They cannot add or remove nodes; a structural choice stays in a builder, or in `points.copy` (§9).
+
+*3. Values per source, commands, the inspector and recipes.*
+- A source's values for its graph's params live in `GraphSource.params` under the key `"$graph"`: `{"$graph": {"height": 6}, "hills": {"octaves": 7}}`. Node ids cannot start with `$`, so the key never names a node, and `GraphSource` (`re_scene`) does not change; the values are saved with the scene, fingerprinted with the params component and undone like any `set_field`, as overrides are today.
+- Precedence for a node param: a per-node override, else the source's graph param value when bound, else the graph param's default when bound, else the document's value. An override on a bound node param replaces the binding for that source; `graph.set_param` accepts it with warning `RE4212`, naming the graph param to set instead.
+- `graph.set_param { source, node?, param, value }`: without `node`, it sets the graph param `param` for `source` (`null` clears it). A value of the wrong type or out of range is refused (`RE4202`); an unknown name is `RE4201`. At regeneration, a stored value that no longer fits (the graph changed) is skipped with warning `RE4202` and the default is used, as `apply_overrides` skips a stale override today (`RE4011`).
+- **Read:** `graph.params { source }` or `graph.params { graph }` returns each declaration with its default, the source's value (if set), the value in use, and the node params bound to it. The inspector, recipes, `real graph eval --json` and agents use it.
+- **Write (document edits through `set_doc`, ADR-0044):** `graph.declare_param { graph, name, type, default?, min?, max?, values?, extensions?, doc? }` adds or replaces a declaration; `graph.remove_param { graph, name, unbind? }` refuses while the param is bound unless `unbind: true`, which writes its default in place of each reference; `graph.set_default { graph, node, param, value }` binds when `value` is `{"$param": name}` and unbinds when it is a literal. A document that gains its first param, port or kind block becomes version 2 in the same edit.
+- **The inspector.** The Procedural panel lists the source's graph params above its node overrides, each with a widget for its type and its `doc` as the tooltip, writing through `graph.set_param { source, param }`. PR "params" adds a plain version (a number field, checkbox, list or text per type); WP43's PR "parameters" replaces it with its typed widgets (sliders from `min` and `max`, colour and file pickers, curve editing).
+- **Recipes** name graph params instead of node ids. The terrain template's builder declares `height` and `roughness` and binds its nodes to them, and `templates/recipes/terrain-shape.toml` sets them with `graph.set_param { source, param }`.
+
+*4. Declared inputs and outputs.*
+- A port declaration is `{ name, type, required?, doc? }` (`required` for inputs only, default false). Names are letters, digits and `_`, unique per side. `type` is a port type name: `field`, `mesh`, `points`, `fragment`, `shapes`, `path`, `scalar` and `curve` (§8), and the types other WPs add (WP41's `polymesh`, WP33's instances). An input cannot be a `fragment`, as for Luau kinds. Bad declarations are `RE4205`.
+- `["$in", "<input>"]` feeds any number of node inputs whose types accept the input's type (`RE4003` otherwise). Each declared output takes exactly one edge into `["$out", "<output>"]` of exactly its type; none, two, or an edge naming an undeclared port is `RE4206`. An input may be wired straight to an output.
+- Only a kind graph (§6) declares inputs (`RE4205` otherwise). Any graph may declare outputs:
+  - **Without declared outputs**, a top-level graph's output is its sinks, as in version 1.
+  - **With declared outputs**, its output is the outputs of type `fragment`, `mesh` or `polymesh` (ADR-0062), in declaration order: a fragment as it is, a mesh as the entity `<producer node>/mesh`, a polymesh as ADR-0062 §6's entities (`<producer node>/mesh`, then `mesh.1`, `mesh.2` and so on, one per material part), keyed by the node that makes it, as for a sink, so declaring outputs on an existing graph keeps its StableKeys. Other nodes still run (the editor previews them) but add nothing. Outputs of other types are for `graph.inspect`, previews and kinds.
+- A kind graph must declare at least one output; only its outputs leave it.
+
+*5. Nodes with several outputs.*
+- A kind has an ordered list of outputs; the first is its **primary** output. `out` names the primary output, and an edge may name any output by name. A single-output kind is unchanged: one output named after its type. Edges already name ports, so the document shape does not change, and a version 1 document may use the extra outputs of a kind that has them.
+- `NodeDef` keeps `output` (the primary output's type, so every existing `NodeSpec` stays as it is) and gains `outputs: &'static [OutPortDef { name, ty, doc }]`. `NodeDef::new` makes single-output kinds as today; `NodeDef::new_outputs::<P>(spec, outputs, eval)` takes an `eval` returning one `Output` per declared output, in order (a wrong count or type fails the node, `RE4008`). `CustomKind` takes `outputs` in place of `output` (its only user is `re_script::generator`). `describe` adds `outputs: [{ name, type, doc }]` and keeps `output` as the primary one.
+- The evaluator keeps a node's outputs together in the memory cache under its key: of WP39's two keys ("hygiene": the identity key, which meshes and fragments are looked up by, and the cache key for the other types), a node uses its identity key when any of its outputs is a mesh, polymesh or fragment, and its cache key otherwise. On disk, the primary output stays at `<key>.bin`, so every existing entry stays valid, and output `i > 0` is stored at the hash of the key and `i`; a node is a disk hit only when every stored output loads.
+- Only the primary output counts as a sink output; another output adds to a graph's output only through an edge or `$out`. `NodeReport` adds `outputs: Vec<OutputInfo>`; `graph.inspect` (WP39) takes an optional `port`.
+- PR "subgraphs" ships it, so WP39's "layers" can give `terrain.erode` its `flow` and `deposit` outputs (a new version of the kind, whose primary output stays the eroded field).
+
+*6. Graph kinds (subgraphs).*
+- A graph file with a `kind` block is a node kind: `{ name, version, oldest?, doc?, migrations? }`. The instance node records the kind version it was written for, as for any kind.
+- **Where.** A project's kind graphs are the `*.graph.json` files under `graphs/kinds/` (subfolders included). They are declared with the Luau kinds, when the project loads and when one changes (`re_app::procedural::declare_generators`), and a re-declaration keeps the last good definition of a kind whose file has an error, as for Luau kinds. A `kind` block in a graph elsewhere is not declared (warning `RE4211`); that file can still be a source's graph, which is also how a kind is previewed on its own. The engine registers kind graphs embedded in its binary through the same public function (WP41's `building.house`, ADR-0062 §10), with engine names outside `project.`, after the Rust kinds; their implementation hash follows the rule below, so a changed embedded document never meets an older cache entry.
+- **Names** follow the Luau rule (ADR-0043 §4): `project.` then lowercase letters, digits, `_` and `.`; Luau kinds and kind graphs share one namespace, and an engine kind or a duplicate is refused (`RE4207`).
+- **Declaration order.** Rust kinds, then Luau kinds, then kind graphs in the order their uses need; kinds that use each other in a cycle are each `RE4208`; a kind graph that does not validate, or uses one that failed, is `RE4207` naming the cause.
+- **What the registry holds** for a kind graph: a `NodeDef` whose inputs, outputs and params schema are its declarations (params without a default are `required`), whose `check` checks param values against the declarations, whose migrations are its `migrations`, and which carries the kind's document for §7. Never evaluated itself, it is expanded before evaluation. The kind file's own `seed` is used only when the file is a source's graph (a preview); as a kind, its nodes' seeds come from the instance's (§7).
+- **Derived properties.** `uses_seed` is true when any node that reaches an output uses its seed (through nested kinds too). The streaming class, over the nodes that reach an output: `pointwise` if all are pointwise; `region` if all are pointwise or region; `global` if all are global; `whole` if any is; `cell` otherwise. A streamed source checks and streams the expanded graph (§7), so the derived class is what `describe`, the canvas and agents show; it decides nothing at evaluation.
+- **Implementation hash** (ADR-0043 §1, "version stamp"): `blake3("re_proc kind graph v1", doc_hash(kind document), and for each distinct kind used inside, in name order: its name and implementation hash)`. The inner nodes' recorded versions are in the document's hash. Editing the file, or any Luau or graph kind it uses at any depth, changes the hash, so the version stamp of every graph using it changes and its sources regenerate. Rust kinds contribute zeros, as they do to version stamps today.
+- **Versions.** Only the current content exists, as for Luau kinds: an instance written for an older version has its params migrated, then expands with the current content. A version step is declarative: `{ from, note?, changes_output?, rename?: {old: new}, remove?: [names], set?: {name: value} }`, applied in that order; a failure is `RE4020`. `oldest` refuses older instances (`RE4018`), and `real migrate-graph` upgrades instances like any node (ADR-0043 §1).
+
+*7. Expansion: ids, seeds, keys and StableKeys.*
+- `ProcGraph::from_doc` validates the document as written (a graph kind node has its kind's declared ports), binds its graph params, then **expands** every graph kind node, depth first:
+  - the instance's params are migrated, defaults filled in and checked, and bound into a copy of the kind's nodes;
+  - inner node `x` of instance `a` becomes the node `a/x`; deeper instances add segments (`a/b/x`);
+  - edges from `["$in", i]` come from whatever feeds the instance's input `i` (and are dropped when nothing does); edges out of the instance's output `o` (or `out`) come from the inner producer wired to `["$out", o]`;
+  - inner nodes that reach no output are dropped (warning `RE4210` when the kind is declared);
+  - at most 16 levels and 20,000 nodes after expansion (`RE4209`).
+- The expanded graph is what is evaluated, streamed (`prepare` expands first, so `check_streaming` and `split_terrain` see inner nodes by their own kinds), reported (`EvalReport.nodes` has `a/x`) and inspected (`graph.inspect { node: "a/x" }`). The canvas shows an instance as one node with its inner reports summed (WP43). Version stamps and fingerprints are computed on the document as written, where the kind's implementation hash covers its content.
+- **Seeds.** A node's seed comes from its id's segments: segment 1 from the graph seed, as today, and each further segment from the one before: `seed(a/x) = Pcg32::from_seed(seed(a)).fork(hash64("x")).next_u64()`. Top-level seeds do not change, and two instances of one kind get different seeds.
+- **Keys and node ids inside.** A node's keys (WP39's identity and cache keys) use its **local id** (its last segment) wherever they used its id, and `NodeCtx::node_id` is the local id. For a top-level node both are its id, so no existing key changes. Two instances with the same params, inputs and seed therefore have equal keys for every inner node: an evaluation computes each key once (the evaluator runs a key at most once, holding the others for its result), and later evaluations and other sources share it through the memory and disk caches; their meshes share one derived asset.
+- **StableKeys.** Inside an instance, outputs are keyed by local ids. A fragment that leaves an instance (to a consumer outside it, or as an output of the graph) has the instance's local id and `/` put in front of every key and parent key, once per level it leaves, and the consumer's key hashes that prefix when it is not empty. So an entity made by node `x` inside instance `a` is `<source>/a/x/<local key>`, which is `<node>/<inner key>`, and it does not depend on any seed: an override on it survives a change of the outer seed (ADR-0017).
+- **Entity references.** Each item records the prefix it has gained (its scope). Key strings in entity fields (ADR-0060 §5) are re-keyed where the component registry is, when the evaluation becomes a scene fragment (`to_scene_fragment`): a string `s` in an entity field of an item with scope `p` becomes `p` + `s` when that names an item of the output, found through WP38's helper for entity fields. `points.copy`'s prefixes (§9) add to the scope the same way.
+- **Overrides.** Per-source overrides name top-level nodes and graph params; `a/x` is refused (`RE4011`, hint: expose the value as a param of the kind). Entity overrides, deletions and structural overrides work on the StableKeys above.
+
+*8. Point attributes, scalar and curve ports.*
+- `Points` gains **attribute columns**: a map, sorted by name, from an attribute name to one column of `float` (f32), `int` (i32), `bool`, `vec2`, `vec3`, `vec4` or `quat` values, each as long as `points`. The column is ADR-0062's attribute column (`re_geom::poly::Column`, to which WP41 adds `quat`), so points and polymeshes share one attribute model and its names, and PR "attributes" follows WP41's PR "polymesh". `id`, `position`, `normal` and `tag` stay fields of each point, and every existing node's output is unchanged. `Points::new`, `select` (filters points and columns together) and `column` keep columns aligned; every kind that filters or reorders points uses them, and a test runs every points-to-points kind on attributed points and checks the columns follow their points.
+- Attribute names are lowercase letters, digits and `_`, starting with a letter, at most 32 bytes; `id`, `position`, `normal`, `tag`, `height` and `slope` are reserved. A name or type error is `RE4230`.
+- **Standard attributes**, which placement reads when present (WP39's `points.instance` in its PR "scatter", WP33's instance sets, `points.copy`, WP41's `poly.place`); WP39's scatter headings write `yaw`, and WP41's `path.sample` writes `yaw`, `tangent` (`vec3`) and `distance` (`float`):
+
+| Name | Type | Meaning | When absent |
+|---|---|---|---|
+| `scale` | `float` or `vec3` | multiplies the instance's scale | 1 |
+| `yaw` | `float` | turn about +Y in radians (`re_geom::math::quat_from_yaw`) | the node's own rule (random or none) |
+| `tilt` | `float`, 0 to 1 | how far +Y leans from straight up to the point's normal | the node's own rule |
+| `rotation` | `quat` | the whole rotation; wins over `yaw` and `tilt` | |
+| `variant` | `int` | which of a node's alternatives to place | 0 |
+| `color` | `vec3` or `vec4` | a linear tint, as ADR-0062's `color` (placement ignores alpha) | white |
+
+- **Port types** `scalar` (one f64) and `curve` (the `curve` value of §2), with `Output::Scalar` and `Output::Curve`; neither goes to the disk cache. Both are window-independent constants, so `check_streaming` accepts them from `global` nodes.
+- **New kinds** (in WP40 files under `crates/re_proc/src/nodes/`):
+  - `value.scalar { value }` and `value.curve { points }`: a scalar or a curve from params, which graph params can bind (global);
+  - `points.attribute { name, type?, source, value?, min?, max?, attribute?, curve?, mode? }` with inputs `points` (required), `field`, `curve` and `mask`: computes a value per point from `constant`, `random` (uniform between `min` and `max`, from `NodeCtx::random01` on the point id, as `points.filter` decides its density), `field` (sampled at the point as `points.filter` samples its mask, on the field's triangles), `height`, `slope` or another `attribute`; maps it through the curve when there is one (the port wins over the param); combines it with the existing value by `mode` (`set`, `add`, `multiply`, `min`, `max`); and, with a mask field, blends from the existing value (or the standard default) by the mask clamped to 0 to 1 at the point. "Scale by a mask" is `{ name: "scale", source: "field", … }` on a mask; "rotation by slope" is `{ name: "tilt", source: "slope", curve: … }` (cell);
+  - `field.expr { expr, size?, cell? }` with variadic inputs: a field from an expression evaluated per sample over input fields and scalars named by their ports, `x` and `z` (the sample's position in metres) and `pi`; operators `+ - * / %`, unary `-`, comparisons giving 1 or 0, parentheses; functions `abs min max clamp floor ceil round fract sqrt pow exp log sin cos lerp smoothstep step select`. It computes in f64 and rounds to f32. `+ - * / sqrt`, rounding and comparisons are exact in IEEE 754, `sin` and `cos` come from `re_geom::math::sin_cos`, and `pow`, `exp` and `log` from `libm`, already a workspace dependency and ADR-0036's choice, so the output is the same on every platform. The grid is the first field input's in port-name order (other fields are resampled by UV as `field.combine` does), else `size` and `cell`, else the window's when streamed. A parse error is `RE4005` at check time with the column; a non-finite result fails the node (`RE4231`) naming the sample. At most 1,024 bytes and 32 levels of nesting (pointwise);
+  - `field.blend { }` with inputs `a`, `b` and `mask`: `a + (b - a) * clamp(mask, 0, 1)` per sample (pointwise).
+
+*9. `points.copy`.*
+- `points.copy { kind, kind_version?, params?, attributes?, max_points? }` runs the graph kind `kind` once per point of its required `points` input and returns a fragment. Its other inputs are passed to the kind's inputs of the same names, checked against the kind's declared inputs when the graph loads (`RE4002`, `RE4003`, `RE4006`); a `NodeDef` hook lets a kind's accepted inputs depend on its params, used by this kind only. A kind that is not a graph kind, or has no `fragment`, `mesh` or `polymesh` output, is `RE4220`; a Rust or Luau kind is copied by wrapping it in a kind graph.
+- **Per point**, the kind graph is evaluated on its own (expanded as in §7, with its inputs set to the copy's inputs and their keys) with:
+  - params: `params` (written for `kind_version`, default 1, and migrated like an instance's), then the values that `attributes` maps from the point: `{ "<kind param>": "<attribute>" }`, where the attribute may also be `id`, `tag`, `height` or `slope`. A float or int fills a `number` or `integer` (whole values only), an int indexes an `enum`'s values, a `bool` or a non-zero number is `true`, a `vec2` fills a `vec2`, a `vec3` a `vec3` or `color`, a `vec4` a `color`, and `tag` fills a `string`, `enum` or `file`. A missing attribute or a refused value fails the node with `RE4222` naming the point id;
+  - seed: `Pcg32::from_seed(copy's seed).fork(u64::from(point id)).next_u64()`, the §7 rule with the point id as the segment.
+- **Output.** For each point, an entity `<node>/<point id>` with a `Transform` at the point: rotation from `rotation`, else `yaw` and `tilt` (leaning toward the normal), else none; scale from `scale`. Under it, the copy's `fragment`, `mesh` and `polymesh` outputs as in §4, keyed `<node>/<point id>/<inner key>`, which is the kind's own StableKey and does not depend on the seed. Points are copied in point order.
+- **Prefabs per point.** Mapping a point's `tag` onto a kind's `file` param lets each copy choose a prefab (for `points.instance` or a Luau kind's prefab item inside the kind). Such a name is known only at evaluation, so the prefabs a source's nodes name do not cover it. ADR-0060 §7 makes the rule general: the `graph` generator's fingerprint hashes (`World::prefab_hash`) every prefab the source's last output expanded, which the `GraphStore` records when the fragment is assembled, besides those its nodes name. Editing a prefab therefore regenerates every source whose output used it, however its name was chosen.
+- **Sharing.** Inner keys use local ids (§7), so copies with equal params, inputs and seed share their work, and when the kind does not use its seed the seed drops out of every key: a kind copied to 10,000 points with three distinct parameter sets is evaluated three times and placed 10,000 times. Copies run through `NodeCtx::evaluate(&ProcGraph, seed)`, which WP39's PR "scheduler" adds over hygiene's prepared `Plan` and `Evaluator::run` (the same memory and disk caches and budget, never evicting, deadlock-free on pool workers), with the copy's inputs and their keys given to the kind's `$in` inputs and one bound `ProcGraph` per distinct parameter set. They check the deadline and the cancel flag between points.
+- `max_points` (default 10,000, at most 100,000) bounds one node: more points is `RE4221`. A copied kind may hold a `points.copy` of its own, and the counts multiply, so every copy also counts, at every depth, against one limit per source evaluation: 100,000 copies, the most `max_points` allows. A `points.copy` output carries how many copies it holds (its points, plus the copies inside each point's copy); a node whose count passes the limit fails with `RE4221`, and so does the evaluation when its top-level copy nodes together pass it. The count is part of the output, so it is the same whatever the caches hold. The node is `cell` for streaming, like `points.instance`. Its key hashes the copied kind's name and implementation hash (a `NodeDef` "kind param", like `file_params`), and so does the graph's version stamp, so editing the kind regenerates exactly the sources that copy it.
+
+*10. Migration, schema and builders.*
+- `real migrate-graph` also rewrites version 1 documents as version 2: the `version` field, and nothing else in them changes. As before it upgrades every node to its kind's current version, all or nothing, and reports per source whether the output changes; `--format-only` upgrades the format alone. The report gains `format: { from, to }` per file.
+- PR "params" runs it with `--format-only` on the repository's graph files (`crates/re_proc/examples/island.graph.json`, `roads.graph.json` and `examples/valley/graphs/valley.graph.json`), and a test evaluates every graph file in the repository before and after, and every builder's graph (the island's, the town's and the terrain template's) as built and rewritten as version 2, and requires the same fragment hash and the same key for every node. The island's, plaza's, valley's and town's D2 hashes do not move.
+- `schemas/graph.schema.json` (generated by `cargo xtask schemas` from `NodeRegistry::graph_json_schema`) describes version 2: the four new fields, `$in` and `$out` in edges, and `{"$param": name}` allowed as any node param's value (each kind's params schema wraps every property in `anyOf [the property, ParamRef]`). A node's `kind` accepts `project.` names besides the engine's kinds, which the schema's `enum` refuses today although Luau kinds already use them. Version 1 documents still validate.
+- **Builders** (WP35's `re_script/src/api/proc.rs`, reviewed by WP35): `g:param(name, { type, default?, min?, max?, values?, extensions?, doc? })` declares a graph param with the fields of its JSON declaration and returns a handle; given as a node param's value, the handle records `{"$param": name}`. `g:output(name, from, { doc? })` declares an output and wires it from a node or port. Builders make sources' graphs, so they declare no inputs and no `kind` block: a kind graph is a file (§6). A builder that declares nothing makes a version 1 document, as today. Builders still record version 1 for a bare kind (ADR-0043 §1), and `engine.d.luau` declares the additions. Luau kinds' own `proc.param` gets the types of §2 in the ADR-0043 §4 amendment.
+
+*11. Diagnostics* (`re_proc`, WP40's range; each gets an explain page in `crates/re_proc/explain/`):
+
+| Code | Meaning |
+|---|---|
+| `RE4200` | A graph param declaration is invalid, or a graph without a `kind` block has a param without a default. |
+| `RE4201` | A reference, a `$graph` value or `graph.set_param` names a param the graph does not declare (an error for a reference; for a stored value, a warning and the value is ignored). |
+| `RE4202` | A graph param value has the wrong type or is out of range (refused by the command; a stored one is skipped with a warning and the default is used), or a bound param has no value (a kind's param without a default, given none). |
+| `RE4203` | A bound node param refuses a value its graph param allows. |
+| `RE4204` | `{"$param": …}` somewhere other than the whole value of a node param. |
+| `RE4205` | An input or output declaration is invalid (name, type, duplicate, a `fragment` input, inputs without a `kind` block). |
+| `RE4206` | A declared output has no edge or two, or a `$in` or `$out` edge names an undeclared port. |
+| `RE4207` | A kind graph cannot be declared: its `kind` block, its name (engine kind, duplicate), its versions or its content. |
+| `RE4208` | Kind graphs use each other in a cycle. |
+| `RE4209` | A graph expands past 16 levels or 20,000 nodes. |
+| `RE4210` | Warning: a node in a kind graph reaches no output and never runs. |
+| `RE4211` | Warning: a `kind` block outside `graphs/kinds/` is not declared. |
+| `RE4212` | Warning: a per-source override replaces a node param's binding to a graph param. |
+| `RE4220` | `points.copy` names a kind that is not a graph kind, or has no fragment, mesh or polymesh output. |
+| `RE4221` | `points.copy` has more points than `max_points`, or the copies of one source evaluation, at every depth, pass 100,000. |
+| `RE4222` | A point's copy cannot bind its params, or fails; the message names the point id. |
+| `RE4230` | An attribute name or type is invalid, or clashes with an existing column. |
+| `RE4231` | `field.expr` gives a non-finite value. |
+
+*12. Changes in other owners' paths, and the PR order.*
+- **Maintainer:** the `re_types::graph` additions, frozen-contract changes with defaults: the four fields (`KindDoc`, `KindMigrationDoc`, `ParamDoc` with a `ParamType` enum, `PortDoc` with the port type as a string, which `re_proc` checks), `VERSION = 2`, and `validate` for ids, the version 1 restrictions, unique names and the `$in`/`$out` edge rules. They go in WP40's PR "params", with `schemas/graph.schema.json` regenerated (`cargo xtask schemas --check` fails without it) and their tests, listed for the maintainer's review; the acceptance PR stays docs-only. The change is ready as `research/m4/wp40/re_types-graphdoc-v2.patch`. Each later WP40 PR that adds kinds regenerates the schema again. Later, through "Doc changes requested": ARCHITECTURE §5 (the document, graph kinds, several outputs, attributes, the new kinds) and §8 (`graphs/kinds/`).
+- **WP39** (re_proc's evaluator and commands), small edits in WP40's PRs, each listed in the PR for WP39's review:
+  - "params": `generator.rs` applies `$graph` values and passes the bound document on; `commands.rs` makes `node` optional in `graph.set_param` and registers the new commands; `edit.rs` accepts `$in`/`$out` edges and port names; `re_cli/src/graph.rs` gains `--format-only`.
+  - "subgraphs": `eval.rs` seeds by segments, keys by local ids, prefixes fragments leaving an instance, runs each key once, and keeps several outputs per node; `nodes/mod.rs` gains `OutPortDef`, `outputs`, `new_outputs`, the kind graph's document on `NodeDef` and `describe`'s `outputs`; `cache.rs` stores outputs after the first; `stream/source.rs` expands before it checks; `re_app/src/procedural.rs` declares kind graphs and reloads them.
+  - "attributes": `value.rs` (`Points` columns, which WP41 reviews too, `scalar`, `curve`), the points kinds moved to `Points::select`, `check_streaming`'s global rule, one registration line per new kind.
+  - "copy": the inputs-from-params hook and the kind param in the key (`NodeCtx::evaluate` itself comes with WP39's "scheduler").
+- **WP35:** the builder additions of §10 in `re_script/src/api/proc.rs` ("params").
+- **WP43:** the plain graph params list in the Procedural panel ("params"); `$in`/`$out` nodes and several output pins on the canvas ("subgraphs"), if WP43's own PRs have not added them first.
+- **WP44:** the terrain template's builder and the `terrain-shape` recipe ("params"); WP44's generated reference lists graph kinds with the others.
+- **Order.** "params" (after this ADR and WP39's "hygiene"; it carries the `re_types` change) → "subgraphs" → "attributes" (after WP41's "polymesh", for the column type) → "copy" (which binds attributes, so it follows them, though the plan lists it first; after WP39's "scheduler", for `NodeCtx::evaluate`) → "luau kinds" (after the ADR-0043 §4 amendment). `check_streaming`'s global rule changes in "attributes" (`scalar`, `curve`) and in WP41's "stream" (`polymesh`, `mesh`); whichever lands second rebases. WP39's "scheduler" makes `levels()` and `inputs_of` in `graph.rs` linear, for WP40's review. The contract freezes at "params"; later PRs add kinds and code, not document fields.
+
+**Alternatives.**
+- **Bindings listed on the param** (`{ "name": "height", "binds": [["pole", "height"]] }`). Rejected: the node's literal value would then be a lie, and moving or deleting a node would leave the list stale. An in-place reference is where a reader looks, survives node moves, and is what a builder writes naturally.
+- **Expressions in bindings** (`{"$expr": "height * 2"}`). Deferred: a second expression language over params, with its own determinism and error rules, for a case that two params or `field.expr` cover. It can come later as a new value form without changing this one.
+- **Graph param values in a new `GraphSource` field.** Rejected for now: it changes a `re_scene` component, every scene schema and the inspector's reflection for no gain over a reserved key in the text that already holds per-source values. Values and overrides then share one undoable `set_field`, one fingerprint and one regeneration path.
+- **Evaluating graph kinds as nested evaluations** (the instance node runs its inner graph through the evaluator, as `read` does). Rejected for subgraphs: the streaming code, `check_streaming`, `split_terrain`, the reports, `graph.inspect` and the scheduler would each need to see through instance nodes (an inner region node reading over another window would have to reach the outer graph through the instance), while expansion gives all of them an ordinary graph. Nested evaluation is kept where it is needed: `points.copy`, whose number of copies is known only from its input.
+- **Keeping full ids in keys inside instances.** Rejected: two instances would never share work, which the plan's acceptance ("evaluated once per distinct input") and a forest of copies both need. Local ids plus a prefix at the instance's edge give sharing without changing any top-level key.
+- **Local groups inside a file** (an unnamed subgraph). A non-goal of the plan ("visual groups beyond subgraphs"): every reusable unit is a kind with a name, a version and a hash.
+- **Kind graphs anywhere, recognised by their `kind` block.** Rejected: every graph file would have to be read and checked at load, and a source's graph could silently become a kind. One folder, as `scripts/generators/` is for Luau, is cheap to declare and easy to find.
+- **Attributes stored on each point** (`Point { …, attrs }`). Simpler for the nodes that clone points, but each point would carry a name and a tagged value per attribute, where a column costs 4 to 16 bytes per point; names would repeat per point in the disk cache, and Luau and instance sets would read them slower. Columns with `Points::select` and the alignment test keep the safety.
+- **An expression crate for `field.expr`** (evalexpr and the like). Rejected: a new dependency for a hundred lines of parser, with its own number semantics; the grammar here is small and fixed.
+- **Graph params that add or remove nodes.** Not offered: a node count is structure, and structure stays in builders and `points.copy`. A builder can still declare graph params for its values.
+
+**Consequences.**
+- Version 1 graphs, keys, seeds, outputs and D2 hashes stay as they are; caches stay warm except where the plan already invalidates them (WP39's canonical keys) and the one-time format bump for points with attributes.
+- Graphs get an interface: a designer, a recipe or an agent tunes `height`, not `pole.height`, and a kind's inside can change without orphaning a source's settings.
+- Kinds can be made of graphs, versioned and keyed by content, and copied per point with stable StableKeys; WP41's building generators and WP48's town can be kind graphs.
+- The evaluator handles more nodes: an instance adds its inner nodes to the graph, which WP39's linear `levels()` and dataflow scheduler are for. Copies are bounded by `max_points` and the existing budgets.
+- An inner node of an instance cannot be overridden per source; a kind's author exposes what should be tuned.
+- WP39, WP35, WP43 and WP44 carry small edits listed in §12, reviewed by them.
+
+## ADR-0062: Modelling kernel: an indexed n-gon `PolyMesh` with attribute columns in `re_geom`, the `poly.*` node kinds, and buildings from footprints
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP41). Its code is WP41's seven PRs, "polymesh", "extrude", "subdivide", "sweep", "uv", "stream" and "buildings", in that order (§14). The contract "The modelling port type `PolyMesh` and its attribute model" (M4_PLAN, "Cross-WP contracts") is §1, §3 and §6 here and freezes at PR "polymesh". Evidence: the spike `wp41-mesh-spike` in `research/m4/wp41/` (sources, raw output and `measurements.md`), two kernels that do the same four operations with the same arithmetic in the same order, timed on one core of this container (Intel Xeon @ 2.10 GHz) and hashed on five builds.
+
+**Context.** The M4 plan (WP41) asks for a pure-Rust modelling kernel in `re_geom`: an attributed polygon mesh with extrusion, insets, bevels, subdivision, sweeps, lofts and lathes, UVs in metres and colliders, bit-identical on the three platforms; and two showcase generators, buildings from footprints and placement along paths. Mesh booleans, a C++ kernel, sculpting and modelling by hand in the editor are non-goals. Facts found in the code at `c4c81ae`:
+
+- **What `re_geom` has.** Triangle meshes only. `primitives` (cuboid, UV sphere, cylinder, capsule, plane) and `ops` (normals, transform, merge) build `re_types::MeshData`. `polygon` has `Shapes`, polygons with holes in the XZ plane in f64 whose outer contours run counter-clockwise in `(x, z)`, with booleans and offsets on i_overlay's 1 mm integer grid and earcut triangulation; `road` samples paths in f64. The arithmetic follows ADR-0036: scalar `f32` and `f64` in a fixed order, `math::cross` and `math::normalize_or`, the polynomial `math::sin_cos`, no fused multiply-add. `GeomError` maps to `RE4500`–`RE4505`, and `NodeError: From<GeomError>` keeps the code.
+- **`MeshData`** holds 48-byte vertices (position, normal, uv, linear RGBA colour) and u32 indices, counter-clockwise seen from the front. There are no submeshes: an entity draws one `MeshRef` with one `MaterialRef` (WP32's "material slots" are texture slots).
+- **The procedural side.** `PortType` is `Field`, `Mesh`, `Points`, `Fragment`, `Shapes` or `Path`, with `Output` and `Output::size` beside it. A mesh output is `MeshValue { mesh, material, asset }`, its asset named `derived:<hex of the making node's key>`. An unconsumed mesh becomes one entity `<node>/mesh` (`sink_fragment_in`), and `fragment.merge` makes one entity `<node>/<port>` per mesh input. The disk cache stores outputs as a postcard `Stored` enum whose variants are only ever appended (`FORMAT_VERSION` 1).
+- **Matches on the port type that must see a new one.** Outside `re_proc`: `re_script::generator::marshal` (outputs to Luau and back) and `re_editor::canvas::colour`. Inside it: `value.rs`, `cache.rs`, `nodes/fragment.rs` and `tests/support/mod.rs`.
+- **Streaming.** `mesh.primitive`, `mesh.transform`, `mesh.merge` and `material.assign` are `Whole`, so a streamed source refuses them (`RE4301`, "does not stream"). A `Global` node may output only shapes or a path (`check_streaming`), and a `Cell` node's mesh is local to its window's corner. So a streamed source cannot use the mesh kinds today, and nothing places one mesh in many cells.
+- **Colliders.** `ColliderShape::Mesh` and `Convex` with a `derived:` source already resolve from the store's meshes (`re_app::procedural`); `Mesh` is static only (`RE5003`). Only terrain makes colliders in a graph.
+- **Points** are `{ id, position, normal, tag }`, with no tangent (F18). WP39's PR "scatter" adds headings, along a path's tangent among them. ADR-0061 (WP40's, accepted) adds point attribute columns, of this ADR's `Column` types (§3, agreed with WP40), with standard attributes (`scale`, `yaw`, `tilt`, `rotation`, `variant`, `color`), graph kinds, engine kinds made of graphs and `points.copy`, and lists WP41's `polymesh` among the port types other WPs add.
+- **Nodes cannot warn.** A node returns an output or fails. `NodeCtx::log` lines are text, and they are empty when the output came from a cache.
+- **The town today** (`examples/town`, #191) models its houses, shops and depot in Luau with `lib/meshb.luau`: boxes, panels proud of the walls for windows and doors, two-slope roofs with gable ends and chimneys, all flat-shaded with vertex colours and merged per block. WP48 moves the town to WP41's generators.
+- **Dependencies.** No property-testing crate is in the workspace. **proptest 1.12.0** (2026-10-10, the newest release; MIT OR Apache-2.0; MSRV 1.88; about 225 million downloads) with `default-features = false, features = ["std"]` adds four crates to the lockfile, `proptest`, `rand_xorshift` 0.5.0, `unarray` 0.1.4 and `core_detect` 1.0.0, all MIT OR Apache-2.0; its other dependencies (`rand` 0.10.3, `chacha20` 0.10.2, `regex-syntax` 0.8.11, `bitflags` 2.13.2, `num-traits` 0.2.19) are already there. No crate does the modelling for us: the half-edge crates are small or old (`halfedge` 0.3.0, 302 downloads; `hedge` 0.2.1, 2019, MPL-2.0); the straight-skeleton crates are GPL (`straight-skeleton` 0.2.1, GPL-2.0-or-later; `surfer2` 0.1.0, GPL-3.0-or-later) or a day old (`geo-straight-skeleton` 0.1.1, published 2026-10-27, 21 downloads); the 3D hull crates are tiny (`quickhull` 0.1.0, 151 downloads) or abandoned (`convex_hull` 0.2.3, 2018).
+
+**The spike.** Two kernels in one crate, written to give bit-identical output so that each checks the other:
+- *Indexed n-gon* (`ngon.rs`): point positions; faces as runs of one corner array, delimited by an offset array; one point index per corner; attribute columns per point, corner and face (the spike carries a face group and a corner uv). No adjacency is stored. An operation that needs it computes `Topo` (per corner its face, next, previous and twin; per point its first corner) in linear passes: a counting sort of the corners by point, then a search for each corner's twin among the corners leaving its edge's end. An edge used twice in one direction pairs with nothing.
+- *Half-edge* (`he.rs`): half-edges in pairs (a twin is its index with the low bit flipped), each with its origin, face, next and previous; one outgoing half-edge per point and one per face; boundary half-edges linked into loops. Extrude and inset splice a copy in place, Euler-style; bevel and subdivision build their output's connectivity directly, as half-edge kernels do.
+- *Operations*: region extrude along averaged point normals, with walls along the region's border; per-face inset with mitred corners, refused where a corner spikes or an inner edge turns back; single-segment bevel of every edge of a closed mesh (shrunk faces, edge strips and vertex caps); Catmull-Clark subdivision with the standard boundary rules; triangulation into `MeshData`'s 12-float vertices; and a chain of all of them (extrude the top, inset every third face, bevel, subdivide, triangulate), the half-edge chain starting from the polygon soup, as a graph node would.
+- *Inputs*: closed boxes of 1,536, 24,576 and 393,216 quads (`box16`, `box64`, `box256`), an open grid plane and a 64-sided prism.
+- *Checks* (`tests/equiv.rs`, 8 tests): the two kernels' outputs are equal field by field for every operation and chain; every output of a closed input stays closed and consistently wound; inset refuses a distance too large for a face; an extrude that builds its adjacency only around the selection gives exactly the full one's output; and a selection whose faces touch at a single point (a pinched region) behaves as described below.
+- *Both kernels size their outputs exactly before filling them*, so neither pays for growth. A first pass without that took 194.8 ms rather than 171.3 ms for the half-edge inset of `box256`, with a peak heap of 368 MB rather than 233 MB, and about twice as long for both kernels' extrude of its top; the table is the fair one.
+
+**Measured** (release build, one core; each cell is the median of three runs' medians, each run timing the row 5 to 101 times after a warm-up, as n-gon / half-edge milliseconds, with half-edge ÷ n-gon in brackets, so above 1 the n-gon mesh is faster; peak heap is above the input, from a counting allocator, in MB of 2^20 bytes):
+
+| Operation | `box16`: n-gon / half-edge ms | `box64` | `box256` |
+|---|---|---|---|
+| build from faces (n-gon: a copy) | 0.003 / 0.175 (58.33) | 0.110 / 1.78 (16.23) | 1.93 / 37.2 (19.28) |
+| n-gon full adjacency; half-edge copy | 0.106 / 0.005 (0.05) | 1.06 / 0.216 (0.20) | 18.5 / 3.36 (0.18) |
+| extrude the top (1/6 of the faces) | 0.182 / 0.053 (0.29) | 1.55 / 0.693 (0.45) | 28.4 / 11.1 (0.39) |
+| extrude scattered faces (a quarter, none touching) | 0.146 / 0.060 (0.41) | 1.85 / 1.41 (0.76) | 60.1 / 47.6 (0.79) |
+| extrude every face | 0.149 / 0.093 (0.62) | 2.55 / 1.66 (0.65) | 44.5 / 34.0 (0.76) |
+| extrude the top, n-gon adjacency around it | 0.047 / 0.034 (0.72) | 0.769 / 0.701 (0.91) | 12.8 / 11.2 (0.87) |
+| extrude scattered, adjacency around them | 0.068 / 0.061 (0.90) | 1.24 / 1.32 (1.06) | 51.1 / 50.0 (0.98) |
+| extrude every face, adjacency around it | 0.131 / 0.093 (0.71) | 2.14 / 2.11 (0.98) | 35.4 / 30.3 (0.86) |
+| inset every face | 0.302 / 0.464 (1.54) | 3.53 / 4.85 (1.37) | 110.9 / 171.3 (1.54) |
+| bevel every edge | 0.250 / 0.278 (1.11) | 4.53 / 5.45 (1.20) | 129.4 / 203.6 (1.57) |
+| Catmull-Clark, one level | 0.171 / 0.193 (1.13) | 3.02 / 3.96 (1.31) | 96.9 / 143.3 (1.48) |
+| triangulate to `MeshData` | 0.055 / 0.080 (1.45) | 0.994 / 1.33 (1.34) | 44.7 / 55.4 (1.24) |
+| the chain | 5.13 / 17.4 (3.39) | 214.3 / 315.4 (1.47) | 5,625 / 9,107 (1.62) |
+
+| Peak heap at `box256`, MB | n-gon | half-edge |
+|---|---:|---:|
+| the mesh at rest | 25.5 | 45.0 |
+| build from faces (n-gon: a copy) | 25.5 | 78.0 |
+| extrude the top (1/6 of the faces) | 57.8 | 53.4 |
+| inset every face | 135.5 | 233.0 |
+| bevel every edge | 131.5 | 193.5 |
+| Catmull-Clark, one level | 144.0 | 205.5 |
+| triangulate to `MeshData` | 81.0 | 112.0 |
+| the chain | 4,314.5 | 5,885.2 |
+
+The `box16` rows other than the chain take under a millisecond and vary by up to 66% between runs; on `box64` and `box256`, 46 of the 52 cells agree within 15% across the runs, and the widest spread is 44% (`box64`'s extrude of every face with adjacency around it). Which kernel is faster never changes between runs, except on two rows of the extrude with adjacency around the selection, where they tie. The second row is the n-gon's full `Topo`, and for the half-edge mesh a copy of the mesh, the first step of its in-place operations. The n-gon extrude spends most of its time building the full `Topo` (18.5 of `box256`'s 28.4 ms for the top). Built only around the selection (`extrude_local`, which gives the same output), it takes at most 1.17× the half-edge extrude's time on `box64` and `box256` (12.8 ms against 11.2 ms for `box256`'s top), and up to 1.41× on `box16`, a difference of under 0.04 ms. The chain's output is large (from `box256`, about 15 million faces and their triangles), hence its peak heap.
+
+**Hashes.** The spike's `hashes` command prints a blake3 hash (16 hex digits) of both kernels' outputs and of their triangulation for 20 cases (the input, each operation and the chain on `box16` and `box64`, and six cases on the prism and the plane): both kernels give the same output in every case, and the digest of all the lines is `115c198d5db93180`. It is identical, line for line, on five builds: Linux x86_64 optimised and unoptimised, aarch64 (linked by `aarch64-linux-gnu-gcc`, run under qemu-aarch64), Windows x86_64 (`x86_64-pc-windows-gnu`, run under Wine) and wasm32-wasip1 (the `web` profile at `opt-level = "s"`, run on Node 22 by a small WASI host in JavaScript, since Node's own `node:wasi` crashed on this build; `measurements.md` has the details). The aarch64 binary contains no fused multiply-add instruction (no `fmadd`, `fmsub`, `fnmadd`, `fnmsub`, `fmla` or `fmls` in its 99,333-line disassembly), so the macOS arm64 build, from the same LLVM back end and flags, rounds the same way. These are emulated platforms: `re_geom`'s first goldens, in PR "polymesh", on the `platforms` Windows and macOS checks and the `d2` job, are the confirmation on real ones (§12).
+
+**Robustness.** A half-edge mesh cannot hold a point where two face fans touch only at that point (a non-manifold point). Extruding a checkerboard of faces on a plane makes exactly that, four walls meeting on one vertical edge: the half-edge splice then corrupts its loops (its `check` fails with "next and prev disagree"), while the n-gon mesh stores the result as it is, a non-manifold polygon mesh that triangulation still draws. Modelling makes such shapes in passing: two facade openings recessed together that touch at a corner, or a lot pinched to a point.
+
+**Code size** (lines after `cargo fmt`, without comments and blank lines): the n-gon extrude is 84 (118 when it builds its own adjacency around the selection), inset 54, bevel 66, subdivide 103 and the adjacency 66, 373 in all; the half-edge extrude is 126, inset 92, bevel 152 (with its corner numbering), subdivide 199, plus its build from a polygon soup (63) and back (17), 649 in all. The exact-size copy each kernel's operations start from is 13 lines (n-gon) and 15 (half-edge).
+
+**Decision.**
+
+*1. `PolyMesh`, an indexed n-gon mesh (PR "polymesh"; frozen contract).*
+- In a new module `re_geom::poly`:
+  ```rust
+  pub struct PolyMesh {
+      pub positions: Vec<Vec3>,   // per point, in metres
+      pub face_start: Vec<u32>,   // faces + 1 offsets: face f is corners face_start[f]..face_start[f + 1]
+      pub corner_point: Vec<u32>, // per corner, its point
+      pub points: Attributes,     // columns as long as `positions`
+      pub corners: Attributes,    // columns as long as `corner_point`
+      pub faces: Attributes,      // columns as long as the faces
+      pub materials: Vec<String>, // material paths, indexed by the face column `material`
+      pub collider: ColliderKind, // None, Mesh or Convex (§9)
+      pub visible: bool,          // false: a collider only (§9)
+  }
+  pub struct Attributes { /* columns, sorted by name */ }
+  pub enum Column { Float(Vec<f32>), Int(Vec<i32>), Bool(Vec<bool>), Vec2(Vec<[f32; 2]>), Vec3(Vec<Vec3>), Vec4(Vec<[f32; 4]>), Quat(Vec<Quat>) }
+  ```
+- **Faces** are polygons with any number of corners (n-gons), counter-clockwise seen from the front, as in `MeshData`. A face has no holes; a polygon with holes becomes several faces (§7, `poly.from_shapes`).
+- **Valid** (`PolyMesh::validate`): `face_start` starts at 0 and every face has at least three corners; every index is in range; no face uses a point twice; positions are finite; every face's area vector is non-zero (collinear corners are allowed, §4); each column is as long as its domain and its name is valid; every `material` value indexes `materials` (0 with an empty table); faces, corners and points each number less than `u32::MAX`. Operations keep these by construction; tests and debug builds check every output.
+- **No stored adjacency.** `PolyMesh::topology()` computes a `Topology` (per corner its face, next, previous and twin; per point its corners, in corner order) as the spike's `topo` does. An edge used by more than two corners, or twice in one direction, has no twin, and every operation treats it as a boundary. Operations that change a selection build adjacency only around it (the spike's `extrude_local`); operations on the whole mesh (bevel, subdivision, normals) build it all. Nothing caches it on the mesh.
+- **Queries**: `is_closed` (every edge has a twin), `is_manifold` (also, each point's corners form one fan), `bounds`, `area` (half the length of each face's Newell vector, summed in f64 in face order), `volume` (closed meshes: signed tetrahedra of each face's fan against the bounds' centre, in f64) and `centroid`.
+- **Positions are `f32`**, as `MeshData`'s. Footprints arrive as `Shapes` in f64; the 2D work on them (lots, the straight skeleton) stays in f64 and rounds once, when it makes faces.
+- serde, and postcard in the disk cache.
+
+*2. Why an n-gon mesh.* It is 1.76× smaller at rest; free to make from the faces a node builds, where the half-edge build costs 16 to 58 copies; faster on inset (1.4× to 1.5×), bevel (1.1× to 1.6×), subdivision (1.1× to 1.5×), triangulation (1.2× to 1.5×) and the chain (1.5× to 3.4×, most at the small sizes buildings have); simpler (under 60% of the code); and it stores the non-manifold results modelling makes. The half-edge mesh wins only extrude, by its in-place splice: by at most 1.17× on `box64` and `box256` once the n-gon extrude builds its adjacency around the selection, and by up to 1.41× on `box16`, under 0.04 ms. Its in-place edits save least here: every node's input is an immutable shared value (`Arc`), so a half-edge node copies its input before it splices.
+
+*3. Attributes (frozen contract).*
+- Three domains: point, corner and face. A column is `float` (f32), `int` (i32), `bool`, `vec2`, `vec3`, `vec4` or `quat` (a unit quaternion). Names follow ADR-0061's point attributes: lowercase letters, digits and `_`, starting with a letter, at most 32 bytes; `position` is reserved. `Column` is also the type of ADR-0061's point attribute columns (agreed with WP40), so points and meshes share one set of types and the standard names where they overlap (`color`); no M4 mesh operation reads a `quat` column, and points use it for `rotation`.
+- **Standard attributes**, which triangulation and every operation read and keep:
+
+  | Name | Domain | Type | Meaning | When absent |
+  |---|---|---|---|---|
+  | `uv` | corner | `vec2` | texture coordinate in metres (§8) | 0 |
+  | `normal` | corner | `vec3` | shading normal | the face's own: flat shading |
+  | `color` | point, corner or face | `vec3` or `vec4` | linear vertex colour, alpha 1 for `vec3`; a corner's wins over its point's, a point's over its face's | white |
+  | `material` | face | `int` | index into `materials` | 0 |
+  | any other `bool` column | face | `bool` | a group: a named selection that operations act on | |
+
+- **Groups are `bool` face columns.** Point and corner `bool` columns are allowed, but no M4 operation selects by them. Every operation on part of a mesh takes `group`, a face group's name (empty: every face), and every operation that makes faces takes the names of the groups it puts them in (`side_group`, `cap_group` and so on), with defaults its kind documents. A missing group is `RE4150`.
+- **How attributes follow operations.** Each operation's documentation states its weights, and a property test checks that every operation keeps every column, with its type and domain:
+  - a new point takes its source points' float columns blended with the operation's weights (an extruded or inset copy copies; a subdivision edge point averages its edge's ends; a face point averages its face's points); `int`, `bool` and `quat` columns take the value of the source with the largest weight, ties going to the lowest index;
+  - a new corner takes its source corners' values the same way;
+  - a new face copies its source face's columns (a wall, ring or strip copies the face it came from), then the operation sets its output groups;
+  - `uv` follows §8 where an operation makes new surface (walls, rings, strips, caps, sweeps).
+
+*4. Refusing bad output.*
+- Every operation checks what it can break, and refuses with a diagnostic rather than emit a broken mesh:
+  - inputs it cannot use: a non-finite or out-of-range parameter (`RE4510` from the `re_geom` API; a node's `Params::validate` refuses it first with `RE4005`), a group that does not exist (`RE4150`), an open or non-manifold mesh where it needs a closed or manifold one (`RE4512`);
+  - local failures: an inset or bevel corner that spikes or an inner edge that turns back (`RE4513`), a face it would leave with zero area (`RE4511`);
+  - self-intersection, for the operations that move or make faces (extrude, inset, bevel, sweep, loft, lathe): `re_geom::poly::intersections` tests the faces the operation made against every face, through a uniform grid of face bounds and triangle-against-triangle tests in f64, skipping pairs that share a point. Only faces whose interiors cross count (`RE4514`, naming two faces); faces that touch along an edge or at a point do not, so coplanar neighbours, such as a facade's split faces, never make an operation refuse itself;
+  - size: no output over 16,777,216 (2^24) corners or points (`RE4515`), which bounds a node's memory at a few hundred megabytes. Each operation first computes its output's exact size, as the spike's operations do, and checks it before allocating anything, so a four-level subdivision of a large mesh is refused at once, not after hundreds of megabytes.
+- **No T-junctions.** An operation that splits a face (the facade's module columns and rows, §10, and any later one) also inserts each new point that lies on one of the face's edges into the neighbouring face across that edge, in order along the edge. Every edge then keeps its twin and none ends partway along another, so a closed mesh stays closed. The neighbour gains collinear corners, which are valid, since §1 asks only that a face's area be non-zero, and triangulation handles them (§5).
+- A non-manifold result that is otherwise valid (the spike's pinched extrude) is kept: the mesh stores it, triangulation draws it and `is_manifold` reports it. Operations that need manifold input treat a non-manifold edge as a boundary.
+
+*5. Triangulation (PR "polymesh").*
+- `PolyMesh::to_meshes()` gives one `MeshData` per material its faces use, in `materials` order (one part with no material when the table is empty).
+- A face whose fan from its first corner has every triangle facing the face's way (every convex face, and some others) is fanned from that corner. Any other face is ear-clipped on its projection along its Newell normal's largest axis, in f64, taking ears in corner order; one that cannot be triangulated (its boundary crosses itself) is `RE4505`, the existing code.
+- **Collinear corners** (§4) need nothing special. A fan from a corner next to them would have a zero-area triangle, which does not face the face's way, so such a face is ear-clipped; an ear is cut only where its corner is strictly convex and no other corner lies inside it or on its edges, so no zero-area triangle is made.
+- A corner's vertex is its position, its `normal` (normalised) or else the face's unit Newell normal, its `uv` and its `color`. Corners of one part with bit-identical vertices share one vertex, numbered in corner order (a hash map used for lookups only).
+- Shading is flat unless the mesh carries `normal`: primitives with curved surfaces write it, and `poly.normals` computes it (§7).
+
+*6. `polymesh` in `re_proc` (PR "polymesh"; frozen contract).*
+- `PortType::PolyMesh`, named `polymesh`, and `Output::PolyMesh(Arc<PolyMesh>)`; `re_proc::value` re-exports `re_geom::poly::PolyMesh`. `Output::size` counts corners, and its bytes.
+- The disk cache stores it as a new `Stored` variant, appended at the end, with no format change. Like a mesh or a fragment, and unlike the outputs WP39's hygiene PR caches under a canonical key, it is cached under its node's key (`lookup_key` in `eval.rs`).
+- **As a graph's output** (unconsumed, or into `fragment.merge`): one entity per material part, keyed `<node>/mesh` for the material table's first entry and `<node>/mesh.<i>` for entry `i` (i from 1). A part with no faces makes no entity, and `poly.material` keeps the table compact: entries no face uses are dropped, and a table holding only the default material is emptied. Each entity has a `Transform`, a `MeshRef` to `derived:<hex>`, a blake3 hash of the triangulated part's contents (the sink sees only the output, never the node's key, so equal parts share one mesh), and the part's `MaterialRef`. In a streamed window the entities sit at the window's corner, as a mesh's does. `fragment.merge` names them `<node>/<port>` and `<node>/<port>.<i>`. Colliders and `visible` are §9.
+- `poly.to_mesh` turns a polymesh into a `mesh` (every face, or one material's), for nodes that take meshes, such as WP33's instance sets.
+- **Elsewhere**, each a few lines in its owner's file within PR "polymesh", for the owner to review (§13): `re_script`'s marshal refuses `polymesh` ports, so a Luau kind cannot declare one in M4 (`RE4100`, as ADR-0061 says); the editor's canvas gives the port a colour; and WP39's `inspect` statistics gain a variant (faces, corners, points, materials, groups and bounds), its mesh thumbnail triangulating the polymesh.
+
+*7. Node kinds.* In new files under `crates/re_proc/src/nodes/` (`poly.rs`, `building.rs` and helpers), registered by one line each in `NodeRegistry::m1()`. Every kind is a pure function of its params and inputs, `uses_seed: false` unless noted, and global for streaming except `poly.place` (§9). Params follow ADR-0044's WP43 amendment (accepted): ranges, a default for every property, and `x-real-asset` on material paths.
+- **"polymesh"**:
+  - primitives, each writing `uv` in metres, smooth `normal` on curved faces and groups (`top`, `bottom`, `side` and so on): `poly.box { size, radius, segments }` (a box with rounded edges and corners; radius 0 gives six quads), `poly.icosphere { radius, subdivisions }`, `poly.cone { radius, top_radius, height, segments, caps }` (cylinders and frustums too), `poly.torus { radius, tube, segments, sides }`, `poly.stairs { steps, width, rise, run }` (a closed solid) and `poly.arch { span, rise, thickness, depth, segments }`;
+  - `poly.transform { translation, rotation, scale }` (`normal` follows by the inverse transpose, renormalised; a negative determinant rewinds faces), `poly.mirror { axis, offset, keep }` (reflects positions and `normal` and rewinds; `keep` also keeps the original and welds the two on the plane), `poly.weld { distance }` (merges points closer than `distance`: each point, in index order, joins the lowest-indexed earlier point within the distance and takes its position, and a grid serves only the lookups; a face that loses corners shrinks, and one left with fewer than three goes), `poly.flip { group }`, `poly.merge` (variadic, in natural port order; columns are unioned, values a mesh lacks take the column's default, and material tables are unioned in order);
+  - `poly.group { name, by, … }` (a face group from faces facing within an angle of a direction, inside a box, of a material, in an index range, a random fraction, which uses the seed, or other groups' union, intersection or complement), `poly.material { group, material }`, `poly.attribute { domain, name, value, group }` (a constant: the colours of flat-shaded buildings), `poly.from_mesh` (which shares points of equal position, counting -0 and 0 as equal) and `poly.to_mesh`.
+- **"extrude"**: `poly.extrude { group, distance, mode, side_group, top_group }` (`region`: faces sharing edges move together along their points' averaged normals, with walls only on the region's border; `faces`: each face on its own, along its normal), `poly.inset { group, distance, mode, ring_group }` (`faces` or `region`), and `poly.bevel { group, width, angle }` (one segment, on the edges of the group's faces whose faces meet at more than `angle`; 0 bevels every edge), with the refusals of §4.
+- **"subdivide"**: `poly.subdivide { levels }` (Catmull-Clark, up to 4 levels, with the spike's boundary rules: a boundary edge's point at its middle, a boundary point smoothed along the boundary), `poly.normals { angle }` (corner normals averaged, weighted by corner angle, over the faces around a point that meet across edges at less than `angle`; sharper edges, boundaries and material borders stay creases; 0 is flat and 180 smooth) and `poly.triangulate { group }`.
+- **"sweep"**:
+  - `poly.from_shapes { height, top_group, bottom_group, side_group }`: each shape a solid with walls, a top and a bottom; a shape without holes gets one n-gon top and bottom, a shape with holes earcut triangles, which `region` operations treat as one region;
+  - `poly.loft { heights, points, caps }`: variadic `shapes` inputs, each a section resampled to `points` points by arc length, stacked at `heights`;
+  - `poly.sweep { profile, twist, scale, caps }`: a profile along a `path` input, framed by rotation-minimising frames (the double reflection method, only `+ - * /` and `sqrt`), with `twist` in degrees over the path and `scale` at its end, linear (ADR-0061's `curve` inputs in a later version, once WP40's "attributes" has merged);
+  - `poly.lathe { profile, segments, angle, caps }`: a profile in the XY plane, x the radius, turned about +Y;
+  - profiles come from a `shapes` input's first contour or from the `profile` param's list of 2D points;
+  - `path.sample { spacing, offset, start, end }`: points along a path every `spacing` metres from `start` to `end`, `offset` metres to its left, numbered from the path's start, with ADR-0061 attributes `yaw` (turning the instance's +X along the path), `tangent` (`vec3`) and `distance` (`float`, metres along the path). It needs ADR-0061's point attributes, so it lands in the first WP41 PR after WP40's "attributes" (§14). With `points.instance`, `points.copy` and `poly.place` it is the plan's placement along paths: fences, walls, posts and lamps.
+- **"uv"**: `poly.uv_box`, `poly.uv_planar` and `poly.uv_cylinder` (§8).
+- **"stream"**: `poly.hull` (the convex hull of a mesh's points as a closed mesh: quickhull in f64, ties broken by point index), `poly.collider { shape, visible }` and `poly.place` (§9).
+- **"buildings"**: §10.
+
+*8. UVs in metres.*
+- A projection writes `uv` as the projected distance in metres divided by its `size` param (default 1 m), so that with the default a texture repeats once per metre on every mesh. `poly.uv_box` projects each face along the axis nearest its normal (ties to x, then y, then z), `poly.uv_planar` along a given direction, and `poly.uv_cylinder` around an axis, with u the arc length at the face's radius (texels stay square) and the seam unwrapped so that no face spans it.
+- Primitives write box-projected UVs in metres. Operations that make surface give it UVs in metres too: an extrusion wall gets u along the region's border loop (metres from the loop's first corner) and v up the wall; inset and bevel points in a face's plane take uvs from that face's own mapping (the affine map from position to uv that its corners define), so a texture stays where it was and the rings and strips between continue it; sweeps, lofts and lathes get u around the profile and v along the path. Other operations blend `uv` as §3 says. PR "uv" adds a test that runs every operation on projected meshes and checks that `uv` stays continuous across shared edges and in metres.
+
+*9. Streaming, placement and colliders (PR "stream").*
+- **Global meshes.** `check_streaming` (WP39's file, reviewed by WP39) lets a global node output `polymesh` and `mesh` as well as shapes and a path (and ADR-0061's scalar and curve). Every `poly.*` kind but `poly.place`, and every `building.*` kind, is global; `mesh.*` and `material.assign` could become global the same way, which is WP39's call. A global mesh is made once, keyed without a window, so every cell shares it through the memory and disk caches, and, as one derived asset, on the GPU.
+- **`poly.place { name }`**, a cell node with inputs `points` and `mesh` (a polymesh): for each point in the window, an entity `<node>/<point id>` at the point, turned and scaled by ADR-0061's standard attributes (`rotation`, else `yaw` and `tilt`; `scale`) as `points.copy` reads them (at the point's position only, until WP40's "attributes" has merged), with one child per material part, keyed as in §6, drawing the shared derived meshes. It is the cheap path for identical copies; `points.copy` (WP40) is the one for copies that differ.
+- An unconsumed global polymesh or mesh in a streamed source is refused (`RE4301`), since every cell would emit it; its hint names `poly.place`.
+- **Colliders.** `poly.collider { shape, visible }` sets the mesh's `collider` (`Mesh` or `Convex`) and `visible`; other operations keep them, and `poly.merge` takes its first input's. Where the mesh becomes entities (§6 and `poly.place`), the first part's entity gets a `Collider` with that shape whose `source` is a derived mesh of all the mesh's faces; with `visible: false` there is one entity, `<node>/collider`, with the collider and no `MeshRef`, so a simple collision mesh can stand in for a detailed one. `Mesh` stays static only (`RE5003`); a dynamic prop uses `Convex`, from which Jolt builds its hull, and `poly.hull` makes a hull to draw or to simplify a collider with.
+
+*10. Buildings from footprints (PR "buildings").* Rust kinds, not only a subgraph library, so that they work before WP40's graph kinds and their output is covered by goldens. Once WP40's "subgraphs" has merged, a ready-made house ships as a graph kind embedded in the engine (`building.house`, registered through ADR-0061's kind-graph function and keyed by its embedded document), and before that as an example graph.
+- **`building.lots { depth, min_width, max_width, setback }`**: input `blocks` (shapes, such as the area left between `road.footprint`s by `shape.boolean`): each block's boundary split into lots along its edges, `min_width` to `max_width` wide and `depth` deep, set back by `setback`, clipped to the block (i_overlay, as `shape.boolean` does). Each lot is a shape whose contour starts on its street frontage, so its first edge faces the street. Lots are ordered by block, then along the block's boundary.
+- **`building.mass { floors, floor_height, base_height }`**: input `footprints` (shapes; a lot, or any footprint): each shape becomes a closed solid with a ring of walls per storey. Wall faces get the face columns `floor` (`int`, storey from 0) and `side` (`int`, the footprint edge, 0 being the frontage) and the group `wall`; the top is `top`, the bottom `bottom`.
+- **`building.facade { modules, rules, group }`**: split-and-repeat on each wall face of the group. A rule picks walls by `floor` and `side` ranges and gives a pattern of modules across the wall, such as `["door", "window*"]` for the ground floor's frontage and `["window*"]` above: fixed modules keep their width, starred ones repeat and stretch to fill the rest exactly, and a wall narrower than its fixed modules is left plain. Built-in modules are `window` (an opening inset into the wall with a frame ring, recessed by an inward extrusion, its back face in the group `glass`), `door` (the same, from the floor) and `plain`; a module may instead name a `polymesh` input, fitted into its slot. Modules write the groups `frame`, `glass` and `door` for `poly.material` and `poly.attribute` to colour. The splits follow §4: the new points on a wall's edges go into the faces across them too (the storeys above and below, the roof's eaves or the top, and the next side), so the house stays closed.
+- **`building.roof { kind, pitch, overhang }`**: input `mass`, whose `top` faces it replaces by the roof, so the result stays closed. Their outline, in f64, gives a straight skeleton (Felkel and Obdržálek's event method: edge and split events processed in time order, ties broken by edge index), from which `hip` roofs are the skeleton's faces raised at `pitch` and `gable` roofs replace each triangular end face by a vertical gable wall, extending the slopes beside it. `overhang` offsets the eaves outward with a soffit underneath; `flat` keeps the top, with an optional parapet. The skeleton skips the outline's collinear corners (§4), and the roof keeps them on the edges it shares with the walls, so it stays joined to them. Where the skeleton fails (a degenerate outline, or events that do not converge), the node returns a flat roof and warns with `RE4517`.
+- **Node warnings**: WP39 builds `NodeCtx::warn(code, message)` in its PR "inspect", with its rule in its inspection amendment to ADR-0044: a warning goes on the node's report row, is cached with the output (in the memory cache, and after the output in the disk entry), is reported again on a cache hit, and reads as none from older disk entries. `building.roof` uses it for `RE4517`, so "buildings" follows "inspect".
+- **The house test** (`re_proc/tests/buildings.rs`): a 10 m × 8 m footprint through `building.mass` (2 floors of 3 m), `building.facade` (a door and windows on the frontage, windows elsewhere), `building.roof` (gable, 37°, 0.4 m overhang), `poly.material` and triangulation gives a closed, valid, consistently wound house. Its golden records its hash and its face, corner and point counts.
+- **The house's budget.** Its target is **20 ms in a release build** on one core of this container, a measured figure that PR "buildings" reports. The test asserts no wall-clock time, which would flake on the slower, shared Windows and macOS runners. It bounds the work instead by counts it can assert exactly, each with a limit well above the house's: the straight skeleton's events and the triangle pairs the intersection test checks (§4), which both report. So a quadratic slowdown fails deterministically, as ADR-0011's amendment bounds the script budget by safepoints.
+
+*11. Determinism (D2).* `re_geom::poly` follows ADR-0036 as the rest of `re_geom` does, and as the spike did: scalar arithmetic in a fixed order with `math::cross`, `math::normalize_or` and `math::sin_cos` (angles in primitives, lathes, cylinders and pitches), `libm` for anything else, no fused multiply-add, no hash-map iteration reaching an output, and f64 where 2D footprint work needs it. Sorting uses total orders with index tie-breaks.
+
+*12. Tests.*
+- **Goldens**: `re_geom/tests/golden.rs` gains one blake3 hash per operation on fixed inputs, as the spike's `hashes`, run on Linux, Windows and macOS by `platforms.yml` and in the `d2` job; `re_proc/tests/versions.rs` gains one per (kind, version), and any change to a kind's output bumps its version (ADR-0043 §1).
+- **Property tests** with proptest, a dev-dependency of `re_geom`, with `failure_persistence: None` (no files written) and a fixed seed per test (`rng_seed: RngSeed::Fixed(…)`), 256 cases each (more locally with `PROPTEST_CASES`). Strategies make random valid meshes (primitives with random params, random polygons and footprints made solid, grids with random selections, random transforms) and random parameters. Every operation must not panic and must return its output or one of its documented errors; an output must validate, contain no NaN, be closed and consistently wound where the input was closed (each edge used once in each direction), keep every attribute column, and keep a positive volume where the operation should.
+- **No wall clock.** No test asserts a time; the house test bounds its work by counts (§10).
+- `cargo test --locked -p re_geom` and `cargo test --locked -p re_proc` run both, as the plan's acceptance asks.
+
+*13. Diagnostics and ownership.*
+- **Codes** (each with an explain page and a `DIAGNOSTICS` entry): `re_geom` `RE4510` an argument to a modelling operation is out of range or not finite; `RE4511` a mesh is invalid (§1's rules, with the first one broken); `RE4512` an operation needs a closed or manifold mesh; `RE4513` an inset or bevel is too wide for a face (a corner spikes or an edge turns back); `RE4514` the result would intersect itself; `RE4515` the result would be too large; `RE4516` a profile, section or path is unusable for a sweep, loft or lathe; `RE4517` the straight skeleton failed (a warning when the roof falls back to flat); `RE4518` too few points for a hull. `re_proc` `RE4150` a group, attribute or material a node names does not exist or has the wrong type; `RE4151` a lot, footprint or facade rule is unusable. `RE4301`'s explain page (WP39's) gains the unplaced global mesh.
+- **Changes in other WPs' paths**, each small and reviewed by its owner: WP39, `value.rs` (the port type and output; the plan gives WP41 the `PolyMesh` value), `cache.rs`, `nodes/fragment.rs`, `tests/support/mod.rs` and a registration line in `nodes/mod.rs` in "polymesh", the statistics variant once its "inspect" has merged, and `check_streaming` in "stream"; WP40, `re_script/src/generator/marshal.rs` in "polymesh", and, agreed with WP40 and built by it, `points.copy` accepting a kind with a `polymesh` output as it does `mesh`, each copy's entities as in §6 under `<copy>/<point id>/`; WP43, `re_editor/src/canvas.rs` in "polymesh". The port type's arms must land with it, so they are all in PR "polymesh", whose description lists each owner's lines for that owner's review.
+- **Doc lines in WP41's PRs**, listed in each PR's description for the maintainer's review: in "polymesh", ARCHITECTURE §2 and §5 (`re_geom::poly` and the `polymesh` port) and the `DEPENDENCIES.md` row for proptest (1.12.0, MIT OR Apache-2.0, MSRV 1.88, a dev-dependency of `re_geom` with `default-features = false` and `std`, four crates in the lockfile), whose ADR this is; and in every PR, `schemas/graph.schema.json` regenerated with its new kinds.
+
+*14. Order.* "polymesh" starts once this ADR is accepted; "extrude", "subdivide", "sweep", "uv", "stream" and "buildings" follow in the plan's order, each with its goldens, versions and property tests. `path.sample` lands in "sweep" if WP40's "attributes" has merged by then, else in the first WP41 PR after it. `poly.sweep`'s curves come as a version 2 after WP40's `curve` port. "buildings" follows WP39's "inspect", which brings node warnings (§10). The house graph kind waits for WP40's "subgraphs". Stretch: levels of detail through one simplifier dependency chosen with WP33 in its own ADR, and signed-distance primitives meshed by surface nets in `re_geom`, with no dependency.
+
+**Alternatives.**
+- **A half-edge mesh** (the spike). Faster extrude (at most 1.17× on the larger meshes against an n-gon extrude with adjacency around the selection, and under 0.04 ms on `box16`), but 1.76× the memory, a build from a node's faces that costs 16 to 58 copies, slower on everything else, more code, and it cannot hold the non-manifold shapes modelling makes in passing. Its strength, local edits in place, matters least in a graph whose values are immutable and shared.
+- **Adjacency stored in the n-gon mesh** (twins as a corner column). Every operation would have to keep it right, and the disk cache would store it. Building it costs about a copy of the corners, paid only by the operations that need it, and only around the selection by most.
+- **`MeshData` as the modelling type.** Triangles lose the quads and n-gons that inset, bevel, Catmull-Clark and facade splitting work on.
+- **Fixed attribute fields** (uv, normal and colour on every corner). No groups, no floor and side numbers for facades, no user attributes, and memory for columns most meshes do not have.
+- **f64 positions.** Twice the memory for points, with no gain where it matters: footprints already work in f64 on `Shapes`, and `MeshData` is f32.
+- **Edge attributes for creases.** The n-gon mesh has no edge identity; creases come from `normal` by angle and material borders, which is what the plan asks.
+- **Colliders made by a separate entity node.** Each place a mesh becomes entities (the sink, `fragment.merge`, `poly.place`, and later `points.copy`) would need the node's options; two fields on the mesh carry them everywhere.
+- **Buildings as a subgraph library only.** It would wait for WP40's graph kinds, and a straight skeleton cannot be made of graph nodes.
+- **An existing crate, or a C++ kernel.** None is mature or licensed for us (Context), and a C++ kernel is a non-goal that would put D2 on a C++ build.
+
+**Consequences.**
+- One modelling type for every WP41 node, and for Luau and the editor later; its contract freezes at "polymesh".
+- Six files outside WP41's paths change in "polymesh", by a few lines each, beside two doc files for the maintainer; WP39's streaming check changes in "stream", and "buildings" uses the node warnings WP39's "inspect" adds.
+- Streamed sources can model objects and place them for the first time, with each mesh made once and shared by every cell and placement.
+- One new dev-dependency (proptest) and four crates in the lockfile, test-only, so no shipped build changes.
+- **The browser runtime grows.** Procedural sources regenerate in the browser, so `re_geom::poly`, the node kinds and the straight skeleton go into `real_bg.wasm`. Each PR reports `build-web`'s size and its growth in its description (ADR-0049's amendment), against the about 2 MB that M4 has left after WP31's #193.
+- `re_geom`'s goldens and `re_proc`'s per-version goldens grow with each PR.
+- Each operation allocates a new mesh, so a chain of many operations on a large mesh pays a copy per step (the spike's `box256` chain: 5.6 s for about 15 million output faces). That suits buildings and props of thousands of faces, not sculpting-scale meshes, which are a non-goal.
+
 ## ADR-0063: The play session in the editor: a second App forked from the edit world, stepped frame by frame in the editor's window
 
 **Status:** Accepted (maintainer, 2026-10-28; drafted by WP42), for WP42 PR "play", with ADR-0045's amendment for it (the debugger on the play world). The play session is a cross-WP contract (`crates/re_app/src/play.rs`; consumers WP35 for recording, WP44 for watches and approvals).
@@ -3838,6 +5515,250 @@ Frozen in M4_PLAN's Cross-WP contracts (consumers: WP35 for recording, WP44 for 
 - Headless editor tests drive Play, Pause, Step and Stop with clicks on the toolbar and check that the edit world's `state_hash` and undo history after Stop equal those before Play; another test checks that a command outside the allow-list is refused during play and accepted after Stop.
 - A WP that adds a command adds it to the allow-list if it should run during play; otherwise it is refused there, which is the safe default.
 - WP44's path-check amendment adds a test that walks every agent-facing command against its table; whichever of WP44's PR and WP42's PRs lands second adds `pick` and `play.status` to that table.
+
+## ADR-0064: Materials, prefabs, scenes and `real.toml` as documents made and edited by commands; the asset browser
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP43). Built in WP43 PRs "documents" and "assets". It gives ADR-0044's open documents a lifecycle and builds on WP37's ADR-0059 (§9, edit mode), WP38's ADR-0060 (prefabs v2), WP42's ADR-0044 amendment (picking, editor state, saving), WP44's ADR-0020 amendment (declared path arguments), ADR-0063 §5 (what a play session refuses) and WP43's ADR-0044 amendment (widgets, previews). Each of those threads agreed its part on 2026-10-28.
+
+**Context.** WP43 must let every document a game needs (materials, prefabs, scenes and `real.toml`) be made and edited through commands and the editor, with an asset browser and drag and drop; each command refuses an invalid document with a diagnostic, and undo gives the files back exactly (M4_PLAN, WP43). What the engine does today, read from `main` at c4c81ae:
+
+- **Open documents** (`re_scene::docs`, ADR-0044) are project files held in the World as JSON, changed only by `set_doc` operations inside transactions, checked after each transaction by a validator registered by suffix (`RE2008` when it refuses), and written by the project save: `App::save_scene` writes the entry scene and each dirty document as `World::doc_text` (pretty JSON and a newline). With `persist_edits` (the editor, `real do`, `real mcp`) every command that changes something saves. A change on disk reopens a clean document and flags a dirty one (`RE0528`). So no transaction makes or removes a file: `set_doc` needs the document open and `open_doc` a value its validator accepts, while `proc.create_source` and `animgraph.create` write their files themselves, and undoing them leaves the files behind. And every document is written in one style: `real new` writes materials in the scene file style (`re_scene::scene::to_pretty_json`, scalar lists on one line), and after any edit such a file comes back with one number per line, so undoing the edit does not give its bytes back.
+- **Materials** (`re_assets::material`): `MaterialFile` has 13 optional keys and `$schema`, and refuses unknown keys. `load_material_from` checks ranges (`RE7011`) and that each texture exists (`RE7012`), and writes a missing texture sidecar, a side effect no validator may have. No command makes or edits a material. `schemas/material.schema.json` is generated from `MaterialFile`.
+- **Prefabs** (WP38, ADR-0060, PR "prefabs"): version 2 keeps the scene document form, with nesting and variants through `PrefabInstance`; `World::load_prefab` and `World::save_prefab` mirror `load` and `save`, and a nested instance's entities load as generated entities `<instance id>/<key>`. WP38 asks an editor to keep ids, keep one root, remember that each placed instance has its own `Transform`, and refuse `Procedural` inside a prefab in M4. `prefab.instantiate`, `prefab.apply` and `prefab.revert` are WP38's.
+- **Scenes** (WP37, ADR-0059 §9, PR "scenes"): `[scenes]` names scenes, and the scenes module reads it from the App's configuration whenever it resolves a name. `App::scene_path` is the open scene, which `save_scene` writes. `App::open_scene(path)` replaces the World through the runtime's loader with no VMs and nothing simulated, carries the open documents (with their epochs) over, returns the scene's diagnostics and leaves the undo history to the caller; it opens a prefab through `World::load_prefab`, and `save_scene` then writes it with `World::save_prefab` (whichever of WP37's "scenes" and WP38's "prefabs" lands second adds that branch). A scene file is written by `World::save`, so a canonical one (as `real new` and every save write them) round-trips byte for byte.
+- **`real.toml`** is read with `toml` 1.1.8 by `AppConfig::parse` (typed, unknown keys refused, ranges checked, `RE0501` at the line). Only `real new`'s template writes it, and a round trip through `toml` or JSON loses comments and order. `toml_edit` 0.25.17 (MIT OR Apache-2.0, `rust-version` 1.85) is already in `Cargo.lock`, and with its `parse` and `display` features needs no crate the lockfile lacks. A spike (`research/m4/wp43/toml-spike/` in the project files) holds `real.toml` as JSON and writes it by merging into the last text with `toml_edit` (tables key by key, arrays element by element, a replaced scalar keeping its spacing and comment). On `real new`'s template with comments added, parse and print is identical; `sim.fixed_hz = 30` changes one line and keeps its comment; and setting values back, adding and removing `[scenes]` and `render.vsync`, and changing and restoring a value in an inline table inside an array all give the original bytes back.
+- **Assets.** `AssetServer` loads by project path, sidecars give stable ids, `ProcessedCache::contains` says whether an import is current, and `asset.import` copies a file into `assets/` and imports it (not undoable). The App's watcher on the project folder feeds `App::apply_file_changes` every frame, which also takes changes "made by a command". The editor shows no project files.
+- **Fields that name files** are plain strings: `MeshRef.asset`, `MaterialRef.asset`, `Collider.source`, `ScriptRef.path`, `AudioSource.clip`, `AnimPlayer.clip`, `SkinnedMesh.asset`, `Animator.graph`, `GraphSource.graph` and `.builder`, and WP38's `PrefabInstance.prefab`. The Inspector shows `entity` fields as text and container fields as read-only text.
+- **Agents, play, picking and saving.** WP44's amendment (PR "safety"): commands declare path arguments (`x-real-path`), and every declared write of an agent's call that is not a dry run is checked at every tier against the policy's scopes (by default `scripts/**`, `scenes/**`, `graphs/**`, `anims/**`, `prefabs/**`, `materials/**` and `assets/**`; `real.toml` is in none). `Op::SetDoc`'s `doc` carries the declaration, so every command whose arguments embed operations has its documents declared as writes (`scene.apply`'s `/ops/*/doc`). A dry run is not checked, on purpose: it is rolled back and nothing is saved. A file a command names itself is checked with `Call::check_write`. ADR-0063 §5 refuses `scene.open`, `scene.new`, `material.*`, `prefab.*` and `config.*` except `config.get` during a play session. WP42's PR "picking" keeps a hover pick every frame (`crate::pick::Pick`: the stable id, or key and source, the point, the normal and the ray; over empty space, the ray and its hit on y = 0). WP42's PR "saving" keeps, per path, what the editor last read or wrote as the base, an `Option<content>` (`None`: no file); a save refuses when the disk differs from the base (`RE065x`), a save of `None` removes the file under the same check, with the empty folders the save made, and the save passes the paths of the documents it wrote or removed (not the scene file) to `App::apply_file_changes`.
+- **The browser runtime** never edits, and `build-web`'s gzipped wasm has a budget (8 MB today, 10 MB if WP31's amendment is accepted) that every M4 runtime feature shares.
+
+**Decision.**
+
+*1. The document lifecycle* (in `re_scene::docs`, a WP0 change the maintainer reviews).
+- **Absent documents.** An open document whose value is `null` has no file. `World::open_doc(path, Json::Null)` opens a path that has no file (the command checks that there is none, `RE2051`); `set_doc` on the empty pointer with a value gives it content, and with `null` empties it again. Validators are not called on `null`, and every document kind is a JSON object, so `null` means nothing else. The save writes a document that has content and removes the file of one that is `null`, under WP42's base rule: it refuses to write where a file has appeared since the base said there was none, and to remove a file that is not the base. So making a file is undoable: undo empties the document and the next save removes the file; redo writes it again.
+- **The save removes only files the session made.** A document remembers whether it was opened absent (or became absent when its file was removed outside the editor, below). `set_doc` refuses to empty a document that was opened from an existing file (`RE2050`), so nothing (a command, an agent's `set_doc`, an undo) can make the save delete a file the person had. No M4 command needs to, and deleting assets is not M4 scope.
+- **Exact text back, within a budget.** A document always keeps the text it was opened with, and the texts of the contents it was saved as since, newest first, within 1 MiB per document; each text is found by the content hash the document already keeps (blake3 of the compact JSON). When the save writes a content it has a text for, it writes that text, and otherwise the kind's writer's output. Undoing every edit therefore gives the file back byte for byte whatever its formatting, and an unchanged content is never rewritten. The JSON writers' output depends only on the content, so for those kinds a text beyond the budget comes back the same anyway. The texts go when the document closes.
+- **Writers by kind.** `World::register_doc_kind(suffix, DocKind { validate, write })`, where `write(value, base)` gets the last text read or written: graph files keep today's pretty JSON; materials, prefabs and scenes use the scene file style (`to_pretty_json`); `real.toml` uses the format-preserving writer of §5. `register_doc_validator` stays, with the pretty JSON writer. `World::open_doc_text(path, value, text)` opens a document from a file and records its text; `World::doc_text` gives the recorded text or the writer's output, and `None` for an absent document as for a closed one.
+- **The App's save** (`app/edit.rs` after the `App` split): WP42's PR "saving" writes each dirty document under the base rule and passes the paths it wrote or removed to `App::apply_file_changes` (`app/files.rs`), as the watcher would, so a saved material reloads in the view at once. WP43's PR "documents" adds absent documents to it, with the two outside-change transitions agreed with WP42: a clean absent document whose file appears on disk is reopened with it (from then on it was opened from a file), and a clean document whose file is removed becomes absent.
+- `proc.create_source` (WP39) moves onto absent documents once they merge: it opens its graph path absent and sets it in the same transaction, so undo removes the file at the next save (agreed). `animgraph.create` can do the same (offered to the maintainer).
+
+*2. The common rules of document commands.*
+- Each command is one transaction, so one undo step: `set_doc` operations on its document (which the command opens, from its file or absent, when it is not open) and any entity operations it needs. A dry run returns the document as it would be and changes nothing.
+- The kind's validator checks the result, as for every document: an invalid result is refused with `RE2008` (the document and the validator's message), and nothing changes. The other refusals have their own codes (part 10).
+- Path arguments are declared with `x-real-path` (WP44), as `write` for every path a command makes, edits or (`scene.open`) will save to, so an agent's policy scopes apply to every call that is not a dry run. `config.set`, and `scene.new` with a name, check `real.toml` with `Call::check_write`, so an agent needs `real.toml` in its scopes; it is in no default scope. The editor's panels run with no agent policy.
+- During a play session they are refused (ADR-0063 §5), except `config.get`, which only reads.
+- The commands live in `crates/re_app/src/documents/`, beside `app/` (WP43; the maintainer reviews), and are built only off the web: the module, its registration and so the `config.*` commands are under `#[cfg(not(target_arch = "wasm32"))]`, and `toml_edit` is in `re_app`'s `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`. Each PR reports `build-web`'s gzipped size.
+
+*3. Materials.*
+- `material.create {path, from?, set?}` makes a `*.material.json` (the Assets panel puts new ones in `materials/`): `{"$schema": "<relative path to schemas/material.schema.json>"}`, plus `from`'s keys, plus `set`. It is refused when the file exists or is open with content (`RE2051`), or the path is not a material path or is outside the project (`RE2052`).
+- `material.edit {path, set?, unset?}` sets and removes keys, one `set_doc` per key. A texture it names must exist (`RE2054`, checked through `ProjectFiles`); no sidecar is written (the asset server writes it when it loads the texture, as now).
+- The validator is a new pure function in `re_assets`, `check_material(&Json) -> Result<MaterialFile, String>`: the parse with unknown keys refused, and the range checks, which `load_material_from` then calls, so the two cannot drift.
+- `MaterialFile`'s schema gains `x-real-widget: "colour"` on `base_color` and `emissive`, `range(min = 0, max = 1)` on `metallic`, `roughness` and `alpha_cutoff`, `minimum` 0 on `emissive_strength`, and `x-real-asset: "texture"` on the texture paths, with `schemas/material.schema.json` regenerated in the same PR (maintainer). WP32's slots and WP33's terrain materials annotate their keys the same way and need no editor change.
+- The Material panel (`PanelId::Material`) edits the material chosen in the Assets panel or from a `MaterialRef` field, with WP43's schema widgets. Each finished edit is one `material.edit`; during a drag only the preview shows the value under the pointer. The preview is a sphere drawn with the material by the game view's renderer into a 256-pixel offscreen capture (`Renderer::register_ui_texture`), lit by the open scene's sun and environment when it has them and by a fixed light otherwise, and drawn again when the material changes, at most once a frame; a drag turns it.
+
+*4. Prefabs.*
+- Editing a prefab is opening it: `scene.open` (part 6) of a `*.prefab.json` loads it through WP37's `App::open_scene` with WP38's `World::load_prefab` and saves it to the same path with `World::save_prefab`, so the Hierarchy, Inspector, viewport, gizmos, undo, agents and the save work as for a scene. A banner says "Editing prefab `<path>`", with "Back to `<scene>`" and the reminder that moving the prefab's root does not move placed instances. An instance's context menu has "Open prefab", and WP38's "Unpack" and "Unpack completely" (`prefab.unpack {id, completely?}`); a variant opens the same way, so edits of its base's entities record overrides on the variant (WP38).
+- WP38's rules hold while a prefab is open through a world check that `re_command`'s `History` runs after every transaction, as it runs document validators: `History::set_world_check(Option<fn(&World) -> Result<(), String>>)` (a WP0 change the maintainer reviews; one check at a time, set when a prefab opens and cleared when it closes). The World keeps exactly one root and no entity has `Procedural`; a transaction that would break either rule is rolled back with `RE2056`. Loading and saving keep ids.
+- `prefab.create {path, root, replace?}` makes a prefab from an authored entity and its descendants, which keep their ids. It is refused when the subtree holds generated entities (`RE2055`, with `proc.bake` in the hint) or `Procedural`; references to entities outside the subtree are cleared and listed in the result. The file is made through part 1, so undo removes it at the next save (until the prefab is opened, as for a new scene). With `replace: true` (after WP38's PR "instances"), the same transaction replaces the subtree with a linked instance of the new prefab, through the operations `prefab.instantiate` makes.
+- `prefab.edit {path, ops}`, for agents and scripts: applies `ops` (`scene.apply`'s entity operations, on the prefab's own ids; `set_doc` is refused among them) to a scratch World loaded with `World::load_prefab` from the prefab's document, and writes it back with `World::save_prefab` as one whole-document `set_doc`, checked by the validator and WP38's rules: one undo step, as `animgraph.edit` does. A prefab open as the edited scene is refused (`RE2058`).
+- The validator is WP38's pure `re_scene::prefab::validate_doc` (PR "prefabs"). Linked instances read a prefab's open document first, else its file (WP38): a `set_doc` on an open prefab marks every instance whose prefab, base or nested prefabs include it, and they refresh at the next `regenerate_changed`, so a `prefab.edit` shows in the scene before the save.
+
+*5. `real.toml`: `config.get` and `config.set`.*
+- `config.get {key?}` (read): the value at a dotted key (`render.post.exposure`; each segment a bare TOML key, or a number indexing an array), or the whole configuration, as JSON, from the open document when there is one and the file otherwise.
+- `config.set {key, value?}` (edit): sets the value at the key, making missing tables, or removes it when `value` is left out. `real.toml` is opened as a document holding its JSON form, with its text (part 1). The validator converts the JSON to TOML and calls `AppConfig::parse`, so unknown keys, wrong types and ranges are refused exactly as at start (`RE2008`, with the loader's message); `null` cannot be TOML and is refused (`RE2057`), as is a key that is not a bare TOML key.
+- The writer merges the JSON into the last text with `toml_edit`, by the spike's rules: comments, order and layout stay, only the changed values' text changes, and with part 1's texts undo gives the file back byte for byte.
+- After a saved change the App reads its configuration again: `[render]` applies to the editor's view and `[scenes]` names resolve at once, and the rest applies at the next play or run, which the command's result says key by key (a maintainer-reviewed change in `re_app`).
+- `toml_edit = "=0.25.17"`, with `default-features = false` and `features = ["parse", "display"]`, pinned in `[workspace.dependencies]` and used only by `re_app` off the web (part 2): no new crate in the lockfile, MIT OR Apache-2.0, and its `docs/DEPENDENCIES.md` row in the same PR. This ADR is its ADR.
+
+*6. Scenes: `scene.new` and `scene.open`.*
+- `scene.new {path, name?, open?}` makes a `*.scene.json` (the Assets panel puts new ones in `scenes/`) holding a camera and a sun as `World::save` writes them, through part 1. With `name`, the same transaction adds `<name> = "<path>"` to `[scenes]` through the configuration document (`RE2051` when the name is taken), so one undo step removes both. With `open: true` the editor then opens it, as a separate step; making a scene can be undone until it is opened.
+- `scene.open {path}` switches the scene, or prefab (part 4), being edited. It is not undoable (it is in the log), and is refused with unsaved changes, which in the editor means a save that failed (`RE2053`, listing them), during a play session (ADR-0063 §5), and when `path` is an open document with unsaved content (`RE2058`); a clean open document of that path is closed first. It loads through `App::open_scene`, which carries the open documents over (ADR-0059 §9), and the save writes to that path from then on.
+- One undo history per scene, for the session: `scene.open` sets the current scene's undo and redo stacks aside with the hash of its file as saved (`History::take_stacks` and `History::put_stacks`, a WP0 change the maintainer reviews; the transaction log stays one), and puts back the target's stacks when it was open earlier in the session and its file still has that hash; otherwise the target starts with none. Ids and keys are the file's and the open documents keep their epochs, so the stacks apply to the reloaded World; a test switches away and back and undoes to the first state, comparing `state_hash`.
+- The Scenes menu lists the entry scene and `[scenes]` by name, then the other scene files the asset index knows; choosing one sends `scene.open`, and "New scene…" sends `scene.new` with a name and `open`.
+
+*7. The asset index and the Assets panel* (PR "assets").
+- The asset index (`re_editor`) knows the project's files by kind. It is built on a worker thread at start and kept current from the App's file changes: `App::apply_file_changes` keeps the changes it applies, the watcher's and the save's, for the editor to take each frame (`App::take_file_changes`, a maintainer-reviewed addition in `app/files.rs`), so there is no second watcher. The kinds, shared with `x-real-asset` and the field hints (part 9): `material` (`*.material.json`), `prefab` (`*.prefab.json`), `scene` (`*.scene.json`), `graph` (`*.graph.json`), `animgraph` (`*.animgraph.json`), `script` (`*.luau`), `texture` (PNG, JPEG), `model` (glTF, GLB), `clip` and `skin` (a model's animations and skins, `<model>#<name>`) and `audio` (what `re_audio` reads). Sidecars and `.real/` are left out.
+- The Assets panel (`PanelId::Assets`): a folder tree and a grid of thumbnails or a list, with a kind filter and search. A file's details show its path, size, asset id, import state and the open scene's entities that use it (through the hinted fields). It opens a file by its kind (a material in the Material panel, a prefab or scene with `scene.open`, a graph on the canvas, a script in the external code editor), and has "New material", "New prefab from selection", "New scene" and "Import…" (`asset.import`); files dropped on the window from the system are imported with `asset.import`.
+- Import state, worked out on the index's thread: *source* (no sidecar yet), *imported* (the processed cache holds the entry for the current importer, version, settings and bytes), *stale* (a sidecar but no such entry: it imports at its next load), *loaded* (the App's asset server holds it, with its version) and *failed* (the last load's diagnostic).
+- Thumbnails (96 pixels) share the texture cache of WP43's previews under their own budget (256 thumbnails, 9 MiB) and are kept on disk under `.real/cache/thumbs/`, keyed by the file's bytes, the thumbnail kind's version and the size: textures are decoded and scaled down on the index's thread; models and prefabs come from WP39's CPU mesh rasteriser; materials from the Material panel's sphere, at most one a frame; graphs from the output node's preview; the other kinds show an icon. `RE8853` (a warning) says when one cannot be made.
+
+*8. Drag and drop* (PR "assets").
+- An asset dragged from the Assets panel carries its path and kind. Over the viewport, WP42's viewport calls `panels::assets::viewport_drop` every frame of the drag with the payload and the frame's hover pick (WP43's PR "assets" adds the call to `viewport.rs`, and WP42 reviews it):
+  - a prefab is placed with WP38's `prefab.instantiate` at the hit point (on y = 0 over empty space), upright, at the scene's root, and becomes the selection; while dragging, its bounds follow the pointer as editor debug lines;
+  - a model is placed the same way with `entity.spawn` (`Transform` and `MeshRef`, and `SkinnedMesh` when it has a skin);
+  - a material dropped on an entity sets its `MaterialRef.asset`, adding the component when it is missing, in one `scene.apply`;
+  - anything else is refused with `RE8854` (a note), and nothing changes.
+- On the Inspector, an asset dropped on a picker of its kind sets that field; on the Hierarchy, a prefab dropped on an entity is instantiated as its child. Each drop is one command and one undo step. A file dropped from the system onto the viewport is imported (`asset.import`, not undoable) and then placed like a dragged asset.
+
+*9. Pickers and container editors in the Inspector* (PR "assets").
+- Field hints (a WP0 change in `re_reflect` and `re_scene` the maintainer reviews): a side table on the `Registry`, `Registry::set_field_hint(component, field, FieldHint)` and `Registry::field_hint`, with `FieldHint { asset: Option<&'static str> }` (a kind of part 7, with room for more), so no `FieldSchema` literal changes; `describe` and `entity.get` show `"asset": "<kind>"` on such fields. `re_scene` sets them on its components: `MeshRef.asset` and `Collider.source` (`model`), `MaterialRef.asset` (`material`), `ScriptRef.path` and `GraphSource.builder` (`script`), `AudioSource.clip` (`audio`), `AnimPlayer.clip` (`clip`), `SkinnedMesh.asset` (`skin`), `Animator.graph` (`animgraph`) and `GraphSource.graph` (`graph`). `PrefabInstance.prefab` (`prefab`) is set where WP38 registers it, by WP38 if the table has landed by then, else in WP43's PR.
+- A hinted string field gets an asset picker listing the index's files of its kind. An `entity` field gets an entity picker: search by name and id, "pick in the viewport" (the next click's pick), and drops of Hierarchy rows. A list gets a row per item with add, remove and reorder; a map, a key and a value per row, the value's type chosen per row; a record, a widget per field. A finished edit is one `entity.set` of the whole value, so one undo step.
+- These are in `re_editor::widgets` (WP43), which WP42's Inspector calls through `widgets::field_row` (from WP43's PR "builder graphs", which switches the Inspector over; WP42 reviews that change).
+
+*10. Codes, tests and how the PRs land.*
+- Codes, each with an explain page. In `re_command` (WP43's range, in `re_command::codes`, shared by the lifecycle and the commands): `RE2050` a document opened from an existing file cannot be emptied (M4 removes only files the session made); `RE2051` the file or name exists; `RE2052` not a path of that kind, or outside the project; `RE2053` `scene.open` with unsaved changes; `RE2054` a file the document names does not exist; `RE2055` the subtree cannot become a prefab; `RE2056` a prefab rule would break while a prefab is open; `RE2057` a configuration key or value TOML cannot hold; `RE2058` the document is open as the edited scene, or has unsaved content. An invalid document is the existing `RE2008`. In `re_editor`: `RE8853` (warning) a thumbnail could not be made; `RE8854` (note) a drop that places nothing.
+- The acceptance test (headless editor), entirely through panels and their commands: "New material" in the Assets panel (`material.create`); its base colour in the Material panel (`material.edit`); the material dropped on the scene's box (`scene.apply`); "Create prefab from selection" in the Hierarchy (`prefab.create`); the prefab dragged from the Assets panel into the viewport (`prefab.instantiate` at the pick); a graph parameter changed on the canvas (`graph.set_default`); Play for 60 frames, then Stop (WP42). Then every step is undone and every project file compared with its bytes before the test, and redone and compared with its bytes after.
+- Refusals: for each document command, an invalid value (`RE2008`), a wrong path (`RE2052`) and an existing file (`RE2051`) are refused, and the documents and files stay as they were. `cargo test -p re_command` covers absent documents, the refusal to empty a document opened from a file, recorded texts and their budget, writers by kind, the world check and the stacks set aside.
+- PR "documents" needs the maintainer's `App` split, WP42's PR "saving", WP38's PR "prefabs" and WP37's PR "scenes", and lands in up to three parts as those merge, each with its tests: the lifecycle with materials and `real.toml`; prefabs; scenes. WP39 is told when the lifecycle part merges (for `proc.create_source`), and WP43's `proc.convert_builder` (the ADR-0044 amendment on previews, §7) follows it. PR "assets" follows the prefab part, which its drops need.
+
+**Alternatives.**
+- *Commands that write files directly* (as `animgraph.create` does), with checkpoints for undo. Not undoable step by step, so it fails the acceptance, and agents could not dry-run them.
+- *New operations to create and delete documents.* A change to the closed operation set (ADR-0003) for what `set_doc` on the empty pointer already says, since no document kind is `null`.
+- *A save that removes the file of any emptied document.* An agent's `set_doc` of `null` could then delete a person's file through the save; M4 removes only files the session made.
+- *Writing every content with the kind's writer, with no recorded texts.* Undo would rewrite hand-formatted files in the engine's style. *Recorded texts with no budget*: with a save after every command, a large graph file's texts would grow with every edit; the opening text and 1 MiB of recent ones keep undo exact where it matters.
+- *`real.toml` as its TOML text in a JSON string*, edited by replacing the text. Pointers could not reach its keys, and every edit would be a whole-file diff. *Writing it with `toml`* drops comments and reorders tables; `toml_edit` keeps them, with no new crate.
+- *A prefab stage beside the scene* (Unity's prefab mode), with a second world shown in the panels. Every WP42 panel would need a second target; opening the prefab as the edited world reuses all of them, as Godot does with scenes. *`prefab.edit` only*: enough for agents, but a person needs the viewport, gizmos and Hierarchy.
+- *One undo history across scenes*: one scene's entity operations would apply to another. *Clearing it on `scene.open`*, as many editors do, loses work when going back and forth; stacks kept per scene, and put back only when the file is unchanged, keep it safely.
+- *Field hints inside `FieldSchema`*: fifteen struct literals in six crates would change; a side table is additive.
+- *A second recursive watcher for the asset index*: it doubles the inotify watches on Linux, and the App's own feed carries the same changes and the save's.
+- *GPU thumbnails for every kind*: models and prefabs through WP39's CPU rasteriser work headless and off the main thread; only materials need lighting. *A native file dialog* (`rfd`): a new dependency with platform code; a path field and system drag and drop are enough for M4.
+
+**Consequences.**
+- `re_scene::docs` gains absent documents, the refusal to empty a document opened from a file, recorded texts with their budget, and writers by kind; `re_command` gains codes `RE2050`–`RE2058`, the world check and the stacks set aside; `re_reflect` and `re_scene` gain field hints; `re_assets` gains `check_material` and `MaterialFile`'s annotations. All are maintainer-reviewed WP0 or maintainer-owned changes in WP43's PRs, and they are all the web build gets from this ADR.
+- `re_app` (after the split, maintainer-reviewed): `documents/` with the commands, desktop only; absent documents in the save; the file-change feed; the configuration read again after a change; `toml_edit` as a desktop-only dependency with its DEPENDENCIES row.
+- `re_editor` (WP43): the Assets and Material panels, the asset index, thumbnails, the drop call, and pickers and container editors in `widgets`. `PanelId::Assets` and `PanelId::Material` are small edits in WP42's `layout.rs` that WP42 reviews, listed in `PanelId::ALL`, with names that never change because `layout.json` saves them; whichever of WP42's PR "camera" (which moves `layout.json` to version 2) and WP43's PR lands second rebases.
+- Agreed with other threads on 2026-10-28: WP37 (ADR-0059 §9), WP38 (instances read a prefab's open document first, `validate_doc`, the `PrefabInstance.prefab` hint), WP39 (`proc.create_source` on absent documents), WP42 (the save, the outside-change transitions, the drop call, `config.get` during play, the panel ids) and WP44 (every `set_doc` an agent sends in a call that is not a dry run is checked as a write, as built in its PR "safety").
+- Agents get `material.*`, `prefab.*`, `scene.new`, `scene.open` and `config.*` with declared paths; `config.set` and a named `scene.new` need `real.toml` in a policy's scopes. WP44's walk test over agent-facing commands (in `re_cli`'s MCP tests) gets their rows from whichever of WP44 and WP43 lands second.
+- Until WP44's PR "agents" (approvals in the editor), `Call::check_write` inside the editor runs under the editor's own policy, so an agent reaching the editor through `real mcp` is not yet held to `real.toml`'s scope by `config.set` and a named `scene.new`, and an agent's undo of a person's `set_doc` is not scope-checked there; a standalone `real mcp` enforces both (WP44).
+- No command, agent or undo deletes a file the person had; a file a session made and then undid is removed at its next save.
+- The scene file is still written by `World::save`: a canonical one comes back byte for byte after undo, and a hand-formatted one takes the canonical form at its first save, as today.
+- `.real/cache/thumbs/` grows with the project's assets (a 96-pixel PNG each) and is cleared with the rest of `.real/cache/`.
+
+## ADR-0065: The user guide and its generated reference ship inside `real`, `real test` runs a project's tests, and `real doctor` says what to fix
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP44). WP44 PRs "reference", "guides", "doctor" and "test" build it; §8's default backends land in PR "honesty". It adds no dependency. It names planned edits in other owners' code (§7); each goes in its own commit, reviewed by its owner.
+
+**Context.** What was checked, on `main` at `046043d` (the M4 tooling audit, `research/m4/audit/tooling-dx.md` §2, §3 and §4.3, was rechecked where it is cited):
+- **No user documentation.** The README is written for maintainers; there is no install guide, tutorial, Luau API reference, editor manual, luau-lsp setup, Roblox-style guide, cookbook or troubleshooting page (audit §3.2). The best "how to use this engine" text is `crates/re_agent/templates/AGENTS.md`, which is written for agents. The 344 explain pages (22 crates) are the only user-facing reference, and they are good.
+- **What a generator can read.**
+  - `real describe --json` (the `describe` command, `crates/re_app/src/commands.rs`) gives `components` (27, with fields, types, defaults and docs), `generators`, `nodes` (28 node kinds with ports, parameters and docs), the project's `scripts` and `commands` (name, summary, tier, input schema, annotations). It lists 40 commands: the App's and `explain`. `real do` registers 48 on the same project (adding `re_agent`'s and the recipes), and `real mcp` 53 (also `resource.list`, `resource.read`, `compat.coverage`, `scene.dump_tree` and `project.import`), so the three disagree about what exists.
+  - The Luau API is registered library by library through `re_script::api::Lib` (`func` and `value`, each with a signature and a doc), and printed as `engine.d.luau` by `re_script::definitions()` (22 declarations, 16.8 KB). `Lib` keeps each member only as preformatted declaration text, and which context has which library (`stream` in `game` and `tools`, `command` in `tools` only) is known only to `api::libs::all`.
+  - `real.toml` is `re_app::AppConfig` and its sections (`re_app`, `re_input`, `re_types::audio`, `re_proc::stream`, `re_assets`, `re_app::net`, `re_app::package`). They derive `Serialize` and `Deserialize`, with a doc comment on almost every field, but not `JsonSchema`, so `real schema` writes no schema for it.
+  - `real schema --out DIR` writes the 11 schemas in `schemas/`, and `cargo xtask schemas --check` regenerates them under `target/xtask/` and fails when the committed folder differs. It runs in `cargo xtask check`, which CI's `xtask` job runs.
+  - `real explain` with no code prints every code and title as text; there is no `--json`.
+- **What agents read.** `re_agent`'s build script embeds every `docs/**/*.md` (11 files, 1.33 MB: `DECISIONS.md`, the four milestone plans, `ARCHITECTURE.md`, `docs/research/`) into `real`, served as `real://docs/...` resources. The owner has decided that Real Engine is proprietary and ships compiled builds only, so these internal design documents would ship to every customer, while the users of those builds would have no guide at all.
+- **Tests a project can run.** `real verify` (ADR-0022) runs `schema`, `compile`, `scan`, `boot`, `replays`, `goldens` and `perf` (`crates/re_app/src/verify.rs`). WP39's PR "graph tests" adds `tests/*.proctest.json` as a stage of `real verify` and of WP44's `real test` (M4_PLAN). There is no way to run only the tests, and no Luau unit tests: `real test` was planned in the devx proposal (§14, §17) and never built (audit §2.2 item 11).
+- **Luau scripts must live under `scripts/`.** `re_script`'s `read_script` refuses any other path, and `require` refuses a module outside `scripts/` (`RE3004`, `crates/re_script/src/modules.rs`). `task.wait(t)` yields to the scheduler, which resumes the thread in the first `PostSimulation` phase whose simulation time has reached its wake time (`crates/re_script/src/scheduler.rs`). Scripts attached to entities start in the first frame's `PreSimulation` or `PreRender` (`ScriptRuntime::start_attached`).
+- **What breaks on a newcomer's machine.**
+  - The graphics backends are `RE_BACKENDS`, else `real.toml [render] backends` (default `["vulkan", "gl"]` in `AppConfig`, and written by the `native` and `terrain` templates), else the platform's primary API (`re_app::gfx::backends`). In wgpu-core 30.0.1, the features `vulkan` and `gles` enable those backends only for Windows, Linux and Android (and GL for Emscripten); Apple targets get Vulkan only through `vulkan-portability` and GL only through `angle`, which the workspace does not enable. So on macOS the default asks for two backends this build does not have, `request_adapter` fails, and `real run`, the editor and goldens stop with `RE6002` ("no GPU adapter for backends") unless `RE_BACKENDS` is set. CI sets `RE_BACKENDS` on Windows and macOS, which is why nothing caught it (audit §2.2 item 12 asked for this check).
+  - The type checker is luau-lsp 1.70.1 (`re_script_check::types::LUAU_LSP_VERSION`), found on `PATH`; only `real check --types` and `real agent init` write `.real/types/engine.d.luau`, and nothing tells a person when it is missing or stale.
+  - The single-writer lock (`re_agent::lock::probe`) can be held by an editor or a headless writer that a person has forgotten; they learn it only from `RE8003`.
+  - ADR-0068 (WP31) puts a build id in every binary, read from `re_cli`'s version module, and names `real doctor` as a reader.
+- **The plan** (M4_PLAN WP44): PR "reference" generates the reference into `docs/guide/reference/` with `cargo xtask docs`, checked by CI; PR "guides" writes the guides, runs their steps in a test where possible, and makes `real` embed the user guide, not the internal design documents; PR "doctor" adds `real doctor [--json]`; PR "test" adds `real test [--filter] [--json]`. Non-goals: a public documentation website and bundling luau-lsp.
+
+**Decision.**
+
+**§1 Where the guide lives and what it is.**
+- The user guide is Markdown in `docs/guide/` (WP44's): CommonMark with GitHub's tables, readable on GitHub, in a terminal and as MCP resources. No site generator, no front matter, no HTML. Every page starts with a `#` title and a one-paragraph summary, which the indexes and `docs.search` (§4) show.
+- Layout:
+  - `README.md`: the index, with the path through the guide;
+  - hand-written guides (§3): `install.md`, `first-game.md`, `procedural-landscape.md`, `modelling-a-building.md`, `roblox-style.md`, `editor.md`, `agents.md`, `scripts.md`, `testing.md`, `troubleshooting.md`;
+  - `cookbook/`: one short page per task, each a few steps and a working snippet;
+  - `reference/`: generated (§2), never edited by hand.
+- Links between pages are relative (`../reference/commands.md#entity-spawn`). A page links to code only through the reference, never to `crates/` or `docs/` outside the guide, because the people reading the shipped guide do not have the repository. An explain page is named by its code and read with `real explain CODE`.
+- Images are PNGs under `docs/guide/images/`, at most 200 KB each and 2 MB for the folder (both enforced by `cargo xtask docs --check`), and only where text cannot do the job (the editor's panels). Each says in the page how it was made, so it can be made again, and a page still reads correctly without its images.
+- The guide describes what the engine does at the commit it is in. Planned work is not described. A guide that depends on a later PR (modelling a building needs WP41's nodes) lands with or after it.
+- The guide is kept true by the common rule M4_PLAN already has: once PR "guides" has merged, a PR that changes a feature a guide describes updates that guide, and regenerates the reference.
+
+**§2 The generated reference.**
+- `cargo xtask docs` (`tools/xtask/src/docs.rs`, WP44's) builds `real`, makes a new project with `real new` under `target/xtask/docs-project`, runs `real describe --json --reference` in it, and writes `docs/guide/reference/` from the result. `cargo xtask docs --check` writes into `target/xtask/docs/` instead and fails when the committed folder differs, naming each file that is missing, out of date or no longer generated (the `schemas --check` pattern); it joins `cargo xtask check`, so CI's `xtask` job fails when the reference is stale.
+- `--reference` is a hidden option of `real describe --json` (tooling builds only) that adds to `describe`'s data:
+  - `luau`: the native API from a new `re_script::api::reference()`: each library's name, doc, the contexts it exists in (`game`, `tools`) and its members (name, Luau type, doc), plus the declared types (`Entity`, `Quat`, `Color`, `Connection`, the graph builder types) and globals, as `engine.d.luau` declares them. `Lib` keeps each member as (name, type, doc) and formats the declaration from that, so `engine.d.luau` stays byte-identical. A class written as declaration text rather than as `Lib` members (the `Entity` methods in `crates/re_script/src/api/entity.rs`, which WP35's PRs extend) is returned as its name and that text, and its page shows the declaration with its comments;
+  - `config`: the JSON Schema of `real.toml`, from `AppConfig` and its sections deriving `JsonSchema` (§7). `real schema` writes it too, as `schemas/real-toml.schema.json`, which editors that read JSON Schemas for TOML use for completion;
+  - `explain`: every code with its crate and title (the catalogue `real explain` lists).
+  
+  The `describe` command itself, which agents call, does not grow: an agent reads the Luau API as `real://luau/engine.d.luau`.
+- The commands are the agent-facing set. `real mcp` registers it with `register_agent_tools` (`crates/re_cli/src/tooling/mcp.rs`); `real do` and `real describe` call the same function instead of their own partial lists, so all of them list the same 53 commands (plus the project's Luau tools, of which the generator's new project has none). `real describe`'s `commands` therefore grows from 40 to 53 in tooling builds, and `real do` can call the five it lacked.
+- Pages, each starting with the line "Generated by `cargo xtask docs`; do not edit." and nothing machine- or version-specific, so a version bump (ADR-0068) does not change the reference; `real guide` prints the binary's version itself:
+  - `reference/README.md`: what each page holds;
+  - `reference/luau/README.md`, with the contexts and which library each has, and `reference/luau/<library>.md`, one page per library, with each member's signature and doc;
+  - `reference/components.md`: each component's fields, with type, default and doc;
+  - `reference/nodes.md`: each node kind's ports, parameters (type, default, range, doc), version and whether it streams;
+  - `reference/commands.md`: each command with its tier, summary, whether it takes `dry_run`, its arguments as a table from its input schema (name, type, required, default, doc) and its declared paths (ADR-0020's WP44 amendment);
+  - `reference/real-toml.md`: every section and key, with type, default and doc;
+  - `reference/schemas.md`: each file `real schema` writes, what it validates and its title;
+  - `reference/errors.md`: every code with its title and crate, grouped by crate, and how to read a page (`real explain CODE`, or `real://explain/CODE` for agents).
+- The output is deterministic: items sorted by name, no dates, no paths from the machine, Unix line endings, and pages written by the same code on every platform. Only CI's Linux `xtask` job checks it.
+- A missing doc is visible: a member, component field, node kind, command or `real.toml` key with an empty doc is written as "(no description)", and `cargo xtask docs` prints how many there are. The count is a number to bring down, not a failure, in M4.
+
+**§3 The guides and their tests.**
+- The guides PR "guides" writes, in order: install and first steps; your first game (native); a procedural landscape; the Roblox-style layer; the editor manual; agent setup; scripts with luau-lsp; testing (`real test`, Luau tests, replays and goldens); troubleshooting (`real doctor`, the common errors); and the cookbook. Modelling a building follows WP41's nodes.
+- **Steps are run by a test.** A fenced block whose info string is `sh test` holds commands a reader types, one per line, each `real ...` or `cd DIR`; a block whose info string is `luau file=PATH` (or `toml file=PATH`, `json file=PATH`) holds a file the reader writes, at `PATH` in the project. A test in `crates/re_cli/tests/guide.rs` reads every page in `docs/guide/`, and for each page with such blocks makes an empty directory, then writes the files and runs the commands in page order with the `real` the test was built with (not through a shell, so the same steps run on Windows), and fails on the first command that exits with an error, naming the page and the line. Other blocks (`sh` without `test`, `text`) are shown and not run: opening the editor's window, installing luau-lsp, configuring an MCP client. A page's first `sh test` block starts from nothing, so pages do not depend on each other.
+- The test runs in the ordinary test suite, so on Linux, Windows and macOS (the `re_cli` tests run with one thread there). A step that needs a GPU runs headless (`real run --headless --frames 60`, `real verify`), as the examples' tests already do. PR "guides" reports the test's time on the three platforms in its description.
+- **The guide ships in `real`.** `re_agent`'s build script embeds `docs/guide/**/*.md` and `docs/guide/images/*.png`, and nothing else from `docs/`. People read it with a new command, `real guide` (tooling builds; `crates/re_cli/src/guide.rs`): with no argument it lists the pages with their summaries; `real guide PAGE` prints one (`first-game`, `reference/commands`); `real guide --out DIR` writes the whole guide as files, images included, to read in any Markdown viewer. The internal documents (`DECISIONS.md`, `ARCHITECTURE.md`, the plans, `docs/research/`) stay in the repository and are no longer in the binary. Whether the release archives also carry `docs/guide/` is WP31's choice (ADR-0068 §3).
+
+**§4 What agents read.**
+- MCP resources: `real://guide/<path>` (each guide page, `README.md` included, every reference page, and each image, served as `image/png`), `real://explain/CODE` and `real://luau/engine.d.luau` and `roblox.d.luau` as today. `real://docs/...` is gone with the embedded documents. `resource.list` and `resource.read` serve the same set to clients without resources.
+- `docs.search` (a `read` command, WP44 PR "agents"): `{ query, limit (default 10, at most 50) }` → the best matching sections of the guide and the explain pages, each with its URI, the page title, the section heading, a score and a snippet of at most 300 characters. A section is the text between two headings. Matching is deterministic and needs no index or new crate. A word is a run of letters, digits, `_`, `.` and `-`, lower-cased, so `entity.spawn` and `RE3004` match whole. The query is split into words, a section scores the number of times each word occurs (a word in a heading counts five times, in a title ten), sections with no query word score nothing, and ties go to the URI order. The guide is small (a few hundred sections), so each search scans it.
+- `AGENTS.md` (written by `real agent init`, later by `real new`) points agents at `real://guide/README.md` and `docs.search` instead of the design documents.
+
+**§5 `real test`.**
+- `real test [--filter TEXT] [--update-goldens] [--json]` (tooling builds; `crates/re_cli/src/test.rs`) runs a project's tests and nothing else of `real verify`, in this order:
+  1. `luau`: the Luau tests (§6);
+  2. `graph`: WP39's graph tests (`tests/*.proctest.json`), through the function its `real verify` stage calls;
+  3. `replays`: each `tests/replays/*.replay.json` twice, with the same `state_hash` at the end (the `replays` stage of `real verify`);
+  4. `goldens`: the replays' screenshot checks (the `goldens` stage), with `--update-goldens` as in `real verify`.
+  
+  A project's scripts and tests must compile first: a test file that does not compile fails as a test, and a project that does not open fails every test with its error.
+- `--filter TEXT` keeps the tests whose name contains `TEXT` (case-sensitive): a Luau test's name is `<file> > <test name>` (`tests/player.test.luau > jumps higher`), a graph test's and a replay's is its file's path. A golden check runs only when its replay is kept.
+- The report (`schemas/test-report.schema.json`, `re_app::tests::TestReport`): `{ ok, summary: { passed, failed, skipped }, tests: [{ kind, name, file, ok, skipped, duration_ms, diagnostics, data }] }`, in the order the tests ran. Without `--json`, one line per test (`ok`, `FAILED` or `skipped` and the name) and each failure's diagnostics, then the counts. Exit code 0 when no test failed (also when there are none, with a note), 1 otherwise, 2 for a usage error, as `real verify`.
+- `real verify` gains the stage `luau`, after `boot` and before `replays`, so the gate still runs every test; `real test` is the fast loop, not a second gate.
+- **Test runs keep no data.** `real test` and `test.run` run as verify runs do (ADR-0059): saves and settings live in memory, seeded from `data/seed/`, so a test never writes `.real/data/`. This is what keeps `test.run` a read-tier command.
+- `test.run { filter?, kinds? }` is the same run as a read-tier command, so agents and `real do` can run the tests, and evaluations can check them (WP44's ADR-0046 amendment). `kinds` picks from `luau`, `graph`, `replays` and `goldens` (all by default), and the outcome's `data` is the report. Like `verify`, it opens fresh worlds from the project as saved and writes nothing but caches; it never updates goldens (`--update-goldens` stays a CLI option). It is registered from `re_app::tests`, and gets its row in the walk (ADR-0020's WP44 amendment) in the same PR.
+
+**§6 Luau tests.**
+- A Luau test file is `tests/**/*.test.luau`. Test files are never packed by `real build` (`tests/` is never packed, whatever `[package] include` says: `never_packed` in `crates/re_cli/src/build/pack.rs`) and never run by `real run` or the editor.
+- A test file runs in the `game` context, with two more globals that only test files have:
+  - `test(name: string, body: () -> (), options: { frames: number? }?)`: declares a test. Names are unique in a file (`RE3251` otherwise).
+  - `expect(value: any): Expectation`, whose methods raise `RE3250` with the file and line, the expected value and the actual one when they do not hold: `:to_be(x)` (`==`), `:to_equal(x)` (deep equality of tables; vectors and quaternions by component), `:to_be_near(x, tolerance)` (numbers, vectors by component), `:to_be_at_least(x)`, `:to_be_at_most(x)`, `:to_be_nil()`, `:to_be_truthy()`, `:to_contain(x)` (a substring of a string, or a value in an array), and `:to_error(text?)` (a function that raises an error, whose message contains `text` when given). `expect(value).never` negates the next method.
+  
+  `engine.d.luau` does not declare them; a second file, `.real/types/test.d.luau`, does, written beside it, so luau-lsp knows them in test files.
+- **Each test gets a fresh world.** The runner opens the project headless with its configuration and seed, as `real verify`'s `boot` does (saves and settings in memory, §5), runs one frame (so the entry scene's scripts have started), runs the test file's top level (which declares the tests), and then runs one test's body as a script thread. While the thread waits, the runner steps frames at the fixed step, so `task.wait(1)` in a test is one second of simulation, and a test that waits for something the game does sees it happen. The test passes when its body returns, and fails on an error (an `expect`, or any script error) or when it has not returned within its frame budget (`options.frames`, default 600, `RE3252`). The next test starts again from a fresh world. The runner may fork a booted world instead of opening the project again (as `play.run` forks), as long as each test starts from the same state.
+- Tests are deterministic as replays are: the fixed step, the project's seed, the frame count and the same inputs (none), so a failure repeats exactly.
+- A test runs under the project's script budget, as the game's scripts do (the `RuntimeConfig` the project's configuration gives, which WP35's ADR-0011 amendment turns into a counted budget).
+- `require` from a test file resolves as from a game script, from the test file's folder, so a test can load the game's modules (`require("../scripts/game/score")`) and helpers under `tests/`. The resolver accepts modules under `tests/` for test files only (§7).
+- Input during a test is out of scope in M4: a test that needs a player's input is a replay.
+
+**§7 Planned edits in other owners' code.**
+- `re_script` (WP35): `Lib` stores members as (name, type, doc), and `api::reference()` returns them per library with the contexts that have the library (PR "reference"); the test globals `test` and `expect` in a new file `crates/re_script/src/api/test.rs`, which WP44 owns, installed only when the runner starts a test file; `read_script` and the module resolver accept `tests/**` for a test file's own chunk and its requires (PR "test"). Codes `RE3250`–`RE3299` (WP44's range in `re_script`).
+- `re_app` (shared, the maintainer): a new module `crates/re_app/src/tests.rs` (WP44's) with the Luau test runner, `TestReport` and the `test.run` command, registered from `commands.rs`; the `luau` stage in `verify.rs` (PR "test"); `AppConfig` and the sections it holds derive `JsonSchema` (PR "reference"), with a plain derive, since `re_app` depends on `schemars` directly. Sections other WPs add in M4 (WP37's `[scenes]`, `[saves]` and `[settings]`, WP39's `[proc]`) derive it too: once `AppConfig` derives it, a section without it does not compile, so whichever PR lands second adds the derive (agreed with WP37 and WP39).
+- `re_input` (WP37), `re_proc::stream` (WP39), `re_assets`, and `re_types`' `audio` and `render` types (the maintainer): the types of the `[input]`, `[stream]`, `[assets]`, `[audio]` and `[render]` sections derive `JsonSchema` (PR "reference"), one commit per owner. `re_app` and `re_proc` already depend on `schemars` unconditionally and derive it plainly; `re_types` and `re_assets` have it behind their optional `schemars` feature and use that; only `re_input` gains a dependency, the same optional one (a crate already in the workspace, so the lockfile does not change). A type with a hand-written `Deserialize` gets a hand-written `JsonSchema` that matches it. Adding a derive changes no behaviour, and nothing in the runtime calls the new impls; PR "reference" reports `build-web`'s size before and after (expected unchanged).
+- `re_cli` (shared, the maintainer): the hidden `--reference` option, one registration function for the agent-facing commands (§2), `schemas/real-toml.schema.json` and `schemas/test-report.schema.json` and `schemas/doctor-report.schema.json` in `real schema`, `real guide`, `real test` and `real doctor` as new modules, and `tests/guide.rs`.
+- WP39's graph tests: `real test` calls the function that runs them. WP39's PR "graph tests" exposes it as `pub fn` in `re_proc` or `re_app::procedural`, whichever it is built in.
+
+**§8 `real doctor`.**
+- `real doctor [--json]` (tooling builds; `crates/re_cli/src/doctor.rs`) checks the machine and the project, writes nothing, and prints one line per check with what to do about each problem. Each check has a status, `ok`, `warn`, `error` or `skipped`, a message, and, unless it is `ok`, a fix:
+  - `build`: the engine version and build id (ADR-0068 §2). A modified or unknown build is `warn` ("build from a clean checkout before you report a bug").
+  - `gpu`: the adapters of each backend this platform has (Vulkan, Metal, DX12, GL), each with its name, kind (discrete, integrated, CPU, virtual) and driver; the backends the project asks for (`RE_BACKENDS` or `[render] backends`); and the adapter the engine would take. No adapter for those backends is `error`, with a fix that names a backend that has one (`backends = ["metal"]` on a Mac, say). Only a CPU adapter is `warn` (software rendering is slow). A device is created on the chosen adapter, so a driver that lists an adapter it cannot open is found here.
+  - `display` (Linux): neither `DISPLAY` nor `WAYLAND_DISPLAY` set is `warn`: the editor and windowed runs need a display; headless runs do not.
+  - `audio`: no output device is `warn`: games run silent (the headless backend, as in CI).
+  - `luau-lsp`: missing is `warn` (type checking with `real check --types` and editor completion need it), another version than `LUAU_LSP_VERSION` is `warn`, naming both.
+  - `project` (when `--project` holds a `real.toml`; `skipped` otherwise): the configuration loads and the content stages of `real verify` pass (`schema`, `compile`, `scan`); an error is `error` with the first diagnostics and "run `real verify` for the whole report".
+  - `definitions`: `.real/types/engine.d.luau` missing or not this engine's is `warn` ("run `real check --types`"); the same for `schemas/` when the project has the folder ("run `real schema`").
+  - `lock`: free is `ok`; held by the editor is `ok` with its pid (and, after WP44's PR "windows pipe", whether its socket or pipe answers); held by a headless writer is `warn` with its pid and command, because `real do` and `real mcp` are refused with `RE8003` until it ends.
+- `--json` prints one report (`schemas/doctor-report.schema.json`): `{ ok, engine: { version, build }, checks: [{ name, status, message, fix, data }] }`. `ok` is false when a check is `error`. The exit code is 1 then, else 0.
+- Doctor finds; it changes nothing. It never takes the lock (`probe` only), never creates `.real/`, and never writes the definitions it finds stale.
+- **The default backends.** The default becomes `["primary", "gl"]` in `AppConfig`, in the `native` and `terrain` templates, and in the project `real new` writes without the template library. `primary` is already a name `parse_backends` accepts: wgpu's primary APIs, which are Vulkan on Linux, Metal on macOS, and DX12 or Vulkan on Windows. Linux keeps Vulkan with GL behind it, as now; a Mac gets Metal; Windows gets DX12 beside Vulkan (CI pins `RE_BACKENDS`, so its goldens do not move). This is a bug fix, so it lands in PR "honesty", with a test that runs `real run --headless --frames 2 --screenshot` (a capture needs a device) on a new native project with `RE_BACKENDS` removed: the macOS check, on a real Apple-silicon machine, proves the default finds an adapter there, and the Windows and Linux checks prove it still does there. PR "doctor" runs `real doctor --json` in the same test.
+- Codes in `re_cli`'s WP44 range, `RE0904`–`RE0949`, for the failures `real test`, `real doctor` and `real guide` report.
+
+**Alternatives.**
+- **A documentation site** (mdBook or similar). It is a non-goal of M4, adds a dependency and a build, and would be a public place to keep current while the engine's distribution is undecided. Markdown in the repository, shipped in `real`, can become a site later without rewriting.
+- **Generating the reference at run time only** (`real describe` and `real explain`, no committed pages). Agents could manage, but people browsing the guide on GitHub or with `real guide --out` would find no reference, and nothing in review would show when the API changed.
+- **Parsing `engine.d.luau` in the generator** instead of `api::reference()`. It needs no change in `re_script`, but it ties the generator to the text's layout and cannot say which context has which library.
+- **A hand-written `real.toml` page with a drift test.** It would avoid the `JsonSchema` derives in four crates, but the page would repeat every field's doc comment by hand, and editors would still have no schema.
+- **Embedding all of `docs/`, as today.** It ships the internal design documents (decisions, plans, research) in a proprietary product's binary and gives users nothing written for them.
+- **Luau tests that share one world per file.** Faster, but a test's result would depend on the tests before it; failures would not repeat when run alone with `--filter`.
+- **Luau tests under `scripts/tests/`.** No resolver change, but `real build` packs `scripts/`, so every game would ship its tests.
+- **`real doctor` fixing what it finds** (writing definitions, changing `real.toml`). It would be a writer that bypasses the lock and the policy; a doctor that only reads can run any time, even beside an open editor.
+
+**Consequences.**
+- A person with only the `real` binary can learn the engine (`real guide`), and an agent reads the same guide through MCP. The design documents leave the binary, which shrinks it by about 1.3 MB.
+- The reference cannot drift: a PR that changes a command, component, node kind, Luau function or `real.toml` key regenerates it or fails CI's `xtask` job. The guides' runnable steps run on all three platforms in every test run.
+- `real describe`, `real do`, `real mcp` and the editor agree on the command set. A tool or test that counted `describe`'s 40 commands sees 53.
+- Every PR that adds a Luau function, component, node kind, command or `real.toml` key also adds its doc comment, or the reference shows "(no description)".
+- `real test` gives game makers a test loop with Luau unit tests on fresh worlds; `real verify` runs the same tests as its `luau` stage.
+- `real doctor` turns the M4 audits' platform gotchas (no adapter for the default backends, missing luau-lsp, a forgotten lock) into a check with a fix.
+- New files outside WP44's paths, each in its owner's review: the `JsonSchema` derives (§7), `crates/re_script/src/api/test.rs` and the resolver change, `crates/re_app/src/tests.rs` and the `luau` stage, and the `re_cli` modules and test. `schemas/` gains three files.
 
 ## ADR-0066: Compressed and streamed audio: Ogg Vorbis decoded by lewton over `ogg` 0.9, long sounds streamed through a ring buffer, pumped by one stream thread on the desktop and each frame in the browser
 
@@ -4098,6 +6019,8 @@ join_code = false              # true: a server or host makes a join code at eac
 players_per_address = 4        # the most players from one address (an IPv4 address or an IPv6 /64); loopback is exempt
 total_rate = 2097152           # bytes a second a server sends all its clients together (2 MiB/s)
 ```
+
+**Amendment (maintainer, 2026-10-28: where the limits' settings land).** §10's `Config::players_per_address` and `Config::total_rate`, and the `[net]` keys `join_code`, `players_per_address` and `total_rate`, land with the PRs that read them ("limits" and "join codes") rather than in PR "secure", so no setting exists that does nothing. Adding them later breaks no consumer, since every one builds its `Config` through `Config::server` or `Config::client`.
 
 ## ADR-0068: Versions follow the milestone, every binary names its build, and releases are drafts with checksums
 

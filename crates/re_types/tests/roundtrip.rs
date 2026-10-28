@@ -724,11 +724,13 @@ fn audio() {
             clip: "assets/sfx/pickup.wav".into(),
             position: Some(Vec3::ONE),
             volume: 0.8,
+            id: None,
         },
         AudioCmd::PlayOneShot {
             clip: "assets/sfx/ui.wav".into(),
             position: None,
             volume: 1.0,
+            id: Some(3),
         },
         AudioCmd::StartSource {
             entity: id,
@@ -762,6 +764,7 @@ fn audio() {
             position: None,
             volume: 1.0,
             bus: "ui".into(),
+            id: Some(4),
         },
         AudioCmd::SetBusVolume {
             bus: "music".into(),
@@ -786,10 +789,80 @@ fn audio() {
             name: "underwater".into(),
             seconds: 1.0,
         },
+        AudioCmd::SoundControl {
+            id: 3,
+            op: SoundOp::Pause { fade: 0.25 },
+        },
+        AudioCmd::SoundControl {
+            id: 4,
+            op: SoundOp::Rate {
+                rate: 1.5,
+                fade: 0.0,
+            },
+        },
+        AudioCmd::SourceControl {
+            entity: id,
+            op: SoundOp::Start,
+        },
+        AudioCmd::SourceControl {
+            entity: id,
+            op: SoundOp::Seek { seconds: 12.5 },
+        },
+        AudioCmd::SourceControl {
+            entity: id,
+            op: SoundOp::Volume {
+                volume: 0.5,
+                fade: 2.0,
+            },
+        },
+        AudioCmd::SetSourceSpatial {
+            entity: id,
+            spatial: Spatial {
+                rolloff: Rolloff::Inverse,
+                min_distance: 2.0,
+                max_distance: 40.0,
+                doppler: 1.0,
+            },
+        },
     ];
     for cmd in &commands {
         round_trip(cmd);
     }
+    // A one-shot without an id is written as it was before ids existed.
+    assert_eq!(
+        round_trip(&commands[0]),
+        r#"{"cmd":"play_one_shot","clip":"assets/sfx/pickup.wav","position":[1.0,1.0,1.0],"volume":0.8}"#
+    );
+    // The op and its fields sit beside the command's own.
+    assert_eq!(
+        round_trip(&AudioCmd::SourceControl {
+            entity: id,
+            op: SoundOp::Stop { fade: 0.5 },
+        }),
+        r#"{"cmd":"source_control","entity":11,"op":"stop","fade":0.5}"#
+    );
+    // Left out, a fade is 0 and spatial settings take their defaults.
+    let read: AudioCmd =
+        serde_json::from_str(r#"{"cmd":"sound_control","id":9,"op":"resume"}"#).unwrap();
+    assert_eq!(
+        read,
+        AudioCmd::SoundControl {
+            id: 9,
+            op: SoundOp::Resume { fade: 0.0 },
+        }
+    );
+    let read: AudioCmd =
+        serde_json::from_str(r#"{"cmd":"set_source_spatial","entity":11,"doppler":1.0}"#).unwrap();
+    assert_eq!(
+        read,
+        AudioCmd::SetSourceSpatial {
+            entity: id,
+            spatial: Spatial {
+                doppler: 1.0,
+                ..Spatial::default()
+            },
+        }
+    );
     assert_eq!(round_trip(&AudioCmd::StopAll), r#"{"cmd":"stop_all"}"#);
     assert_eq!(
         round_trip(&AudioCmd::ApplySnapshot {

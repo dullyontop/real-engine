@@ -24,8 +24,18 @@
 //!
 //! The panels other than the toolbar and the palette are tabs in a dock
 //! (egui_dock): they can be dragged into other splits, stacked or floated.
-//! The arrangement and the gizmo settings are saved per project in
+//! The arrangement, the gizmo settings, the editor camera, the view's
+//! toggles and the selection are saved per project in
 //! `.real/editor/layout.json` ([`layout`]), as editor state, not as commands.
+//!
+//! The game view is drawn from the editor's own camera ([`camera`]): it
+//! orbits, pans, zooms and flies, frames the selection (`F`) or everything
+//! (`Shift+F`), and can look through the game's camera instead. It is editor
+//! state, never a command, saved with the layout. Over the scene the view
+//! shows a grid, an axis indicator, icons for lights and cameras, the
+//! selected camera's frustum or light's reach and the selection's outline,
+//! each with a toggle in the view's menu ([`ViewSettings`]); none of them
+//! reaches `screenshot`, which draws the app's own snapshot.
 //!
 //! The game view carries translate, rotate and scale gizmos for the selected
 //! entity ([`gizmo`]; `W`, `E`, `R`). A drag moves the entity as it goes,
@@ -48,6 +58,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod camera;
 mod canvas;
 pub mod codes;
 mod debugger;
@@ -55,6 +66,7 @@ mod editor;
 pub mod gizmo;
 mod headless;
 pub mod layout;
+mod overlay;
 mod panels;
 mod socket;
 mod view;
@@ -64,6 +76,7 @@ mod windowed;
 pub use canvas::CanvasSpot;
 pub use editor::{ConsoleLine, Editor, LineKind, Panel, PanelRects};
 pub use headless::HeadlessEditor;
+pub use overlay::ViewSettings;
 pub use socket::EditorSocket;
 pub use view::GameView;
 pub use windowed::run_editor;

@@ -109,6 +109,7 @@ pub struct CreateSourceArgs {
     /// The graph file to write (default `graphs/<name>.graph.json`, with
     /// `_2`, `_3`... when taken). It must not exist.
     #[serde(default)]
+    #[schemars(extend("x-real-path" = "write"))]
     pub graph: Option<String>,
 }
 
@@ -602,6 +603,9 @@ fn create_source<C: EditTarget>(
     let file = root.join(&graph);
     let written = !call.dry_run() && !file.exists();
     if written {
+        // The default file is named by no argument, so the policy has not
+        // seen it yet.
+        call.check_write(&graph)?;
         let write = || -> std::io::Result<()> {
             if let Some(dir) = file.parent() {
                 std::fs::create_dir_all(dir)?;
