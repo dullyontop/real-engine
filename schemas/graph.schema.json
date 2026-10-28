@@ -100,7 +100,23 @@
             "path.spline",
             "road.mesh",
             "road.footprint",
-            "terrain.conform"
+            "terrain.conform",
+            "poly.box",
+            "poly.icosphere",
+            "poly.cone",
+            "poly.torus",
+            "poly.stairs",
+            "poly.arch",
+            "poly.transform",
+            "poly.mirror",
+            "poly.weld",
+            "poly.flip",
+            "poly.merge",
+            "poly.group",
+            "poly.material",
+            "poly.attribute",
+            "poly.from_mesh",
+            "poly.to_mesh"
           ]
         },
         "version": {
@@ -1533,6 +1549,797 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.box"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "size": {
+                    "description": "The full size `[x, y, z]`, in metres (each 0.001 to 10000).",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float",
+                      "minimum": 0.001,
+                      "maximum": 10000.0
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  },
+                  "radius": {
+                    "description": "The radius of the rounded edges and corners, from 0 (six flat quads)\nto half the smallest side.",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.0,
+                    "default": 0.0
+                  },
+                  "segments": {
+                    "description": "Steps per quarter circle of a rounded edge: an even number, 2 to 64.",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 2,
+                    "maximum": 64,
+                    "default": 4
+                  }
+                },
+                "description": "Parameters of `poly.box`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.icosphere"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "radius": {
+                    "description": "The radius, in metres (0.001 to 10000).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 0.5
+                  },
+                  "subdivisions": {
+                    "description": "How many times each triangle is split in four (0 to 6): 20 × 4^n\ntriangles.",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "maximum": 6,
+                    "default": 2
+                  }
+                },
+                "description": "Parameters of `poly.icosphere`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.cone"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "radius": {
+                    "description": "The radius at the bottom, in metres (0 to 10000; 0 is a point, but not\nat both ends).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.0,
+                    "maximum": 10000.0,
+                    "default": 0.5
+                  },
+                  "top_radius": {
+                    "description": "The radius at the top, in metres (0 to 10000): 0 for a cone, the\nbottom radius for a cylinder.",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.0,
+                    "maximum": 10000.0,
+                    "default": 0.0
+                  },
+                  "height": {
+                    "description": "The height, in metres (0.001 to 10000).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 1.0
+                  },
+                  "segments": {
+                    "description": "Sides around (3 to 256).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 3,
+                    "maximum": 256,
+                    "default": 24
+                  },
+                  "caps": {
+                    "description": "Closes the ends with flat faces.",
+                    "type": "boolean",
+                    "default": true
+                  }
+                },
+                "description": "Parameters of `poly.cone`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.torus"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "radius": {
+                    "description": "The radius of the circle the tube follows, in metres (0.001 to 10000,\nlarger than `tube`).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 1.0
+                  },
+                  "tube": {
+                    "description": "The radius of the tube, in metres (0.001 to 10000, smaller than\n`radius`).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 0.25
+                  },
+                  "segments": {
+                    "description": "Steps around the circle (3 to 256).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 3,
+                    "maximum": 256,
+                    "default": 24
+                  },
+                  "sides": {
+                    "description": "Steps around the tube (3 to 256).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 3,
+                    "maximum": 256,
+                    "default": 12
+                  }
+                },
+                "description": "Parameters of `poly.torus`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.stairs"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "steps": {
+                    "description": "The number of steps (1 to 256).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 1,
+                    "maximum": 256,
+                    "default": 8
+                  },
+                  "width": {
+                    "description": "The width along X, in metres (0.001 to 10000).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 1.0
+                  },
+                  "rise": {
+                    "description": "The height of each step, in metres (0.001 to 10000).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 0.18000000715255737
+                  },
+                  "run": {
+                    "description": "The depth of each step, in metres (0.001 to 10000).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 0.2800000011920929
+                  }
+                },
+                "description": "Parameters of `poly.stairs`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.arch"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "span": {
+                    "description": "The width of the opening at its feet, in metres (0.001 to 10000).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 2.0
+                  },
+                  "rise": {
+                    "description": "The height of the opening, in metres (0.001 to 10000, at most half\nthe span: a semicircle).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 1.0
+                  },
+                  "thickness": {
+                    "description": "The thickness of the ring, in metres (0.001 to 10000).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 0.30000001192092896
+                  },
+                  "depth": {
+                    "description": "The depth along Z, in metres (0.001 to 10000).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.001,
+                    "maximum": 10000.0,
+                    "default": 0.5
+                  },
+                  "segments": {
+                    "description": "Pieces along the curve (1 to 256).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 1,
+                    "maximum": 256,
+                    "default": 12
+                  }
+                },
+                "description": "Parameters of `poly.arch`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.transform"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "translation": {
+                    "description": "Moves the mesh, in metres (each -1000000 to 1000000).",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float",
+                      "minimum": -1000000.0,
+                      "maximum": 1000000.0
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "rotation": {
+                    "description": "Euler angles in degrees, applied X, then Y, then Z (each -1000000 to\n1000000).",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float",
+                      "minimum": -1000000.0,
+                      "maximum": 1000000.0
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "scale": {
+                    "description": "Scale per axis, applied first (each -1000000 to 1000000, not 0); an\nodd number of negative axes mirrors the mesh.",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float",
+                      "minimum": -1000000.0,
+                      "maximum": 1000000.0
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  }
+                },
+                "description": "Parameters of `poly.transform`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.mirror"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "axis": {
+                    "description": "The axis the mirror plane is square to.",
+                    "$ref": "#/$defs/poly.mirror.AxisParam",
+                    "default": "x"
+                  },
+                  "offset": {
+                    "description": "Where the plane crosses the axis, in metres (-1000000 to 1000000).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": -1000000.0,
+                    "maximum": 1000000.0,
+                    "default": 0.0
+                  },
+                  "keep": {
+                    "description": "Keeps the original too, joined to its reflection at the points on the\nplane (faces lying on the plane go); else only the reflection.",
+                    "type": "boolean",
+                    "default": true
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `poly.mirror`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.weld"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "distance": {
+                    "description": "Points closer than this merge, in metres (0 to 1000; 0 merges only\npoints at the same position).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.0,
+                    "maximum": 1000.0,
+                    "default": 0.0010000000474974513
+                  }
+                },
+                "description": "Parameters of `poly.weld`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.flip"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "group": {
+                    "description": "The face group to turn around; empty for every face.",
+                    "type": "string",
+                    "default": ""
+                  }
+                },
+                "description": "Parameters of `poly.flip`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.merge"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "type": "object",
+                "description": "Parameters of `poly.merge` (none)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.group"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "name": {
+                    "description": "The group to write, replacing a group of that name.",
+                    "type": "string",
+                    "default": "selection"
+                  },
+                  "by": {
+                    "description": "How faces are chosen.",
+                    "$ref": "#/$defs/poly.group.GroupBy",
+                    "default": "direction"
+                  },
+                  "direction": {
+                    "description": "`direction`: the direction faces should face (not zero).",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      0.0,
+                      1.0,
+                      0.0
+                    ]
+                  },
+                  "angle": {
+                    "description": "`direction`: the largest angle between a face's normal and\n`direction`, in degrees (0 to 180).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.0,
+                    "maximum": 180.0,
+                    "default": 45.0
+                  },
+                  "min": {
+                    "description": "`box`: the box's lowest corner, in metres.",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float",
+                      "minimum": -1000000.0,
+                      "maximum": 1000000.0
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      -0.5,
+                      -0.5,
+                      -0.5
+                    ]
+                  },
+                  "max": {
+                    "description": "`box`: the box's highest corner, in metres.",
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "format": "float",
+                      "minimum": -1000000.0,
+                      "maximum": 1000000.0
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                      0.5,
+                      0.5,
+                      0.5
+                    ]
+                  },
+                  "material": {
+                    "description": "`material`: the material file, as `poly.material` set it.",
+                    "type": "string",
+                    "default": "",
+                    "x-real-asset": "material"
+                  },
+                  "start": {
+                    "description": "`index`: the first face chosen.",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 0
+                  },
+                  "end": {
+                    "description": "`index`: one past the last face chosen (faces past the mesh's last are\nignored).",
+                    "type": "integer",
+                    "format": "uint32",
+                    "minimum": 0,
+                    "default": 1
+                  },
+                  "fraction": {
+                    "description": "`random`: the probability that a face is chosen (0 to 1).",
+                    "type": "number",
+                    "format": "float",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "default": 0.5
+                  },
+                  "groups": {
+                    "description": "`union`, `intersection` and `complement`: the groups combined.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "default": []
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `poly.group`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.material"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "group": {
+                    "description": "The face group to paint; empty for every face.",
+                    "type": "string",
+                    "default": ""
+                  },
+                  "material": {
+                    "description": "A material file, relative to the project root\n(`materials/stone.material.json`); empty for the default material.",
+                    "type": "string",
+                    "default": "",
+                    "x-real-asset": "material"
+                  }
+                },
+                "description": "Parameters of `poly.material`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.attribute"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "properties": {
+                  "domain": {
+                    "description": "What the attribute has one value per.",
+                    "$ref": "#/$defs/poly.attribute.DomainParam",
+                    "default": "face"
+                  },
+                  "name": {
+                    "description": "The attribute's name: lowercase letters, digits and `_`, starting with\na letter (`color` is the vertex colour). Not `material`, which\n`poly.material` sets.",
+                    "type": "string",
+                    "default": "color"
+                  },
+                  "type": {
+                    "description": "The type of the values; when omitted, a number is a `float`, `true`\nor `false` a `bool`, and a list of 2, 3 or 4 numbers a `vec2`, `vec3`\nor `vec4`.",
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/poly.attribute.TypeParam"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "value": {
+                    "description": "The value given to every element of the group's faces.",
+                    "$ref": "#/$defs/poly.attribute.Constant",
+                    "default": [
+                      1.0,
+                      1.0,
+                      1.0
+                    ]
+                  },
+                  "group": {
+                    "description": "The face group whose faces (or their corners or points) get the\nvalue; empty for every face.",
+                    "type": "string",
+                    "default": ""
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Parameters of `poly.attribute`.",
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.from_mesh"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "type": "object",
+                "description": "Parameters of `poly.from_mesh` (none)."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "poly.to_mesh"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "material": {
+                    "description": "Only the faces drawn with this material file; empty for every face,\ndrawn with the first material any face uses.",
+                    "type": "string",
+                    "default": "",
+                    "x-real-asset": "material"
+                  }
+                },
+                "description": "Parameters of `poly.to_mesh`.",
+                "type": "object"
+              }
+            }
+          }
         }
       ]
     },
@@ -1844,6 +2651,153 @@
           "required": [
             "position"
           ]
+        }
+      ]
+    },
+    "poly.mirror.AxisParam": {
+      "description": "A coordinate axis.",
+      "oneOf": [
+        {
+          "description": "The X axis.",
+          "type": "string",
+          "const": "x"
+        },
+        {
+          "description": "The Y axis.",
+          "type": "string",
+          "const": "y"
+        },
+        {
+          "description": "The Z axis.",
+          "type": "string",
+          "const": "z"
+        }
+      ]
+    },
+    "poly.group.GroupBy": {
+      "description": "How `poly.group` chooses faces.",
+      "oneOf": [
+        {
+          "description": "Faces whose normal is within `angle` degrees of `direction`.",
+          "type": "string",
+          "const": "direction"
+        },
+        {
+          "description": "Faces whose centre (the average of their corners) is inside the box\nfrom `min` to `max`, edges included.",
+          "type": "string",
+          "const": "box"
+        },
+        {
+          "description": "Faces drawn with `material` (empty: the default material).",
+          "type": "string",
+          "const": "material"
+        },
+        {
+          "description": "Faces `start` to `end - 1`, in face order.",
+          "type": "string",
+          "const": "index"
+        },
+        {
+          "description": "Each face with probability `fraction`, from the node's seed.",
+          "type": "string",
+          "const": "random"
+        },
+        {
+          "description": "Faces in any of `groups`.",
+          "type": "string",
+          "const": "union"
+        },
+        {
+          "description": "Faces in every one of `groups`.",
+          "type": "string",
+          "const": "intersection"
+        },
+        {
+          "description": "Faces in none of `groups`.",
+          "type": "string",
+          "const": "complement"
+        }
+      ]
+    },
+    "poly.attribute.DomainParam": {
+      "description": "What an attribute has one value per.",
+      "oneOf": [
+        {
+          "description": "Each point the group's faces use.",
+          "type": "string",
+          "const": "point"
+        },
+        {
+          "description": "Each corner of the group's faces.",
+          "type": "string",
+          "const": "corner"
+        },
+        {
+          "description": "Each face of the group.",
+          "type": "string",
+          "const": "face"
+        }
+      ]
+    },
+    "poly.attribute.TypeParam": {
+      "description": "The type of an attribute's values.",
+      "oneOf": [
+        {
+          "description": "A number.",
+          "type": "string",
+          "const": "float"
+        },
+        {
+          "description": "A whole number.",
+          "type": "string",
+          "const": "int"
+        },
+        {
+          "description": "`true` or `false`.",
+          "type": "string",
+          "const": "bool"
+        },
+        {
+          "description": "Two numbers.",
+          "type": "string",
+          "const": "vec2"
+        },
+        {
+          "description": "Three numbers.",
+          "type": "string",
+          "const": "vec3"
+        },
+        {
+          "description": "Four numbers.",
+          "type": "string",
+          "const": "vec4"
+        },
+        {
+          "description": "A rotation as a quaternion `[x, y, z, w]`, normalised.",
+          "type": "string",
+          "const": "quat"
+        }
+      ]
+    },
+    "poly.attribute.Constant": {
+      "description": "A constant attribute value: a number, `true` or `false`, or a list of\ntwo to four numbers.",
+      "anyOf": [
+        {
+          "description": "`true` or `false`.",
+          "type": "boolean"
+        },
+        {
+          "description": "A number.",
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "description": "Two to four numbers.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
         }
       ]
     }

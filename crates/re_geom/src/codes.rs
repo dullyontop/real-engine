@@ -27,3 +27,15 @@ pub const INVALID_POLYGON: Code = Code::new("RE4504");
 
 /// A polygon could not be triangulated.
 pub const TRIANGULATION_FAILED: Code = Code::new("RE4505");
+
+/// An argument to a modelling operation (`poly`) is out of range or not
+/// finite, or names an attribute or group that cannot be used.
+pub const INVALID_ARGUMENT: Code = Code::new("RE4510");
+
+/// A [`PolyMesh`](crate::poly::PolyMesh) breaks one of the rules of
+/// [`PolyMesh::validate`](crate::poly::PolyMesh::validate).
+pub const INVALID_POLYMESH: Code = Code::new("RE4511");
+
+/// A modelling operation's result would have more than
+/// [`MAX_ELEMENTS`](crate::poly::MAX_ELEMENTS) points or corners.
+pub const POLYMESH_TOO_LARGE: Code = Code::new("RE4515");

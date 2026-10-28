@@ -387,9 +387,11 @@ fn nodes_are_moved_added_and_removed_with_commands() {
     );
     assert_eq!(app.history().log().len(), 1);
 
-    // The canvas menu adds a node where it was opened.
+    // The canvas menu adds a node where it was opened. Opened with room
+    // below it for every kind group: a menu that opens upward adds the node
+    // at its own top corner (egui-snarl's menu position), not at the click.
     let canvas = ed.editor.rects().get(Panel::Canvas).unwrap();
-    let empty = canvas.right_bottom() - egui::vec2(200.0, 60.0);
+    let empty = canvas.right_bottom() - egui::vec2(200.0, 260.0);
     right_click(&mut ed, &mut app, empty);
     let group = spot(&ed, CanvasSpot::MenuItem("field"));
     click(&mut ed, &mut app, group);

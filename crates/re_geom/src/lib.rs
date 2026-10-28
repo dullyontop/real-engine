@@ -10,7 +10,10 @@
 //!   strokes and triangulation on a 1 mm integer grid (ADR-0043 §5);
 //! * [`road`]: centreline splines and road surfaces with junctions;
 //! * [`terrain`]: the level-of-detail chunk quadtree, stitched chunk meshes
-//!   and hydraulic erosion on region tiles, for streamed worlds (ADR-0042).
+//!   and hydraulic erosion on region tiles, for streamed worlds (ADR-0042);
+//! * [`poly`]: the modelling kernel (ADR-0062), [`poly::PolyMesh`], an
+//!   indexed polygon mesh with attribute columns, its primitives and
+//!   operations, and its triangulation into `MeshData`.
 //!
 //! Everything here is plain computation with no GPU, physics or scripting
 //! dependency. Results are **bit-identical on every platform**: angles come
@@ -31,6 +34,7 @@ mod error;
 mod heightfield;
 pub mod math;
 pub mod ops;
+pub mod poly;
 pub mod polygon;
 pub mod primitives;
 pub mod road;
@@ -75,6 +79,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::TRIANGULATION_FAILED,
         title: "Triangulation failed",
         page: include_str!("../explain/RE4505.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_ARGUMENT,
+        title: "Invalid modelling argument",
+        page: include_str!("../explain/RE4510.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_POLYMESH,
+        title: "Invalid polygon mesh",
+        page: include_str!("../explain/RE4511.md"),
+    },
+    DiagInfo {
+        code: codes::POLYMESH_TOO_LARGE,
+        title: "Modelling result too large",
+        page: include_str!("../explain/RE4515.md"),
     },
 ];
 

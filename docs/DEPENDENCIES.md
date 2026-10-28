@@ -219,6 +219,7 @@ The files live in `crates/re_compat/assets/fonts/`, about 307 KB in all, each fa
 |---|---|---|---|---|---|
 | insta | 1.49.0 | Apache-2.0 | 1.66 | Snapshot tests for JSON output, diagnostics and command specs (`json` feature) | Verified (WP3, WP7: snapshot tests in `re_script`, `re_script_check` and `re_agent`) |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | 1.63 | Temporary project directories in tests | Verified (WP0: the `tools/xtask` explain tests build fixture workspaces in temp dirs) |
+| proptest | 1.12.0 | MIT OR Apache-2.0 | 1.88 | Property tests for `re_geom::poly` (ADR-0062): random valid meshes and parameters, and every operation's output must validate, stay closed and keep its columns. A dev-dependency of `re_geom` only, with `default-features = false` and `std`; each test sets a fixed seed and `failure_persistence: None`, so it writes no files. It adds four crates to the lockfile, `proptest`, `rand_xorshift` 0.5.0, `unarray` 0.1.4 and `core_detect` 1.0.0, all MIT OR Apache-2.0; its other dependencies were already there. No shipped build changes. | Verified (WP41 PR "polymesh": `crates/re_geom/tests/poly_props.rs`) |
 
 ## Known duplicate versions
 

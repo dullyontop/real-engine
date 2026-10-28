@@ -554,6 +554,7 @@ fn read_declaration(scripts: &Arc<Scripts>, path: &str, limits: Limits) -> Resul
         "fragment" => PortType::Fragment,
         "shapes" => PortType::Shapes,
         "path" => PortType::Path,
+        "polymesh" => return Err("a Luau node cannot output a `polymesh` (ADR-0062)".into()),
         other => {
             return Err(format!(
                 "`output` must be field, points, mesh, fragment, shapes or path (found `{other}`)"
@@ -624,6 +625,7 @@ fn port_type(s: &str) -> Result<PortType, String> {
         "shapes" => Ok(PortType::Shapes),
         "path" => Ok(PortType::Path),
         "fragment" => Err("fragment inputs are not supported for Luau nodes".into()),
+        "polymesh" => Err("polymesh inputs are not supported for Luau nodes (ADR-0062)".into()),
         other => Err(format!(
             "unknown port type `{other}` (field, points, mesh, shapes or path)"
         )),

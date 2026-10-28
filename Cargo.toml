@@ -134,6 +134,9 @@ tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "io-std"
 # Dev-dependencies.
 insta = { version = "=1.49.0", features = ["json"] }
 tempfile = "=3.27.0"
+# Property tests of the modelling kernel (ADR-0062 §12): re_geom only, with no
+# failure files and fixed seeds. Without default features: no fork or timeout.
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 
 # Temporary patched copies for wasm32-unknown-unknown (ADR-0049 §2), removed when upstream
 # releases carry the changes. Both are the crates.io sources of the versions pinned above

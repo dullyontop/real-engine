@@ -122,6 +122,12 @@ pub(crate) fn to_lua(lua: &Lua, output: &Output) -> mlua::Result<Value> {
                 "fragments are not passed to Luau nodes",
             ));
         }
+        // ADR-0062 §6: polygon meshes stay out of Luau in M4.
+        Output::PolyMesh(_) => {
+            return Err(mlua::Error::runtime(
+                "polygon meshes are not passed to Luau nodes",
+            ));
+        }
         Output::Shapes(shapes) => {
             let ring = |c: &[[f64; 2]]| -> mlua::Result<Table> {
                 let r = lua.create_table_with_capacity(c.len(), 0)?;
@@ -221,6 +227,7 @@ pub(crate) fn from_lua(
         }
         PortType::Shapes => Output::Shapes(Arc::new(shapes(&table(v, "shapes")?)?)),
         PortType::Path => Output::Path(Arc::new(path(&table(v, "path")?)?)),
+        PortType::PolyMesh => return Err("a Luau node cannot output a polygon mesh".into()),
     })
 }
 

@@ -107,6 +107,10 @@ pub const LUAU_OUTPUT: Code = Code::new("RE4103");
 /// does not output a fragment, needs inputs, or the graph file exists.
 pub const CREATE_SOURCE: Code = Code::new("RE4104");
 
+/// A group, attribute or material that a modelling node names does not exist
+/// in its polygon mesh, or has the wrong type (ADR-0062 §3).
+pub const UNKNOWN_ATTRIBUTE: Code = Code::new("RE4150");
+
 /// A value in the `[stream]` section of `real.toml` is out of range (an
 /// unknown key is refused when the file is parsed, as `RE0501`).
 pub const STREAM_CONFIG: Code = Code::new("RE4300");

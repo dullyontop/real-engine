@@ -1,15 +1,16 @@
 //! The disk cache of node outputs: `<dir>/<key hex>.bin` in a [`WritableDir`]
 //! (the run's cache folder), postcard with a
 //! `(magic, format_version)` header (ARCHITECTURE §8, "Caches"). Fields,
-//! meshes, points, shapes and paths are stored; fragments are cheap to
-//! rebuild from them and stay in memory only. Every entry is safe to delete.
+//! meshes, points, shapes, paths and polygon meshes are stored; fragments are
+//! cheap to rebuild from them and stay in memory only. Every entry is safe to
+//! delete.
 
 use std::sync::Arc;
 
 use re_core::files::WritableDir;
 use serde::{Deserialize, Serialize};
 
-use crate::value::{Field, MeshValue, Output, Points, RoadPath, Shapes};
+use crate::value::{Field, MeshValue, Output, Points, PolyMesh, RoadPath, Shapes};
 
 const MAGIC: [u8; 8] = *b"REPROC\0\0";
 /// Bump when the stored types change; older entries are then ignored.
@@ -23,6 +24,8 @@ enum Stored {
     // Added after the M1 variants, so older entries still read the same.
     Shapes(Shapes),
     Path(RoadPath),
+    // ADR-0062 §6, appended in turn.
+    PolyMesh(PolyMesh),
 }
 
 /// A directory of cached node outputs.
@@ -90,6 +93,11 @@ impl DiskCache {
                     .map_err(|e| format!("cache entry is damaged: {e}"))?;
                 Output::Path(Arc::new(p))
             }
+            Stored::PolyMesh(m) => {
+                m.validate()
+                    .map_err(|e| format!("cache entry is damaged: {e}"))?;
+                Output::PolyMesh(Arc::new(m))
+            }
         }))
     }
 
@@ -102,6 +110,7 @@ impl DiskCache {
             Output::Points(p) => Stored::Points((**p).clone()),
             Output::Shapes(s) => Stored::Shapes((**s).clone()),
             Output::Path(p) => Stored::Path((**p).clone()),
+            Output::PolyMesh(m) => Stored::PolyMesh((**m).clone()),
             Output::Fragment(_) => return Ok(()),
         };
         let mut bytes = MAGIC.to_vec();

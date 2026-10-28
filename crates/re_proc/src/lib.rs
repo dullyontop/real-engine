@@ -239,6 +239,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE4104.md"),
     },
     DiagInfo {
+        code: codes::UNKNOWN_ATTRIBUTE,
+        title: "Unknown group or attribute",
+        page: include_str!("../explain/RE4150.md"),
+    },
+    DiagInfo {
         code: codes::STREAM_CONFIG,
         title: "Invalid [stream] settings",
         page: include_str!("../explain/RE4300.md"),

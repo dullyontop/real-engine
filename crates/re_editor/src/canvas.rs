@@ -553,6 +553,7 @@ fn colour(ty: Option<PortType>) -> Color32 {
         Some(PortType::Fragment) => Color32::from_rgb(0xa0, 0x6c, 0xd5),
         Some(PortType::Shapes) => Color32::from_rgb(0xd5, 0x6c, 0x8a),
         Some(PortType::Path) => Color32::from_rgb(0x6c, 0xc5, 0xd5),
+        Some(PortType::PolyMesh) => Color32::from_rgb(0x3a, 0x6c, 0xb0),
         None => Color32::GRAY,
     }
 }

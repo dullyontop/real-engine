@@ -206,6 +206,44 @@ pub fn output_hash(output: &Output) -> String {
                 }
             }
         }
+        Output::PolyMesh(m) => {
+            use re_geom::poly::AttrValue;
+            for p in &m.positions {
+                for x in p.to_array() {
+                    f(&mut h, x);
+                }
+            }
+            for i in m.face_start.iter().chain(&m.corner_point) {
+                h.update(&i.to_le_bytes());
+            }
+            for attrs in [&m.points, &m.corners, &m.faces] {
+                h.update(b"|");
+                for (name, col) in attrs.iter() {
+                    h.update(name.as_bytes());
+                    h.update(col.ty().name().as_bytes());
+                    for i in 0..col.len() {
+                        match col.get(i) {
+                            AttrValue::Float(v) => f(&mut h, v),
+                            AttrValue::Int(v) => {
+                                h.update(&v.to_le_bytes());
+                            }
+                            AttrValue::Bool(v) => {
+                                h.update(&[u8::from(v)]);
+                            }
+                            AttrValue::Vec2(v) => v.iter().for_each(|x| f(&mut h, *x)),
+                            AttrValue::Vec3(v) => v.to_array().iter().for_each(|x| f(&mut h, *x)),
+                            AttrValue::Vec4(v) => v.iter().for_each(|x| f(&mut h, *x)),
+                            AttrValue::Quat(v) => v.to_array().iter().for_each(|x| f(&mut h, *x)),
+                        }
+                    }
+                }
+            }
+            for path in &m.materials {
+                h.update(path.as_bytes());
+                h.update(b"\0");
+            }
+            h.update(format!("{:?}{}", m.collider, m.visible).as_bytes());
+        }
     }
     h.finalize().to_hex()[..16].to_string()
 }
