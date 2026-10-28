@@ -5,7 +5,9 @@
 //! After the Humanoids have placed their parts, each part of a character
 //! that can touch is checked against the simulated parts its box overlaps;
 //! a new overlap fires `Touched` on both parts and one that ended fires
-//! `TouchEnded`, as the part simulation does for its own parts.
+//! `TouchEnded`, as the part simulation does for its own parts. A new
+//! overlap with a team-changing `SpawnLocation` changes the player's team
+//! first (`players::teams::touched`).
 
 use std::collections::BTreeSet;
 
@@ -82,6 +84,9 @@ pub(super) fn dispatch(lua: &Lua, classes: &ClassRegistry, humanoids: &[Entity])
         // A part an earlier handler destroyed touches nothing.
         if !(alive(a)? && alive(b)?) {
             continue;
+        }
+        if began {
+            crate::players::teams::touched(lua, a, b)?;
         }
         let (pa, pb) = (
             crate::instance::push(lua, a)?,

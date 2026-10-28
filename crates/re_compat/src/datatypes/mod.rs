@@ -17,6 +17,7 @@
 //! Errors use the shared codes: an unknown member raises `RE9001` and a bad
 //! argument `RE3006`, with Roblox-style wording.
 
+mod brick;
 mod cframe;
 mod color;
 mod convert;
@@ -26,11 +27,14 @@ mod sequence;
 mod udim;
 mod vector;
 
+pub use brick::BrickColor;
 pub use cframe::CFrame;
 pub use color::{Color3, ColorSequence, ColorSequenceKeypoint};
+pub(crate) use convert::{brick_of, brick_value};
 pub use convert::{datatype_of, from_lua, to_lua, userdata_to_value};
 pub use misc::{Font, OverlapParams, PhysicalProperties, RaycastParams, TweenInfo};
 pub use random::Random;
+pub(crate) use random::engine_integer;
 pub use sequence::{NumberRange, NumberSequence, NumberSequenceKeypoint};
 pub use udim::{Rect, UDim, UDim2};
 pub use vector::Vector2;
@@ -41,6 +45,7 @@ use re_script::codes;
 
 /// The datatypes whose stored form [`to_lua`] turns into their Luau form.
 const STORED_TYPES: &[&str] = &[
+    "BrickColor",
     "CFrame",
     "EnumItem",
     "Color3",
@@ -140,6 +145,7 @@ pub fn install(lua: &Lua, globals: &Table, seed: u64) -> Result<()> {
     vector::install(lua, globals)?;
     cframe::install(lua, globals)?;
     color::install(lua, globals)?;
+    brick::install(lua, globals)?;
     udim::install(lua, globals)?;
     sequence::install(lua, globals)?;
     misc::install(lua, globals)?;

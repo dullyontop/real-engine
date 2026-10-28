@@ -4,6 +4,173 @@
   "version": 1,
   "libraries": [
     {
+      "name": "BrickColor",
+      "members": [
+        {
+          "name": "new",
+          "params": [
+            {
+              "name": "value",
+              "type": "any"
+            },
+            {
+              "name": "g",
+              "type": "number",
+              "optional": true
+            },
+            {
+              "name": "b",
+              "type": "number",
+              "optional": true
+            }
+          ],
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "From a number, an exact name, a Color3, or three 0-1 channels; an unknown number or name gives \"Medium stone grey\", and a colour the nearest brick colour."
+        },
+        {
+          "name": "palette",
+          "params": [
+            {
+              "name": "index",
+              "type": "number"
+            }
+          ],
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "The colour at a palette index, 0 to 127; another index raises RE3006."
+        },
+        {
+          "name": "random",
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "A palette colour drawn from the VM's own generator, seeded from the run seed, so a run with the same seed draws the same colours."
+        },
+        {
+          "name": "White",
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "\"White\" (1)."
+        },
+        {
+          "name": "Gray",
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "\"Medium stone grey\" (194)."
+        },
+        {
+          "name": "DarkGray",
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "\"Dark stone grey\" (199)."
+        },
+        {
+          "name": "Black",
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "\"Black\" (26)."
+        },
+        {
+          "name": "Red",
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "\"Bright red\" (21)."
+        },
+        {
+          "name": "Yellow",
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "\"Bright yellow\" (24)."
+        },
+        {
+          "name": "Green",
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "\"Dark green\" (28)."
+        },
+        {
+          "name": "Blue",
+          "returns": [
+            "BrickColor"
+          ],
+          "status": "implemented",
+          "doc": "\"Bright blue\" (23)."
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Number",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "The colour's number, as places store it."
+        },
+        {
+          "name": "Name",
+          "kind": "property",
+          "type": "string",
+          "status": "implemented",
+          "doc": "The colour's name; tostring gives it too."
+        },
+        {
+          "name": "Color",
+          "kind": "property",
+          "type": "Color3",
+          "status": "implemented",
+          "doc": "The colour as a Color3."
+        },
+        {
+          "name": "r",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Red, 0 to 1."
+        },
+        {
+          "name": "g",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Green, 0 to 1."
+        },
+        {
+          "name": "b",
+          "kind": "property",
+          "type": "number",
+          "status": "implemented",
+          "doc": "Blue, 0 to 1."
+        }
+      ],
+      "record": [
+        {
+          "name": "Number",
+          "type": "i32"
+        }
+      ],
+      "status": "implemented",
+      "doc": "One of Roblox's 208 numbered, named colours (128 of them make the palette). Equal when the numbers are; tostring gives the name. Four names belong to two colours each; by name, the palette's one is meant. Stored as the colour's number."
+    },
+    {
       "name": "Color3",
       "members": [
         {

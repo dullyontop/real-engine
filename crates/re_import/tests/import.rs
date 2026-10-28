@@ -806,3 +806,63 @@ fn a_symlink_loop_in_a_rojo_project_is_an_error() {
     let err = import(&input, &dir.path().join("game"), &registry(), &opts()).unwrap_err();
     assert_eq!(err.code, codes::ROJO_INVALID);
 }
+
+#[test]
+fn rojo_names_the_starter_player_containers_as_rojo_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in");
+    let project = dir.path().join("game");
+    // The layout `rojo init` makes, and a container mapped to a directory,
+    // neither with a `$className`.
+    write_files(
+        &input,
+        &[
+            (
+                "default.project.json",
+                r#"{"name":"t","tree":{"$className":"DataModel","StarterPlayer":{
+                    "StarterPlayerScripts":{"Client":{"$path":"src/client"}},
+                    "StarterCharacterScripts":{"$path":"src/character"}}}}"#,
+            ),
+            ("src/client/Hud.client.luau", "print(1)\n"),
+            ("src/character/Sprint.client.luau", "print(2)\n"),
+        ],
+    );
+    let report = import(&input, &project, &registry(), &opts()).unwrap();
+    assert!(report.ok(), "{}", report.render_human());
+    let mut created = paths(&report.created);
+    created.sort();
+    assert_eq!(
+        created,
+        [
+            (
+                "StarterPlayer.StarterCharacterScripts.Sprint",
+                "LocalScript"
+            ),
+            ("StarterPlayer.StarterPlayerScripts.Client", "Folder"),
+            (
+                "StarterPlayer.StarterPlayerScripts.Client.Hud",
+                "LocalScript"
+            ),
+        ]
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+    );
+    // The place's own containers are found, not made as Folders beside them.
+    let mut adopted = paths(&report.adopted);
+    adopted.sort();
+    assert_eq!(
+        adopted,
+        [
+            (
+                "StarterPlayer.StarterCharacterScripts",
+                "StarterCharacterScripts"
+            ),
+            ("StarterPlayer.StarterPlayerScripts", "StarterPlayerScripts"),
+        ]
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+    );
+    let mut w = load(&project);
+    let mut q = w.ecs.query::<&re_scene::Name>();
+    for name in ["StarterPlayerScripts", "StarterCharacterScripts"] {
+        assert_eq!(q.iter(&w.ecs).filter(|n| n.0 == name).count(), 1, "{name}");
+    }
+}

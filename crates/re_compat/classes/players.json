@@ -247,7 +247,28 @@
           },
           "default": true,
           "status": "implemented",
-          "doc": "True when the player belongs to no team."
+          "doc": "True when the player is on no team. Setting Team or TeamColor makes it false."
+        },
+        {
+          "name": "Team",
+          "type": "Instance<Team>",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The Team under Teams whose TeamColor is the player's, or nil when the player is neutral or no team has that colour. Setting a Team takes its TeamColor and clears Neutral; setting nil makes the player neutral."
+        },
+        {
+          "name": "TeamColor",
+          "type": "BrickColor",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1
+          ],
+          "status": "implemented",
+          "doc": "The colour of the player's team. Setting it clears Neutral, which puts the player on the team of that colour."
         },
         {
           "name": "RespawnLocation",
@@ -571,6 +592,88 @@
           "default": true,
           "status": "implemented",
           "doc": "Whether the field is drawn."
+        }
+      ]
+    },
+    {
+      "name": "Team",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "doc": "A side players can be on, as a child of Teams. A player who is not neutral is on the first team whose TeamColor is the player's.",
+      "properties": [
+        {
+          "name": "TeamColor",
+          "type": "BrickColor",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            1
+          ],
+          "status": "implemented",
+          "doc": "The team's colour: its players' TeamColor, and the colour of the spawns they use."
+        },
+        {
+          "name": "AutoAssignable",
+          "type": "bool",
+          "storage": {
+            "kind": "own"
+          },
+          "default": true,
+          "status": "implemented",
+          "doc": "When true, a player who joins may be put on this team: the auto-assignable team with the fewest players, the first in child order on a tie. With no such team the player joins neutral."
+        }
+      ],
+      "methods": [
+        {
+          "name": "GetPlayers",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The players on the team, in join order."
+        }
+      ],
+      "events": [
+        {
+          "name": "PlayerAdded",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires with a player who came onto the team (by Team, TeamColor or Neutral, a team's colour changing, or joining the game), once a frame on each side."
+        },
+        {
+          "name": "PlayerRemoved",
+          "params": [
+            {
+              "name": "player",
+              "type": "Instance<Player>"
+            }
+          ],
+          "status": "implemented",
+          "doc": "Fires with a player who left the team, the game included, once a frame on each side."
+        }
+      ]
+    },
+    {
+      "name": "Teams",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "doc": "Holds the place's teams.",
+      "methods": [
+        {
+          "name": "GetTeams",
+          "returns": [
+            "table"
+          ],
+          "status": "implemented",
+          "doc": "The Team children, in child order."
         }
       ]
     }

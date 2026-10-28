@@ -7,6 +7,7 @@
 //! | `Vector3` | `Vec3` |
 //! | `Color3` | `Color`, channels as the script gave them, alpha 1 |
 //! | `Enum.<Name>` | `Enum`, the item's name |
+//! | `BrickColor` | the `BrickColor` record: the colour's number |
 //! | `CFrame`, `Vector2`, `UDim`, `UDim2`, `Rect`, `NumberRange`, `PhysicalProperties`, `Font`, keypoints | the record of that name (`libraries/*.json`) |
 //! | `NumberSequence`, `ColorSequence` | a list of keypoint records |
 //!
@@ -18,9 +19,9 @@ use mlua::{AnyUserData, Lua, Result, Value as LuaValue};
 use re_reflect::{Color, RecordId, Value};
 
 use super::{
-    CFrame, Color3, ColorSequence, ColorSequenceKeypoint, Font, NumberRange, NumberSequence,
-    NumberSequenceKeypoint, PhysicalProperties, Rect, UDim, UDim2, Vector2, bad_argument,
-    type_name, ud_arg, vec_value,
+    BrickColor, CFrame, Color3, ColorSequence, ColorSequenceKeypoint, Font, NumberRange,
+    NumberSequence, NumberSequenceKeypoint, PhysicalProperties, Rect, UDim, UDim2, Vector2,
+    bad_argument, type_name, ud_arg, vec_value,
 };
 use crate::enums::EnumItem;
 
@@ -128,6 +129,23 @@ fn ud(lua: &Lua, v: impl mlua::UserData + 'static) -> Result<LuaValue> {
     Ok(LuaValue::UserData(lua.create_userdata(v)?))
 }
 
+/// The stored form of a brick colour.
+pub(crate) fn brick_value(b: BrickColor) -> Result<Value> {
+    record(
+        "BrickColor",
+        &[("Number", Value::Int(i64::from(b.number())))],
+    )
+}
+
+/// The brick colour of a stored `BrickColor` record (an unknown number is
+/// "Medium stone grey", as `BrickColor.new` gives).
+pub(crate) fn brick_of(v: &Value) -> Option<BrickColor> {
+    match fields("BrickColor", v).ok()?.as_slice() {
+        [("Number", Value::Int(n))] => Some(BrickColor::from_number(*n)),
+        _ => None,
+    }
+}
+
 fn nsk_value(k: &NumberSequenceKeypoint) -> Result<Value> {
     record(
         "NumberSequenceKeypoint",
@@ -181,6 +199,14 @@ pub fn to_lua(lua: &Lua, ty: &str, v: Value) -> Result<LuaValue> {
         ("string", Value::Str(s)) => LuaValue::String(lua.create_string(s)?),
         ("Vector3", Value::Vec3(v)) => vec_value(v.to_array()),
         ("Color3", Value::Color(c)) => ud(lua, Color3::new(c.r, c.g, c.b))?,
+        ("BrickColor", _) => {
+            let fs = fields(ty, &v)?;
+            let n = match get(&fs, "Number") {
+                Some(Value::Int(i)) => *i,
+                _ => return Err(bad_stored(ty, &v)),
+            };
+            ud(lua, BrickColor::from_number(n))?
+        }
         ("CFrame", _) => {
             let fs = fields(ty, &v)?;
             let (x, y, z) = (
@@ -319,6 +345,7 @@ pub fn from_lua(_lua: &Lua, ty: &str, v: LuaValue) -> Result<Value> {
             other => return Err(wrong(&other)),
         },
         "Color3" => color(ud_arg::<Color3>(&v, 3, ty, ty)?),
+        "BrickColor" => brick_value(ud_arg::<BrickColor>(&v, 3, ty, ty)?)?,
         "CFrame" => {
             let c = ud_arg::<CFrame>(&v, 3, ty, ty)?;
             record(
@@ -422,6 +449,8 @@ pub fn from_lua(_lua: &Lua, ty: &str, v: LuaValue) -> Result<Value> {
 pub fn datatype_of(ud: &AnyUserData) -> Option<&'static str> {
     Some(if ud.is::<CFrame>() {
         "CFrame"
+    } else if ud.is::<BrickColor>() {
+        "BrickColor"
     } else if ud.is::<Color3>() {
         "Color3"
     } else if ud.is::<Vector2>() {

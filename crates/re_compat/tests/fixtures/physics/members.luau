@@ -42,6 +42,14 @@ function M.setup()
 	check(a.CanTouch == false, "CanTouch")
 	a.RootPriority = 5
 	check(a.RootPriority == 5, "RootPriority")
+	-- BrickColor: the brick colour nearest to Color, and setting it sets Color.
+	a.Color = Color3.fromRGB(200, 40, 30)
+	check(a.BrickColor == BrickColor.new("Bright red"), "BrickColor read")
+	a.BrickColor = BrickColor.new("Pastel Blue")
+	check(a.Color == Color3.fromRGB(128, 187, 219), "BrickColor write")
+	check(not pcall(function()
+		a.BrickColor = Color3.new(1, 0, 0)
+	end), "BrickColor takes a BrickColor")
 	a.Parent = workspace
 	PS:SetPartCollisionGroup(a, "Renamed")
 	check(a.CollisionGroup == "Renamed", "SetPartCollisionGroup")

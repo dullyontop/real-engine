@@ -2,8 +2,8 @@
   "format": "real-engine/compat-coverage",
   "version": 1,
   "totals": {
-    "implemented": 1816,
-    "partial": 234,
+    "implemented": 1848,
+    "partial": 232,
     "stub-error": 50,
     "missing": 3
   },
@@ -525,6 +525,11 @@
         {
           "name": "BreakJoints",
           "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "BrickColor",
+          "kind": "property",
           "status": "implemented"
         },
         {
@@ -3953,6 +3958,16 @@
           "status": "implemented"
         },
         {
+          "name": "Team",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TeamColor",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
           "name": "UserId",
           "kind": "property",
           "status": "implemented"
@@ -4888,13 +4903,12 @@
       "name": "SpawnLocation",
       "superclass": "Part",
       "creatable": true,
-      "status": "partial",
+      "status": "implemented",
       "members": [
         {
           "name": "AllowTeamChangeOnTouch",
           "kind": "property",
-          "status": "partial",
-          "note": "Stored; touching the spawn does not change a player's team yet."
+          "status": "implemented"
         },
         {
           "name": "Duration",
@@ -4908,6 +4922,11 @@
         },
         {
           "name": "Neutral",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "TeamColor",
           "kind": "property",
           "status": "implemented"
         }
@@ -5181,6 +5200,52 @@
         {
           "name": "Range",
           "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Team",
+      "superclass": "Instance",
+      "creatable": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "AutoAssignable",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "GetPlayers",
+          "kind": "method",
+          "status": "implemented"
+        },
+        {
+          "name": "PlayerAdded",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "PlayerRemoved",
+          "kind": "event",
+          "status": "implemented"
+        },
+        {
+          "name": "TeamColor",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
+    {
+      "name": "Teams",
+      "superclass": "Instance",
+      "service": true,
+      "status": "implemented",
+      "members": [
+        {
+          "name": "GetTeams",
+          "kind": "method",
           "status": "implemented"
         }
       ]
@@ -14297,6 +14362,99 @@
     }
   ],
   "libraries": [
+    {
+      "name": "BrickColor",
+      "status": "implemented",
+      "members": [
+        {
+          "name": "Black",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "Blue",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "DarkGray",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "Gray",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "Green",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "Red",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "White",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "Yellow",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "new",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "palette",
+          "kind": "function",
+          "status": "implemented"
+        },
+        {
+          "name": "random",
+          "kind": "function",
+          "status": "implemented"
+        }
+      ],
+      "value_members": [
+        {
+          "name": "Color",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Name",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "Number",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "b",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "g",
+          "kind": "property",
+          "status": "implemented"
+        },
+        {
+          "name": "r",
+          "kind": "property",
+          "status": "implemented"
+        }
+      ]
+    },
     {
       "name": "CFrame",
       "status": "implemented",
