@@ -466,7 +466,16 @@ mod sessions {
         let CompatWorlds { mut server, .. } = CompatWorlds::new(&setup, scene.fork()).unwrap();
         let vm_s = vm(&setup, ContextKind::Server, &mut server, dir.path());
         let net = MemoryNet::new();
-        let end = Endpoint::server(net.bind(), Config::server(1, 7));
+        // These tests count frames, and a frame waits for nothing. A join
+        // sends more than a connection's burst at the default rate (the
+        // second player's first frames are about 30 KB), and the rest goes
+        // once the bucket refills in real time: a fast machine runs the
+        // frames a join has before that, so the rate here is high enough
+        // that the bucket never waits. `re_net` tests the rates.
+        let rate = 64.0 * 1024.0 * 1024.0;
+        let mut config = Config::server(1, 7);
+        config.send_rate = rate;
+        let end = Endpoint::server(net.bind(), config);
         let addr = end.local_addr();
         let snet = ServerNet::new(end, &mut server, settings.clone(), false);
         let s = Server {
@@ -484,7 +493,9 @@ mod sessions {
                 let mut w = client_world(&setup, &mut copy, &set).unwrap();
                 link_client(&mut w);
                 let vm_c = vm(&setup, ContextKind::Client, &mut w, dir.path());
-                let end = Endpoint::client(net.bind(), addr, Config::client(1, 7));
+                let mut config = Config::client(1, 7);
+                config.send_rate = rate;
+                let end = Endpoint::client(net.bind(), addr, config);
                 Client {
                     world: w,
                     vm: vm_c,
