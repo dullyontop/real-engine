@@ -49,8 +49,12 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # A new push to a PR cancels the PR's older run. A push to main cancels no
+  # run: a job cancelled before its end saves no cargo cache, and PR runs
+  # restore main's. Of the pushes that come while a run on main goes, only the
+  # newest waits for it (ADR-0023's amendment for WP31 PR "one build").
   group: ci-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

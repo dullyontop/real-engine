@@ -37,10 +37,11 @@ on:
 
 concurrency:
   # Called from ci.yml, the github context is the caller's. The event name
-  # keeps a run started by hand on main from cancelling a push's, and the
-  # caller's own group never matches this one.
+  # keeps a run started by hand on main apart from a push's, and the caller's
+  # own group never matches this one. As in ci.yml, only a PR's newer run
+  # cancels an older one, so every run on main saves its caches.
   group: platforms-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
