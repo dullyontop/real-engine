@@ -28,7 +28,7 @@ mod tooling;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use re_app::{App, AppConfig, VerifyOptions};
 use re_core::{DiagInfo, Diagnostic};
 
@@ -53,6 +53,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::SCRIPT_API_GAP,
         title: "Script uses an API the engine does not provide",
         page: include_str!("../explain/RE0903.md"),
+    },
+    DiagInfo {
+        code: codes::NEEDS_TOOLING,
+        title: "Needs the tooling build of real",
+        page: include_str!("../explain/RE0904.md"),
     },
     DiagInfo {
         code: codes::PACKAGE_CONFIG,
@@ -129,6 +134,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
 )]
 struct Cli {
     /// The project directory.
+    ///
+    /// Paths given on the command line are relative to the current
+    /// directory. A project file named there (`run --replay`, `graph eval
+    /// FILE`) is also looked for in the project, and outputs with a default
+    /// place (`schema`, `agent eval`) go in the project.
     #[arg(long, global = true, default_value = ".")]
     project: PathBuf,
     #[command(subcommand)]
@@ -206,9 +216,9 @@ enum Command {
     MigrateGraph(graph::MigrateArgs),
     /// Write every JSON Schema the engine defines.
     Schema {
-        /// The output directory.
-        #[arg(long, default_value = "schemas")]
-        out: PathBuf,
+        /// The output directory (default: the project's `schemas/`).
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
     },
     /// Check the project's scripts: compile, the static API scan and (with
     /// --types) the Luau type checker.
@@ -218,7 +228,8 @@ enum Command {
     /// has the project open).
     #[cfg(feature = "tooling")]
     Do(tooling::do_cmd::DoArgs),
-    /// Serve the project's commands to MCP clients over stdio.
+    /// Serve the project's commands to MCP clients, over stdio or (with
+    /// --http) over HTTP on this machine.
     #[cfg(feature = "tooling")]
     Mcp(tooling::mcp::McpArgs),
     /// Set up and manage agent access.
@@ -255,11 +266,12 @@ struct RunArgs {
     /// window closes).
     #[arg(long)]
     frames: Option<u64>,
-    /// Drive the run with a replay file.
-    #[arg(long)]
+    /// Drive the run with a replay file (relative to the current directory,
+    /// else to the project: `tests/replays/NAME.replay.json`).
+    #[arg(long, value_name = "FILE")]
     replay: Option<PathBuf>,
-    /// Write the last frame to this PNG.
-    #[arg(long)]
+    /// Write the last frame to this PNG (relative to the current directory).
+    #[arg(long, value_name = "FILE")]
     screenshot: Option<PathBuf>,
     /// Exit after the frames and print `RUN OK` when no error was reported.
     #[arg(long)]
@@ -444,12 +456,18 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
     {
         return fail(d);
     }
+    // A packaged run reads no project files.
+    let replay = if package.is_some() {
+        args.replay
+    } else {
+        args.replay.map(|path| project_input(project, path))
+    };
     let options = PlayOptions {
         // A dedicated server has no window.
         headless: args.headless || server,
         // and runs until stopped.
         frames: args.frames.or(server.then_some(u64::MAX)),
-        replay: args.replay,
+        replay,
         screenshot: args.screenshot,
         exit_after: args.exit_after,
         json: args.json,
@@ -468,6 +486,17 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
     match package {
         Some(archive) => play(app, options, &mut || archive.take_case_matches()),
         None => play(app, options, &mut Vec::new),
+    }
+}
+
+/// A file of the project that a command line names (a replay): the path as
+/// given, relative to the current directory, or the project's file of that
+/// name when the current directory has none.
+fn project_input(project: &Path, path: PathBuf) -> PathBuf {
+    if path.is_relative() && !path.exists() && project.join(&path).exists() {
+        project.join(path)
+    } else {
+        path
     }
 }
 
@@ -932,7 +961,20 @@ fn main() -> ExitCode {
 
 /// `main` of the `real` tool.
 fn development_main() -> ExitCode {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    // `real new` makes the project in DIR; a `--project` there would be
+    // ignored, so it is refused.
+    if matches!(cli.command, Command::New { .. })
+        && matches.value_source("project") == Some(clap::parser::ValueSource::CommandLine)
+    {
+        Cli::command()
+            .error(
+                clap::error::ErrorKind::ArgumentConflict,
+                "`real new` makes the project in DIR and takes no `--project`",
+            )
+            .exit();
+    }
     install_crash_hook(re_core::files::WritableDirs::in_project(&cli.project).crash);
     // Warnings, plus what scripts `print`, on standard error (stdout stays for
     // results and JSON); `RUST_LOG` replaces this.
@@ -972,7 +1014,8 @@ fn development_main() -> ExitCode {
             };
             match new::create_from(&dir, options) {
                 Ok(files) => {
-                    println!("created {} ({})", dir.display(), files.join(", "));
+                    println!("created {} ({} files)", dir.display(), files.len());
+                    print!("{}", new::next_steps(&dir));
                     ExitCode::SUCCESS
                 }
                 Err(d) => fail(d),
@@ -992,7 +1035,7 @@ fn development_main() -> ExitCode {
             ..
         } => cmd_verify(&project, json, update_goldens),
         Command::Explain { code } => cmd_explain(code),
-        Command::Schema { out } => cmd_schema(&out),
+        Command::Schema { out } => cmd_schema(&out.unwrap_or_else(|| project.join("schemas"))),
         Command::Graph(command) => graph::run(command, &project),
         Command::MigrateGraph(args) => graph::migrate(args, &project),
         #[cfg(feature = "tooling")]

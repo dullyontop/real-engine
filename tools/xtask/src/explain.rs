@@ -11,6 +11,11 @@
 //! `include_str!` of its `DIAGNOSTICS` entry), so that every code used in source
 //! is also in the crate's catalogue and `real explain` knows it.
 //!
+//! Each page has the shape of ARCHITECTURE §7 ([`page_problems`]): the title
+//! line `# RE####: Title`, then the explanation, an `## Example` and a
+//! `## How to fix it` section, in that order. A page describes the engine as it
+//! is, so it names no milestone ("in M1", "a later milestone").
+//!
 //! Paths in messages always use `/`, whatever the OS.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -101,6 +106,52 @@ pub fn find_page_refs(source: &str) -> BTreeSet<String> {
                 .then(|| code.to_string())
         })
         .collect()
+}
+
+/// What is wrong with the shape of the explain page of `code`, whose text is
+/// `text`: its title line, its sections, and wording that names a milestone.
+pub fn page_problems(code: &str, text: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    let first = text.lines().next().unwrap_or_default();
+    let title = first
+        .strip_prefix(&format!("# {code}: "))
+        .unwrap_or_default();
+    if title.trim().is_empty() {
+        problems.push(format!("its first line is not `# {code}: Title`"));
+    }
+    let headings: Vec<&str> = text.lines().filter(|l| l.starts_with("## ")).collect();
+    let at = |name: &str| headings.iter().position(|h| h.trim_end() == name);
+    match (at("## Example"), at("## How to fix it")) {
+        (Some(example), Some(fix)) if example < fix => {}
+        (Some(_), Some(_)) => {
+            problems.push("its `## Example` comes after `## How to fix it`".to_string());
+        }
+        (example, fix) => {
+            for (name, found) in [("## Example", example), ("## How to fix it", fix)] {
+                if found.is_none() {
+                    problems.push(format!("it has no `{name}` section"));
+                }
+            }
+        }
+    }
+    let words: Vec<&str> = text
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let milestone = words.iter().find(|w| {
+        w.eq_ignore_ascii_case("milestone")
+            || w.eq_ignore_ascii_case("milestones")
+            || (w.len() > 1 && w.starts_with('M') && w[1..].bytes().all(|b| b.is_ascii_digit()))
+    });
+    if let Some(word) = milestone {
+        problems.push(format!(
+            "it names a milestone (`{word}`): say what the engine does now"
+        ));
+    }
+    if !text.ends_with('\n') {
+        problems.push("it does not end with a newline".to_string());
+    }
+    problems
 }
 
 fn is_code(literal: &str) -> bool {
@@ -356,6 +407,11 @@ pub fn scan(root: &Path) -> Result<std::result::Result<Report, Vec<String>>> {
                 problems.push(format!("{rel} is not named RE####.md"));
                 continue;
             }
+            let text = std::fs::read_to_string(&page)
+                .with_context(|| format!("reading {}", page.display()))?;
+            for problem in page_problems(&stem, &text) {
+                problems.push(format!("{rel}: {problem}"));
+            }
             if !page_refs
                 .get(&krate)
                 .is_some_and(|refs| refs.contains(&stem))
@@ -385,7 +441,7 @@ pub fn run(root: &Path) -> Result<()> {
                 println!("explain: note: {page} is not used by any source file");
             }
             println!(
-                "explain: ok ({} codes, each with a page in its crate's catalogue, in range, used by one crate)",
+                "explain: ok ({} codes, each with a page in its crate's catalogue, in range, used by one crate; every page well formed)",
                 report.codes.len()
             );
             Ok(())
@@ -406,6 +462,14 @@ mod tests {
     /// A catalogue source with RE0001's page.
     const CATALOGUE_0001: &str = "const P: &str = include_str!(\"../explain/RE0001.md\");\n";
 
+    /// A well-formed explain page for `code`.
+    fn page(code: &str) -> String {
+        format!(
+            "# {code}: Something went wrong\n\nWhat it means.\n\n## Example\n\n```text\n\
+             error[{code}]: it went wrong\n```\n\n## How to fix it\n\nFix it.\n"
+        )
+    }
+
     fn write(root: &Path, path: &str, text: &str) {
         let path = root.join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -421,7 +485,11 @@ mod tests {
             "pub const A: Code = Code::new(\"RE0001\");\npub const B: Code = Code::new(\"RE0002\");\n",
         );
         write(dir.path(), "crates/re_core/src/lib.rs", CATALOGUE_0001);
-        write(dir.path(), "crates/re_core/explain/RE0001.md", "# RE0001\n");
+        write(
+            dir.path(),
+            "crates/re_core/explain/RE0001.md",
+            &page("RE0001"),
+        );
         let problems = scan(dir.path()).unwrap().expect_err("RE0002 has no page");
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(problems[0].contains("RE0002") && problems[0].contains("no explain page"));
@@ -446,8 +514,16 @@ mod tests {
             "crates/re_core/src/lib.rs",
             &format!("{CATALOGUE_0001}const P: &str = include_str!(\"../explain/RE0009.md\");\n"),
         );
-        write(dir.path(), "crates/re_core/explain/RE0001.md", "# RE0001\n");
-        write(dir.path(), "crates/re_core/explain/RE0009.md", "# RE0009\n");
+        write(
+            dir.path(),
+            "crates/re_core/explain/RE0001.md",
+            &page("RE0001"),
+        );
+        write(
+            dir.path(),
+            "crates/re_core/explain/RE0009.md",
+            &page("RE0009"),
+        );
         let report = scan(dir.path()).unwrap().unwrap();
         assert_eq!(report.codes.len(), 1);
         assert_eq!(report.unused_pages, ["crates/re_core/explain/RE0009.md"]);
@@ -468,8 +544,16 @@ mod tests {
             "crates/re_core/src/lib.rs",
             &format!("{CATALOGUE_0001}// include_str!(\"../explain/RE0002.md\")\n"),
         );
-        write(dir.path(), "crates/re_core/explain/RE0001.md", "# RE0001\n");
-        write(dir.path(), "crates/re_core/explain/RE0002.md", "# RE0002\n");
+        write(
+            dir.path(),
+            "crates/re_core/explain/RE0001.md",
+            &page("RE0001"),
+        );
+        write(
+            dir.path(),
+            "crates/re_core/explain/RE0002.md",
+            &page("RE0002"),
+        );
         let problems = scan(dir.path()).unwrap().unwrap_err();
         assert_eq!(
             problems,
@@ -494,6 +578,63 @@ const D: &str = "../explain/RE0004.txt";
     }
 
     #[test]
+    fn pages_have_a_title_an_example_and_a_fix_and_name_no_milestone() {
+        assert!(page_problems("RE0001", &page("RE0001")).is_empty());
+        let problems = |text: &str| page_problems("RE0001", text);
+        assert_eq!(
+            problems("# RE0001\n\n## Example\n\n## How to fix it\n"),
+            ["its first line is not `# RE0001: Title`"]
+        );
+        assert_eq!(
+            problems("# RE0001: A\n\n## How to fix it\n"),
+            ["it has no `## Example` section"]
+        );
+        assert_eq!(
+            problems("# RE0001: A\n\n## How to fix it\n\n## Example\n"),
+            ["its `## Example` comes after `## How to fix it`"]
+        );
+        let stale = page("RE0001").replace("What it means.", "M1 plays WAV files.");
+        assert_eq!(
+            problems(&stale),
+            ["it names a milestone (`M1`): say what the engine does now"]
+        );
+        let later = page("RE0001").replace("Fix it.", "It comes in a later milestone.");
+        assert_eq!(problems(&later).len(), 1, "{:?}", problems(&later));
+        // A word that only starts with M and a digit is not a milestone.
+        let hex = page("RE0001").replace("What it means.", "Mode M2x and RE0001.");
+        assert!(problems(&hex).is_empty(), "{:?}", problems(&hex));
+        assert_eq!(
+            problems(page("RE0001").trim_end()),
+            ["it does not end with a newline"]
+        );
+    }
+
+    #[test]
+    fn a_malformed_page_fails_the_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "crates/re_core/src/codes.rs",
+            "const A: &str = \"RE0001\";\n",
+        );
+        write(dir.path(), "crates/re_core/src/lib.rs", CATALOGUE_0001);
+        write(
+            dir.path(),
+            "crates/re_core/explain/RE0001.md",
+            "# RE0001: A\n\nIn M1 this is a warning.\n\n## How to fix it\n\nFix it.\n",
+        );
+        let problems = scan(dir.path()).unwrap().unwrap_err();
+        assert_eq!(
+            problems,
+            [
+                "crates/re_core/explain/RE0001.md: it has no `## Example` section",
+                "crates/re_core/explain/RE0001.md: it names a milestone (`M1`): say what the \
+                 engine does now",
+            ]
+        );
+    }
+
+    #[test]
     fn relative_paths_use_slashes() {
         let root = Path::new("ws");
         let file = root.join("crates").join("re_core").join("src").join("a.rs");
@@ -508,7 +649,11 @@ const D: &str = "../explain/RE0004.txt";
             "crates/re_core/src/lib.rs",
             "const A: &str = \"RE6001\";\n",
         );
-        write(dir.path(), "crates/re_core/explain/RE6001.md", "# RE6001\n");
+        write(
+            dir.path(),
+            "crates/re_core/explain/RE6001.md",
+            &page("RE6001"),
+        );
         write(
             dir.path(),
             "crates/re_core/src/diag.rs",
@@ -522,7 +667,7 @@ const D: &str = "../explain/RE0004.txt";
         write(
             dir.path(),
             "crates/re_types/explain/RE0003.md",
-            "# RE0003\n",
+            &page("RE0003"),
         );
         write(
             dir.path(),

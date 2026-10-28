@@ -168,7 +168,9 @@ impl Default for SimConfig {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenderConfig {
-    /// wgpu backend preference, in order (`vulkan`, `gl`, `metal`, `dx12`). The
+    /// The graphics backends wgpu may use (`primary`, `vulkan`, `gl`,
+    /// `metal`, `dx12`, `all`). `primary` is the platform's own API: Vulkan
+    /// on Linux, Metal on macOS, DX12 or Vulkan on Windows. The
     /// `RE_BACKENDS` environment variable wins over this.
     #[serde(default = "default_backends")]
     pub backends: Vec<String>,
@@ -191,8 +193,10 @@ pub struct RenderConfig {
     pub shadows: SunShadows,
 }
 
+/// The platform's own API, with GL behind it (ADR-0065 §8): `vulkan` would
+/// find no adapter on a Mac, where this build has neither Vulkan nor GL.
 fn default_backends() -> Vec<String> {
-    vec!["vulkan".into(), "gl".into()]
+    vec!["primary".into(), "gl".into()]
 }
 fn default_width() -> u32 {
     1280
@@ -451,7 +455,7 @@ fixed_hz = 60
 max_steps_per_frame = 5
 
 [render]
-backends = ["vulkan", "gl"]
+backends = ["primary", "gl"]
 
 [scripts]
 contexts = ["game", "tools"]

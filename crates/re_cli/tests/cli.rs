@@ -81,6 +81,88 @@ fn new_then_run_verify_and_describe() {
     assert!(text(&o).contains("RE0901"));
 }
 
+/// ADR-0065 §8: a new project's default backends (`["primary", "gl"]`)
+/// find a GPU adapter on every platform without `RE_BACKENDS`. With
+/// `["vulkan", "gl"]`, a Mac found none (`RE6002`). A screenshot needs the
+/// device, so the run takes one.
+#[test]
+fn a_new_project_draws_with_the_default_backends() {
+    let dir = tempfile::tempdir().unwrap();
+    let o = real(&["new", "game"], dir.path());
+    assert!(o.status.success(), "{}", text(&o));
+    let o = Command::new(env!("CARGO_BIN_EXE_real"))
+        .args(["run", "--project", "game", "--headless", "--frames", "2"])
+        .args(["--screenshot", "shot.png", "--json"])
+        .env_remove("RE_BACKENDS")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", text(&o));
+    let report: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(report["screenshot"].is_string(), "{report}");
+    // A path on the command line is relative to the current directory.
+    assert!(dir.path().join("shot.png").is_file());
+}
+
+/// `real new` writes `schemas/` beside the files that name it, says what to
+/// do next, and refuses `--project`, which it would not use.
+#[test]
+fn new_writes_schemas_and_next_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let o = real(&["new", "game"], dir.path());
+    assert!(o.status.success(), "{}", text(&o));
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(out.contains("next steps:\n  cd game\n"), "{out}");
+    assert!(dir.path().join("game/schemas/scene.schema.json").is_file());
+    assert!(
+        dir.path()
+            .join("game/schemas/material.schema.json")
+            .is_file()
+    );
+
+    let o = real(&["new", "other", "--project", "game"], dir.path());
+    assert_eq!(o.status.code(), Some(2), "{}", text(&o));
+    assert!(text(&o).contains("takes no `--project`"), "{}", text(&o));
+    assert!(!dir.path().join("other").exists());
+}
+
+/// Paths typed on the command line are relative to the current directory;
+/// a project file named there is also found in the project, and default
+/// outputs go in the project.
+#[test]
+fn command_line_paths_have_one_base() {
+    let dir = tempfile::tempdir().unwrap();
+    real(&["new", "game"], dir.path());
+    let o = real(&["schema", "--project", "game"], dir.path());
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(!dir.path().join("schemas").exists());
+    assert!(dir.path().join("game/schemas/graph.schema.json").is_file());
+
+    // A replay named as the project names it, from outside the project.
+    let replay = serde_json::json!({ "version": 1, "seed": 1, "frames": 3 });
+    std::fs::create_dir_all(dir.path().join("game/tests/replays")).unwrap();
+    std::fs::write(
+        dir.path().join("game/tests/replays/idle.replay.json"),
+        replay.to_string(),
+    )
+    .unwrap();
+    let o = real(
+        &[
+            "run",
+            "--project",
+            "game",
+            "--headless",
+            "--replay",
+            "tests/replays/idle.replay.json",
+            "--json",
+        ],
+        dir.path(),
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let report: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(report["frames"], 3, "{report}");
+}
+
 #[test]
 fn verify_outside_a_project_is_re0500() {
     let dir = tempfile::tempdir().unwrap();

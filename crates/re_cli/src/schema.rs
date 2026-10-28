@@ -26,7 +26,7 @@ pub fn all() -> Vec<(&'static str, Json)> {
             "animgraph.schema.json",
             to_json(schemars::schema_for!(re_types::AnimGraph)),
         ),
-        // With every M1 node kind's parameters.
+        // With every built-in node kind's parameters.
         (
             "graph.schema.json",
             re_proc::NodeRegistry::m1().graph_json_schema(),
