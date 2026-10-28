@@ -111,7 +111,10 @@ impl CollisionState {
 
     /// One fixed step: requests chunks near `focuses`, removes far ones and
     /// applies due ones within `config.apply_chunks`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the stream step's inputs, each borrowed separately from the manager"
+    )]
     pub fn step(
         &mut self,
         world: &mut World,

@@ -1,5 +1,5 @@
 //! A small rig around `ScriptRuntime` for the integration tests.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "test helpers, not all of them used by every test")]
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

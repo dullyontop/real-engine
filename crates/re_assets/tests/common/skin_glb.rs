@@ -1,6 +1,6 @@
 //! A small GLB writer for skinned test models: accessors are appended to one
 //! binary buffer and the caller writes the rest of the JSON.
-#![allow(dead_code)] // each test binary uses a different subset
+#![allow(dead_code, reason = "each test binary uses a different subset")]
 
 /// glTF component types.
 pub const FLOAT: u32 = 5126;

@@ -16,3 +16,6 @@ glam.workspace = true
 libm.workspace = true
 oxijolt.workspace = true
 tracing.workspace = true
+
+[lints]
+workspace = true

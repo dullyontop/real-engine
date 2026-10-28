@@ -35,3 +35,6 @@ path = "examples/re_imgdiff.rs"
 [[example]]
 name = "windowed_smoke"
 path = "examples/windowed_smoke.rs"
+
+[lints]
+workspace = true

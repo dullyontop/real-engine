@@ -63,3 +63,6 @@ tempfile.workspace = true
 toml.workspace = true
 re_agent.workspace = true
 re_editor.workspace = true
+
+[lints]
+workspace = true

@@ -191,7 +191,10 @@ pub(crate) struct Described {
 
 /// [`describe`] past its cache: the graph with its overrides, checked and
 /// built.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the source's graph, id and overrides, as `describe` has them"
+)]
 fn prepare(
     store: &GraphStore,
     doc: &GraphDoc,
@@ -289,7 +292,10 @@ fn prepare(
 /// the `terrain.chunks` node and its edges, and without the nodes that only
 /// fed it), and, when there is a `terrain.chunks` node, the graph of its
 /// field with the field node's id, the material and `max_level`.
-#[allow(clippy::type_complexity)]
+#[expect(
+    clippy::type_complexity,
+    reason = "the two graphs and the field's names, for one caller"
+)]
 fn split_terrain(
     doc: &GraphDoc,
     registry: &crate::NodeRegistry,

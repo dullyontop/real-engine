@@ -22,7 +22,10 @@ pub(crate) fn gv(v: JVec3) -> glam::Vec3 {
 }
 
 // `Real` is f32 unless oxijolt's `double-precision` feature is on (not used in M1).
-#[allow(clippy::unnecessary_cast)]
+#[allow(
+    clippy::unnecessary_cast,
+    reason = "`Real` is f64 when oxijolt's `double-precision` feature is on"
+)]
 pub(crate) fn grv(v: RVec3) -> glam::Vec3 {
     glam::Vec3::new(v.x as f32, v.y as f32, v.z as f32)
 }

@@ -192,7 +192,10 @@ fn drag3(
 
 /// Keeps a dragged or typed value pending while its widget is in use, and
 /// commits it once when the widget is released.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the widget's responses, the pending edit and the field it commits to"
+)]
 pub(crate) fn settle(
     ui: &egui::Ui,
     rs: &[egui::Response],

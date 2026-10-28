@@ -55,7 +55,7 @@ use re_scene::{Entity, GlobalTransform, Transform, World};
 use re_types::EntityId;
 use re_types::physics::BodyKind;
 
-use super::layout::{Field, Layout};
+use super::layout::Layout;
 use super::pose::world_pose;
 use crate::class::ClassMarker;
 use crate::datatypes::PhysicalProperties;
@@ -1816,12 +1816,6 @@ impl Sim {
             .collect();
         v.sort_unstable();
         v
-    }
-
-    /// Whether the fields this module reads exist (for tests).
-    #[allow(dead_code)]
-    pub(crate) fn field(&self) -> Field {
-        self.layout.size
     }
 }
 

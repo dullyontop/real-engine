@@ -533,6 +533,10 @@ fn thread_times() -> Option<(u64, u64)> {
 }
 
 #[cfg(target_os = "linux")]
+#[expect(
+    unsafe_code,
+    reason = "the thread's CPU clock is read with clock_gettime"
+)]
 fn thread_cpu_ns() -> Option<u64> {
     #[repr(C)]
     struct Timespec {

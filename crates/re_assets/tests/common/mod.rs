@@ -1,7 +1,7 @@
 //! Builds small glTF 2.0 test files: a textured triangle with a material, a
 //! normal map, a node tree and a translation/rotation animation.
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "test helpers, not all of them used by every test")]
 
 pub mod skin_glb;
 

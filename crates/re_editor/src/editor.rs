@@ -855,7 +855,10 @@ impl Editor {
     /// Sets one field of one entity through `entity.set`: what an inspector
     /// widget does when its edit is committed. `value` is written in the
     /// field's file form (entity references as ids).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the field's address and value, as an inspector widget holds them"
+    )]
     pub fn set_field(
         &mut self,
         app: &mut App,

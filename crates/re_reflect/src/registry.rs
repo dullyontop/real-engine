@@ -247,6 +247,10 @@ struct ScriptOps {
     id: ComponentId,
 }
 
+#[expect(
+    unsafe_code,
+    reason = "script components are untyped bevy_ecs components, laid out as `ScriptData`"
+)]
 impl ScriptOps {
     fn register(name: &str, world: &mut World) -> ComponentId {
         // SAFETY: the layout and drop function are those of `ScriptData`, which
@@ -268,6 +272,10 @@ impl ScriptOps {
     }
 }
 
+#[expect(
+    unsafe_code,
+    reason = "script components are untyped bevy_ecs components, laid out as `ScriptData`"
+)]
 impl ComponentOps for ScriptOps {
     fn get_field(&self, world: &World, entity: Entity, index: usize) -> Option<Value> {
         let ptr = world.get_by_id(entity, self.id)?;
@@ -318,6 +326,10 @@ impl ComponentOps for ScriptOps {
 /// # Safety
 ///
 /// `ptr` must point to a `ScriptData`.
+#[expect(
+    unsafe_code,
+    reason = "script components are untyped bevy_ecs components, laid out as `ScriptData`"
+)]
 unsafe fn drop_script_data(ptr: OwningPtr<'_>) {
     // SAFETY: only called by bevy_ecs on values inserted by `ScriptOps::insert`.
     unsafe { ptr.drop_as::<ScriptData>() }
@@ -799,7 +811,12 @@ macro_rules! component {
                 }
             }
 
-            #[allow(unused_assignments, unused_mut, unused_variables)]
+            #[allow(
+                unused_assignments,
+                unused_mut,
+                unused_variables,
+                reason = "a component with one field or none leaves the counter unused"
+            )]
             fn get_field(&self, index: usize) -> $crate::value::Value {
                 let mut i = 0usize;
                 $(
@@ -811,7 +828,12 @@ macro_rules! component {
                 panic!("{}: field index {index} out of range", stringify!($name))
             }
 
-            #[allow(unused_assignments, unused_mut, unused_variables)]
+            #[allow(
+                unused_assignments,
+                unused_mut,
+                unused_variables,
+                reason = "a component with one field or none leaves the counter unused"
+            )]
             fn set_field(&mut self, index: usize, value: &$crate::value::Value) {
                 let mut i = 0usize;
                 $(

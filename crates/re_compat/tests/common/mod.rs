@@ -1,6 +1,6 @@
 //! Shared helpers for the re_compat tests.
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "test helpers, not all of them used by every test")]
 
 use std::sync::Arc;
 

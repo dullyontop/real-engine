@@ -78,7 +78,10 @@ fn mark_parts(w: &mut World, classes: &ClassRegistry, model: Entity, driven: boo
 /// Creates the character for a root part: a capsule `height` tall (caps
 /// included) and `radius` wide, centred at `pos`. It collides with what the
 /// root part's collision group collides with.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the character's shape and placement"
+)]
 pub fn add(
     w: &mut World,
     classes: &ClassRegistry,

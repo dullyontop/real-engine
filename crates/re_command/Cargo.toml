@@ -20,3 +20,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 glam.workspace = true
+
+[lints]
+workspace = true

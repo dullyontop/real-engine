@@ -162,7 +162,10 @@ impl EngineReceiver {
 
     /// The next request if one is waiting. `Ok(None)` when none is waiting,
     /// `Err(())` once every handle is dropped.
-    #[allow(clippy::result_unit_err)]
+    #[expect(
+        clippy::result_unit_err,
+        reason = "the only error is that every handle was dropped"
+    )]
     pub fn try_recv(&self) -> Result<Option<EngineRequest>, ()> {
         match self.receiver.try_recv() {
             Ok(r) => Ok(Some(r)),
@@ -173,7 +176,10 @@ impl EngineReceiver {
 
     /// Waits up to `timeout` for a request. `Ok(None)` on timeout, `Err(())`
     /// once every handle is dropped.
-    #[allow(clippy::result_unit_err)]
+    #[expect(
+        clippy::result_unit_err,
+        reason = "the only error is that every handle was dropped"
+    )]
     pub fn recv_timeout(&self, timeout: Duration) -> Result<Option<EngineRequest>, ()> {
         match self.receiver.recv_timeout(timeout) {
             Ok(r) => Ok(Some(r)),
@@ -185,7 +191,10 @@ impl EngineReceiver {
     /// Answers every request already waiting, without blocking (what a frame
     /// loop calls between frames). Returns how many were answered, or
     /// `Err(())` once every handle is dropped and nothing is left.
-    #[allow(clippy::result_unit_err)]
+    #[expect(
+        clippy::result_unit_err,
+        reason = "the only error is that every handle was dropped"
+    )]
     pub fn serve_pending<C: EditTarget>(
         &self,
         target: &mut C,

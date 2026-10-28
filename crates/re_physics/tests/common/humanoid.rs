@@ -5,7 +5,7 @@
 //! the neutral pose. Joint 0 (`root`) and `chest`, `neck` and the hands and feet have no
 //! part, so the mapping has joints above the ragdoll root, chains and leaves.
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "test helpers, not all of them used by every test")]
 
 use re_types::glam::{Quat, Vec3};
 use re_types::physics::{JointPose, RagdollDesc, RagdollSkeleton, SkeletonJoint};

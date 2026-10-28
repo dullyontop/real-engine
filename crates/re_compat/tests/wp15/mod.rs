@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, reason = "test helpers, not all of them used by every test")]
 //! The test place shared by the WP15 tests: a client VM over a place with the
 //! `TweenTarget` test class. The GUI frames a place steps are compared with
 //! committed values when it is dropped ([`gui_log`]).

@@ -117,7 +117,10 @@ struct ClipFile {
     format: String,
     version: u32,
     name: String,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "declared for `deny_unknown_fields`; the runtime never reads it"
+    )]
     doc: String,
     looped: bool,
     priority: String,

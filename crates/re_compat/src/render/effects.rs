@@ -306,7 +306,6 @@ fn spawn_point(rng: &mut Pcg32, p: &Props, size: Vec3, emit_dir: Vec3) -> (Vec3,
 }
 
 /// Advances one emitter and appends its sprites.
-#[allow(clippy::too_many_arguments)]
 fn emitter(
     s: &Scope,
     st: &mut State,
@@ -548,7 +547,6 @@ fn trail(s: &Scope, st: &mut State, e: Entity, dt: f32) -> Option<Ribbon> {
 }
 
 /// Advances the effects by `dt` and adds what fits the budget.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(
     s: &Scope,
     hub: &mut Hub,

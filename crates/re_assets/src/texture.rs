@@ -231,7 +231,10 @@ fn encode_level(
 
 /// `pixels` (`width` x `height` RGBA8) grown to whole 4×4 blocks by repeating
 /// the last column and row.
-#[cfg_attr(not(feature = "texture-encode"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "texture-encode"),
+    allow(dead_code, reason = "only the encoder pads to whole blocks")
+)]
 fn pad_to_blocks(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
     let (w, h) = (width as usize, height as usize);
     let (pw, ph) = (w.div_ceil(4) * 4, h.div_ceil(4) * 4);

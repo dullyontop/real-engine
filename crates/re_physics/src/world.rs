@@ -390,7 +390,10 @@ const HOLD_MAX_SLOPE_DEG: f32 = 50.0;
 
 /// How far from the simulation origin, per axis, a body may be (Jolt's
 /// limit for single precision), in studs.
-#[allow(clippy::unnecessary_cast)]
+#[allow(
+    clippy::unnecessary_cast,
+    reason = "`Real` is f64 when oxijolt's `double-precision` feature is on"
+)]
 pub const WORLD_LIMIT: f32 = oxijolt::limits::MAX_POSITION as f32;
 
 fn max_position() -> f32 {

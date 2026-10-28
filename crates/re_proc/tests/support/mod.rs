@@ -1,6 +1,6 @@
 //! Shared test helpers: graphs, worlds with a graph source, output hashes.
 
-#![allow(dead_code)]
+#![allow(dead_code, reason = "test helpers, not all of them used by every test")]
 
 use std::path::PathBuf;
 use std::sync::Arc;
