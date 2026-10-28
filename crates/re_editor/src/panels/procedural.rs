@@ -116,6 +116,18 @@ pub(super) fn graph(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut
     }
 }
 
+/// What the procedural tools draw over the viewport and the pointer input
+/// they take there (WP43), after the gizmo. Returns true when they took the
+/// pointer this frame, so the viewport does not also act on it. Nothing yet.
+pub(super) fn viewport_overlay(
+    _ui: &mut egui::Ui,
+    _app: &App,
+    _view: &crate::camera::View,
+    _actions: &mut Vec<Action>,
+) -> bool {
+    false
+}
+
 fn display(world: &World, e: Entity, id: &str) -> String {
     let name = world.name_of(e);
     if name.is_empty() {
